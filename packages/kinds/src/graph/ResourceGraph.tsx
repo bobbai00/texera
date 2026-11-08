@@ -1,46 +1,48 @@
-// The resource graph beside a chat: what the chat read, made and ran, and how they connect. It
-// shares nothing visible with the workflow canvas: round icons by kind with the name beneath,
-// straight labelled arrows, columns of dependency on a plain ground with bands, Used first and
-// Made last. A click on a node shows what it is; Open opens it beside. The outside sources the
-// agent consulted sit in a strip above. It changes nothing.
+// The resource graph beside a chat: what the chat read, made and ran, and how it connects. Only
+// data flows are arrows; what a workflow uses rides on its card, and the unit it ran on is a
+// frame around it. It zooms in three levels, each showing more: the whole graph by name, each
+// thing with its facts, and each workflow's steps with the file and the table each step read or
+// made. It shares nothing visible with the workflow canvas, and it changes nothing: a click says
+// what a thing is, and Open opens it beside. The outside sources the agent consulted sit above.
 
 import { useQuery } from "@tanstack/react-query";
 import { conversationsGraphOptions } from "@texera/catalog-client/query";
-import type { ConversationGraph, GraphNode, GraphRun, GraphSource } from "@texera/catalog-client/types";
-import { Button, cn, formatDuration, timeAgo } from "@texera/ui";
-import { ArrowUpRight, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PhaseIcon } from "../execution/PhaseIcon";
-import { isKindId } from "../registry";
+import type { ConversationGraph, GraphSource } from "@texera/catalog-client/types";
+import { Button, cn } from "@texera/ui";
+import { Info, Minus, Plus, Scan } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { KindIcon } from "../shell/KindIcon";
-import { useOpenResource } from "../shell/navigation";
-import type { KindId } from "../types";
-import { refOf } from "../uri";
-import { type DrawnNode, layoutGraph, type Place } from "./layout";
+import { GraphDetail } from "./Detail";
+import { type Box, type Layout, layOut, type Measured } from "./layout";
+import { type GraphView, type Level, viewOf } from "./model";
+import { DataCard, type Handlers, ResultTile, UnitHead, WorkCard } from "./parts";
+import { lineOf } from "./steps";
 
-const COL = 150;
-const ROW = 108;
-const PAD = 28;
-const HEAD = 30;
-const SIZE = 48;
-/** How far a node's name and the line under it reach below its icon. */
-const UNDER = 36;
+/** Each level: its type size against the standard one, and the zoom it opens at. */
+const LEVELS: { id: Level; label: string; u: number; home: number }[] = [
+  { id: "overview", label: "Overview", u: 1.3, home: 0.6 },
+  { id: "standard", label: "Standard", u: 1, home: 1 },
+  { id: "detail", label: "Detail", u: 0.62, home: 1.55 },
+];
+/** The drawing's type at the standard level, in pixels at zoom 1. */
+const BASE = 12.5;
+const K_MIN = 0.42;
+const K_MAX = 2.6;
+/** The zooms where the next level begins. */
+const T1 = 0.75;
+const T2 = 1.3;
+export const levelOf = (k: number): Level => (k < T1 ? "overview" : k < T2 ? "standard" : "detail");
+const levelSpec = (l: Level) => LEVELS.find(x => x.id === l) ?? (LEVELS[1] as (typeof LEVELS)[number]);
+/** The width of a unit's frame at each level: a workflow card with room on each side. */
+const FRAME_WIDTH: Record<Level, string> = { overview: "w-[15.3em]", standard: "w-[18.8em]", detail: "w-[22.8em]" };
 
 const GOING = new Set(["pending", "provisioning", "running"]);
 
-/** What a role is drawn as: the kind whose icon and colours it takes. */
-const LOOK: Record<GraphNode["role"], KindId> = {
-  data: "dataset",
-  workflow: "workflow",
-  model: "model",
-  function: "operator",
-  unit: "computing-unit",
-};
-
-const LABEL: Record<string, string> = { reads: "reads", makes: "makes", uses: "uses", runsOn: "runs on" };
-
 /** The graph of a chat, and whether the chat has started work: made something, or planned to. */
-export function useChatGraph(rid: string, { enabled = true, live = false }: { enabled?: boolean; live?: boolean } = {}) {
+export function useChatGraph(
+  rid: string,
+  { enabled = true, live = false }: { enabled?: boolean; live?: boolean } = {}
+) {
   const query = useQuery({
     ...conversationsGraphOptions({ path: { rid } }),
     enabled,
@@ -56,123 +58,630 @@ export function useChatGraph(rid: string, { enabled = true, live = false }: { en
   return { graph, started, refresh };
 }
 
-/** Where the chat's nodes were put, kept for the chat's life in this tab. */
-function useKeptPlaces(rid: string) {
-  const key = `texera.graph.${rid}`;
-  const kept = useRef<Map<string, Place> | null>(null);
-  if (kept.current === null) {
-    try {
-      kept.current = new Map(JSON.parse(sessionStorage.getItem(key) ?? "[]") as [string, Place][]);
-    } catch {
-      kept.current = new Map();
-    }
-  }
-  const save = (places: Map<string, Place>) => {
-    kept.current = places;
-    try {
-      sessionStorage.setItem(key, JSON.stringify([...places]));
-    } catch {
-      // A tab that may not store keeps them for as long as the page is open.
-    }
-  };
-  return { kept: kept.current, save };
+/** A short fingerprint of what the catalog said, so a layout is redone only when it changes. */
+function fingerprint(value: unknown): string {
+  const text = JSON.stringify(value);
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${text.length}:${h >>> 0}`;
 }
 
-export function ResourceGraph({ rid, graph, className }: { rid: string; graph: ConversationGraph; className?: string }) {
-  const { kept, save } = useKeptPlaces(rid);
-  const layout = useMemo(() => layoutGraph(graph, kept), [graph, kept]);
-  useEffect(() => save(layout.places), [layout]);
+/** How far down and across an element sits inside another it is drawn in. */
+function offsetWithin(el: HTMLElement, root: HTMLElement): number {
+  let y = 0;
+  let at: HTMLElement | null = el;
+  while (at && at !== root) {
+    y += at.offsetTop;
+    at = at.offsetParent as HTMLElement | null;
+  }
+  return y;
+}
+
+const boxOf = (layout: Layout, id: string): Box | undefined =>
+  layout.places.get(id) ?? layout.frames.find(f => f.id === id);
+
+/** The drawn thing nearest a point of the drawing. */
+function nearest(layout: Layout, x: number, y: number): string | undefined {
+  let best: string | undefined;
+  let distance = Number.POSITIVE_INFINITY;
+  for (const [id, b] of layout.places) {
+    const d = (b.x + b.w / 2 - x) ** 2 + (b.y + b.h / 2 - y) ** 2;
+    if (d < distance) {
+      distance = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/** What a thing touches: what a workflow reads, uses, makes and runs on; what reads or uses a thing. */
+function touching(view: GraphView, id: string): Set<string> {
+  const near = new Set([id]);
+  for (const w of view.works) {
+    const mine = [
+      w.id,
+      ...w.reads.map(r => r.data),
+      ...w.results,
+      ...w.uses.map(u => u.uri),
+      ...(w.unit ? [w.unit] : []),
+    ];
+    if (mine.includes(id)) {
+      if (id === w.id || id === w.unit || w.uses.some(u => u.uri === id)) for (const x of mine) near.add(x);
+      else near.add(w.id);
+    }
+  }
+  return near;
+}
+
+export function ResourceGraph({
+  graph,
+  className,
+  bar,
+}: {
+  rid: string;
+  graph: ConversationGraph;
+  className?: string;
+  bar?: ReactNode;
+}) {
+  const view = useMemo(() => viewOf(graph), [graph]);
+  const said = useMemo(() => fingerprint(graph), [graph]);
+  const [cam, setCam] = useState({ k: 1, tx: 24, ty: 16 });
+  const camRef = useRef(cam);
+  camRef.current = cam;
+  const level = levelOf(cam.k);
+  const em = BASE * levelSpec(level).u;
+  const viewport = useRef<HTMLDivElement>(null);
+  const world = useRef<HTMLDivElement>(null);
+  const [laid, setLaid] = useState<{ key: string; layout: Layout }>();
+  const laidRef = useRef(laid);
+  laidRef.current = laid;
+  // What the camera does once the next layout is known: frame everything, keep a thing where it
+  // is on screen, or bring a workflow's top to the top.
+  const pending = useRef<{ fit?: boolean; anchor?: { id: string; sx: number; sy: number }; top?: string }>({
+    fit: true,
+  });
+  const [tick, setTick] = useState(0);
+  const key = `${level}|${said}`;
   const [chosen, setChosen] = useState<string>();
-  const centre = (id: string) => {
-    const p = layout.places.get(id) as Place;
-    return { x: PAD + p.col * COL + COL / 2, y: HEAD + PAD + p.row * ROW + SIZE / 2 };
+  const [hover, setHover] = useState<string>();
+  const [legend, setLegend] = useState(false);
+
+  // Measure what is drawn at this level, lay it out, and point the camera.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key names everything a layout depends on; tick asks for a new one
+  useLayoutEffect(() => {
+    const root = world.current;
+    if (!root) return;
+    const els = new Map<string, HTMLElement>();
+    for (const el of root.querySelectorAll<HTMLElement>("[data-graph-measure]"))
+      els.set(el.dataset.graphMeasure as string, el);
+    const measured: Measured = {
+      size: id => {
+        const el = els.get(id);
+        return el ? { w: el.offsetWidth, h: el.offsetHeight } : undefined;
+      },
+      row: (id, row) => {
+        const el = els.get(id);
+        const r = el?.querySelector<HTMLElement>(`[data-graph-row="${CSS.escape(row)}"]`);
+        return el && r ? offsetWithin(r, el) + r.offsetHeight / 2 : undefined;
+      },
+      head: unit => els.get(`head:${unit}`)?.offsetHeight ?? 2.6 * em,
+    };
+    const layout = layOut(view, measured, level, em);
+    setLaid({ key, layout });
+    const vp = viewport.current;
+    const p = pending.current;
+    if (!vp) return;
+    const W = vp.clientWidth;
+    const H = vp.clientHeight;
+    if (p.fit) {
+      if (W < 40 || H < 40) return;
+      // A graph that has not grown its three columns yet is framed as if it had them, so what
+      // comes later has room and nothing moves when it does.
+      const wide = Math.max(layout.width, (level === "overview" ? 46.4 : 51.4) * em);
+      const fits = Math.min((W - 28) / wide, (H - 48) / Math.max(layout.height, 1));
+      if (level !== "overview" && fits < T1) {
+        setCam(c => ({ ...c, k: levelSpec("overview").home }));
+        return;
+      }
+      const k = level === "overview" ? Math.min(Math.max(fits, K_MIN), T1 - 0.01) : Math.min(Math.max(fits, T1), 1.12);
+      pending.current = {};
+      setCam({ k, tx: Math.max(14, (W - wide * k) / 2), ty: 16 });
+      return;
+    }
+    if (p.top) {
+      const b = boxOf(layout, p.top);
+      pending.current = {};
+      if (b) setCam(c => ({ ...c, tx: W / 2 - (b.x + b.w / 2) * c.k, ty: 18 - b.y * c.k + 2.4 * em * c.k }));
+      return;
+    }
+    if (p.anchor) {
+      const { id, sx, sy } = p.anchor;
+      const b = boxOf(layout, id);
+      pending.current = {};
+      if (b) setCam(c => ({ ...c, tx: sx - (b.x + b.w / 2) * c.k, ty: sy - (b.y + b.h / 2) * c.k }));
+    }
+  }, [key, tick]);
+
+  // A panel first measured at no size frames the graph once it has one.
+  useEffect(() => {
+    const vp = viewport.current;
+    if (!vp) return;
+    const watch = new ResizeObserver(() => {
+      if (pending.current.fit && vp.clientWidth >= 40) setTick(t => t + 1);
+    });
+    watch.observe(vp);
+    return () => watch.disconnect();
+  }, []);
+
+  // What is chosen stays in sight once its details open beside it or under it.
+  useEffect(() => {
+    const layout = laidRef.current?.layout;
+    const vp = viewport.current;
+    if (!chosen || !layout || !vp || placed.current) {
+      placed.current = false;
+      return;
+    }
+    const b = boxOf(layout, chosen);
+    if (!b) return;
+    const sheet = vp.parentElement?.querySelector<HTMLElement>("[data-graph-detail]");
+    const covered = sheet && sheet.offsetLeft === 0 ? sheet.offsetHeight : 0;
+    const c = camRef.current;
+    const W = vp.clientWidth;
+    const H = vp.clientHeight - covered;
+    const sx = (b.x + b.w / 2) * c.k + c.tx;
+    const sy = (b.y + Math.min(b.h, 3 * em) / 2) * c.k + c.ty;
+    if (sx < 48 || sx > W - 48 || sy < 32 || sy > H - 32)
+      setCam({
+        ...c,
+        tx: W / 2 - (b.x + b.w / 2) * c.k,
+        ty: Math.max(16, H / 2 - (b.y + Math.min(b.h, 3 * em) / 2) * c.k),
+      });
+  }, [chosen, em]);
+
+  /** Zooms to k about a point of the viewport; a new level keeps the thing nearest it in place. */
+  const zoomAt = useCallback((next: number, sx: number, sy: number) => {
+    const c = camRef.current;
+    const k = Math.min(K_MAX, Math.max(K_MIN, next));
+    const wx = (sx - c.tx) / c.k;
+    const wy = (sy - c.ty) / c.k;
+    const layout = laidRef.current?.layout;
+    if (levelOf(k) !== levelOf(c.k) && layout) {
+      const id = nearest(layout, wx, wy);
+      const b = id ? boxOf(layout, id) : undefined;
+      if (id && b)
+        pending.current = { anchor: { id, sx: (b.x + b.w / 2) * c.k + c.tx, sy: (b.y + b.h / 2) * c.k + c.ty } };
+    }
+    setCam({ k, tx: sx - wx * k, ty: sy - wy * k });
+  }, []);
+
+  const centre = () => ({ x: (viewport.current?.clientWidth ?? 0) / 2, y: (viewport.current?.clientHeight ?? 0) / 2 });
+  const frameAll = () => {
+    pending.current = { fit: true };
+    setCam(c => ({ ...c, k: 1 }));
+    setTick(t => t + 1);
   };
-  const width = PAD * 2 + layout.columns * COL;
-  const height = HEAD + PAD * 2 + layout.rows * ROW;
-  const picked = layout.nodes.find(d => d.id === chosen);
+  const toLevel = (l: Level) => {
+    const layout = laidRef.current?.layout;
+    const c = camRef.current;
+    const { x, y } = centre();
+    const target =
+      chosen && layout && boxOf(layout, chosen)
+        ? chosen
+        : layout
+          ? nearest(layout, (x - c.tx) / c.k, (y - c.ty) / c.k)
+          : undefined;
+    if (l === level) {
+      const b = layout && target ? boxOf(layout, target) : undefined;
+      if (b) setCam({ ...c, tx: x - (b.x + b.w / 2) * c.k, ty: y - (b.y + b.h / 2) * c.k });
+      return;
+    }
+    pending.current = target ? { anchor: { id: target, sx: x, sy: y } } : {};
+    setCam({ ...c, k: levelSpec(l).home });
+  };
+  const placed = useRef(false);
+  const open = (id: string) => {
+    placed.current = true;
+    const work = view.works.find(w => w.id === id) ?? view.works.find(w => w.results.includes(id));
+    if (!work) return;
+    setChosen(work.id);
+    pending.current = { top: work.id };
+    setCam(c => ({ ...c, k: levelSpec("detail").home }));
+    setTick(t => t + 1);
+  };
+
+  // A wheel moves the graph; with Ctrl or ⌘, or a pinch, it zooms.
+  useEffect(() => {
+    const vp = viewport.current;
+    if (!vp) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = vp.getBoundingClientRect();
+      if (e.ctrlKey || e.metaKey)
+        zoomAt(
+          camRef.current.k * Math.exp(-e.deltaY * (Math.abs(e.deltaY) > 40 ? 0.002 : 0.012)),
+          e.clientX - r.left,
+          e.clientY - r.top
+        );
+      else setCam(c => ({ ...c, tx: c.tx - e.deltaX, ty: c.ty - e.deltaY }));
+    };
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => vp.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+
+  // A drag moves the graph; two fingers pinch it.
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const drag = useRef<{
+    x: number;
+    y: number;
+    tx: number;
+    ty: number;
+    moved: boolean;
+    pinch?: { d: number; k: number };
+  }>(undefined);
+  const onPointerDown = (e: React.PointerEvent) => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const c = camRef.current;
+    if (pointers.current.size === 2) {
+      const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
+      drag.current = {
+        x: 0,
+        y: 0,
+        tx: c.tx,
+        ty: c.ty,
+        moved: true,
+        pinch: { d: Math.hypot(p.x - q.x, p.y - q.y), k: c.k },
+      };
+    } else drag.current = { x: e.clientX, y: e.clientY, tx: c.tx, ty: c.ty, moved: false };
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d || !pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (d.pinch && pointers.current.size === 2) {
+      const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
+      const r = viewport.current?.getBoundingClientRect();
+      zoomAt(
+        d.pinch.k * (Math.hypot(p.x - q.x, p.y - q.y) / d.pinch.d),
+        (p.x + q.x) / 2 - (r?.left ?? 0),
+        (p.y + q.y) / 2 - (r?.top ?? 0)
+      );
+      return;
+    }
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < 4) return;
+    if (!d.moved) {
+      d.moved = true;
+      viewport.current?.setPointerCapture(e.pointerId);
+    }
+    setCam(c => ({ ...c, tx: d.tx + dx, ty: d.ty + dy }));
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size === 0 && drag.current && !drag.current.moved) drag.current = undefined;
+  };
+
+  // A click waits a moment to be sure it is not the first of a double-click, which opens.
+  const clicking = useRef<number>(undefined);
+  const handlers: Handlers = {
+    onChoose: id => {
+      window.clearTimeout(clicking.current);
+      clicking.current = window.setTimeout(() => setChosen(was => (was === id ? undefined : id)), 220);
+    },
+    onHover: setHover,
+    onOpen: id => {
+      window.clearTimeout(clicking.current);
+      open(id);
+    },
+  };
+  const focus = hover ?? chosen;
+  const near = useMemo(() => (focus ? touching(view, focus) : undefined), [view, focus]);
+  const layout = laid?.key === key ? laid.layout : undefined;
+  const place = (id: string): React.CSSProperties => {
+    const b = layout?.places.get(id);
+    return b ? { left: b.x, top: b.y } : { left: 0, top: 0, visibility: "hidden" };
+  };
+  const dim = (id: string) => near && !near.has(id) && "opacity-25";
+  const ring = (id: string) => chosen === id && "ring-2 ring-primary/45";
+  const opOf = (id: string) => {
+    const n = view.nodes.get(id);
+    const step = view.works.find(w => w.results.includes(id))?.steps.find(s => s.id === n?.step);
+    return step ? lineOf(step, view.nodes).op : undefined;
+  };
+
   return (
     <div className={cn("flex min-h-0 flex-col bg-background", className)} data-resource-graph>
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+        {bar}
+        <div className="ml-auto flex items-center gap-1.5">
+          <fieldset className="m-0 inline-flex rounded-lg border bg-muted/60 p-0.5" aria-label="How close">
+            {LEVELS.map(l => (
+              <button
+                key={l.id}
+                type="button"
+                aria-pressed={level === l.id}
+                onClick={() => toLevel(l.id)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-xs",
+                  level === l.id
+                    ? "bg-background font-medium text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                data-graph-level={l.id}>
+                {l.label}
+              </button>
+            ))}
+          </fieldset>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            aria-label="Zoom out"
+            onClick={() => zoomAt(cam.k / 1.3, centre().x, centre().y)}>
+            <Minus />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            aria-label="Zoom in"
+            onClick={() => zoomAt(cam.k * 1.3, centre().x, centre().y)}>
+            <Plus />
+          </Button>
+          <Button variant="outline" size="sm" onClick={frameAll} data-graph-fit>
+            <Scan /> Fit
+          </Button>
+          <Button
+            variant={legend ? "secondary" : "ghost"}
+            size="icon-sm"
+            aria-label="What the shapes mean"
+            aria-pressed={legend}
+            onClick={() => setLegend(v => !v)}>
+            <Info />
+          </Button>
+        </div>
+      </div>
       {graph.sources.length > 0 && <Consulted sources={graph.sources} />}
-      <div className="relative min-h-0 flex-1">
-        <div className="absolute inset-0 overflow-auto">
-      <div className="relative" style={{ width, height }}>
-        {/* Columns of dependency: data and work alternate, Used first and Made last. */}
-        {Array.from({ length: layout.columns }, (_, col) => (
+      <div className="@container relative flex min-h-0 flex-1">
+        <div
+          ref={viewport}
+          className="relative min-w-0 flex-1 cursor-grab touch-none overflow-hidden outline-none select-none active:cursor-grabbing"
+          role="application"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: the graph takes keys to zoom and move, so it takes focus
+          tabIndex={0}
+          aria-label="What this chat read, made and ran. Plus and minus zoom, 0 fits, the arrows move."
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onClickCapture={e => {
+            if (drag.current?.moved) {
+              e.stopPropagation();
+              drag.current = undefined;
+            }
+          }}
+          onClick={() => setChosen(undefined)}
+          onKeyDown={e => {
+            const { x, y } = centre();
+            if (e.key === "+" || e.key === "=") zoomAt(cam.k * 1.25, x, y);
+            else if (e.key === "-" || e.key === "_") zoomAt(cam.k / 1.25, x, y);
+            else if (e.key === "0") frameAll();
+            else if (e.key === "Escape") setChosen(undefined);
+            else if (e.key.startsWith("Arrow")) {
+              const step = 48;
+              setCam(c => ({
+                ...c,
+                tx: c.tx + (e.key === "ArrowLeft" ? step : e.key === "ArrowRight" ? -step : 0),
+                ty: c.ty + (e.key === "ArrowUp" ? step : e.key === "ArrowDown" ? -step : 0),
+              }));
+            } else return;
+            e.preventDefault();
+          }}>
           <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: a band is its column
-            key={col}
-            className={cn("absolute top-0 bottom-0", col % 2 === 0 ? "bg-muted/35" : "bg-transparent")}
-            style={{ left: PAD + col * COL, width: COL }}>
-            <div className="px-2 pt-2 text-2xs font-medium tracking-wide text-muted-foreground uppercase" data-graph-band={col}>
-              {col === 0 ? "Used" : col === layout.columns - 1 && layout.columns > 1 ? "Made" : ""}
+            ref={world}
+            className="absolute top-0 left-0 origin-top-left"
+            style={{ transform: `translate(${cam.tx}px, ${cam.ty}px) scale(${cam.k})`, fontSize: `${em}px` }}
+            data-graph-zoom={level}>
+            {layout?.columns.map(c => (
+              <div
+                key={c.rank}
+                className="absolute top-0 flex items-baseline gap-[0.5em] text-[0.78em] font-semibold tracking-[0.08em] whitespace-nowrap text-muted-foreground uppercase"
+                style={{ left: c.x }}
+                data-graph-column={c.label.toLowerCase()}>
+                {c.label}
+                <span className="font-normal tracking-normal text-muted-foreground/70">{c.count || ""}</span>
+              </div>
+            ))}
+            {layout?.frames.map((f, i) => {
+              const unit = view.units.get(f.id);
+              if (!unit) return null;
+              return (
+                <div
+                  // biome-ignore lint/suspicious/noArrayIndexKey: a unit may frame work in more than one place
+                  key={`${f.id}:${i}`}
+                  className={cn(
+                    "absolute rounded-[1.15em] border transition-opacity",
+                    unit.planned
+                      ? "border-dashed border-muted-foreground/45"
+                      : "border-kind-computing-unit/35 bg-kind-computing-unit/[0.05]",
+                    dim(f.id),
+                    ring(f.id)
+                  )}
+                  style={{ left: f.x, top: f.y, width: f.w, height: f.h }}
+                  data-graph-node={f.id}
+                  data-graph-role={unit.planned ? "planned" : "unit"}
+                  data-graph-planned={unit.planned ? "true" : undefined}>
+                  <button
+                    type="button"
+                    className="block w-full cursor-pointer rounded-t-[1.15em] text-left"
+                    aria-label={`Computing unit ${unit.node?.name ?? unit.planned?.name}`}
+                    onClick={e => {
+                      e.stopPropagation();
+                      handlers.onChoose(f.id);
+                    }}
+                    onPointerEnter={() => setHover(f.id)}
+                    onPointerLeave={() => setHover(undefined)}>
+                    <UnitHead unit={unit} level={level} empty={view.idle.includes(f.id)} />
+                  </button>
+                </div>
+              );
+            })}
+            {layout && (
+              <svg
+                className="pointer-events-none absolute top-0 left-0 overflow-visible"
+                width={Math.ceil(layout.width + 8)}
+                height={Math.ceil(layout.height + 8)}
+                aria-hidden>
+                {layout.arrows.map(a => {
+                  const hot = !!focus && (a.from === focus || a.to === focus);
+                  const faint = !!near && !hot && !(near.has(a.from) && near.has(a.to));
+                  return (
+                    <g
+                      key={a.key}
+                      data-graph-edge={a.relation}
+                      className={cn("transition-opacity", faint && "opacity-15")}>
+                      <path
+                        d={a.path}
+                        fill="none"
+                        vectorEffect="non-scaling-stroke"
+                        strokeDasharray={a.planned ? "5 4" : undefined}
+                        className={hot ? "stroke-foreground" : "stroke-muted-foreground/70"}
+                        strokeWidth={hot ? 2 : 1.5}
+                      />
+                      <polygon points={a.tip} className={hot ? "fill-foreground" : "fill-muted-foreground/70"} />
+                      {a.label && (
+                        <text
+                          x={a.label.x}
+                          y={a.label.y}
+                          textAnchor={a.label.anchor}
+                          className="fill-muted-foreground"
+                          style={{
+                            fontSize: "0.76em",
+                            paintOrder: "stroke",
+                            stroke: "var(--background)",
+                            strokeWidth: "0.32em",
+                            strokeLinejoin: "round",
+                          }}>
+                          {a.label.text}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+            {view.works.map(w => (
+              <WorkCard
+                key={w.id}
+                work={w}
+                level={level}
+                nodes={view.nodes}
+                hot={focus}
+                h={handlers}
+                className={cn("transition-opacity", dim(w.id), ring(w.id))}
+                style={place(w.id)}
+              />
+            ))}
+            {[...view.data.values()].map(d =>
+              d.node?.kind === "execution" ? (
+                <ResultTile
+                  key={d.id}
+                  node={d.node}
+                  of={view.works.find(w => w.results.includes(d.id))?.id}
+                  op={opOf(d.id)}
+                  level={level}
+                  h={handlers}
+                  className={cn("transition-opacity", dim(d.id), ring(d.id))}
+                  style={place(d.id)}
+                />
+              ) : (
+                <DataCard
+                  key={d.id}
+                  item={d}
+                  level={level}
+                  result={(view.rank.get(d.id) ?? 0) > 0}
+                  h={handlers}
+                  className={cn("transition-opacity", dim(d.id), ring(d.id))}
+                  style={place(d.id)}
+                />
+              )
+            )}
+            {/* Each unit's head, measured where nothing shows it, for its frame's height. */}
+            <div className="invisible absolute top-0 left-0" aria-hidden>
+              {[...view.units.values()].map(u => (
+                <div
+                  key={u.id}
+                  className={cn("absolute top-0 left-0", FRAME_WIDTH[level])}
+                  data-graph-measure={`head:${u.id}`}>
+                  <UnitHead unit={u} level={level} />
+                </div>
+              ))}
+              {view.idle.map(id => {
+                const u = view.units.get(id);
+                return u ? (
+                  <div key={id} className={cn("absolute top-0 left-0", FRAME_WIDTH[level])} data-graph-measure={id}>
+                    <UnitHead unit={u} level={level} empty />
+                  </div>
+                ) : null;
+              })}
             </div>
           </div>
-        ))}
-        <svg className="pointer-events-none absolute inset-0" width={width} height={height} aria-hidden>
-          <defs>
-            <marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" className="fill-muted-foreground" />
-            </marker>
-          </defs>
-          {graph.edges.map(e => {
-            if (!layout.places.has(e.from) || !layout.places.has(e.to)) return null;
-            const a = centre(e.from);
-            const b = centre(e.to);
-            const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-            const r = SIZE / 2 + 4;
-            let [x1, y1] = [a.x + ((b.x - a.x) / len) * r, a.y + ((b.y - a.y) / len) * r];
-            let [x2, y2] = [b.x - ((b.x - a.x) / len) * r, b.y - ((b.y - a.y) / len) * r];
-            // Within a column, an arrow leaves from under the name of the node above, and is labelled beside.
-            const upright = Math.abs(b.x - a.x) < 1;
-            if (upright && b.y > a.y) y1 = a.y + SIZE / 2 + UNDER;
-            if (upright && b.y < a.y) y2 = b.y + SIZE / 2 + UNDER;
-            if (upright) [x1, x2] = [a.x, b.x];
-            const main = e.relation === "reads" || e.relation === "makes";
-            // What a workflow uses and runs on is said faintly, and fully when one end is chosen.
-            const focused = chosen === e.from || chosen === e.to;
-            if (!main && !focused)
-              return (
-                <line
-                  key={`${e.from}>${e.to}>${e.relation}`}
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  className="stroke-muted-foreground/20"
-                  strokeWidth={1}
-                  data-graph-edge={e.relation}
-                />
-              );
-            return (
-              <g key={`${e.from}>${e.to}>${e.relation}`} data-graph-edge={e.relation}>
-                <line
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  markerEnd="url(#graph-arrow)"
-                  className={main ? "stroke-muted-foreground" : "stroke-muted-foreground/45"}
-                  strokeWidth={main ? 1.6 : 1}
-                />
-                <text
-                  x={upright ? x1 + 6 : (x1 + x2) / 2}
-                  y={upright ? (y1 + y2) / 2 + 3 : (y1 + y2) / 2 - 5}
-                  textAnchor={upright ? "start" : "middle"}
-                  className="fill-muted-foreground text-[10px]">
-                  {LABEL[e.relation]}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-        {layout.nodes.map(d => {
-          const c = centre(d.id);
-          return <Node key={d.id} drawn={d} x={c.x} y={c.y} chosen={chosen === d.id} onChoose={() => setChosen(chosen === d.id ? undefined : d.id)} />;
-        })}
-      </div>
+          <p className="pointer-events-none absolute bottom-2 left-3 rounded-md bg-background/85 px-2 py-0.5 text-2xs text-muted-foreground">
+            Drag to move · Ctrl+scroll to zoom · double-click to open
+          </p>
+          {legend && <Legend />}
         </div>
-        {picked && <Detail drawn={picked} onClose={() => setChosen(undefined)} />}
+        {chosen &&
+          (view.nodes.has(chosen) ||
+            view.works.some(w => w.id === chosen) ||
+            view.data.has(chosen) ||
+            view.units.has(chosen)) && (
+            <GraphDetail
+              id={chosen}
+              view={view}
+              graph={graph}
+              onChoose={setChosen}
+              onClose={() => setChosen(undefined)}
+            />
+          )}
       </div>
+    </div>
+  );
+}
+
+/** What the shapes and marks mean. */
+function Legend() {
+  const row = (shape: ReactNode, words: string) => (
+    <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-2.5">
+      <div className="flex h-5 items-center">{shape}</div>
+      <span>{words}</span>
+    </div>
+  );
+  return (
+    <div
+      className="absolute top-2.5 right-2.5 z-10 grid w-64 gap-2 rounded-xl border bg-card p-3 text-xs shadow-lg"
+      data-graph-legend>
+      {row(<span className="h-4 w-12 rounded-full border border-kind-dataset/45 bg-card" />, "Dataset")}
+      {row(
+        <span className="h-5 w-12 rounded-md border border-kind-workflow/55 bg-card" />,
+        "Workflow, with what it uses"
+      )}
+      {row(<span className="h-4 w-9 rounded border bg-card" />, "Table a run made")}
+      {row(
+        <span className="h-3.5 w-9 rounded border border-kind-model/40 bg-kind-model/10" />,
+        "Model or function the workflow uses"
+      )}
+      {row(
+        <span className="h-5 w-12 rounded-md border border-kind-computing-unit/45 bg-kind-computing-unit/10" />,
+        "Computing unit: what is inside ran on it"
+      )}
+      {row(
+        <span className="relative h-px w-11 bg-muted-foreground/70 after:absolute after:-top-1 after:-right-0.5 after:border-y-4 after:border-l-[7px] after:border-y-transparent after:border-l-muted-foreground/70" />,
+        "Data read or made"
+      )}
+      {row(
+        <span className="h-4 w-12 rounded-md border border-dashed border-muted-foreground/60" />,
+        "Planned, not made yet"
+      )}
+      {row(<span className="ml-1 size-2.5 rounded-full bg-primary" />, "Made in this chat")}
     </div>
   );
 }
@@ -191,7 +700,10 @@ function Consulted({ sources }: { sources: GraphSource[] }) {
             type="button"
             aria-expanded={open === s.uri}
             onClick={() => setOpen(open === s.uri ? undefined : s.uri)}
-            className={cn("flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted", open === s.uri && "bg-muted")}
+            className={cn(
+              "flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted",
+              open === s.uri && "bg-muted"
+            )}
             data-graph-source={s.name}>
             <KindIcon kind="mcp-server" className="size-4 rounded-sm [&_svg]:size-3" />
             <span className="font-medium">{s.name}</span>
@@ -215,107 +727,5 @@ function Consulted({ sources }: { sources: GraphSource[] }) {
         </ol>
       )}
     </div>
-  );
-}
-
-/** A node: its kind's round icon, its state in the outline, its name beneath. */
-function Node({ drawn, x, y, chosen, onChoose }: { drawn: DrawnNode; x: number; y: number; chosen: boolean; onChoose: () => void }) {
-  const n = drawn.node;
-  const kind: KindId | undefined = n ? LOOK[n.role] : drawn.planned?.kind && isKindId(drawn.planned.kind) ? drawn.planned.kind : undefined;
-  const name = n ? n.name : drawn.planned?.name;
-  const state = n?.state;
-  const run = n?.runs?.[0];
-  const sub = n
-    ? n.role === "workflow" && run
-      ? run.reused > 0
-        ? `${run.reused} of ${run.steps} steps from earlier runs`
-        : `${n.runs?.length} run${n.runs?.length === 1 ? "" : "s"}`
-      : n.version !== undefined
-        ? `v${n.version}`
-        : n.rows !== undefined && n.rows !== null
-          ? `${n.rows} rows`
-          : ""
-    : "planned";
-  return (
-    <button
-      type="button"
-      onClick={onChoose}
-      className="group absolute flex w-36 -translate-x-1/2 flex-col items-center gap-1 text-center"
-      style={{ left: x, top: y - SIZE / 2 }}
-      data-graph-node={drawn.id}
-      data-graph-role={n?.role ?? "planned"}
-      data-graph-made={n?.made ? "true" : "false"}
-      data-graph-state={state ?? ""}
-      data-graph-planned={drawn.planned ? "true" : undefined}>
-      <span
-        className={cn(
-          "flex items-center justify-center rounded-full border-2 bg-card shadow-xs transition",
-          // Dashed means planned, and nothing else; a run that goes moves; one that failed is red.
-          drawn.planned ? "border-dashed border-muted-foreground/60" : "border-border",
-          state && GOING.has(state) && "animate-pulse border-primary",
-          state === "failed" && "border-destructive",
-          !drawn.planned && n && !n.made && "opacity-75",
-          chosen && "ring-4 ring-primary/30"
-        )}
-        style={{ width: SIZE, height: SIZE }}>
-        {kind ? <KindIcon kind={kind} className="size-8 rounded-full" /> : <span className="size-3 rounded-full bg-muted-foreground/50" />}
-      </span>
-      <span className="line-clamp-2 w-full text-xs leading-tight font-medium [overflow-wrap:anywhere]" title={name}>
-        {name}
-      </span>
-      {sub && <span className="w-full truncate text-2xs text-muted-foreground">{sub}</span>}
-    </button>
-  );
-}
-
-/** What a node is, beside the graph: its kind, version and origin, a workflow's runs, and Open. */
-function Detail({ drawn, onClose }: { drawn: DrawnNode; onClose: () => void }) {
-  const { beside } = useOpenResource();
-  const n = drawn.node;
-  const ref = n ? refOf(n.uri) : undefined;
-  return (
-    <aside className="absolute top-3 right-3 w-72 space-y-2 rounded-xl border bg-card p-3 text-sm shadow-lg" data-graph-detail={drawn.id}>
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="font-medium [overflow-wrap:anywhere]">{n?.name ?? drawn.planned?.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {n ? `${n.role}${n.version !== undefined ? ` · v${n.version}` : ""} · ${n.made ? "made in this chat" : "worked from"}` : `planned${drawn.planned?.detail ? `: ${drawn.planned.detail}` : ""}`}
-          </p>
-        </div>
-        <Button variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
-          <X />
-        </Button>
-      </div>
-      {n?.rows !== undefined && n.rows !== null && <p className="text-xs">{n.rows} rows</p>}
-      {n?.runs && n.runs.length > 0 && (
-        <ul className="space-y-1" data-graph-runs>
-          {n.runs.map(run => (
-            <Run key={run.uri} run={run} />
-          ))}
-        </ul>
-      )}
-      {ref && (
-        <Button size="sm" variant="outline" onClick={() => beside(ref)} data-graph-open>
-          <ArrowUpRight /> Open
-        </Button>
-      )}
-    </aside>
-  );
-}
-
-function Run({ run }: { run: GraphRun }) {
-  const { beside } = useOpenResource();
-  const ref = refOf(run.uri);
-  return (
-    <li>
-      <button type="button" className="flex w-full items-center gap-1.5 text-left text-xs hover:underline" onClick={() => ref && beside(ref)}>
-        <PhaseIcon phase={run.phase as never} className="size-3.5" />
-        <span className="flex-1">{run.startedAt ? timeAgo(run.startedAt) : run.phase}</span>
-        <span className="text-muted-foreground">
-          {run.reused > 0 ? `${run.reused}/${run.steps} reused · ` : ""}
-          {formatDuration(run.startedAt, run.finishedAt)}
-        </span>
-      </button>
-    </li>
   );
 }

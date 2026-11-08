@@ -50,12 +50,16 @@ test("a diabetes researcher brings in a public cohort, screens it with the team'
   let conversation: string | undefined;
   cleanups.push(async () => {
     const made = conversation ? await createdIn(alice, conversation) : [];
-    for (const r of made) if (r.kind === "computing-unit") await alice.attempt("POST", `/computing-units/${r.metadata.rid}/terminate`, {});
-    for (const r of made) if (r.kind === "execution" && r.metadata.parent) await alice.attempt("DELETE", `/workflows/${r.metadata.parent}/executions/${r.metadata.rid}`);
+    for (const r of made)
+      if (r.kind === "computing-unit") await alice.attempt("POST", `/computing-units/${r.metadata.rid}/terminate`, {});
+    for (const r of made)
+      if (r.kind === "execution" && r.metadata.parent)
+        await alice.attempt("DELETE", `/workflows/${r.metadata.parent}/executions/${r.metadata.rid}`);
     for (const kind of ["workflow", "dataset", "computing-unit"])
       for (const r of made) if (r.kind === kind) await alice.attempt("DELETE", `/resources/${r.metadata.rid}`);
     if (conversation) await alice.attempt("DELETE", `/resources/${conversation}`);
-    for (const uri of [team.model, team.roc_auc, team.calibration]) await alice.attempt("DELETE", `/resources/${uri.split("/").at(-1)}`);
+    for (const uri of [team.model, team.roc_auc, team.calibration])
+      await alice.attempt("DELETE", `/resources/${uri.split("/").at(-1)}`);
     await alice.attempt("DELETE", `/projects/${team.project}`);
     await workAtHome(alice);
   });
@@ -63,20 +67,26 @@ test("a diabetes researcher brings in a public cohort, screens it with the team'
   await signIn(page);
   await workIn(page, team.name);
   // What there is.
-  await ask(page, "I study type 2 diabetes and I'm new to this team. What tools does this platform give me: data, models, operators, and where my work can run?");
+  await ask(
+    page,
+    "I study type 2 diabetes and I'm new to this team. What tools does this platform give me: data, models, operators, and where my work can run?"
+  );
   conversation = conversationOf(page);
   await turnEnds(page);
   expect(await createdIn(alice, conversation)).toEqual([]);
 
   // The cohort comes in.
-  await sayAndWait(page, `Please get the Pima Indians diabetes data from ${PIMA_URL} and put it into a new dataset called 'Pima cohort'.`);
+  await sayAndWait(
+    page,
+    `Please get the Pima Indians diabetes data from ${PIMA_URL} and put it into a new dataset called 'Pima cohort'.`
+  );
   const datasets = (await createdIn(alice, conversation)).filter(r => r.kind === "dataset");
   expect(datasets).toHaveLength(1);
 
   // The screening: the agent asks where it runs, and she picks Small on the card.
   await sayAndWait(
     page,
-    "Now screen every woman in the Pima cohort with our diabetes onset-risk model: how well does its risk separate the women who developed diabetes from those who did not, and is it calibrated? Use the team's ROC AUC and Risk calibration operators.",
+    "Now screen every woman in the Pima cohort with our diabetes onset-risk model: how well does its risk separate the women who developed diabetes from those who did not, and is it calibrated? Use the team's ROC AUC and Risk calibration operators."
   );
   const card = page.locator('[data-part="ask"]').last();
   await expect(card).toBeVisible();
@@ -90,17 +100,25 @@ test("a diabetes researcher brings in a public cohort, screens it with the team'
   await choice.click();
   await turnEnds(page);
 
-  // The graph: the cohort and the model go into the workflow, which runs on her unit.
+  // The graph: the cohort goes into the workflow, the model and the team's operators ride on
+  // its card, and the workflow stands in the frame of her unit.
   const graph = page.locator("[data-resource-graph]");
   await expect(graph).toBeVisible({ timeout: 60_000 });
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "Pima cohort" }).first()).toBeVisible();
-  await expect(graph.locator('[data-graph-role="model"]').filter({ hasText: "Diabetes onset risk" })).toHaveCount(1);
-  await expect(graph.locator('[data-graph-role="unit"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-role="workflow"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-edge="runsOn"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-edge="reads"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-edge="uses"]')).not.toHaveCount(0);
   const units = (await createdIn(alice, conversation)).filter(r => r.kind === "computing-unit");
   expect(units).toHaveLength(1);
+  const unitUri = `texera://computing-units/${units[0]?.metadata.rid}`;
+  const screen = graph.locator(`[data-graph-role="workflow"][data-graph-runs-on="${unitUri}"]`);
+  await expect(screen).toHaveCount(1);
+  await expect(graph.locator(`[data-graph-role="unit"][data-graph-node="${unitUri}"]`)).toHaveCount(1);
+  await expect(screen.locator('[data-graph-role="model"]').filter({ hasText: "Diabetes onset risk" })).toHaveCount(1);
+  await expect(screen.locator('[data-graph-role="function"]')).not.toHaveCount(0);
+  await expect(graph.locator('[data-graph-edge="reads"]')).not.toHaveCount(0);
+  await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
   await page.screenshot({ path: "test-results/diabetes-graph.png", fullPage: true });
+  // Closer, the workflow's steps: the cohort scanned, the model's predict, the team's operators.
+  await screen.dblclick();
+  await expect(screen.locator("[data-graph-step]").filter({ hasText: "predict" })).toHaveCount(1);
+  await expect(screen.locator('[data-graph-step] [data-graph-role="model"]')).not.toHaveCount(0);
+  await page.screenshot({ path: "test-results/diabetes-graph-steps.png", fullPage: true });
 });
