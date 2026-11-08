@@ -42,7 +42,9 @@ A unit of the person's own costs money while it runs and takes minutes to start,
 3. Large (8 CPUs, 16 GB): for big tables and many workers per operator.
 4. GPU, only when a GPU profile can start here. When none can, say in the question that this deployment has no GPU, and offer ML on CPU in its place for a model whose card asks for a GPU.
 
-Label each by the profile's name first, such as "Small (2 CPUs, 4 GB)", so the person's pick names it. Read the profiles' `status` first and leave out a rung that cannot start; offer Medium in place of Large when Large cannot. A GPU is always the person's choice, never yours. A ready unit made for the same purpose is reused rather than made again: look at `list_computing_units` first. Work the deployment's unit does well needs no question: run it there.
+Label each by the profile's name first, such as "Small (2 CPUs, 4 GB)", so the person's pick names it. Read the profiles' `status` first and leave out a rung that cannot start; offer Medium in place of Large when Large cannot. A GPU is always the person's choice, never yours. A ready unit made for the same purpose is reused rather than made again: look at `list_computing_units` first.
+
+A model's work is always asked about before its first run in a chat, however small the data: the person decides, and the deployment's unit is one of the choices. Other work that the deployment's unit does well, with no model in it, needs no question: run it there.
 
 ## Make it and keep it
 
