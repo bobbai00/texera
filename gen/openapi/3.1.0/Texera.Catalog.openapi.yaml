@@ -3555,6 +3555,7 @@ paths:
   /catalog/v1/resources/{rid}/grants:
     get:
       operationId: Resources_listGrants
+      description: Who a resource is shared with, and how. A project's people are everyone's to see who may read the project; anything else's grants, its sharers' alone. Changing them is the sharers' (a project's admins') either way.
       parameters:
         - name: rid
           in: path
@@ -3576,7 +3577,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      x-texera-permission: share
+      x-texera-permission: read
   /catalog/v1/resources/{rid}/grants/{pid}:
     put:
       operationId: Resources_grant

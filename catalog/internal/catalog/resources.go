@@ -493,13 +493,18 @@ func (s *Service) Version(ctx context.Context, caller *auth.Caller, kind *kinds.
 	return r, v, nil
 }
 
-// Grants lists a resource's direct grants, for whoever may share it.
+// Grants lists a resource's direct grants: a project's for whoever may read it, anything else's for its sharers.
 func (s *Service) Grants(ctx context.Context, caller *auth.Caller, rid uuid.UUID) ([]store.Grant, error) {
-	if _, err := s.Get(ctx, caller, nil, rid); err != nil {
+	r, err := s.Get(ctx, caller, nil, rid)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.decide(ctx, caller, authz.Share, rid); err != nil {
-		return nil, err
+	// A project's people are seen by everyone who may read the project; who else a resource is
+	// shared with, by its sharers alone.
+	if r.Kind != projectKind.Name {
+		if err := s.decide(ctx, caller, authz.Share, rid); err != nil {
+			return nil, err
+		}
 	}
 	return s.Store.ListGrants(ctx, rid)
 }

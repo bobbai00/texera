@@ -244,6 +244,41 @@ func TestAProjectInheritsWhatItsBaseHolds(t *testing.T) {
 	}
 }
 
+// A project's people are everyone's to see who may read the project; only its admins change
+// them. Who anything else is shared with stays its sharers' to see.
+func TestAProjectsPeopleAreSeenByEveryoneInIt(t *testing.T) {
+	h := newHarness(t)
+	alice, bob := principalOf(h, "alice"), principalOf(h, "bob")
+	lab := project(h, "alice", "lab", "", map[string]any{})
+	h.mustJSON("alice", "PUT", p+"/resources/"+rid(lab)+"/grants/"+bob, map[string]any{"relation": "viewer"}, nil)
+	var people []api.Grant
+	h.mustJSON("bob", "GET", p+"/resources/"+rid(lab)+"/grants", nil, &people)
+	roles := map[string]api.Relation{}
+	for _, g := range people {
+		roles[string(g.Principal)] = g.Relation
+	}
+	if len(people) != 2 || roles[alice] != api.RelationOwner || roles[bob] != api.RelationViewer {
+		t.Fatalf("the lab's people as bob sees them: %+v", people)
+	}
+	refused(t, h, "bob", "PUT", "/resources/"+rid(lab)+"/grants/"+bob, map[string]any{"relation": "owner"}, http.StatusForbidden, "forbidden")
+	refused(t, h, "bob", "DELETE", "/resources/"+rid(lab)+"/grants/"+alice, nil, http.StatusForbidden, "forbidden")
+	refused(t, h, "admin", "GET", "/resources/"+rid(lab)+"/grants", nil, http.StatusForbidden, "forbidden")
+	// Who a workflow is shared with stays its sharers' to see, a viewer of it included.
+	wf := createIn(h, "alice", "workflows", "notes", lab.Metadata.Rid, map[string]any{"operators": []any{}, "links": []any{}})
+	refused(t, h, "bob", "GET", "/resources/"+rid(wf)+"/grants", nil, http.StatusForbidden, "forbidden")
+	// Texera's people are everyone's to see: who to ask about what every project inherits.
+	me(h, "admin")
+	var texeras []api.Grant
+	h.mustJSON("bob", "GET", p+"/resources/"+string(me(h, "bob").RootProject)+"/grants", nil, &texeras)
+	found := false
+	for _, g := range texeras {
+		found = found || (string(g.Principal) == principalOf(h, "admin") && g.Relation == api.RelationOwner)
+	}
+	if !found {
+		t.Fatalf("Texera's admins as bob sees them: %+v", texeras)
+	}
+}
+
 // A chain goes up to Texera and never loops; a project another inherits from stays while it
 // does; and a project is public only when what it inherits is, since its readers read that too.
 func TestAChainCannotLoopAndWhatIsInheritedFromStays(t *testing.T) {

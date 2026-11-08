@@ -74,6 +74,9 @@ def test_a_project_inherits_what_its_base_holds(alice, bob, admin, run_id):
         admin.grant(lab, alice.pid(), "owner")
         study = alice.post("/projects", {"name": f"e2e study {run_id}", "base": lab, "spec": {}})["metadata"]["rid"]
         alice.grant(study, bob.pid(), "editor")
+        # Everyone in the study sees who is in it; only its admins change that.
+        assert {(g["principal"], g["relation"]) for g in bob.get(f"/resources/{study}/grants")} == {(alice.pid(), "owner"), (bob.pid(), "editor")}
+        assert bob.status("PUT", f"/resources/{study}/grants/{bob.pid()}", {"relation": "owner"}) == 403
         # Bob, a member of the study, reads what the lab holds, and Texera's things, and changes none.
         assert bob.status("GET", f"/skills/{skill}") == 200
         scoped = [s["metadata"]["rid"] for s in bob.get(f"/skills?limit=200&scope={study}")["items"]]

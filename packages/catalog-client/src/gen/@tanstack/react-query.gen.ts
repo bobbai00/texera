@@ -2508,6 +2508,9 @@ export const resourcesDependentsOptions = (options: Options<ResourcesDependentsD
 
 export const resourcesListGrantsQueryKey = (options: Options<ResourcesListGrantsData>) => createQueryKey('resourcesListGrants', options);
 
+/**
+ * Who a resource is shared with, and how. A project's people are everyone's to see who may read the project; anything else's grants, its sharers' alone. Changing them is the sharers' (a project's admins') either way.
+ */
 export const resourcesListGrantsOptions = (options: Options<ResourcesListGrantsData>) => queryOptions<ResourcesListGrantsResponse, ResourcesListGrantsError, ResourcesListGrantsResponse, ReturnType<typeof resourcesListGrantsQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await resourcesListGrants({

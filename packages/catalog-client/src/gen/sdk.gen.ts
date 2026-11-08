@@ -1049,6 +1049,9 @@ export const resourcesDependents = <ThrowOnError extends boolean = false>(option
     ...options
 });
 
+/**
+ * Who a resource is shared with, and how. A project's people are everyone's to see who may read the project; anything else's grants, its sharers' alone. Changing them is the sharers' (a project's admins') either way.
+ */
 export const resourcesListGrants = <ThrowOnError extends boolean = false>(options: Options<ResourcesListGrantsData, ThrowOnError>): RequestResult<ResourcesListGrantsResponses, ResourcesListGrantsErrors, ThrowOnError> => (options.client ?? client).get<ResourcesListGrantsResponses, ResourcesListGrantsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/resources/{rid}/grants',

@@ -148,9 +148,10 @@ namespace Routes {
     @extension("x-texera-permission", "service")
     writeLive(@path rid: Rid, @body body: LiveState): void | Error;
 
+    @doc("Who a resource is shared with, and how. A project's people are everyone's to see who may read the project; anything else's grants, its sharers' alone. Changing them is the sharers' (a project's admins') either way.")
     @get
     @route("/{rid}/grants")
-    @extension("x-texera-permission", "share")
+    @extension("x-texera-permission", "read")
     listGrants(@path rid: Rid): Grant[] | Error;
 
     @doc("What a person this resource is shared with cannot open of what it uses, for the one sharing it: what its head version names, of the kinds that hold data or code (a workflow's datasets and custom operators), that the person may not read. The unit or warehouse it names is where it runs, not what it uses.")
