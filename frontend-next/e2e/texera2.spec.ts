@@ -241,13 +241,20 @@ test("a project's page says what it inherits and runs with, and its admins manag
   await expect(view.locator("[data-roles]")).toContainText("An admin changes the project itself");
   await page.screenshot({ path: "test-results/project-people.png", fullPage: true });
 
-  // Bob sees his own role, and neither the people nor the project's settings to change.
+  // Bob sees his own role and who is in the project, and changes neither it nor its settings.
   const bobsPage = await browserOf(browser, "bob");
   await bobsPage.goto(`/projects/${study.metadata.rid}`);
   const bobsView = bobsPage.locator('[data-resource-view="project"]');
   await expect(bobsView.locator('[data-my-role="viewer"]')).toBeVisible();
   await bobsView.getByRole("tab", { name: "People" }).click();
-  await expect(bobsView.locator("[data-access]")).toContainText("Only the project's admins see and change who is in it");
+  await expect(bobsView.locator('[data-grant="owner"]')).toContainText("Alice Liddell");
+  await expect(bobsView.locator('[data-grant="owner"]')).toContainText("admin");
+  await expect(bobsView.locator('[data-grant="viewer"]')).toContainText("Bob Builder");
+  await expect(bobsView.locator("[data-change-role]")).toHaveCount(0);
+  await expect(bobsView.locator("[data-grant-form]")).toHaveCount(0);
+  await expect(bobsView.locator("[data-toggle-visibility]")).toHaveCount(0);
+  await expect(bobsView.locator("[data-people-readonly]")).toHaveText("Only its admins change who is in it.");
+  await bobsPage.screenshot({ path: "test-results/project-people-as-a-viewer.png", fullPage: true });
   await bobsView.getByRole("tab", { name: "Settings" }).click();
   await expect(bobsView.locator("[data-project-description]")).toHaveCount(0);
   await expect(bobsView.locator("[data-base-select]")).toHaveCount(0);

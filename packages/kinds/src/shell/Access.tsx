@@ -11,7 +11,7 @@ import { Avatar, Badge, Button, EmptyState, ErrorNote, Input, NativeSelect, Sect
 import { Globe, Loader2, Lock, Trash2, TriangleAlert, UserPlus } from "lucide-react";
 import { useDeferredValue, useState } from "react";
 import { CatalogError, unwrap, updateMetadata } from "../api";
-import { grantsQuery, keysOf, principalsQuery, resourceQuery } from "../queries";
+import { canQuery, grantsQuery, keysOf, principalsQuery, resourceQuery } from "../queries";
 import { kindEntry } from "../types";
 import { PrincipalName } from "./Chips";
 
@@ -51,6 +51,10 @@ function Grants({ resource }: { resource: Resource }) {
     onSuccess: refresh,
   });
   const forbidden = grants.error instanceof CatalogError && grants.error.status === 403;
+  // A project's people are everyone's in it to see; who may change them, or what anything else is
+  // shared with, is the sharers' (a project's admins').
+  const { data: mayShare } = useQuery(canQuery("share", rid));
+  const sharer = mayShare === true;
   const isPublic = resource.metadata.visibility === "public";
   // A resource of a public project is everyone's to read through the project, however it is set
   // itself: what Texera holds among it, which every project inherits.
@@ -72,7 +76,7 @@ function Grants({ resource }: { resource: Resource }) {
                 ? `everyone can read it: ${throughProject} is public`
                 : "private: only people it is shared with"}
           </Badge>
-          {!forbidden && (
+          {sharer && (
             <Button variant="outline" size="xs" onClick={() => visibility.mutate(isPublic ? "private" : "public")} disabled={visibility.isPending} data-toggle-visibility>
               {visibility.isPending ? <Loader2 className="animate-spin" /> : null} Make {isPublic ? "private" : "public"}
             </Button>
@@ -83,11 +87,7 @@ function Grants({ resource }: { resource: Resource }) {
       <section className="space-y-2">
         <SectionTitle>{resource.kind === "project" ? "People" : "Shared with"}</SectionTitle>
         {forbidden ? (
-          <EmptyState className="py-4">
-            {resource.kind === "project"
-              ? "Only the project's admins see and change who is in it."
-              : "Only someone who may share this resource can see or change its grants."}
-          </EmptyState>
+          <EmptyState className="py-4">Only someone who may share this resource can see or change its grants.</EmptyState>
         ) : grants.error ? (
           <ErrorNote error={grants.error} prefix="Could not load grants" />
         ) : grants.isPending ? (
@@ -101,7 +101,7 @@ function Grants({ resource }: { resource: Resource }) {
                   <div className="flex items-center gap-2">
                     <PrincipalName pid={g.principal} className="min-w-0 flex-1 truncate" />
                     {/* The owner's own grant is the ownership: the catalog does not change or take it back. */}
-                    {g.principal === resource.metadata.owner ? (
+                    {g.principal === resource.metadata.owner || !sharer ? (
                       <Badge>{relationLabel(resource.kind, g.relation)}</Badge>
                     ) : (
                       <>
@@ -124,11 +124,17 @@ function Grants({ resource }: { resource: Resource }) {
                     )}
                   </div>
                   {/* Someone it is shared with to read it, not to run on it: what they cannot open of what it uses. */}
-                  {g.principal !== resource.metadata.owner && g.relation !== "user" && <Needs rid={rid} pid={g.principal} />}
+                  {sharer && g.principal !== resource.metadata.owner && g.relation !== "user" && <Needs rid={rid} pid={g.principal} />}
                 </li>
               ))}
             </ul>
-            <GrantForm kind={resource.kind} used={used} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
+            {sharer ? (
+              <GrantForm kind={resource.kind} used={used} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
+            ) : (
+              <p className="text-xs text-muted-foreground" data-people-readonly>
+                Only its admins change who is in it.
+              </p>
+            )}
             {resource.kind === "project" && (
               <p className="text-xs text-muted-foreground" data-roles>
                 An admin changes the project itself: its settings, what it inherits from and its people. A member works in it: makes,
