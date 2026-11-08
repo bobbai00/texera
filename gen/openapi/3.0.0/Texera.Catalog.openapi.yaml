@@ -1252,6 +1252,11 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateDataset'
+      x-mcp:
+        tool: create_dataset
+        description: "Create a dataset: a name, a description that says what it holds and where it comes from, and a format hint such as csv. It goes into the chat's project unless parent names another. It has no files until import_dataset_file stages one and commit_dataset_version makes its first version."
+        readOnlyHint: false
+        destructiveHint: false
       x-texera-permission: create
   /catalog/v1/datasets/{rid}:
     get:
@@ -1422,6 +1427,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+      x-texera-permission: write
+  /catalog/v1/datasets/{rid}/import:
+    post:
+      operationId: Datasets_importFile
+      description: Fetch a file from the internet into the staging area; commit makes a version.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetFile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportFile'
+      x-mcp:
+        tool: import_dataset_file
+        description: "Bring a file from the internet into a dataset: the catalog downloads an https URL itself, so its bytes never pass through the chat, and stages it at path (by default the URL's last segment). Only public addresses, up to the deployment's size limit. commit_dataset_version then makes the version: say in its message where the file came from."
+        readOnlyHint: false
+        destructiveHint: false
       x-texera-permission: write
   /catalog/v1/datasets/{rid}/staged:
     get:
@@ -2347,6 +2387,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+      x-texera-permission: write
+  /catalog/v1/models/{rid}/import:
+    post:
+      operationId: Models_importFile
+      description: Fetch a file from the internet into the staging area, as upload stages bytes sent; commit makes a version. Up to the deployment's size limit (`TEXERA_IMPORT_MAX_BYTES`).
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetFile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportFile'
       x-texera-permission: write
   /catalog/v1/models/{rid}/staged:
     get:
@@ -6589,6 +6659,18 @@ components:
           items:
             $ref: '#/components/schemas/GraphCall'
       description: An outside MCP server the chat's agent consulted, and its calls, oldest first.
+    ImportFile:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          description: An https URL on the public internet. An address on a private network, the platform's own services among them, is refused, and so are a URL with a user and password in it and a redirect to plain http.
+        path:
+          type: string
+          description: The path it is staged at; absent, the last segment of the URL's path.
+      description: A file the catalog fetches itself into the staging area, from the internet.
     JsonPatchOperation:
       type: object
       required:

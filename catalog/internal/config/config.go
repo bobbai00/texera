@@ -66,6 +66,8 @@ type Config struct {
 	StaticUnitEndpoint string
 	StaticUnitName     string
 	StaticUnitClientID string
+	// ImportMaxBytes is the largest file an import fetches from the internet.
+	ImportMaxBytes int64
 
 	// Kubernetes units: set the namespace to let the catalog create units as Deployments there
 	// (in-cluster, or through the kubeconfig KUBECONFIG names); empty means static units only.
@@ -132,6 +134,7 @@ func FromEnv() (Config, error) {
 		PresignTTL:          envDuration("TEXERA_PRESIGN_TTL", time.Hour),
 		LeaseTTL:            envDuration("TEXERA_LEASE_TTL", time.Hour),
 		UploadGrace:         envDuration("TEXERA_UPLOAD_GRACE", 24*time.Hour),
+		ImportMaxBytes:      envInt64("TEXERA_IMPORT_MAX_BYTES", 1<<30),
 		MaxDownloadBytes:    envInt64("TEXERA_MAX_DOWNLOAD_BYTES", 1<<20),
 	}
 	if c.DatabaseURL == "" {

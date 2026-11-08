@@ -221,7 +221,13 @@ person the agent worked for, on hover). The chat's name opens the chat beside, a
 who started it.
 
 **Datasets.** Upload files (they stay staged), then commit a version; download or presign any
-file of any version. Uploading the same bytes twice stores them once.
+file of any version. Uploading the same bytes twice stores them once. A file on the internet is
+staged the same way without passing through you: `POST /datasets/{rid}/import` with `{"url",
+"path"}` has the catalog fetch it (the agent's `import_dataset_file`). Only an https file on
+the public internet comes in: an address on a private network, the platform's own services
+among them, is refused when the connection is made, after every redirect, and so is a redirect
+to plain http or a URL with a password in it; a file over `TEXERA_IMPORT_MAX_BYTES` (1 GiB by
+default) is not staged.
 
 **Sharing.** A resource is private or public. Grants give a person or group a relation:
 `viewer` reads and runs, `editor` writes too, `owner` everything; `user` is "may use" for a
@@ -331,6 +337,7 @@ api -X POST $GW/catalog/v1/datasets -d '{"name":"iris","spec":{"format":"csv"}}'
 curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/csv" -X PUT \
   --data-binary @bin/texera-2-0/examples/iris.csv $GW/catalog/v1/datasets/$DS/files/iris.csv
 api -X POST $GW/catalog/v1/datasets/$DS/commit -d '{"message":"first upload"}'            # -> version 1
+api -X POST $GW/catalog/v1/datasets/$DS/import -d '{"url":"https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv"}'  # staged as diabetes.csv
 api -X POST $GW/catalog/v1/workflows -d @workflow.json                                    # {"name":..., "spec":{"operators":[...],"links":[...]}}
 api $GW/catalog/v1/computing-units/available                                              # a unit with status.phase ready
 api -X POST $GW/catalog/v1/workflows/$WF/validate -d '{}'                                 # compile: schemas, errors, and the plan

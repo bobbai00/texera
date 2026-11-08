@@ -149,6 +149,10 @@ export function describeChange(toolName: string, input: unknown): string {
       return name ? `Save the unit as the profile "${name}"` : "Save the unit as a profile";
     case "grant_access":
       return `Give ${text(a.role) ?? "access"} access to someone`;
+    case "create_dataset":
+      return name ? `Create the dataset "${name}"` : "Create a dataset";
+    case "import_dataset_file":
+      return text(a.url) ? `Bring ${text(a.url)} into the dataset` : "Bring a file into the dataset";
     case "commit_dataset_version":
       return "Save a new version of the dataset";
     case "pause_execution":

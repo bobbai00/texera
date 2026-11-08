@@ -123,7 +123,8 @@ def test_the_mcp_server(alice, anon, project):
     _, listed = alice.mcp("tools/list")
     assert {t["name"] for t in listed["result"]["tools"]} == {
         "search_resources", "resolve_uri", "get_resource", "list_versions", "get_version", "get_lineage", "grant_access",
-        "search_principals", "whoami", "list_dataset_files", "read_dataset_file", "commit_dataset_version",
+        "search_principals", "whoami", "create_dataset", "import_dataset_file", "list_dataset_files", "read_dataset_file",
+        "commit_dataset_version",
         "list_operators", "list_computing_units", "create_computing_unit", "save_unit_as_profile",
         "create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
         "get_execution", "pause_execution", "resume_execution", "get_port_result", "project_settings"}

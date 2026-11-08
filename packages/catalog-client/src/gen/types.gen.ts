@@ -1138,6 +1138,20 @@ export type GraphSource = {
 };
 
 /**
+ * A file the catalog fetches itself into the staging area, from the internet.
+ */
+export type ImportFile = {
+    /**
+     * An https URL on the public internet. An address on a private network, the platform's own services among them, is refused, and so are a URL with a user and password in it and a redirect to plain http.
+     */
+    url: string;
+    /**
+     * The path it is staged at; absent, the last segment of the URL's path.
+     */
+    path?: string;
+};
+
+/**
  * One RFC 6902 JSON Patch operation.
  */
 export type JsonPatchOperation = {
@@ -4228,6 +4242,33 @@ export type DatasetsUploadResponses = {
 
 export type DatasetsUploadResponse = DatasetsUploadResponses[keyof DatasetsUploadResponses];
 
+export type DatasetsImportFileData = {
+    body: ImportFile;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/datasets/{rid}/import';
+};
+
+export type DatasetsImportFileErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type DatasetsImportFileError = DatasetsImportFileErrors[keyof DatasetsImportFileErrors];
+
+export type DatasetsImportFileResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: DatasetFile;
+};
+
+export type DatasetsImportFileResponse = DatasetsImportFileResponses[keyof DatasetsImportFileResponses];
+
 export type DatasetsStagedData = {
     body?: never;
     path: {
@@ -5066,6 +5107,33 @@ export type ModelsUploadResponses = {
 };
 
 export type ModelsUploadResponse = ModelsUploadResponses[keyof ModelsUploadResponses];
+
+export type ModelsImportFileData = {
+    body: ImportFile;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/models/{rid}/import';
+};
+
+export type ModelsImportFileErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ModelsImportFileError = ModelsImportFileErrors[keyof ModelsImportFileErrors];
+
+export type ModelsImportFileResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: DatasetFile;
+};
+
+export type ModelsImportFileResponse = ModelsImportFileResponses[keyof ModelsImportFileResponses];
 
 export type ModelsStagedData = {
     body?: never;

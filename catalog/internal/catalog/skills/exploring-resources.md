@@ -32,6 +32,16 @@ A person new to a project asks what is in it, what it can answer, and where to s
 3. Look inside the data that matters to the question: `list_dataset_files` for a dataset version's files, and `read_dataset_file` for a file's header and first rows. A file's columns, units and coding, such as glucose in mg/dL or mmol/L or an outcome coded 0 and 1, decide what can be computed from it.
 4. Follow how things were made: `get_lineage` on a model, a dataset or a workflow shows what it was made from and what was made from it, and `list_versions` shows how it changed.
 
+## What the platform offers
+
+Asked what tools there are, answer beyond the team's own resources, from what the catalog returns:
+
+- `list_operators`: the operator types the project can use, its own and those it inherits from Texera, by group; name the groups and a few operators of each that fit the person's field, and the team's own Python operators by name.
+- `search_resources` with kind `model`: the models a workflow can run with `predict`, each with what it reads and predicts.
+- `search_resources` with kind `profile`: where work can run, the sizes and whether a GPU can start here (each profile's `status`).
+- `search_resources` with kind `mcp-server`: the outside sources you can read, such as PubMed.
+- Data from the internet can come into a dataset: the catalog fetches a file at a public URL (the importing-data skill).
+
 ## Answer
 
 - Group what is there by kind, one line each: the name, what it holds or does in a few words, its newest version, and the URI chip, so the person can open it.

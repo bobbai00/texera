@@ -76,7 +76,7 @@ func TestTexeraHoldsOneAgent(t *testing.T) {
 		}
 	}
 	sort.Strings(known)
-	if strings.Join(known, " ") != "computing-units exploring-resources literature-review python-udf reading-results texera-workflows using-models" || len(skills) != 7 {
+	if strings.Join(known, " ") != "computing-units exploring-resources importing-data literature-review python-udf reading-results texera-workflows using-models" || len(skills) != 8 {
 		t.Fatalf("skills: %v of %d shipped", known, len(skills))
 	}
 

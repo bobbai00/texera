@@ -73,6 +73,12 @@ describe("the gate", () => {
       'Start a computing unit "GPU unit" from the profile texera://profiles/p@2',
     );
     expect(describeChange("run_workflow", {})).toBe("Run the workflow");
+    expect(describeChange("create_dataset", { name: "Pima cohort", spec: { format: "csv" } })).toBe(
+      'Create the dataset "Pima cohort"',
+    );
+    expect(describeChange("import_dataset_file", { rid: "d", url: "https://example.org/diabetes.csv" })).toBe(
+      "Bring https://example.org/diabetes.csv into the dataset",
+    );
     expect(describeChange("edit_workflow", { rid: "w", lines: "set night: filter(r, where='x')\ndelete old" })).toBe(
       "Change the workflow: set night, delete old",
     );

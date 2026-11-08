@@ -145,7 +145,7 @@ func run(log *slog.Logger) error {
 				AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
 			},
 			LineageCallbackURL: cfg.LineageCallbackURL,
-			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes, UploadGrace: cfg.UploadGrace,
+			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes, UploadGrace: cfg.UploadGrace, ImportMaxBytes: cfg.ImportMaxBytes,
 			ProfileUnits:       profileUnits(cfg),
 			StaticUnitEndpoint: cfg.StaticUnitEndpoint, StaticUnitName: cfg.StaticUnitName, StaticUnitClientID: cfg.StaticUnitClientID, BioMcpURL: cfg.BioMcpURL, BioMcpKey: cfg.BioMcpKey,
 			ModelName: cfg.ModelName, ModelSecretPath: cfg.ModelSecretPath,

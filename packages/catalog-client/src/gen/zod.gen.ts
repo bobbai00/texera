@@ -190,6 +190,14 @@ export const zGraphRole = z.enum([
 ]);
 
 /**
+ * A file the catalog fetches itself into the staging area, from the internet.
+ */
+export const zImportFile = z.object({
+    url: z.string(),
+    path: z.string().optional()
+});
+
+/**
  * One RFC 6902 JSON Patch operation.
  */
 export const zJsonPatchOperation = z.object({
@@ -2467,6 +2475,17 @@ export const zDatasetsUploadPath = z.object({
  */
 export const zDatasetsUploadResponse = zDatasetFile;
 
+export const zDatasetsImportFileBody = zImportFile;
+
+export const zDatasetsImportFilePath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zDatasetsImportFileResponse = zDatasetFile;
+
 export const zDatasetsStagedPath = z.object({
     rid: zRid
 });
@@ -2784,6 +2803,17 @@ export const zModelsUploadPath = z.object({
  * The request has succeeded.
  */
 export const zModelsUploadResponse = zDatasetFile;
+
+export const zModelsImportFileBody = zImportFile;
+
+export const zModelsImportFilePath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zModelsImportFileResponse = zDatasetFile;
 
 export const zModelsStagedPath = z.object({
     rid: zRid

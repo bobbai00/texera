@@ -74,6 +74,22 @@ func (s *Server) routeFiles() {
 			writeJSON(w, http.StatusOK, m)
 			return nil
 		})
+		s.handle("POST "+base+"/import", func(w http.ResponseWriter, r *http.Request) error {
+			rid, err := ridParam(r, "rid")
+			if err != nil {
+				return err
+			}
+			var body api.ImportFile
+			if err := decode(r, &body); err != nil {
+				return err
+			}
+			f, err := s.svc.ImportFile(ctxOf(r), callerOf(r), k, rid, body)
+			if err != nil {
+				return err
+			}
+			writeJSON(w, http.StatusOK, f)
+			return nil
+		})
 		s.handle("POST "+base+"/commit", func(w http.ResponseWriter, r *http.Request) error {
 			rid, err := ridParam(r, "rid")
 			if err != nil {

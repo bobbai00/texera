@@ -55,7 +55,8 @@ search_resources finds things by kind, project or text; resolve_uri and get_reso
 list_versions and get_version read history; get_lineage shows where a version came from and what
 was made from it; grant_access shares a resource with a principal found by search_principals.
 Datasets are versioned files: list_dataset_files and read_dataset_file look at a version,
-commit_dataset_version makes one. list_operators, with q, gives an operator's property schema
+create_dataset makes a dataset, import_dataset_file brings a file in from a public https URL
+(the catalog fetches it), and commit_dataset_version makes a version of what is staged. list_operators, with q, gives an operator's property schema
 and ports; list_computing_units the units the caller may run on. A profile is what a unit's node
 is made of, its size and the Python packages it adds: create_computing_unit makes a unit from a
 profile (search_resources with kind profile lists them; waitSeconds waits until it is ready, and

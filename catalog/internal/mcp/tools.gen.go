@@ -21,6 +21,14 @@ var Tools = []Tool{
 		Input: "{\"$defs\":{\"Rid\":{\"description\":\"Resource id, a UUID.\",\"type\":\"string\"},\"Uri\":{\"description\":\"A resource URI: `texera://` followed by the resource's REST path, optionally `@vno` and a subresource path, e.g. `texera://datasets/{rid}@2/files/iris.csv`.\",\"type\":\"string\"}},\"properties\":{\"name\":{\"type\":\"string\"},\"parent\":{\"$ref\":\"#/$defs/Rid\",\"description\":\"The project the unit goes into; absent: the chat's project in a chat, else the caller's own.\"},\"profile\":{\"$ref\":\"#/$defs/Uri\",\"description\":\"The profile, with `@vno`, or its head.\"},\"waitSeconds\":{\"description\":\"Wait up to this many seconds for the unit to be ready (or failed); it is returned as it is then.\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"name\",\"profile\"],\"type\":\"object\"}",
 	},
 	{
+		Name:        "create_dataset",
+		Description: "Create a dataset: a name, a description that says what it holds and where it comes from, and a format hint such as csv. It goes into the chat's project unless parent names another. It has no files until import_dataset_file stages one and commit_dataset_version makes its first version.",
+		ReadOnly:    false, Idempotent: false, Destructive: boolPtr(false),
+		Method: "POST", Path: "/catalog/v1/datasets",
+		PathParams: nil, QueryParams: nil, Body: true,
+		Input: "{\"$defs\":{\"DatasetSpec\":{\"properties\":{\"format\":{\"description\":\"A content hint for the files, free-form, e.g. csv or parquet.\",\"type\":\"string\"}},\"type\":\"object\"},\"Rid\":{\"description\":\"Resource id, a UUID.\",\"type\":\"string\"},\"Visibility\":{\"enum\":[\"private\",\"public\"],\"type\":\"string\"}},\"properties\":{\"base\":{\"$ref\":\"#/$defs/Rid\",\"description\":\"For a project: the project it inherits from, one the caller administers or Texera; default Texera.\"},\"description\":{\"type\":\"string\"},\"labels\":{\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"message\":{\"description\":\"Recorded on the first version of a versioned kind.\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"parent\":{\"$ref\":\"#/$defs/Rid\",\"description\":\"The parent; for a top-level kind a project, default the caller's home project.\"},\"spec\":{\"$ref\":\"#/$defs/DatasetSpec\"},\"visibility\":{\"$ref\":\"#/$defs/Visibility\"}},\"required\":[\"name\",\"spec\"],\"type\":\"object\"}",
+	},
+	{
 		Name:        "create_workflow",
 		Description: "Create a workflow from a spec {operators, links}; returns the workflow with its version 1. Every later edit_workflow makes a new version of the same workflow.",
 		ReadOnly:    false, Idempotent: false, Destructive: boolPtr(false),
@@ -91,6 +99,14 @@ var Tools = []Tool{
 		Method: "PUT", Path: "/catalog/v1/resources/{rid}/grants/{pid}",
 		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "pid", Type: "string", Required: true}}, QueryParams: nil, Body: true,
 		Input: "{\"$defs\":{\"Relation\":{\"description\":\"The grantable relations. On a project, an `owner` is one of its admins, who change the project itself (its settings, what it inherits from, its people), and an `editor` is a member, who works in it. `user` may use without reading: run on a computing unit, keep results in a warehouse, lease a credential.\",\"enum\":[\"owner\",\"editor\",\"viewer\",\"user\"],\"type\":\"string\"}},\"properties\":{\"pid\":{\"type\":\"string\"},\"relation\":{\"$ref\":\"#/$defs/Relation\"},\"rid\":{\"type\":\"string\"}},\"required\":[\"pid\",\"relation\",\"rid\"],\"type\":\"object\"}",
+	},
+	{
+		Name:        "import_dataset_file",
+		Description: "Bring a file from the internet into a dataset: the catalog downloads an https URL itself, so its bytes never pass through the chat, and stages it at path (by default the URL's last segment). Only public addresses, up to the deployment's size limit. commit_dataset_version then makes the version: say in its message where the file came from.",
+		ReadOnly:    false, Idempotent: false, Destructive: boolPtr(false),
+		Method: "POST", Path: "/catalog/v1/datasets/{rid}/import",
+		PathParams: []Param{{Name: "rid", Type: "string", Required: true}}, QueryParams: nil, Body: true,
+		Input: "{\"properties\":{\"path\":{\"description\":\"The path it is staged at; absent, the last segment of the URL's path.\",\"type\":\"string\"},\"rid\":{\"type\":\"string\"},\"url\":{\"description\":\"An https URL on the public internet. An address on a private network, the platform's own services among them, is refused, and so are a URL with a user and password in it and a redirect to plain http.\",\"type\":\"string\"}},\"required\":[\"rid\",\"url\"],\"type\":\"object\"}",
 	},
 	{
 		Name:        "list_computing_units",

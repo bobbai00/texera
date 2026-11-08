@@ -46,6 +46,8 @@ type Config struct {
 	PresignTTL         time.Duration
 	LeaseTTL           time.Duration
 	MaxDownloadBytes   int64
+	// ImportMaxBytes is the largest file an import fetches from the internet; 1 GiB when unset.
+	ImportMaxBytes int64
 	// UploadGrace is how long an upload that no version and no staging names is kept before the
 	// retention sweep removes it: long enough for it to be committed. A day when unset.
 	UploadGrace time.Duration
@@ -78,8 +80,10 @@ type Service struct {
 	Workloads   ports.Workloads
 	Lake        ports.Lake
 	LineageSink ports.LineageSink
-	Config      Config
-	Log         *slog.Logger
+	// Importer fetches the files imports bring in; the public client (PublicClient) when nil.
+	Importer *http.Client
+	Config   Config
+	Log      *slog.Logger
 
 	mu     sync.RWMutex
 	system *store.Principal
@@ -90,6 +94,9 @@ type Service struct {
 
 	eventsOnce sync.Once
 	broker     *Broker
+
+	importerOnce   sync.Once
+	publicImporter *http.Client
 }
 
 // Error is a failure the API renders: a status, a code and a message.

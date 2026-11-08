@@ -2342,6 +2342,23 @@
       ],
       "type": "object"
     },
+    "ImportFile": {
+      "description": "A file the catalog fetches itself into the staging area, from the internet.",
+      "properties": {
+        "path": {
+          "description": "The path it is staged at; absent, the last segment of the URL's path.",
+          "type": "string"
+        },
+        "url": {
+          "description": "An https URL on the public internet. An address on a private network, the platform's own services among them, is refused, and so are a URL with a user and password in it and a redirect to plain http.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
     "JsonPatchOperation": {
       "description": "One RFC 6902 JSON Patch operation.",
       "properties": {

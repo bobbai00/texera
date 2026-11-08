@@ -68,6 +68,14 @@ model FileLink {
   expiresInSeconds: int32;
 }
 
+@doc("A file the catalog fetches itself into the staging area, from the internet.")
+model ImportFile {
+  @doc("An https URL on the public internet. An address on a private network, the platform's own services among them, is refused, and so are a URL with a user and password in it and a redirect to plain http.")
+  url: string;
+  @doc("The path it is staged at; absent, the last segment of the URL's path.")
+  path?: string;
+}
+
 @extension("x-texera-kind", #{ kind: "dataset", plural: "datasets", versioned: true, content: "manifest", parent: "project" })
 model Dataset is Typed<DatasetSpec, DatasetStatus>;
 model DatasetPage is Page<Dataset>;
@@ -88,6 +96,12 @@ interface FileRoutes<TVersion> {
     @header contentType: "application/octet-stream",
     @body data: bytes,
   ): DatasetFile | Error;
+
+  @doc("Fetch a file from the internet into the staging area, as upload stages bytes sent; commit makes a version. Up to the deployment's size limit (`TEXERA_IMPORT_MAX_BYTES`).")
+  @post
+  @route("/{rid}/import")
+  @extension("x-texera-permission", "write")
+  importFile(@path rid: Rid, @body body: ImportFile): DatasetFile | Error;
 
   @delete
   @route("/{rid}/files/{path}")
@@ -134,6 +148,28 @@ namespace Routes {
   interface Datasets
     extends VersionedKindRoutes<Dataset, DatasetPage, CreateDataset, UpdateDataset, DatasetVersion, DatasetVersionPage>,
       FileRoutes<DatasetVersion> {
+    @post
+    @extension("x-texera-permission", "create")
+    @extension("x-mcp", #{
+      tool: "create_dataset",
+      description: "Create a dataset: a name, a description that says what it holds and where it comes from, and a format hint such as csv. It goes into the chat's project unless parent names another. It has no files until import_dataset_file stages one and commit_dataset_version makes its first version.",
+      readOnlyHint: false,
+      destructiveHint: false,
+    })
+    create(@body body: CreateDataset): Created<Dataset> | Error;
+
+    @doc("Fetch a file from the internet into the staging area; commit makes a version.")
+    @post
+    @route("/{rid}/import")
+    @extension("x-texera-permission", "write")
+    @extension("x-mcp", #{
+      tool: "import_dataset_file",
+      description: "Bring a file from the internet into a dataset: the catalog downloads an https URL itself, so its bytes never pass through the chat, and stages it at path (by default the URL's last segment). Only public addresses, up to the deployment's size limit. commit_dataset_version then makes the version: say in its message where the file came from.",
+      readOnlyHint: false,
+      destructiveHint: false,
+    })
+    importFile(@path rid: Rid, @body body: ImportFile): DatasetFile | Error;
+
     @doc("Commit the staged files as a new version.")
     @post
     @route("/{rid}/commit")
