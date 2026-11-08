@@ -2,6 +2,53 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 15, part 9): runs as boxes on their units' rails, and going into any box
+
+The user reframed the graph around execution: a workflow and a unit only meet in a run, so each
+should be drawn as itself, and the computation split into workflow, run and compute, without
+overwhelming anyone. A page of two layouts on this machine's chats (an Artifact: A, their tiers,
+workflows across the top, runs under them, units along the bottom; B, rails) showed the tiers
+turn into a staircase with more than one workflow, every arrow crossing the other workflows'
+lines, the middle widening with each one. They chose B, and asked that every box open to its
+details, in a view that zooms in and back out, without losing the chat on the right.
+
+- **The endpoint** (`a482aaecc`): a run says the unit it ran on, a table the run that made it.
+- **The view** (`e504ffc5f`): a workflow's card (its models and functions on it) stands beside
+  its runs; each run is a box in the lane of the unit it ran on, the unit a plinth at the lane's
+  foot, dotted ties from the run to the card and down the lane to the unit. One box per workflow
+  and unit (reruns ×3); a workflow run on two units has a box in each lane, the tables on the box
+  of the run that made them; one not run yet a hollow box on the unit it will use; the plan's run
+  dashed, a rerun noted under the box. Overview: a run is a dot on its rail; Detail: a bar the
+  height of the steps, each table leaving it level with its step.
+- **Going in**: a click on any box zooms its own view out of the box over the graph: a dataset, a
+  workflow (its editor), a model, a function, a unit as everywhere; a run its execution, one run
+  at a time; a table its rows; what the plan has not made yet what the plan said. A trail leads
+  back (Back, a crumb, Escape or Alt+Left; the view shrinks into its box), and a strip under it
+  says what the thing is to the rest (reads, uses, runs, made, on, used by) to go to next. Views
+  shown there open what they link to there too (a `ViewHost` that `useOpenResource` defers to),
+  so nothing opens beside the page and the chat is never touched; the List tab goes in the same
+  way. The old details panel beside the graph is gone.
+
+Verified on the dev stack: 374 unit tests (the model's boxes, the rails layout at every level
+and plan, the trail), the type check, Biome, the Go suite; `graph.spec.ts` goes into every kind
+of box and back (workflow, run, a table from the run's strip and from the graph, the run's link
+to its workflow opening in place, Alt+Left and Escape, dataset, unit, function, a run not had
+yet, the plan's dataset, this chat from a function it made, a row of the List tab) with the
+chat's messages and address unchanged (22 s); `diabetes.spec.ts` through the real model, into
+the model and the run (1.1 min); the browser suite without the model, 62 passed and 6 skipped,
+the two that failed fixed (`chat-tree.spec.ts` expected a version row to open beside the chat,
+and it opens in the panel now; a dock flake passed alone); the scenarios, 54 passed. Kind: the
+catalog and frontend images rebuilt and rolled out (`k8s.sh up --no-build`); `k8s.sh check`, 57
+scenarios and the browser suite without the model (64 passed, 6 skipped), the new graph test
+among them; `diabetes.spec.ts` through the real model (1.6 min); `test_diabetes.py --cluster`
+failed once at the agent's question (it offered the deployment's unit and Small only, the test
+wants two sizes), before anything of the graph, and passed run again (90 s).
+
+Seen and left: a workflow's pinned version badge says the head's number ("v2 pinned" on v1).
+
+Next: the lineage tab, as said before; a model or function no workflow uses yet still has no
+place on the graph.
+
 ## 2026-11-08 (session 15, part 8): the graph's columns are Data, Computation and Results
 
 The user put the graph's idea in their words: the workflow is the centre and the rest stands
