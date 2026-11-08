@@ -119,8 +119,9 @@ Its Settings tab shows what holds and which project each value comes from
 
 **Admins and members.** A project's owners are its admins: they change the project itself, its
 settings, its base and its people. Its editors are its members: they work in it. A project's page
-says your role beside its name (admin, member or viewer). On its People tab its admins add people,
-change a person's role in place and remove them; the person who made the project stays its admin.
+says your role beside its name (admin, member or viewer). Its People tab shows everyone in it who
+is in it and with which role; its admins add people, change a person's role in place and remove
+them there, and the person who made the project stays its admin.
 On its Settings tab its admins say what it is for, choose what it inherits from, and see the
 projects that inherit from it, each with "Send back to Texera"
 (`GET /projects/{rid}/inheritors`). Texera is a

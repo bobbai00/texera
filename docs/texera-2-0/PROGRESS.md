@@ -78,6 +78,17 @@ Playwright 64 passed, 5 skipped. On the way the long-answer test failed again on
 waiting for a saved copy that never came: it wrote the turn's messages only after the page had
 the whole stream. It now writes them first, as the runtime does (15 in 15 on both stacks).
 
+Then everyone in a project sees its people: a project's grants are listed for whoever may read it,
+while changing them stays its admins' (anything else's grants stay its sharers'); the People tab
+shows a member or a viewer the list and the roles, and nothing to change. The catalog's suite, the
+app's tests, the scenarios and the Playwright tests of projects and sharing passed on the dev stack.
+Then the machine's disk filled (99%, 4 GB left of 281 GB, most of it Docker's build cache and old
+images, shared with other stacks): the kind redeploy stopped loading an image (`no space left on
+device`), so the cluster still runs the step before, and Chrome on the dev stack began to fail its
+page loads (`ERR_INSUFFICIENT_RESOURCES`, blank pages in the long sharing test, the code before this
+step included). Both wait for space; this session removed only its own leftovers (a 3 GB image
+tarball of an interrupted load, its Go build cache).
+
 ## 2026-11-07 (session 15, part 4): nobody writes the engine's classes
 
 The user's rule: an agent or a person using operators never works on the class template; the
