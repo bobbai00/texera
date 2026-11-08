@@ -459,6 +459,12 @@ test("a long first answer ends up on screen", async ({ page, request }) => {
   const rid = await openChat(page, call, `long answer ${Date.now()}`);
   const answer = `${Array.from({ length: 90 }, (_, i) => `Paragraph ${i} of a long answer.`).join("\n\n")}\n\nThe end of the answer.`;
   await page.route(`**/agents/conversations/${rid}/ag-ui`, async route => {
+    // The catalog has the turn's messages before the stream ends, as the runtime writes them
+    // while it streams: the page finds the catalog's copy when the run finishes.
+    const turn = await call("POST", `/conversations/${rid}/turns`, {});
+    await call("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "user", parts: [{ type: "text", text: "Tell me everything." }] });
+    await call("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "assistant", template: turn.template, parts: [{ type: "text", text: answer }] });
+    await call("DELETE", `/conversations/${rid}/turns/${turn.turn}`);
     const events = [
       { type: "RUN_STARTED", threadId: rid, runId: "r" },
       { type: "TEXT_MESSAGE_START", messageId: "m", role: "assistant" },
@@ -467,11 +473,6 @@ test("a long first answer ends up on screen", async ({ page, request }) => {
       { type: "RUN_FINISHED", threadId: rid, runId: "r" },
     ];
     await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map(e => `data: ${JSON.stringify(e)}\n\n`).join("") });
-    // The catalog gets the turn while the page shows the stream, as from the runtime.
-    const turn = await call("POST", `/conversations/${rid}/turns`, {});
-    await call("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "user", parts: [{ type: "text", text: "Tell me everything." }] });
-    await call("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "assistant", template: turn.template, parts: [{ type: "text", text: answer }] });
-    await call("DELETE", `/conversations/${rid}/turns/${turn.turn}`);
   });
   await say(page, "Tell me everything.");
   await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible();
