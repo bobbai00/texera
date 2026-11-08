@@ -81,9 +81,13 @@ function Grants({ resource }: { resource: Resource }) {
         {visibility.error && <ErrorNote error={visibility.error} prefix="Could not change visibility" />}
       </section>
       <section className="space-y-2">
-        <SectionTitle>Shared with</SectionTitle>
+        <SectionTitle>{resource.kind === "project" ? "People" : "Shared with"}</SectionTitle>
         {forbidden ? (
-          <EmptyState className="py-4">Only someone who may share this resource can see or change its grants.</EmptyState>
+          <EmptyState className="py-4">
+            {resource.kind === "project"
+              ? "Only the project's admins see and change who is in it."
+              : "Only someone who may share this resource can see or change its grants."}
+          </EmptyState>
         ) : grants.error ? (
           <ErrorNote error={grants.error} prefix="Could not load grants" />
         ) : grants.isPending ? (
@@ -96,12 +100,27 @@ function Grants({ resource }: { resource: Resource }) {
                 <li key={`${g.principal}:${g.relation}`} className="space-y-1 px-3 py-2 text-sm" data-grant={g.relation}>
                   <div className="flex items-center gap-2">
                     <PrincipalName pid={g.principal} className="min-w-0 flex-1 truncate" />
-                    <Badge>{relationLabel(resource.kind, g.relation)}</Badge>
-                    {/* The owner's own grant is the ownership: the catalog does not take it back. */}
-                    {g.principal !== resource.metadata.owner && (
-                      <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                    {/* The owner's own grant is the ownership: the catalog does not change or take it back. */}
+                    {g.principal === resource.metadata.owner ? (
+                      <Badge>{relationLabel(resource.kind, g.relation)}</Badge>
+                    ) : (
+                      <>
+                        <NativeSelect
+                          value={g.relation}
+                          onChange={e => grant.mutate({ pid: g.principal, relation: e.target.value as Relation })}
+                          disabled={grant.isPending}
+                          aria-label="Role"
+                          data-change-role>
+                          {RELATIONS.map(r => (
+                            <option key={r} value={r}>
+                              {relationLabel(resource.kind, r)}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                        <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </>
                     )}
                   </div>
                   {/* Someone it is shared with to read it, not to run on it: what they cannot open of what it uses. */}
@@ -110,6 +129,13 @@ function Grants({ resource }: { resource: Resource }) {
               ))}
             </ul>
             <GrantForm kind={resource.kind} used={used} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
+            {resource.kind === "project" && (
+              <p className="text-xs text-muted-foreground" data-roles>
+                An admin changes the project itself: its settings, what it inherits from and its people. A member works in it: makes,
+                changes and runs what is in it. A viewer reads and runs. A user only runs on its computing units and keeps results in its
+                warehouses.
+              </p>
+            )}
             {(grant.error ?? revoke.error) && <ErrorNote error={grant.error ?? revoke.error} prefix="Could not change access" />}
           </>
         )}

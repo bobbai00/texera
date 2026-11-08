@@ -9,6 +9,7 @@ import {
   meGetOptions,
   principalsListOptions,
   projectsChatSettingsOptions,
+  projectsInheritorsOptions,
   projectsSettingsOptions,
   resourcesLineageOptions,
   resourcesListGrantsOptions,
@@ -27,6 +28,9 @@ export const meQuery = () => ({ ...meGetOptions(), staleTime: 5 * 60_000 });
  * the project of its chain that set it.
  */
 export const projectSettingsQuery = (rid: string) => ({ ...projectsSettingsOptions({ path: { rid } }), staleTime: 60_000 });
+
+/** The projects that inherit from a project, for its admins. */
+export const inheritorsQuery = (rid: string) => ({ ...projectsInheritorsOptions({ path: { rid } }), staleTime: 30_000 });
 
 /** The envelope of any catalog resource, by rid. */
 /** A resource as the catalog has it this moment, past any cache: for a write that must start from it. */

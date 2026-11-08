@@ -4,15 +4,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ProjectSettings, Resource } from "@texera/catalog-client/types";
-import { Badge, Button, ErrorNote, NativeSelect, SectionTitle, Skeleton } from "@texera/ui";
+import { Badge, Button, ErrorNote, NativeSelect, SectionTitle, Skeleton, Textarea } from "@texera/ui";
 import { Check, FolderKanban, LayoutList } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { updateMetadata } from "../api";
 import { ResourceTable } from "../library/ResourceTable";
-import { keysOf, meQuery, projectSettingsQuery, searchQuery } from "../queries";
+import { inheritorsQuery, keysOf, meQuery, projectSettingsQuery, searchQuery } from "../queries";
 import { ProjectScope, projectsQuery, useWorkingProject } from "../scope";
 import { UriChip } from "../shell/Chips";
-import { useMay } from "../shell/may";
+import { roleOf, useMay } from "../shell/may";
 import { SpecEditor } from "../shell/SpecEditor";
 import type { KindSpec } from "../types";
 
@@ -29,31 +29,41 @@ function Contents({ resource }: { resource: Resource }) {
 }
 
 /**
- * Whether the person works in this project, and the one click that makes it so: what they
- * make from then on goes into it. Looking at a project's page does not change where they work.
+ * The person's role here, and whether they work in this project, with the one click that makes it
+ * so: what they make from then on goes into it. Looking at a project's page does not change where
+ * they work.
  */
 function Actions({ resource }: { resource: Resource }) {
   const { current, pick } = useWorkingProject();
   // Working in a project puts what one makes into it: only someone who may add to it works there.
-  const may = useMay(resource.metadata.rid);
-  if (current === undefined) return null;
-  if (current === resource.metadata.rid)
-    return (
-      <Badge tone="success" data-working-here>
-        <Check className="size-3" /> You work here
-      </Badge>
-    );
-  if (may.write !== true) return null;
+  const may = useMay(resource.metadata.rid, true);
+  const role = roleOf(may);
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={() => void pick(resource.metadata.rid).catch(() => undefined)}
-      data-work-here>
-      Work in this project
-    </Button>
+    <>
+      {role && (
+        <Badge tone={role === "admin" ? "primary" : "neutral"} data-my-role={role} title={ROLE_SAYS[role]}>
+          You: {role}
+        </Badge>
+      )}
+      {current === undefined ? null : current === resource.metadata.rid ? (
+        <Badge tone="success" data-working-here>
+          <Check className="size-3" /> You work here
+        </Badge>
+      ) : may.write === true ? (
+        <Button variant="outline" size="sm" onClick={() => void pick(resource.metadata.rid).catch(() => undefined)} data-work-here>
+          Work in this project
+        </Button>
+      ) : null}
+    </>
   );
 }
+
+/** What each role may do in a project, as the page explains it. */
+const ROLE_SAYS = {
+  admin: "An admin changes the project itself: its settings, what it inherits from and its people.",
+  member: "A member works in the project: makes, changes and runs what is in it.",
+  viewer: "A viewer reads and runs what is in the project.",
+} as const;
 
 /** What a value of a project's settings is, as the page says it. */
 type Show = (settings: ProjectSettings) => ReactNode;
@@ -178,12 +188,88 @@ function Inherits({ resource, readonly }: { resource: Resource; readonly?: boole
   );
 }
 
+/** What the project is for, in its own words: its admins write them. */
+function About({ resource, readonly }: { resource: Resource; readonly?: boolean }) {
+  const rid = resource.metadata.rid;
+  const saved = resource.metadata.description ?? "";
+  const [text, setText] = useState(saved);
+  useEffect(() => setText(saved), [saved]);
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: () => updateMetadata(rid, { description: text.trim() }, resource.metadata.etag),
+    onSuccess: () => {
+      for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
+      queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+    },
+  });
+  if (readonly) {
+    return saved ? (
+      <section className="space-y-1" data-project-about>
+        <SectionTitle>About</SectionTitle>
+        <p className="text-sm">{saved}</p>
+      </section>
+    ) : null;
+  }
+  return (
+    <section className="space-y-2" data-project-about>
+      <SectionTitle>About</SectionTitle>
+      <Textarea value={text} onChange={e => setText(e.target.value)} rows={2} aria-label="What this project is for" placeholder="What this project is for" data-project-description />
+      <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={text.trim() === saved || save.isPending} data-save-description>
+        Save
+      </Button>
+      {save.error && <ErrorNote error={save.error} prefix="Could not save what it is for" />}
+    </section>
+  );
+}
+
+/**
+ * The projects that inherit from this one, for its admins: their people read and use what this
+ * project holds, and an admin here sends any of them back to Texera.
+ */
+function InheritedBy({ resource }: { resource: Resource }) {
+  const rid = resource.metadata.rid;
+  const queryClient = useQueryClient();
+  const { data: me } = useQuery(meQuery());
+  const { data, error } = useQuery(inheritorsQuery(rid));
+  const sendBack = useMutation({
+    mutationFn: (project: string) => updateMetadata(project, { base: me?.rootProject }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [{ _id: "projectsInheritors" }] });
+      queryClient.invalidateQueries({ queryKey: [{ _id: "projectsSettings" }] });
+      queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+    },
+  });
+  return (
+    <section className="space-y-2" data-inherited-by>
+      <SectionTitle>Inherited by</SectionTitle>
+      {error && <ErrorNote error={error} prefix="Could not list what inherits from it" />}
+      {data && data.length === 0 && <p className="text-sm text-muted-foreground">No project inherits from {resource.metadata.name}.</p>}
+      {data && data.length > 0 && (
+        <ul className="divide-y rounded-lg border">
+          {data.map(p => (
+            <li key={p.rid} className="flex items-center gap-2 px-3 py-2 text-sm" data-inheritor={p.name}>
+              <span className="min-w-0 flex-1 truncate">{p.name}</span>
+              <Button variant="outline" size="xs" onClick={() => sendBack.mutate(p.rid)} disabled={sendBack.isPending || !me} data-send-back>
+                Send back to Texera
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-muted-foreground">Their people read and use what this project holds. Sent back to Texera, a project inherits from Texera alone.</p>
+      {sendBack.error && <ErrorNote error={sendBack.error} prefix="Could not send it back" />}
+    </section>
+  );
+}
+
 /** A project's settings: what it inherits, what its work runs with, and what it sets itself. */
 function Settings({ resource, readonly }: { resource: Resource; readonly?: boolean }) {
   const { data: settings, error } = useQuery(projectSettingsQuery(resource.metadata.rid));
   return (
     <div className="space-y-6 p-4" data-project-settings>
+      <About resource={resource} readonly={readonly} />
       <Inherits resource={resource} readonly={readonly} />
+      {!readonly && resource.metadata.base && <InheritedBy resource={resource} />}
       {error && <ErrorNote error={error} prefix="Could not read its settings" />}
       {settings ? <Effective settings={settings} rid={resource.metadata.rid} /> : !error && <Skeleton className="h-48" />}
       <section className="space-y-2" data-own-settings>

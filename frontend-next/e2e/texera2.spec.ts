@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { type Browser, expect, test } from "@playwright/test";
 import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn } from "./support";
 
 // The pages against the real stack: sign in through Keycloak, start a chat by saying something,
@@ -192,9 +192,10 @@ test("the project a person works in scopes what they see and where things go", a
 });
 
 // A project inherits from another, up to Texera: its page says from which, what its work runs
-// with and where each value comes from; its admins choose another base, and give it a look the app
-// wears inside it.
-test("a project's page says what it inherits and runs with, and its admins change it", async ({ page, request }) => {
+// with and where each value comes from. Its admins say what it is for, choose its people and their
+// roles, see what inherits from it and send any of that back to Texera; everyone sees their own
+// role; and the app wears a project's look inside it.
+test("a project's page says what it inherits and runs with, and its admins manage it", async ({ page, request, browser }) => {
   const call = await api(request);
   const stamp = Date.now();
   const lab = await call("POST", "/projects", { name: `lab ${stamp}`, spec: { defaults: { workMode: "manual" } } });
@@ -205,9 +206,11 @@ test("a project's page says what it inherits and runs with, and its admins chang
     await call.attempt("DELETE", `/projects/${lab.metadata.rid}`);
   });
   const texera = (await call("GET", "/me")).rootProject as string;
+  const bob = (await (await api(request, "bob", "bob"))("GET", "/me")).principal.pid as string;
   await signIn(page);
   await page.goto(`/projects/${study.metadata.rid}`);
   const view = page.locator('[data-resource-view="project"]');
+  await expect(view.locator('[data-my-role="admin"]')).toBeVisible();
   await view.getByRole("tab", { name: "Settings" }).click();
   const settings = view.locator("[data-project-settings]");
   await expect(settings.locator(`[data-inherits="${lab.metadata.rid}"]`)).toBeVisible();
@@ -216,22 +219,66 @@ test("a project's page says what it inherits and runs with, and its admins chang
   await expect(mode.locator("[data-setting-from]")).toHaveText(`from lab ${stamp}`);
   await expect(settings.locator('[data-setting="defaults.agentTemplate"] [data-setting-from]')).toHaveText("from Texera");
   await expect(settings.locator('[data-setting="branding.name"] [data-setting-from]')).toHaveText("set here");
+  // What it is for, in its admin's words.
+  await settings.locator("[data-project-description]").fill(`A study of the lab's ${stamp}`);
+  await settings.locator("[data-save-description]").click();
+  await expect.poll(async () => (await call("GET", `/projects/${study.metadata.rid}`)).metadata.description).toBe(`A study of the lab's ${stamp}`);
   await page.screenshot({ path: "test-results/project-settings.png", fullPage: true });
 
-  // Its admin sends it back to Texera: the lab's work mode no longer holds.
-  await settings.locator("[data-base-select]").selectOption(texera);
-  await expect(settings.locator(`[data-inherits="${texera}"]`)).toBeVisible();
-  await expect(mode).toContainText("auto");
-  expect((await call("GET", `/projects/${study.metadata.rid}`)).metadata.base).toBe(texera);
-
-  // Its people: alice, who made it, is its admin.
+  // Its people: alice, who made it, is its admin; she adds bob as a member, then makes him a viewer.
   await view.getByRole("tab", { name: "People" }).click();
   await expect(view.locator('[data-grant="owner"]')).toContainText("admin");
+  await view.getByLabel("Principal").fill("bob");
+  await view.locator('[data-principal="Bob Builder"]').click();
+  await view.getByLabel("Relation").selectOption("editor");
+  await view.locator("[data-grant-button]").click();
+  const bobs = view.locator('[data-grant="editor"]').filter({ hasText: "Bob Builder" });
+  await expect(bobs.locator("[data-change-role]")).toHaveValue("editor");
+  await bobs.locator("[data-change-role]").selectOption("viewer");
+  await expect(view.locator('[data-grant="viewer"]').filter({ hasText: "Bob Builder" })).toBeVisible();
+  const grants: Array<{ principal: string; relation: string }> = await call("GET", `/resources/${study.metadata.rid}/grants`);
+  expect(grants.find(g => g.principal === bob)?.relation).toBe("viewer");
+  await expect(view.locator("[data-roles]")).toContainText("An admin changes the project itself");
+  await page.screenshot({ path: "test-results/project-people.png", fullPage: true });
+
+  // Bob sees his own role, and neither the people nor the project's settings to change.
+  const bobsPage = await browserOf(browser, "bob");
+  await bobsPage.goto(`/projects/${study.metadata.rid}`);
+  const bobsView = bobsPage.locator('[data-resource-view="project"]');
+  await expect(bobsView.locator('[data-my-role="viewer"]')).toBeVisible();
+  await bobsView.getByRole("tab", { name: "People" }).click();
+  await expect(bobsView.locator("[data-access]")).toContainText("Only the project's admins see and change who is in it");
+  await bobsView.getByRole("tab", { name: "Settings" }).click();
+  await expect(bobsView.locator("[data-project-description]")).toHaveCount(0);
+  await expect(bobsView.locator("[data-base-select]")).toHaveCount(0);
+
+  // The lab's admin sees that the study inherits from the lab, and sends it back to Texera: the
+  // lab's work mode no longer holds there.
+  await page.goto(`/projects/${lab.metadata.rid}`);
+  await view.getByRole("tab", { name: "Settings" }).click();
+  const inheritor = settings.locator(`[data-inherited-by] [data-inheritor="study ${stamp}"]`);
+  await expect(inheritor).toBeVisible();
+  await inheritor.locator("[data-send-back]").click();
+  await expect(settings.locator("[data-inherited-by]")).toContainText(`No project inherits from lab ${stamp}`);
+  expect((await call("GET", `/projects/${study.metadata.rid}`)).metadata.base).toBe(texera);
+  await page.goto(`/projects/${study.metadata.rid}`);
+  await view.getByRole("tab", { name: "Settings" }).click();
+  await expect(settings.locator(`[data-inherits="${texera}"]`)).toBeVisible();
+  await expect(mode).toContainText("auto");
 
   // Working in it, the app wears its look.
   await page.locator("[data-work-here]").click();
   await expect(page.locator("[data-look]")).toHaveAttribute("data-look", `Study look ${stamp}`);
 });
+
+/** Another person's own browser, signed in. */
+async function browserOf(browser: Browser, user: string) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await signIn(page, user, user);
+  cleanups.push(() => context.close());
+  return page;
+}
 
 test("a project made in the app is worked in at once, and what is made then goes into it", async ({ page, request }) => {
   const call = await api(request);
