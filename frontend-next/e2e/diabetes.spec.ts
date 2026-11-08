@@ -7,8 +7,9 @@ import { api, ask, cleanups, conversationOf, createdIn, say, signIn, tidyUp, wor
 // asks what the platform gives her, has the agent bring the public Pima cohort into a dataset,
 // and asks to screen it with the team's onset-risk model. The agent asks where to run it, she
 // picks Small on the card, and the chat's graph shows the cohort and the model going into the
-// workflow, with the team's operators, and the workflow running on her unit. The team's project
-// is made by the scenarios' own Python (texera_e2e.diabetes), which fits the model.
+// workflow, with the team's operators, and its run standing on her unit; she goes into the model
+// and the run and back, the chat as it was. The team's project is made by the scenarios' own
+// Python (texera_e2e.diabetes), which fits the model.
 
 test.afterEach(tidyUp);
 
@@ -101,24 +102,48 @@ test("a diabetes researcher brings in a public cohort, screens it with the team'
   await turnEnds(page);
 
   // The graph: the cohort goes into the workflow, the model and the team's operators ride on
-  // its card, and the workflow stands in the frame of her unit.
+  // its card, and its run stands in the lane of her unit, the unit at the lane's foot.
   const graph = page.locator("[data-resource-graph]");
   await expect(graph).toBeVisible({ timeout: 60_000 });
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "Pima cohort" }).first()).toBeVisible();
   const units = (await createdIn(alice, conversation)).filter(r => r.kind === "computing-unit");
   expect(units).toHaveLength(1);
   const unitUri = `texera://computing-units/${units[0]?.metadata.rid}`;
-  const screen = graph.locator(`[data-graph-role="workflow"][data-graph-runs-on="${unitUri}"]`);
+  const run = graph.locator(`[data-graph-role="run"][data-graph-unit="${unitUri}"]`);
+  await expect(run).toHaveCount(1);
+  await expect(run).toHaveAttribute("data-graph-state", "completed");
+  const screen = graph.locator(
+    `[data-graph-role="workflow"][data-graph-node="${await run.getAttribute("data-graph-of")}"]`
+  );
   await expect(screen).toHaveCount(1);
-  await expect(graph.locator(`[data-graph-role="unit"][data-graph-node="${unitUri}"]`)).toHaveCount(1);
-  await expect(screen.locator('[data-graph-role="model"]').filter({ hasText: "Diabetes onset risk" })).toHaveCount(1);
+  await expect(graph.locator(`[data-graph-foot="${unitUri}"]`)).toHaveCount(1);
+  await expect(screen.locator('[data-graph-role="model"][title*="Diabetes onset risk"]')).toHaveCount(1);
   await expect(screen.locator('[data-graph-role="function"]')).not.toHaveCount(0);
+  await expect(graph.locator('[data-graph-tie="tether"]')).not.toHaveCount(0);
   await expect(graph.locator('[data-graph-edge="reads"]')).not.toHaveCount(0);
   await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
   await page.screenshot({ path: "test-results/diabetes-graph.png", fullPage: true });
   // Closer, the workflow's steps: the cohort scanned, the model's predict, the team's operators.
-  await screen.dblclick();
+  await graph.locator('[data-graph-level="detail"]').click();
   await expect(screen.locator("[data-graph-step]").filter({ hasText: "predict" })).toHaveCount(1);
   await expect(screen.locator('[data-graph-step] [data-graph-role="model"]')).not.toHaveCount(0);
   await page.screenshot({ path: "test-results/diabetes-graph-steps.png", fullPage: true });
+
+  // Going into the model and into the run, and back: the chat beside it stays as it is.
+  const said = await page.locator("[data-message-seq]").count();
+  await graph.locator("[data-graph-fit]").click();
+  await screen.locator('[data-graph-role="model"]').first().click();
+  const focus = page.locator("[data-graph-focus]");
+  await expect(focus).toHaveAttribute("data-graph-focus-kind", "resource");
+  await expect(focus.locator('[data-graph-view="model"]')).toBeVisible();
+  await expect(focus.locator("[data-graph-related]")).toContainText("Used by");
+  await focus.locator("[data-graph-back]").click();
+  await expect(focus).toHaveCount(0);
+  await run.click();
+  await expect(focus).toHaveAttribute("data-graph-focus-kind", "run");
+  await expect(focus.locator("[data-execution-view] [data-phase]")).toHaveText("completed");
+  await page.screenshot({ path: "test-results/diabetes-run.png", fullPage: true });
+  await page.locator('[data-graph-crumb="root"]').click();
+  await expect(focus).toHaveCount(0);
+  expect(await page.locator("[data-message-seq]").count()).toBe(said);
 });

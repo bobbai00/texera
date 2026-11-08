@@ -1,9 +1,11 @@
-// The resource graph beside a chat: what the chat read, made and ran, and how it connects. Only
-// data flows are arrows; what a workflow uses rides on its card, and the unit it ran on is a
-// frame around it. It zooms in three levels, each showing more: the whole graph by name, each
-// thing with its facts, and each workflow's steps with the file and the table each step read or
-// made. It shares nothing visible with the workflow canvas, and it changes nothing: a click says
-// what a thing is, and Open opens it beside. The outside sources the agent consulted sit above.
+// The resource graph beside a chat: what the chat read, made and ran, and how it connects. Data,
+// computation and results stand left to right. In the computation a workflow's card stands
+// beside its runs, each run a box in the lane of the unit it ran on, the unit at the lane's foot;
+// dotted ties join a run to both. Only data flows are arrows. It zooms in three levels, each
+// showing more: the whole graph by name, each thing with its facts, and each workflow's steps
+// with the file and the table each step read or made. A click goes into a thing: the graph gives
+// way to its view, and the person goes back the way they came (ResourcePanel keeps the trail).
+// The outside sources the agent consulted sit above.
 
 import { useQuery } from "@tanstack/react-query";
 import { conversationsGraphOptions } from "@texera/catalog-client/query";
@@ -12,10 +14,9 @@ import { Button, cn } from "@texera/ui";
 import { Info, Minus, Plus, Scan } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { KindIcon } from "../shell/KindIcon";
-import { GraphDetail } from "./Detail";
 import { type Box, type Layout, layOut, type Measured } from "./layout";
-import { type GraphView, type Level, viewOf } from "./model";
-import { DataCard, type Handlers, ResultTile, UnitHead, WorkCard } from "./parts";
+import { type GraphView, type Level, SOMEWHERE, touching, viewOf } from "./model";
+import { DataCard, type Handlers, RerunNote, ResultTile, RunBox, UnitFoot, WorkCard } from "./parts";
 import { lineOf } from "./steps";
 
 /** Each level: its type size against the standard one, and the zoom it opens at. */
@@ -33,8 +34,8 @@ const T1 = 0.75;
 const T2 = 1.3;
 export const levelOf = (k: number): Level => (k < T1 ? "overview" : k < T2 ? "standard" : "detail");
 const levelSpec = (l: Level) => LEVELS.find(x => x.id === l) ?? (LEVELS[1] as (typeof LEVELS)[number]);
-/** The width of a unit's frame at each level: a workflow card with room on each side. */
-const FRAME_WIDTH: Record<Level, string> = { overview: "w-[15.3em]", standard: "w-[18.8em]", detail: "w-[22.8em]" };
+/** How wide a graph with all three columns is at each level, in its ems: what a young graph is framed for. */
+const WIDE: Record<Level, number> = { overview: 54, standard: 62, detail: 66 };
 
 const GOING = new Set(["pending", "provisioning", "running"]);
 
@@ -66,7 +67,7 @@ function fingerprint(value: unknown): string {
   return `${text.length}:${h >>> 0}`;
 }
 
-/** How far down and across an element sits inside another it is drawn in. */
+/** How far down an element sits inside another it is drawn in. */
 function offsetWithin(el: HTMLElement, root: HTMLElement): number {
   let y = 0;
   let at: HTMLElement | null = el;
@@ -78,7 +79,7 @@ function offsetWithin(el: HTMLElement, root: HTMLElement): number {
 }
 
 const boxOf = (layout: Layout, id: string): Box | undefined =>
-  layout.places.get(id) ?? layout.frames.find(f => f.id === id);
+  layout.places.get(id) ?? layout.lanes.find(l => l.unit === id)?.foot;
 
 /** The drawn thing nearest a point of the drawing. */
 function nearest(layout: Layout, x: number, y: number): string | undefined {
@@ -94,34 +95,21 @@ function nearest(layout: Layout, x: number, y: number): string | undefined {
   return best;
 }
 
-/** What a thing touches: what a workflow reads, uses, makes and runs on; what reads or uses a thing. */
-function touching(view: GraphView, id: string): Set<string> {
-  const near = new Set([id]);
-  for (const w of view.works) {
-    const mine = [
-      w.id,
-      ...w.reads.map(r => r.data),
-      ...w.results,
-      ...w.uses.map(u => u.uri),
-      ...(w.unit ? [w.unit] : []),
-    ];
-    if (mine.includes(id)) {
-      if (id === w.id || id === w.unit || w.uses.some(u => u.uri === id)) for (const x of mine) near.add(x);
-      else near.add(w.id);
-    }
-  }
-  return near;
-}
-
 export function ResourceGraph({
   graph,
   className,
   bar,
+  onOpen,
+  inert,
 }: {
   rid: string;
   graph: ConversationGraph;
   className?: string;
   bar?: ReactNode;
+  /** Goes into a thing on the graph, from the element drawn for it. */
+  onOpen?: (id: string, from: HTMLElement, view: GraphView) => void;
+  /** Something stands over the graph: it takes no focus and no pointer. */
+  inert?: boolean;
 }) {
   const view = useMemo(() => viewOf(graph), [graph]);
   const said = useMemo(() => fingerprint(graph), [graph]);
@@ -135,14 +123,10 @@ export function ResourceGraph({
   const [laid, setLaid] = useState<{ key: string; layout: Layout }>();
   const laidRef = useRef(laid);
   laidRef.current = laid;
-  // What the camera does once the next layout is known: frame everything, keep a thing where it
-  // is on screen, or bring a workflow's top to the top.
-  const pending = useRef<{ fit?: boolean; anchor?: { id: string; sx: number; sy: number }; top?: string }>({
-    fit: true,
-  });
+  // What the camera does once the next layout is known: frame everything, or keep a thing where it is on screen.
+  const pending = useRef<{ fit?: boolean; anchor?: { id: string; sx: number; sy: number } }>({ fit: true });
   const [tick, setTick] = useState(0);
   const key = `${level}|${said}`;
-  const [chosen, setChosen] = useState<string>();
   const [hover, setHover] = useState<string>();
   const [legend, setLegend] = useState(false);
 
@@ -164,7 +148,6 @@ export function ResourceGraph({
         const r = el?.querySelector<HTMLElement>(`[data-graph-row="${CSS.escape(row)}"]`);
         return el && r ? offsetWithin(r, el) + r.offsetHeight / 2 : undefined;
       },
-      head: unit => els.get(`head:${unit}`)?.offsetHeight ?? 2.6 * em,
     };
     const layout = layOut(view, measured, level, em);
     setLaid({ key, layout });
@@ -177,7 +160,7 @@ export function ResourceGraph({
       if (W < 40 || H < 40) return;
       // A graph that has not grown its three columns yet is framed as if it had them, so what
       // comes later has room and nothing moves when it does.
-      const wide = Math.max(layout.width, (level === "overview" ? 46.4 : 51.4) * em);
+      const wide = Math.max(layout.width, WIDE[level] * em);
       const fits = Math.min((W - 28) / wide, (H - 48) / Math.max(layout.height, 1));
       if (level !== "overview" && fits < T1) {
         setCam(c => ({ ...c, k: levelSpec("overview").home }));
@@ -186,12 +169,6 @@ export function ResourceGraph({
       const k = level === "overview" ? Math.min(Math.max(fits, K_MIN), T1 - 0.01) : Math.min(Math.max(fits, T1), 1.12);
       pending.current = {};
       setCam({ k, tx: Math.max(14, (W - wide * k) / 2), ty: 16 });
-      return;
-    }
-    if (p.top) {
-      const b = boxOf(layout, p.top);
-      pending.current = {};
-      if (b) setCam(c => ({ ...c, tx: W / 2 - (b.x + b.w / 2) * c.k, ty: 18 - b.y * c.k + 2.4 * em * c.k }));
       return;
     }
     if (p.anchor) {
@@ -212,31 +189,6 @@ export function ResourceGraph({
     watch.observe(vp);
     return () => watch.disconnect();
   }, []);
-
-  // What is chosen stays in sight once its details open beside it or under it.
-  useEffect(() => {
-    const layout = laidRef.current?.layout;
-    const vp = viewport.current;
-    if (!chosen || !layout || !vp || placed.current) {
-      placed.current = false;
-      return;
-    }
-    const b = boxOf(layout, chosen);
-    if (!b) return;
-    const sheet = vp.parentElement?.querySelector<HTMLElement>("[data-graph-detail]");
-    const covered = sheet && sheet.offsetLeft === 0 ? sheet.offsetHeight : 0;
-    const c = camRef.current;
-    const W = vp.clientWidth;
-    const H = vp.clientHeight - covered;
-    const sx = (b.x + b.w / 2) * c.k + c.tx;
-    const sy = (b.y + Math.min(b.h, 3 * em) / 2) * c.k + c.ty;
-    if (sx < 48 || sx > W - 48 || sy < 32 || sy > H - 32)
-      setCam({
-        ...c,
-        tx: W / 2 - (b.x + b.w / 2) * c.k,
-        ty: Math.max(16, H / 2 - (b.y + Math.min(b.h, 3 * em) / 2) * c.k),
-      });
-  }, [chosen, em]);
 
   /** Zooms to k about a point of the viewport; a new level keeps the thing nearest it in place. */
   const zoomAt = useCallback((next: number, sx: number, sy: number) => {
@@ -264,12 +216,7 @@ export function ResourceGraph({
     const layout = laidRef.current?.layout;
     const c = camRef.current;
     const { x, y } = centre();
-    const target =
-      chosen && layout && boxOf(layout, chosen)
-        ? chosen
-        : layout
-          ? nearest(layout, (x - c.tx) / c.k, (y - c.ty) / c.k)
-          : undefined;
+    const target = layout ? nearest(layout, (x - c.tx) / c.k, (y - c.ty) / c.k) : undefined;
     if (l === level) {
       const b = layout && target ? boxOf(layout, target) : undefined;
       if (b) setCam({ ...c, tx: x - (b.x + b.w / 2) * c.k, ty: y - (b.y + b.h / 2) * c.k });
@@ -277,16 +224,6 @@ export function ResourceGraph({
     }
     pending.current = target ? { anchor: { id: target, sx: x, sy: y } } : {};
     setCam({ ...c, k: levelSpec(l).home });
-  };
-  const placed = useRef(false);
-  const open = (id: string) => {
-    placed.current = true;
-    const work = view.works.find(w => w.id === id) ?? view.works.find(w => w.results.includes(id));
-    if (!work) return;
-    setChosen(work.id);
-    pending.current = { top: work.id };
-    setCam(c => ({ ...c, k: levelSpec("detail").home }));
-    setTick(t => t + 1);
   };
 
   // A wheel moves the graph; with Ctrl or ⌘, or a pinch, it zooms.
@@ -361,39 +298,38 @@ export function ResourceGraph({
     if (pointers.current.size === 0 && drag.current && !drag.current.moved) drag.current = undefined;
   };
 
-  // A click waits a moment to be sure it is not the first of a double-click, which opens.
-  const clicking = useRef<number>(undefined);
   const handlers: Handlers = {
-    onChoose: id => {
-      window.clearTimeout(clicking.current);
-      clicking.current = window.setTimeout(() => setChosen(was => (was === id ? undefined : id)), 220);
+    onOpen: (id, from) => {
+      setHover(undefined);
+      onOpen?.(id, from, view);
     },
     onHover: setHover,
-    onOpen: id => {
-      window.clearTimeout(clicking.current);
-      open(id);
-    },
   };
-  const focus = hover ?? chosen;
-  const near = useMemo(() => (focus ? touching(view, focus) : undefined), [view, focus]);
+  const near = useMemo(() => (hover ? touching(view, hover) : undefined), [view, hover]);
   const layout = laid?.key === key ? laid.layout : undefined;
-  const place = (id: string): React.CSSProperties => {
+  const place = (id: string, stretch = false): React.CSSProperties => {
     const b = layout?.places.get(id);
-    return b ? { left: b.x, top: b.y } : { left: 0, top: 0, visibility: "hidden" };
+    return b ? { left: b.x, top: b.y, ...(stretch ? { height: b.h } : {}) } : { left: 0, top: 0, visibility: "hidden" };
   };
   const dim = (id: string) => near && !near.has(id) && "opacity-25";
-  const ring = (id: string) => chosen === id && "ring-2 ring-primary/45";
+  const lit = (ends: string[]) => !!near && ends.every(e => near.has(e));
+  const boxes = [...view.runs.values()];
+  const madeBy = (id: string) => boxes.find(b => b.results.includes(id));
   const opOf = (id: string) => {
     const n = view.nodes.get(id);
-    const step = view.works.find(w => w.results.includes(id))?.steps.find(s => s.id === n?.step);
+    const box = madeBy(id);
+    const step = view.works.find(w => w.id === box?.work)?.steps.find(s => s.id === n?.step);
     return step ? lineOf(step, view.nodes).op : undefined;
   };
+  const unitName = (id: string) =>
+    id === SOMEWHERE ? undefined : (view.units.get(id)?.node?.name ?? view.units.get(id)?.planned?.name);
+  const feet = [...new Set([...boxes.map(b => b.unit), ...view.idle])];
 
   return (
-    <div className={cn("flex min-h-0 flex-col bg-background", className)} data-resource-graph>
-      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+    <div className={cn("flex min-h-0 flex-col bg-background", className)} data-resource-graph inert={inert}>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5">
         {bar}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex items-center gap-1">
           <fieldset className="m-0 inline-flex rounded-lg border bg-muted/60 p-0.5" aria-label="How close">
             {LEVELS.map(l => (
               <button
@@ -402,7 +338,7 @@ export function ResourceGraph({
                 aria-pressed={level === l.id}
                 onClick={() => toLevel(l.id)}
                 className={cn(
-                  "rounded-md px-2 py-1 text-xs",
+                  "rounded-md px-1.5 py-1 text-xs",
                   level === l.id
                     ? "bg-background font-medium text-foreground shadow-xs"
                     : "text-muted-foreground hover:text-foreground"
@@ -426,8 +362,14 @@ export function ResourceGraph({
             onClick={() => zoomAt(cam.k * 1.3, centre().x, centre().y)}>
             <Plus />
           </Button>
-          <Button variant="outline" size="sm" onClick={frameAll} data-graph-fit>
-            <Scan /> Fit
+          <Button
+            variant="outline"
+            size="icon-sm"
+            aria-label="Fit everything"
+            title="Fit everything"
+            onClick={frameAll}
+            data-graph-fit>
+            <Scan />
           </Button>
           <Button
             variant={legend ? "secondary" : "ghost"}
@@ -440,14 +382,14 @@ export function ResourceGraph({
         </div>
       </div>
       {graph.sources.length > 0 && <Consulted sources={graph.sources} />}
-      <div className="@container relative flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <div
           ref={viewport}
           className="relative min-w-0 flex-1 cursor-grab touch-none overflow-hidden outline-none select-none active:cursor-grabbing"
           role="application"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: the graph takes keys to zoom and move, so it takes focus
           tabIndex={0}
-          aria-label="What this chat read, made and ran. Plus and minus zoom, 0 fits, the arrows move."
+          aria-label="What this chat read, made and ran. Plus and minus zoom, 0 fits, the arrows move; Enter on a thing goes into it."
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -458,13 +400,11 @@ export function ResourceGraph({
               drag.current = undefined;
             }
           }}
-          onClick={() => setChosen(undefined)}
           onKeyDown={e => {
             const { x, y } = centre();
             if (e.key === "+" || e.key === "=") zoomAt(cam.k * 1.25, x, y);
             else if (e.key === "-" || e.key === "_") zoomAt(cam.k / 1.25, x, y);
             else if (e.key === "0") frameAll();
-            else if (e.key === "Escape") setChosen(undefined);
             else if (e.key.startsWith("Arrow")) {
               const step = 48;
               setCam(c => ({
@@ -490,54 +430,58 @@ export function ResourceGraph({
                 <span className="font-normal tracking-normal text-muted-foreground/70">{c.count || ""}</span>
               </div>
             ))}
-            {layout?.frames.map((f, i) => {
-              const unit = view.units.get(f.id);
-              if (!unit) return null;
-              return (
-                <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: a unit may frame work in more than one place
-                  key={`${f.id}:${i}`}
-                  className={cn(
-                    "absolute rounded-[1.15em] border transition-opacity",
-                    unit.planned
-                      ? "border-dashed border-muted-foreground/45"
-                      : "border-kind-computing-unit/35 bg-kind-computing-unit/[0.05]",
-                    dim(f.id),
-                    ring(f.id)
-                  )}
-                  style={{ left: f.x, top: f.y, width: f.w, height: f.h }}
-                  data-graph-node={f.id}
-                  data-graph-role={unit.planned ? "planned" : "unit"}
-                  data-graph-planned={unit.planned ? "true" : undefined}>
-                  <button
-                    type="button"
-                    className="block w-full cursor-pointer rounded-t-[1.15em] text-left"
-                    aria-label={`Computing unit ${unit.node?.name ?? unit.planned?.name}`}
-                    onClick={e => {
-                      e.stopPropagation();
-                      handlers.onChoose(f.id);
-                    }}
-                    onPointerEnter={() => setHover(f.id)}
-                    onPointerLeave={() => setHover(undefined)}>
-                    <UnitHead unit={unit} level={level} empty={view.idle.includes(f.id)} />
-                  </button>
-                </div>
-              );
-            })}
+            {/* Each unit's lane, faint behind its runs, down to the unit at its foot. */}
+            {layout?.lanes.map(l => (
+              <div
+                key={`${l.rank}|${l.unit}`}
+                className={cn(
+                  "absolute rounded-[1.2em] transition-opacity",
+                  l.unit === SOMEWHERE ? "bg-muted/40" : "bg-kind-computing-unit/[0.05]",
+                  dim(l.unit)
+                )}
+                style={{
+                  left: l.foot.x - 0.6 * em,
+                  width: l.foot.w + 1.2 * em,
+                  top: l.top - 1.9 * em,
+                  height: l.foot.y + l.foot.h + 0.6 * em - (l.top - 1.9 * em),
+                }}
+                data-graph-lane={l.unit}
+                aria-hidden
+              />
+            ))}
             {layout && (
               <svg
                 className="pointer-events-none absolute top-0 left-0 overflow-visible"
                 width={Math.ceil(layout.width + 8)}
                 height={Math.ceil(layout.height + 8)}
                 aria-hidden>
+                {layout.ties.map(t => {
+                  const hot = lit(t.ends);
+                  return (
+                    <g
+                      key={t.key}
+                      data-graph-tie={t.kind}
+                      data-graph-ends={t.ends.join(" ")}
+                      className={cn("transition-opacity", near && !hot && "opacity-20")}>
+                      <path
+                        d={t.path}
+                        fill="none"
+                        vectorEffect="non-scaling-stroke"
+                        strokeDasharray="0.1 4.5"
+                        strokeLinecap="round"
+                        className={hot ? "stroke-foreground" : "stroke-muted-foreground/80"}
+                        strokeWidth={hot ? 2.2 : 1.8}
+                      />
+                    </g>
+                  );
+                })}
                 {layout.arrows.map(a => {
-                  const hot = !!focus && (a.from === focus || a.to === focus);
-                  const faint = !!near && !hot && !(near.has(a.from) && near.has(a.to));
+                  const hot = lit([a.from, a.to]);
                   return (
                     <g
                       key={a.key}
                       data-graph-edge={a.relation}
-                      className={cn("transition-opacity", faint && "opacity-15")}>
+                      className={cn("transition-opacity", near && !hot && "opacity-15")}>
                       <path
                         d={a.path}
                         fill="none"
@@ -572,24 +516,43 @@ export function ResourceGraph({
               <WorkCard
                 key={w.id}
                 work={w}
+                results={w.runs.flatMap(id => view.runs.get(id)?.results ?? [])}
                 level={level}
                 nodes={view.nodes}
-                hot={focus}
+                hot={hover}
                 h={handlers}
-                className={cn("transition-opacity", dim(w.id), ring(w.id))}
+                className={cn("transition-opacity", dim(w.id))}
                 style={place(w.id)}
               />
             ))}
+            {boxes.map(b => (
+              <RunBox
+                key={b.id}
+                box={b}
+                unitName={unitName(b.unit)}
+                level={level}
+                h={handlers}
+                className={cn("transition-opacity", dim(b.id))}
+                style={place(b.id, level === "detail")}
+              />
+            ))}
+            {level !== "detail" &&
+              boxes.map(b => {
+                const p = layout?.places.get(b.id);
+                return p ? (
+                  <RerunNote key={`rerun:${b.id}`} box={b} style={{ left: p.x + p.w / 2, top: p.y + p.h + 0.3 * em }} />
+                ) : null;
+              })}
             {[...view.data.values()].map(d =>
               d.node?.kind === "execution" ? (
                 <ResultTile
                   key={d.id}
                   node={d.node}
-                  of={view.works.find(w => w.results.includes(d.id))?.id}
+                  of={madeBy(d.id)?.work}
                   op={opOf(d.id)}
                   level={level}
                   h={handlers}
-                  className={cn("transition-opacity", dim(d.id), ring(d.id))}
+                  className={cn("transition-opacity", dim(d.id))}
                   style={place(d.id)}
                 />
               ) : (
@@ -599,49 +562,34 @@ export function ResourceGraph({
                   level={level}
                   result={(view.rank.get(d.id) ?? 0) > 0}
                   h={handlers}
-                  className={cn("transition-opacity", dim(d.id), ring(d.id))}
+                  className={cn("transition-opacity", dim(d.id))}
                   style={place(d.id)}
                 />
               )
             )}
-            {/* Each unit's head, measured where nothing shows it, for its frame's height. */}
+            {layout?.lanes.map(l => (
+              <UnitFoot
+                key={`foot:${l.rank}|${l.unit}`}
+                id={l.unit}
+                unit={view.units.get(l.unit)}
+                level={level}
+                h={handlers}
+                className={cn("transition-opacity", dim(l.unit))}
+                style={{ left: l.foot.x, top: l.foot.y }}
+              />
+            ))}
+            {/* Each unit's foot, measured where nothing shows it, for its lane's width. */}
             <div className="invisible absolute top-0 left-0" aria-hidden>
-              {[...view.units.values()].map(u => (
-                <div
-                  key={u.id}
-                  className={cn("absolute top-0 left-0", FRAME_WIDTH[level])}
-                  data-graph-measure={`head:${u.id}`}>
-                  <UnitHead unit={u} level={level} />
-                </div>
+              {feet.map(id => (
+                <UnitFoot key={id} id={id} unit={view.units.get(id)} level={level} measure />
               ))}
-              {view.idle.map(id => {
-                const u = view.units.get(id);
-                return u ? (
-                  <div key={id} className={cn("absolute top-0 left-0", FRAME_WIDTH[level])} data-graph-measure={id}>
-                    <UnitHead unit={u} level={level} empty />
-                  </div>
-                ) : null;
-              })}
             </div>
           </div>
           <p className="pointer-events-none absolute bottom-2 left-3 rounded-md bg-background/85 px-2 py-0.5 text-2xs text-muted-foreground">
-            Drag to move · Ctrl+scroll to zoom · double-click to open
+            Drag to move · Ctrl+scroll to zoom · click a box to go into it
           </p>
           {legend && <Legend />}
         </div>
-        {chosen &&
-          (view.nodes.has(chosen) ||
-            view.works.some(w => w.id === chosen) ||
-            view.data.has(chosen) ||
-            view.units.has(chosen)) && (
-            <GraphDetail
-              id={chosen}
-              view={view}
-              graph={graph}
-              onChoose={setChosen}
-              onClose={() => setChosen(undefined)}
-            />
-          )}
       </div>
     </div>
   );
@@ -662,20 +610,24 @@ function Legend() {
       {row(<span className="h-4 w-12 rounded-full border border-kind-dataset/45 bg-card" />, "Dataset")}
       {row(
         <span className="h-5 w-12 rounded-md border border-kind-workflow/55 bg-card" />,
-        "Workflow, with what it uses"
+        "Workflow, with the models and functions it uses"
+      )}
+      {row(
+        <span className="h-4 w-11 rounded-full border border-kind-execution/60 bg-kind-execution/10" />,
+        "Run: its workflow on one unit (×3, three runs)"
+      )}
+      {row(
+        <span className="h-4 w-12 rounded-t-md rounded-b-sm border border-b-[3px] border-kind-computing-unit/45 bg-kind-computing-unit/10" />,
+        "Computing unit, under the runs on it"
       )}
       {row(<span className="h-4 w-9 rounded border bg-card" />, "Table a run made")}
       {row(
-        <span className="h-3.5 w-9 rounded border border-kind-model/40 bg-kind-model/10" />,
-        "Model or function the workflow uses"
-      )}
-      {row(
-        <span className="h-5 w-12 rounded-md border border-kind-computing-unit/45 bg-kind-computing-unit/10" />,
-        "Computing unit: what is inside ran on it"
-      )}
-      {row(
         <span className="relative h-px w-11 bg-muted-foreground/70 after:absolute after:-top-1 after:-right-0.5 after:border-y-4 after:border-l-[7px] after:border-y-transparent after:border-l-muted-foreground/70" />,
         "Data read or made"
+      )}
+      {row(
+        <span className="h-0 w-11 border-t-2 border-dotted border-muted-foreground/80" />,
+        "A run's workflow and unit"
       )}
       {row(
         <span className="h-4 w-12 rounded-md border border-dashed border-muted-foreground/60" />,

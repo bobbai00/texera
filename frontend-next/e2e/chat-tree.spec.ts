@@ -102,8 +102,13 @@ test("a chat shows what it made and worked from as a tree that folds at every le
   await expect(used.locator('[data-tree-version="1"][data-made="false"] [data-tree-file="iris.csv"]')).toBeVisible();
   await page.screenshot({ path: "test-results/chat-tree.png" });
 
-  // A version opens beside the chat, at that version.
+  // A version opens where the list was, at that version, the chat beside it as it was.
   await v1.locator("[data-open-row]").first().click();
-  await expect(page.locator("[data-side-panel] [data-workflow-view]")).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`panel=workflows(%2F|/)${workflow.metadata.rid}(%40|@)1`));
+  const focus = page.locator("[data-graph-focus]");
+  await expect(focus.locator("[data-workflow-view]")).toBeVisible();
+  await expect(focus.locator("[data-resource-header]")).toContainText("back to head");
+  await expect(focus.locator('[data-graph-crumb="root"]')).toHaveText("List");
+  await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+  await focus.locator("[data-graph-back]").click();
+  await expect(tree).toBeVisible();
 });

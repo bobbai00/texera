@@ -2,6 +2,7 @@ import { ResourceHeader, usePanelStack } from "@texera/ui";
 import type { ReactNode } from "react";
 import { KINDS } from "../registry";
 import type { ResourceRef } from "../types";
+import { useViewHost } from "./host";
 import { KindIcon } from "./KindIcon";
 import { useOpenResource } from "./navigation";
 import { Presence } from "./Presence";
@@ -24,7 +25,9 @@ export function KindHeader({
   const depth = usePanelStack(s => s.stack.length);
   const back = usePanelStack(s => s.back);
   const close = usePanelStack(s => s.close);
-  const { expand } = useOpenResource();
+  const { page } = useOpenResource();
+  // Inside a host (the graph beside a chat) the host goes back and away; the header only opens the page.
+  const hosted = !!useViewHost();
   return (
     <ResourceHeader
       icon={<KindIcon kind={ref.kind} className="size-7" />}
@@ -41,9 +44,9 @@ export function KindHeader({
         </>
       }
       mode={mode}
-      onBack={depth > 1 ? back : undefined}
-      onExpand={() => expand(ref)}
-      onClose={close}
+      onBack={!hosted && depth > 1 ? back : undefined}
+      onExpand={() => page(ref)}
+      onClose={hosted ? undefined : close}
     />
   );
 }

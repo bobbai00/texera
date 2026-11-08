@@ -54,16 +54,23 @@ agent and the model that wrote it. A turn that fails says why in the chat, and s
 a reload.
 
 **The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
-the left of the chat page shows what the chat read, made and ran. Arrows carry data only: the
-dataset a workflow reads, the table it makes. A workflow is a card with the models and functions
-it uses on it, inside the frame of the unit it ran on (or, not run yet, its default unit);
-Data, Computation and Results head the columns. What the plan has not made yet is dashed, and
-a dot marks what this chat made. It zooms in three levels: Overview, names only; Standard, each
-thing's version, rows and last run; Detail, each workflow's steps, the file a step read and the
-table a step made standing level with it. Drag to move, scroll with Ctrl or ⌘ (or pinch) to
-zoom, Fit to see everything, and double-click a workflow to open its steps. A click shows what a
-thing is beside the graph (under it, in a narrow panel), and Open opens it. Nothing drawn moves
-when more arrives. The List tab holds the same as a tree, "From this chat": a section per kind,
+the left of the chat page shows what the chat read, made and ran: Data, Computation and Results
+from left to right. In the computation a workflow's card, with the models and functions it uses
+on it, stands beside its runs: each run is a box of its own in the lane of the unit it ran on,
+the unit at the lane's foot, dotted lines joining the run to its workflow and to its unit (a
+workflow run on two units has a box in each lane; reruns on one unit show as ×3). A workflow not
+run yet has a hollow box on the unit it will use. Arrows carry data only: the dataset a workflow
+reads, the table a run made. What the plan has not made yet is dashed, and a dot marks what this
+chat made. It zooms in three levels: Overview, names only and each run a dot on its rail;
+Standard, each thing's version, rows and how its last run went; Detail, each workflow's steps,
+the file a step read and the table a step made standing level with it, the run a bar beside the
+steps. Drag to move, scroll with Ctrl or ⌘ (or pinch) to zoom, Fit to see everything. A click on
+any box goes into it: the graph gives way to the thing's own view (a run's execution, a table's
+rows, a dataset, a workflow, a model, a function, a unit, or what the plan said of something not
+made yet), with a trail back to the graph and, under it, what the thing is to the rest (what it
+reads, uses, made, runs on) to go to next. What that view links to opens there too; Back, the
+trail, Escape or Alt+Left go back, and the chat beside it is never touched. Nothing drawn moves
+when more arrives, but a unit, which stays at its lane's foot. The List tab holds the same as a tree, "From this chat": a section per kind,
 each resource, its versions, and under a version the executions that ran it or the files it
 holds; what the chat worked from (what you attached, what its workflows read) is dimmed, and
 what a search only returned is not in it.

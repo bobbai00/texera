@@ -1,7 +1,8 @@
 // The things a chat's graph draws, each sized in ems of the drawing's type, so a zoom level
 // sets their scale with one font size. A dataset is a capsule, a workflow a card (the one
-// strong thing on the graph), a table a run made a small tile, a model or function a chip on
-// the workflow that uses it, and a unit the frame around what ran on it. Dashed means planned.
+// strong thing on the graph), a model or function a chip on the workflow that uses it, a run a
+// pill in its unit's lane, the unit a plinth at the lane's foot, and a table a run made a small
+// tile. Dashed means planned. A click goes into the thing; the graph gives way to its view.
 
 import type { GraphNode, PlannedItem } from "@texera/catalog-client/types";
 import { cn } from "@texera/ui";
@@ -19,14 +20,23 @@ import {
   XCircle,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import type { DataItem, Level, UnitItem, WorkItem } from "./model";
+import {
+  type DataItem,
+  isGoing,
+  type Level,
+  type RunItem,
+  type RunState,
+  runStateOf,
+  SOMEWHERE,
+  type UnitItem,
+  type WorkItem,
+} from "./model";
 import { lineOf } from "./steps";
 
-/** What a pointer or a key does to a drawn thing. */
+/** What a pointer or a key does to a drawn thing: a click goes into it, a hover lights what it touches. */
 export interface Handlers {
-  onChoose: (id: string) => void;
+  onOpen: (id: string, from: HTMLElement) => void;
   onHover: (id: string | undefined) => void;
-  onOpen?: (id: string) => void;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -50,18 +60,15 @@ function nodeProps(id: string, label: string, h: Handlers) {
     role: "button",
     tabIndex: 0,
     "aria-label": label,
-    onClick: (e: React.MouseEvent) => {
+    onClick: (e: React.MouseEvent<HTMLElement>) => {
       e.stopPropagation();
-      h.onChoose(id);
+      h.onOpen(id, e.currentTarget);
     },
-    onDoubleClick: (e: React.MouseEvent) => {
-      e.stopPropagation();
-      h.onOpen?.(id);
-    },
-    onKeyDown: (e: React.KeyboardEvent) => {
+    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        h.onChoose(id);
+        e.stopPropagation();
+        h.onOpen(id, e.currentTarget);
       }
     },
     onPointerEnter: () => h.onHover(id),
@@ -237,15 +244,16 @@ export function UseChip({
     ? {
         role: "button" as const,
         tabIndex: 0,
-        onClick: (e: React.MouseEvent) => {
+        "aria-label": `${model ? "Model" : "Function"} ${name}`,
+        onClick: (e: React.MouseEvent<HTMLElement>) => {
           e.stopPropagation();
-          h.onChoose(id);
+          h.onOpen(id, e.currentTarget);
         },
-        onKeyDown: (e: React.KeyboardEvent) => {
+        onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             e.stopPropagation();
-            h.onChoose(id);
+            h.onOpen(id, e.currentTarget);
           }
         },
         onPointerEnter: () => h.onHover(id),
@@ -292,20 +300,9 @@ function PlanPill({ children, title }: { children: ReactNode; title?: string }) 
   );
 }
 
-const GOING = new Set(["pending", "provisioning", "running", "starting", "submitted"]);
-
-/** How a workflow's last run stands, in a word and an icon. */
-function runState(state: string | undefined) {
-  if (!state) return { word: "Not run yet", Icon: Circle, tone: "text-muted-foreground/60", spin: false };
-  if (state === "completed") return { word: "Completed", Icon: CheckCircle2, tone: "text-success", spin: false };
-  if (state === "failed" || state === "cancelled")
-    return { word: state === "failed" ? "Failed" : "Cancelled", Icon: XCircle, tone: "text-destructive", spin: false };
-  if (state === "paused") return { word: "Paused", Icon: PauseCircle, tone: "text-muted-foreground", spin: false };
-  return { word: state === "running" ? "Running" : "Starting", Icon: Loader2, tone: "text-primary", spin: true };
-}
-
 export function WorkCard({
   work,
+  results,
   level,
   nodes,
   hot,
@@ -314,6 +311,8 @@ export function WorkCard({
   style,
 }: {
   work: WorkItem;
+  /** The tables its runs made: the steps that made them are marked. */
+  results: string[];
   level: Level;
   nodes: Map<string, GraphNode>;
   hot?: string;
@@ -324,25 +323,13 @@ export function WorkCard({
   const n = work.node;
   const planned = !!work.planned;
   const name = n?.name ?? work.planned?.name ?? "";
-  const run = n?.runs?.[0];
-  const state = runState(n?.state);
-  const going = !!n?.state && GOING.has(n.state);
-  const facts = [
-    run && n?.state !== undefined ? plural(run.steps, "step") : "",
-    run && run.reused > 0 ? `${run.reused} reused` : "",
-    run?.startedAt && run.finishedAt
-      ? `${((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000).toFixed(1)} s`
-      : "",
-  ].filter(Boolean);
-  const outs = new Set(work.results.map(id => nodes.get(id)?.step).filter(Boolean));
+  const outs = new Set(results.map(id => nodes.get(id)?.step).filter(Boolean));
   return (
     <div
       {...nodeProps(work.id, `${planned ? "Planned workflow" : "Workflow"} ${name}`, h)}
       data-graph-role={planned ? "planned" : "workflow"}
       data-graph-planned={planned ? "true" : undefined}
       data-graph-made={n?.made ? "true" : "false"}
-      data-graph-state={n?.state ?? ""}
-      data-graph-runs-on={work.unit}
       style={style}
       className={cn(
         "absolute overflow-hidden rounded-[0.95em] border bg-card",
@@ -378,33 +365,12 @@ export function WorkCard({
           )}
         </div>
       </div>
-      <div
-        className={cn(
-          "flex min-w-0 items-center gap-[0.4em] pr-[0.85em] pb-[0.55em] text-[0.86em] text-muted-foreground tabular-nums",
-          level === "overview" ? "pl-[0.85em]" : "pl-[3.55em]"
-        )}>
-        {planned ? (
-          <PlanPill>planned</PlanPill>
-        ) : (
-          <>
-            <state.Icon className={cn("size-[1.1em] shrink-0", state.tone, state.spin && "animate-spin")} aria-hidden />
-            <span className="truncate">
-              <span className="font-semibold text-foreground">{state.word}</span>
-              {level !== "overview" && facts.length > 0 && ` · ${facts.join(" · ")}`}
-            </span>
-          </>
-        )}
-      </div>
-      {work.plannedRun && level !== "overview" && (
+      {planned && (
         <div className="pr-[0.85em] pb-[0.6em] pl-[3.55em]">
-          <PlanPill title={work.plannedRun.detail}>{work.plannedRun.name}</PlanPill>
+          <PlanPill>planned</PlanPill>
         </div>
       )}
-      {going && (
-        <div className="relative h-[0.2em] overflow-hidden bg-primary/15">
-          <div className="absolute inset-y-0 w-1/4 animate-working bg-primary" />
-        </div>
-      )}
+      <div className={level === "overview" ? "pb-[0.35em]" : "pb-[0.2em]"} />
       {level === "detail" && work.steps.length > 0 ? (
         <ol className="grid gap-[0.12em] border-t px-[0.6em] pt-[0.45em] pb-[0.55em]" data-graph-steps>
           {work.steps.map(step => {
@@ -476,70 +442,206 @@ export function WorkCard({
   );
 }
 
-/** A unit frame's head: the unit's name, and how it stands. */
-export function UnitHead({ unit, level, empty }: { unit: UnitItem; level: Level; empty?: boolean }) {
-  const n = unit.node;
-  const planned = !!unit.planned;
-  const name = n?.name ?? unit.planned?.name ?? "";
-  const state = planned ? "planned" : (n?.state ?? "");
-  const starting = !!state && state !== "ready" && state !== "planned" && state !== "terminated" && state !== "failed";
+/** How a run box stands, in a word and an icon. */
+const RUN_LOOK: Record<RunState, { word: string; Icon: typeof Circle; tone: string }> = {
+  completed: { word: "Completed", Icon: CheckCircle2, tone: "text-success" },
+  running: { word: "Running", Icon: Loader2, tone: "text-kind-execution" },
+  starting: { word: "Starting", Icon: Loader2, tone: "text-kind-execution" },
+  paused: { word: "Paused", Icon: PauseCircle, tone: "text-muted-foreground" },
+  failed: { word: "Failed", Icon: XCircle, tone: "text-destructive" },
+  cancelled: { word: "Cancelled", Icon: XCircle, tone: "text-destructive" },
+  planned: { word: "Planned", Icon: Circle, tone: "text-muted-foreground" },
+  idle: { word: "Not run yet", Icon: Circle, tone: "text-muted-foreground/70" },
+};
+
+const seconds = (from?: string, to?: string) =>
+  from && to ? `${((Date.parse(to) - Date.parse(from)) / 1000).toFixed(1)} s` : "";
+
+/** A run box: the runs of a workflow on one unit, standing in the unit's lane. */
+export function RunBox({
+  box,
+  unitName,
+  level,
+  h,
+  className,
+  style,
+}: {
+  box: RunItem;
+  unitName?: string;
+  level: Level;
+  h: Handlers;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const state = runStateOf(box);
+  const look = RUN_LOOK[state];
+  const going = isGoing(state);
+  const run = box.runs[0];
+  const count = box.runs.length;
+  const waiting = state === "planned" || state === "idle";
+  const facts = run
+    ? [
+        seconds(run.startedAt, run.finishedAt),
+        plural(run.steps, "step"),
+        run.reused > 0 ? `${run.reused} reused` : "",
+      ].filter(Boolean)
+    : [];
+  const where = unitName ? ` on ${unitName}` : "";
+  const label = waiting
+    ? `${look.word}${where}`
+    : `${plural(count, "run")}${where}, the newest ${look.word.toLowerCase()}`;
   return (
-    <span className="block px-[0.85em] pt-[0.6em] pb-[0.55em]">
-      <span className="flex min-w-0 items-center gap-[0.55em]">
+    <div
+      {...nodeProps(box.id, `Run ${label}`, h)}
+      data-graph-role={state === "planned" ? "planned" : "run"}
+      data-graph-planned={state === "planned" ? "true" : undefined}
+      data-graph-state={state}
+      data-graph-unit={box.unit}
+      data-graph-of={box.work}
+      data-graph-runs={count}
+      title={box.planned && !waiting ? `${label}; ${box.planned.name}` : label}
+      style={style}
+      className={cn(
+        "absolute overflow-hidden border",
+        level === "overview" ? "grid size-[2.3em] place-items-center rounded-full" : "w-[9em] rounded-[1.2em]",
+        waiting
+          ? "border-dashed border-muted-foreground/50 bg-background text-muted-foreground"
+          : "border-kind-execution/60 bg-[color-mix(in_oklch,var(--kind-execution)_11%,var(--card))] shadow-xs",
+        className
+      )}>
+      {level === "overview" ? (
+        <look.Icon className={cn("size-[1.15em]", look.tone, going && "animate-spin")} aria-hidden />
+      ) : (
+        <>
+          <div className="flex h-[2.4em] items-center gap-[0.45em] pr-[0.75em] pl-[0.6em]">
+            <look.Icon className={cn("size-[1.15em] shrink-0", look.tone, going && "animate-spin")} aria-hidden />
+            <span className={cn("truncate text-[0.92em]", waiting ? "font-medium" : "font-semibold")}>{look.word}</span>
+            {count > 1 && (
+              <span
+                className="ml-auto shrink-0 font-mono text-[0.82em] text-muted-foreground tabular-nums"
+                data-graph-count>
+                ×{count}
+              </span>
+            )}
+          </div>
+          {level === "detail" && facts.length > 0 && (
+            <div className="grid gap-[0.15em] px-[0.75em] pb-[0.5em] text-[0.8em] text-muted-foreground tabular-nums">
+              {facts.map(f => (
+                <span key={f} className="truncate">
+                  {f}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {going && (
+        <div className="absolute inset-x-0 bottom-0 h-[0.18em] overflow-hidden bg-kind-execution/15">
+          <div className="absolute inset-y-0 w-1/3 animate-working bg-kind-execution" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** What the plan will run again where a run box has run: said under it. */
+export function RerunNote({ box, style }: { box: RunItem; style?: CSSProperties }) {
+  if (!box.planned || !box.runs.length) return null;
+  return (
+    <span
+      className="absolute -translate-x-1/2 rounded-full border border-dashed border-muted-foreground/60 bg-background px-[0.6em] text-[0.78em] whitespace-nowrap text-muted-foreground"
+      style={style}
+      title={box.planned.detail ?? box.planned.name}
+      data-graph-rerun={box.id}>
+      + run planned
+    </span>
+  );
+}
+
+/** A unit at the foot of its lane: its name, and how it stands. */
+export function UnitFoot({
+  unit,
+  id,
+  level,
+  h,
+  className,
+  style,
+  measure,
+}: {
+  unit?: UnitItem;
+  id: string;
+  level: Level;
+  h?: Handlers;
+  className?: string;
+  style?: CSSProperties;
+  /** Drawn only to be measured. */
+  measure?: boolean;
+}) {
+  const n = unit?.node;
+  const planned = !!unit?.planned;
+  const unknown = id === SOMEWHERE;
+  const name = unknown ? "Unit not known" : (n?.name ?? unit?.planned?.name ?? "");
+  const state = planned ? "planned" : (n?.state ?? "");
+  const starting = !!state && !["ready", "planned", "terminated", "failed"].includes(state);
+  const props =
+    !measure && !unknown && h
+      ? nodeProps(id, `${planned ? "Planned computing unit" : "Computing unit"} ${name}`, h)
+      : {};
+  return (
+    <div
+      {...props}
+      data-graph-measure={measure ? `foot:${id}` : undefined}
+      data-graph-role={measure ? undefined : planned ? "planned" : "unit"}
+      data-graph-planned={planned && !measure ? "true" : undefined}
+      data-graph-foot={measure ? undefined : id}
+      style={style}
+      className={cn(
+        "absolute flex items-center gap-[0.55em] rounded-t-[0.8em] rounded-b-[0.35em] border border-b-[0.3em] py-[0.5em] pr-[1.4em] pl-[0.5em]",
+        level === "overview" ? "w-[9.5em]" : "w-[11.5em]",
+        planned || unknown
+          ? "border-dashed border-muted-foreground/50 bg-background"
+          : "border-kind-computing-unit/40 border-b-kind-computing-unit/70 bg-[color-mix(in_oklch,var(--kind-computing-unit)_9%,var(--card))]",
+        className
+      )}>
+      {n?.made && <MadeDot className="top-[0.7em] right-[0.6em]" />}
+      <span
+        className={cn(
+          "grid size-[2em] shrink-0 place-items-center rounded-[0.5em]",
+          planned || unknown
+            ? "border border-dashed border-muted-foreground/50 text-muted-foreground"
+            : "bg-kind-computing-unit/15 text-kind-computing-unit"
+        )}>
+        <Cpu className="size-[1.1em]" />
+      </span>
+      <span className="grid min-w-0">
         <span
           className={cn(
-            "grid size-[1.85em] shrink-0 place-items-center rounded-[0.5em]",
-            planned
-              ? "border border-dashed border-muted-foreground/50 text-muted-foreground"
-              : "bg-kind-computing-unit/15 text-kind-computing-unit"
-          )}>
-          <Cpu className="size-[1.05em]" />
-        </span>
-        <span className="grid min-w-0">
-          <span className="flex min-w-0 items-center gap-[0.45em]">
-            <span
-              className={cn("truncate text-[0.95em] font-semibold", planned && "text-muted-foreground")}
-              title={name}>
-              {name}
-            </span>
-            {n?.made && <span className="size-[0.55em] shrink-0 rounded-full bg-primary" title="Made in this chat" />}
-          </span>
-          {level !== "overview" && (
-            <span className="flex min-w-0 items-center gap-[0.35em] text-[0.82em] text-muted-foreground">
-              {planned ? (
-                <PlanPill title={unit.planned?.detail}>
-                  planned{unit.planned?.detail ? `: ${unit.planned.detail}` : ""}
-                </PlanPill>
-              ) : (
-                <>
-                  {state && (
-                    <span
-                      className={cn(
-                        "size-[0.55em] shrink-0 rounded-full",
-                        state === "ready"
-                          ? "bg-success"
-                          : state === "failed"
-                            ? "bg-destructive"
-                            : "animate-pulse bg-primary"
-                      )}
-                    />
-                  )}
-                  <span className="truncate">
-                    {[state ? `${state}${starting ? "…" : ""}` : "", n?.made ? "made here" : ""]
-                      .filter(Boolean)
-                      .join(" · ") || "computing unit"}
-                  </span>
-                </>
-              )}
-            </span>
+            "line-clamp-2 text-[0.95em] leading-[1.25] font-semibold",
+            (planned || unknown) && "text-muted-foreground"
           )}
+          title={name}>
+          {name}
         </span>
+        {level !== "overview" && !unknown && (
+          <span className="flex min-w-0 items-center gap-[0.35em] text-[0.82em] text-muted-foreground">
+            {state && !planned && (
+              <span
+                className={cn(
+                  "size-[0.55em] shrink-0 rounded-full",
+                  state === "ready" ? "bg-success" : state === "failed" ? "bg-destructive" : "animate-pulse bg-primary"
+                )}
+              />
+            )}
+            <span className="truncate">
+              {planned
+                ? `planned${unit?.planned?.detail ? `: ${unit.planned.detail}` : ""}`
+                : [state ? `${state}${starting ? "…" : ""}` : "", n?.made ? "made here" : ""]
+                    .filter(Boolean)
+                    .join(" · ") || "computing unit"}
+            </span>
+          </span>
+        )}
       </span>
-      {empty && level !== "overview" && (
-        <span className="mt-[0.5em] block pl-[2.4em] text-[0.82em] text-muted-foreground">
-          Nothing has run here yet.
-        </span>
-      )}
-    </span>
+    </div>
   );
 }
