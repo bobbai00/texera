@@ -1116,6 +1116,10 @@ export type GraphNode = {
      */
     step?: string;
     /**
+     * For a table a run made, the run.
+     */
+    run?: Uri;
+    /**
      * For a table a run made, its rows.
      */
     rows?: number;
@@ -1142,6 +1146,10 @@ export type GraphRun = {
     reused: number;
     startedAt?: string;
     finishedAt?: string;
+    /**
+     * The unit it ran on, when the caller may see it.
+     */
+    unit?: Uri;
 };
 
 /**

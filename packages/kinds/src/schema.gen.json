@@ -2247,6 +2247,10 @@
           "format": "int64",
           "type": "integer"
         },
+        "run": {
+          "$ref": "#/$defs/Uri",
+          "description": "For a table a run made, the run."
+        },
         "runs": {
           "description": "For a workflow, its runs in the chat, newest first.",
           "items": {
@@ -2325,6 +2329,10 @@
           "description": "The operators its plan had.",
           "format": "int32",
           "type": "integer"
+        },
+        "unit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The unit it ran on, when the caller may see it."
         },
         "uri": {
           "$ref": "#/$defs/Uri"

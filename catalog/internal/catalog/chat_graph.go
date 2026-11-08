@@ -195,6 +195,12 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 			run.Reused = int32(len(*spec.Reused))
 		}
 		run.StartedAt, run.FinishedAt = status.StartedAt, status.FinishedAt
+		// Where it ran: the unit, drawn when the caller may see it.
+		if unit := string(spec.ComputingUnit); unit != "" && s.unitNode(ctx, caller, g, unit) {
+			g.edge(workflow, unit, api.GraphEdgeRelationRunsOn)
+			on := api.Uri(unit)
+			run.Unit = &on
+		}
 		listed := []api.GraphRun{}
 		if wfNode.Runs != nil {
 			listed = *wfNode.Runs
@@ -220,9 +226,6 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 				}
 			}
 		}
-		if unit := string(spec.ComputingUnit); unit != "" && s.unitNode(ctx, caller, g, unit) {
-			g.edge(workflow, unit, api.GraphEdgeRelationRunsOn)
-		}
 		if newest[workflow] || status.Ports == nil || status.ResultsExpiredAt != nil {
 			continue
 		}
@@ -237,6 +240,8 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 			step := p.OperatorID
 			n.Step = &step
 			n.Rows = p.Rows
+			by := api.Uri(URI(exec).String())
+			n.Run = &by
 			g.edge(workflow, port, api.GraphEdgeRelationMakes)
 		}
 	}

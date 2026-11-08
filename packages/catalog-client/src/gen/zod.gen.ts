@@ -750,7 +750,8 @@ export const zGraphRun = z.object({
     steps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
     reused: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
     startedAt: z.iso.datetime().optional(),
-    finishedAt: z.iso.datetime().optional()
+    finishedAt: z.iso.datetime().optional(),
+    unit: zUri.optional()
 });
 
 /**
@@ -1161,6 +1162,7 @@ export const zGraphNode = z.object({
     runs: z.array(zGraphRun).optional(),
     steps: z.array(zGraphStep).optional(),
     step: z.string().optional(),
+    run: zUri.optional(),
     rows: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()
 });
 

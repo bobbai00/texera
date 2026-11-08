@@ -6559,6 +6559,9 @@ components:
         step:
           type: string
           description: For a table a run made, the step that made it.
+        run:
+          $ref: '#/components/schemas/Uri'
+          description: For a table a run made, the run.
         rows:
           type: integer
           format: int64
@@ -6599,6 +6602,9 @@ components:
         finishedAt:
           type: string
           format: date-time
+        unit:
+          $ref: '#/components/schemas/Uri'
+          description: The unit it ran on, when the caller may see it.
       description: A run of a workflow, as its node in a chat's graph lists it.
     GraphSource:
       type: object

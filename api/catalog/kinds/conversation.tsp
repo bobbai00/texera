@@ -123,6 +123,8 @@ model GraphRun {
   reused: int32;
   startedAt?: utcDateTime;
   finishedAt?: utcDateTime;
+  @doc("The unit it ran on, when the caller may see it.")
+  unit?: Uri;
 }
 
 @doc("A step of a workflow on a chat's graph: one operator of the version it shows.")
@@ -160,6 +162,8 @@ model GraphNode {
   steps?: GraphStep[];
   @doc("For a table a run made, the step that made it.")
   step?: string;
+  @doc("For a table a run made, the run.")
+  run?: Uri;
   @doc("For a table a run made, its rows.")
   rows?: int64;
 }

@@ -90,6 +90,17 @@ func TestAChatsGraphIsWhatItReadMadeAndRan(t *testing.T) {
 	if strings.Join(nodes, "; ") != strings.Join(want, "; ") {
 		t.Fatalf("the nodes:\n got %q\nwant %q", nodes, want)
 	}
+	// A run says the unit it ran on, and a table the run that made it.
+	for _, n := range graph.Nodes {
+		if n.Runs != nil {
+			if on := (*n.Runs)[0].Unit; on == nil || string(*on) != "texera://computing-units/"+unitOf(h).RID.String() {
+				t.Errorf("the run's unit: %v", on)
+			}
+		}
+		if n.Name == "tir" && (n.Run == nil || string(*n.Run) != string(exec.Metadata.Uri) || !strings.HasPrefix(string(n.Uri), string(*n.Run)+"/")) {
+			t.Errorf("the table's run: %v, want %s (the table is %s)", n.Run, exec.Metadata.Uri, n.Uri)
+		}
+	}
 	name := map[string]string{}
 	for _, n := range graph.Nodes {
 		name[string(n.Uri)] = n.Name
