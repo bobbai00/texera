@@ -44,7 +44,7 @@ describe("what a picker offers", () => {
     const endpoint = resource("model-endpoint", HAIKU, "anthropic-platform", { provider: "anthropic", model: "claude-haiku-5-5" });
     expect(asOption(endpoint)).toEqual({ value: HAIKU, label: "anthropic-platform", hint: "anthropic · claude-haiku-5-5" });
     const unit = resource("computing-unit", MINE, "mine", { provider: "kubernetes" }, { phase: "pending" });
-    expect(asOption(unit)).toEqual({ value: MINE, label: "mine", hint: "kubernetes · pending" });
+    expect(asOption(unit)).toEqual({ value: MINE, label: "mine", hint: "Shared CPU · pending" });
   });
 
   it("is the name alone when the kind has nothing to add", () => {

@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, FromThisChat, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, ResourcePanel, resourceQuery, settleViewing, ShareButton, updateSpec, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
+import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, EditableName, FromThisChat, keysOf, KindIcon, ProjectOverview, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, resourceQuery, settleViewing, ShareButton, updateMetadata, updateSpec, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
-import { Loader2, PanelRight } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, PanelRight } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ScrollPoint, staysPinned } from "./chat-scroll";
 import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
 import { useResourceLabels } from "./labels";
+import { useChatMaximized } from "./maximized";
 import { MessageItem } from "./MessageItem";
 import { writersOf } from "./model";
 import { StatePart } from "./parts";
@@ -62,6 +64,15 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   const busy = chat.running || uploading || starting;
   // The chat's resource graph, followed while the agent works, and again with every message.
   const { graph, started, refresh } = useChatGraph(rid, { enabled: !dock, live: chat.running });
+  const [maximized, toggleMaximized] = useChatMaximized();
+  const graphBeside = !dock && !maximized && started && !!graph;
+  const rename = useMutation({
+    mutationFn: (name: string) => updateMetadata(rid, { name }, conversation.metadata.etag),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+      for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
   const said = chat.messages.length;
   useEffect(() => {
     if (said > 0) refresh();
@@ -74,6 +85,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const scrolledTo = useRef<ScrollPoint>({ top: 0, height: 0, client: 0 });
   const last = chat.messages.at(-1);
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run whenever the streaming message grows
   useEffect(() => {
@@ -101,8 +113,9 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
     if (attached.length) {
       try {
         setUpload({ status: "Preparing upload" });
-        // An attachment becomes a dataset of the chat's project.
-        const { ref } = await createDatasetVersion(attached, { parent: project, onStatus: s => setUpload({ status: s }) });
+        // A file attached is the chat's own: the agent reads it, a workflow can use it, and it is
+        // a dataset of the project only if someone asks to keep it.
+        const { ref } = await createDatasetVersion(attached, { parent: project, attachedTo: rid, name: attached[0]?.name, onStatus: s => setUpload({ status: s }) });
         attachments.push({ ref, name: attached.map(f => f.name).join(", ") });
       } catch (e) {
         setUpload({ error: e instanceof Error ? e.message : String(e) });
@@ -123,6 +136,27 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
     // The agent reads what the person sees: an edit of the page still on its way is saved first.
     if (context) await settleViewing();
     void chat.send(text, attachments);
+    return true;
+  };
+
+  /**
+   * A comment on a thing of the graph: a message of the chat that names the thing and has it
+   * attached. It asks the agent, unless a turn is going: then the agent reads it in the next one.
+   */
+  const comment = async (on: { uri: string; name: string }, text: string) => {
+    const ref = refOf(on.uri);
+    const attachments: Attachment[] = ref ? [{ ref, name: on.name }] : [];
+    const words = `Comment on ${on.name}: ${text}`;
+    if (busy || othersTurn !== undefined) {
+      try {
+        await chat.note(words, attachments);
+      } catch (e) {
+        setNoteError(e);
+        return false;
+      }
+      return true;
+    }
+    void chat.send(words, attachments);
     return true;
   };
 
@@ -158,7 +192,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
     <ProjectScope project={project}>
     {/* biome-ignore lint/a11y/noStaticElementInteractions: a file drop zone; the attach button is the keyboard path */}
     <div
-      className="relative flex h-full min-h-0 flex-col"
+      className="relative flex h-full min-h-0"
       data-chat={rid}
       onDragOver={e => {
         if (e.dataTransfer.types.includes("Files")) {
@@ -172,31 +206,47 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
         setDragging(false);
         if (e.dataTransfer.files.length) setFiles(f => [...f, ...Array.from(e.dataTransfer.files)]);
       }}>
+      {/* Behind the chat, what the project holds; once the chat starts work, what it reads, makes and runs. */}
+      {!dock &&
+        !maximized &&
+        (started && graph ? (
+          <ResourcePanel rid={rid} graph={graph} className="hidden min-w-0 flex-1 xl:flex" onComment={readOnly ? undefined : comment} />
+        ) : (
+          <div className="scrollbar-thin hidden min-w-0 flex-1 overflow-y-auto xl:block" data-chat-behind>
+            <FromThisChat rid={rid} className="mx-auto max-w-5xl px-6 pt-6" />
+            <ProjectOverview rid={project} />
+          </div>
+        ))}
+      <div className={cn("flex min-h-0 min-w-0 flex-col", dock || maximized ? "flex-1" : "flex-1 xl:m-3 xl:w-[30rem] xl:flex-none xl:overflow-hidden xl:rounded-2xl xl:border xl:bg-background xl:shadow-xl")} data-chat-window data-chat-maximized={maximized ? "true" : undefined}>
       {!dock && (
         <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2" data-chat-header>
           <KindIcon kind="conversation" className="size-7" />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">{conversation.metadata.name}</div>
+            <EditableName value={conversation.metadata.name} onChange={name => rename.mutateAsync(name)} disabled={may.write !== true} label="Chat name" />
             <div className="truncate text-xs text-muted-foreground">
               with <span data-current-template>{agent?.name ?? "…"}</span> · started by <PrincipalName pid={conversation.metadata.createdBy} />
             </div>
           </div>
-          <Presence rid={rid} />
+          {/* Beside the graph the people show on it; where the graph is not drawn, they show here. */}
+          <div className={cn(graphBeside && "xl:hidden")}>
+            <Presence rid={rid} />
+          </div>
           <ShareButton ref={{ kind: "conversation", rid }} />
           <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
             <PanelRight />
           </Button>
+          <Button variant="ghost" size="icon-sm" className="hidden xl:inline-flex" aria-label={maximized ? "Show the graph and project again" : "Maximize the chat"} title={maximized ? "Show the graph and project again" : "Maximize the chat"} aria-pressed={maximized} onClick={toggleMaximized} data-chat-maximize>
+            {maximized ? <Minimize2 /> : <Maximize2 />}
+          </Button>
         </header>
       )}
-      <div className="flex min-h-0 flex-1">
-        {/* Once the chat starts work, what it reads, makes and runs takes the left, and the chat the right. */}
-        {!dock && started && graph && <ResourcePanel rid={rid} graph={graph} className="hidden min-w-0 flex-1 border-r xl:flex" />}
-        <div className={cn("flex min-w-0 flex-col", !dock && started ? "flex-1 xl:w-[30rem] xl:flex-none" : "flex-1")}>
           <div
             ref={scroller}
             onScroll={e => {
               const el = e.currentTarget;
-              pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              const now = { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight };
+              pinned.current = staysPinned(pinned.current, scrolledTo.current, now);
+              scrolledTo.current = now;
             }}
             className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
             <div ref={content} className={cn("mx-auto w-full max-w-3xl space-y-6", dock ? "px-3 py-4" : "px-4 py-8")}>
@@ -259,10 +309,8 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
             />
           </div>
         </div>
-        {!dock && !started && <FromThisChat rid={rid} className="hidden w-72 shrink-0 overflow-y-auto border-l p-3 xl:block" />}
-      </div>
       <div className={cn("pointer-events-none absolute inset-3 hidden items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-sm font-medium text-primary", dragging && "flex")}>
-        Drop files to add them as a dataset
+        Drop files to attach them to this chat
       </div>
     </div>
     </ProjectScope>

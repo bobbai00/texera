@@ -1,22 +1,25 @@
-// The resource graph beside a chat: what the chat read, made and ran, and how it connects. Data,
-// computation and results stand left to right. In the computation a workflow's card stands
-// beside its runs, each run a box in the lane of the unit it ran on, the unit at the lane's foot;
-// dotted ties join a run to both. Only data flows are arrows. It zooms in three levels, each
-// showing more: the whole graph by name, each thing with its facts, and each workflow's steps
-// with the file and the table each step read or made. A click goes into a thing: the graph gives
-// way to its view, and the person goes back the way they came (ResourcePanel keeps the trail).
-// The outside sources the agent consulted sit above.
+// The resource graph beside a chat: what the chat read, made and ran, left to right: data above
+// models, workflows, executions, and the tables they made. Each execution is a box with the unit
+// it ran on at its bottom right. It zooms in three levels, each showing more: the whole graph by
+// name, each thing with its facts, and each workflow's steps with the file and the table each step
+// read or made. A click goes into a thing: the graph gives way to its view, and the person goes
+// back the way they came (ResourcePanel keeps the trail). On hover a thing offers a comment, which
+// goes into the chat. Everyone looking at the chat sees each other here, icons and pointers. The
+// outside sources the agent consulted sit above.
 
 import { useQuery } from "@tanstack/react-query";
 import { conversationsGraphOptions } from "@texera/catalog-client/query";
 import type { ConversationGraph, GraphSource } from "@texera/catalog-client/types";
 import { Button, cn } from "@texera/ui";
-import { Info, Minus, Plus, Scan } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Info, MessageSquare, Minus, Plus, Scan, X } from "lucide-react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { KindIcon } from "../shell/KindIcon";
-import { type Box, type Layout, layOut, type Measured } from "./layout";
-import { type GraphView, type Level, SOMEWHERE, touching, viewOf } from "./model";
-import { DataCard, type Handlers, RerunNote, ResultTile, RunBox, UnitFoot, WorkCard } from "./parts";
+import { Presence } from "../shell/Presence";
+import { rectWithin } from "./Focus";
+import { GraphCursors, useGraphPointer } from "./GraphCursors";
+import { type Layout, layOut, type Measured } from "./layout";
+import { commentTarget, type GraphView, type Level, touching, viewOf } from "./model";
+import { DataCard, type Handlers, ModelCard, ResultTile, RunBox, UnitBox, WorkCard } from "./parts";
 import { lineOf } from "./steps";
 
 /** Each level: its type size against the standard one, and the zoom it opens at. */
@@ -34,8 +37,8 @@ const T1 = 0.75;
 const T2 = 1.3;
 export const levelOf = (k: number): Level => (k < T1 ? "overview" : k < T2 ? "standard" : "detail");
 const levelSpec = (l: Level) => LEVELS.find(x => x.id === l) ?? (LEVELS[1] as (typeof LEVELS)[number]);
-/** How wide a graph with all three columns is at each level, in its ems: what a young graph is framed for. */
-const WIDE: Record<Level, number> = { overview: 54, standard: 62, detail: 66 };
+/** How wide a graph with all its columns is at each level, in its ems: what a young graph is framed for. */
+const WIDE: Record<Level, number> = { overview: 55, standard: 63, detail: 67 };
 
 const GOING = new Set(["pending", "provisioning", "running"]);
 
@@ -78,9 +81,6 @@ function offsetWithin(el: HTMLElement, root: HTMLElement): number {
   return y;
 }
 
-const boxOf = (layout: Layout, id: string): Box | undefined =>
-  layout.places.get(id) ?? layout.lanes.find(l => l.unit === id)?.foot;
-
 /** The drawn thing nearest a point of the drawing. */
 function nearest(layout: Layout, x: number, y: number): string | undefined {
   let best: string | undefined;
@@ -95,11 +95,19 @@ function nearest(layout: Layout, x: number, y: number): string | undefined {
   return best;
 }
 
+/** What a comment on the graph is about. */
+export interface CommentOn {
+  uri: string;
+  name: string;
+}
+
 export function ResourceGraph({
+  rid,
   graph,
   className,
   bar,
   onOpen,
+  onComment,
   inert,
 }: {
   rid: string;
@@ -108,6 +116,8 @@ export function ResourceGraph({
   bar?: ReactNode;
   /** Goes into a thing on the graph, from the element drawn for it. */
   onOpen?: (id: string, from: HTMLElement, view: GraphView) => void;
+  /** Posts a comment on a thing into the chat; false when it could not. Absent for who may only read. */
+  onComment?: (on: CommentOn, text: string) => Promise<boolean>;
   /** Something stands over the graph: it takes no focus and no pointer. */
   inert?: boolean;
 }) {
@@ -125,6 +135,8 @@ export function ResourceGraph({
   laidRef.current = laid;
   // What the camera does once the next layout is known: frame everything, or keep a thing where it is on screen.
   const pending = useRef<{ fit?: boolean; anchor?: { id: string; sx: number; sy: number } }>({ fit: true });
+  // Nobody has moved the graph since it was last framed: a change of size frames it again.
+  const framed = useRef(false);
   const [tick, setTick] = useState(0);
   const key = `${level}|${said}`;
   const [hover, setHover] = useState<string>();
@@ -134,7 +146,9 @@ export function ResourceGraph({
   // biome-ignore lint/correctness/useExhaustiveDependencies: the key names everything a layout depends on; tick asks for a new one
   useLayoutEffect(() => {
     const root = world.current;
-    if (!root) return;
+    const shown = viewport.current;
+    // A panel the page hides has no sizes to measure: it is laid out when it shows again.
+    if (!root || !shown || shown.clientWidth < 40 || shown.clientHeight < 40) return;
     const els = new Map<string, HTMLElement>();
     for (const el of root.querySelectorAll<HTMLElement>("[data-graph-measure]"))
       els.set(el.dataset.graphMeasure as string, el);
@@ -151,13 +165,10 @@ export function ResourceGraph({
     };
     const layout = layOut(view, measured, level, em);
     setLaid({ key, layout });
-    const vp = viewport.current;
     const p = pending.current;
-    if (!vp) return;
-    const W = vp.clientWidth;
-    const H = vp.clientHeight;
+    const W = shown.clientWidth;
+    const H = shown.clientHeight;
     if (p.fit) {
-      if (W < 40 || H < 40) return;
       // A graph that has not grown its three columns yet is framed as if it had them, so what
       // comes later has room and nothing moves when it does.
       const wide = Math.max(layout.width, WIDE[level] * em);
@@ -168,23 +179,34 @@ export function ResourceGraph({
       }
       const k = level === "overview" ? Math.min(Math.max(fits, K_MIN), T1 - 0.01) : Math.min(Math.max(fits, T1), 1.12);
       pending.current = {};
+      framed.current = true;
       setCam({ k, tx: Math.max(14, (W - wide * k) / 2), ty: 16 });
       return;
     }
     if (p.anchor) {
       const { id, sx, sy } = p.anchor;
-      const b = boxOf(layout, id);
+      const b = layout.places.get(id);
       pending.current = {};
       if (b) setCam(c => ({ ...c, tx: sx - (b.x + b.w / 2) * c.k, ty: sy - (b.y + b.h / 2) * c.k }));
     }
   }, [key, tick]);
 
-  // A panel first measured at no size frames the graph once it has one.
+  // A panel that shows again is measured again; one that changes size is framed again, unless
+  // someone has moved the graph since it was framed.
   useEffect(() => {
     const vp = viewport.current;
     if (!vp) return;
+    let size = { w: 0, h: 0 };
     const watch = new ResizeObserver(() => {
-      if (pending.current.fit && vp.clientWidth >= 40) setTick(t => t + 1);
+      const now = { w: vp.clientWidth, h: vp.clientHeight };
+      const was = size;
+      size = now;
+      if (now.w < 40 || now.h < 40 || (now.w === was.w && now.h === was.h)) return;
+      if (framed.current && was.w >= 40) {
+        pending.current = { fit: true };
+        setCam(c => ({ ...c, k: 1 }));
+      }
+      setTick(t => t + 1);
     });
     watch.observe(vp);
     return () => watch.disconnect();
@@ -192,6 +214,7 @@ export function ResourceGraph({
 
   /** Zooms to k about a point of the viewport; a new level keeps the thing nearest it in place. */
   const zoomAt = useCallback((next: number, sx: number, sy: number) => {
+    framed.current = false;
     const c = camRef.current;
     const k = Math.min(K_MAX, Math.max(K_MIN, next));
     const wx = (sx - c.tx) / c.k;
@@ -199,7 +222,7 @@ export function ResourceGraph({
     const layout = laidRef.current?.layout;
     if (levelOf(k) !== levelOf(c.k) && layout) {
       const id = nearest(layout, wx, wy);
-      const b = id ? boxOf(layout, id) : undefined;
+      const b = id ? layout.places.get(id) : undefined;
       if (id && b)
         pending.current = { anchor: { id, sx: (b.x + b.w / 2) * c.k + c.tx, sy: (b.y + b.h / 2) * c.k + c.ty } };
     }
@@ -213,12 +236,13 @@ export function ResourceGraph({
     setTick(t => t + 1);
   };
   const toLevel = (l: Level) => {
+    framed.current = false;
     const layout = laidRef.current?.layout;
     const c = camRef.current;
     const { x, y } = centre();
     const target = layout ? nearest(layout, (x - c.tx) / c.k, (y - c.ty) / c.k) : undefined;
     if (l === level) {
-      const b = layout && target ? boxOf(layout, target) : undefined;
+      const b = layout && target ? layout.places.get(target) : undefined;
       if (b) setCam({ ...c, tx: x - (b.x + b.w / 2) * c.k, ty: y - (b.y + b.h / 2) * c.k });
       return;
     }
@@ -239,7 +263,10 @@ export function ResourceGraph({
           e.clientX - r.left,
           e.clientY - r.top
         );
-      else setCam(c => ({ ...c, tx: c.tx - e.deltaX, ty: c.ty - e.deltaY }));
+      else {
+        framed.current = false;
+        setCam(c => ({ ...c, tx: c.tx - e.deltaX, ty: c.ty - e.deltaY }));
+      }
     };
     vp.addEventListener("wheel", onWheel, { passive: false });
     return () => vp.removeEventListener("wheel", onWheel);
@@ -256,6 +283,7 @@ export function ResourceGraph({
     pinch?: { d: number; k: number };
   }>(undefined);
   const onPointerDown = (e: React.PointerEvent) => {
+    setCommenting(undefined);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const c = camRef.current;
     if (pointers.current.size === 2) {
@@ -270,7 +298,22 @@ export function ResourceGraph({
       };
     } else drag.current = { x: e.clientX, y: e.clientY, tx: c.tx, ty: c.ty, moved: false };
   };
+  const point = useGraphPointer(rid);
+  /** Tells the others where this person points: the thing nearest, and how far from its middle. */
+  const sayWhere = (e: React.PointerEvent) => {
+    const layout = laidRef.current?.layout;
+    const vp = viewport.current;
+    if (!layout || !vp) return;
+    const r = vp.getBoundingClientRect();
+    const c = camRef.current;
+    const wx = (e.clientX - r.left - c.tx) / c.k;
+    const wy = (e.clientY - r.top - c.ty) / c.k;
+    const id = nearest(layout, wx, wy);
+    const b = id ? layout.places.get(id) : undefined;
+    if (id && b) point({ id, dx: (wx - (b.x + b.w / 2)) / em, dy: (wy - (b.y + b.h / 2)) / em });
+  };
   const onPointerMove = (e: React.PointerEvent) => {
+    sayWhere(e);
     const d = drag.current;
     if (!d || !pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -289,6 +332,7 @@ export function ResourceGraph({
     if (!d.moved && Math.hypot(dx, dy) < 4) return;
     if (!d.moved) {
       d.moved = true;
+      framed.current = false;
       viewport.current?.setPointerCapture(e.pointerId);
     }
     setCam(c => ({ ...c, tx: d.tx + dx, ty: d.ty + dy }));
@@ -298,12 +342,27 @@ export function ResourceGraph({
     if (pointers.current.size === 0 && drag.current && !drag.current.moved) drag.current = undefined;
   };
 
+  const area = useRef<HTMLDivElement>(null);
+  const [commenting, setCommenting] = useState<{ on: CommentOn; x: number; y: number }>();
   const handlers: Handlers = {
     onOpen: (id, from) => {
       setHover(undefined);
       onOpen?.(id, from, view);
     },
     onHover: setHover,
+    ...(onComment
+      ? {
+          onComment: (id: string, from: HTMLElement) => {
+            const on = commentTarget(view, id);
+            const root = area.current;
+            if (!on || !root) return;
+            const box = rectWithin(from, root);
+            // Beside what is commented on, inside the graph.
+            const x = box.x + box.w + COMMENT_W + 16 > root.clientWidth ? box.x - COMMENT_W - 8 : box.x + box.w + 8;
+            setCommenting({ on, x: Math.max(8, x), y: Math.max(8, Math.min(box.y, root.clientHeight - 170)) });
+          },
+        }
+      : {}),
   };
   const near = useMemo(() => (hover ? touching(view, hover) : undefined), [view, hover]);
   const layout = laid?.key === key ? laid.layout : undefined;
@@ -321,15 +380,12 @@ export function ResourceGraph({
     const step = view.works.find(w => w.id === box?.work)?.steps.find(s => s.id === n?.step);
     return step ? lineOf(step, view.nodes).op : undefined;
   };
-  const unitName = (id: string) =>
-    id === SOMEWHERE ? undefined : (view.units.get(id)?.node?.name ?? view.units.get(id)?.planned?.name);
-  const feet = [...new Set([...boxes.map(b => b.unit), ...view.idle])];
-
   return (
     <div className={cn("flex min-h-0 flex-col bg-background", className)} data-resource-graph inert={inert}>
       <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5">
         {bar}
         <div className="ml-auto flex items-center gap-1">
+          <Presence rid={rid} />
           <fieldset className="m-0 inline-flex rounded-lg border bg-muted/60 p-0.5" aria-label="How close">
             {LEVELS.map(l => (
               <button
@@ -382,7 +438,7 @@ export function ResourceGraph({
         </div>
       </div>
       {graph.sources.length > 0 && <Consulted sources={graph.sources} />}
-      <div className="relative flex min-h-0 flex-1">
+      <div ref={area} className="relative flex min-h-0 flex-1">
         <div
           ref={viewport}
           className="relative min-w-0 flex-1 cursor-grab touch-none overflow-hidden outline-none select-none active:cursor-grabbing"
@@ -394,6 +450,7 @@ export function ResourceGraph({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => point(null)}
           onClickCapture={e => {
             if (drag.current?.moved) {
               e.stopPropagation();
@@ -422,32 +479,13 @@ export function ResourceGraph({
             data-graph-zoom={level}>
             {layout?.columns.map(c => (
               <div
-                key={c.rank}
-                className="absolute top-0 flex items-baseline gap-[0.5em] text-[0.78em] font-semibold tracking-[0.08em] whitespace-nowrap text-muted-foreground uppercase"
-                style={{ left: c.x }}
+                key={c.key}
+                className="absolute flex items-baseline gap-[0.5em] text-[0.78em] font-semibold tracking-[0.08em] whitespace-nowrap text-muted-foreground uppercase"
+                style={{ left: c.x, top: c.y }}
                 data-graph-column={c.label.toLowerCase()}>
                 {c.label}
-                <span className="font-normal tracking-normal text-muted-foreground/70">{c.count || ""}</span>
+                <span className="font-normal tracking-normal text-muted-foreground/70">{c.count}</span>
               </div>
-            ))}
-            {/* Each unit's lane, faint behind its runs, down to the unit at its foot. */}
-            {layout?.lanes.map(l => (
-              <div
-                key={`${l.rank}|${l.unit}`}
-                className={cn(
-                  "absolute rounded-[1.2em] transition-opacity",
-                  l.unit === SOMEWHERE ? "bg-muted/40" : "bg-kind-computing-unit/[0.05]",
-                  dim(l.unit)
-                )}
-                style={{
-                  left: l.foot.x - 0.6 * em,
-                  width: l.foot.w + 1.2 * em,
-                  top: l.top - 1.9 * em,
-                  height: l.foot.y + l.foot.h + 0.6 * em - (l.top - 1.9 * em),
-                }}
-                data-graph-lane={l.unit}
-                aria-hidden
-              />
             ))}
             {layout && (
               <svg
@@ -455,26 +493,6 @@ export function ResourceGraph({
                 width={Math.ceil(layout.width + 8)}
                 height={Math.ceil(layout.height + 8)}
                 aria-hidden>
-                {layout.ties.map(t => {
-                  const hot = lit(t.ends);
-                  return (
-                    <g
-                      key={t.key}
-                      data-graph-tie={t.kind}
-                      data-graph-ends={t.ends.join(" ")}
-                      className={cn("transition-opacity", near && !hot && "opacity-20")}>
-                      <path
-                        d={t.path}
-                        fill="none"
-                        vectorEffect="non-scaling-stroke"
-                        strokeDasharray="0.1 4.5"
-                        strokeLinecap="round"
-                        className={hot ? "stroke-foreground" : "stroke-muted-foreground/80"}
-                        strokeWidth={hot ? 2.2 : 1.8}
-                      />
-                    </g>
-                  );
-                })}
                 {layout.arrows.map(a => {
                   const hot = lit([a.from, a.to]);
                   return (
@@ -491,22 +509,6 @@ export function ResourceGraph({
                         strokeWidth={hot ? 2 : 1.5}
                       />
                       <polygon points={a.tip} className={hot ? "fill-foreground" : "fill-muted-foreground/70"} />
-                      {a.label && (
-                        <text
-                          x={a.label.x}
-                          y={a.label.y}
-                          textAnchor={a.label.anchor}
-                          className="fill-muted-foreground"
-                          style={{
-                            fontSize: "0.76em",
-                            paintOrder: "stroke",
-                            stroke: "var(--background)",
-                            strokeWidth: "0.32em",
-                            strokeLinejoin: "round",
-                          }}>
-                          {a.label.text}
-                        </text>
-                      )}
                     </g>
                   );
                 })}
@@ -529,20 +531,23 @@ export function ResourceGraph({
               <RunBox
                 key={b.id}
                 box={b}
-                unitName={unitName(b.unit)}
+                unit={view.units.get(b.unit)}
                 level={level}
                 h={handlers}
                 className={cn("transition-opacity", dim(b.id))}
                 style={place(b.id, level === "detail")}
               />
             ))}
-            {level !== "detail" &&
-              boxes.map(b => {
-                const p = layout?.places.get(b.id);
-                return p ? (
-                  <RerunNote key={`rerun:${b.id}`} box={b} style={{ left: p.x + p.w / 2, top: p.y + p.h + 0.3 * em }} />
-                ) : null;
-              })}
+            {view.models.map(n => (
+              <ModelCard
+                key={n.uri}
+                node={n}
+                level={level}
+                h={handlers}
+                className={cn("transition-opacity", dim(n.uri))}
+                style={place(n.uri)}
+              />
+            ))}
             {[...view.data.values()].map(d =>
               d.node?.kind === "execution" ? (
                 <ResultTile
@@ -567,31 +572,97 @@ export function ResourceGraph({
                 />
               )
             )}
-            {layout?.lanes.map(l => (
-              <UnitFoot
-                key={`foot:${l.rank}|${l.unit}`}
-                id={l.unit}
-                unit={view.units.get(l.unit)}
+            {view.idle.map(id => (
+              <UnitBox
+                key={id}
+                id={id}
+                unit={view.units.get(id)}
                 level={level}
                 h={handlers}
-                className={cn("transition-opacity", dim(l.unit))}
-                style={{ left: l.foot.x, top: l.foot.y }}
+                alone
+                className={cn("transition-opacity", dim(id))}
+                style={place(id)}
               />
             ))}
-            {/* Each unit's foot, measured where nothing shows it, for its lane's width. */}
-            <div className="invisible absolute top-0 left-0" aria-hidden>
-              {feet.map(id => (
-                <UnitFoot key={id} id={id} unit={view.units.get(id)} level={level} measure />
-              ))}
-            </div>
+            {layout && <GraphCursors rid={rid} places={layout.places} em={em} k={cam.k} />}
           </div>
-          <p className="pointer-events-none absolute bottom-2 left-3 rounded-md bg-background/85 px-2 py-0.5 text-2xs text-muted-foreground">
-            Drag to move · Ctrl+scroll to zoom · click a box to go into it
-          </p>
           {legend && <Legend />}
         </div>
+        {commenting && onComment && (
+          <CommentBox
+            name={commenting.on.name}
+            x={commenting.x}
+            y={commenting.y}
+            onSend={text => onComment(commenting.on, text)}
+            onClose={() => setCommenting(undefined)}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+const COMMENT_W = 288;
+
+/** A comment on a thing of the graph: it goes into the chat beside it, for the agent and the others. */
+function CommentBox({
+  name,
+  x,
+  y,
+  onSend,
+  onClose,
+}: {
+  name: string;
+  x: number;
+  y: number;
+  onSend: (text: string) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!text.trim() || sending) return;
+    setSending(true);
+    const sent = await onSend(text.trim());
+    setSending(false);
+    if (sent) onClose();
+  };
+  return (
+    <form
+      onSubmit={submit}
+      className="absolute z-30 grid gap-2 rounded-xl border bg-card p-3 shadow-lg"
+      style={{ left: x, top: y, width: COMMENT_W }}
+      data-graph-comment-box>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <MessageSquare className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          Comment on <span className="font-medium text-foreground">{name}</span>
+        </span>
+        <button type="button" aria-label="Close" onClick={onClose} className="rounded p-0.5 hover:bg-muted">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <textarea
+        // biome-ignore lint/a11y/noAutofocus: the box opens because the person asked to write in it
+        autoFocus
+        rows={2}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Escape") onClose();
+          if (e.key === "Enter" && !e.shiftKey) void submit(e);
+        }}
+        placeholder="Goes to the chat, for the agent and everyone in it"
+        aria-label={`Comment on ${name}`}
+        className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+      />
+      <div className="flex justify-end">
+        <Button type="submit" size="sm" disabled={!text.trim() || sending} data-graph-comment-send>
+          Send
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -608,32 +679,19 @@ function Legend() {
       className="absolute top-2.5 right-2.5 z-10 grid w-64 gap-2 rounded-xl border bg-card p-3 text-xs shadow-lg"
       data-graph-legend>
       {row(<span className="h-4 w-12 rounded-full border border-kind-dataset/45 bg-card" />, "Dataset")}
+      {row(<span className="h-5 w-12 rounded-md border border-kind-model/45 bg-card" />, "Model")}
+      {row(<span className="h-5 w-12 rounded-md border border-kind-workflow/55 bg-card" />, "Workflow, with the functions it uses")}
       {row(
-        <span className="h-5 w-12 rounded-md border border-kind-workflow/55 bg-card" />,
-        "Workflow, with the models and functions it uses"
+        <span className="h-5 w-12 rounded-md border border-kind-execution/60 bg-kind-execution/10" />,
+        "Execution, with the computing unit it ran on"
       )}
-      {row(
-        <span className="h-4 w-11 rounded-full border border-kind-execution/60 bg-kind-execution/10" />,
-        "Run: its workflow on one unit (×3, three runs)"
-      )}
-      {row(
-        <span className="h-4 w-12 rounded-t-md rounded-b-sm border border-b-[3px] border-kind-computing-unit/45 bg-kind-computing-unit/10" />,
-        "Computing unit, under the runs on it"
-      )}
-      {row(<span className="h-4 w-9 rounded border bg-card" />, "Table a run made")}
-      {row(
-        <span className="relative h-px w-11 bg-muted-foreground/70 after:absolute after:-top-1 after:-right-0.5 after:border-y-4 after:border-l-[7px] after:border-y-transparent after:border-l-muted-foreground/70" />,
-        "Data read or made"
-      )}
-      {row(
-        <span className="h-0 w-11 border-t-2 border-dotted border-muted-foreground/80" />,
-        "A run's workflow and unit"
-      )}
+      {row(<span className="h-4 w-9 rounded border bg-card" />, "Table an execution made")}
       {row(
         <span className="h-4 w-12 rounded-md border border-dashed border-muted-foreground/60" />,
         "Planned, not made yet"
       )}
       {row(<span className="ml-1 size-2.5 rounded-full bg-primary" />, "Made in this chat")}
+      <p className="text-muted-foreground">Drag to move, Ctrl+scroll to zoom, click a box to go into it.</p>
     </div>
   );
 }

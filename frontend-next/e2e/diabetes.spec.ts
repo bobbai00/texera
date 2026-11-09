@@ -1,31 +1,58 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, type Page, test } from "@playwright/test";
-import { api, ask, cleanups, conversationOf, createdIn, say, signIn, tidyUp, workAtHome, workIn } from "./support";
+import { type Browser, expect, type Page, test } from "@playwright/test";
+import { api, ask, type Caller, cleanups, conversationOf, operatorList, say, signIn, tidyUp } from "./support";
 
-// The diabetes use case in the app, through the real model: a researcher in the team's project
-// asks what the platform gives her, has the agent bring the public Pima cohort into a dataset,
-// and asks to screen it with the team's onset-risk model. The agent asks where to run it, she
-// picks Small on the card, and the chat's graph shows the cohort and the model going into the
-// workflow, with the team's operators, and its run standing on her unit; she goes into the model
-// and the run and back, the chat as it was. The team's project is made by the scenarios' own
-// Python (texera_e2e.diabetes), which fits the model.
+// The demo in the README of bin/texera-2-0/examples/diabetes, whole, through the real model and in
+// two browsers. Alice lands on her project: what it holds and who is in it, with the chat over it.
+// She attaches a file, which stays the chat's; asks what it is and which of the team's models fits;
+// the agent builds the pipeline on the unit she picks, and the graph takes the place of the
+// overview. She asks what is published, and keeps the file. Bob, in his own browser, finds the
+// workflow; they open it together, see each other's pointers, and what he adds appears on her canvas.
 
 test.afterEach(tidyUp);
 
-const PIMA_URL = "https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv";
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
+const EXAMPLE = `${REPO}bin/texera-2-0/examples/diabetes`;
+const DATA = process.env.TEXERA_DIABETES_DATA ?? join(homedir(), "texera-diabetes");
+const FILE = join(DATA, "uploads", "screening_cohort.csv");
 
-type Team = { project: string; name: string; model: string; roc_auc: string; calibration: string };
+const CHECK = "Can you check what's in this data? I want to analyze it using the models in our project. Which model do you think works best? Please go ahead and run it.";
+const LITERATURE = "How does that compare with what has been published on models like this? Cite what you find.";
+const KEEP = "Please keep this file as a dataset called Screening cohort.";
 
-function teamProject(name: string): Team {
+/** What load.py made: a project of the test's own. */
+function teamProject(): { rid: string } {
   const gw = process.env.TEXERA_BASE_URL ?? "http://localhost:8088";
-  const out = execFileSync(`${REPO}.venv/bin/python`, ["-m", "texera_e2e.diabetes", "--gw", gw, "--name", name], {
-    cwd: `${REPO}tests/e2e`,
-    encoding: "utf8",
-    timeout: 180_000,
-  });
-  return JSON.parse(out.trim().split("\n").at(-1) as string) as Team;
+  const name = `Diabetes research ${Date.now()}`;
+  const out = execFileSync("python3", [`${EXAMPLE}/load.py`, "--data", DATA, "--gw", gw, "--project", name], { encoding: "utf8", timeout: 300_000 });
+  return { rid: (out.trim().split("\n").at(-1) as string).split("/").at(-1) as string };
+}
+
+/** Another person's own browser, signed in. */
+async function browserOf(browser: Browser, user: string) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await signIn(page, user, user);
+  cleanups.push(() => context.close());
+  return page;
+}
+
+/** Everything the project holds goes, then the project. */
+async function emptied(as: Caller, project: string) {
+  const items = ((await as("GET", `/resources?project=${project}&limit=500`)) as { items: { kind: string; metadata: { rid: string } }[] }).items;
+  const of = (kind: string) => items.filter(r => r.kind === kind);
+  for (const u of of("computing-unit")) await as.attempt("POST", `/computing-units/${u.metadata.rid}/terminate`, {});
+  for (const w of of("workflow")) {
+    const runs = (await as("GET", `/workflows/${w.metadata.rid}/executions?limit=50`)) as { items: { metadata: { rid: string } }[] };
+    for (const e of runs.items) await as.attempt("DELETE", `/workflows/${w.metadata.rid}/executions/${e.metadata.rid}`);
+  }
+  for (const kind of ["workflow", "conversation", "dataset", "model", "operator", "computing-unit"])
+    for (const r of of(kind)) await as.attempt("DELETE", `/resources/${r.metadata.rid}`);
+  await as.attempt("DELETE", `/projects/${project}`);
 }
 
 /** Waits for a turn that has started to end: the composer offers to stop it, then to send again. */
@@ -34,116 +61,172 @@ async function turnEnds(page: Page) {
   await expect(page.getByLabel("Stop generating")).toBeHidden({ timeout: 900_000 });
 }
 
-/** Says something in the chat and waits for the agent's turn to end. */
-async function sayAndWait(page: Page, text: string) {
-  await say(page, text);
-  await turnEnds(page);
-}
+const shot = (page: Page, name: string) => page.screenshot({ path: `test-results/demo-${name}.png` });
 
-test("a diabetes researcher brings in a public cohort, screens it with the team's model on a unit she picks, and sees it all on the graph", async ({
-  page,
-  request,
-}) => {
+type Message = { role: string; parts: { type: string; toolName?: string; text?: string }[] };
+const messagesOf = async (as: Caller, chat: string) => ((await as("GET", `/conversations/${chat}/messages?limit=200`)) as { items: Message[] }).items;
+const toolsOf = (messages: Message[]) => messages.flatMap(m => m.parts.filter(p => p.type === "tool_call").map(p => p.toolName));
+const answerOf = (messages: Message[]) => (messages.at(-1) as Message).parts.filter(p => p.type === "text").map(p => p.text).join("");
+
+test("the demo: a project at a glance, a file brought to the chat and analyzed with the team's model, and two people on the workflow it made", async ({ page, browser, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
+  test.skip(!existsSync(FILE), `run prepare.py first: no ${FILE}`);
   test.setTimeout(2_400_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
   const alice = await api(request);
-  const team = teamProject(`Diabetes research ${Date.now()}`);
-  let conversation: string | undefined;
-  cleanups.push(async () => {
-    const made = conversation ? await createdIn(alice, conversation) : [];
-    for (const r of made)
-      if (r.kind === "computing-unit") await alice.attempt("POST", `/computing-units/${r.metadata.rid}/terminate`, {});
-    for (const r of made)
-      if (r.kind === "execution" && r.metadata.parent)
-        await alice.attempt("DELETE", `/workflows/${r.metadata.parent}/executions/${r.metadata.rid}`);
-    for (const kind of ["workflow", "dataset", "computing-unit"])
-      for (const r of made) if (r.kind === kind) await alice.attempt("DELETE", `/resources/${r.metadata.rid}`);
-    if (conversation) await alice.attempt("DELETE", `/resources/${conversation}`);
-    for (const uri of [team.model, team.roc_auc, team.calibration])
-      await alice.attempt("DELETE", `/resources/${uri.split("/").at(-1)}`);
-    await alice.attempt("DELETE", `/projects/${team.project}`);
-    await workAtHome(alice);
-  });
-
+  const project = teamProject();
+  cleanups.push(() => emptied(alice, project.rid));
   await signIn(page);
-  await workIn(page, team.name);
-  // What there is.
-  await ask(
-    page,
-    "I study type 2 diabetes and I'm new to this team. What tools does this platform give me: data, models, operators, and where my work can run?"
-  );
-  conversation = conversationOf(page);
+  await page.goto(`/projects/${project.rid}`);
+  await page.locator("[data-work-here]").click();
+  await expect(page.locator("[data-working-here]")).toBeVisible();
+  // The badge is the app following at once; the catalog keeps the pick a moment later.
+  await expect.poll(async () => ((await alice("GET", "/me")) as { preferences: { project?: string } }).preferences.project).toBe(project.rid);
+
+  // Part 1: the landing page is the project, by kind, with the chat over it.
+  await page.goto("/");
+  const overview = page.locator(`[data-project-overview="${project.rid}"]`);
+  for (const [kind, name] of [
+    ["dataset", "Pima diabetes cohort"],
+    ["model", "Diabetes onset risk"],
+    ["operator", "ROC AUC"],
+    ["workflow", "CGM metrics per adolescent"],
+    ["computing-unit", "Team unit"],
+  ] as const)
+    await expect(overview.locator(`[data-overview-section="${kind}"]`)).toContainText(name);
+  // Every resource says what it is: a model its description, a custom operator what its code says.
+  await expect(overview.locator('[data-overview-section="model"]')).toContainText("routine clinic measurements");
+  await expect(overview.locator('[data-overview-section="operator"]')).toContainText("area under the ROC curve");
+  // The project's own operators come first, the built-in ones are counted.
+  await expect(overview.locator('[data-overview-section="operator"]')).toContainText("built-in");
+  await expect(overview.locator('[data-overview-person="owner"]')).toContainText("Alice Liddell");
+  await expect(overview.locator('[data-overview-person="editor"]')).toContainText("Bob Builder");
+  await expect(page.locator("[data-new-chat] [data-composer]")).toBeInViewport();
+  await shot(page, "1-landing");
+
+  // A model's page says what it is, from its README.
+  await overview.locator('[data-overview-section="model"] [data-resource-row="model"]').filter({ hasText: "Diabetes onset risk" }).locator("button").first().click();
+  await expect(page.locator("[data-model-card]")).toContainText("Estimates who is likely");
+  await expect(page.locator("[data-model-contract]")).toContainText("Glucose");
+  await shot(page, "2-the-model");
+  // The operators page: the project's own first, the built-in ones behind a click.
+  await page.goto("/operators");
+  const rows = page.locator('[data-library="operator"] [data-resource-row="operator"]');
+  await expect(rows).toHaveCount(4);
+  await page.locator("[data-built-in-operators]").click();
+  await expect.poll(() => rows.count()).toBeGreaterThan(50);
+  await shot(page, "3-operators");
+
+  // Part 2: a file brought to the chat stays the chat's, and the agent reads it.
+  await page.goto("/");
+  await page.locator("[data-attach-input]").setInputFiles(FILE);
+  await ask(page, CHECK);
+  const chat = conversationOf(page);
+  await expect(page.locator(`[data-chat-behind] [data-project-overview="${project.rid}"]`)).toBeVisible();
   await turnEnds(page);
-  expect(await createdIn(alice, conversation)).toEqual([]);
+  let said = await messagesOf(alice, chat);
+  expect(toolsOf(said)).toContain("read_dataset_file");
+  expect(toolsOf(said)).not.toContain("create_dataset");
+  expect(answerOf(said)).toMatch(/onset.?risk/i);
+  const listed = async () => ((await alice("GET", `/datasets?project=${project.rid}&limit=20`)) as { items: { metadata: { name: string } }[] }).items.map(d => d.metadata.name);
+  expect(await listed()).not.toContain("screening_cohort.csv");
 
-  // The cohort comes in.
-  await sayAndWait(
-    page,
-    `Please get the Pima Indians diabetes data from ${PIMA_URL} and put it into a new dataset called 'Pima cohort'.`
-  );
-  const datasets = (await createdIn(alice, conversation)).filter(r => r.kind === "dataset");
-  expect(datasets).toHaveLength(1);
-
-  // The screening: the agent asks where it runs, and she picks Small on the card.
-  await sayAndWait(
-    page,
-    "Now screen every woman in the Pima cohort with our diabetes onset-risk model: how well does its risk separate the women who developed diabetes from those who did not, and is it calibrated? Use the team's ROC AUC and Risk calibration operators."
-  );
+  // It says where it would run: she picks, it builds the pipeline, and the graph takes the overview's place.
   const card = page.locator('[data-part="ask"]').last();
+  if ((await card.count()) === 0) {
+    // A model is free to stop at its recommendation: the README says what to say then.
+    await say(page, "Go ahead and apply it to this file.");
+    await turnEnds(page);
+  }
   await expect(card).toBeVisible();
-  // Sizes to choose from: Small if it is offered, else the smallest there is.
-  const sizes = card.locator("[data-ask-option]").filter({ hasText: /Small|Medium|Large/ });
-  await expect(sizes.nth(1)).toBeVisible();
-  const small = card.locator("[data-ask-option]").filter({ hasText: "Small" });
-  const choice = (await small.count()) > 0 ? small.first() : sizes.first();
-  await card.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "test-results/diabetes-ask.png" });
-  await choice.click();
+  await shot(page, "4-which-model");
+  // Someone coming back to answer: the chat opens at its end, and goes on to follow the answer.
+  await page.reload();
+  await expect(card).toBeInViewport({ timeout: 30_000 });
+  await card.locator("[data-ask-option]").filter({ hasText: "Team unit" }).first().click();
   await turnEnds(page);
-
-  // The graph: the cohort goes into the workflow, the model and the team's operators ride on
-  // its card, and its run stands in the lane of her unit, the unit at the lane's foot.
+  await expect(page.locator("[data-message-seq]").last()).toBeInViewport({ timeout: 15_000 });
   const graph = page.locator("[data-resource-graph]");
   await expect(graph).toBeVisible({ timeout: 60_000 });
-  await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "Pima cohort" }).first()).toBeVisible();
-  const units = (await createdIn(alice, conversation)).filter(r => r.kind === "computing-unit");
-  expect(units).toHaveLength(1);
-  const unitUri = `texera://computing-units/${units[0]?.metadata.rid}`;
-  const run = graph.locator(`[data-graph-role="run"][data-graph-unit="${unitUri}"]`);
+  await expect(page.locator("[data-chat-behind]")).toHaveCount(0);
+  await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "screening_cohort" }).first()).toBeVisible();
+  const run = graph.locator('[data-graph-role="run"]');
   await expect(run).toHaveCount(1);
   await expect(run).toHaveAttribute("data-graph-state", "completed");
-  const screen = graph.locator(
-    `[data-graph-role="workflow"][data-graph-node="${await run.getAttribute("data-graph-of")}"]`
-  );
-  await expect(screen).toHaveCount(1);
-  await expect(graph.locator(`[data-graph-foot="${unitUri}"]`)).toHaveCount(1);
-  await expect(screen.locator('[data-graph-role="model"][title*="Diabetes onset risk"]')).toHaveCount(1);
-  await expect(screen.locator('[data-graph-role="function"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-tie="tether"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-edge="reads"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
-  await page.screenshot({ path: "test-results/diabetes-graph.png", fullPage: true });
-  // Closer, the workflow's steps: the cohort scanned, the model's predict, the team's operators.
-  await graph.locator('[data-graph-level="detail"]').click();
-  await expect(screen.locator("[data-graph-step]").filter({ hasText: "predict" })).toHaveCount(1);
-  await expect(screen.locator('[data-graph-step] [data-graph-role="model"]')).not.toHaveCount(0);
-  await page.screenshot({ path: "test-results/diabetes-graph-steps.png", fullPage: true });
-
-  // Going into the model and into the run, and back: the chat beside it stays as it is.
-  const said = await page.locator("[data-message-seq]").count();
+  const workflowCard = graph.locator('[data-graph-role="workflow"]').first();
+  await expect(graph.locator('[data-graph-role="model"]')).toHaveCount(1);
+  await expect(graph.locator('[data-graph-edge="uses"]')).toHaveCount(1);
+  await expect(workflowCard.locator('[data-graph-role="function"]')).not.toHaveCount(0);
+  await expect(graph.locator('[data-graph-role="unit"]').filter({ hasText: "Team unit" })).toHaveCount(1);
   await graph.locator("[data-graph-fit]").click();
-  await screen.locator('[data-graph-role="model"]').first().click();
-  const focus = page.locator("[data-graph-focus]");
-  await expect(focus).toHaveAttribute("data-graph-focus-kind", "resource");
-  await expect(focus.locator('[data-graph-view="model"]')).toBeVisible();
-  await expect(focus.locator("[data-graph-related]")).toContainText("Used by");
-  await focus.locator("[data-graph-back]").click();
-  await expect(focus).toHaveCount(0);
-  await run.click();
-  await expect(focus).toHaveAttribute("data-graph-focus-kind", "run");
-  await expect(focus.locator("[data-execution-view] [data-phase]")).toHaveText("completed");
-  await page.screenshot({ path: "test-results/diabetes-run.png", fullPage: true });
-  await page.locator('[data-graph-crumb="root"]').click();
-  await expect(focus).toHaveCount(0);
-  expect(await page.locator("[data-message-seq]").count()).toBe(said);
+  await page.waitForTimeout(800);
+  await shot(page, "5-the-graph");
+
+  // The numbers are the ones the data gives: the AUC of the model on the women it never saw.
+  const workflows = (await alice("GET", `/workflows?project=${project.rid}&limit=10`)) as { items: { metadata: { rid: string; name: string } }[] };
+  const workflow = workflows.items.find(w => w.metadata.name !== "CGM metrics per adolescent") as { metadata: { rid: string; name: string } };
+  type Execution = { metadata: { rid: string }; status: { phase: string; ports: { operatorID: string; portID: string; rows: number }[] } };
+  const runs = ((await alice("GET", `/workflows/${workflow.metadata.rid}/executions?limit=10`)) as { items: Execution[] }).items;
+  const done = runs.find(e => e.status.phase === "completed") as Execution;
+  let auc: number[] | undefined;
+  for (const port of done.status.ports.filter(p => p.rows === 1)) {
+    const page1 = (await alice("GET", `/workflows/${workflow.metadata.rid}/executions/${done.metadata.rid}/operators/${port.operatorID}/ports/${port.portID}/rows?limit=1`)) as { schema: { attributeName: string }[]; rows: unknown[][] };
+    const at = page1.schema.findIndex(c => c.attributeName === "auc");
+    if (at >= 0) auc = [page1.rows[0]?.[0] as number, page1.rows[0]?.[at] as number];
+  }
+  expect(auc?.[0], "the women it never saw").toBe(154);
+  expect(auc?.[1]).toBeCloseTo(0.8467, 3);
+
+  // What is published, and the file kept.
+  await say(page, LITERATURE);
+  await turnEnds(page);
+  said = await messagesOf(alice, chat);
+  expect(toolsOf(said)).toContain("search_pubmed");
+  await expect(page.locator("[data-graph-sources]")).toContainText("biomcp");
+  await shot(page, "6-the-literature");
+  await say(page, KEEP);
+  await turnEnds(page);
+  said = await messagesOf(alice, chat);
+  expect(toolsOf(said)).toContain("keep_attachment");
+  expect(await listed()).toContain("Screening cohort");
+
+  // Part 3: Bob finds what was built, and they work on it together.
+  const bobs = await browserOf(browser, "bob");
+  await bobs.goto(`/projects/${project.rid}`);
+  await expect(bobs.getByText(workflow.metadata.name, { exact: true }).first()).toBeVisible();
+  await expect(bobs.getByText("Screening cohort", { exact: true }).first()).toBeVisible();
+  await shot(bobs, "7-bob-finds-the-workflow");
+
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await bobs.goto(`/workflows/${workflow.metadata.rid}`);
+  await expect(page.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "true", { timeout: 30_000 });
+  await expect(bobs.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "true", { timeout: 30_000 });
+  const present = (on: Page) => on.locator("[data-presence] [data-present]");
+  await expect(present(page)).toHaveCount(2, { timeout: 15_000 });
+  await expect(present(bobs)).toHaveCount(2, { timeout: 15_000 });
+
+  // Each sees where the other points.
+  const point = async (on: Page, dx: number) => {
+    const box = (await on.locator("[data-workflow-canvas]").boundingBox()) as { x: number; y: number; width: number; height: number };
+    // Near the top: the results of the execution float over the bottom of the canvas.
+    await on.mouse.move(box.x + box.width / 2 + dx, box.y + 130, { steps: 5 });
+  };
+  await point(page, -80);
+  await expect(bobs.locator('[data-cursor="Alice Liddell"]')).toBeVisible({ timeout: 10_000 });
+  await point(bobs, 80);
+  await expect(page.locator('[data-cursor="Bob Builder"]')).toBeVisible({ timeout: 10_000 });
+  await shot(page, "8-each-others-pointers");
+
+  // What he adds appears on her canvas, with no reload, and goes into the next version.
+  const before = await page.locator(".react-flow__node").count();
+  const palette = await operatorList(bobs);
+  await palette.getByPlaceholder("Search operators").fill("Limit");
+  await palette.locator('[data-palette-operator="Limit"]').click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(before + 1, { timeout: 15_000 });
+  await expect(page.locator('.react-flow__node [data-operator-type="Limit"]')).toHaveCount(1);
+  await bobs.locator("[data-operator-done]").click();
+  await expect
+    .poll(async () => ((await alice("GET", `/workflows/${workflow.metadata.rid}`)) as { spec: { operators: { operatorType: string }[] } }).spec.operators.some(o => o.operatorType === "Limit"), { timeout: 30_000 })
+    .toBe(true);
+  await shot(page, "9-edited-together");
 });

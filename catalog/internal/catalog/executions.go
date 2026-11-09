@@ -492,7 +492,7 @@ func executionNamespace(rid uuid.UUID) string {
 	return "e_" + strings.ReplaceAll(rid.String(), "-", "")
 }
 
-// executionUnit returns the client of the unit an execution runs on.
+// executionUnit returns the client of the unit an execution runs on, which must be up.
 func (s *Service) executionUnit(ctx context.Context, _ *auth.Caller, exec *store.Resource) (*engine.Unit, error) {
 	// The caller was allowed to read the execution; the unit is the catalog's to reach.
 	var spec api.ExecutionSpec
@@ -501,8 +501,46 @@ func (s *Service) executionUnit(ctx context.Context, _ *auth.Caller, exec *store
 	if err != nil {
 		return nil, err
 	}
-	client, _, err := s.unitClient(ctx, unit)
-	return client, err
+	client, status, err := s.unitClient(ctx, unit)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, Conflict("unit_not_ready", fmt.Sprintf("the unit %s is %s", unit.Name, status.Phase), nil)
+	}
+	return client, nil
+}
+
+// resultsUnit returns a unit to read an execution's results through. Results live in the
+// warehouse and outlive the unit that made them: when that unit is not up, the unit its project
+// runs on reads them, let into the execution's namespace. So too when that unit has been deleted.
+func (s *Service) resultsUnit(ctx context.Context, caller *auth.Caller, exec *store.Resource) (*engine.Unit, error) {
+	client, notUp := s.executionUnit(ctx, caller, exec)
+	if notUp == nil {
+		return client, nil
+	}
+	var refused *Error
+	if !errors.As(notUp, &refused) || (refused.Code != "unit_not_ready" && refused.Status != http.StatusNotFound) {
+		return nil, notUp
+	}
+	name := uriString(s.defaultsOf(ctx, exec.ProjectRID).ComputingUnit)
+	if name == "" {
+		return nil, notUp
+	}
+	unit, err := s.named(ctx, name, unitKind)
+	if err != nil {
+		return nil, notUp
+	}
+	reader, _, err := s.unitClient(ctx, unit)
+	if err != nil || reader == nil {
+		return nil, notUp
+	}
+	if identity := unitIdentity(unit); identity != nil {
+		if err := s.Lake.OpenNamespace(ctx, s.warehouseOf(ctx, exec), executionNamespace(exec.RID), identity.Subject, unit.Name); err != nil {
+			return nil, Unavailable("lake", err)
+		}
+	}
+	return reader, nil
 }
 
 // Port describes a port of an execution: an output's result, or an input's binding.
@@ -573,7 +611,7 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if table == "" {
 		return nil, NotFound(fmt.Sprintf("no result is kept for %s/%s", operatorID, portID))
 	}
-	client, err := s.executionUnit(ctx, caller, r)
+	client, err := s.resultsUnit(ctx, caller, r)
 	if err != nil {
 		return nil, err
 	}

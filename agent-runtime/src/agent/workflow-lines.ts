@@ -24,8 +24,10 @@ import { type ToolSet, tool } from "ai";
 import { z } from "zod";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
 import {
+  type AttachedFile,
   type CatalogAuth,
   type OperatorSpec,
+  type ParsedUri,
   parseUri,
   type Validation,
   type WorkflowRecord,
@@ -40,6 +42,8 @@ export interface LineToolDeps {
   auth: () => CatalogAuth;
   /** The chat's project: where a new workflow goes and where a dataset's name is looked up. */
   project: string;
+  /** The files attached to the chat, oldest first: a line names one as the person did. */
+  attached: AttachedFile[];
 }
 
 const LINES_DOC =
@@ -47,7 +51,7 @@ const LINES_DOC =
   "`delete <id>` removes one. Inputs are other operators' ids, in port order (a join's left, then its right). " +
   'Values are JSON-like: "text", 1.5, true, null, ["a", "b"]; code over several lines goes in """...""". ' +
   "Expressions are text: where=\"glucose < 70\". Ids use letters, digits and '-', never '_'. " +
-  'A file is texera://datasets/<rid>@<version>/files/<path>, or by its dataset or model\'s name: "CGM cohort@4/cgm.csv"; ' +
+  'A file is texera://datasets/<rid>@<version>/files/<path>, or by its dataset or model\'s name: "CGM cohort@4/cgm.csv", or by its own name when it is attached to the chat; ' +
   'a model is texera://models/<rid>@<version>, or by name: predict(cohort, model="Diabetes risk@2").';
 
 /** A workflow record as the agent reads it: where it stands and where it runs, without the JSON of its spec. */
@@ -293,7 +297,7 @@ async function resolveFiles(lines: Line[], deps: LineToolDeps): Promise<Line[]> 
     const settings = { ...l.settings };
     for (const key of FILE_SETTINGS) {
       const named = settings[key];
-      if (typeof named === "string" && !named.startsWith("texera://")) settings[key] = await fileUri(named, l, deps);
+      if (typeof named === "string") settings[key] = await fileUri(named, l, deps);
     }
     const model = settings.model;
     if (typeof model === "string" && !model.startsWith("texera://")) settings.model = await modelUri(model, l, deps);
@@ -334,23 +338,63 @@ async function modelUri(named: string, line: SetLine, deps: LineToolDeps): Promi
   return `${resource.metadata.uri}@${vno}`;
 }
 
+/**
+ * A file a line names, as the URI it is read by. A name is first a file attached to the chat, then
+ * a dataset or model of the project; a URI is checked here, where the agent can be told how it is
+ * written, for the engine would only say it cannot read it.
+ */
 async function fileUri(named: string, line: SetLine, deps: LineToolDeps): Promise<Value> {
+  if (named.startsWith("texera://")) return checkedFileUri(named, line, deps);
   const slash = named.indexOf("/");
   const head = slash < 0 ? named : named.slice(0, slash);
   const path = slash < 0 ? undefined : named.slice(slash + 1);
+  const attached = deps.attached.findLast((a) => a.name === head);
+  if (attached) return `${attached.uri}/files/${path ?? head}`;
   const { resource, name, vno } = await oneNamed(["dataset", "model"], head, line, deps);
-  let file = path;
-  if (!file) {
-    const plural = resource.kind === "model" ? "models" : "datasets";
-    const files = await deps.catalog.versionFiles(plural, resource.metadata.rid, vno, deps.auth());
-    if (files.length !== 1)
-      throw new LineError(
-        line.line,
-        `"${name}" has ${files.length} files at version ${vno}: ${files.slice(0, 8).join(", ")}; name one, as in "${name}/${files[0] ?? "data.csv"}"`,
-      );
-    file = files[0] as string;
-  }
+  const plural = resource.kind === "model" ? "models" : "datasets";
+  const file =
+    path ?? (await onlyFile(plural, resource.metadata.rid, vno, `"${name}"`, (f) => `"${name}/${f}"`, line, deps));
   return `${resource.metadata.uri}@${vno}/files/${file}`;
+}
+
+/** A file's URI as it was written; a version's URI stands for the one file the version holds. */
+async function checkedFileUri(uri: string, line: SetLine, deps: LineToolDeps): Promise<Value> {
+  let parsed: ParsedUri | undefined;
+  try {
+    parsed = parseUri(uri);
+  } catch {
+    parsed = undefined;
+  }
+  const plural = parsed?.plural;
+  if (!parsed || (plural !== "datasets" && plural !== "models") || parsed.vno === undefined)
+    throw new LineError(line.line, `${uri} is not a file; a file is texera://datasets/<rid>@<version>/files/<path>`);
+  const { rid, vno, subresource } = parsed;
+  if (subresource?.startsWith("files/")) return uri;
+  if (subresource)
+    throw new LineError(
+      line.line,
+      `${uri} is not a file; it is written texera://${plural}/${rid}@${vno}/files/${subresource}`,
+    );
+  return `${uri}/files/${await onlyFile(plural, rid, vno, uri, (f) => `${uri}/files/${f}`, line, deps)}`;
+}
+
+/** The file a version holds, when it holds just one; the line's mistake when it does not. */
+async function onlyFile(
+  plural: "datasets" | "models",
+  rid: string,
+  vno: number,
+  what: string,
+  example: (file: string) => string,
+  line: SetLine,
+  deps: LineToolDeps,
+): Promise<string> {
+  const files = await deps.catalog.versionFiles(plural, rid, vno, deps.auth());
+  if (files.length !== 1)
+    throw new LineError(
+      line.line,
+      `${what} has ${files.length} files at version ${vno}: ${files.slice(0, 8).join(", ")}; name one, as in ${example(files[0] ?? "data.csv")}`,
+    );
+  return files[0] as string;
 }
 
 /** Saves a workflow's new spec and compiles it, answering in lines. */

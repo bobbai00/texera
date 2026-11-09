@@ -8,7 +8,7 @@ import { AlertTriangle, ArrowRightLeft, Brain, Check, ChevronDown, CircleHelp, L
 import { lazy, Suspense, useState } from "react";
 import type { Part } from "./model";
 
-const Markdown = lazy(() => import("./Markdown"));
+const Markdown = lazy(() => import("@texera/ui/markdown"));
 
 export function TextPart({ text, streaming }: { text: string; streaming: boolean }) {
   return (

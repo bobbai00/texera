@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/apache/texera/catalog/internal/store"
 )
@@ -356,5 +357,39 @@ func TestBlobsStagingAndLeases(t *testing.T) {
 	found, err := st.SearchPrincipals(ctx, "ali", "", 10)
 	if err != nil || len(found) != 1 || found[0].PID != alice.PID {
 		t.Fatalf("search principals: %+v %v", found, err)
+	}
+}
+
+// A turn gives its lock back as it ends. One that could not, because the catalog or the runtime
+// went away, holds the chat only until long after any tool call would have come back.
+func TestATurnNobodyEndedDoesNotHoldItsChatForGood(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	alice := user(t, st, "alice")
+	lab := project(t, st, alice, "lab")
+	conv, _, err := st.CreateResource(ctx, store.NewResource{Kind: "conversation", Name: "chat", ParentRID: &lab.RID, ProjectRID: &lab.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID, Spec: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.StartTurn(ctx, conv.RID, uuid.NewString(), &alice.PID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.StartTurn(ctx, conv.RID, uuid.NewString(), &alice.PID); !store.IsConflict(err) {
+		t.Fatalf("while it may still be running: %v", err)
+	}
+	url := os.Getenv("TEXERA_TEST_DATABASE_URL")
+	if url == "" {
+		url = "postgres://texera:texera@localhost:15432/catalog_test?sslmode=disable"
+	}
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, `UPDATE resource SET updated_at = now() - interval '31 minutes' WHERE rid = $1`, conv.RID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.StartTurn(ctx, conv.RID, uuid.NewString(), &alice.PID); err != nil {
+		t.Fatalf("after the lock went stale: %v", err)
 	}
 }

@@ -521,7 +521,7 @@
       "properties": {
         "contract": {
           "$ref": "#/$defs/ModelContract",
-          "description": "For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract."
+          "description": "For a model, the new version's contract; absent, a contract.json among the staged files says it, else the head version's carries over. A model version may change only its contract."
         },
         "message": {
           "type": "string"
@@ -2225,9 +2225,18 @@
     "GraphNode": {
       "description": "A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.",
       "properties": {
+        "cpu": {
+          "description": "For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.",
+          "type": "string"
+        },
         "description": {
           "description": "What the resource says it is.",
           "type": "string"
+        },
+        "gpu": {
+          "description": "For a unit, the GPUs of its main node.",
+          "format": "int32",
+          "type": "integer"
         },
         "kind": {
           "$ref": "#/$defs/ResourceKind"
@@ -2235,6 +2244,10 @@
         "made": {
           "description": "The chat made it, or a version of it.",
           "type": "boolean"
+        },
+        "memory": {
+          "description": "For a unit, the memory of its main node, as Kubernetes counts it.",
+          "type": "string"
         },
         "name": {
           "type": "string"
@@ -2443,6 +2456,20 @@
         "op",
         "path"
       ],
+      "type": "object"
+    },
+    "KeepAttachment": {
+      "description": "A file attached to a chat, kept as a dataset of the chat's project.",
+      "properties": {
+        "description": {
+          "description": "What it holds and where it comes from.",
+          "type": "string"
+        },
+        "name": {
+          "description": "What to call the dataset; absent, it keeps the file's name.",
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "Lease": {

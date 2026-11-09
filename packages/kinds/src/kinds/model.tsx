@@ -1,6 +1,7 @@
 import type { ModelSpec } from "@texera/catalog-client/types";
-import { Box, FileText, Upload } from "lucide-react";
+import { Box, FileText, Info, Upload } from "lucide-react";
 import { FilesTab, UploadTab } from "../files/FilesTabs";
+import { AboutModel } from "../files/AboutModel";
 import type { KindSpec } from "../types";
 
 export const modelKind: KindSpec = {
@@ -10,6 +11,7 @@ export const modelKind: KindSpec = {
   icon: Box,
   accent: "bg-kind-model/12 text-kind-model",
   tabs: [
+    { value: "about", label: "About", icon: Info, Component: AboutModel },
     { value: "files", label: "Files", icon: FileText, Component: FilesTab },
     { value: "upload", label: "Upload", icon: Upload, Component: UploadTab },
   ],

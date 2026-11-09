@@ -16,9 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Puts a diabetes research team's project into a Texera stack: the datasets and models that
-prepare.py wrote, and the team's Python operators in operators/, in a project of the owner's
-that the team member may edit.
+"""Puts a diabetes research team's project into a Texera stack: the datasets and models prepare.py
+wrote, the team's Python operators in operators/, a workflow they made, a computing unit of the
+team's, and the teammate who works in it.
 
     python load.py --data ~/texera-diabetes                         # http://localhost:8088, alice's, bob on the team
     python load.py --data ~/texera-diabetes --gw http://localhost:28088
@@ -31,6 +31,7 @@ import argparse
 import json
 import pathlib
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -38,6 +39,7 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 
 PROJECT = "Diabetes research"
+UNIT = "Team unit"
 PROJECT_DESCRIPTION = (
     "The diabetes team's data, models and tools: a cohort followed for diabetes onset, hospital "
     "encounters with readmission, disease progression after a year, and a week of CGM of "
@@ -120,11 +122,16 @@ def named(person: Person, plural: str, project: str, name: str):
     return None
 
 
+def folders(parent: pathlib.Path) -> list[pathlib.Path]:
+    """The folders under one, in order, and nothing a file browser leaves there."""
+    return sorted(p for p in parent.iterdir() if p.is_dir() and not p.name.startswith("."))
+
+
 def upload(
     person: Person, plural: str, rid: str, folder: pathlib.Path, skip=("card.json",)
 ) -> None:
     for path in sorted(folder.iterdir()):
-        if path.is_file() and path.name not in skip:
+        if path.is_file() and path.name not in skip and not path.name.startswith("."):
             kind = "text/csv" if path.suffix == ".csv" else "application/octet-stream"
             person.must(
                 "PUT",
@@ -163,6 +170,7 @@ def dataset(person: Person, project: str, folder: pathlib.Path) -> str:
 
 
 def model(person: Person, project: str, folder: pathlib.Path) -> str:
+    """A model version from its folder; its contract.json says what it reads and adds."""
     card = json.loads((folder / "card.json").read_text())
     found = named(person, "models", project, card["name"])
     if found and found["metadata"]["head"] > 0:
@@ -179,13 +187,78 @@ def model(person: Person, project: str, folder: pathlib.Path) -> str:
         },
     )
     upload(person, "models", made["metadata"]["rid"], folder)
-    version = person.must(
-        "POST",
-        f"/models/{made['metadata']['rid']}/commit",
-        {"message": card["message"], "contract": card["contract"]},
+    person.must(
+        "POST", f"/models/{made['metadata']['rid']}/commit", {"message": card["message"]}
     )
-    print(f"   model {card['name']}: version {version['vno']}, {card['metrics']}")
+    print(f"   model {card['name']}: {card['metrics']}")
     return made["metadata"]["uri"]
+
+
+def cgm_workflow(person: Person, project: str, readings: str, metrics: str) -> None:
+    """A workflow the team already made: the CGM metrics of each adolescent."""
+    name = "CGM metrics per adolescent"
+    if named(person, "workflows", project, name):
+        print(f"   {name}: there")
+        return
+    operator = person.must("GET", f"/operators/{metrics.rsplit('/', 1)[1]}")
+    spec = {
+        "operators": [
+            {
+                "operatorID": "readings",
+                "operatorType": "scan",
+                "operatorProperties": {"file": f"{readings}@1/files/cgm.csv"},
+            },
+            {
+                "operatorID": "metrics",
+                "operatorType": f"{metrics}@{operator['metadata']['head']}",
+                "operatorProperties": {},
+                "viewResult": True,
+            },
+        ],
+        "links": [
+            {
+                "linkID": "readings-metrics",
+                "source": {"operatorID": "readings", "portID": "output-0"},
+                "target": {"operatorID": "metrics", "portID": "input-0"},
+            }
+        ],
+    }
+    person.must(
+        "POST",
+        "/workflows",
+        {
+            "name": name,
+            "description": "The consensus CGM metrics of each of the seven adolescents with type 1 diabetes.",
+            "parent": project,
+            "spec": spec,
+        },
+    )
+    print(f"   {name}")
+
+
+def team_unit(person: Person, project: str, name: str, profile_name: str) -> None:
+    """A computing unit the team keeps in its project, from one of the profiles it can use."""
+    found = named(person, "computing-units", project, name)
+    if found:
+        print(f"   {name}: there")
+        return
+    query = urllib.parse.urlencode({"scope": project, "limit": 100})
+    profiles = person.must("GET", f"/profiles?{query}")["items"]
+    profile = next(p for p in profiles if p["metadata"]["name"] == profile_name)
+    made = person.must(
+        "POST",
+        "/computing-units/from-profile",
+        {"name": name, "parent": project, "profile": profile["metadata"]["uri"]},
+    )
+    print(f"   {name}: from the profile {profile_name}")
+    # The team's unit is ready when the demo starts: a unit still starting is not offered.
+    for _ in range(60):
+        unit = person.must("GET", f"/computing-units/{made['metadata']['rid']}")
+        if unit["status"].get("phase") == "ready":
+            print(f"   {name}: ready")
+            return
+        time.sleep(5)
+    sys.exit(f"{name} did not become ready in five minutes")
 
 
 def operator(person: Person, project: str, path: pathlib.Path) -> str:
@@ -194,6 +267,8 @@ def operator(person: Person, project: str, path: pathlib.Path) -> str:
     code = path.read_text()
     found = named(person, "operators", project, name)
     if found:
+        # A list gives an operator's summary; its code is in the operator itself.
+        found = person.must("GET", f"/operators/{found['metadata']['rid']}")
         python = (found["spec"].get("implementation") or {}).get("python") or {}
         if python.get("code") == code:
             print(f"   operator {name}: there, version {found['metadata']['head']}")
@@ -243,6 +318,12 @@ def main() -> None:
         help="whose project it is (password = name, as on the dev stack)",
     )
     ap.add_argument("--team", default="bob", help="who else edits it; empty for nobody")
+    ap.add_argument("--project", default=PROJECT, help="the project's name")
+    ap.add_argument(
+        "--unit-profile",
+        default="python-default",
+        help="the profile of the team's computing unit",
+    )
     args = ap.parse_args()
     gw = args.gw.rstrip("/")
     owner = Person(gw, args.owner)
@@ -252,7 +333,7 @@ def main() -> None:
         (
             p
             for p in owner.must("GET", "/projects?limit=500")["items"]
-            if p["metadata"]["name"] == PROJECT
+            if p["metadata"]["name"] == args.project
         ),
         None,
     )
@@ -261,10 +342,10 @@ def main() -> None:
         or owner.must(
             "POST",
             "/projects",
-            {"name": PROJECT, "description": PROJECT_DESCRIPTION, "spec": {}},
+            {"name": args.project, "description": PROJECT_DESCRIPTION, "spec": {}},
         )
     )["metadata"]["rid"]
-    print(f"   {PROJECT}: {project}")
+    print(f"   {args.project}: {project}")
     if args.team:
         member = Person(gw, args.team).must("GET", "/me")["principal"]["pid"]
         owner.must(
@@ -273,14 +354,22 @@ def main() -> None:
         print(f"   {args.team} edits it")
 
     print("== datasets")
-    for folder in sorted((args.data / "datasets").iterdir()):
-        dataset(owner, project, folder)
+    datasets = {
+        folder.name: dataset(owner, project, folder)
+        for folder in folders(args.data / "datasets")
+    }
     print("== models")
-    for folder in sorted((args.data / "models").iterdir()):
+    for folder in folders(args.data / "models"):
         model(owner, project, folder)
     print("== operators")
-    for path in sorted((HERE / "operators").glob("*.py")):
-        operator(owner, project, path)
+    operators = {
+        path.stem: operator(owner, project, path)
+        for path in sorted((HERE / "operators").glob("*.py"))
+    }
+    print("== a workflow")
+    cgm_workflow(owner, project, datasets["cgm"], operators["cgm_metrics"])
+    print("== the team's computing unit")
+    team_unit(owner, project, UNIT, args.unit_profile)
     print(f"\n{gw}/projects/{project}")
 
 

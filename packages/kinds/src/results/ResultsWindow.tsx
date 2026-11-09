@@ -8,7 +8,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { Execution, PortSummary } from "@texera/catalog-client/types";
-import { Badge, Button, cn, EmptyState, formatDuration, formatNumber, timeAgo, Tooltip } from "@texera/ui";
+import { Badge, Button, cn, EmptyState, formatDuration, formatNumber, Tooltip } from "@texera/ui";
 import { operatorImage } from "@texera/workflow-model";
 import { ArrowUpRight, BarChart3, ChevronDown, ChevronUp, GripHorizontal, Loader2, Table2, X } from "lucide-react";
 import {
@@ -134,9 +134,6 @@ export function ResultsWindow({
         {floating && <GripHorizontal className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
         <Table2 className="size-4 shrink-0 text-primary" aria-hidden />
         <span className="shrink-0 text-sm font-medium">Results</span>
-        <span className="min-w-0 truncate text-xs text-muted-foreground" title={execution.metadata.name}>
-          {execution.metadata.name}
-        </span>
         {showing !== undefined && ran !== undefined && ran !== showing && (
           <Tooltip content={`These results are of version ${ran}; the canvas shows version ${showing}.`}>
             <Badge tone="warning" className="shrink-0" data-ran-version={ran}>
@@ -149,11 +146,12 @@ export function ResultsWindow({
         {onOpen && (
           <Button
             variant="ghost"
-            size="xs"
+            size="icon-xs"
             onClick={onOpen}
+            aria-label="Open this execution beside the workflow"
             title="Open this execution beside the workflow"
             data-open-execution>
-            <ArrowUpRight /> Execution
+            <ArrowUpRight />
           </Button>
         )}
         {floating && (
@@ -299,7 +297,7 @@ function Standing({ execution }: { execution: Execution }) {
   const going = LIVE.has(phase);
   const progress = going
     ? [operators.length ? `${done} of ${operators.length} done` : "", formatDuration(status?.startedAt, undefined)]
-    : [timeAgo(execution.metadata.createdAt)];
+    : [];
   return (
     <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" data-latest-execution={phase}>
       <Badge

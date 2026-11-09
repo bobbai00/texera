@@ -2,6 +2,130 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 16, part 3): less on every page, and the graph read left to right
+
+The user played with the demo and sent one list.
+
+- **The graph reads Data above Model, Workflow, Execution, Result.** A model is a box of its own
+  under the data, a function stays on the workflow's card. An execution is a box of its own, the
+  unit it ran on at its bottom right and repeated for each execution on it; lanes, rails, dotted
+  ties, `×N` and the words on arrows are gone (`model.ts`, `layout.ts`, `parts.tsx`).
+- **A graph that changed while hidden collapsed.** Below 1280 px the panel is `display: none`, its
+  sizes are 0, and a graph update then laid everything out on one spot until the next update.
+  Measuring waits until it shows, and it reframes on a change of size unless someone moved it.
+- **Together on the graph.** Icons at its top and pointers on it, through the chat's awareness
+  (`graphCursor`: a box and an offset in ems, for people at different zoom levels). A speech bubble
+  on hover posts a comment into the chat with the box attached; it asks the agent, or is a note
+  while a turn is going.
+- **Each unit says what it has**, `2 cores · 2 GB`: `python-default` and the deployment's unit had
+  no CPU at all, and now have 2; a unit that reserves none says Shared CPU. The graph's node carries
+  it (`cpu`, `memory`, `gpu`).
+- **The overview** is one column of one-line rows, with Private or Public, who made it, and a pencil
+  that renames in place; the chat's header renames too, and a name's pencil shows on every page.
+  The chat maximizes over what is behind it. Less elsewhere: Configure folds in the sidebar, run
+  options sit behind one button, the canvas toolbar is icons, a result window says only its state,
+  no "updated N ago" under names, a model's card says its name instead of its URI.
+
+Verified on the OrbStack stack: the browser suite, 68 of 71, and the three that failed each pass
+alone after their fixes (a pencil's label that matched a field's, and two expectations from before
+the default profile had CPUs and the graph opened things in place); the new `graph.spec.ts` test
+with two browsers; a comment on a box answered by the real agent, which read the file. The catalog's
+`mcp`, `catalog` and `server` suites, the app's 386 tests and typecheck, the runtime's 107.
+`k8s.sh check` was not run in this round.
+
+## 2026-11-08 (session 16, part 2): the project first, and a file brought to the chat
+
+The user reworked the demo again: the models are there already, what a person brings is a dataset,
+and the first thing anyone sees is what the project holds.
+
+- **The landing page is the project.** With a project picked, the new-chat page is its overview:
+  the people, then data, models, operators, workflows, computing units and recent chats, each row
+  saying what it is, and the chat box floats over it (`ProjectOverview`, `NewChat floating`). In a
+  chat the overview stays behind the floating chat window until the agent starts work, and the graph
+  takes its place. The project page's first tab is the same overview.
+- **Everything says what it is.** `describe()` is a resource's description or its spec's. A model's
+  first tab is About: its README and its contract. The operators page lists the project's own
+  first, built-ins behind a button.
+- **A file attached to a chat is the chat's.** It is a dataset labelled `texera.attachment=<chat>`,
+  which no list shows; it goes with the chat unless a workflow reads it or the person keeps it
+  (`POST /datasets/{rid}/keep`, MCP `keep_attachment`).
+- **A file attached goes by its own name in a workflow's lines.** The turn tells the line tools what
+  the chat holds (`attachedFiles`). A URI is checked there too, and a version's URI stands for its
+  one file: one run in three had written `...@1/screening_cohort.csv`, was told only that the
+  engine had no such scheme, tried the name, which no list shows, and stopped to ask. The messages
+  of a deleted chat stay in `message`, so the error could be read there.
+- **`load.py`** makes three models, the team's unit and a workflow built with the team's operators,
+  and ignores what Finder leaves in a folder. `prepare.py` holds 154 of the 768 Pima women back,
+  unseen by the model, as `uploads/screening_cohort.csv`.
+- The skills: which model fits is said before where it runs, and the project's own operators are
+  looked for first.
+- **`clean.py`** leaves a person's space as the demo starts from, and says what would go until
+  `--apply`: the demo's project back to what `load.py` made (whatever is newer than its Team unit
+  goes), the home emptied, any other project of theirs gone, and they land on the demo's project.
+
+Verified on the OrbStack stack: `diabetes.spec.ts`, the whole demo in two browsers through the real
+model, twice in a row after the fix (2.0 and 1.8 min); four more runs through the API, each executed
+with no tool error; `scenario.py` in the real project, AUC 0.847 on the 154, then `clean.py` took
+it back to what `load.py` made with no attachment left. The catalog's suite against Postgres; the
+app's 383 tests and typecheck; the runtime's 107. `k8s.sh check` was not run again after the last
+fixes: before them, 57 scenarios and 70 browser tests with one failure each, both test expectations
+since fixed and passing alone.
+
+Seen and left: the agent may say the file looks like the 154 women the model card held out, which
+it is. Next: the lake check's cost with the size of the warehouse.
+
+## 2026-11-08 (session 16, on the Mac): the demo in three acts, and what running it found
+
+The branch deployed in place on OrbStack (migrations 0010 to 0012 on the Mac's data, nothing lost)
+and the diabetes demos run through the real model found what the Linux stacks, wiped more often,
+had not. The user then set the demo: resource management, then a model put to work with what the
+literature says of it, then two people on what the agent built.
+
+- **A new unit could not run on a warehouse with history.** Lakekeeper's `can_list_warehouses`
+  for an identity with only namespace grants walks every namespace and table; with 202 tables
+  each check took a second, and four Python workers starting together passed OpenFGA's 3 s
+  deadline (`AuthorizationBackendError`). `OPENFGA_REQUEST_TIMEOUT` is 30 s in both setups. The
+  check still costs what it costs: it grows with the warehouse.
+- **A result of a unit not up crashed the catalog.** `unitClient` answers no client for a unit
+  not ready; `Rows` called it, and on the MCP connection's goroutine nothing recovers a panic, so
+  the agent's `get_port_result` took the process down and left its chat locked. Now
+  `executionUnit` says the unit is not ready; results outlive their unit (`resultsUnit`: the
+  project's unit reads them, let into the namespace, for a unit terminated or deleted); a panic
+  in a tool ends the call (`mcp.serve`); a turn's lock goes stale 30 minutes after the chat's last
+  write.
+- **A profile is startable if it fits in what is free**, pods' requests counted, not in the
+  node's whole size; a cluster role reads pods. Medium was offered and stayed pending.
+- **A chat opened anew did not follow**: the event of its own move to the end arrived after the
+  messages grew, read as the reader leaving (`chat-scroll.ts`).
+- **`focus.ts` beside `Focus.tsx`** broke the build on a case-insensitive disk: `focus-trail.ts`.
+- **A model uploaded in the app can be run**: a `contract.json` among the staged files is the
+  version's contract (the commit's says first, then that file, then the head's). The app's upload
+  had no other way to give one, and predict refuses a version without.
+- **The demo** (`bin/texera-2-0/examples/diabetes/README.md`). `load.py` makes the project with
+  four datasets, four operators, a Team unit and Bob; the model is no longer loaded but uploaded
+  in the demo, the other two models and the six questions are gone. Act 1: contents, people, the
+  upload. Act 2: what PubMed says of such models, which of the team's data fits, applying it on
+  the unit picked on the card, the graph. Act 3: Bob finds the workflow, they open it together,
+  see each other's pointers, and what he adds appears on her canvas. The skills offer a unit the
+  project holds first.
+
+Verified on the OrbStack stack: the catalog's suite against Postgres; the app's 379 tests,
+typecheck and build on the Mac; the runtime's 104. `diabetes.spec.ts`, the three acts in two
+browsers through the real model, twice in a row (2.2 min), the AUC on the 154 women held out
+0.8467 as the data gives it, and a reload at the agent's question followed to the answer.
+`test_diabetes.py` with the model (87 s), `test_cluster_unit.py` (results read after the unit is
+terminated and deleted, through the API and the agent's tool; no restart of the catalog),
+`scenario.py` in a project of its own. `k8s.sh check`: 57 scenarios passed; the browser suite 63
+passed, 6 skipped (the model), and one failed, `collaboration.spec.ts` two people editing at the
+same moment, the known intermittent one (scan a row below avg before the drag), 6 of 6 alone.
+
+Seen and left: for some seconds after the catalog restarts a request can be refused with 403
+(once, on a project just made); the agent's prose can misstate a table it read correctly (a band
+called over-predicted that was under-predicted, 2,000 readings for 1,973). This Mac's cluster is
+short of memory: four older idle units hold 8 GB of 16.
+
+Next: the lake check's cost with the size of the warehouse; the lineage tab, as before.
+
 ## 2026-11-08 (session 15, part 9): runs as boxes on their units' rails, and going into any box
 
 The user reframed the graph around execution: a workflow and a unit only meet in a run, so each

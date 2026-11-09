@@ -1,14 +1,13 @@
-// Where each thing of a chat's graph stands, once its size is known. Columns are ranks of
-// dependency: data, then computation, then results, again for a chain. A computation column is a
-// workflow's card and, beside it, a lane for each unit its runs stood on: the run boxes in the
-// lane, the unit at its foot. Each workflow takes a row: the data it reads level with it on the
-// left, its runs level with it in their lanes, the tables they made level with them on the right;
-// at the closest level a file and a table stand level with the step that reads or made it, and a
-// run box runs the height of the steps. Rows are taken in the order the chat came to the
-// workflows, so a new one never moves what is drawn. Arrows are data, with at most one rounded
-// elbow; dotted ties join a run to its workflow and its unit.
+// Where each thing of a chat's graph stands, once its size is known. It reads left to right: data
+// above models, workflows, executions, and the tables they made, and the same again for a workflow
+// that reads another's table. Each workflow takes a row: the data it reads level with it on the
+// left, its executions beside it one under another, the tables each kept level with it on the
+// right; at the closest level a file and a table stand level with the step that reads or made it,
+// and an execution runs the height of the steps. Rows are taken in the order the chat came to the
+// workflows, so a new one never moves what is drawn; the models, under the data, go down as data
+// comes. Arrows have at most one rounded elbow.
 
-import { type GraphView, type Level, type RunItem, SOMEWHERE, type WorkItem } from "./model";
+import { type GraphView, type Level, namedBy, type RunItem, type WorkItem } from "./model";
 
 export interface Box {
   x: number;
@@ -28,58 +27,37 @@ export interface Arrow {
   key: string;
   from: string;
   to: string;
-  relation: "reads" | "makes";
+  relation: "reads" | "uses" | "runs" | "makes";
   planned: boolean;
   path: string;
   tip: string;
-  label?: { x: number; y: number; anchor: "start" | "end"; text: string };
-}
-
-/** A dotted tie: a run to its workflow (tether), or the runs of a lane to its unit (rail). */
-export interface Tie {
-  key: string;
-  kind: "tether" | "rail";
-  /** What it joins: it lights up when all of these do. */
-  ends: string[];
-  path: string;
-}
-
-/** A unit's lane in a computation column: its runs stand in it, the unit at its foot. */
-export interface Lane {
-  unit: string;
-  rank: number;
-  /** The middle of the lane. */
-  x: number;
-  top: number;
-  foot: Box;
 }
 
 export interface Column {
-  rank: number;
+  key: string;
   x: number;
-  label: "Data" | "Computation" | "Results";
+  y: number;
+  label: "Data" | "Model" | "Workflow" | "Execution" | "Result";
   count: number;
 }
 
 export interface Layout {
   places: Map<string, Box>;
-  lanes: Lane[];
-  ties: Tie[];
   arrows: Arrow[];
   columns: Column[];
   width: number;
   height: number;
 }
 
-/** The measured id of a unit's foot. */
-export const footId = (unit: string) => `foot:${unit}`;
-
 /** How a level spaces things, in ems of its own type. */
-const SPACING: Record<Level, { gap: number; row: number; track: number; tether: number; lane: number }> = {
-  overview: { gap: 4.4, row: 0.7, track: 1.2, tether: 1.8, lane: 1.2 },
-  standard: { gap: 4.4, row: 0.9, track: 1.6, tether: 2.4, lane: 1.6 },
-  detail: { gap: 4, row: 0.9, track: 1.6, tether: 2.4, lane: 1.6 },
+const SPACING: Record<Level, { gap: number; row: number; track: number; stack: number }> = {
+  overview: { gap: 3.4, row: 0.7, track: 1.2, stack: 0.6 },
+  standard: { gap: 3.4, row: 0.9, track: 1.6, stack: 0.7 },
+  detail: { gap: 3.2, row: 0.9, track: 1.6, stack: 0.5 },
 };
+
+/** How far down the column's heading things start, in ems. */
+const HEADING = 2.6;
 
 /** Lays out a graph's view with what was measured; `em` is the level's type size in drawing units. */
 export function layOut(view: GraphView, m: Measured, level: Level, em: number): Layout {
@@ -87,77 +65,58 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
   const gap = s.gap * em;
   const rowGap = s.row * em;
   const trackGap = s.track * em;
-  const laneGap = s.lane * em;
-  const tether = s.tether * em;
-  const top0 = 2.6 * em;
+  const stackGap = s.stack * em;
+  const top0 = HEADING * em;
   const places = new Map<string, Box>();
   const sizeOf = (id: string) => m.size(id) ?? { w: 0, h: 0 };
   const rankOf = (id: string) => view.rank.get(id) ?? 0;
   const boxesOf = (w: WorkItem) => w.runs.map(id => view.runs.get(id)).filter((b): b is RunItem => !!b);
+  const widest = (ids: string[]) => Math.max(0, ...ids.map(id => sizeOf(id).w));
 
-  // The lanes of each computation column: units in the order its workflows' runs first stood on
-  // them; units nothing ran on in the first; the lane of runs whose unit is not known last.
-  const lanesIn = new Map<number, string[]>();
-  for (const w of view.works) {
-    const r = rankOf(w.id);
-    const lanes = lanesIn.get(r) ?? [];
-    for (const b of boxesOf(w)) if (!lanes.includes(b.unit)) lanes.push(b.unit);
-    lanesIn.set(r, lanes);
-  }
-  if (view.idle.length) lanesIn.set(1, [...(lanesIn.get(1) ?? []), ...view.idle]);
-  for (const lanes of lanesIn.values()) {
-    const i = lanes.indexOf(SOMEWHERE);
-    if (i >= 0) lanes.push(...lanes.splice(i, 1));
-  }
+  const dataIn = new Map<number, string[]>();
+  for (const id of view.data.keys()) dataIn.set(rankOf(id), [...(dataIn.get(rankOf(id)) ?? []), id]);
+  const models = view.models.map(n => n.uri);
+  const worksIn = (r: number) => view.works.filter(w => rankOf(w.id) === r);
+  const runsIn = (r: number) => [...view.runs.values()].filter(b => rankOf(b.id) === r);
+  const maxRank = Math.max(
+    view.idle.length ? 1 : 0,
+    ...dataIn.keys(),
+    ...view.works.map(w => rankOf(w.id)),
+    ...[...view.runs.values()].map(b => rankOf(b.id))
+  );
 
-  // Columns: data as wide as its widest thing; computation as wide as its cards and its lanes.
-  const inRank = new Map<number, string[]>();
-  const add = (id: string) => {
-    const r = rankOf(id);
-    inRank.set(r, [...(inRank.get(r) ?? []), id]);
-  };
-  for (const id of view.data.keys()) add(id);
-  for (const w of view.works) add(w.id);
-  const maxRank = Math.max(0, ...inRank.keys(), ...lanesIn.keys());
-  const laneWidth = new Map<number, number>();
-  const cardWidth = new Map<number, number>();
-  const widthOf = (r: number) => {
-    if (r % 2 === 0) return Math.max(0, ...(inRank.get(r) ?? []).map(id => sizeOf(id).w));
-    const card = Math.max(0, ...view.works.filter(w => rankOf(w.id) === r).map(w => sizeOf(w.id).w));
-    const lanes = lanesIn.get(r) ?? [];
-    const runsHere = [...view.runs.values()].filter(b => rankOf(b.id) === r);
-    const lane = Math.max(0, ...lanes.map(u => sizeOf(footId(u)).w), ...runsHere.map(b => sizeOf(b.id).w));
-    cardWidth.set(r, card);
-    laneWidth.set(r, lane);
-    return lanes.length ? card + tether + lanes.length * lane + (lanes.length - 1) * laneGap : card;
-  };
-  const colX: number[] = [];
-  const colW: number[] = [];
+  // Across: a data column for an even rank; for an odd one a column of workflows, then one of executions.
+  const dataX: number[] = [];
+  const dataW: number[] = [];
+  const workX: number[] = [];
+  const execX: number[] = [];
   for (let r = 0, x = 0; r <= maxRank; r++) {
-    const w = widthOf(r);
-    colX[r] = x;
-    colW[r] = w;
-    x += w + (w > 0 ? gap : 0);
+    if (r % 2 === 0) {
+      const w = widest([...(dataIn.get(r) ?? []), ...(r === 0 ? models : [])]);
+      dataX[r] = x;
+      dataW[r] = w;
+      x += w + (w > 0 ? gap : 0);
+    } else {
+      workX[r] = x;
+      const card = widest(worksIn(r).map(w => w.id));
+      x += card + (card > 0 ? gap : 0);
+      execX[r] = x;
+      const run = widest([...runsIn(r).map(b => b.id), ...(r === 1 ? view.idle : [])]);
+      x += run + (run > 0 ? gap : 0);
+    }
   }
-  const laneX = (r: number, unit: string) => {
-    const i = (lanesIn.get(r) ?? []).indexOf(unit);
-    const lane = laneWidth.get(r) ?? 0;
-    return (colX[r] as number) + (cardWidth.get(r) ?? 0) + tether + i * (lane + laneGap) + lane / 2;
-  };
+  const at = (xs: number[], r: number) => xs[r] as number;
+
   const bottoms = new Map<number, number>();
   const bottom = (r: number) => bottoms.get(r) ?? top0;
   const raise = (r: number, y: number) => bottoms.set(r, Math.max(bottom(r), y));
 
-  // A workflow's head: where its arrows and ties meet it when nothing finer is known.
+  // A workflow's head: where its arrows meet it when nothing finer is known.
   const headOf = (w: WorkItem) => Math.min(sizeOf(w.id).h / 2, 1.6 * em);
-  const ties: Tie[] = [];
-  const firstOnLane = new Map<string, number>();
   for (const w of view.works) {
     const r = rankOf(w.id);
     const size = sizeOf(w.id);
-    const boxes = boxesOf(w).sort(
-      (a, b) => (lanesIn.get(r) ?? []).indexOf(a.unit) - (lanesIn.get(r) ?? []).indexOf(b.unit)
-    );
+    const boxes = boxesOf(w);
     const inputs = w.reads
       .map(x => x.data)
       .filter((id, i, all) => all.indexOf(id) === i && !places.has(id) && rankOf(id) === r - 1);
@@ -169,31 +128,20 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
     if (results.length) top = Math.max(top, bottom(r + 1));
     const first = placedInputs[0];
     if (first) top = Math.max(top, first.y + first.h / 2 - headOf(w));
-    places.set(w.id, { x: colX[r] as number, y: top, w: size.w, h: size.h });
+    places.set(w.id, { x: at(workX, r), y: top, w: size.w, h: size.h });
     const head = top + headOf(w);
     let end = top + size.h;
 
-    // Its runs, each in its unit's lane: level with its head, one under another; at the closest
-    // level each runs the height of the steps, shared when it ran on more than one unit.
+    // Its executions, one under another from its top; at the closest level they share the height of the steps.
     const span = { from: top + 0.35 * em, to: top + size.h - 0.35 * em };
-    const share = boxes.length ? (span.to - span.from - (boxes.length - 1) * 0.5 * em) / boxes.length : 0;
-    for (const [i, b] of boxes.entries()) {
+    const share = boxes.length ? (span.to - span.from - (boxes.length - 1) * stackGap) / boxes.length : 0;
+    let next = level === "detail" ? span.from : top;
+    for (const b of boxes) {
       const bs = sizeOf(b.id);
-      const x = laneX(r, b.unit) - bs.w / 2;
-      const box =
-        level === "detail"
-          ? { x, y: span.from + i * (share + 0.5 * em), w: bs.w, h: Math.max(bs.h, share) }
-          : { x, y: head - bs.h / 2 + i * (bs.h + 0.7 * em), w: bs.w, h: bs.h };
+      const box = { x: at(execX, r), y: next, w: bs.w, h: level === "detail" ? Math.max(bs.h, share) : bs.h };
       places.set(b.id, box);
-      const cy = level === "detail" ? box.y + Math.min(box.h / 2, 1.25 * em) : box.y + box.h / 2;
-      ties.push({
-        key: `tether:${b.id}`,
-        kind: "tether",
-        ends: [w.id, b.id],
-        path: line((colX[r] as number) + size.w, cy, box.x, cy),
-      });
-      if (!firstOnLane.has(`${r}|${b.unit}`)) firstOnLane.set(`${r}|${b.unit}`, cy);
-      end = Math.max(end, box.y + box.h + (b.planned && b.runs.length && level !== "detail" ? 1.6 * em : 0));
+      next = box.y + box.h + stackGap;
+      end = Math.max(end, box.y + box.h);
     }
 
     // What it reads, level with it on the left, right-aligned against the gap.
@@ -203,14 +151,14 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
       const read = w.reads.find(x => x.data === id);
       const step = read?.steps[0];
       const file = read?.files[0];
-      const at = level === "detail" && step && file ? m.row(w.id, step) : undefined;
+      const stepAt = level === "detail" && step && file ? m.row(w.id, step) : undefined;
       const fileAt = level === "detail" && file ? m.row(id, `file:${file}`) : undefined;
-      const want = at !== undefined && fileAt !== undefined ? top + at - fileAt : head - d.h / 2;
+      const want = stepAt !== undefined && fileAt !== undefined ? top + stepAt - fileAt : head - d.h / 2;
       const y = Math.max(iy, want);
-      places.set(id, { x: (colX[r - 1] as number) + (colW[r - 1] as number) - d.w, y, w: d.w, h: d.h });
+      places.set(id, { x: at(dataX, r - 1) + at(dataW, r - 1) - d.w, y, w: d.w, h: d.h });
       iy = y + d.h + rowGap;
     }
-    // What its runs made, level with them on the right; at the closest level, level with its step.
+    // What each execution made, level with it on the right; at the closest level, level with its step.
     let ry = Math.max(bottom(r + 1), top);
     for (const b of boxes) {
       const bb = places.get(b.id) as Box;
@@ -218,10 +166,10 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
         if (places.has(id)) continue;
         const d = sizeOf(id);
         const step = view.nodes.get(id)?.step;
-        const at = level === "detail" && step ? m.row(w.id, step) : undefined;
-        const want = at !== undefined ? top + at - d.h / 2 : j === 0 ? bb.y + bb.h / 2 - d.h / 2 : ry;
+        const stepAt = level === "detail" && step ? m.row(w.id, step) : undefined;
+        const want = stepAt !== undefined ? top + stepAt - d.h / 2 : j === 0 ? bb.y : ry;
         const y = Math.max(ry, want);
-        places.set(id, { x: colX[r + 1] as number, y, w: d.w, h: d.h });
+        places.set(id, { x: at(dataX, r + 1), y, w: d.w, h: d.h });
         ry = y + d.h + rowGap;
       }
     }
@@ -238,7 +186,7 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
     const d = sizeOf(id);
     const y = bottom(r);
     places.set(id, {
-      x: r === 0 ? (colX[0] as number) + (colW[0] as number) - d.w : (colX[r] as number),
+      x: r === 0 ? at(dataX, 0) + at(dataW, 0) - d.w : at(dataX, r),
       y,
       w: d.w,
       h: d.h,
@@ -246,101 +194,81 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
     raise(r, y + d.h + rowGap);
   }
 
-  // Each lane's unit at its foot, all of a column's on one line under its last row; the rail
-  // from the lane's first run down to it.
-  const lanes: Lane[] = [];
-  for (const [r, units] of lanesIn) {
-    const footTop = bottom(r) + 0.4 * em;
-    for (const unit of units) {
-      const f = sizeOf(footId(unit));
-      const x = laneX(r, unit);
-      const foot = { x: x - f.w / 2, y: footTop, w: f.w, h: f.h };
-      const from = firstOnLane.get(`${r}|${unit}`);
-      lanes.push({ unit, rank: r, x, top: from ?? footTop, foot });
-      if (from !== undefined)
-        ties.push({
-          key: `rail:${r}|${unit}`,
-          kind: "rail",
-          ends: [unit],
-          path: `M${round(x)},${round(from)}V${round(footTop)}`,
-        });
-      raise(r, footTop + f.h + trackGap);
-    }
+  // The models, under all the data of the first column.
+  const dataOfFirst = (dataIn.get(0) ?? []).map(id => places.get(id)).filter((b): b is Box => !!b);
+  const modelHeading = dataOfFirst.length ? Math.max(...dataOfFirst.map(b => b.y + b.h)) + 1.4 * em : 0;
+  let my = modelHeading + top0;
+  for (const id of models) {
+    const d = sizeOf(id);
+    places.set(id, { x: at(dataX, 0) + at(dataW, 0) - d.w, y: my, w: d.w, h: d.h });
+    my += d.h + rowGap;
   }
 
-  const arrows = arrowsOf(view, places, m, level, em);
+  // Units nothing has run on, on their own under the executions.
+  for (const id of view.idle) {
+    const d = sizeOf(id);
+    const y = bottom(1);
+    places.set(id, { x: at(execX, 1), y, w: d.w, h: d.h });
+    raise(1, y + d.h + rowGap);
+  }
+
   const columns: Column[] = [];
   for (let r = 0; r <= maxRank; r++) {
-    const count = (inRank.get(r) ?? []).length;
-    if (!count && !lanesIn.get(r)?.length) continue;
-    columns.push({
-      rank: r,
-      x: colX[r] as number,
-      label: r === 0 ? "Data" : r % 2 === 1 ? "Computation" : "Results",
-      count,
-    });
+    if (r % 2 === 0) {
+      const count = (dataIn.get(r) ?? []).length;
+      if (count)
+        columns.push({ key: `${r}:data`, x: at(dataX, r), y: 0, label: r === 0 ? "Data" : "Result", count });
+      if (r === 0 && models.length)
+        columns.push({ key: "0:model", x: at(dataX, 0), y: modelHeading, label: "Model", count: models.length });
+    } else {
+      const works = worksIn(r).length;
+      if (works) columns.push({ key: `${r}:work`, x: at(workX, r), y: 0, label: "Workflow", count: works });
+      const runs = runsIn(r).length + (r === 1 ? view.idle.length : 0);
+      if (runs) columns.push({ key: `${r}:exec`, x: at(execX, r), y: 0, label: "Execution", count: runs });
+    }
   }
   let width = 0;
   let height = 0;
-  for (const b of [...places.values(), ...lanes.map(l => l.foot)]) {
+  for (const b of places.values()) {
     width = Math.max(width, b.x + b.w);
     height = Math.max(height, b.y + b.h);
   }
-  return { places, lanes, ties, arrows, columns, width, height };
+  return { places, arrows: arrowsOf(view, places, m, level, em), columns, width, height };
 }
 
-/** The arrows: data each workflow reads, tables its runs made. Labels where they do not collide. */
+/** The arrows, left to right: what a workflow reads and uses, its executions, the tables they made. */
 function arrowsOf(view: GraphView, places: Map<string, Box>, m: Measured, level: Level, em: number): Arrow[] {
   const arrows: Arrow[] = [];
-  const labels: Box[] = [];
-  const labelled = new Set<string>();
+  const rankOf = (id: string) => view.rank.get(id) ?? 0;
   const inside = (y: number, b: Box, margin = 1.1 * em) =>
     Math.min(Math.max(y, b.y + Math.min(margin, b.h / 2)), b.y + b.h - Math.min(margin, b.h / 2));
   const push = (
-    key: string,
+    relation: Arrow["relation"],
     from: string,
     to: string,
-    relation: "reads" | "makes",
     planned: boolean,
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number
+    ends: { x1: number; y1: number; x2: number; y2: number },
+    options: { key?: string; late?: boolean } = {}
   ) => {
+    const { x1, y1, x2, y2 } = ends;
     const head = 0.5 * em;
     const end = x2 - head * 0.85;
-    // A table's arrow turns just before the table, past every lane it crosses.
-    const turn = relation === "makes" ? end - 1.6 * em : undefined;
     arrows.push({
-      key,
+      key: options.key ?? `${from}>${to}`,
       from,
       to,
       relation,
       planned,
-      path: elbow(x1, y1, end, y2, em, turn),
+      // An arrow that passes other columns turns just before its end, past all it crosses.
+      path: elbow(x1, y1, end, y2, em, options.late ? end - 1.6 * em : undefined),
       tip: `${x2},${y2} ${x2 - head},${y2 - head * 0.52} ${x2 - head},${y2 + head * 0.52}`,
     });
-    if (level === "overview" || labelled.has(`${from}>${to}`)) return;
-    const width = relation.length * 0.45 * em;
-    const label =
-      relation === "reads"
-        ? { x: x1 + 0.55 * em, y: y1 - 0.42 * em, anchor: "start" as const }
-        : { x: end - 0.35 * em, y: y2 - 0.42 * em, anchor: "end" as const };
-    const box = {
-      x: label.anchor === "start" ? label.x : label.x - width,
-      y: label.y - 0.9 * em,
-      w: width,
-      h: 0.9 * em,
-    };
-    if (labels.some(b => b.x < box.x + box.w && box.x < b.x + b.w && b.y < box.y + box.h && box.y < b.y + b.h)) return;
-    labels.push(box);
-    labelled.add(`${from}>${to}`);
-    (arrows.at(-1) as Arrow).label = { ...label, text: relation };
   };
   for (const w of view.works) {
     const card = places.get(w.id);
     if (!card) continue;
     const plannedWork = !!w.planned;
+    const r = rankOf(w.id);
     for (const read of w.reads) {
       const d = places.get(read.data);
       if (!d) continue;
@@ -353,22 +281,50 @@ function arrowsOf(view: GraphView, places: Map<string, Box>, m: Measured, level:
         const sy = step !== undefined ? m.row(w.id, step) : undefined;
         const y1 = fy !== undefined ? d.y + fy : d.y + d.h / 2;
         const y2 = sy !== undefined ? card.y + sy : inside(y1, card);
-        push(`${read.data}>${w.id}>${step ?? ""}`, read.data, w.id, "reads", plannedWork, d.x + d.w, y1, card.x, y2);
+        push(
+          "reads",
+          read.data,
+          w.id,
+          plannedWork,
+          { x1: d.x + d.w, y1, x2: card.x, y2 },
+          { key: `${read.data}>${w.id}>${step ?? ""}`, late: r - rankOf(read.data) > 1 }
+        );
       }
     }
+    for (const model of w.models) {
+      const b = places.get(model);
+      if (!b) continue;
+      const y1 = b.y + b.h / 2;
+      const step = level === "detail" ? w.steps.find(s => namedBy(s).some(n => n.base === model)) : undefined;
+      const sy = step ? m.row(w.id, step.id) : undefined;
+      const y2 = sy !== undefined ? card.y + sy : inside(y1, card);
+      push("uses", model, w.id, plannedWork, { x1: b.x + b.w, y1, x2: card.x, y2 }, { late: r > 1 });
+    }
+    // One line out of the workflow to each execution; straight to the first, which stands level with it.
+    const runY = (b: Box) => b.y + Math.min(b.h / 2, 1.2 * em);
+    const firstRun = w.runs.map(id => places.get(id)).find((b): b is Box => !!b);
+    const out = firstRun ? inside(runY(firstRun), card) : 0;
     for (const id of w.runs) {
       const box = view.runs.get(id);
       const b = places.get(id);
       if (!box || !b) continue;
+      push("runs", w.id, id, plannedWork || !box.run, { x1: card.x + card.w, y1: out, x2: b.x, y2: runY(b) });
       for (const t of box.results) {
-        const r = places.get(t);
-        if (!r) continue;
+        const table = places.get(t);
+        if (!table) continue;
         const item = view.data.get(t);
-        // A dataset the plan will make is drawn from its workflow's run only when the same plan made or will make that workflow.
+        // A dataset the plan will make is drawn from its workflow's execution only when the same plan made or will make that workflow.
         if (item?.planned && !(plannedWork || (w.node?.turn && w.node.turn === item.planned.turn))) continue;
-        const y2 = r.y + r.h / 2;
-        const y1 = level === "detail" ? inside(y2, b, 0.9 * em) : b.y + b.h / 2;
-        push(`${id}>${t}`, id, t, "makes", plannedWork || !!item?.planned || !box.runs.length, b.x + b.w, y1, r.x, y2);
+        const y2 = table.y + table.h / 2;
+        const y1 = inside(y2, b, 0.6 * em);
+        push(
+          "makes",
+          id,
+          t,
+          plannedWork || !!item?.planned || !box.run,
+          { x1: b.x + b.w, y1, x2: table.x, y2 },
+          { late: true }
+        );
       }
     }
   }
@@ -376,11 +332,6 @@ function arrowsOf(view: GraphView, places: Map<string, Box>, m: Measured, level:
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;
-
-/** A straight line from one point to another. */
-function line(x1: number, y1: number, x2: number, y2: number): string {
-  return `M${round(x1)},${round(y1)}L${round(x2)},${round(y2)}`;
-}
 
 /** A path from one point to another: straight when level, else with one rounded elbow, midway or at `xm`. */
 export function elbow(x1: number, y1: number, x2: number, y2: number, em: number, at?: number): string {

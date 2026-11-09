@@ -80,6 +80,9 @@ services:
       OPENFGA_DATASTORE_URI: postgres://texera:texera@postgres:5432/openfga?sslmode=disable
       OPENFGA_LOG_FORMAT: json
       OPENFGA_PLAYGROUND_ENABLED: "false"
+      # The lake asks if a unit may list warehouses by walking every namespace and table for it,
+      # and every Python worker asks as it starts: past the default 3 s on a warehouse with history.
+      OPENFGA_REQUEST_TIMEOUT: 30s
     depends_on:
       openfga-migrate:
         condition: service_completed_successfully

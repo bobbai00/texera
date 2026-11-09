@@ -1,5 +1,6 @@
 import { ResourceHeader, usePanelStack } from "@texera/ui";
-import type { ReactNode } from "react";
+import { Pencil } from "lucide-react";
+import { type ReactNode, useRef } from "react";
 import { KINDS } from "../registry";
 import type { ResourceRef } from "../types";
 import { useViewHost } from "./host";
@@ -66,34 +67,64 @@ export function EditableName({
   disabled?: boolean;
   label: string;
 }) {
+  const input = useRef<HTMLInputElement>(null);
+  const sizer = useRef<HTMLSpanElement>(null);
   return (
-    <input
-      aria-label={label}
-      key={value}
-      defaultValue={value}
-      disabled={disabled}
-      onBlur={e => {
-        const input = e.currentTarget;
-        const next = input.value.trim();
-        if (!next || next === value) {
-          input.value = value;
-          return;
-        }
-        const saving = onChange(next);
-        if (saving instanceof Promise)
-          saving.catch(() => {
-            input.value = value;
-          });
-      }}
-      onKeyDown={e => {
-        if (e.key === "Enter") e.currentTarget.blur();
-        if (e.key === "Escape") {
-          e.currentTarget.value = value;
-          e.currentTarget.blur();
-        }
-      }}
-      className="block w-full truncate rounded bg-transparent text-sm font-semibold outline-none focus:bg-accent/50 disabled:opacity-100"
-      data-resource-name
-    />
+    <span className="group/name flex max-w-full min-w-0 items-center gap-1">
+      {/* The name's own width, so the pencil stands right after it. */}
+      <span className="inline-grid min-w-0">
+        <span ref={sizer} aria-hidden className="invisible col-start-1 row-start-1 overflow-hidden text-sm font-semibold whitespace-pre">
+          {value}
+        </span>
+        <input
+          ref={input}
+          aria-label={label}
+          key={value}
+          defaultValue={value}
+          disabled={disabled}
+          onInput={e => {
+            if (sizer.current) sizer.current.textContent = e.currentTarget.value;
+          }}
+          onBlur={e => {
+            const field = e.currentTarget;
+            const next = field.value.trim();
+            if (!next || next === value) {
+              field.value = value;
+              if (sizer.current) sizer.current.textContent = value;
+              return;
+            }
+            const saving = onChange(next);
+            if (saving instanceof Promise)
+              saving.catch(() => {
+                field.value = value;
+                if (sizer.current) sizer.current.textContent = value;
+              });
+          }}
+          onKeyDown={e => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") {
+              e.currentTarget.value = value;
+              e.currentTarget.blur();
+            }
+          }}
+          className="col-start-1 row-start-1 block w-full min-w-8 truncate rounded bg-transparent text-sm font-semibold outline-none focus:bg-accent/50 disabled:opacity-100"
+          data-resource-name
+        />
+      </span>
+      {!disabled && (
+        <button
+          type="button"
+          aria-label="Rename"
+          title="Rename"
+          onClick={() => {
+            input.current?.focus();
+            input.current?.select();
+          }}
+          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/name:opacity-100 hover:text-foreground focus-visible:opacity-100"
+          data-rename-name>
+          <Pencil className="size-3.5" />
+        </button>
+      )}
+    </span>
   );
 }

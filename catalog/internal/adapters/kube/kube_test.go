@@ -182,3 +182,26 @@ func TestOffersSaysWhatTheClusterCannotStart(t *testing.T) {
 		t.Fatalf("two GPUs: %v", err)
 	}
 }
+
+// Room is what is free now: what the pods on a node reserved does not count, a finished pod or one
+// no node took reserves nothing.
+func TestOffersCountsWhatIsAlreadyRunning(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+		corev1.ResourceCPU: resource.MustParse("16"), corev1.ResourceMemory: resource.MustParse("16Gi")}}}
+	pod := func(name, on, memory string, phase corev1.PodPhase) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "texera2"}, Spec: corev1.PodSpec{NodeName: on, Containers: []corev1.Container{{
+			Name: "c", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(memory)}}}}},
+			Status: corev1.PodStatus{Phase: phase}}
+	}
+	unit := func(cpu, memory string) api.ComputingUnitSpec {
+		return api.ComputingUnitSpec{Provider: api.UnitProviderKubernetes, ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Cpu: &cpu, Memory: &memory}}}
+	}
+	busy := NewWithClient(fake.NewSimpleClientset(node, pod("running", "a", "10Gi", corev1.PodRunning), pod("done", "a", "8Gi", corev1.PodSucceeded), pod("waiting", "", "8Gi", corev1.PodPending)), Options{Namespace: "texera2"})
+	if err := busy.Offers(ctx, unit("2", "4Gi")); err != nil {
+		t.Fatalf("a unit that fits in what is free: %v", err)
+	}
+	if err := busy.Offers(ctx, unit("4", "8Gi")); err == nil || err.Error() != "asks for 8Gi of memory; the most free on any node is 6.0Gi" {
+		t.Fatalf("more than is free, less than the node: %v", err)
+	}
+}

@@ -4,7 +4,7 @@ import { resourceByUriQuery } from "../queries";
 import { versionOf } from "../uri";
 
 /** A resource's name, and the version its URI pins: `python-default v1`; empty without a URI. */
-function useNamed(uri: string | undefined): string {
+export function useNamed(uri: string | undefined): string {
   const { data } = useQuery({ ...resourceByUriQuery(uri ?? ""), enabled: !!uri });
   if (!uri) return "";
   const vno = versionOf(uri);

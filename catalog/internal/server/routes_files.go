@@ -90,6 +90,24 @@ func (s *Server) routeFiles() {
 			writeJSON(w, http.StatusOK, f)
 			return nil
 		})
+		if k.Name == "dataset" {
+			s.handle("POST "+base+"/keep", func(w http.ResponseWriter, r *http.Request) error {
+				rid, err := ridParam(r, "rid")
+				if err != nil {
+					return err
+				}
+				var body api.KeepAttachment
+				if err := decode(r, &body); err != nil {
+					return err
+				}
+				res, err := s.svc.KeepAttachment(ctxOf(r), callerOf(r), k, rid, body)
+				if err != nil {
+					return err
+				}
+				writeJSON(w, http.StatusOK, catalog.Envelope(res))
+				return nil
+			})
+		}
 		s.handle("POST "+base+"/commit", func(w http.ResponseWriter, r *http.Request) error {
 			rid, err := ridParam(r, "rid")
 			if err != nil {

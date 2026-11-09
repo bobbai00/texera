@@ -233,7 +233,7 @@ export type ChatVersion = {
 export type CommitFiles = {
     message?: string;
     /**
-     * For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract.
+     * For a model, the new version's contract; absent, a contract.json among the staged files says it, else the head version's carries over. A model version may change only its contract.
      */
     contract?: ModelContract;
 };
@@ -1123,6 +1123,18 @@ export type GraphNode = {
      * For a table a run made, its rows.
      */
     rows?: number;
+    /**
+     * For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.
+     */
+    cpu?: string;
+    /**
+     * For a unit, the memory of its main node, as Kubernetes counts it.
+     */
+    memory?: string;
+    /**
+     * For a unit, the GPUs of its main node.
+     */
+    gpu?: number;
 };
 
 /**
@@ -1210,6 +1222,20 @@ export type JsonPatchOperation = {
     path: string;
     from?: string;
     value?: unknown;
+};
+
+/**
+ * A file attached to a chat, kept as a dataset of the chat's project.
+ */
+export type KeepAttachment = {
+    /**
+     * What to call the dataset; absent, it keeps the file's name.
+     */
+    name?: string;
+    /**
+     * What it holds and where it comes from.
+     */
+    description?: string;
 };
 
 export type Lease = {
@@ -4316,6 +4342,33 @@ export type DatasetsImportFileResponses = {
 };
 
 export type DatasetsImportFileResponse = DatasetsImportFileResponses[keyof DatasetsImportFileResponses];
+
+export type DatasetsKeepData = {
+    body: KeepAttachment;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/datasets/{rid}/keep';
+};
+
+export type DatasetsKeepErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type DatasetsKeepError = DatasetsKeepErrors[keyof DatasetsKeepErrors];
+
+export type DatasetsKeepResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Dataset;
+};
+
+export type DatasetsKeepResponse = DatasetsKeepResponses[keyof DatasetsKeepResponses];
 
 export type DatasetsStagedData = {
     body?: never;

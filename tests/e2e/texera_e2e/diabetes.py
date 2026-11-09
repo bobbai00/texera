@@ -1,11 +1,11 @@
-"""The diabetes team the screening use case meets: a project holding the team's onset-risk model,
-fitted on the public Pima cohort the way the example's prepare.py fits it, and two of the team's
-Python operators from the example, ROC AUC and Risk calibration. The model is fitted here with
-this Python's scikit-learn, the version the platform's profiles pin."""
+"""The diabetes team the demo meets: a project holding the team's onset-risk model, fitted on the
+public Pima cohort the way the example's prepare.py fits it, and two of the team's Python operators
+from the example, ROC AUC and Risk calibration; and the cohort as a file attached to a chat. The
+model is fitted here with this Python's scikit-learn, the version the platform's profiles pin."""
 from __future__ import annotations
 
-import hashlib
 import io
+import json
 import pathlib
 import urllib.request
 
@@ -52,10 +52,6 @@ def pima_bytes() -> bytes:
     return _bytes[PIMA_URL]
 
 
-def pima_digest() -> str:
-    return "sha256:" + hashlib.sha256(pima_bytes()).hexdigest()
-
-
 def onset_model(api: Api, project: str) -> str:
     """The team's onset-risk model, version 1 with its contract and its card; returns its URI."""
     cohort = pd.read_csv(io.BytesIO(pima_bytes()))
@@ -76,14 +72,13 @@ def onset_model(api: Api, project: str) -> str:
     api.upload(f"/models/{rid}/files/model.joblib", blob.getvalue(), content_type="application/octet-stream")
     api.upload(f"/models/{rid}/files/README.md", CARD.format(sklearn=sklearn.__version__, n=len(cohort), url=PIMA_URL, auc=auc).encode(),
                content_type="text/markdown")
-    api.post(f"/models/{rid}/commit", {
-        "message": f"Fitted on the Pima cohort (scikit-learn {sklearn.__version__})",
-        "contract": {
-            "framework": "sklearn", "entry": "model.joblib",
-            "inputs": [{"attributeName": n, "attributeType": t} for n, t in FEATURES],
-            "outputs": [{"attributeName": "predicted", "attributeType": "long"}, {"attributeName": "risk", "attributeType": "double"}],
-        },
-    })
+    contract = {
+        "framework": "sklearn", "entry": "model.joblib",
+        "inputs": [{"attributeName": n, "attributeType": t} for n, t in FEATURES],
+        "outputs": [{"attributeName": "predicted", "attributeType": "long"}, {"attributeName": "risk", "attributeType": "double"}],
+    }
+    api.upload(f"/models/{rid}/files/contract.json", json.dumps(contract).encode(), content_type="application/json")
+    api.post(f"/models/{rid}/commit", {"message": f"Fitted on the Pima cohort (scikit-learn {sklearn.__version__})"})
     return made["metadata"]["uri"]
 
 
@@ -96,34 +91,20 @@ def team_operator(api: Api, project: str, function: str, name: str) -> str:
     return made["metadata"]["uri"]
 
 
+def attach_cohort(api: Api, project: str, conversation: str) -> tuple[str, str]:
+    """The public cohort as a file attached to a chat, as the chat's attach button makes one:
+    its URI at the version, and its name."""
+    made = api.create("datasets", "diabetes.csv", {}, project=project, labels={"texera.attachment": conversation})
+    rid = made["metadata"]["rid"]
+    api.upload(f"/datasets/{rid}/files/diabetes.csv", pima_bytes(), content_type="text/csv")
+    version = api.post(f"/datasets/{rid}/commit", {"message": "Attached"})
+    return f"{made['metadata']['uri']}@{version['vno']}", "diabetes.csv"
+
+
 def team(api: Api, project: str) -> dict[str, str]:
-    """The team's project as the use case finds it: the model and the two operators."""
+    """The team's project as the demo finds it: the model and the two operators."""
     return {
         "model": onset_model(api, project),
         "roc_auc": team_operator(api, project, "roc_auc", "ROC AUC"),
         "calibration": team_operator(api, project, "calibration", "Risk calibration"),
     }
-
-
-def main() -> None:
-    """The team's project for a test in another language, the app's Playwright test:
-    `python -m texera_e2e.diabetes --gw URL --name NAME` makes the project as the user and
-    prints {project, name, model, roc_auc, calibration} as JSON."""
-    import argparse
-    import json
-
-    from .client import token
-
-    ap = argparse.ArgumentParser(description=main.__doc__)
-    ap.add_argument("--gw", required=True)
-    ap.add_argument("--user", default="alice")
-    ap.add_argument("--password", default="alice")
-    ap.add_argument("--name", required=True)
-    args = ap.parse_args()
-    api = Api(args.gw.rstrip("/"), token(args.gw.rstrip("/"), args.user, args.password))
-    project = api.post("/projects", {"name": args.name, "spec": {}})["metadata"]["rid"]
-    print(json.dumps({"project": project, "name": args.name, **team(api, project)}))
-
-
-if __name__ == "__main__":
-    main()

@@ -29,6 +29,13 @@ export async function signIn(page: Page, user = USER, password = PASSWORD) {
   await expect(page.locator("[data-new-chat]")).toBeVisible();
 }
 
+/** Goes to a page under Configure in the sidebar, a group folded until it is asked for. */
+export async function toConfigure(page: Page, kind: string) {
+  const link = page.locator(`[data-library-link="${kind}"]`);
+  if (!(await link.isVisible())) await page.locator('[data-library-group="Configure"]').click();
+  await link.click();
+}
+
 export const AGENT = "Texera Agent";
 
 export async function say(page: Page, text: string) {

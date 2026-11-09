@@ -16,15 +16,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""A scientist new to the diabetes team asks the Texera Agent what the team has, what it can do
-with it, and then does it: six questions in one chat in the project load.py made, as bob, the
-last of them reading the literature as well as the data. Each turn prints the tools the agent
-called and its answer; at the end, what the chat's graph holds and the outside sources it
-consulted. The transcript is written as JSON.
+"""The README's demo without a browser: attaches the screening cohort to a new chat in the project
+load.py made, then says what the demo says, answering the agent's question about where to run
+with the team's unit. Each turn prints the tools the agent called and its answer; at the end, what
+the chat's graph holds and the outside sources it consulted. The transcript is written as JSON.
 
-    python scenario.py                      # all six questions, against http://localhost:8088
-    python scenario.py --ask 3 5            # only some of them, in a new chat
-    python scenario.py --transcript out.json
+    python scenario.py --data ~/texera-diabetes                       # against http://localhost:8088
+    python scenario.py --data ~/texera-diabetes --gw http://localhost:28088
 
 It needs the platform's model key on the stack. Only the standard library is used.
 """
@@ -36,18 +34,15 @@ import urllib.parse
 import urllib.request
 import uuid
 
-QUESTIONS = [
-    "I just joined the diabetes team. What does our project have (data, models and tools), and what is each for?",
-    "What could we learn by putting these together? Suggest three analyses we could run today.",
-    "Let's check our diabetes onset-risk model the honest way: on the women it was never fitted on, how well does it "
-    "separate those who developed diabetes from those who did not, and is its predicted risk calibrated?",
-    "In the hospital data, is measuring HbA1c associated with fewer readmissions within 30 days? Break it down by "
-    "primary diagnosis, and leave out encounters that ended in death or hospice.",
-    "For the adolescents with type 1 diabetes, compute the standard CGM metrics for each participant, check them "
-    "against what the study itself reported, and tell me whether more daily steps go with more time in range.",
-    "The international consensus on time in range recommends more than 70% of readings between 70 and 180 mg/dL "
-    "for most people with type 1 diabetes. Find that paper and cite it, then compute each adolescent's time in "
-    "range from their CGM readings and tell me how many meet the target.",
+PROJECT = "Diabetes research"
+UNIT = "Team unit"
+
+# What the presenter says, in order; the first with the file attached.
+MESSAGES = [
+    "Can you check what's in this data? I want to analyze it using the models in our project. "
+    "Which model do you think works best? Please go ahead and run it.",
+    "How does that compare with what has been published on models like this? Cite what you find.",
+    "Please keep this file as a dataset called Screening cohort.",
 ]
 
 
@@ -66,22 +61,35 @@ def token(gw: str, user: str) -> str:
         return json.load(r)["access_token"]
 
 
-def call(gw: str, bearer: str, method: str, path: str, body=None):
+def call(gw: str, bearer: str, method: str, path: str, body=None, raw=None):
     req = urllib.request.Request(
         f"{gw}/catalog/v1{path}",
         method=method,
-        data=None if body is None else json.dumps(body).encode(),
+        data=raw
+        if raw is not None
+        else (None if body is None else json.dumps(body).encode()),
         headers={
             "Authorization": f"Bearer {bearer}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/octet-stream"
+            if raw is not None
+            else "application/json",
         },
     )
     with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)
+        out = r.read()
+        return json.loads(out) if out[:1] in (b"{", b"[") else out
 
 
-def ask(gw: str, bearer: str, chat: str, question: str) -> dict:
-    """One turn over AG-UI: the question in, the events out as they stream."""
+def ask(gw: str, bearer: str, chat: str, message: str, attached=None) -> dict:
+    """One turn over AG-UI: the message in, with a file attached by URI, the events out as they
+    stream."""
+    content = message
+    if attached:
+        uri, name = attached
+        content = [
+            {"type": "text", "text": message},
+            {"type": "binary", "mimeType": "application/vnd.texera.resource", "url": uri, "filename": name},
+        ]
     body = {
         "threadId": chat,
         "runId": str(uuid.uuid4()),
@@ -89,7 +97,7 @@ def ask(gw: str, bearer: str, chat: str, question: str) -> dict:
         "tools": [],
         "context": [],
         "forwardedProps": {},
-        "messages": [{"id": str(uuid.uuid4()), "role": "user", "content": question}],
+        "messages": [{"id": str(uuid.uuid4()), "role": "user", "content": content}],
     }
     req = urllib.request.Request(
         f"{gw}/agents/conversations/{chat}/ag-ui",
@@ -101,7 +109,7 @@ def ask(gw: str, bearer: str, chat: str, question: str) -> dict:
             "Accept": "text/event-stream",
         },
     )
-    turn = {"question": question, "tools": [], "answer": "", "outcome": None}
+    turn = {"message": message, "tools": [], "answer": "", "outcome": None}
     with urllib.request.urlopen(req, timeout=1800) as r:
         for raw in r:
             line = raw.decode().strip()
@@ -119,18 +127,48 @@ def ask(gw: str, bearer: str, chat: str, question: str) -> dict:
                 print(f"   ! {event.get('message')}", flush=True)
             elif kind == "RUN_FINISHED":
                 turn["outcome"] = (event.get("outcome") or {}).get("type")
+    print(f"\n{turn['answer'].strip()}\n", flush=True)
     return turn
+
+
+def attach(gw: str, bearer: str, project: str, chat: str, path: pathlib.Path) -> tuple[str, str]:
+    """What the chat's attach button does: the file is the chat's own, a dataset no list shows."""
+    made = call(
+        gw,
+        bearer,
+        "POST",
+        "/datasets",
+        {"name": path.name, "parent": project, "spec": {}, "labels": {"texera.attachment": chat}},
+    )
+    rid = made["metadata"]["rid"]
+    call(gw, bearer, "PUT", f"/datasets/{rid}/files/{path.name}", raw=path.read_bytes())
+    version = call(gw, bearer, "POST", f"/datasets/{rid}/commit", {"message": "Attached"})
+    return f"{made['metadata']['uri']}@{version['vno']}", path.name
+
+
+def question_asked(gw: str, bearer: str, chat: str):
+    """The question the agent's last message ends on, if it does."""
+    messages = call(gw, bearer, "GET", f"/conversations/{chat}/messages?limit=200")["items"]
+    if not messages or messages[-1]["role"] != "assistant":
+        return None
+    asks = [
+        p["args"]
+        for p in messages[-1]["parts"]
+        if p.get("type") == "tool_call" and p.get("toolName") == "ask"
+    ]
+    return asks[-1] if asks else None
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--gw", default="http://localhost:8088", help="the gateway")
-    ap.add_argument("--user", default="bob", help="the scientist, on the team")
     ap.add_argument(
-        "--ask", type=int, nargs="*", help="which questions, 1 to 6; all by default"
+        "--data", type=pathlib.Path, required=True, help="the folder prepare.py wrote"
     )
+    ap.add_argument("--gw", default="http://localhost:8088", help="the gateway")
+    ap.add_argument("--user", default="alice", help="who presents")
+    ap.add_argument("--project", default=PROJECT, help="the project's name")
     ap.add_argument(
         "--transcript",
         type=pathlib.Path,
@@ -139,44 +177,42 @@ def main() -> None:
     args = ap.parse_args()
     gw = args.gw.rstrip("/")
     bearer = token(gw, args.user)
-    projects = call(gw, bearer, "GET", "/resources?kind=project&limit=500")["items"]
+    projects = call(gw, bearer, "GET", "/projects?limit=500")["items"]
     project = next(
-        (
-            p["metadata"]["rid"]
-            for p in projects
-            if p["metadata"]["name"] == "Diabetes research"
-        ),
+        (p["metadata"]["rid"] for p in projects if p["metadata"]["name"] == args.project),
         None,
     )
     if project is None:
-        raise SystemExit(
-            "no project Diabetes research that this person may open: run load.py first"
-        )
+        raise SystemExit(f"no project {args.project} this person may open: run load.py first")
+
     # Auto mode: each change goes through as the agent makes it; in manual mode each waits for a yes.
     chat = call(
         gw,
         bearer,
         "POST",
         "/conversations",
-        {
-            "name": "Getting to know the diabetes project",
-            "parent": project,
-            "spec": {"workMode": "auto"},
-        },
+        {"name": "The screening cohort", "parent": project, "spec": {"workMode": "auto"}},
     )
-    print(f"chat {gw}/conversations/{chat['metadata']['rid']}")
+    rid = chat["metadata"]["rid"]
+    print(f"chat {gw}/conversations/{rid}", flush=True)
+    attached = attach(gw, bearer, project, rid, args.data / "uploads" / "screening_cohort.csv")
     turns = []
-    for n in args.ask or range(1, len(QUESTIONS) + 1):
-        print(f"\n== {n}. {QUESTIONS[n - 1]}")
-        turn = ask(gw, bearer, chat["metadata"]["rid"], QUESTIONS[n - 1])
-        print(f"\n{turn['answer'].strip()}\n")
-        turns.append(turn)
-    # What the chat read, made and ran, and the outside sources it consulted, as its graph says.
-    graph = call(gw, bearer, "GET", f"/conversations/{chat['metadata']['rid']}/graph")
+    for n, message in enumerate(MESSAGES, 1):
+        print(f"\n== {n}. {message}", flush=True)
+        # A turn can outlast a token: a fresh one for each.
+        bearer = token(gw, args.user)
+        turns.append(ask(gw, bearer, rid, message, attached if n == 1 else None))
+        asked = question_asked(gw, bearer, rid)
+        if asked:
+            labels = [o["label"] for o in asked.get("options", [])]
+            pick = next((label for label in labels if UNIT in label), labels[0])
+            print(f"   [{asked.get('question')}] answering: {pick}", flush=True)
+            turns.append(ask(gw, token(gw, args.user), rid, pick))
+
+    bearer = token(gw, args.user)
+    graph = call(gw, bearer, "GET", f"/conversations/{rid}/graph")
     made = sorted(f"{n['role']} {n['name']}" for n in graph["nodes"] if n["made"])
-    print(
-        f"the graph: {len(graph['nodes'])} nodes, made: {', '.join(made) or 'nothing'}"
-    )
+    print(f"the graph: {len(graph['nodes'])} nodes, made: {', '.join(made) or 'nothing'}")
     for source in graph["sources"]:
         print(f"consulted {source['name']}: {len(source['calls'])} calls")
         for c in source["calls"]:

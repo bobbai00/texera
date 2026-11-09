@@ -272,6 +272,9 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 	if u := nodes["unit screening unit"]; !u.Made || u.Turn == nil || *u.Turn != t2 || u.State == nil || *u.State == "" {
 		t.Fatalf("the unit the chat made, with how it stands: %+v", u)
 	}
+	if u := nodes["unit screening unit"]; u.Cpu == nil || *u.Cpu != "2" || u.Memory == nil || *u.Memory != "4Gi" {
+		t.Fatalf("the unit says what it has: %+v", u)
+	}
 }
 
 // Above the graph, the outside sources the chat's agent consulted, each with what it asked of

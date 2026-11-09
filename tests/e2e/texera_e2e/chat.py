@@ -61,12 +61,15 @@ class Turn:
         self.outcome = (finished[-1].get("outcome") or {}).get("type") if finished else None
 
 
-def say(api: Api, conversation: str, prompt: str, template: str | None = None, timeout: int = 900) -> Turn:
-    """Runs one turn and returns it when the stream ends; prints the tool calls as they come."""
+def say(api: Api, conversation: str, prompt: str, template: str | None = None, timeout: int = 900, attached: tuple[str, str] | None = None) -> Turn:
+    """Runs one turn and returns it when the stream ends; prints the tool calls as they come.
+    `attached` is a file attached to the message, its URI and its name."""
+    content = [{"type": "text", "text": prompt},
+               {"type": "binary", "mimeType": "application/vnd.texera.resource", "url": attached[0], "filename": attached[1]}] if attached else prompt
     body = {
         "threadId": conversation, "runId": str(uuid.uuid4()), "state": {}, "tools": [], "context": [],
         "forwardedProps": {"template": template} if template else {},
-        "messages": [{"id": str(uuid.uuid4()), "role": "user", "content": prompt}],
+        "messages": [{"id": str(uuid.uuid4()), "role": "user", "content": content}],
     }
     req = urllib.request.Request(f"{api.gw}/agents/conversations/{conversation}/ag-ui", method="POST", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {api.token}", "Content-Type": "application/json", "Accept": "text/event-stream"})

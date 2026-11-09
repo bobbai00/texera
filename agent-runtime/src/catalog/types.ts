@@ -63,6 +63,12 @@ export interface CatalogAuth {
   origin?: Origin;
 }
 
+/** A file a person attached to a chat: the name it came in under, and its dataset at a version. */
+export interface AttachedFile {
+  name: string;
+  uri: string;
+}
+
 /** A template resolved to a specific version. */
 export interface TemplateRecord {
   /** The version URI, `texera://agent-templates/{rid}@{vno}`. */

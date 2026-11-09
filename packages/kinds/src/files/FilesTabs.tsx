@@ -137,6 +137,11 @@ export function UploadTab({ resource }: { resource: Resource }) {
         {status && <span className="text-xs text-muted-foreground">{status}…</span>}
       </div>
       {upload.error && <ErrorNote error={upload.error} prefix="Upload failed" />}
+      {kind === "model" && (
+        <p className="text-xs text-muted-foreground" data-contract-hint>
+          Add a <code>contract.json</code> with the model's files to say what it reads and puts out; a workflow can run it once it has one.
+        </p>
+      )}
       {isPending ? (
         <Skeleton className="h-24" />
       ) : files.length === 0 ? (

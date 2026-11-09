@@ -8,21 +8,20 @@ import { Badge, Button, ErrorNote, NativeSelect, SectionTitle, Skeleton, Textare
 import { Check, FolderKanban, LayoutList } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { updateMetadata } from "../api";
-import { ResourceTable } from "../library/ResourceTable";
-import { inheritorsQuery, keysOf, meQuery, projectSettingsQuery, searchQuery } from "../queries";
+import { ProjectOverview } from "../project/Overview";
+import { inheritorsQuery, keysOf, meQuery, projectSettingsQuery } from "../queries";
 import { ProjectScope, projectsQuery, useWorkingProject } from "../scope";
 import { UriChip } from "../shell/Chips";
 import { roleOf, useMay } from "../shell/may";
 import { SpecEditor } from "../shell/SpecEditor";
 import type { KindSpec } from "../types";
 
-/** Everything in the project the caller may read. */
+/** What the project holds, as the landing page shows it. */
 function Contents({ resource }: { resource: Resource }) {
-  const { data, isPending } = useQuery(searchQuery({ project: resource.metadata.rid, limit: 200 }));
   return (
     <ProjectScope project={resource.metadata.rid}>
-      <div className="scrollbar-thin overflow-y-auto p-4">
-        <ResourceTable resources={data?.items.filter(r => r.kind !== "project")} loading={isPending} />
+      <div className="scrollbar-thin overflow-y-auto">
+        <ProjectOverview rid={resource.metadata.rid} titled={false} />
       </div>
     </ProjectScope>
   );
@@ -291,7 +290,7 @@ export const projectKind: KindSpec = {
   plural: "Projects",
   icon: FolderKanban,
   accent: "bg-kind-project/12 text-kind-project",
-  tabs: [{ value: "contents", label: "Contents", icon: LayoutList, Component: Contents }],
+  tabs: [{ value: "contents", label: "Overview", icon: LayoutList, Component: Contents }],
   Editor: Settings,
   Actions,
   defaultSpec: () => ({}),

@@ -419,15 +419,15 @@ export function EditorCanvas({
               {!readonly && spec.operators.length > 1 && (
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="icon-sm"
                   className="bg-background shadow-xs"
-                  title="Lay the workflow out again, left to right"
+                  title="Tidy up: lay the workflow out again, left to right"
                   onClick={() => {
                     store.getState().move(layoutPositions(store.getState().spec));
                     setTimeout(() => void frame(), 150);
                   }}
                   data-tidy>
-                  <LayoutGrid /> Tidy up
+                  <LayoutGrid /> <span className="sr-only">Tidy up</span>
                 </Button>
               )}
             </Panel>

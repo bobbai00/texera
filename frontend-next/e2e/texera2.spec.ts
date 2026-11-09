@@ -1,8 +1,8 @@
 import { type Browser, expect, test } from "@playwright/test";
-import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn } from "./support";
+import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn, toConfigure } from "./support";
 
 // The pages against the real stack: sign in through Keycloak, start a chat by saying something,
-// attach a CSV (which becomes a dataset version) and see it as a card; the agent every chat runs,
+// attach a CSV (the chat's own file, in no list) and see it as a card; the agent every chat runs,
 // on show; the project a person works in; what a chat runs with, chosen in its box; a turn that
 // fails and says why; a long answer that ends up on screen; custom operators; a unit made with
 // a size; an execution's lineage; two people in one chat; an execution that is paused and
@@ -25,7 +25,7 @@ test("the sign-in page wears Texera's look", async ({ page }) => {
   await expect(page.locator("[data-new-chat]")).toBeVisible();
 });
 
-test("signs in, starts a chat by saying something and attaches a CSV that becomes a dataset", async ({ page, request }) => {
+test("signs in, starts a chat by saying something and attaches a CSV that stays the chat's", async ({ page, request }) => {
   await signIn(page);
   // Nothing to pick before talking. The box says what a chat runs with: the platform's agent and
   // its model. Where an execution runs is not the chat's to choose.
@@ -35,8 +35,8 @@ test("signs in, starts a chat by saying something and attaches a CSV that become
   await expect(box.getByLabel("Model")).toHaveText("anthropic-platform");
   await expect(box.getByLabel("Computing unit")).toHaveCount(0);
 
-  // Attach a CSV and send: the first message makes the chat, and the upload makes a dataset
-  // version before the agent is asked.
+  // Attach a CSV and send: the first message makes the chat, and the upload is the chat's file
+  // before the agent is asked: in no list of the project until someone keeps it.
   await page.locator("[data-attach-input]").setInputFiles({
     name: "penguins.csv",
     mimeType: "text/csv",
@@ -53,6 +53,8 @@ test("signs in, starts a chat by saying something and attaches a CSV that become
   await expect(page.locator('[data-resource-card="dataset"]').first()).toBeVisible();
   const uploaded = (await page.locator('[data-resource-card="dataset"]').first().getAttribute("data-rid")) as string;
   cleanups.push(() => call.attempt("DELETE", `/resources/${uploaded}`));
+  const inList = ((await call("GET", `/datasets?project=${chat.metadata.project}&limit=200`)) as { items: { metadata: { rid: string } }[] }).items;
+  expect(inList.map(d => d.metadata.rid)).not.toContain(uploaded);
 
   // The dataset opens beside the chat and shows its file, named by its URI.
   await page.locator('[data-resource-card="dataset"] [aria-label="Open beside"]').first().click();
@@ -71,7 +73,8 @@ test("signs in, starts a chat by saying something and attaches a CSV that become
   await expect(mine).toContainText("What is in this file?");
   await expect(mine.getByText("texera://")).toHaveCount(0);
   // Beside the chat, what it worked from: the attached dataset, dimmed, made elsewhere; unfolded,
-  // its version and the version's file.
+  // its version and the version's file. At this width the panel beside leaves it no room.
+  await page.locator("[data-side-panel]").getByRole("button", { name: "Close panel" }).click();
   const tree = page.locator("[data-chat-tree]");
   const attached = tree.locator('[data-tree-section="dataset"] [data-tree-resource="dataset"][data-made="false"]');
   await expect(attached).toBeVisible();
@@ -116,7 +119,7 @@ test("a turn that fails says why, and the chat keeps saying it", async ({ page, 
 // project inherits and only Texera's admins change.
 test("the agent every chat runs is on show and is not alice's to change", async ({ page }) => {
   await signIn(page);
-  await page.locator('[data-library-link="agent-template"]').click();
+  await toConfigure(page, "agent-template");
   await expect(page.locator('[data-library="agent-template"]').getByRole("heading", { name: "Agents" })).toBeVisible();
   // Texera holds it: there is none to make here.
   await expect(page.locator('[data-new="agent-template"]')).toHaveCount(0);
@@ -158,7 +161,7 @@ test("the project a person works in scopes what they see and where things go", a
 
   // Personal until another is picked: the person's own and what it inherits, not the lab's.
   await expect(page.getByLabel("Project", { exact: true })).toHaveText("Personal");
-  await page.locator('[data-library-link="skill"]').click();
+  await toConfigure(page, "skill");
   await expect(row(`home skill ${stamp}`)).toBeVisible();
   await expect(row("texera-workflows").locator("[data-inherited-from]")).toHaveText("from Texera");
   await expect(row(`home skill ${stamp}`).locator("[data-inherited-from]")).toHaveCount(0);
@@ -186,7 +189,7 @@ test("the project a person works in scopes what they see and where things go", a
 
   // Every project at once.
   await workIn(page, "All projects");
-  await page.locator('[data-library-link="skill"]').click();
+  await toConfigure(page, "skill");
   await expect(row(`lab skill ${stamp}`)).toBeVisible();
   await expect(row(`home skill ${stamp}`)).toBeVisible();
 });
@@ -363,7 +366,7 @@ test("with every project in view, the app asks which project a new thing goes in
   await expect(page.getByLabel("Project", { exact: true })).toHaveText("All projects");
 
   // The dialog asks, and makes nothing until it is told.
-  await page.locator('[data-library-link="skill"]').click();
+  await toConfigure(page, "skill");
   await page.locator('[data-new="skill"]').click();
   const dialog = page.locator('[data-new-resource="skill"]');
   await dialog.locator("input").first().fill(`asked skill ${stamp}`);
@@ -570,7 +573,7 @@ test("a computing unit is made from a profile, with the size asked for, and says
   // The dialog proposes the profile the project inherits from Texera, and its size; the person asks for more.
   await expect(dialog.locator('[data-field="profile"]')).toHaveValue(profile);
   await expect(dialog.locator('[data-field="memory"]')).toHaveValue(made.spec.memory);
-  await expect(dialog.locator('[data-field="cpu"]')).toHaveValue("");
+  await expect(dialog.locator('[data-field="cpu"]')).toHaveValue(made.spec.cpu);
   await dialog.locator('[data-field="memory"]').selectOption({ label: "4 GB" });
   await dialog.locator('[data-field="cpu"]').selectOption({ label: "1 core" });
   await page.screenshot({ path: "test-results/unit-new.png" });
@@ -591,7 +594,7 @@ test("a computing unit is made from a profile, with the size asked for, and says
   const madeOf = page.locator("[data-made-of]");
   await expect(madeOf.locator("[data-unit-profile]")).toContainText(`${made.metadata.name}@${made.metadata.head}`);
   await expect(madeOf.locator("[data-unit-changes]")).toContainText("memory 2 GB → 4 GB");
-  await expect(madeOf.locator("[data-unit-changes]")).toContainText("CPU none → 1 core");
+  await expect(madeOf.locator("[data-unit-changes]")).toContainText("CPU 2 cores → 1 core");
   await expect(madeOf.locator("[data-unit-packages]")).toContainText("pandas");
   // A package added on the page is the unit's: saved, it is one more change from the profile.
   await madeOf.locator("[data-add-package]").fill("humanize==4.11.0");
@@ -661,7 +664,7 @@ test("a project keeps its results in a warehouse made for it, and an execution s
   await workIn(page, lab.name);
 
   // The deployment's warehouse is on show, inherited from Texera; a project makes its own from the same page.
-  await page.locator('[data-library-link="warehouse"]').click();
+  await toConfigure(page, "warehouse");
   await expect(page.locator('[data-library="warehouse"]').getByRole("heading", { name: "Warehouses" })).toBeVisible();
   await expect(page.locator('[data-resource-row="warehouse"]').filter({ hasText: "texera" }).locator("[data-inherited-from]")).toHaveText("from Texera");
   await page.locator('[data-new="warehouse"]').click();
@@ -905,12 +908,13 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   // The answer says what wrote it: the agent and the model.
   await expect(page.locator('[data-message-model="anthropic-platform"]').first()).toBeVisible({ timeout: 30_000 });
 
-  // Beside the chat, the workflow it built, its version, and the run under the version.
+  // Beside the chat, the workflow it built, its version, and the execution under the version.
+  await page.locator('[data-resource-view="list"]').click();
   const built = page.locator('[data-chat-tree] [data-tree-resource="workflow"][data-made="true"]').first();
   await expect(built).toBeVisible({ timeout: 30_000 });
   await expect(built.locator("[data-tree-version] [data-tree-execution]").first()).toBeVisible();
   await built.locator("[data-open-row]").first().click();
-  const view = page.locator("[data-side-panel] [data-workflow-view]").first();
+  const view = page.locator("[data-graph-focus] [data-workflow-view]").first();
   await expect(view).toBeVisible();
   await expect(view.locator("[data-workflow-canvas]").first()).toBeVisible();
   await view.getByRole("tab", { name: "Versions" }).click();

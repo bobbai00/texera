@@ -6,6 +6,9 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  PopoverContent,
+  PopoverRoot,
+  PopoverTrigger,
   Select,
   Skeleton,
   Tab,
@@ -32,6 +35,7 @@ import {
   Lock,
   Play,
   RotateCcw,
+  SlidersHorizontal,
   Table2,
   Users,
   Workflow,
@@ -340,9 +344,8 @@ function EditorLayout({
         actions={
           <>
             {units && units.length > 0 && (
-              // Where the run goes, said as a sentence: on a unit (its profile) · results in a warehouse.
+              // Where an execution goes: the unit here, the rest of it a click away.
               <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground" data-run-target>
-                on
                 <Select
                   aria-label="Computing unit"
                   value={unit?.metadata.uri ?? null}
@@ -350,23 +353,46 @@ function EditorLayout({
                   options={units.map(u => ({ value: u.metadata.uri, label: u.metadata.name }))}
                   className="w-36"
                 />
-                {/* Beside a chat the panel is narrow: the unit says where, the page says the rest. */}
-                {madeFrom && mode === "page" && (
-                  <span className="truncate" data-run-profile>
-                    (<Named uri={madeFrom} />)
-                  </span>
-                )}
-                {warehouses && warehouses.items.length > 0 && mode === "page" && (
-                  <>
-                    <span className="shrink-0">· results in</span>
-                    <Select
-                      aria-label="Warehouse"
-                      value={warehouse ?? null}
-                      onChange={setWarehousePick}
-                      options={warehouses.items.map(w => ({ value: w.metadata.uri, label: w.metadata.name }))}
-                      className="w-36"
-                    />
-                  </>
+                {mode === "page" && (
+                  <PopoverRoot>
+                    <PopoverTrigger>
+                      <Button variant="ghost" size="icon-sm" aria-label="Execution options" title="Execution options" data-run-options>
+                        <SlidersHorizontal />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="grid w-72 gap-3 p-3 text-sm">
+                      {madeFrom && (
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-muted-foreground">Made from</span>
+                          <span className="truncate" data-run-profile>
+                            <Named uri={madeFrom} />
+                          </span>
+                        </div>
+                      )}
+                      {warehouses && warehouses.items.length > 0 && (
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="shrink-0 text-muted-foreground">Results in</span>
+                          <Select
+                            aria-label="Warehouse"
+                            value={warehouse ?? null}
+                            onChange={setWarehousePick}
+                            options={warehouses.items.map(w => ({ value: w.metadata.uri, label: w.metadata.name }))}
+                            className="w-40"
+                          />
+                        </div>
+                      )}
+                      {/* An execution reads what earlier ones of the same work stored; this makes everything again. */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => run.mutate({ fresh: true })}
+                        disabled={!unit || run.isPending || spec.operators.length === 0 || pinned}
+                        title="Make every result again, reading nothing earlier executions stored"
+                        data-run-fresh>
+                        <RotateCcw /> Run fresh
+                      </Button>
+                    </PopoverContent>
+                  </PopoverRoot>
                 )}
               </span>
             )}
@@ -380,16 +406,6 @@ function EditorLayout({
                 <Loader2 className="size-3 animate-spin" /> {latest.status?.phase}
               </Badge>
             )}
-            {/* A run reads what earlier runs of the same work stored; Run fresh makes everything again. */}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => run.mutate({ fresh: true })}
-              disabled={!unit || run.isPending || spec.operators.length === 0 || pinned}
-              title="Make every result again, reading nothing earlier runs stored"
-              data-run-fresh>
-              <RotateCcw /> Run fresh
-            </Button>
             <Button
               size="sm"
               onClick={() => run.mutate({})}

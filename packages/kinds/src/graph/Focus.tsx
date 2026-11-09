@@ -1,15 +1,15 @@
 // What the graph beside a chat shows when a person goes into a thing on it: the thing's own view,
 // over the graph, with the trail of how they got there. A dataset, a workflow, a model, a
-// function and a unit show the view they have everywhere; a run box its runs, one at a time; a
+// function and a unit show the view they have everywhere; an execution its own view; a
 // table the rows its run kept; what the plan has not made yet what the plan said. Under the trail,
 // what the thing is to the rest of the graph, to go to next. Going in grows the view out of the
 // thing's box; going all the way back shrinks it into the box again. The chat beside it is never
 // touched.
 
 import { useQuery } from "@tanstack/react-query";
-import { Button, cn, Skeleton, timeAgo } from "@texera/ui";
+import { Button, cn, Skeleton } from "@texera/ui";
 import { ArrowLeft, ChevronRight } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { executionQuery } from "../execution/queries";
 import { resourceQuery } from "../queries";
 import { ResourceView } from "../ResourceView";
@@ -20,7 +20,7 @@ import { OpenError } from "../shell/OpenError";
 import type { KindId } from "../types";
 import { parseUri, refOf } from "../uri";
 import { createCanvasView, portKey } from "../workflow/canvas-view";
-import { entryFor, type FocusEntry, keyOf } from "./focus";
+import { entryFor, type FocusEntry, keyOf } from "./focus-trail";
 import { type GraphView, nameOf, type RunItem, relationsOf, runStateOf, SOMEWHERE } from "./model";
 import { lineOf } from "./steps";
 
@@ -269,53 +269,25 @@ function Gone() {
   return <p className="m-6 text-sm text-muted-foreground">This is no longer on the graph.</p>;
 }
 
-/** A run box: its runs, newest first, one at a time in the run's own view; or the run it has not had. */
+/** An execution, in its own view; or the one a workflow has not had. */
 function RunFocus({ box, view, onGo }: { box: RunItem; view: GraphView; onGo: (e: FocusEntry) => void }) {
-  const [pick, setPick] = useState<string>();
-  const chosen = box.runs.find(r => r.uri === pick) ?? box.runs[0];
-  const ref = chosen ? refOf(chosen.uri) : undefined;
-  if (!chosen || !ref) return <WaitingRun box={box} view={view} onGo={onGo} />;
+  const ref = box.run ? refOf(box.run.uri) : undefined;
+  if (!box.run || !ref) return <WaitingRun box={box} view={view} onGo={onGo} />;
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-graph-view="run">
-      {box.runs.length > 1 && (
-        <div
-          role="tablist"
-          aria-label="Its runs on this unit"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-1.5"
-          data-graph-run-list>
-          {box.runs.map((r, i) => (
-            <button
-              key={r.uri}
-              type="button"
-              role="tab"
-              aria-selected={r === chosen}
-              onClick={() => setPick(r.uri)}
-              className={cn(
-                "shrink-0 rounded-md px-2 py-0.5 text-xs whitespace-nowrap",
-                r === chosen ? "bg-accent font-medium" : "text-muted-foreground hover:bg-muted"
-              )}
-              data-graph-run={r.uri}>
-              Run {box.runs.length - i} · {r.phase}
-              {r.startedAt ? ` · ${timeAgo(r.startedAt)}` : ""}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="flex min-h-0 flex-1 flex-col">
-        <ResourceView key={chosen.uri} ref={{ ...ref, kind: "execution" }} mode="panel" />
-      </div>
+      <ResourceView key={box.run.uri} ref={{ ...ref, kind: "execution" }} mode="panel" />
     </div>
   );
 }
 
-/** The run a workflow has not had yet: where it will run, and what the plan says of it. */
+/** The execution a workflow has not had yet: where it will go, and what the plan says of it. */
 function WaitingRun({ box, view, onGo }: { box: RunItem; view: GraphView; onGo: (e: FocusEntry) => void }) {
   const state = runStateOf(box);
   const work = entryFor(view, box.work);
   const unit = box.unit === SOMEWHERE ? undefined : entryFor(view, box.unit);
   return (
     <div className="m-6 grid max-w-lg gap-3 text-sm" data-graph-view="run" data-graph-waiting={state}>
-      <h3 className="text-base font-semibold">{state === "planned" ? "A planned run" : "Not run yet"}</h3>
+      <h3 className="text-base font-semibold">{state === "planned" ? "A planned execution" : "Not run yet"}</h3>
       <p className="text-muted-foreground">
         {nameOf(view, box.work)} has not run{unit ? ` on ${nameOf(view, box.unit)}` : ""} in this chat
         {state === "planned" ? "; the plan says it will." : "."}
@@ -390,7 +362,7 @@ function PlannedFocus({ id, view }: { id: string; view: GraphView }) {
     "computing-unit": "a computing unit",
     model: "a model",
     operator: "a function",
-    execution: "a run",
+    execution: "an execution",
   };
   return (
     <div className="m-6 grid max-w-lg gap-3 text-sm" data-graph-view="planned">

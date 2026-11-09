@@ -1,8 +1,31 @@
 import { describe, expect, test } from "bun:test";
 import type { Message, MessagePart } from "../src/catalog/types.ts";
-import { assistantParts, toModelMessages } from "../src/run/messages.ts";
+import { assistantParts, attachedFiles, toModelMessages } from "../src/run/messages.ts";
 
 const base = { conversation: "c", author: "a", createdAt: "" };
+
+describe("attachedFiles", () => {
+  const file = "texera://datasets/88888888-8888-4888-8888-888888888888@1";
+  test("gives each file of an upload its own name, and leaves out what is not a file at a version", () => {
+    const history: Message[] = [
+      {
+        ...base,
+        seq: 1,
+        role: "user",
+        parts: [
+          { type: "text", text: "look" },
+          { type: "resource", resource: file, text: "a.csv, b.csv" },
+          { type: "resource", resource: "texera://models/88888888-8888-4888-8888-888888888888@1", text: "m" },
+          { type: "resource", resource: "texera://datasets/88888888-8888-4888-8888-888888888888", text: "d" },
+        ],
+      },
+    ];
+    expect(attachedFiles(history)).toEqual([
+      { name: "a.csv", uri: file },
+      { name: "b.csv", uri: file },
+    ]);
+  });
+});
 
 describe("toModelMessages", () => {
   test("keeps text turns and pairs tool calls with their results", () => {
@@ -121,7 +144,7 @@ describe("toModelMessages", () => {
     ]);
     expect(toModelMessages(history, { people })).toEqual([
       { role: "user", content: "[Alice Liddell] Use the 2020 data." },
-      { role: "user", content: '[Bob Builder] Run it.\nAttached dataset "sales.csv" (texera://datasets/d@1)' },
+      { role: "user", content: '[Bob Builder] Run it.\nAttached file "sales.csv" (texera://datasets/d@1)' },
       // What the agent said is its own, whoever it was answering.
       { role: "assistant", content: [{ type: "text", text: "Done." }] },
     ]);
@@ -182,13 +205,13 @@ describe("what a person attached", () => {
       ]),
     ]);
     expect(messages).toEqual([
-      { role: "user", content: 'What is in this file?\nAttached dataset "iris.csv" (texera://datasets/d1@1)' },
+      { role: "user", content: 'What is in this file?\nAttached file "iris.csv" (texera://datasets/d1@1)' },
     ]);
   });
 
   test("is a message of its own when there is no text", () => {
     expect(toModelMessages([user([{ type: "resource", resource: "texera://datasets/d1@1" }])])).toEqual([
-      { role: "user", content: "Attached dataset (texera://datasets/d1@1)" },
+      { role: "user", content: "Attached file (texera://datasets/d1@1)" },
     ]);
   });
 

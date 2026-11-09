@@ -1,6 +1,6 @@
 import type { ConversationGraph, GraphNode } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
-import { nameOf, plannedId, relationsOf, runId, runStateOf, SOMEWHERE, touching, viewOf } from "./model";
+import { commentTarget, nameOf, plannedId, relationsOf, runId, runStateOf, SOMEWHERE, touching, viewOf } from "./model";
 
 const D = "texera://datasets/11111111-1111-1111-1111-111111111111";
 const W = "texera://workflows/22222222-2222-2222-2222-222222222222";
@@ -57,26 +57,29 @@ const screening: ConversationGraph = {
 };
 
 describe("the view of a chat's graph", () => {
-  it("puts what a workflow uses on its card, and its run in a box of its own on the unit, with the tables it made in the order of the steps", () => {
+  it("draws a model on its own, a function on the card, and the execution in a box of its own with the tables it made in the order of the steps", () => {
     const view = viewOf(screening);
     const [w] = view.works;
     expect(w?.reads).toEqual([{ data: D, steps: ["cohort"], files: ["pima.csv"] }]);
-    expect(w?.uses.map(u => u.name)).toEqual(["Diabetes onset risk", "ROC AUC"]);
-    expect(w?.runs).toEqual([runId(W, U)]);
-    const box = view.runs.get(runId(W, U));
-    expect(box?.runs.map(r => r.uri)).toEqual([E1]);
+    expect(w?.models).toEqual([M]);
+    expect(view.models.map(n => n.name)).toEqual(["Diabetes onset risk"]);
+    expect(w?.uses.map(u => u.name)).toEqual(["ROC AUC"]);
+    expect(w?.runs).toEqual([runId(W, E1)]);
+    const box = view.runs.get(runId(W, E1));
+    expect(box?.run?.uri).toBe(E1);
+    expect(box?.unit).toBe(U);
     expect(box?.results).toEqual([port(E1, "calib"), port(E1, "auc")]);
     expect(box && runStateOf(box)).toBe("completed");
     expect(view.data.get(D)?.files).toEqual(["pima.csv"]);
-    expect([view.rank.get(D), view.rank.get(W), view.rank.get(runId(W, U)), view.rank.get(port(E1, "auc"))]).toEqual([
+    expect([view.rank.get(D), view.rank.get(W), view.rank.get(runId(W, E1)), view.rank.get(port(E1, "auc"))]).toEqual([
       0, 1, 1, 2,
     ]);
     expect(view.loose).toEqual([]);
     expect(view.idle).toEqual([]);
-    expect(nameOf(view, runId(W, U))).toBe("screen on Small");
+    expect(nameOf(view, runId(W, E1))).toBe("screen on Small");
   });
 
-  it("gives a workflow run on two units a box on each, newest first, and the tables to the box of the run that made them", () => {
+  it("gives each execution its box, newest first, and the tables to the execution that made them", () => {
     const moved: ConversationGraph = {
       ...screening,
       nodes: [
@@ -93,8 +96,8 @@ describe("the view of a chat's graph", () => {
       edges: [...screening.edges, { from: W, to: U2, relation: "runsOn" }],
     };
     const view = viewOf(moved);
-    expect(view.works[0]?.runs).toEqual([runId(W, U2), runId(W, U)]);
-    const [large, small] = [view.runs.get(runId(W, U2)), view.runs.get(runId(W, U))];
+    expect(view.works[0]?.runs).toEqual([runId(W, E2), runId(W, E1)]);
+    const [large, small] = [view.runs.get(runId(W, E2)), view.runs.get(runId(W, E1))];
     expect(large && runStateOf(large)).toBe("running");
     expect(large?.results).toEqual([]);
     expect(small?.results).toEqual([port(E1, "calib"), port(E1, "auc")]);
@@ -108,8 +111,8 @@ describe("the view of a chat's graph", () => {
         ...screening.nodes.slice(1),
       ],
     });
-    expect(older.works[0]?.runs).toEqual([runId(W, U)]);
-    expect(runStateOf(older.runs.get(runId(W, U)) as never)).toBe("failed");
+    expect(older.runs.get(runId(W, E1))?.unit).toBe(U);
+    expect(runStateOf(older.runs.get(runId(W, E1)) as never)).toBe("failed");
     const hidden = viewOf({
       ...screening,
       nodes: [
@@ -120,7 +123,7 @@ describe("the view of a chat's graph", () => {
         ...screening.nodes.slice(1),
       ],
     });
-    expect(hidden.works[0]?.runs).toEqual([runId(W, SOMEWHERE)]);
+    expect(hidden.runs.get(runId(W, E1))?.unit).toBe(SOMEWHERE);
     // The unit it did not run on stands with nothing on it.
     expect(hidden.idle).toEqual([U]);
   });
@@ -168,7 +171,7 @@ describe("the view of a chat's graph", () => {
     expect(view.loose).toEqual([D]);
   });
 
-  it("gives a workflow made and not run its run on the fresh unit made for it, and a planned rerun to the box it ran in", () => {
+  it("gives a workflow made and not run its execution on the fresh unit made for it, and a planned one its own box, first", () => {
     const made: ConversationGraph = {
       nodes: [
         node(W, "workflow", { name: "risk screen", made: true, turn: "t2", steps: [] }),
@@ -190,13 +193,13 @@ describe("the view of a chat's graph", () => {
     // The fresh unit is the plan's target, so the rerun is planned there.
     const rerun = view.works.find(w => w.id === W2)?.runs.map(id => view.runs.get(id));
     expect(rerun?.map(b => [b?.unit, b?.planned?.name !== undefined])).toEqual([
-      [U2, false],
       [U, true],
+      [U2, false],
     ]);
     expect(view.idle).toEqual([]);
   });
 
-  it("gives a workflow not run its run on its default unit, and a rerun the plan names to where it ran when no unit was made", () => {
+  it("gives a workflow not run its execution on its default unit, and a planned one the unit it ran on when no unit was made", () => {
     const view = viewOf({
       nodes: [
         node(W, "workflow", { name: "next", steps: [] }),
@@ -217,26 +220,34 @@ describe("the view of a chat's graph", () => {
     expect(runStateOf(view.runs.get(runId(W, U2)) as never)).toBe("idle");
     const box = view.runs.get(runId(W2, U2));
     expect(box?.planned?.name).toContain("rerun");
-    expect(box && runStateOf(box)).toBe("completed");
+    expect(box && runStateOf(box)).toBe("planned");
+    expect(view.works.find(w => w.id === W2)?.runs[0]).toBe(runId(W2, U2));
   });
 
   it("lights up what a thing touches, and says how it stands to the rest", () => {
     const view = viewOf(screening);
-    const box = runId(W, U);
-    expect([...touching(view, box)].sort()).toEqual([box, D, U, W, port(E1, "auc"), port(E1, "calib")].sort());
+    const box = runId(W, E1);
+    expect([...touching(view, box)].sort()).toEqual([box, D, M, U, W, port(E1, "auc"), port(E1, "calib")].sort());
     expect([...touching(view, U)].sort()).toEqual([box, U, W].sort());
     expect([...touching(view, port(E1, "auc"))].sort()).toEqual([box, U, W, port(E1, "auc")].sort());
     expect([...touching(view, M)]).toContain(box);
     expect(relationsOf(view, W)).toEqual([
       { label: "Reads", ids: [D] },
       { label: "Uses", ids: [M, F] },
-      { label: "Runs", ids: [box] },
+      { label: "Executions", ids: [box] },
       { label: "Made", ids: [port(E1, "calib"), port(E1, "auc")] },
     ]);
     expect(relationsOf(view, box).map(r => r.label)).toEqual(["Of", "On", "Read", "Made"]);
-    expect(relationsOf(view, U)).toEqual([{ label: "Runs on it", ids: [box] }]);
+    expect(relationsOf(view, U)).toEqual([{ label: "Executions on it", ids: [box] }]);
     expect(relationsOf(view, port(E1, "auc"))).toEqual([{ label: "Made by", ids: [box] }]);
     expect(relationsOf(view, D)).toEqual([{ label: "Read by", ids: [W] }]);
     expect(relationsOf(view, M)).toEqual([{ label: "Used by", ids: [W] }]);
+  });
+
+  it("says what a comment is about: a thing's own URI, an execution's, and nothing for what is only planned", () => {
+    const view = viewOf(screening);
+    expect(commentTarget(view, D)).toEqual({ uri: D, name: "Pima cohort" });
+    expect(commentTarget(view, runId(W, E1))).toEqual({ uri: E1, name: "execution of screen" });
+    expect(commentTarget(view, runId(W, U))).toBeUndefined();
   });
 });

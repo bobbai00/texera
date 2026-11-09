@@ -1,6 +1,6 @@
 // Going into a thing on the graph beside a chat: the graph gives way to the thing's own view, and
 // a trail says how the person got there, so they can always go back. A dataset, a workflow, a
-// model, a function and a unit show the view they have everywhere; a run box shows its runs, a
+// model, a function and a unit show the view they have everywhere; an execution its own, a
 // table the rows its run kept, and what the plan has not made yet what the plan said. Pure, so it
 // is tested on its own.
 
@@ -11,7 +11,7 @@ import { type GraphView, nameOf, SOMEWHERE } from "./model";
 export type FocusEntry =
   /** A resource's own view; `id` is the graph's node for it, when it has one. */
   | { kind: "resource"; ref: ResourceRef; id?: string; title?: string }
-  /** A run box: a workflow's runs on one unit. */
+  /** An execution, or the one a workflow has not had yet. */
   | { kind: "run"; id: string; title: string }
   /** A table a run made: its rows. */
   | { kind: "table"; id: string; title: string }

@@ -61,7 +61,7 @@ Bob) goes through a guard fixture that puts it back.
 | The agent's executions go to the unit the person names in their words; the chat stores no unit | `test_agents.py` | model, slow | 1 min, about 10 model calls |
 | Asked to, the agent makes a unit from a profile, runs on it and keeps the results in the warehouse it was told | `test_agents.py` | model, slow | 3 min, about 15 model calls |
 | Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
-| The diabetes use case: a researcher asks what the platform gives her (nothing is made), has the agent bring the public Pima cohort into a dataset (the file byte for byte), asks to screen it with the team's onset-risk model; the agent asks where it runs, offering what can start here and no GPU where none starts; she picks Small; the unit is made from Small, every run goes to it, and the chat's graph joins the cohort, the model and the team's operators to the workflow and the workflow to the unit | `test_diabetes.py` | model, slow | 5 to 10 min, about 40 model calls |
+| The demo through the agent: a file attached to a chat stays the chat's, the agent reads it and the team's model, says which fits and why, runs it on the unit picked on its question card, compares with PubMed, and keeps the file as a dataset when asked; the graph joins them | `test_diabetes.py` | model, slow | 2 min, about 20 model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless
 the matching flag is given (`--model`, `--cluster`, `--local`, `--destructive`); `test.sh`
@@ -122,13 +122,18 @@ workflow and its executions as cards with the arrows' words, then the file, the 
 ran and each result; a person the workflow is shared with, without its dataset, sees the graph
 once and steadily (it used to blink without end), the dataset drawn "Not shared with you".
 
+`graph.spec.ts`, a second test: two people on one chat see each other's icon and pointer on the
+graph; a comment on a box, while a turn is going, lands in the chat as a note for the other person
+too, with the box attached; the graph comes back as it was when it changed while the page was too
+narrow to show it (it used to collapse); the chat maximizes and gives the page back; a chat and a
+dataset are renamed in place, and an overview row is one line with who can see it and who made it.
+
 `graph.spec.ts`: the graph beside a chat, made the way the runtime makes it, in a turn, so no
-model is needed: a workflow over iris, its run a box in the lane of the unit it ran on with the
-unit at the lane's foot and dotted ties to both, one arrow for the read and one for each table,
-no arrow for a unit or a function, the plan's dataset dashed; a second workflow, with a function
-the agent made and not run yet, has a waiting box in the same lane, and nothing else moves;
-Detail shows the steps in order with each table level with its step and the run as tall as the
-steps, Overview only names. Then it goes into every kind of box and back: the workflow (its
+model is needed: a workflow over iris, its execution a box beside it with the unit it ran on at its
+bottom right, arrows for the read, the execution and each table, the columns Data, Workflow,
+Execution and Result, the plan's dataset dashed; a second workflow, with a function the agent made
+and not run yet, has a waiting box in the same column, and nothing else moves; Detail shows the
+steps in order with each table level with its step and the execution as tall as the steps, Overview only names. Then it goes into every kind of box and back: the workflow (its
 editor), the run (its execution, completed), a table it made from the run's related strip (its
 rows; the trail grows, a crumb goes back), the run's link to its workflow (it opens in place,
 nothing opens beside the page), Alt+Left and Escape, the table from the graph and its run from
@@ -180,14 +185,15 @@ box without asking the agent, also during someone else's turn; what a chat runs 
 in everyone's box at once; and with the model, one of two people asks the agent, which answers
 from what the other said under his name, while the other watches the answer arrive.
 
-`diabetes.spec.ts`, with the model: the diabetes use case in the app. A project of the test's
-own holds the team's onset-risk model (fitted by the scenarios' Python, `texera_e2e.diabetes`)
-and two of its operators; the researcher asks what there is, has the agent bring the public
-Pima cohort into a dataset, asks for the screening, picks Small on the agent's question card,
-and the graph shows the cohort read by the workflow, the model and the operators on its card,
-and its run, completed, in the lane of her unit; Detail shows its steps, predict with the model
-among them; she goes into the model and into the run and back, the chat's messages as they were
-(`test-results/diabetes-ask.png`, `diabetes-graph.png`, `diabetes-graph-steps.png`, `diabetes-run.png`).
+`diabetes.spec.ts`, with the model and the prepared data (`TEXERA_DIABETES_DATA`, default
+`~/texera-diabetes`, written by the example's `prepare.py`): the demo in the README of
+`bin/texera-2-0/examples/diabetes`, whole, in two browsers. Alice lands on the project, by kind of
+resource, each saying what it is, with the chat over it; a model's card and the team's operators
+first. She attaches a file, which stays the chat's and in no list; the agent says which model fits
+and why, and builds the pipeline on the unit she picks, the graph taking the overview's place,
+with the AUC the data gives. She asks what is published and keeps the file. Bob, in his own browser,
+finds the workflow and the dataset; they open the workflow together, see each other at the top
+right and each other's pointers, and what he adds appears on her canvas (`test-results/demo-*.png`).
 `e2e/support.ts` holds what the files share: signing in, the API caller, a page of every kind,
 and the tidying up each scenario owes the stack.
 

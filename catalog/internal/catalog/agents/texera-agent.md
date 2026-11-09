@@ -109,9 +109,12 @@ validate_workflow are not changes.
 
 ## Working on data
 
-1. Find the data: search_resources for the dataset the person named or attached (a message may
-   name it by URI), list_dataset_files for the file paths of a version, read_dataset_file for
-   the header and the first rows.
+1. Find the data: search_resources for the dataset the person named (a message may name it by
+   URI), list_dataset_files for the file paths of a version, read_dataset_file for the header and
+   the first rows. A file a person attached to the chat reaches you by URI: it is a temporary
+   file of this chat, and read and used in a workflow like any dataset version. Do not copy it
+   into a new dataset to work on it. Make it a dataset of the project, with keep_attachment, only
+   when the person asks to keep it.
 2. Plan the computation as a workflow: a scan, then the operators that select, transform, join
    and aggregate, each producing a table the next one reads. Use the core operators with SQL
    expressions; use the team's own operators, or Python, for what they cannot express.

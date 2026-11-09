@@ -12,6 +12,8 @@ export interface UploadOptions {
   name?: string;
   description?: string;
   parent?: string;
+  /** A file attached to this chat is the chat's, in no list of the project until someone keeps it. */
+  attachedTo?: string;
   message?: string;
   onStatus?: (status: string) => void;
 }
@@ -30,7 +32,8 @@ export async function createDatasetVersion(files: File[], options: UploadOptions
     status("Creating the dataset");
     const name = options.name ?? defaultName(files);
     // A second upload of the same file name is a dataset of its own, of the same name: a name is a label.
-    const dataset = await createResource("dataset", { name, description: options.description, parent: options.parent, spec: {} });
+    const labels = options.attachedTo ? { "texera.attachment": options.attachedTo } : undefined;
+    const dataset = await createResource("dataset", { name, description: options.description, parent: options.parent, spec: {}, labels });
     rid = dataset.metadata.rid;
   }
   for (const [i, file] of files.entries()) {

@@ -33,7 +33,7 @@ import {
   makeupOf,
   masterOf,
   packageName,
-  sizeLabel,
+  unitSizeLabel,
   withMakeup,
 } from "./profiles";
 import { SizeFields } from "./SizeFields";
@@ -408,6 +408,6 @@ export const computingUnitKind: KindSpec = {
   facts: r => {
     const spec = r.spec as Partial<ComputingUnitSpec>;
     const status = r.status as Partial<ComputingUnitStatus> | undefined;
-    return [spec.provider ?? "", status?.phase ?? "", sizeLabel(makeupOf(masterOf(spec)))].filter(Boolean);
+    return [unitSizeLabel(makeupOf(masterOf(spec))), status?.phase ?? ""].filter(Boolean);
   },
 };

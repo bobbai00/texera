@@ -1,10 +1,9 @@
-// What a chat's graph draws, read from what the catalog returns. Arrows are for data only: a
-// workflow reads datasets, and its runs make tables. A run is a box of its own, where a workflow
-// meets a unit: the runs of one workflow on one unit, newest first, or the run a workflow has not
-// had yet on the unit it will use. What a workflow uses, its models and functions, rides on its
-// card; a unit stands at the foot of a rail, the runs on it above. Data and work stand in ranks of
-// dependency, data even and work odd. Each item of the latest plan stands where the thing it names
-// will stand. Pure, so it is tested on its own.
+// What a chat's graph draws, read from what the catalog returns. It reads left to right: data and
+// the models workflows use, then each workflow, then each of its executions, then the tables they
+// made. An execution is a box of its own and carries the unit it ran on, so a unit stands once for
+// every execution on it. The functions a workflow uses ride on its card. Data and work stand in
+// ranks of dependency, data even and work odd. Each item of the latest plan stands where the thing
+// it names will stand. Pure, so it is tested on its own.
 
 import type { ConversationGraph, GraphNode, GraphRun, GraphStep, PlannedItem } from "@texera/catalog-client/types";
 
@@ -20,14 +19,14 @@ export interface DataItem {
   files: string[];
 }
 
-/** A computing unit, standing at the foot of the rail its runs are on. */
+/** A computing unit: inside each execution on it, or on its own when none has run on it. */
 export interface UnitItem {
   id: string;
   node?: GraphNode;
   planned?: PlannedItem;
 }
 
-/** The lane of runs whose unit is not known: one the caller may not see, or one nothing names yet. */
+/** Where an execution ran when that is not known: a unit the caller may not see, or one nothing names yet. */
 export const SOMEWHERE = "unit:somewhere";
 
 /** What a workflow reads of a dataset: by which of its steps, and which of its files. */
@@ -44,39 +43,41 @@ export interface WorkItem {
   planned?: PlannedItem;
   steps: GraphStep[];
   reads: Read[];
-  /** The models and functions it uses. */
+  /** The models it uses, drawn on their own and tied to it. */
+  models: string[];
+  /** The functions it uses, on its card. */
   uses: GraphNode[];
   /** Models and functions the plan will make, which it will likely use. */
   plannedUses: PlannedItem[];
-  /** Its run boxes, one per unit: the unit of its newest run first. */
+  /** Its executions, the newest first; one it has not had yet comes before them. */
   runs: string[];
 }
 
-/** A run box: the runs of a workflow on one unit, newest first; with none, the run it has not had yet. */
+/** An execution of a workflow; without `run`, the one it has not had yet. */
 export interface RunItem {
   id: string;
   work: string;
   /** The unit it ran or will run on, or SOMEWHERE. */
   unit: string;
-  runs: GraphRun[];
-  /** A run the latest plan will start here, or the plan's workflow this box is the run of. */
+  run?: GraphRun;
+  /** The execution the latest plan will start here, or the plan's workflow this is the execution of. */
   planned?: PlannedItem;
-  /** The tables its newest run kept, in the order of the workflow's steps; then what the plan will make. */
+  /** The tables it kept, in the order of the workflow's steps; then what the plan will make. */
   results: string[];
 }
 
-/** How a run box stands: its newest run's phase, or that it has not run. */
+/** How an execution stands: its phase, or that it has not happened. */
 export type RunState = "completed" | "running" | "starting" | "paused" | "failed" | "cancelled" | "planned" | "idle";
 
 export function runStateOf(box: RunItem): RunState {
-  const phase = box.runs[0]?.phase;
+  const phase = box.run?.phase;
   if (!phase) return box.planned ? "planned" : "idle";
   if (phase === "completed" || phase === "failed" || phase === "cancelled" || phase === "paused" || phase === "running")
     return phase;
   return "starting";
 }
 
-/** A run box that is going: what is drawn of it moves. */
+/** An execution that is going: what is drawn of it moves. */
 export const isGoing = (state: RunState) => state === "running" || state === "starting";
 
 export interface GraphView {
@@ -84,18 +85,21 @@ export interface GraphView {
   runs: Map<string, RunItem>;
   data: Map<string, DataItem>;
   units: Map<string, UnitItem>;
+  /** The models on the graph: under the data, in the order the chat came to them. */
+  models: GraphNode[];
   /** Data no workflow on the graph reads or made: it stands at the end of its column. */
   loose: string[];
-  /** Units nothing has run on yet, and none will by the plan. */
+  /** Units nothing has run on yet, and none will by the plan: they stand on their own. */
   idle: string[];
-  /** Each item's rank: data even, work and its runs odd, each past what it depends on. */
+  /** Each item's rank: data even, work and its executions odd, each past what it depends on. */
   rank: Map<string, number>;
   /** Every node of the graph by its URI, models and functions too. */
   nodes: Map<string, GraphNode>;
 }
 
 export const plannedId = (p: PlannedItem) => `planned:${p.kind ?? ""}:${p.name}`;
-export const runId = (work: string, unit: string) => `run:${work}|${unit}`;
+/** An execution's id on the graph, by what tells it apart: its URI, or the unit of one not had yet. */
+export const runId = (work: string, key: string) => `run:${work}|${key}`;
 
 /** The resource a URI names, without a version or a path inside it. */
 export const baseOf = (uri: string) => /^texera:\/\/[a-z-]+\/[0-9a-f-]{36}/.exec(uri)?.[0] ?? uri;
@@ -110,7 +114,7 @@ function namesIn(value: unknown, out: { base: string; path?: string }[] = []): {
   return out;
 }
 
-/** The view of a chat's graph: its workflows with what they read and use, and their runs. */
+/** The view of a chat's graph: its workflows with what they read and use, and their executions. */
 export function viewOf(graph: ConversationGraph): GraphView {
   const nodes = new Map(graph.nodes.map(n => [n.uri, n]));
   const data = new Map<string, DataItem>();
@@ -121,16 +125,18 @@ export function viewOf(graph: ConversationGraph): GraphView {
   }
   const works: WorkItem[] = graph.nodes
     .filter(n => n.role === "workflow")
-    .map(n => ({ id: n.uri, node: n, steps: n.steps ?? [], reads: [], uses: [], plannedUses: [], runs: [] }));
+    .map(n => ({ id: n.uri, node: n, steps: n.steps ?? [], reads: [], models: [], uses: [], plannedUses: [], runs: [] }));
   const work = new Map(works.map(w => [w.id, w]));
   const runs = new Map<string, RunItem>();
-  const boxOf = (w: WorkItem, unit: string): RunItem => {
-    const id = runId(w.id, unit);
+  const boxOf = (w: WorkItem, unit: string, run?: GraphRun): RunItem => {
+    const id = runId(w.id, run?.uri ?? unit);
     let box = runs.get(id);
     if (!box) {
-      box = { id, work: w.id, unit, runs: [], results: [] };
+      box = { id, work: w.id, unit, ...(run ? { run } : {}), results: [] };
       runs.set(id, box);
-      w.runs.push(id);
+      // The executions come newest first, and what has not happened yet is newer still.
+      if (run) w.runs.push(id);
+      else w.runs.unshift(id);
     }
     return box;
   };
@@ -145,25 +151,25 @@ export function viewOf(graph: ConversationGraph): GraphView {
       w.reads.push(readOf(w, e.from));
     if (e.relation === "uses") {
       const tool = nodes.get(e.from);
-      if (tool && !w.uses.includes(tool)) w.uses.push(tool);
+      if (tool?.role === "model" && !w.models.includes(tool.uri)) w.models.push(tool.uri);
+      else if (tool && tool.role !== "model" && !w.uses.includes(tool)) w.uses.push(tool);
     }
     if (e.relation === "makes" && data.has(e.to)) made.set(w.id, [...(made.get(w.id) ?? []), e.to]);
     if (e.relation === "runsOn" && units.has(e.to)) ranOn.set(w.id, [...(ranOn.get(w.id) ?? []), e.to]);
   }
 
-  // Each workflow's runs, a box per unit, the unit of the newest run first; the tables its newest
-  // run kept on the box of the run that made them.
+  // Each workflow's executions, the newest first, and the tables each of them kept.
   for (const w of works) {
     const ran = w.node?.runs ?? [];
     const on = ranOn.get(w.id) ?? [];
     for (const run of ran) {
       const unit =
         run.unit && units.has(run.unit) ? run.unit : !run.unit && on.length === 1 ? (on[0] as string) : SOMEWHERE;
-      boxOf(w, unit).runs.push(run);
+      boxOf(w, unit, run);
     }
     for (const table of made.get(w.id) ?? []) {
       const by = nodes.get(table)?.run;
-      const box = boxes(w).find(b => b.runs.some(r => r.uri === by)) ?? boxes(w)[0];
+      const box = boxes(w).find(b => b.run?.uri === by) ?? boxes(w)[0];
       box?.results.push(table);
     }
     const at = (id: string) => {
@@ -191,7 +197,7 @@ export function viewOf(graph: ConversationGraph): GraphView {
     if (unit) boxOf(w, unit);
   }
   for (const p of planned.filter(p => p.kind === "workflow")) {
-    const w: WorkItem = { id: plannedId(p), planned: p, steps: [], reads: [], uses: [], plannedUses: [], runs: [] };
+    const w: WorkItem = { id: plannedId(p), planned: p, steps: [], reads: [], models: [], uses: [], plannedUses: [], runs: [] };
     works.push(w);
     work.set(w.id, w);
     boxOf(w, target ?? SOMEWHERE).planned = p;
@@ -213,18 +219,15 @@ export function viewOf(graph: ConversationGraph): GraphView {
       const named = works.find(w => w.node && p.name.toLowerCase().includes(w.node.name.toLowerCase()));
       const on = named ?? last;
       if (!on) continue;
-      // The run it has not had yet; else on the unit made for it; else again where it ran last.
-      const box =
-        boxes(on).find(b => !b.runs.length) ??
-        (target ? (boxes(on).find(b => b.unit === target) ?? boxOf(on, target)) : boxes(on)[0]) ??
-        boxOf(on, SOMEWHERE);
+      // The execution it has not had yet: on the unit made for it, else where it ran last.
+      const box = boxes(on).find(b => !b.run) ?? boxOf(on, target ?? boxes(on)[0]?.unit ?? SOMEWHERE);
       box.planned ??= p;
     } else if (p.kind === "operator" || p.kind === "model") {
       ofPlan?.plannedUses.push(p);
     }
   }
 
-  // Ranks: data even, work odd, each past what it depends on; a run box with its workflow.
+  // Ranks: data even, work odd, each past what it depends on; an execution with its workflow.
   const rank = new Map<string, number>();
   for (const id of data.keys()) rank.set(id, 0);
   for (const w of works) rank.set(w.id, 1);
@@ -253,7 +256,8 @@ export function viewOf(graph: ConversationGraph): GraphView {
   const loose = [...data.keys()].filter(id => !read.has(id) && !hung.has(id));
   const standing = new Set([...runs.values()].map(b => b.unit));
   const idle = [...units.keys()].filter(id => !standing.has(id));
-  return { works, runs, data, units, loose, idle, rank, nodes };
+  const models = graph.nodes.filter(n => n.role === "model");
+  return { works, runs, data, units, models, loose, idle, rank, nodes };
 }
 
 /** What a workflow reads of a dataset: the steps that name it, and the files they name. */
@@ -283,10 +287,11 @@ export function touching(view: GraphView, id: string): Set<string> {
     const mine = [
       w.id,
       ...w.reads.map(r => r.data),
+      ...w.models,
       ...w.uses.map(u => u.uri),
       ...bs.flatMap(b => [b.id, b.unit, ...b.results]),
     ];
-    if (id === w.id || w.uses.some(u => u.uri === id)) {
+    if (id === w.id || w.models.includes(id) || w.uses.some(u => u.uri === id)) {
       for (const x of mine) near.add(x);
       continue;
     }
@@ -295,7 +300,7 @@ export function touching(view: GraphView, id: string): Set<string> {
       for (const b of bs) near.add(b.id);
     }
     for (const b of bs) {
-      if (id === b.id) for (const x of [w.id, b.unit, ...w.reads.map(r => r.data), ...b.results]) near.add(x);
+      if (id === b.id) for (const x of [w.id, b.unit, ...w.reads.map(r => r.data), ...w.models, ...b.results]) near.add(x);
       else if (id === b.unit) for (const x of [b.id, w.id]) near.add(x);
       else if (b.results.includes(id)) for (const x of [b.id, w.id, b.unit]) near.add(x);
     }
@@ -317,11 +322,8 @@ export function relationsOf(view: GraphView, id: string): { label: string; ids: 
       "Reads",
       w.reads.map(r => r.data)
     );
-    add(
-      "Uses",
-      w.uses.map(u => u.uri)
-    );
-    add("Runs", w.runs);
+    add("Uses", [...w.models, ...w.uses.map(u => u.uri)]);
+    add("Executions", w.runs);
     add(
       "Made",
       boxesOf(w).flatMap(b => b.results)
@@ -339,7 +341,7 @@ export function relationsOf(view: GraphView, id: string): { label: string; ids: 
   }
   if (view.units.has(id)) {
     add(
-      "Runs on it",
+      "Executions on it",
       [...view.runs.values()].filter(b => b.unit === id).map(b => b.id)
     );
     return out;
@@ -357,12 +359,12 @@ export function relationsOf(view: GraphView, id: string): { label: string; ids: 
   }
   add(
     "Used by",
-    view.works.filter(x => x.uses.some(u => u.uri === id)).map(x => x.id)
+    view.works.filter(x => x.models.includes(id) || x.uses.some(u => u.uri === id)).map(x => x.id)
   );
   return out;
 }
 
-/** A thing's name on the graph: a node's, a plan item's, or a run box's workflow and unit. */
+/** A thing's name on the graph: a node's, a plan item's, or an execution's workflow and unit. */
 export function nameOf(view: GraphView, id: string): string {
   const box = view.runs.get(id);
   if (box) {
@@ -377,4 +379,12 @@ export function nameOf(view: GraphView, id: string): string {
     view.units.get(id)?.planned?.name ??
     id
   );
+}
+
+/** What a comment on a thing of the graph is about; undefined for what is only planned. */
+export function commentTarget(view: GraphView, id: string): { uri: string; name: string } | undefined {
+  const box = view.runs.get(id);
+  if (box) return box.run ? { uri: box.run.uri, name: `execution of ${nameOf(view, box.work)}` } : undefined;
+  const n = view.nodes.get(id);
+  return n ? { uri: n.uri, name: n.name } : undefined;
 }

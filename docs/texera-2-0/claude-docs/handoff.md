@@ -71,8 +71,14 @@ Resource Graph", each of which now carries a dated status under its Plan heading
   `Credential` gets a credential's secret.
 - Skills: texera-workflows, python-udf, reading-results, computing-units, exploring-resources,
   using-models (`catalog/internal/catalog/skills/`).
-- A diabetes research team's project from public data, with a scientist's session through the
-  real model: `bin/texera-2-0/examples/diabetes/`.
+- A diabetes research team's project from public data, and the demo on it (the project as the
+  landing page with the chat over it, a file brought to the chat and analyzed with the team's
+  model, two people on one canvas): `bin/texera-2-0/examples/diabetes/`.
+- A file attached to a chat is the chat's own: a dataset labelled `texera.attachment`, read and used
+  by URI, in no list, gone with the chat unless something uses it, until `keep_attachment`
+  (`POST /datasets/{rid}/keep`) makes it the project's.
+- The landing page is the working project's overview (`packages/kinds/src/project/Overview.tsx`), the
+  chat floats over it, and the graph takes its place once the agent starts work.
 
 ## What is done
 

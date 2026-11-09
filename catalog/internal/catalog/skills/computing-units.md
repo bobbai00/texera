@@ -37,10 +37,11 @@ The deployment's unit runs the core operators and Python with the packages its p
 
 A unit of the person's own costs money while it runs and takes minutes to start, so where heavier work runs is the person's choice. Before the first run in a chat of work that runs a model (`predict`), fits one, or reads a large table, unless the person already said where, call `ask` with these choices, at most four, each with its size and what it costs in its `detail`:
 
-1. The deployment's unit: shared, ready now, enough for small tables and light models.
-2. Small (2 CPUs, 4 GB): a unit of the person's own, a few minutes to start on a cluster.
-3. Large (8 CPUs, 16 GB): for big tables and many workers per operator.
-4. GPU, only when a GPU profile can start here. When none can, say in the question that this deployment has no GPU, and offer ML on CPU in its place for a model whose card asks for a GPU.
+1. A unit the project already holds and that is ready, by its name (`list_computing_units`): the team's own, no wait and nothing new to pay for. Offer it first.
+2. The deployment's unit: shared, ready now, enough for small tables and light models.
+3. Small (2 CPUs, 4 GB): a unit of the person's own, a few minutes to start on a cluster.
+4. Large (8 CPUs, 16 GB): for big tables and many workers per operator.
+5. GPU, only when a GPU profile can start here. When none can, say in the question that this deployment has no GPU, and offer ML on CPU in its place for a model whose card asks for a GPU.
 
 Label each by the profile's name first, such as "Small (2 CPUs, 4 GB)", so the person's pick names it. Read the profiles' `status` first and leave out a rung that cannot start; offer Medium in place of Large when Large cannot. A GPU is always the person's choice, never yours. A ready unit made for the same purpose is reused rather than made again: look at `list_computing_units` first.
 

@@ -109,10 +109,15 @@ func (s *Store) Attached(ctx context.Context, conversation uuid.UUID) ([]string,
 	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
+// staleTurn is how long a turn's lock outlasts the chat's last write. A turn gives its lock back
+// as it ends; one that could not, because the catalog or the runtime went away, must not hold the
+// chat for good. It is longer than any tool call waits.
+const staleTurn = "30 minutes"
+
 // StartTurn takes the conversation's turn lock for a person; ErrConflict when a turn is active.
 func (s *Store) StartTurn(ctx context.Context, conversation uuid.UUID, turn string, by *uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE resource SET status = coalesce(status, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object('activeTurn', $2::text, 'activeTurnBy', $4::text)), etag = $3, updated_at = now()
-		WHERE rid = $1 AND deleted_at IS NULL AND kind = 'conversation' AND (status ->> 'activeTurn') IS NULL`, conversation, turn, newEtag(), by)
+		WHERE rid = $1 AND deleted_at IS NULL AND kind = 'conversation' AND ((status ->> 'activeTurn') IS NULL OR updated_at < now() - $5::interval)`, conversation, turn, newEtag(), by, staleTurn)
 	if err != nil {
 		return err
 	}

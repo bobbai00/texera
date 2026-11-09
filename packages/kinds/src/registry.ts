@@ -42,10 +42,15 @@ export const KINDS: Record<KindId, KindSpec> = {
  * workflow, and is listed after workflows because people look for one across workflows), what
  * the agent is made of (Agent), and the projects themselves.
  */
-export const LIBRARY_GROUPS: { title: string; kinds: KindId[] }[] = [
-  { title: "Work", kinds: ["workflow", "execution", "dataset", "model", "operator", "computing-unit", "profile", "warehouse"] },
-  { title: "Agent", kinds: ["agent-template", "skill", "mcp-server", "model-endpoint", "credential"] },
+export const LIBRARY_GROUPS: { title: string; kinds: KindId[]; folded?: boolean }[] = [
+  { title: "Work", kinds: ["workflow", "execution", "dataset", "model", "operator", "computing-unit"] },
   { title: "Projects", kinds: ["project"] },
+  // What a project runs with: set up once, so out of the way until asked for.
+  {
+    title: "Configure",
+    folded: true,
+    kinds: ["profile", "warehouse", "agent-template", "skill", "mcp-server", "model-endpoint", "credential"],
+  },
 ];
 
 export const isKindId = (value: string): value is KindId => value in KINDS;

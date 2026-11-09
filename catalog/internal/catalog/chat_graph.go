@@ -137,6 +137,7 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		n := api.GraphNode{Uri: api.Uri(URI(r).String()), Role: role, Kind: api.ResourceKind(r.Kind), Name: r.Name, Made: item.Made, Description: r.Description}
 		if role == api.GraphRoleUnit {
 			n.State = unitPhase(r)
+			sizeUnitNode(&n, r)
 		}
 		if r.Origin != nil && r.Origin.Conversation == rid {
 			turn := r.Origin.Turn
@@ -344,8 +345,24 @@ func (s *Service) unitNode(ctx context.Context, caller *auth.Caller, g *chatGrap
 	if err != nil {
 		return false
 	}
-	g.node(api.GraphNode{Uri: api.Uri(unit), Role: api.GraphRoleUnit, Kind: api.ResourceKind(r.Kind), Name: r.Name, Description: r.Description, State: unitPhase(r)})
+	n := api.GraphNode{Uri: api.Uri(unit), Role: api.GraphRoleUnit, Kind: api.ResourceKind(r.Kind), Name: r.Name, Description: r.Description, State: unitPhase(r)}
+	sizeUnitNode(&n, r)
+	g.node(n)
 	return true
+}
+
+// sizeUnitNode says on a unit's node what its main node has.
+func sizeUnitNode(n *api.GraphNode, r *store.Resource) {
+	var spec api.ComputingUnitSpec
+	if json.Unmarshal(r.Spec, &spec) != nil || spec.ComputingNodes == nil {
+		return
+	}
+	for _, node := range *spec.ComputingNodes {
+		if node.Role == api.ComputingNodeSpecRoleMaster {
+			n.Cpu, n.Memory, n.Gpu = node.Cpu, node.Memory, node.Gpu
+			return
+		}
+	}
 }
 
 // unitPhase is how a unit stands, as its status says: starting, ready, and so on.

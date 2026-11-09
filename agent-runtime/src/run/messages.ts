@@ -6,7 +6,7 @@
  * theirs. What a person attached reaches the model as a line that names it.
  */
 import type { ModelMessage } from "ai";
-import type { Message, MessagePart } from "../catalog/types.ts";
+import type { AttachedFile, Message, MessagePart } from "../catalog/types.ts";
 import type { CollectedTurn } from "./ag-ui-events.ts";
 
 export interface HistoryOptions {
@@ -64,10 +64,24 @@ export function toModelMessages(history: Message[], options: HistoryOptions = {}
   return out;
 }
 
-/** A person's attachment as the model reads it: its kind, the name they gave it, its URI. */
+/** The files people attached to a chat, oldest first, each under its own name: an upload of several names them all. */
+export function attachedFiles(history: Message[]): AttachedFile[] {
+  return history.flatMap((m) =>
+    m.role !== "user"
+      ? []
+      : m.parts.flatMap((p) =>
+          p.type === "resource" && p.resource && p.text && /^texera:\/\/datasets\/.+@\d+$/.test(p.resource)
+            ? p.text.split(", ").map((name) => ({ name, uri: p.resource as string }))
+            : [],
+        ),
+  );
+}
+
+/** A person's attachment as the model reads it: its kind, the name they gave it, its URI. A dataset attached is a file of the chat. */
 function attachedLine(uri: string, name?: string): string {
   const kind = /^texera:\/\/([a-z-]+?)s?\//.exec(uri)?.[1] ?? "resource";
-  return `Attached ${kind}${name ? ` ${JSON.stringify(name)}` : ""} (${uri})`;
+  const file = kind === "dataset" && /@\d+$/.test(uri);
+  return `Attached ${file ? "file" : kind}${name ? ` ${JSON.stringify(name)}` : ""} (${uri})`;
 }
 
 type AssistantContent =

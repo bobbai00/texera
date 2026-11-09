@@ -9,18 +9,21 @@ import { useMemo, useRef, useState } from "react";
 import { FromThisChat } from "../shell/FromThisChat";
 import { type ViewHost, ViewHostContext } from "../shell/host";
 import { FocusLayer, type Rect, rectWithin } from "./Focus";
-import { entryFor, entryForRef, type FocusEntry, pushed } from "./focus";
+import { entryFor, entryForRef, type FocusEntry, pushed } from "./focus-trail";
 import { viewOf } from "./model";
-import { ResourceGraph } from "./ResourceGraph";
+import { type CommentOn, ResourceGraph } from "./ResourceGraph";
 
 export function ResourcePanel({
   rid,
   graph,
   className,
+  onComment,
 }: {
   rid: string;
   graph: ConversationGraph;
   className?: string;
+  /** Posts a comment on a thing of the graph into the chat. */
+  onComment?: (on: CommentOn, text: string) => Promise<boolean>;
 }) {
   const [tab, setTab] = useState<"graph" | "list">("graph");
   const [trail, setTrail] = useState<FocusEntry[]>([]);
@@ -86,6 +89,7 @@ export function ResourcePanel({
             className="min-h-0 flex-1"
             bar={tabs}
             onOpen={(id, el) => enter(id, el)}
+            onComment={onComment}
             inert={focused}
           />
         ) : (

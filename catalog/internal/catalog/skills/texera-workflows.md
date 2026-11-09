@@ -54,7 +54,7 @@ Every create and edit makes a version, and an execution names the version it ran
 
 `file` takes a dataset file:
 
-- by name: `"CGM readings/cgm.csv"` reads the dataset's newest version, `"CGM readings@3/cgm.csv"` pins version 3, and a dataset of one file needs no path: `"CGM readings"`. A name is looked up in the chat's project; when two datasets share it, use the URI.
+- by name: `"CGM readings/cgm.csv"` reads the dataset's newest version, `"CGM readings@3/cgm.csv"` pins version 3, and a dataset of one file needs no path: `"CGM readings"`. A name is looked up in the chat's project; when two datasets share it, use the URI. A file attached to the chat goes by its own name: `"cohort.csv"`.
 - by URI: `texera://datasets/<rid>@<version>/files/<path>`, from `search_resources` and `list_dataset_files`.
 
 The answer's lines show the URI at the version used. Before you write a scan, read the file's first lines with `read_dataset_file`: they settle the header, the delimiter, and how numbers and missing values are written. A column is named by its header cell as written, case and spaces included; its type is read off the first rows.

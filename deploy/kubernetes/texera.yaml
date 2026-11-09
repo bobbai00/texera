@@ -148,7 +148,7 @@ spec:
             periodSeconds: 5
             failureThreshold: 60
           resources:
-            requests: { memory: 2Gi }
+            requests: { cpu: "2", memory: 2Gi }
 ---
 apiVersion: v1
 kind: Service

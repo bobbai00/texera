@@ -47,30 +47,33 @@ literature. The foot of the box shows what the chat runs with: the agent, its mo
 add-on tools. Change one and the chat stores your choice; a chat you never touch stores nothing
 and follows its project's and the platform's defaults. Where its executions run is not a chat's
 choice: they go where any execution goes (see "Computing units"), and you say "run it on my GPU
-unit" in words when you want another. Attach a CSV from the box
-and it becomes a dataset of the chat's project, shown as a card of your message. What the
-agent makes shows as a card in its message. Each answer is labelled with the version of the
+unit" in words when you want another. A file you attach from the box is the chat's own, shown
+as a card of your message: the agent reads it and a workflow can use it, it is in no list of the
+project, and it goes with the chat unless something still uses it. Ask the agent to keep it and
+it becomes a dataset of the project. What the agent makes shows as a card in its message. Each answer is labelled with the version of the
 agent and the model that wrote it. A turn that fails says why in the chat, and still does after
 a reload.
 
 **The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
-the left of the chat page shows what the chat read, made and ran: Data, Computation and Results
-from left to right. In the computation a workflow's card, with the models and functions it uses
-on it, stands beside its runs: each run is a box of its own in the lane of the unit it ran on,
-the unit at the lane's foot, dotted lines joining the run to its workflow and to its unit (a
-workflow run on two units has a box in each lane; reruns on one unit show as ×3). A workflow not
-run yet has a hollow box on the unit it will use. Arrows carry data only: the dataset a workflow
-reads, the table a run made. What the plan has not made yet is dashed, and a dot marks what this
-chat made. It zooms in three levels: Overview, names only and each run a dot on its rail;
-Standard, each thing's version, rows and how its last run went; Detail, each workflow's steps,
-the file a step read and the table a step made standing level with it, the run a bar beside the
-steps. Drag to move, scroll with Ctrl or ⌘ (or pinch) to zoom, Fit to see everything. A click on
-any box goes into it: the graph gives way to the thing's own view (a run's execution, a table's
-rows, a dataset, a workflow, a model, a function, a unit, or what the plan said of something not
-made yet), with a trail back to the graph and, under it, what the thing is to the rest (what it
-reads, uses, made, runs on) to go to next. What that view links to opens there too; Back, the
-trail, Escape or Alt+Left go back, and the chat beside it is never touched. Nothing drawn moves
-when more arrives, but a unit, which stays at its lane's foot. The List tab holds the same as a tree, "From this chat": a section per kind,
+the left of the chat page shows what the chat read, made and ran, left to right: Data above Model,
+Workflow, Execution, Result. Each execution is a box of its own beside its workflow, the newest on
+top, with the unit it ran on at its bottom right (the unit's name and what it has, `2 cores · 2 GB`;
+several executions on one unit each show it). A function a workflow uses rides on its card. A
+workflow not run yet has a hollow box on the unit it will use, and what the plan has not made yet
+is dashed; a dot marks what this chat made. It zooms in three levels: Overview, names only;
+Standard, each thing's version, rows and how long an execution took; Detail, each workflow's steps,
+the file a step read and the table a step made standing level with it. Drag to move, scroll with
+Ctrl or ⌘ (or pinch) to zoom, Fit to see everything; it frames itself again when the page changes
+size, until you move it. A click on any box goes into it: the graph gives way to the thing's own
+view (an execution, a table's rows, a dataset, a workflow, a model, a function, a unit, or what the
+plan said of something not made yet), with a trail back to the graph and, under it, what the thing
+is to the rest (what it reads, uses, made, runs on) to go to next. What that view links to opens
+there too; Back, the trail, Escape or Alt+Left go back, and the chat beside it is never touched.
+Nothing drawn moves when more arrives, but the models, under the data. Everyone on the chat shows
+at the top of the graph, and their pointers on it with their names. Hovering a box shows a speech
+bubble: a comment posted there goes into the chat with the box attached, so the agent answers it
+and everyone sees it; while the agent is busy it goes in as a note the agent reads next. The button
+at the top right of the chat gives it the whole page and back. The List tab holds the same as a tree, "From this chat": a section per kind,
 each resource, its versions, and under a version the executions that ran it or the files it
 holds; what the chat worked from (what you attached, what its workflows read) is dimmed, and
 what a search only returned is not in it.
@@ -166,8 +169,8 @@ envelope; `?panel=` opens a second resource beside the first.
 offers every project unless its admins took one away, and the custom operators of the
 workflow's project and what it inherits, by URI) joined by arrows. An operator is a card:
 its name, and its settings in one line as a person would say them (a file by its name, a
-filter as `medal = Gold`). "Compact | Detailed" at the top of the canvas chooses how much every
-card says; "Detailed" lists each setting on a line. A card has the operator's own two buttons:
+filter as `medal = Gold`). The two density icons at the top of the canvas choose how much every
+card says; the second lists each setting on a line. A card has the operator's own two buttons:
 the eye keeps its result on every run (it stays in sight while it is on), and the run button
 runs up to it. The pencil on a card (or a double click) opens the card into its form, where
 the operator is renamed and set (properties from its JSON Schema; code a few lines in the card
@@ -447,9 +450,9 @@ its credential when the secret is replaced.
 An execution keeps its results in the warehouse the request names (`warehouse` of `run`), else
 the workflow's (`defaultWarehouse`), else the project's default (`defaults.warehouse`, which may
 come from up its chain), and records it
-(`spec.warehouse`); its page shows it. The bar beside Run says it before a run, `on <unit>
-(<profile> vN) · results in <warehouse>`, and picks another warehouse for the runs started
-there; an execution's card in lineage says the same. On a warehouse's page, "Keep <project>'s results here"
+(`spec.warehouse`); its page shows it. The sliders beside Run say it before an execution: the
+profile the unit was made from and where the results go, and pick another warehouse for the
+executions started there, with Run fresh beside them; an execution's card in lineage says the same. On a warehouse's page, "Keep <project>'s results here"
 makes it the project's default, for its admins. Whoever runs needs `use` on the warehouse
 (grant `user`; Texera's is everyone's). Reading is decided by the execution, not by the warehouse: whoever
 may read an execution reads its rows, through the catalog. A warehouse is deleted only when no

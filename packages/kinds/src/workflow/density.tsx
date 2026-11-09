@@ -52,7 +52,7 @@ export function DensityToggle({ view }: { view: CanvasView }) {
           value: "compact",
           label: (
             <>
-              <Rows3 /> Compact
+              <Rows3 /> <span className="sr-only">Compact</span>
             </>
           ),
           title: "Each operator says its settings in one line",
@@ -61,7 +61,7 @@ export function DensityToggle({ view }: { view: CanvasView }) {
           value: "detailed",
           label: (
             <>
-              <LayoutList /> Detailed
+              <LayoutList /> <span className="sr-only">Detailed</span>
             </>
           ),
           title: "Each operator lists every setting",

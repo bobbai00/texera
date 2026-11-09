@@ -1462,6 +1462,41 @@ paths:
         readOnlyHint: false
         destructiveHint: false
       x-texera-permission: write
+  /catalog/v1/datasets/{rid}/keep:
+    post:
+      operationId: Datasets_keep
+      description: 'Keep a file attached to a chat as a dataset of its project: from then on it is listed like any other, and outlives the chat.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KeepAttachment'
+      x-mcp:
+        tool: keep_attachment
+        description: "Keep a file attached to this chat as a dataset of the project, when the person asks for that: give it a name and a description of what it holds and where it comes from. Until then an attached file is the chat's own: a workflow can read it, and it is in no list of the project."
+        readOnlyHint: false
+        destructiveHint: false
+      x-texera-permission: write
   /catalog/v1/datasets/{rid}/staged:
     get:
       operationId: Datasets_staged
@@ -5318,7 +5353,7 @@ components:
           type: string
         contract:
           $ref: '#/components/schemas/ModelContract'
-          description: For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract.
+          description: For a model, the new version's contract; absent, a contract.json among the staged files says it, else the head version's carries over. A model version may change only its contract.
     ComputingNodeSpec:
       type: object
       required:
@@ -6566,6 +6601,16 @@ components:
           type: integer
           format: int64
           description: For a table a run made, its rows.
+        cpu:
+          type: string
+          description: For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.
+        memory:
+          type: string
+          description: For a unit, the memory of its main node, as Kubernetes counts it.
+        gpu:
+          type: integer
+          format: int32
+          description: For a unit, the GPUs of its main node.
       description: A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
     GraphRole:
       type: string
@@ -6678,6 +6723,16 @@ components:
           type: string
         value: {}
       description: One RFC 6902 JSON Patch operation.
+    KeepAttachment:
+      type: object
+      properties:
+        name:
+          type: string
+          description: What to call the dataset; absent, it keeps the file's name.
+        description:
+          type: string
+          description: What it holds and where it comes from.
+      description: A file attached to a chat, kept as a dataset of the chat's project.
     Lease:
       type: object
       required:

@@ -81,13 +81,16 @@ const canonical = (requirement: string) =>
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** A size in words, `4 GB · 2 cores · 1 GPU`; empty when the node reserves nothing of its own. */
+/** A size in words, `2 cores · 4 GB · 1 GPU`; empty when the node reserves nothing of its own. */
 export function sizeLabel(m: Makeup): string {
   const memory = m.memory ? (MEMORY_CHOICES.find(c => c.value === m.memory)?.label ?? m.memory) : "";
   const cpu = m.cpu ? (CPU_CHOICES.find(c => c.value === m.cpu)?.label ?? `${m.cpu} cores`) : "";
   const gpu = m.gpu ? plural(m.gpu, "GPU") : "";
-  return [memory, cpu, gpu].filter(Boolean).join(" · ");
+  return [cpu, memory, gpu].filter(Boolean).join(" · ");
 }
+
+/** What a unit has, in words: a unit that reserves no cores shares the CPU of its machine. */
+export const unitSizeLabel = (m: Makeup): string => (m.cpu ? sizeLabel(m) : ["Shared CPU", sizeLabel(m)].filter(Boolean).join(" · "));
 
 /** A makeup in words, for lists: its size and how many packages it adds. */
 export const makeupFacts = (m: Makeup): string[] =>

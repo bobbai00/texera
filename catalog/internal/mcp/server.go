@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -56,7 +57,8 @@ list_versions and get_version read history; get_lineage shows where a version ca
 was made from it; grant_access shares a resource with a principal found by search_principals.
 Datasets are versioned files: list_dataset_files and read_dataset_file look at a version,
 create_dataset makes a dataset, import_dataset_file brings a file in from a public https URL
-(the catalog fetches it), and commit_dataset_version makes a version of what is staged. list_operators, with q, gives an operator's property schema
+(the catalog fetches it), commit_dataset_version makes a version of what is staged, and keep_attachment
+makes a file attached to a chat one of the project's datasets. list_operators, with q, gives an operator's property schema
 and ports; list_computing_units the units the caller may run on. A profile is what a unit's node
 is made of, its size and the Python packages it adds: create_computing_unit makes a unit from a
 profile (search_resources with kind profile lists them; waitSeconds waits until it is ready, and
@@ -74,6 +76,20 @@ pause_execution and resume_execution hold and continue it.`
 
 // maxToolTextBytes bounds what a tool returns to a model.
 const maxToolTextBytes = 256 << 10
+
+// serve answers a tool call's request in process. net/http ends only the request when a handler
+// panics; this runs on the MCP connection's own goroutine, where a panic would end the catalog.
+func serve(api http.Handler, rec *httptest.ResponseRecorder, r *http.Request, tool string) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("a tool call panicked", "tool", tool, "panic", p, "stack", string(debug.Stack()))
+			rec.Code = http.StatusInternalServerError
+			rec.Body.Reset()
+			rec.Body.WriteString(`{"code":"internal","message":"the catalog failed on this call"}`)
+		}
+	}()
+	api.ServeHTTP(rec, r)
+}
 
 // bridge turns a tool call into the operation's HTTP request against the API handler.
 func bridge(ctx context.Context, api http.Handler, t Tool, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
@@ -133,7 +149,7 @@ func bridge(ctx context.Context, api http.Handler, t Tool, req *sdk.CallToolRequ
 		}
 	}
 	rec := httptest.NewRecorder()
-	api.ServeHTTP(rec, hr)
+	serve(api, rec, hr, t.Name)
 	data := rec.Body.Bytes()
 	if rec.Code >= 400 {
 		return toolError(fmt.Sprintf("%d: %s", rec.Code, truncate(data))), nil

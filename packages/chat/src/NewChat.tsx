@@ -20,12 +20,15 @@ export function NewChat({
   greeting,
   onCreated,
   dock = false,
+  floating = false,
   about,
   suggested,
 }: {
   greeting: string;
   onCreated: (rid: string) => void;
   dock?: boolean;
+  /** Over the project's overview: the box alone, which says for itself what it is for. */
+  floating?: boolean;
   about?: string;
   /** The project to start from when the person is asked: the one the page's resource is in. */
   suggested?: string;
@@ -67,7 +70,7 @@ export function NewChat({
       className={dock ? "flex h-full flex-col justify-end gap-3 p-3" : "mx-auto w-full max-w-2xl space-y-6"}
       data-new-chat
       data-new-chat-in={project ?? ""}>
-      {dock ? (
+      {floating ? null : dock ? (
         <p className="flex-1 content-center text-center text-sm text-muted-foreground">{greeting}</p>
       ) : (
         <div className="flex flex-col items-center gap-3">
@@ -76,7 +79,7 @@ export function NewChat({
           <p className="text-center text-sm text-muted-foreground">Ask about your data or the literature, or attach a CSV.</p>
         </div>
       )}
-      <div className="space-y-2">
+      <div className={floating ? "space-y-2 rounded-2xl shadow-xl" : "space-y-2"}>
         <Composer
           busy={start.isPending}
           disabled={project === undefined}

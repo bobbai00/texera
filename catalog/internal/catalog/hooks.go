@@ -212,6 +212,8 @@ func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 	switch r.Kind {
 	case "project":
 		return s.beforeDeleteProject(ctx, r)
+	case "conversation":
+		return s.dropAttachments(ctx, r)
 	case "credential":
 		path := secretPath(r)
 		if err := s.Secrets.Delete(ctx, path); err != nil && !errors.Is(err, ports.ErrSecretNotFound) {

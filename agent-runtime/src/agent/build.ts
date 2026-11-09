@@ -7,7 +7,14 @@
  */
 import type { LanguageModel, ModelMessage, ToolSet } from "ai";
 import type { CatalogClient } from "../catalog/client.ts";
-import type { CatalogAuth, ChatSettings, LoopSpec, SkillRecord, TemplateRecord } from "../catalog/types.ts";
+import type {
+  AttachedFile,
+  CatalogAuth,
+  ChatSettings,
+  LoopSpec,
+  SkillRecord,
+  TemplateRecord,
+} from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
 import {
   DEFAULT_POLICY,
@@ -65,6 +72,8 @@ export interface BuildInput {
   people?: ChatPeople;
   /** The turn's work: how its changes go, and whether it has started. */
   work: Work;
+  /** The files attached to the chat so far. */
+  attached: AttachedFile[];
 }
 
 export interface RunInput {
@@ -145,6 +154,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     catalog,
     auth: () => ({ ...auth, origin: input.turn.current }),
     project: settings.project.rid,
+    attached: input.attached,
   });
   for (const name of LINE_TOOLS) if (name in mcp.tools) tools[name] = lineTools[name] as ToolSet[string];
   if (skills.length > 0) tools[LOAD_SKILL_TOOL] = loadSkillTool(skills);

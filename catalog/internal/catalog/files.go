@@ -119,6 +119,32 @@ func (s *Service) Staged(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	return m, nil
 }
 
+// contractFile is the file that says a model version's contract, for someone uploading a model
+// who has no other place to say it.
+const contractFile = "contract.json"
+
+// stagedContract reads the contract among the staged files; none is there, nothing is returned.
+func (s *Service) stagedContract(ctx context.Context, staged []store.StagedFile) (*api.ModelContract, error) {
+	for _, f := range staged {
+		if f.Path != contractFile {
+			continue
+		}
+		rc, err := s.Blobs.Get(ctx, f.SHA256, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		var c api.ModelContract
+		dec := json.NewDecoder(rc)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&c); err != nil {
+			return nil, err
+		}
+		return &c, nil
+	}
+	return nil, nil
+}
+
 // Commit makes a version from the head version's files overlaid with the staged ones.
 func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind, rid uuid.UUID, message *string, contract *api.ModelContract) (*store.Resource, *store.Version, error) {
 	if contract != nil && k.Name != "model" {
@@ -160,7 +186,13 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	}
 	sortFiles(manifest.Files)
 	if k.Name == "model" {
-		// What the version reads and puts out: as committed, else as the head said.
+		// What the version reads and puts out: as committed, else as a contract.json uploaded
+		// with it says, else as the head said.
+		if contract == nil {
+			if contract, err = s.stagedContract(ctx, staged); err != nil {
+				return nil, nil, Invalid(contractFile+": "+err.Error(), map[string]any{"field": "contract"})
+			}
+		}
 		if contract == nil {
 			contract = headContract
 		}

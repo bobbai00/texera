@@ -3,9 +3,11 @@ import type { Resource } from "@texera/catalog-client/types";
 import { Badge, EmptyState, Skeleton, timeAgo } from "@texera/ui";
 import { KINDS, isKindId } from "../registry";
 import { projectsQuery, useScope } from "../scope";
-import { OriginChip, PrincipalName } from "../shell/Chips";
+import { OriginChip } from "../shell/Chips";
 import { KindIcon } from "../shell/KindIcon";
 import { useOpenResource } from "../shell/navigation";
+import { ResourceLabels } from "../shell/ResourceRow";
+import { describe } from "./describe";
 
 /**
  * The library list. Identical for every kind: the point of one envelope. What the project in view
@@ -42,7 +44,7 @@ export function ResourceTable({ resources, loading, empty = "Nothing here yet. A
                 {r.metadata.name}
               </button>
               <div className="truncate text-xs text-muted-foreground">
-                {[r.metadata.description, ...facts].filter(Boolean).join(" · ")}
+                {[describe(r), ...facts].filter(Boolean).join(" · ")}
               </div>
             </div>
             {r.metadata.origin && <OriginChip origin={r.metadata.origin} className="hidden md:inline-flex" />}
@@ -51,7 +53,7 @@ export function ResourceTable({ resources, loading, empty = "Nothing here yet. A
                 from {inherited(r)}
               </Badge>
             )}
-            <PrincipalName pid={r.metadata.owner} className="hidden w-24 truncate text-right text-xs text-muted-foreground sm:block" />
+            <span className="hidden sm:block"><ResourceLabels metadata={r.metadata} /></span>
             <span className="w-28 text-right text-xs text-muted-foreground">{timeAgo(r.metadata.updatedAt)}</span>
           </div>
         );

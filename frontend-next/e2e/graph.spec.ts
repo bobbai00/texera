@@ -2,21 +2,20 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { api, cleanups, inTurn, signIn, tidyUp, withIris } from "./support";
 
 // Once a chat starts work, what it reads, makes and runs takes the left of the chat page as a
-// graph: Data, Computation and Results. In the computation each workflow's card stands beside
-// its runs, each run a box in the lane of the unit it ran on, the unit at the lane's foot, dotted
-// ties joining a run to both; arrows are only for data; what the plan has not made yet is dashed.
-// Nothing moves when more arrives (only a unit, which stays at its lane's foot); it zooms from the
-// whole graph to each workflow's steps. A click on any box goes into it: its own view over the
-// graph, with the trail back; what that view links to opens there too, and the chat beside it
-// never changes. The agent's calls are made here as the runtime makes them, in a turn of the chat,
-// so no model is needed.
+// graph, left to right: Data above Model, Workflow, Execution, Result. Each execution is a box
+// with the unit it ran on at its bottom right; what the plan has not made yet is dashed. Nothing
+// moves when more arrives; it zooms from the whole graph to each workflow's steps. A click on any
+// box goes into it: its own view over the graph, with the trail back; what that view links to
+// opens there too, and the chat beside it never changes. Everyone on the chat sees each other on
+// the graph, and a comment on any box goes into the chat. The agent's calls are made here as the
+// runtime makes them, in a turn of the chat, so no model is needed.
 
 test.afterEach(tidyUp);
 
-/** Where each box of the graph is on screen, by what it stands for; units at the lanes' feet go down as rows come. */
+/** Where each box of the graph is on screen, by what it stands for. */
 async function positions(graph: Locator) {
   const out = new Map<string, { x: number; y: number }>();
-  for (const node of await graph.locator("[data-graph-node]:not([data-graph-foot])").all()) {
+  for (const node of await graph.locator("[data-graph-node]:not([data-graph-unit-box])").all()) {
     const box = await node.boundingBox();
     if (box)
       out.set((await node.getAttribute("data-graph-node")) as string, { x: Math.round(box.x), y: Math.round(box.y) });
@@ -39,7 +38,7 @@ async function backToGraph(page: Page) {
   await expect(page.locator("[data-resource-graph]")).toBeVisible();
 }
 
-test("a chat's graph stands each run where its workflow meets its unit, and goes into any box and back with the chat untouched", async ({
+test("a chat's graph reads from data to results, each execution with its unit, and goes into any box and back with the chat untouched", async ({
   page,
   request,
 }) => {
@@ -114,32 +113,33 @@ test("a chat's graph stands each run where its workflow meets its unit, and goes
   await expect(workflows).toHaveCount(1);
   await expect(workflows.first()).toContainText("petal means");
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "iris" })).toHaveCount(1);
-  // Its run is a box of its own in the lane of the unit it ran on, the unit at the lane's foot,
-  // dotted ties to both; the plan's dataset, not made yet, beside it.
+  // Its execution is a box of its own beside the workflow, the unit it ran on at its bottom
+  // right; the plan's dataset, not made yet, beside it.
   const run = graph.locator(`[data-graph-role="run"][data-graph-of="${workflow}"]`);
   await expect(run).toHaveCount(1);
   await expect(run).toHaveAttribute("data-graph-unit", unit);
   await expect(run).toHaveAttribute("data-graph-state", "completed");
-  const foot = graph.locator(`[data-graph-foot="${unit}"]`);
+  const foot = run.locator(`[data-graph-unit-box="${unit}"]`);
   await expect(foot).toHaveCount(1);
   const [box, base, card] = [await run.boundingBox(), await foot.boundingBox(), await workflows.first().boundingBox()];
   expect(box && base && card).toBeTruthy();
   if (box && base && card) {
-    expect(base.y).toBeGreaterThan(box.y + box.height);
-    expect(Math.abs(base.x + base.width / 2 - (box.x + box.width / 2))).toBeLessThan(2);
+    expect(base.x + base.width).toBeGreaterThan(box.x + box.width - 14);
+    expect(base.y + base.height).toBeGreaterThan(box.y + box.height - 14);
     expect(box.x).toBeGreaterThan(card.x + card.width);
-    expect(Math.abs(box.y + box.height / 2 - (card.y + 0.2 * card.height))).toBeLessThan(card.height * 0.25);
   }
-  await expect(graph.locator('[data-graph-tie="tether"]')).toHaveCount(1);
-  await expect(graph.locator('[data-graph-tie="rail"]')).toHaveCount(1);
   await expect(graph.locator('[data-graph-planned="true"]')).toContainText("Long petals");
-  // Arrows are data only: the iris file read, the tables the run made.
+  // The arrows go left to right: the iris file read, the execution, the tables it made.
   await expect(graph.locator('[data-graph-edge="reads"]')).toHaveCount(1);
+  await expect(graph.locator('[data-graph-edge="runs"]')).toHaveCount(1);
   await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
-  await expect(graph.locator('[data-graph-edge="runsOn"], [data-graph-edge="uses"]')).toHaveCount(0);
-  await expect(graph.locator('[data-graph-column="data"]')).toContainText("Data");
-  await expect(graph.locator('[data-graph-column="computation"]')).toContainText("Computation");
-  await expect(graph.locator('[data-graph-column="results"]')).toContainText("Results");
+  for (const [column, label] of [
+    ["data", "Data"],
+    ["workflow", "Workflow"],
+    ["execution", "Execution"],
+    ["result", "Result"],
+  ] as const)
+    await expect(graph.locator(`[data-graph-column="${column}"]`)).toContainText(label);
   // Above it, the outside source the agent consulted; a click lists what it asked.
   const source = graph.locator('[data-graph-sources] [data-graph-source="biomcp"]');
   await expect(source).toContainText("1 call");
@@ -149,8 +149,8 @@ test("a chat's graph stands each run where its workflow meets its unit, and goes
   await page.screenshot({ path: "test-results/resource-graph.png" });
   const before = await positions(graph);
 
-  // A second workflow arrives, with a function the agent makes, not run yet: its run waits on
-  // its default unit, in the same lane. Nothing already there moves.
+  // A second workflow arrives, with a function the agent makes, not run yet: its execution waits
+  // on its default unit. Nothing already there moves.
   agent = await inTurn(request, alice, conversation);
   const code =
     'import pandas as pd\n\n\n@returns(Species=str, n=int)\ndef count_species(rows: pd.DataFrame):\n    return rows.groupby("Species").size().reset_index(name="n")\n';
@@ -181,7 +181,7 @@ test("a chat's graph stands each run where its workflow meets its unit, and goes
   await expect(graph.locator(`[data-graph-uses="${fn.metadata.uri}"]`)).toHaveCount(1);
 
   // Closer, a workflow shows its steps, each table level with the step that made it, and its
-  // run runs the height of the steps; further, only names.
+  // execution runs the height of the steps; further, only names.
   await graph.locator('[data-graph-level="detail"]').click();
   await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "detail");
   const petals = workflows.filter({ hasText: "petal means" });
@@ -218,8 +218,8 @@ test("a chat's graph stands each run where its workflow meets its unit, and goes
   await focus.locator("[data-graph-back]").click();
   await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
 
-  // A run: the execution, completed. From it, a table it made; the trail grows, and goes back.
-  await run.click();
+  // An execution: its view, completed. From it, a table it made; the trail grows, and goes back.
+  await run.click({ position: { x: 14, y: 12 } });
   focus = await wentInto(page, "run", "petal means");
   await expect(focus.locator("[data-execution-view] [data-phase]")).toHaveText("completed");
   await expect(focus.locator("[data-graph-related]")).toContainText("On");
@@ -271,7 +271,7 @@ test("a chat's graph stands each run where its workflow meets its unit, and goes
   await focus.locator(`[data-made-in="${conversation}"], [data-origin]`).first().click();
   await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
   await expect(page.locator("[data-side-panel]")).toHaveCount(0);
-  await waiting.click();
+  await waiting.click({ position: { x: 14, y: 12 } });
   focus = await wentInto(page, "run", "species counts");
   await expect(focus.locator('[data-graph-waiting="idle"]')).toContainText("Not run yet");
   await focus.getByRole("button", { name: "The workflow" }).click();
@@ -301,4 +301,146 @@ test("a chat's graph stands each run where its workflow meets its unit, and goes
   await focus.locator('[data-graph-crumb="root"]').click();
   await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
   await expect(page.locator("[data-chat-tree]")).toBeVisible();
+});
+
+test("people on a chat see each other on its graph, a comment on a box goes into the chat, and the graph survives the page changing size", async ({
+  page,
+  browser,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const alice = await api(request);
+  const iris = await withIris(alice, "the graph together");
+  const conversation = (
+    await alice("POST", "/conversations", { name: `the graph together ${Date.now()}`, parent: iris.project, spec: {} })
+  ).metadata.rid as string;
+  cleanups.push(() => iris.clear(conversation, []));
+  const bob = await api(request, "bob", "bob");
+  const me = (await bob("GET", "/me")).principal.pid as string;
+  await alice("PUT", `/resources/${iris.project}/grants/${me}`, { relation: "editor" });
+  const file = `texera://datasets/${iris.dataset}@1/files/iris.csv`;
+  let agent = await inTurn(request, alice, conversation);
+  const made = await agent("POST", "/workflows", {
+    name: "petals",
+    spec: {
+      operators: [
+        { operatorID: "readings", operatorType: "scan", operatorProperties: { file } },
+        { operatorID: "n", operatorType: "limit", operatorProperties: { n: 5 } },
+      ],
+      links: [
+        { linkID: "l", source: { operatorID: "readings", portID: "output-0" }, target: { operatorID: "n", portID: "input-0" } },
+      ],
+    },
+  });
+  await agent("POST", `/workflows/${made.metadata.rid}/run`, { waitSeconds: 120 });
+  await agent.end();
+
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await signIn(page);
+  await page.goto(`/conversations/${conversation}`);
+  const graph = page.locator("[data-resource-graph]");
+  const dataset = graph.locator('[data-graph-role="data"]').filter({ hasText: "iris" });
+  await expect(dataset).toBeVisible();
+
+  // Bob opens the same chat: each sees the other on the graph, an icon and a pointer with a name.
+  const other = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+  cleanups.push(() => other.close());
+  const bobPage = await other.newPage();
+  await signIn(bobPage, "bob", "bob");
+  await bobPage.goto(`/conversations/${conversation}`);
+  const bobsGraph = bobPage.locator("[data-resource-graph]");
+  await expect(bobsGraph.locator('[data-graph-role="data"]').filter({ hasText: "iris" })).toBeVisible();
+  await expect(graph.locator("[data-present]")).toHaveCount(2);
+  await expect(bobsGraph.locator("[data-present]")).toHaveCount(2);
+  await bobsGraph.locator('[data-graph-role="workflow"]').hover();
+  await expect(graph.locator("[data-graph-cursor]")).toContainText("Bob");
+  const [cursor, card] = [
+    await graph.locator("[data-graph-cursor]").boundingBox(),
+    await graph.locator('[data-graph-role="workflow"]').boundingBox(),
+  ];
+  expect(cursor && card && Math.abs(cursor.x - (card.x + card.width / 2))).toBeLessThan(card?.width ?? 0);
+  await page.screenshot({ path: "test-results/graph-together.png" });
+
+  // A comment on a box, while a turn is going, is a note the agent reads next.
+  agent = await inTurn(request, bob, conversation, "bob", "bob");
+  await expect(page.locator("[data-turn-of]")).toBeVisible({ timeout: 20_000 });
+  await dataset.hover();
+  await dataset.locator("[data-graph-comment]").click();
+  const box = page.locator("[data-graph-comment-box]");
+  await expect(box).toContainText("iris");
+  await box.locator("textarea").fill("is this the full file?");
+  await box.locator("[data-graph-comment-send]").click();
+  await expect(box).toHaveCount(0);
+  await expect(page.locator('[data-chat-window] [data-message-role="user"]').filter({ hasText: "Comment on iris: is this the full file?" })).toBeVisible();
+  await agent.end();
+  const messages = (await alice("GET", `/conversations/${conversation}/messages?limit=200`)).items as {
+    parts: { type: string; text?: string; resource?: string }[];
+  }[];
+  const said = messages.find(m => m.parts.some(p => p.text?.includes("is this the full file?")));
+  expect(said?.parts.some(p => p.type === "resource" && p.resource?.includes(iris.dataset))).toBe(true);
+  await expect(bobPage.locator("[data-chat-window]")).toContainText("is this the full file?");
+
+  // The graph follows what the catalog says while the page is too narrow to show it, and comes
+  // back as it was; a change of size frames it again.
+  const places = () =>
+    graph.locator("[data-graph-node]:not([data-graph-unit-box])").evaluateAll(nodes =>
+      nodes.map(n => {
+        const r = n.getBoundingClientRect();
+        return [Math.round(r.x), Math.round(r.y)];
+      })
+    );
+  const spread = (at: number[][]) => new Set(at.map(p => p[0])).size;
+  expect(spread(await places())).toBeGreaterThan(2);
+  let changed = false;
+  await page.route("**/conversations/*/graph", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (changed) for (const n of body.nodes) if (typeof n.rows === "number") n.rows += 1;
+    await route.fulfill({ response, json: body });
+  });
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await expect(graph).toBeHidden();
+  changed = true;
+  await page.waitForResponse("**/conversations/*/graph", { timeout: 20_000 });
+  await page.waitForTimeout(300);
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await expect(graph).toBeVisible();
+  await expect.poll(async () => spread(await places())).toBeGreaterThan(2);
+  await page.unroute("**/conversations/*/graph");
+
+  // The chat can take the whole page and give it back.
+  await page.locator("[data-chat-maximize]").click();
+  await expect(graph).toHaveCount(0);
+  await expect(page.locator("[data-chat-window]")).toHaveAttribute("data-chat-maximized", "true");
+  await expect(page.locator("[data-presence]")).toBeVisible();
+  await page.screenshot({ path: "test-results/chat-maximized.png" });
+  await page.locator("[data-chat-maximize]").click();
+  await expect(graph).toBeVisible();
+
+  // A chat takes a meaningful name, there and in the list of the project.
+  const renamed = `Iris review ${Date.now()}`;
+  const name = page.locator("[data-chat-header] [data-resource-name]");
+  await name.fill(renamed);
+  await name.press("Enter");
+  await expect.poll(async () => (await alice("GET", `/conversations/${conversation}`)).metadata.name).toBe(renamed);
+
+  // The overview says who can see each thing and who made it, one line each, and renames in place.
+  await page.goto(`/projects/${iris.project}`);
+  const row = page.locator('[data-overview-section="dataset"] [data-resource-row="dataset"]').filter({ hasText: "iris" });
+  await expect(row.locator('[data-visibility="private"]')).toHaveText("Private");
+  await expect(row.locator("[data-created-by]")).toContainText("Alice");
+  const height = await row.evaluate(el => el.getBoundingClientRect().height);
+  expect(height).toBeLessThan(48);
+  await row.hover();
+  await row.locator("[data-rename]").click();
+  const better = `iris flowers ${Date.now()}`;
+  // While it is being written, the row's name is the box itself.
+  const input = page.locator("[data-rename-input]");
+  await input.fill(better);
+  await input.press("Enter");
+  await expect
+    .poll(async () => (await alice("GET", `/datasets/${iris.dataset}`)).metadata.name)
+    .toBe(better);
+  // Each unit says what it has.
+  await expect(page.locator('[data-overview-section="computing-unit"]')).toContainText(/\d+ cores?|Shared CPU/);
 });

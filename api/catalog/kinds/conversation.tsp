@@ -166,6 +166,12 @@ model GraphNode {
   run?: Uri;
   @doc("For a table a run made, its rows.")
   rows?: int64;
+  @doc("For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.")
+  cpu?: string;
+  @doc("For a unit, the memory of its main node, as Kubernetes counts it.")
+  memory?: string;
+  @doc("For a unit, the GPUs of its main node.")
+  gpu?: int32;
 }
 
 @doc("An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.")

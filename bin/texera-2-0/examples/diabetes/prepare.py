@@ -16,8 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Prepares a diabetes research team's project from public data: four datasets and three
-models fitted on them, written to a folder that load.py puts into a Texera stack.
+"""Prepares a diabetes research team's project from public data: four datasets and three models
+fitted on them, which load.py puts into a Texera stack, and the file someone brings in the demo,
+uploads/screening_cohort.csv: the 154 women the onset-risk model never saw.
 
     python prepare.py --out ~/texera-diabetes
 
@@ -101,7 +102,7 @@ def card(folder: pathlib.Path, **fields) -> None:
 # ---- datasets ----------------------------------------------------------------------------
 
 
-def pima(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+def pima(cache: pathlib.Path, out: pathlib.Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     columns = [
         "Pregnancies",
         "Glucose",
@@ -115,20 +116,26 @@ def pima(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
     ]
     frame = pd.read_csv(io.BytesIO(fetch("pima", cache)), header=None, names=columns)
     frame.insert(0, "patient_id", range(1, len(frame) + 1))
+    # The team has 614 of the women; the other 154 are the file someone brings in the demo.
+    team, screening = train_test_split(
+        frame, test_size=0.2, stratify=frame["Outcome"], random_state=SEED
+    )
+    team, screening = team.sort_values("patient_id"), screening.sort_values("patient_id")
+    write(out / "uploads", {"screening_cohort.csv": screening})
     folder = out / "datasets" / "pima"
-    write(folder, {"pima_cohort.csv": frame, "README.md": PIMA_README})
+    write(folder, {"pima_cohort.csv": team, "README.md": PIMA_README})
     card(
         folder,
         name="Pima diabetes cohort",
-        description="768 Pima women aged 21 or more (NIDDK): eight clinical measurements and whether diabetes was diagnosed within five years. A 0 in Glucose, BloodPressure, SkinThickness, Insulin or BMI means not measured.",
+        description="614 Pima women aged 21 or more (NIDDK): eight clinical measurements and whether diabetes was diagnosed within five years. A 0 in Glucose, BloodPressure, SkinThickness, Insulin or BMI means not measured. The team's onset-risk model was fitted on these women.",
         message="The NIDDK cohort as the UCI repository has it, with row numbers as patient_id",
     )
-    return frame
+    return team, screening
 
 
 PIMA_README = """# Pima diabetes cohort
 
-768 women of Pima Indian heritage, aged 21 or more, from the National Institute of Diabetes and
+614 of the 768 women of Pima Indian heritage, aged 21 or more, from the National Institute of Diabetes and
 Digestive and Kidney Diseases, as the UCI Machine Learning Repository distributes them. Smith JW,
 Everhart JE, Dickson WC, Knowler WC, Johannes RS. Using the ADAP learning algorithm to forecast the
 onset of diabetes mellitus. Proc Annu Symp Comput Appl Med Care 1988:261-265.
@@ -147,7 +154,7 @@ onset of diabetes mellitus. Proc Annu Symp Comput Appl Med Care 1988:261-265.
 | Outcome | 1 if diabetes was diagnosed within five years, else 0 |
 
 A 0 in Glucose, BloodPressure, SkinThickness, Insulin or BMI is a measurement not taken, not a
-value: 5 rows have Glucose 0, 35 BloodPressure 0, 227 SkinThickness 0, 374 Insulin 0, 11 BMI 0.
+value. The team's onset-risk model was fitted on these women.
 """
 
 
@@ -322,16 +329,24 @@ def contract(framework, entry, inputs, outputs, **more):
 
 
 def save_model(
-    folder: pathlib.Path, estimator, holdout: pd.DataFrame, readme: str, **fields
+    folder: pathlib.Path, estimator, holdout, readme: str, contract: dict, **fields
 ) -> None:
+    """A model version's files, contract.json saying what it reads and adds, and what load.py
+    calls it."""
     folder.mkdir(parents=True, exist_ok=True)
     joblib.dump(estimator, folder / "model.joblib")
-    write(folder, {"holdout.csv": holdout, "README.md": readme})
+    write(
+        folder,
+        {"README.md": readme, "contract.json": json.dumps(contract, indent=2) + "\n"},
+    )
+    if holdout is not None:
+        write(folder, {"holdout.csv": holdout})
     card(folder, **fields)
 
 
-def onset_risk(cohort: pd.DataFrame, out: pathlib.Path) -> dict:
-    """Logistic regression for diabetes within five years, a 0 read as not measured."""
+def onset_risk(team: pd.DataFrame, screening: pd.DataFrame, out: pathlib.Path) -> dict:
+    """Logistic regression for diabetes within five years, a 0 read as not measured: fitted on the
+    team's women, tested on those it never saw."""
     features = [
         "Pregnancies",
         "Glucose",
@@ -340,9 +355,6 @@ def onset_risk(cohort: pd.DataFrame, out: pathlib.Path) -> dict:
         "DiabetesPedigreeFunction",
         "Age",
     ]
-    train, test = train_test_split(
-        cohort, test_size=0.2, stratify=cohort["Outcome"], random_state=SEED
-    )
     prepare = ColumnTransformer(
         [
             (
@@ -364,24 +376,21 @@ def onset_risk(cohort: pd.DataFrame, out: pathlib.Path) -> dict:
             ("fit", LogisticRegression(max_iter=1000)),
         ]
     )
-    model.fit(train[features], train["Outcome"])
-    risk = model.predict_proba(test[features])[:, 1]
+    model.fit(team[features], team["Outcome"])
+    risk = model.predict_proba(screening[features])[:, 1]
     metrics = {
-        "test_auc": round(roc_auc_score(test["Outcome"], risk), 3),
+        "test_auc": round(roc_auc_score(screening["Outcome"], risk), 3),
         "test_accuracy": round(
-            accuracy_score(test["Outcome"], model.predict(test[features])), 3
+            accuracy_score(screening["Outcome"], model.predict(screening[features])), 3
         ),
-        "train": len(train),
-        "test": len(test),
+        "train": len(team),
+        "test": len(screening),
     }
     save_model(
         out / "models" / "onset-risk",
         model,
-        test[["patient_id"]],
+        None,
         ONSET_README.format(sklearn=sklearn.__version__, **metrics),
-        name="Diabetes onset risk",
-        description=f"Logistic regression for diabetes diagnosed within five years, fitted on 614 of the Pima cohort's 768 women; held-out AUC {metrics['test_auc']}. A 0 in Glucose, BloodPressure or BMI is read as not measured.",
-        spec={"framework": "sklearn", "format": "joblib", "task": "classification"},
         contract=contract(
             "sklearn",
             "model.joblib",
@@ -395,7 +404,10 @@ def onset_risk(cohort: pd.DataFrame, out: pathlib.Path) -> dict:
             ],
             [("predicted", "long"), ("risk", "double")],
         ),
-        message=f"Fitted on the Pima diabetes cohort, version 1, all but holdout.csv (scikit-learn {sklearn.__version__})",
+        name="Diabetes onset risk",
+        description=f"Who is likely to develop diabetes within five years, from six routine clinic measurements of adult women. A logistic regression fitted on the Pima cohort; AUC {metrics['test_auc']} on women it never saw.",
+        spec={"framework": "sklearn", "format": "joblib", "task": "classification"},
+        message=f"Fitted on the Pima diabetes cohort, version 1 (scikit-learn {sklearn.__version__})",
         metrics=metrics,
     )
     return metrics
@@ -403,13 +415,15 @@ def onset_risk(cohort: pd.DataFrame, out: pathlib.Path) -> dict:
 
 ONSET_README = """# Diabetes onset risk
 
-A logistic regression for diabetes diagnosed within five years, fitted with scikit-learn
-{sklearn} on the Pima diabetes cohort (version 1): {train} women to fit, {test} held out,
-stratified by outcome. holdout.csv lists the patient_id of the women it never saw: evaluate it on
-those. A 0 in Glucose, BloodPressure or BMI is replaced by the median of the fitted women, as a
-measurement not taken; the features are then standardized.
+Estimates who is likely to be diagnosed with diabetes within five years, from six measurements
+taken at a routine clinic visit. It is for adult women; it says nothing of people who already have
+diabetes, or of other populations it has not been checked on.
 
-Held out: AUC {test_auc}, accuracy {test_accuracy} at a threshold of 0.5.
+A logistic regression fitted with scikit-learn {sklearn} on {train} women of the Pima diabetes
+cohort. A 0 in Glucose, BloodPressure or BMI is read as a measurement not taken and replaced by the
+median of the fitted women; the features are then standardized.
+
+On {test} women it never saw: AUC {test_auc}, accuracy {test_accuracy} at a threshold of 0.5.
 
 predict adds `predicted`, 1 for diabetes within five years, and `risk`, its probability.
 """
@@ -584,14 +598,14 @@ def main() -> None:
     )
     args = parser.parse_args()
     cache = args.cache or args.out / "downloads"
-    cohort = pima(cache, args.out)
+    team, screening = pima(cache, args.out)
     encounters = hospitals(cache, args.out)
     frame = progression(cache, args.out)
     readings = cgm(cache, args.out)
     print(
-        f"datasets: {len(cohort)} women, {len(encounters)} encounters, {len(frame)} patients, {len(readings)} CGM readings"
+        f"datasets: {len(team)} women, {len(encounters)} encounters, {len(frame)} patients, {len(readings)} CGM readings"
     )
-    print("onset risk", onset_risk(cohort, args.out))
+    print("onset risk", onset_risk(team, screening, args.out))
     print("readmission risk", readmission_risk(encounters, args.out))
     print("progression", progression_model(frame, args.out))
     print(

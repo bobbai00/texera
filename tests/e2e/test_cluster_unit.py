@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from texera_e2e import kube
+from texera_e2e import chat, kube
 from texera_e2e import workflows as w
 from texera_e2e.units import wait_ready
 
@@ -56,4 +56,11 @@ def test_a_unit_lives_as_a_resource(alice, bob, project, iris, kubectl, grants_g
     time.sleep(3)
     if kubectl:
         assert kube.held_for(rid) == []
+    # The results outlive the unit: the unit the project runs on reads them, for a person and for
+    # the agent's tool alike, and neither takes the catalog down.
+    eid = run["metadata"]["rid"]
+    assert len(w.rows(alice, wrid, eid, limit=5)["rows"]) == 3
+    failed, text = chat.tool(alice, "get_port_result", rid=wrid, eid=eid, operatorID="avg", portID="output-0")
+    assert not failed and '"rows"' in text, text
     assert alice.status("DELETE", f"/computing-units/{rid}") == 204
+    assert len(w.rows(alice, wrid, eid, limit=5)["rows"]) == 3

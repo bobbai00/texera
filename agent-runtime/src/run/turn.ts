@@ -26,7 +26,7 @@ import { baseUri, type CatalogAuth, type Message, type MessagePart, type Turn } 
 import type { Logger } from "../log.ts";
 import { type AGUIEvent, events, StreamMapper } from "./ag-ui-events.ts";
 import { keeper } from "./keeper.ts";
-import { assistantParts, toModelMessages } from "./messages.ts";
+import { assistantParts, attachedFiles, toModelMessages } from "./messages.ts";
 
 export interface TurnDeps {
   catalog: CatalogClient;
@@ -259,6 +259,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         app: input.context,
         people,
         work,
+        attached: attachedFiles(history),
       });
       let outcome: Awaited<ReturnType<BuiltAgent["run"]>["return"]> extends never
         ? never

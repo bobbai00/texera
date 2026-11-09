@@ -59,12 +59,16 @@ type Options struct {
 
 type Provider struct {
 	client kubernetes.Interface
-	// The cluster's nodes as last read, for Offers.
+	// The cluster's nodes and what runs on them as last read, for Offers.
 	nodesMu   sync.Mutex
 	nodesRead *corev1.NodeList
+	usedRead  map[string]usage
 	nodesAt   time.Time
 	opts      Options
 }
+
+// usage is what the pods on a node have reserved: thousandths of a CPU, and bytes.
+type usage struct{ cpu, memory int64 }
 
 // New connects in-cluster, or through the kubeconfig KUBECONFIG or ~/.kube/config names.
 func New(opts Options) (*Provider, error) {
@@ -209,17 +213,25 @@ func (p *Provider) sizeOf(spec api.ComputingUnitSpec) (memory, cpu string, gpu i
 	return memory, cpu, gpu
 }
 
-// Offers says whether the cluster has room for such a unit: GPUs when it asks for them, and a
-// node with as much CPU and memory as it asks for. A cluster the catalog may not read is not
+// Offers says whether the cluster has room for such a unit now: GPUs when it asks for them, and a
+// node with as much CPU and memory free as it asks for. A cluster the catalog may not read is not
 // refused for that.
 func (p *Provider) Offers(ctx context.Context, spec api.ComputingUnitSpec) error {
 	memory, cpu, gpu := p.sizeOf(spec)
-	nodes, err := p.nodes(ctx)
+	nodes, used, err := p.room(ctx)
 	if err != nil {
 		return nil
 	}
-	var gpus int64
+	wantMemory, wantCPU := int64(0), int64(0)
+	if q, err := resource.ParseQuantity(memory); err == nil {
+		wantMemory = q.Value()
+	}
+	if q, err := resource.ParseQuantity(cpu); cpu != "" && err == nil {
+		wantCPU = q.MilliValue()
+	}
+	var gpus, freeCPU, freeMemory int64
 	var mostCPU, mostMemory resource.Quantity
+	fits := false
 	for _, n := range nodes.Items {
 		a := n.Status.Allocatable
 		if q, ok := a[gpuResource]; ok {
@@ -231,6 +243,9 @@ func (p *Provider) Offers(ctx context.Context, spec api.ComputingUnitSpec) error
 		if q, ok := a[corev1.ResourceMemory]; ok && q.Cmp(mostMemory) > 0 {
 			mostMemory = q
 		}
+		nodeCPU, nodeMemory := a.Cpu().MilliValue()-used[n.Name].cpu, a.Memory().Value()-used[n.Name].memory
+		freeCPU, freeMemory = max(freeCPU, nodeCPU), max(freeMemory, nodeMemory)
+		fits = fits || (nodeCPU >= wantCPU && nodeMemory >= wantMemory)
 	}
 	if gpu > 0 && gpus == 0 {
 		return fmt.Errorf("no GPU in this cluster")
@@ -238,29 +253,52 @@ func (p *Provider) Offers(ctx context.Context, spec api.ComputingUnitSpec) error
 	if int64(gpu) > gpus {
 		return fmt.Errorf("asks for %d GPUs; the cluster has %d", gpu, gpus)
 	}
-	if q, err := resource.ParseQuantity(cpu); cpu != "" && err == nil && !mostCPU.IsZero() && q.Cmp(mostCPU) > 0 {
+	if wantCPU > 0 && !mostCPU.IsZero() && wantCPU > mostCPU.MilliValue() {
 		return fmt.Errorf("asks for %s CPUs; the largest node has %s", cpu, mostCPU.String())
 	}
-	if q, err := resource.ParseQuantity(memory); err == nil && !mostMemory.IsZero() && q.Cmp(mostMemory) > 0 {
+	if wantMemory > 0 && !mostMemory.IsZero() && wantMemory > mostMemory.Value() {
 		return fmt.Errorf("asks for %s of memory; the largest node has %s", memory, mostMemory.String())
 	}
-	return nil
+	if fits || len(nodes.Items) == 0 {
+		return nil
+	}
+	if wantMemory > freeMemory {
+		return fmt.Errorf("asks for %s of memory; the most free on any node is %.1fGi", memory, float64(freeMemory)/(1<<30))
+	}
+	if wantCPU > freeCPU {
+		return fmt.Errorf("asks for %s CPUs; the most free on any node is %.1f", cpu, float64(freeCPU)/1000)
+	}
+	return fmt.Errorf("asks for %s CPUs and %s of memory; no node has both free", cpu, memory)
 }
 
-// nodes are the cluster's nodes, read at most every few seconds: a list of profiles asks about
-// each one.
-func (p *Provider) nodes(ctx context.Context) (*corev1.NodeList, error) {
+// room is the cluster's nodes and what the pods on each have reserved, read at most every few
+// seconds: a list of profiles asks about each one. Pods the catalog may not read count as none.
+func (p *Provider) room(ctx context.Context) (*corev1.NodeList, map[string]usage, error) {
 	p.nodesMu.Lock()
 	defer p.nodesMu.Unlock()
 	if p.nodesRead != nil && time.Since(p.nodesAt) < 15*time.Second {
-		return p.nodesRead, nil
+		return p.nodesRead, p.usedRead, nil
 	}
 	list, err := p.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	p.nodesRead, p.nodesAt = list, time.Now()
-	return list, nil
+	used := map[string]usage{}
+	if pods, err := p.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{}); err == nil {
+		for _, pod := range pods.Items {
+			if pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+				continue
+			}
+			u := used[pod.Spec.NodeName]
+			for _, c := range pod.Spec.Containers {
+				u.cpu += c.Resources.Requests.Cpu().MilliValue()
+				u.memory += c.Resources.Requests.Memory().Value()
+			}
+			used[pod.Spec.NodeName] = u
+		}
+	}
+	p.nodesRead, p.usedRead, p.nodesAt = list, used, time.Now()
+	return list, used, nil
 }
 
 func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.Deployment {

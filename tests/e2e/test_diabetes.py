@@ -1,20 +1,16 @@
-"""The diabetes use case through the real model: a researcher new to the team's project asks what
-the platform gives her, has the agent bring the public Pima cohort into a dataset, then asks to
-screen it with the team's onset-risk model. The agent asks where the work runs, offering the
-profiles that can start here and no GPU where there is none; she picks Small; it makes a unit
-from Small, builds and runs the workflow on it (the model's predict, the team's ROC AUC and
-calibration operators), and the chat's graph joins the dataset, the model, the unit and the
-workflow. Outcomes are asserted in the catalog, never the wording."""
+"""The demo's analysis through the real model: a file attached to a chat stays the chat's, the agent
+reads it and the team's model, applies the model on the unit picked when it asks, compares with
+what is published, and keeps the file as a dataset when asked. The chat's graph joins the file, the
+model, the operators and the unit. Outcomes are asserted in the catalog, never the wording. The
+clicks around it are `frontend-next/e2e/diabetes.spec.ts`."""
 import pytest
 
 from texera_e2e import chat, diabetes
+from texera_e2e.client import uri_rid
 
-ASK_TOOLS = "I study type 2 diabetes and I'm new to this team. What tools does this platform give me: data, models, operators, and where my work can run?"
-BRING_IN = (f"Please get the Pima Indians diabetes data from {diabetes.PIMA_URL} and put it into a new dataset "
-            "called 'Pima cohort'.")
-SCREEN = ("Now screen every woman in the Pima cohort with our diabetes onset-risk model: how well does its risk separate "
-          "the women who developed diabetes from those who did not, and is it calibrated? Use the team's ROC AUC and "
-          "Risk calibration operators.")
+CHECK = "Can you check what's in this data? I want to analyze it using the models in our project. Which model do you think works best? Please go ahead and run it."
+LITERATURE = "How does that compare with what has been published on models like this? Cite what you find."
+KEEP = "Please keep this file as a dataset called Screening cohort."
 
 
 def asks_in(api, conversation: str) -> list[dict]:
@@ -24,75 +20,53 @@ def asks_in(api, conversation: str) -> list[dict]:
             for part in m["parts"] if part.get("type") == "tool_call" and part.get("toolName") == "ask"]
 
 
-def profiles(api, project: str) -> dict[str, dict]:
-    return {p["metadata"]["name"]: p for p in api.get(f"/profiles?scope={project}&limit=100")["items"]}
+def datasets_listed(api, project: str) -> list[str]:
+    return [d["metadata"]["name"] for d in api.get(f"/datasets?project={project}&limit=100")["items"]]
 
 
 @pytest.mark.model
 @pytest.mark.slow
-def test_a_researcher_brings_in_a_cohort_and_screens_it_with_the_teams_model(alice, project):
+def test_a_file_brought_to_a_chat_is_analyzed_with_the_teams_model(alice, project):
     team = diabetes.team(alice, project)
-    ladder = profiles(alice, project)
-    small = ladder["Small"]
-    assert small["status"]["startable"], small["status"]
-    crid = chat.conversation(alice, "screening the Pima cohort", project)
-    units: list[dict] = []
-    try:
-        # What there is: the agent reads, and makes nothing.
-        turn = chat.say(alice, crid, ASK_TOOLS)
-        assert turn.outcome == "success", turn.errors
-        assert {"list_operators", "search_resources"} & set(turn.tool_calls), turn.tool_calls
-        assert chat.made_in(alice, crid) == []
+    crid = chat.conversation(alice, "the screening cohort", project)
+    attached = diabetes.attach_cohort(alice, project, crid)
 
-        # The cohort comes in: a dataset of the chat's, holding the public file byte for byte.
-        turn = chat.say(alice, crid, BRING_IN)
-        assert turn.outcome == "success", turn.errors
-        assert "import_dataset_file" in turn.tool_calls, turn.tool_calls
-        datasets = [r for r in chat.made_in(alice, crid) if r["kind"] == "dataset"]
-        assert len(datasets) == 1 and datasets[0]["metadata"]["head"] >= 1, datasets
-        cohort = datasets[0]
-        files = alice.get(f"/datasets/{cohort['metadata']['rid']}/versions/{cohort['metadata']['head']}/files")["files"]
-        assert [f["sha256"] for f in files] == [diabetes.pima_digest()], files
+    # What is in it and which model fits: the file is read, the agent says which, and asks where.
+    turn = chat.say(alice, crid, CHECK, attached=attached)
+    assert turn.outcome == "success", turn.errors
+    assert "read_dataset_file" in turn.tool_calls, turn.tool_calls
+    assert "create_dataset" not in turn.tool_calls, turn.tool_calls
+    assert turn.text, "it says what it found before it asks"
+    assert datasets_listed(alice, project) == [], "an attached file is in no list"
+    asks = asks_in(alice, crid)
+    assert asks, f"no question about where it runs: {turn.tool_calls}"
 
-        # The screening: before anything runs, the agent asks where, with what can start here.
-        turn = chat.say(alice, crid, SCREEN)
-        assert turn.outcome == "success", turn.errors
-        asks = asks_in(alice, crid)
-        assert asks, f"no question about where it runs: {turn.tool_calls}"
-        labels = [o["label"] for o in asks[-1]["options"]]
-        startable = [name for name, p in ladder.items() if p["status"].get("startable")]
-        assert any(name in label for label in labels for name in startable), labels
-        if not ladder["GPU"]["status"].get("startable"):
-            assert not any(label.strip().lower().startswith("gpu") for label in labels), f"a GPU offered where none starts: {labels}"
-        assert [r for r in chat.made_in(alice, crid) if r["kind"] == "computing-unit"] == [], "no unit before she chose"
+    # She picks; the agent builds the pipeline and runs it.
+    labels = [o["label"] for o in asks[-1]["options"]]
+    pick = next((label for label in labels if "eployment" in label or "hared" in label), labels[0])
+    turn = chat.say(alice, crid, pick)
+    assert turn.outcome == "success", turn.errors
+    made = chat.made_in(alice, crid)
+    runs = [r for r in made if r["kind"] == "execution" and r["status"]["phase"] == "completed"]
+    assert runs, [(r["metadata"]["name"], r["status"].get("phase")) for r in made if r["kind"] == "execution"]
 
-        # A choice of sizes: at least two of the ladder's rungs. She picks Small, or the smallest offered.
-        rungs = [name for name in ("Small", "Medium", "Large", "ML") if ladder[name]["status"].get("startable")]
-        offered = [(label, name) for name in rungs for label in labels if label.startswith(name) or f" {name}" in label]
-        assert len({name for _, name in offered}) >= 2, f"sizes to choose from: {labels}"
-        pick, rung = offered[0]
-        turn = chat.say(alice, crid, pick)
-        assert turn.outcome == "success", turn.errors
-        made = chat.made_in(alice, crid)
-        units = [r for r in made if r["kind"] == "computing-unit"]
-        assert len(units) == 1, [r["metadata"]["name"] for r in units]
-        unit = units[0]
-        assert unit["spec"]["computingNodes"][0]["profile"].split("@")[0] == ladder[rung]["metadata"]["uri"], (rung, unit["spec"])
-        runs = [r for r in made if r["kind"] == "execution" and r["status"]["phase"] == "completed"]
-        assert runs, [(r["metadata"]["name"], r["status"].get("phase")) for r in made if r["kind"] == "execution"]
-        assert {r["spec"]["computingUnit"] for r in runs} == {unit["metadata"]["uri"]}, "every run went to her unit"
+    # What is published: from PubMed.
+    turn = chat.say(alice, crid, LITERATURE)
+    assert turn.outcome == "success", turn.errors
+    assert "search_pubmed" in turn.tool_calls, turn.tool_calls
 
-        # The graph joins them: the cohort and the model go into the workflow, with the team's
-        # operators, and the workflow runs on the unit.
-        graph = alice.get(f"/conversations/{crid}/graph")
-        roles = {node["role"] for node in graph["nodes"]}
-        assert {"data", "model", "unit", "workflow"} <= roles, sorted(roles)
-        edges = {(e["relation"], e["from"].split("@")[0], e["to"].split("@")[0]) for e in graph["edges"]}
-        into = {(relation, source) for relation, source, _ in edges}
-        assert ("reads", cohort["metadata"]["uri"]) in into, graph["edges"]
-        assert ("uses", team["model"]) in into, graph["edges"]
-        assert ("runsOn", unit["metadata"]["uri"]) in {(relation, target) for relation, _, target in edges}, graph["edges"]
-        assert {("uses", team["roc_auc"]), ("uses", team["calibration"])} & into, "the team's operators are on the graph"
-    finally:
-        for u in units:
-            alice.post(f"/computing-units/{u['metadata']['rid']}/terminate", {})
+    # The graph joins them, and says where the agent looked.
+    graph = alice.get(f"/conversations/{crid}/graph")
+    roles = {node["role"] for node in graph["nodes"]}
+    assert {"data", "model", "unit", "workflow"} <= roles, sorted(roles)
+    edges = {(e["relation"], e["from"].split("@")[0]) for e in graph["edges"]}
+    assert ("reads", attached[0].split("@")[0]) in edges, graph["edges"]
+    assert ("uses", team["model"]) in edges, graph["edges"]
+    assert [s["name"] for s in graph["sources"]] == ["biomcp"], graph["sources"]
+
+    # Kept when asked: a dataset of the project from then on.
+    turn = chat.say(alice, crid, KEEP)
+    assert turn.outcome == "success", turn.errors
+    assert "keep_attachment" in turn.tool_calls, turn.tool_calls
+    assert datasets_listed(alice, project) == ["Screening cohort"]
+    assert alice.get(f"/datasets/{uri_rid(attached[0].split('@')[0])}")["metadata"]["name"] == "Screening cohort"

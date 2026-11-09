@@ -507,10 +507,10 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
   await page.goto(`/workflows/${rid}`);
 
   // On the unit (made from its profile), results in the platform's warehouse unless another is picked.
-  const target = page.locator("[data-run-target]");
-  await expect(target.locator("[data-run-profile]")).toContainText(profile.metadata.name);
-  await expect(target.getByLabel("Warehouse")).toHaveText(platform.metadata.name);
-  await pick(page, target.getByLabel("Warehouse"), lab.metadata.name);
+  await page.locator("[data-run-options]").click();
+  await expect(page.locator("[data-run-profile]")).toContainText(profile.metadata.name);
+  await expect(page.getByLabel("Warehouse")).toHaveText(platform.metadata.name);
+  await pick(page, page.getByLabel("Warehouse"), lab.metadata.name);
   await page.screenshot({ path: "test-results/run-target.png" });
   await page.locator("[data-run]").click();
   await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
@@ -669,6 +669,7 @@ test("a run reads what an earlier run of the same work stored, and its cards say
   await page.screenshot({ path: "test-results/canvas-reused.png" });
 
   // Run fresh makes everything again.
+  await page.locator("[data-run-options]").click();
   await runWith("[data-run-fresh]");
   await expect(means.locator("[data-operator-reused]")).toHaveCount(0);
   await expect(readings.locator("[data-operator-skipped]")).toHaveCount(0);

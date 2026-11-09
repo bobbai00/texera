@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ALL_PROJECTS, KINDS, LIBRARY_GROUPS, pluralOf, searchQuery, useLook, useWorkingProject } from "@texera/kinds";
 import {
   Avatar,
@@ -16,7 +16,8 @@ import {
   Tooltip,
   toggleTheme,
 } from "@texera/ui";
-import { LogOut, MoonStar, PanelLeftClose, PanelLeftOpen, Search, SquarePen, Users } from "lucide-react";
+import { ChevronRight, LogOut, MoonStar, PanelLeftClose, PanelLeftOpen, Search, SquarePen, Users } from "lucide-react";
+import { useState } from "react";
 import { signOut, useSession } from "@/auth/session";
 
 /** The sidebar collapsed: a narrow column with the way back, a new chat and the search. */
@@ -113,23 +114,7 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
 
       <div className="scrollbar-thin mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {LIBRARY_GROUPS.map(group => (
-          <section key={group.title} className="mb-3">
-            <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{group.title}</h2>
-            {group.kinds.map(kind => {
-              const spec = KINDS[kind];
-              return (
-                <Link
-                  key={kind}
-                  to="/$plural"
-                  params={{ plural: pluralOf(kind) }}
-                  data-library-link={kind}
-                  className="flex items-center gap-2.5 rounded-lg px-2 py-1 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium">
-                  <spec.icon className="size-4 text-muted-foreground" />
-                  {spec.plural}
-                </Link>
-              );
-            })}
-          </section>
+          <LibraryGroup key={group.title} group={group} />
         ))}
         <section className="mt-3">
           <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</h2>
@@ -173,5 +158,44 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
         </DropdownMenu>
       </div>
     </nav>
+  );
+}
+
+/** A group of the library in the sidebar; a folded one opens when asked, or when it holds the page. */
+function LibraryGroup({ group }: { group: (typeof LIBRARY_GROUPS)[number] }) {
+  const path = useRouterState({ select: state => state.location.pathname });
+  const [open, setOpen] = useState(false);
+  const shown = !group.folded || open || group.kinds.some(kind => path.startsWith(`/${pluralOf(kind)}`));
+  return (
+    <section className="mb-3">
+      {group.folded ? (
+        <button
+          type="button"
+          aria-expanded={shown}
+          onClick={() => setOpen(o => !o)}
+          className="flex w-full items-center gap-1 px-2 pb-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          data-library-group={group.title}>
+          {group.title}
+          <ChevronRight className={shown ? "size-3 rotate-90 transition-transform" : "size-3 transition-transform"} />
+        </button>
+      ) : (
+        <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{group.title}</h2>
+      )}
+      {shown &&
+        group.kinds.map(kind => {
+          const spec = KINDS[kind];
+          return (
+            <Link
+              key={kind}
+              to="/$plural"
+              params={{ plural: pluralOf(kind) }}
+              data-library-link={kind}
+              className="flex items-center gap-2.5 rounded-lg px-2 py-1 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium">
+              <spec.icon className="size-4 text-muted-foreground" />
+              {spec.plural}
+            </Link>
+          );
+        })}
+    </section>
   );
 }

@@ -19,6 +19,8 @@ export function resultLabel(
   if (!op) return { title: operatorID };
   const schema = schemas?.get(op.operatorType);
   const title = op.customDisplayName || schema?.userFriendlyName || operatorLabel(op);
-  const summary = schema ? summarize(describeProperties(schema.jsonSchema, op.operatorProperties ?? {})) : "";
+  // A resource's URI says nothing to a person reading a tab.
+  const said = schema ? describeProperties(schema.jsonSchema, op.operatorProperties ?? {}).filter(l => !l.short.startsWith("texera://")) : [];
+  const summary = summarize(said);
   return { title, type: op.operatorType, ...(summary ? { summary } : {}) };
 }

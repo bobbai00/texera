@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { functionsIn, workflowLineTools } from "../src/agent/workflow-lines.ts";
 import { CatalogClient } from "../src/catalog/client.ts";
-import type { WorkflowSpec } from "../src/catalog/types.ts";
+import type { AttachedFile, WorkflowSpec } from "../src/catalog/types.ts";
 
 const IRIS = "texera://datasets/11111111-1111-4111-8111-111111111111";
 const WF = "22222222-2222-4222-8222-222222222222";
@@ -146,11 +146,12 @@ function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: 
   return { calls, fetch, spec: () => spec, head: () => head, operators };
 }
 
-const toolsOf = (fake: ReturnType<typeof fakeCatalog>) =>
+const toolsOf = (fake: ReturnType<typeof fakeCatalog>, attached: AttachedFile[] = []) =>
   workflowLineTools({
     catalog: new CatalogClient({ baseUrl: "http://catalog", fetch: fake.fetch }),
     auth: () => ({ userToken: "t" }),
     project: "p",
+    attached,
   });
 const call = async (tools: ReturnType<typeof toolsOf>, name: string, input: unknown) =>
   (await tools[name]?.execute?.(input as never, { toolCallId: "c", messages: [], context: {} } as never)) as Record<
@@ -218,6 +219,33 @@ describe("create_workflow", () => {
     });
     const ambiguous = await call(toolsOf(fake), "create_workflow", { name: "x", lines: LINES });
     expect(String(ambiguous.error)).toStartWith('line 1: 2 resources are named "iris"');
+    expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
+  });
+
+  test("reads a file attached to the chat by its own name, which no list shows", async () => {
+    const fake = fakeCatalog();
+    const cohort = "texera://datasets/88888888-8888-4888-8888-888888888888@1";
+    const tools = toolsOf(fake, [{ name: "cohort.csv", uri: cohort }]);
+    const out = await call(tools, "create_workflow", { name: "x", lines: 'set a: scan(file="cohort.csv")' });
+    expect(out.error).toBeUndefined();
+    expect((out.lines as string[])[0]).toBe(`set a: scan(file="${cohort}/files/cohort.csv")`);
+    expect(fake.calls.some((c) => c.path.startsWith("/catalog/v1/resources"))).toBe(false);
+  });
+
+  test("takes a version's URI for its one file, and says how a file's URI is written", async () => {
+    const lines = (uri: string) => `set a: scan(file="${uri}")`;
+    const whole = await call(toolsOf(fakeCatalog()), "create_workflow", { name: "x", lines: lines(`${IRIS}@3`) });
+    expect((whole.lines as string[])[0]).toBe(lines(`${IRIS}@3/files/iris.csv`));
+
+    const fake = fakeCatalog();
+    expect(await call(toolsOf(fake), "create_workflow", { name: "x", lines: lines(`${IRIS}@3/iris.csv`) })).toEqual({
+      error: `line 1: ${IRIS}@3/iris.csv is not a file; it is written ${IRIS}@3/files/iris.csv`,
+    });
+    expect(await call(toolsOf(fake), "create_workflow", { name: "x", lines: lines(`${IRIS}/files/iris.csv`) })).toEqual(
+      {
+        error: `line 1: ${IRIS}/files/iris.csv is not a file; a file is texera://datasets/<rid>@<version>/files/<path>`,
+      },
+    );
     expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
   });
 });

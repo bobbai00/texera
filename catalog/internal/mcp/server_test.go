@@ -71,6 +71,16 @@ func TestAToolReportsTheErrorOfItsOperationInItsOwnWords(t *testing.T) {
 	}
 }
 
+// A tool call runs on the connection's own goroutine, where nothing recovers a panic: one failing
+// call must end as an error of that call, not take the catalog and everyone on it down.
+func TestAPanicInAToolEndsTheCallNotTheCatalog(t *testing.T) {
+	api := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("nil unit") })
+	result := call(t, api, getRows, map[string]any{"rid": "r1"})
+	if !result.IsError || !strings.HasPrefix(text(t, result), "500: ") {
+		t.Fatalf("a call that panicked: %q", text(t, result))
+	}
+}
+
 func TestAToolWithoutARequiredArgumentSaysWhich(t *testing.T) {
 	api := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("no request without its argument") })
 	result := call(t, api, getRows, map[string]any{})

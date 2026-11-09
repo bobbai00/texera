@@ -18,6 +18,34 @@ func riskContract() map[string]any {
 	}
 }
 
+// Someone uploading a model has only files to give: a contract.json among them is the version's
+// contract, a broken one says so, and one said in the commit comes first.
+func TestAContractJSONUploadedWithAModelIsItsContract(t *testing.T) {
+	h := newHarness(t)
+	model := h.create("alice", "models", "risk", map[string]any{"framework": "sklearn", "task": "classification"})
+	models := p + "/models/" + rid(model)
+	raw, _ := json.Marshal(riskContract())
+	h.mustJSON("alice", "PUT", models+"/files/model.joblib", "fitted bytes", nil)
+	h.mustJSON("alice", "PUT", models+"/files/contract.json", `{"framework":`, nil)
+	if status, body := h.do("alice", "POST", models+"/commit", map[string]any{}); status != http.StatusBadRequest || !strings.Contains(string(body), "contract.json: ") {
+		t.Fatalf("a contract.json that is not one: %d %s", status, body)
+	}
+	h.mustJSON("alice", "PUT", models+"/files/contract.json", string(raw), nil)
+	var v1 api.ModelVersion
+	h.mustJSON("alice", "POST", models+"/commit", map[string]any{"message": "fitted"}, &v1)
+	if v1.Content.Contract == nil || v1.Content.Contract.Entry != "model.joblib" || len(v1.Content.Contract.Inputs) != 2 {
+		t.Fatalf("the uploaded contract: %+v", v1.Content.Contract)
+	}
+	h.mustJSON("alice", "PUT", models+"/files/contract.json", string(raw), nil)
+	said := riskContract()
+	said["needs"] = "said in the commit"
+	var v2 api.ModelVersion
+	h.mustJSON("alice", "POST", models+"/commit", map[string]any{"contract": said}, &v2)
+	if v2.Content.Contract == nil || v2.Content.Contract.Needs == nil {
+		t.Fatalf("the commit's contract comes first: %+v", v2.Content.Contract)
+	}
+}
+
 // A model version says what it reads and puts out. Its contract is committed with it and checked
 // against its files, carries over to a version that changes only files, and can change alone; a
 // dataset has none. A workflow's predict is pinned to a version: the engine gets its contract and

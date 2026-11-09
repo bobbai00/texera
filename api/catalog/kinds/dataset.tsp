@@ -43,8 +43,17 @@ model Manifest {
 model CommitFiles {
   message?: string;
 
-  @doc("For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract.")
+  @doc("For a model, the new version's contract; absent, a contract.json among the staged files says it, else the head version's carries over. A model version may change only its contract.")
   contract?: ModelContract;
+}
+
+@doc("A file attached to a chat, kept as a dataset of the chat's project.")
+model KeepAttachment {
+  @doc("What to call the dataset; absent, it keeps the file's name.")
+  name?: string;
+
+  @doc("What it holds and where it comes from.")
+  description?: string;
 }
 
 @doc("A whole file.")
@@ -169,6 +178,18 @@ namespace Routes {
       destructiveHint: false,
     })
     importFile(@path rid: Rid, @body body: ImportFile): DatasetFile | Error;
+
+    @doc("Keep a file attached to a chat as a dataset of its project: from then on it is listed like any other, and outlives the chat.")
+    @post
+    @route("/{rid}/keep")
+    @extension("x-texera-permission", "write")
+    @extension("x-mcp", #{
+      tool: "keep_attachment",
+      description: "Keep a file attached to this chat as a dataset of the project, when the person asks for that: give it a name and a description of what it holds and where it comes from. Until then an attached file is the chat's own: a workflow can read it, and it is in no list of the project.",
+      readOnlyHint: false,
+      destructiveHint: false,
+    })
+    keep(@path rid: Rid, @body body: KeepAttachment): Dataset | Error;
 
     @doc("Commit the staged files as a new version.")
     @post

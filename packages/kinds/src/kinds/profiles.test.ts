@@ -27,8 +27,8 @@ describe("what a node is made of", () => {
   });
 
   it("says a size and a makeup in words", () => {
-    expect(sizeLabel({ memory: "4Gi", cpu: "2", gpu: 1 })).toBe("4 GB · 2 cores · 1 GPU");
-    expect(sizeLabel({ memory: "3Gi", cpu: "500m" })).toBe("3Gi · 500m cores");
+    expect(sizeLabel({ memory: "4Gi", cpu: "2", gpu: 1 })).toBe("2 cores · 4 GB · 1 GPU");
+    expect(sizeLabel({ memory: "3Gi", cpu: "500m" })).toBe("500m cores · 3Gi");
     expect(sizeLabel({})).toBe("");
     expect(makeupFacts({ memory: "2Gi", packages: ["pandas", "numpy"] })).toEqual(["2 GB", "2 packages"]);
     expect(makeupFacts({ packages: ["pandas"] })).toEqual(["1 package"]);

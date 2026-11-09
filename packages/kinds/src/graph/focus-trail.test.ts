@@ -1,6 +1,6 @@
 import type { ConversationGraph, GraphNode } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
-import { entryFor, entryForRef, keyOf, pushed } from "./focus";
+import { entryFor, entryForRef, keyOf, pushed } from "./focus-trail";
 import { plannedId, runId, SOMEWHERE, viewOf } from "./model";
 
 const D = "texera://datasets/11111111-1111-1111-1111-111111111111";
@@ -58,8 +58,8 @@ describe("going into a thing on the graph", () => {
     expect(entryFor(view, U)).toMatchObject({ kind: "resource", ref: { kind: "computing-unit" }, title: "Small" });
   });
 
-  it("shows a run box's runs, a table's rows, and what the plan said of what it has not made", () => {
-    expect(entryFor(view, runId(W, U))).toEqual({ kind: "run", id: runId(W, U), title: "screen on Small" });
+  it("shows an execution, a table's rows, and what the plan said of what it has not made", () => {
+    expect(entryFor(view, runId(W, E))).toEqual({ kind: "run", id: runId(W, E), title: "screen on Small" });
     expect(entryFor(view, T)).toEqual({ kind: "table", id: T, title: "auc" });
     const planned = plannedId({ kind: "dataset", name: "Screened", turn: "t1" });
     expect(entryFor(view, planned)).toEqual({ kind: "planned", id: planned, title: "Screened" });
@@ -83,7 +83,7 @@ describe("going into a thing on the graph", () => {
   });
 
   it("keeps a trail that goes back, never round, when it reaches a place it has been", () => {
-    const [a, b, c] = [entryFor(view, W), entryFor(view, runId(W, U)), entryFor(view, T)] as const;
+    const [a, b, c] = [entryFor(view, W), entryFor(view, runId(W, E)), entryFor(view, T)] as const;
     if (!a || !b || !c) throw new Error("no entries");
     const trail = pushed(pushed(pushed([], a), b), c);
     expect(trail.map(keyOf)).toEqual([keyOf(a), keyOf(b), keyOf(c)]);

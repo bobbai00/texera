@@ -149,10 +149,10 @@ func (s *Service) Seed(ctx context.Context) error {
 	// one it was fitted with (one fitted with 1.7 does not load in 1.9), so every unit the release
 	// makes runs the one the teams fit their models with, which the dev stack's Python has too.
 	const fitsModels = "scikit-learn==1.7.2"
-	// The profile the deployment's unit is made from: a node of 2 GB with the Python libraries
-	// most analyses use.
-	memory, packages := "2Gi", []string{"pandas", "numpy", fitsModels}
-	profile, err := ship("profile", "python-default", "2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Memory: &memory, Packages: &packages}, nil)
+	// The profile the deployment's unit is made from: a node of 2 CPUs and 2 GB with the Python
+	// libraries most analyses use.
+	cpu, memory, packages := "2", "2Gi", []string{"pandas", "numpy", fitsModels}
+	profile, err := ship("profile", "python-default", "2 CPUs and 2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Cpu: &cpu, Memory: &memory, Packages: &packages}, nil)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (s *Service) Seed(ctx context.Context) error {
 		spec := api.ComputingUnitSpec{
 			Provider:       api.UnitProviderStatic,
 			Endpoint:       &s.Config.StaticUnitEndpoint,
-			ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Profile: &madeFrom, Memory: &memory, Packages: &packages}},
+			ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Profile: &madeFrom, Cpu: &cpu, Memory: &memory, Packages: &packages}},
 		}
 		if s.Config.StaticUnitClientID != "" {
 			spec.ClientId = &s.Config.StaticUnitClientID

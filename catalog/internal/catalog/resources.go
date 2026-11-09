@@ -224,6 +224,8 @@ func (s *Service) List(ctx context.Context, caller *auth.Caller, kind *kinds.Kin
 		pid := caller.PID()
 		filter.SharedWith = &pid
 	}
+	// A file attached to a chat is the chat's until someone keeps it.
+	filter.WithoutLabel = attachmentLabel
 	rs, err := s.Store.ListResources(ctx, filter)
 	if err != nil {
 		return nil, err

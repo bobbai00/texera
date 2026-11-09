@@ -414,7 +414,7 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
       { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
     ]);
     expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain(
-      'Attached dataset \\"iris.csv\\" (texera://datasets/d1@1)',
+      'Attached file \\"iris.csv\\" (texera://datasets/d1@1)',
     );
   });
 
