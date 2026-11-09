@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, operatorList, pick, signIn, tidyUp } from "./support";
+import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, operatorList, pick, signIn, tidyUp, withIris } from "./support";
 
 // The canvas: an operator is a card that says how it is set, in one line or with every setting
 // on its own, and is edited in place, the cards under it making room; arrows are curves. Each
@@ -152,7 +152,7 @@ test("several cards are picked at once and go with one key, and Ctrl+Z brings th
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
   await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
-  const picked = page.locator(".react-flow__node.selected");
+  const picked = page.locator(".react-flow__node-operator.selected");
   const avg = operatorCard(page, "avg");
   const most = operatorCard(page, "most");
 
@@ -164,20 +164,20 @@ test("several cards are picked at once and go with one key, and Ctrl+Z brings th
   await expect(picked).toHaveCount(2);
   // One press of Backspace removes both, and the arrows into them; the catalog's next version says so.
   await page.keyboard.press("Backspace");
-  await expect(page.locator(".react-flow__node")).toHaveCount(1);
-  await expect(page.locator(".react-flow__edge")).toHaveCount(0);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(1);
+  await expect(page.locator(".react-flow__edge:not([data-id^='resource:'])")).toHaveCount(0);
   await expect.poll(async () => (await operatorsOf(alice, rid)).map(o => o.operatorID), { timeout: 20_000 }).toEqual(["scan"]);
 
   // Ctrl+Z takes it back, the arrows included, and Ctrl+Shift+Z does it again.
   await expect(page.locator("[data-undo]")).toBeEnabled();
   await page.keyboard.press("ControlOrMeta+z");
-  await expect(page.locator(".react-flow__node")).toHaveCount(3);
-  await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(3);
+  await expect(page.locator(".react-flow__edge:not([data-id^='resource:'])")).toHaveCount(2);
   await expect.poll(async () => (await operatorsOf(alice, rid)).map(o => o.operatorID).sort(), { timeout: 20_000 }).toEqual(["avg", "most", "scan"]);
   await page.keyboard.press("ControlOrMeta+Shift+z");
-  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(1);
   await page.locator("[data-undo]").click();
-  await expect(page.locator(".react-flow__node")).toHaveCount(3);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(3);
 
   // A box drawn with Shift picks every card in it; Delete removes them all.
   const pane = await box(page.locator(".react-flow__pane"));
@@ -189,7 +189,7 @@ test("several cards are picked at once and go with one key, and Ctrl+Z brings th
   await page.keyboard.up("Shift");
   await expect(picked).toHaveCount(3);
   await page.keyboard.press("Delete");
-  await expect(page.locator(".react-flow__node")).toHaveCount(0);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(0);
 });
 
 test("a new operator opens ready to set: typing and Backspace edit its setting, never remove it, and it says what it lacks", async ({ page, request }) => {
@@ -317,7 +317,7 @@ test("Tidy up lays a workflow out left to right: a join stands between its branc
   await page.goto(`/workflows/${workflow.metadata.rid}`);
   await expect(operatorCard(page, "join")).toBeVisible();
   // The join lists no ports: it has the two its links use, and every arrow is drawn.
-  await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+  await expect(page.locator(".react-flow__edge:not([data-id^='resource:'])")).toHaveCount(3);
 
   /** Whether the straight line from one card's output to another's input crosses a third card. */
   const crosses = async (from: string, to: string, over: string) => {
@@ -674,3 +674,47 @@ test("a run reads what an earlier run of the same work stored, and its cards say
   await expect(means.locator("[data-operator-reused]")).toHaveCount(0);
   await expect(readings.locator("[data-operator-skipped]")).toHaveCount(0);
 });
+
+test("the data an operator reads stands above it, joined by a dashed line, until the person hides it", async ({ page, request }) => {
+  const alice = await api(request);
+  const iris = await withIris(alice, "resources on a canvas");
+  cleanups.push(() => iris.clear());
+  const file = `texera://datasets/${iris.dataset}@1/files/iris.csv`;
+  const made = await alice("POST", "/workflows", {
+    name: `resources ${Date.now()}`,
+    parent: iris.project,
+    spec: {
+      operators: [
+        { operatorID: "readings", operatorType: "scan", operatorProperties: { file } },
+        { operatorID: "few", operatorType: "limit", operatorProperties: { n: 5 } },
+      ],
+      links: [{ linkID: "l", source: { operatorID: "readings", portID: "output-0" }, target: { operatorID: "few", portID: "input-0" } }],
+    },
+  });
+  cleanups.push(() => alice.attempt("DELETE", `/resources/${made.metadata.rid}`));
+  await signIn(page);
+  await page.goto(`/workflows/${made.metadata.rid}`);
+  const chip = page.locator('[data-canvas-resource="dataset"]');
+  await expect(chip).toContainText("iris");
+  await expect(chip).toHaveCount(1);
+  const [above, card] = [await chip.boundingBox(), await page.locator('.react-flow__node[data-id="readings"]').boundingBox()];
+  expect(above && card && above.y + above.height).toBeLessThan(card?.y ?? 0);
+  await expect(page.locator(".react-flow__edge[data-id$=':line']")).toHaveCount(1);
+  await page.screenshot({ path: "test-results/canvas-resources.png" });
+
+  // A chip is read off the settings: it cannot be dragged away, and it opens what it names.
+  const toggle = page.locator("[data-canvas-resources]");
+  await expect(toggle).toHaveAttribute("data-canvas-resources", "shown");
+  await toggle.click();
+  await expect(chip).toHaveCount(0);
+  await expect(page.locator(".react-flow__edge[data-id$=':line']")).toHaveCount(0);
+  // The viewer's choice stays for the next canvas.
+  await page.reload();
+  await expect(page.locator('.react-flow__node[data-id="readings"]')).toBeVisible();
+  await expect(chip).toHaveCount(0);
+  await page.locator("[data-canvas-resources]").click();
+  await expect(chip).toHaveCount(1);
+  await chip.click();
+  await expect(page.locator('[data-side-panel] [data-resource-view="dataset"]')).toBeVisible();
+});
+

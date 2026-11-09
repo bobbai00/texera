@@ -1,13 +1,14 @@
-// The other people on a canvas: where each points and the card each has open. Each says it
-// through the session's awareness, which is never saved and goes when they leave; a canvas
-// says its own the same way.
+// The other people on a canvas: where each points and what each holds. Each says it through the
+// session's awareness, which is never saved and goes when they leave; a canvas says its own the
+// same way.
 
 import { cn } from "@texera/ui";
 import type { Point } from "@texera/workflow-model";
 import { ViewportPortal } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { Wanted } from "../live/holds";
 import { type Present, presenceTone } from "../live/presence";
-import { usePresence, useRoom } from "../live/room";
+import { useHolds, usePresence, useRoom } from "../live/room";
 
 /** A person's colour, as every page shows it. */
 export const toneOf = (pid: string) => `var(--presence-${presenceTone(pid) + 1})`;
@@ -18,16 +19,14 @@ const pointOf = (state: Record<string, unknown>): Point | undefined => {
 };
 
 /**
- * The others on a workflow's canvas, and how this canvas tells them where it points (on the
- * canvas, or null when it leaves) and which card it has open.
+ * The others on a workflow's canvas, what they hold, and how this canvas tells them where it
+ * points (on the canvas, or null when it leaves). `wanted` is what this person would hold.
  */
-export function useCanvasPeople(rid: string, editing: string | null) {
+export function useCanvasPeople(rid: string, wanted: Wanted | null) {
   const room = useRoom(rid);
   const people = usePresence(rid);
   const others = useMemo(() => people.filter(p => !p.self), [people]);
-  useEffect(() => {
-    room?.awareness?.setLocalStateField("editing", editing);
-  }, [room, editing]);
+  const holds = useHolds(rid, wanted);
   // At most once a frame: a pointer moves faster than anyone needs to see it.
   const frame = useRef(0);
   const next = useRef<Point | null>(null);
@@ -43,13 +42,7 @@ export function useCanvasPeople(rid: string, editing: string | null) {
     [room]
   );
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
-  /** The person who has each card open, by operator. */
-  const openBy = useMemo(() => {
-    const open = new Map<string, Present>();
-    for (const p of others) if (typeof p.state.editing === "string") open.set(p.state.editing, p);
-    return open;
-  }, [others]);
-  return { others, openBy, point };
+  return { others, holds, point };
 }
 
 /** Where the others point, drawn on the canvas where they point, with their names. */

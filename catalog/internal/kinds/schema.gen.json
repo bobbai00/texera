@@ -2349,6 +2349,10 @@
         },
         "uri": {
           "$ref": "#/$defs/Uri"
+        },
+        "version": {
+          "$ref": "#/$defs/Vno",
+          "description": "The version of the workflow it ran."
         }
       },
       "required": [

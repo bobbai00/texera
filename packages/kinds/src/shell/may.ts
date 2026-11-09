@@ -3,6 +3,7 @@
 // removes until it has said yes.
 
 import { useQuery } from "@tanstack/react-query";
+import { createContext, use } from "react";
 import { canQuery } from "../queries";
 
 export interface May {
@@ -22,9 +23,13 @@ export function roleOf(may: May): Role | undefined {
   return may.write ? "member" : "viewer";
 }
 
+/** Inside it, a person may do what a reader may: someone else has hold of what is shown. */
+export const LookOnly = createContext(false);
+
 export function useMay(rid: string | undefined, project = false): May {
+  const lookOnly = use(LookOnly);
   const { data: write } = useQuery({ ...canQuery("write", rid ?? ""), enabled: !!rid });
   const { data: remove } = useQuery({ ...canQuery("delete", rid ?? ""), enabled: !!rid });
   const { data: admin } = useQuery({ ...canQuery("admin", rid ?? ""), enabled: !!rid && project });
-  return { write, delete: remove, admin };
+  return lookOnly ? { write: false, delete: false, admin: false } : { write, delete: remove, admin };
 }

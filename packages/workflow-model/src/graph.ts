@@ -1,6 +1,7 @@
 // Pure edits on the workflow spec: adding and removing operators and links, the link
 // rules and property updates. Every function returns a new spec.
 
+import { same } from "./same";
 import { initialValues } from "./schema";
 import type { LogicalPort, OperatorSchema, WorkflowLink, WorkflowOperator, WorkflowSpec } from "./types";
 
@@ -85,4 +86,10 @@ export function enabledGraph(spec: WorkflowSpec): { operators: WorkflowOperator[
 export function terminalOperators(spec: WorkflowSpec): WorkflowOperator[] {
   const { operators, links } = enabledGraph(spec);
   return operators.filter(o => !links.some(l => l.source.operatorID === o.operatorID));
+}
+
+/** The operators one spec changes or drops of another: what an edit does to operators, not to the wires between them. */
+export function changedOperators(before: WorkflowSpec, after: WorkflowSpec): string[] {
+  const now = new Map(after.operators.map(op => [op.operatorID, op]));
+  return before.operators.filter(op => !same(op, now.get(op.operatorID))).map(op => op.operatorID);
 }

@@ -17,8 +17,9 @@ session's document between sessions. The service holds nothing of its own.
   maps keyed by id, an operator's properties a map of their own, so two people changing
   different properties of one operator both keep their change; where the operators sit is in
   the document too, one layout for everyone. Someone who may only read gets a read-only
-  connection. The people in a session also say where they point on a canvas and which card
-  they have open, in its awareness, which is never saved.
+  connection. The people in a session also say where they point and what they hold (the
+  operator or box they are on), in its awareness, which is never saved. The app, not this
+  service, keeps others from changing what someone holds.
 
 ## The rules of a workflow's document
 

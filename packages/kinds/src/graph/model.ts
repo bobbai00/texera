@@ -6,6 +6,9 @@
 // it names will stand. Pure, so it is tested on its own.
 
 import type { ConversationGraph, GraphNode, GraphRun, GraphStep, PlannedItem } from "@texera/catalog-client/types";
+import { baseOf, namesIn } from "@texera/workflow-model";
+
+export { baseOf };
 
 /** How close the graph is drawn: the whole of it, each thing with its facts, or a workflow's steps. */
 export type Level = "overview" | "standard" | "detail";
@@ -100,19 +103,6 @@ export interface GraphView {
 export const plannedId = (p: PlannedItem) => `planned:${p.kind ?? ""}:${p.name}`;
 /** An execution's id on the graph, by what tells it apart: its URI, or the unit of one not had yet. */
 export const runId = (work: string, key: string) => `run:${work}|${key}`;
-
-/** The resource a URI names, without a version or a path inside it. */
-export const baseOf = (uri: string) => /^texera:\/\/[a-z-]+\/[0-9a-f-]{36}/.exec(uri)?.[0] ?? uri;
-
-/** The texera:// names a step's settings hold, with the path of a file when one is named. */
-function namesIn(value: unknown, out: { base: string; path?: string }[] = []): { base: string; path?: string }[] {
-  if (typeof value === "string" && value.startsWith("texera://")) {
-    const path = /\/files\/(.+)$/.exec(value)?.[1];
-    out.push({ base: baseOf(value), path: path ? decodeURIComponent(path) : undefined });
-  } else if (Array.isArray(value)) for (const v of value) namesIn(v, out);
-  else if (value && typeof value === "object") for (const v of Object.values(value)) namesIn(v, out);
-  return out;
-}
 
 /** The view of a chat's graph: its workflows with what they read and use, and their executions. */
 export function viewOf(graph: ConversationGraph): GraphView {

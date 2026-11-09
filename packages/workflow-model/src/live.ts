@@ -161,10 +161,36 @@ export function specOf(doc: Y.Doc, previous?: WorkflowSpec): WorkflowSpec {
  * Typing in a setting is one step until it pauses.
  */
 export function historyOf(doc: Y.Doc): Y.UndoManager {
-  return new Y.UndoManager([doc.getMap(OPERATORS), doc.getMap(LINKS), doc.getMap(SETTINGS), doc.getMap(POSITIONS)], {
+  const operators = doc.getMap<Y.Map<unknown>>(OPERATORS);
+  const manager = new Y.UndoManager([operators, doc.getMap(LINKS), doc.getMap(SETTINGS), doc.getMap(POSITIONS)], {
     captureTimeout: 500,
     trackedOrigins: new Set([null]),
   });
+  // Each step remembers the operators it touches, so taking it back can be refused while someone holds one.
+  const record = ({ stackItem, changedParentTypes }: { stackItem: { meta: Map<unknown, unknown> }; changedParentTypes: Map<unknown, Y.YEvent<never>[]> }) => {
+    const touched = (stackItem.meta.get(TOUCHED) as Set<string> | undefined) ?? new Set<string>();
+    for (const event of changedParentTypes.get(operators) ?? []) {
+      if (event.target === (operators as unknown)) for (const id of event.keys.keys()) touched.add(id);
+      else {
+        // Up from what changed to the operator it is in.
+        let type = event.target as Y.AbstractType<unknown>;
+        while (type._item && type._item.parent !== (operators as unknown)) type = type._item.parent as Y.AbstractType<unknown>;
+        if (type._item?.parentSub) touched.add(type._item.parentSub);
+      }
+    }
+    stackItem.meta.set(TOUCHED, touched);
+  };
+  manager.on("stack-item-added", record as never);
+  manager.on("stack-item-updated", record as never);
+  return manager;
+}
+
+const TOUCHED = "touched";
+
+/** The operators taking back, or doing again, this person's last step would change. */
+export function operatorsOfStep(manager: Y.UndoManager, step: "undo" | "redo"): ReadonlySet<string> {
+  const item = (step === "undo" ? manager.undoStack : manager.redoStack).at(-1);
+  return (item?.meta.get(TOUCHED) as Set<string> | undefined) ?? new Set();
 }
 
 /** Where each operator sits, for the ones somebody or the layout has placed. */

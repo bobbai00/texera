@@ -9,9 +9,10 @@
 import { Forbidden } from "@hocuspocus/common";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { askAgain, meQuery } from "../queries";
 import { accessToken } from "../watch";
+import { AWAY_AFTER_MS, CLAIM, claimFor, claimOf, type Hold, holdsIn, holdsOfOthers, sameHolds, type Wanted } from "./holds";
 import { peopleIn, type Present } from "./presence";
 
 /** A joined session: its document, its awareness, and its connection. */
@@ -103,3 +104,63 @@ export function usePresence(rid: string | undefined): Present[] {
   }, [room, pid, name]);
   return people;
 }
+
+/** Whether the person has done nothing on the page for a while. */
+function useAway(ms: number): boolean {
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    let timer = setTimeout(() => setAway(true), ms);
+    const active = () => {
+      setAway(false);
+      clearTimeout(timer);
+      timer = setTimeout(() => setAway(true), ms);
+    };
+    const events = ["pointermove", "pointerdown", "keydown", "wheel"];
+    for (const event of events) window.addEventListener(event, active, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      for (const event of events) window.removeEventListener(event, active);
+    };
+  }, [ms]);
+  return away;
+}
+
+const NOBODY: ReadonlyMap<string, Hold> = new Map();
+
+/**
+ * What the others hold in a session, by what is held; and this person takes what they want when
+ * nobody has it, for as long as they want it and are there. `wanted` is null for someone who
+ * wants nothing, or who may only read and so holds nothing.
+ */
+export function useHolds(rid: string | undefined, wanted: Wanted | null): ReadonlyMap<string, Hold> {
+  const room = useRoom(rid);
+  const { data: me } = useQuery(meQuery());
+  const pid = me?.principal.pid;
+  const away = useAway(AWAY_AFTER_MS);
+  const [held, setHeld] = useState(NOBODY);
+  const shown = useRef(NOBODY);
+  const id = away ? undefined : wanted?.id;
+  const doing = away ? undefined : wanted?.doing;
+  useEffect(() => {
+    const awareness = room?.awareness;
+    if (!awareness || !pid) return;
+    const settle = () => {
+      const holds = holdsIn(awareness.getStates() as Map<number, Record<string, unknown>>);
+      const others = holdsOfOthers(holds, pid);
+      if (!sameHolds(shown.current, others)) {
+        shown.current = others;
+        setHeld(others);
+      }
+      const mine = claimOf(awareness.getLocalState());
+      const next = claimFor(id && doing ? { id, doing } : null, holds, pid, mine, Date.now());
+      if (next?.id !== mine?.id || next?.doing !== mine?.doing) awareness.setLocalStateField(CLAIM, next);
+    };
+    settle();
+    awareness.on("change", settle);
+    return () => awareness.off("change", settle);
+  }, [room, pid, id, doing]);
+  // Gone from the page, nothing is held there any more, even with the session still open for another view.
+  useEffect(() => () => room?.awareness?.setLocalStateField(CLAIM, null), [room]);
+  return held;
+}
+

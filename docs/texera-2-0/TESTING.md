@@ -125,7 +125,8 @@ once and steadily (it used to blink without end), the dataset drawn "Not shared 
 `graph.spec.ts`, a second test: two people on one chat see each other's icon and pointer on the
 graph; a comment on a box, while a turn is going, lands in the chat as a note for the other person
 too, with the box attached; the graph comes back as it was when it changed while the page was too
-narrow to show it (it used to collapse); the chat maximizes and gives the page back; a chat and a
+narrow to show it (it used to collapse); a box one person went into says so to the other, whose
+view of it is read-only; the chat maximizes and gives the page back; a chat and a
 dataset are renamed in place, and an overview row is one line with who can see it and who made it.
 
 `graph.spec.ts`: the graph beside a chat, made the way the runtime makes it, in a turn, so no

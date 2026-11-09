@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addLink,
   addOperator,
+  changedOperators,
   deleteOperators,
   linkProblem,
   newOperator,
@@ -114,5 +115,17 @@ describe("logicalPlan", () => {
   it("finds the operators nothing reads from", () => {
     const { s, scan2, limit } = build();
     expect(terminalOperators(s).map(o => o.operatorID).sort()).toEqual([scan2.operatorID, limit.operatorID].sort());
+  });
+});
+
+describe("what an edit does to operators", () => {
+  const op = (operatorID: string, operatorProperties = {}) => ({ operatorID, operatorType: "x", operatorProperties }) as WorkflowSpec["operators"][number];
+  const wire = { linkID: "l", source: { operatorID: "a", portID: "o" }, target: { operatorID: "b", portID: "i" } };
+
+  it("is the operators it changes or drops; adding one or moving a wire changes none", () => {
+    const before: WorkflowSpec = { operators: [op("a"), op("b")], links: [] };
+    expect(changedOperators(before, { operators: [op("a", { n: 1 }), op("b")], links: [] })).toEqual(["a"]);
+    expect(changedOperators(before, { operators: [op("b")], links: [] })).toEqual(["a"]);
+    expect(changedOperators(before, { operators: [op("a"), op("b"), op("c")], links: [wire] })).toEqual([]);
   });
 });

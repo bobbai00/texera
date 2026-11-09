@@ -7,5 +7,6 @@ export * from "./schema";
 export * from "./summary";
 export * from "./compile";
 export * from "./to-flow";
+export * from "./resources";
 export * from "./live";
 export * from "./lines";

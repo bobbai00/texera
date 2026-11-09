@@ -2,6 +2,34 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 16, part 4): holds, the resources on a canvas, and every execution's results
+
+Checkpoint `39a2d7fa3` is parts 1 to 3. The user's next list:
+
+- **A canvas came up distorted.** `placeMissing` went through missing operators in spec order, and
+  a version's new operators come sorted by id, so a chart was placed before the operator it reads
+  from and fell to "under everything"; the live service then kept that place. Missing operators are
+  now taken outward from what stands already.
+- **A later execution hid an earlier one's results.** The graph listed tables for the newest
+  execution of each workflow only. Every execution keeps its own, and says the version it ran.
+- **Resources on a canvas.** `resourcesOf` reads the datasets and models an operator's settings
+  name; `resourceLayer` draws each as a chip above its operator with a dashed line to a handle of
+  its own. Viewer's state like density: never in the document, one toggle, rows spread to make room.
+- **Holds.** `live/holds.ts`: one per person per session, in awareness, first come first held, the
+  same answer everywhere from the same states; gone on leaving or after 2 minutes away; none for
+  who may only read. On a canvas it is what they have open or selected, and `editor.ts` is the one
+  place that refuses a change to an operator someone else holds, undo and redo included (each step
+  remembers the operators it touched). Where an operator sits and what it is wired to stay free. On
+  a graph it is the box gone into; `LookOnly` makes a held view read-only through `useMay`, except a
+  workflow, held operator by operator. A card someone else holds is a read-only card, and its
+  settings show when picked. It coordinates people; the catalog stays the authority, and the agent
+  is not in the session, so it does not take part.
+
+Verified on the OrbStack stack: the browser suite, 71 of 72 (the one, an assertion that the agent
+had used a team function, which it need not; removed), with a new test of two people on a held card
+and one of the chips; `diabetes.spec.ts` three times in a row after that. The catalog's suite, the
+app's 399 tests and typecheck, the live service's 18, the runtime's 107. `k8s.sh check` not run.
+
 ## 2026-11-08 (session 16, part 3): less on every page, and the graph read left to right
 
 The user played with the demo and sent one list.

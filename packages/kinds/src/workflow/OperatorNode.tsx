@@ -22,6 +22,7 @@ import {
   type OperatorStatus,
   operatorImage,
   type PropertyLine,
+  RESOURCE_HANDLE,
   summarize,
   updateOperator,
 } from "@texera/workflow-model";
@@ -50,6 +51,7 @@ import { toneOf } from "./Cursors";
 import { type Canvas, useCanvas } from "./canvas-view";
 import type { EditorStore } from "./editor";
 import { PropertyForm } from "./PropertyForm";
+import { ResourceChip } from "./ResourceNode";
 
 /** Where a port's handle sits on the card's side: beside the name, one under the other. */
 const HANDLE_TOP = 28;
@@ -102,7 +104,9 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
     () => (schema ? describeProperties(schema.jsonSchema, data.properties) : []),
     [schema, data.properties]
   );
-  const editor = readonly ? undefined : canvas.editor;
+  // Someone else holds it: to this person the card is as to someone who may only read.
+  const heldBy = canvas.heldBy?.get(id);
+  const editor = readonly || heldBy ? undefined : canvas.editor;
   const title = titleOf(data, schema?.userFriendlyName);
   // Under the name: the settings in one line; with each on its own line below, the type instead.
   const named = useNamed(lines.find(l => l.short.startsWith("texera://"))?.short);
@@ -115,8 +119,6 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
   const ports = Math.max(data.inputs.length, data.outputs.length);
   // Just arrived from elsewhere (the agent, another person): pointed out for a moment.
   const arrived = canvas.arrived?.has(id) === true;
-  // Open on someone else's screen.
-  const openBy = canvas.openBy?.get(id);
 
   const card = (
     <div
@@ -135,7 +137,7 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
       )}
       style={{
         minHeight: HANDLE_TOP * 2 + Math.max(0, ports - 1) * HANDLE_STEP,
-        ...(openBy ? { borderColor: toneOf(openBy.pid) } : {}),
+        ...(heldBy ? { borderColor: toneOf(heldBy.pid) } : {}),
       }}
       data-selected={selected ? "true" : "false"}
       data-operator-type={data.operatorType}
@@ -144,12 +146,14 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
       data-result-shown={shown ?? ""}
       data-pointed={pointed ? "true" : undefined}
       data-arrived={arrived ? "true" : undefined}>
-      {openBy && (
+      {heldBy && (
         <span
-          className="absolute -top-2.5 right-3 rounded-md px-1.5 py-0.5 text-xs font-medium text-white shadow-xs"
-          style={{ background: toneOf(openBy.pid) }}
-          data-open-by={openBy.name}>
-          {openBy.name}
+          className="absolute -top-2.5 right-3 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap text-white shadow-xs"
+          style={{ background: toneOf(heldBy.pid) }}
+          title={`${heldBy.name} has this. You can look at it, not change it.`}
+          data-held-by={heldBy.name}
+          data-held-doing={heldBy.doing}>
+          {heldBy.name} is {heldBy.doing}
         </span>
       )}
       {editing && editor ? (
@@ -175,7 +179,8 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
             </div>
             <Actions id={id} data={data} canvas={canvas} editor={editor} />
           </div>
-          {detailed && lines.length > 0 && <Settings lines={lines} />}
+          {/* Someone else's card, picked: its settings to read, since its form is theirs. */}
+          {(detailed || (selected && heldBy)) && lines.length > 0 && <Settings lines={lines} />}
         </>
       )}
       {data.error && (
@@ -203,6 +208,14 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
           Not run: only results read from an earlier run needed it
         </p>
       )}
+      {/* Where the line from a dataset or model this operator names ends. */}
+      <Handle
+        id={RESOURCE_HANDLE}
+        type="target"
+        position={Position.Top}
+        isConnectable={false}
+        className="!pointer-events-none !opacity-0"
+      />
       {data.inputs.map((p, i) => (
         <Handle
           key={p.id}
@@ -570,4 +583,4 @@ function Editor({
   );
 }
 
-export const nodeTypes = { operator: OperatorNode };
+export const nodeTypes = { operator: OperatorNode, resource: ResourceChip };

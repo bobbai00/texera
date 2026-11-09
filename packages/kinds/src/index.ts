@@ -17,7 +17,7 @@ export { ShareButton } from "./shell/Share";
 export { OpenError } from "./shell/OpenError";
 export { SharedWithMe } from "./library/Shared";
 export { ProjectOverview } from "./project/Overview";
-export { type Room, useRoom, usePresence } from "./live/room";
+export { type Room, useHolds, useRoom, usePresence } from "./live/room";
 export { type Present, presenceTone } from "./live/presence";
 export { Versions } from "./shell/Versions";
 export { Lineage } from "./shell/Lineage";

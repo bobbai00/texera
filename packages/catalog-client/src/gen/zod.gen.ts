@@ -750,19 +750,6 @@ export const zGraphEdge = z.object({
 });
 
 /**
- * A run of a workflow, as its node in a chat's graph lists it.
- */
-export const zGraphRun = z.object({
-    uri: zUri,
-    phase: z.string(),
-    steps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
-    reused: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
-    startedAt: z.iso.datetime().optional(),
-    finishedAt: z.iso.datetime().optional(),
-    unit: zUri.optional()
-});
-
-/**
  * An outside MCP server the chat's agent consulted, and its calls, oldest first.
  */
 export const zGraphSource = z.object({
@@ -1152,6 +1139,20 @@ export const zDatasetVersion = z.object({
     contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
+});
+
+/**
+ * A run of a workflow, as its node in a chat's graph lists it.
+ */
+export const zGraphRun = z.object({
+    uri: zUri,
+    phase: z.string(),
+    steps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
+    reused: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
+    startedAt: z.iso.datetime().optional(),
+    finishedAt: z.iso.datetime().optional(),
+    unit: zUri.optional(),
+    version: zVno.optional()
 });
 
 /**

@@ -162,9 +162,8 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		}
 	}
 
-	// Each run: what it read, where it ran, and for the newest of each workflow what it kept.
+	// Each execution, the newest first: what it read, where it ran, what it kept.
 	slices.SortStableFunc(executions, func(a, b *store.Resource) int { return b.CreatedAt.Compare(a.CreatedAt) })
-	newest := map[string]bool{}
 	ranVersion := map[string]bool{}
 	var runs []chatRun
 	for _, exec := range executions {
@@ -192,6 +191,10 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 			shown[workflow] = string(spec.Workflow)
 		}
 		run := api.GraphRun{Uri: api.Uri(URI(exec).String()), Phase: string(status.Phase), Steps: int32(planSteps(spec))}
+		if wfRef.Vno > 0 {
+			version := api.Vno(wfRef.Vno)
+			run.Version = &version
+		}
 		if spec.Reused != nil {
 			run.Reused = int32(len(*spec.Reused))
 		}
@@ -227,10 +230,9 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 				}
 			}
 		}
-		if newest[workflow] || status.Ports == nil || status.ResultsExpiredAt != nil {
+		if status.Ports == nil || status.ResultsExpiredAt != nil {
 			continue
 		}
-		newest[workflow] = true
 		for _, p := range *status.Ports {
 			// What the run shows is what it made; what it keeps only to reuse is not drawn.
 			if p.Table == nil || strings.HasPrefix(*p.Table, "vfs:") || !shownPort(spec, p.OperatorID, p.PortID) {

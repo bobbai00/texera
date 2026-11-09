@@ -78,7 +78,9 @@ export function layoutPositions(spec: WorkflowSpec, grid: Grid = CARDS): Positio
 /**
  * Places for a spec's operators: every place someone set kept, and an operator nobody placed
  * beside what it connects to: right of what it reads from, else left of what it feeds, else
- * under everything, in the first free spot there. With nothing placed, the workflow is laid out.
+ * under everything, in the first free spot there. Operators nobody placed are taken outward from
+ * what stands already, so a new chain goes on from where it joins, whatever its operators are
+ * called. With nothing placed, the workflow is laid out.
  */
 export function placeMissing(spec: WorkflowSpec, known: Positions): Positions {
   const placed: Positions = {};
@@ -87,10 +89,15 @@ export function placeMissing(spec: WorkflowSpec, known: Positions): Positions {
     if (at) placed[op.operatorID] = at;
   }
   if (Object.keys(placed).length === 0) return spec.operators.length ? layoutPositions(spec) : {};
-  for (const op of spec.operators) {
-    if (placed[op.operatorID]) continue;
-    const reads = spec.links.find(l => l.target.operatorID === op.operatorID && placed[l.source.operatorID]);
-    const feeds = spec.links.find(l => l.source.operatorID === op.operatorID && placed[l.target.operatorID]);
+  const reading = (id: string) => spec.links.find(l => l.target.operatorID === id && placed[l.source.operatorID]);
+  const feeding = (id: string) => spec.links.find(l => l.source.operatorID === id && placed[l.target.operatorID]);
+  const missing = spec.operators.map(op => op.operatorID).filter(id => !placed[id]);
+  while (missing.length > 0) {
+    const joined = missing.findIndex(id => reading(id));
+    const next = joined >= 0 ? joined : Math.max(missing.findIndex(id => feeding(id)), 0);
+    const id = missing.splice(next, 1)[0] as string;
+    const reads = reading(id);
+    const feeds = feeding(id);
     const from = reads ? placed[reads.source.operatorID] : undefined;
     const to = feeds ? placed[feeds.target.operatorID] : undefined;
     const below = Math.max(...Object.values(placed).map(p => p.y));
@@ -99,7 +106,7 @@ export function placeMissing(spec: WorkflowSpec, known: Positions): Positions {
       : to
         ? { x: to.x - COLUMN, y: to.y }
         : { x: ORIGIN.x, y: below + ROW };
-    placed[op.operatorID] = freeSpot(placed, want);
+    placed[id] = freeSpot(placed, want);
   }
   return placed;
 }

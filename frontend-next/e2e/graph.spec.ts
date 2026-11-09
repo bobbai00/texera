@@ -361,6 +361,21 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   expect(cursor && card && Math.abs(cursor.x - (card.x + card.width / 2))).toBeLessThan(card?.width ?? 0);
   await page.screenshot({ path: "test-results/graph-together.png" });
 
+  // Bob goes into the dataset: Alice sees that he has it, and going in herself she can only look.
+  const bobsDataset = bobsGraph.locator('[data-graph-role="data"]').filter({ hasText: "iris" });
+  await bobsDataset.click();
+  await expect(bobPage.locator("[data-graph-focus]")).toBeVisible();
+  await expect(graph.locator(`[data-graph-held]`).filter({ hasText: "Bob" })).toContainText("is viewing");
+  await page.screenshot({ path: "test-results/graph-held.png" });
+  await dataset.click();
+  const look = page.locator("[data-graph-look-only]");
+  await expect(look).toContainText("Bob");
+  await expect(page.locator('[data-graph-focus] [data-resource-name]')).toBeDisabled();
+  await page.locator("[data-graph-back]").click();
+  await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
+  await bobPage.locator("[data-graph-back]").click();
+  await expect(graph.locator("[data-graph-held]")).toHaveCount(0);
+
   // A comment on a box, while a turn is going, is a note the agent reads next.
   agent = await inTurn(request, bob, conversation, "bob", "bob");
   await expect(page.locator("[data-turn-of]")).toBeVisible({ timeout: 20_000 });

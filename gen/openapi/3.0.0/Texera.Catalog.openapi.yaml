@@ -6709,6 +6709,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: The unit it ran on, when the caller may see it.
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The version of the workflow it ran.
       description: A run of a workflow, as its node in a chat's graph lists it.
     GraphSource:
       type: object

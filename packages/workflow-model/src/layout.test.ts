@@ -135,3 +135,35 @@ describe("a free spot", () => {
     expect(freeSpot({}, { x: 1, y: 2 })).toEqual({ x: 1, y: 2 });
   });
 });
+
+describe("a chain of operators nobody placed", () => {
+  const op = (operatorID: string) => ({ operatorID, operatorType: "x" }) as WorkflowSpec["operators"][number];
+  const wire = (from: string, to: string) => ({
+    linkID: `${from}-${to}`,
+    source: { operatorID: from, portID: "output-0" },
+    target: { operatorID: to, portID: "input-0" },
+  });
+
+  it("goes on from where it joins, whatever its operators are called", () => {
+    // Named so that the charts come before the operator they read from.
+    const spec: WorkflowSpec = {
+      operators: ["cohort", "chart-a", "chart-b", "group"].map(op),
+      links: [wire("cohort", "group"), wire("group", "chart-a"), wire("group", "chart-b")],
+    };
+    const placed = placeMissing(spec, { cohort: { x: 40, y: 40 } });
+    expect(placed.group).toEqual({ x: 40 + COLUMN, y: 40 });
+    expect(placed["chart-a"]).toEqual({ x: 40 + 2 * COLUMN, y: 40 });
+    expect(placed["chart-b"]).toEqual({ x: 40 + 2 * COLUMN, y: 40 + ROW });
+  });
+
+  it("walks back from what it feeds when it reads from nothing placed, and only then goes under everything", () => {
+    const spec: WorkflowSpec = {
+      operators: ["a", "b", "c", "loose"].map(op),
+      links: [wire("a", "b"), wire("b", "c")],
+    };
+    const placed = placeMissing(spec, { c: { x: 1000, y: 40 } });
+    expect(placed.b).toEqual({ x: 1000 - COLUMN, y: 40 });
+    expect(placed.a).toEqual({ x: 1000 - 2 * COLUMN, y: 40 });
+    expect(placed.loose).toEqual({ x: ORIGIN.x, y: 40 + ROW });
+  });
+});

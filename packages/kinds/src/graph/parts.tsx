@@ -573,8 +573,10 @@ export function RunBox({
       <div className="flex h-[2.4em] shrink-0 items-center gap-[0.45em] pr-[0.75em] pl-[0.6em]">
         <look.Icon className={cn("size-[1.15em] shrink-0", look.tone, going && "animate-spin")} aria-hidden />
         <span className={cn("truncate text-[0.92em]", waiting ? "font-medium" : "font-semibold")}>{look.word}</span>
-        {level !== "overview" && took && (
-          <span className="ml-auto shrink-0 text-[0.82em] text-muted-foreground tabular-nums">{took}</span>
+        {level !== "overview" && (run?.version !== undefined || took) && (
+          <span className="ml-auto shrink-0 text-[0.82em] text-muted-foreground tabular-nums" data-graph-ran-version={run?.version}>
+            {[run?.version !== undefined ? `v${run.version}` : "", took].filter(Boolean).join(" · ")}
+          </span>
         )}
       </div>
       {level === "detail" && facts.length > 0 && (

@@ -13,8 +13,10 @@ import type { ConversationGraph, GraphSource } from "@texera/catalog-client/type
 import { Button, cn } from "@texera/ui";
 import { Info, MessageSquare, Minus, Plus, Scan, X } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Hold } from "../live/holds";
 import { KindIcon } from "../shell/KindIcon";
 import { Presence } from "../shell/Presence";
+import { toneOf } from "../workflow/Cursors";
 import { rectWithin } from "./Focus";
 import { GraphCursors, useGraphPointer } from "./GraphCursors";
 import { type Layout, layOut, type Measured } from "./layout";
@@ -108,6 +110,7 @@ export function ResourceGraph({
   bar,
   onOpen,
   onComment,
+  held,
   inert,
 }: {
   rid: string;
@@ -118,6 +121,8 @@ export function ResourceGraph({
   onOpen?: (id: string, from: HTMLElement, view: GraphView) => void;
   /** Posts a comment on a thing into the chat; false when it could not. Absent for who may only read. */
   onComment?: (on: CommentOn, text: string) => Promise<boolean>;
+  /** What the others have hold of, by what they hold. */
+  held?: ReadonlyMap<string, Hold>;
   /** Something stands over the graph: it takes no focus and no pointer. */
   inert?: boolean;
 }) {
@@ -584,6 +589,20 @@ export function ResourceGraph({
                 style={place(id)}
               />
             ))}
+            {layout &&
+              [...(held ?? [])].map(([id, hold]) => {
+                // A unit stands inside its executions: it is said over the first of them.
+                const at = layout.places.get(id) ?? layout.places.get(boxes.find(b => b.unit === id)?.id ?? "");
+                return at ? (
+                  <span
+                    key={id}
+                    className="pointer-events-none absolute z-10 rounded-[0.4em] px-[0.5em] py-[0.15em] text-[0.82em] font-medium whitespace-nowrap text-white"
+                    style={{ left: at.x, top: at.y - 1.5 * em, background: toneOf(hold.pid) }}
+                    data-graph-held={id}>
+                    {hold.name} is {hold.doing}
+                  </span>
+                ) : null;
+              })}
             {layout && <GraphCursors rid={rid} places={layout.places} em={em} k={cam.k} />}
           </div>
           {legend && <Legend />}
@@ -631,7 +650,7 @@ function CommentBox({
   return (
     <form
       onSubmit={submit}
-      className="absolute z-30 grid gap-2 rounded-xl border bg-card p-3 shadow-lg"
+      className="absolute z-30 grid grid-cols-[minmax(0,1fr)] gap-2 rounded-xl border bg-card p-3 shadow-lg"
       style={{ left: x, top: y, width: COMMENT_W }}
       data-graph-comment-box>
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">

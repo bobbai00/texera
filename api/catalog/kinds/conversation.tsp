@@ -125,6 +125,8 @@ model GraphRun {
   finishedAt?: utcDateTime;
   @doc("The unit it ran on, when the caller may see it.")
   unit?: Uri;
+  @doc("The version of the workflow it ran.")
+  version?: Vno;
 }
 
 @doc("A step of a workflow on a chat's graph: one operator of the version it shows.")

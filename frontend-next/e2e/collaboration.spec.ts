@@ -55,6 +55,7 @@ async function sharedWorkflow(alice: Caller, bob: Caller, relation: "viewer" | "
   return { ...made, alicePid, bobPid };
 }
 
+const paneOf = (page: Page) => page.locator(".react-flow__pane");
 const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
 /** Where an operator sits on the canvas itself, whatever the zoom and the part on screen. */
 const placeOf = async (page: Page, id: string) =>
@@ -237,7 +238,7 @@ test("what the agent adds to an open workflow arrives beside what it reads from,
   await expect(node(page, "top").locator("[data-arrived]")).toHaveCount(0, { timeout: 10_000 });
 });
 
-test("people on one canvas see where the other points and the card the other has open", async ({ page, browser, request }) => {
+test("people on one canvas see where the other points, and what one has hold of the other can look at, not change", async ({ page, browser, request }) => {
   const alice = await api(request);
   const bob = await api(request, "bob", "bob");
   const { rid } = await sharedWorkflow(alice, bob, "editor");
@@ -253,12 +254,34 @@ test("people on one canvas see where the other points and the card the other has
   const canvas = (await page.locator("[data-workflow-canvas]").boundingBox()) as { x: number; y: number; width: number; height: number };
   await page.mouse.move(canvas.x + canvas.width / 2, canvas.y + canvas.height - 60, { steps: 5 });
   await expect(bobs.locator(`[data-cursor="${aliceName}"]`)).toBeVisible({ timeout: 10_000 });
-  // She opens a card: bob sees on it that she has it open.
+  // She opens a card: bob sees that she has it, and it is a card to look at for him. He can
+  // read its settings, not open its form, turn it off or delete it.
   await editOperator(page, "avg");
-  await expect(node(bobs, "avg").locator("[data-open-by]")).toHaveText(aliceName, { timeout: 10_000 });
+  const held = node(bobs, "avg").locator("[data-held-by]");
+  await expect(held).toHaveText(`${aliceName} is editing`, { timeout: 10_000 });
+  await node(bobs, "avg").click({ position: { x: 20, y: 20 } });
+  await expect(node(bobs, "avg").locator("[data-operator-settings]")).toBeVisible();
+  await expect(node(bobs, "avg").locator("[data-operator-edit]")).toHaveCount(0);
+  await node(bobs, "avg").dblclick({ position: { x: 20, y: 20 } });
+  await expect(node(bobs, "avg").locator("[data-operator-done]")).toHaveCount(0);
+  await bobs.keyboard.press("Delete");
+  await node(bobs, "avg").click({ button: "right", position: { x: 20, y: 20 } });
+  await expect(bobs.locator('[data-operator-menu="delete"]')).toHaveCount(0);
+  await bobs.keyboard.press("Escape");
+  await expect(node(page, "avg")).toBeVisible();
+  await expect(node(bobs, "avg")).toBeVisible();
   await bobs.screenshot({ path: "test-results/seen-by-bob.png" });
+  // Bob looks elsewhere. She closes the form and still has the card picked: she is viewing it.
+  await paneOf(bobs).click({ position: { x: 8, y: 8 } });
   await page.locator("[data-operator-done]").click();
-  await expect(node(bobs, "avg").locator("[data-open-by]")).toHaveCount(0);
+  await expect(held).toHaveText(`${aliceName} is viewing`);
+  // She picks nothing: the card is free, and his to open.
+  await paneOf(page).click({ position: { x: 8, y: 8 } });
+  await expect(held).toHaveCount(0, { timeout: 10_000 });
+  await editOperator(bobs, "avg");
+  await expect(node(page, "avg").locator("[data-held-by]")).toContainText("is editing", { timeout: 10_000 });
+  await bobs.locator("[data-operator-done]").click();
+  await paneOf(bobs).click({ position: { x: 8, y: 8 } });
   // Her pointer leaves the canvas, and goes from bob's.
   await page.mouse.move(5, 5);
   await expect(bobs.locator(`[data-cursor="${aliceName}"]`)).toHaveCount(0, { timeout: 10_000 });
@@ -307,7 +330,7 @@ test("a version written elsewhere arrives on an open canvas, beside an edit not 
     ],
   });
   await expect(node(page, "top")).toBeVisible();
-  await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+  await expect(page.locator(".react-flow__edge:not([data-id^='resource:'])")).toHaveCount(2);
   // The person keeps editing on top of it, and the next version holds both.
   const palette = await operatorList(page);
   await palette.getByPlaceholder("Search operators").fill("Sort");

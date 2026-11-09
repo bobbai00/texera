@@ -3,7 +3,7 @@
 // and the live service saves it into the catalog's versions. An older version is only looked
 // at: the same interface over a spec that never changes.
 
-import { applyChange, historyOf, movePositions, type Positions, positionsOf, readSaveAnswer, type SaveAnswer, saveRequest, specOf, standingIn, type WorkflowSpec } from "@texera/workflow-model";
+import { applyChange, historyOf, movePositions, operatorsOfStep, type Positions, positionsOf, readSaveAnswer, type SaveAnswer, saveRequest, specOf, standingIn, type WorkflowSpec } from "@texera/workflow-model";
 import type * as Y from "yjs";
 import type { Room } from "../live/room";
 
@@ -19,6 +19,8 @@ export interface History {
   redo(): void;
   canUndo(): boolean;
   canRedo(): boolean;
+  /** The operators taking back, or doing again, the last step would change. */
+  touches(step: "undo" | "redo"): ReadonlySet<string>;
   /** Calls back whenever what can be taken back or done again changes. */
   watch(listener: () => void): () => void;
   /** Stops recording: the view is gone. */
@@ -54,6 +56,7 @@ export function historyIn(doc: Y.Doc): History {
     redo: () => void manager.redo(),
     canUndo: () => manager.canUndo(),
     canRedo: () => manager.canRedo(),
+    touches: step => operatorsOfStep(manager, step),
     watch: listener => {
       for (const event of events) manager.on(event, listener);
       return () => {

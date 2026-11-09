@@ -57,7 +57,8 @@ a reload.
 **The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
 the left of the chat page shows what the chat read, made and ran, left to right: Data above Model,
 Workflow, Execution, Result. Each execution is a box of its own beside its workflow, the newest on
-top, with the unit it ran on at its bottom right (the unit's name and what it has, `2 cores · 2 GB`;
+top, saying the version it ran and keeping the tables it made beside it, with the unit it ran on at
+its bottom right (the unit's name and what it has, `2 cores · 2 GB`;
 several executions on one unit each show it). A function a workflow uses rides on its card. A
 workflow not run yet has a hollow box on the unit it will use, and what the plan has not made yet
 is dashed; a dot marks what this chat made. It zooms in three levels: Overview, names only;
@@ -72,7 +73,9 @@ there too; Back, the trail, Escape or Alt+Left go back, and the chat beside it i
 Nothing drawn moves when more arrives, but the models, under the data. Everyone on the chat shows
 at the top of the graph, and their pointers on it with their names. Hovering a box shows a speech
 bubble: a comment posted there goes into the chat with the box attached, so the agent answers it
-and everyone sees it; while the agent is busy it goes in as a note the agent reads next. The button
+and everyone sees it; while the agent is busy it goes in as a note the agent reads next. Going into a box is holding
+it: the others see "Alice is viewing" on it, and going in themselves they can look at it, not change
+it. A workflow is held operator by operator on its canvas instead. The button
 at the top right of the chat gives it the whole page and back. The List tab holds the same as a tree, "From this chat": a section per kind,
 each resource, its versions, and under a version the executions that ran it or the files it
 holds; what the chat worked from (what you attached, what its workflows read) is dimmed, and
@@ -169,7 +172,9 @@ envelope; `?panel=` opens a second resource beside the first.
 offers every project unless its admins took one away, and the custom operators of the
 workflow's project and what it inherits, by URI) joined by arrows. An operator is a card:
 its name, and its settings in one line as a person would say them (a file by its name, a
-filter as `medal = Gold`). The two density icons at the top of the canvas choose how much every
+filter as `medal = Gold`). Each dataset or model an operator's settings name stands above its card as a small chip, joined
+by a dashed line, which opens it; they are read off the settings, in no version, and the link icon
+at the top of the canvas hides them. The two density icons there choose how much every
 card says; the second lists each setting on a line. A card has the operator's own two buttons:
 the eye keeps its result on every run (it stays in sight while it is on), and the run button
 runs up to it. The pencil on a card (or a double click) opens the card into its form, where

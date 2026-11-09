@@ -3,6 +3,7 @@ import { Button, useDark } from "@texera/ui";
 import {
   addLink,
   addOperator,
+  type CanvasNode,
   COLUMN,
   type Compilation,
   deleteLinks,
@@ -11,8 +12,9 @@ import {
   layoutPositions,
   linkProblem,
   newOperator,
-  type OperatorNode,
   type OperatorOverlay,
+  resourceLayer,
+  resourceRoom,
   toFlow,
 } from "@texera/workflow-model";
 import {
@@ -41,7 +43,7 @@ import { useArrivals } from "./arrivals";
 import { Cursors, useCanvasPeople } from "./Cursors";
 import { CanvasContext, type CanvasView, portKey } from "./canvas-view";
 import { CanvasControls } from "./controls";
-import { DensityToggle, spread, unspread, useRowSpread } from "./density";
+import { DensityToggle, ResourcesToggle, spread, unspread, useRowSpread } from "./density";
 import type { EditorStore } from "./editor";
 import { useFollow, useFrame, useReframe, useShow } from "./framing";
 import { nodeTypes } from "./OperatorNode";
@@ -88,6 +90,7 @@ export function EditorCanvas({
   const canRedo = useStore(store, s => s.canRedo);
   const editing = useStore(view, s => s.editing);
   const density = useStore(view, s => s.density);
+  const showResources = useStore(view, s => s.resources);
   const [fitOnOpen] = useState(() => store.getState().spec.operators.length <= FIT_UP_TO);
   // An empty workflow opens with the operators to choose from, once it can be edited (the page
   // shows the head before the live session is joined); one with operators shows them.
@@ -107,8 +110,26 @@ export function EditorCanvas({
   const frame = useFrame(view);
   const measured = useNodesInitialized();
   const dark = useDark();
-  // Cards that say every setting are taller: the rows move apart so none lies on the next.
-  const k = useRowSpread(editing);
+  // The others here, and what they hold: this person holds what they have open, else what they
+  // have selected. Someone who may only read holds nothing.
+  const wanted = readonly
+    ? null
+    : editing
+      ? ({ id: editing, doing: "editing" } as const)
+      : selected
+        ? ({ id: selected, doing: "viewing" } as const)
+        : null;
+  const { others, holds, point } = useCanvasPeople(store.getState().rid, wanted);
+  useEffect(() => store.getState().setHeld(new Set(holds.keys())), [store, holds]);
+  // Two reached for the same card at once and the other was first: its form closes here.
+  useEffect(() => {
+    if (editing && holds.has(editing)) view.getState().edit(null);
+  }, [editing, holds, view]);
+  // Cards that say every setting are taller, and the resources operators use stand above them:
+  // the rows move apart so none lies on the next. A card open here, or someone else's open to
+  // read, lies over the others.
+  const overTheRest = editing ?? (selected && holds.has(selected) ? selected : null);
+  const k = useRowSpread(overTheRest, showResources ? resourceRoom(spec) : 0);
   // Until the person has moved the canvas themselves, it is the app's to frame.
   const still = useCallback(() => fitOnOpen && !userMoved.current, [fitOnOpen]);
   useReframe(wrapper, frame, still);
@@ -148,8 +169,9 @@ export function EditorCanvas({
       const onCanvas =
         e.target === document.body || (e.target instanceof Node && !!wrapper.current?.contains(e.target));
       if (!onCanvas || (e.target instanceof HTMLElement && e.target.closest(".nokey"))) return;
+      // What someone else holds stays, and the rest of what is picked goes.
       const nodes = getNodes()
-        .filter(n => n.selected)
+        .filter(n => n.selected && !store.getState().held.has(n.id))
         .map(n => n.id);
       const links = getEdges()
         .filter(l => l.selected)
@@ -191,9 +213,15 @@ export function EditorCanvas({
     const placed = Object.fromEntries(
       Object.entries(drawn).map(([id, p]) => [id, room[id] ? { x: p.x, y: p.y + room[id] } : p])
     );
-    return toFlow(spec, placed, overlay);
-  }, [spec, drawn, room, overlay]);
-  const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
+    const operators = toFlow(spec, placed, overlay);
+    if (!showResources) return operators;
+    const resources = resourceLayer(spec, placed);
+    return {
+      nodes: [...operators.nodes, ...resources.nodes] as CanvasNode[],
+      edges: [...operators.edges, ...resources.edges],
+    };
+  }, [spec, drawn, room, overlay, showResources]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
   // What arrives from elsewhere (the agent, another person) is pointed out and brought into view.
@@ -201,11 +229,9 @@ export function EditorCanvas({
   const show = useShow(view);
   const onArrive = useCallback((ids: string[]) => setTimeout(() => ids[0] && show(ids[0]), 150), [show]);
   const arrived = useArrivals(spec, mine, onArrive);
-  // The others here: where they point, and the cards they have open.
-  const { others, openBy, point } = useCanvasPeople(store.getState().rid, editing);
   const canvas = useMemo(
-    () => ({ view, schemas, editor: store, compilation, run: readonly ? undefined : onRunTo, arrived, openBy }),
-    [view, schemas, store, compilation, readonly, onRunTo, arrived, openBy]
+    () => ({ view, schemas, editor: store, compilation, run: readonly ? undefined : onRunTo, arrived, heldBy: holds }),
+    [view, schemas, store, compilation, readonly, onRunTo, arrived, holds]
   );
 
   // The store is the truth of the workflow; React Flow keeps what it measured, what is being
@@ -226,9 +252,11 @@ export function EditorCanvas({
         const chosen = told || !p ? n.id === selected : p.selected;
         // The card open for editing lies over its neighbours while it is.
         const zIndex = n.id === editing ? 1000 : undefined;
-        return p
-          ? { ...p, data: n.data, position: p.dragging ? p.position : n.position, selected: chosen, zIndex }
-          : { ...n, selected: chosen, zIndex };
+        return (
+          p
+            ? { ...p, data: n.data, position: p.dragging ? p.position : n.position, selected: chosen, zIndex }
+            : { ...n, selected: chosen, zIndex }
+        ) as CanvasNode;
       });
     });
     setEdges(previous => {
@@ -356,11 +384,17 @@ export function EditorCanvas({
             onSelectionChange={onSelectionChange}
             // A click on a card shows its result, when the execution on screen kept one.
             onNodeClick={(_, node) => {
-              const port = node.data.results?.[0];
+              const port = node.type === "operator" ? node.data.results?.[0] : undefined;
               if (port) view.getState().show(portKey(node.id, port));
             }}
-            // A double click on a card opens it for editing, as its pencil does.
-            onNodeDoubleClick={readonly ? undefined : (_, node) => view.getState().edit(node.id)}
+            // A double click on a card opens it for editing, as its pencil does, unless someone else holds it.
+            onNodeDoubleClick={
+              readonly
+                ? undefined
+                : (_, node) => {
+                    if (node.type === "operator" && !holds.has(node.id)) view.getState().edit(node.id);
+                  }
+            }
             // A click on the empty canvas closes the card that is open.
             onPaneClick={() => view.getState().edit(null)}
             onMoveStart={event => {
@@ -416,6 +450,7 @@ export function EditorCanvas({
                 </span>
               )}
               <DensityToggle view={view} />
+              <ResourcesToggle view={view} />
               {!readonly && spec.operators.length > 1 && (
                 <Button
                   variant="outline"

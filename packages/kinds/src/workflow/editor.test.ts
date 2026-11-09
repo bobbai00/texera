@@ -1,7 +1,7 @@
 import { addOperator, applySpec, EMPTY_SPEC, movePositions, positionsOf, specOf, type WorkflowSpec } from "@texera/workflow-model";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { documentOf, fixedDocument, type SyncState, type WorkflowDocument } from "./document";
+import { documentOf, fixedDocument, historyIn, type SyncState, type WorkflowDocument } from "./document";
 import { createEditorStore } from "./editor";
 
 const op = (id: string) => ({ operatorID: id, operatorType: "Limit", operatorProperties: {} as Record<string, unknown> });
@@ -187,3 +187,45 @@ describe("the workflow editor's store", () => {
     expect(ids(store.getState().spec)).toEqual([]);
   });
 });
+
+describe("what someone else holds", () => {
+  const start = () => {
+    const doc = new Y.Doc();
+    applySpec(doc, { operators: [op("a"), op("b")], links: [] });
+    const { document } = session(doc);
+    const store = createEditorStore(workflow, { ...document, history: historyIn(doc) }, none);
+    return { doc, store };
+  };
+  const set = (id: string, n: number) => (spec: WorkflowSpec) => ({
+    ...spec,
+    operators: spec.operators.map(o => (o.operatorID === id ? { ...o, operatorProperties: { n } } : o)),
+  });
+
+  it("cannot be changed or dropped from here; the rest of the workflow can, and it can be moved and wired", () => {
+    const { doc, store } = start();
+    store.getState().setHeld(new Set(["a"]));
+    store.getState().edit(set("a", 1));
+    expect(specOf(doc).operators.find(o => o.operatorID === "a")?.operatorProperties).toEqual({});
+    store.getState().edit(spec => ({ ...spec, operators: spec.operators.filter(o => o.operatorID !== "a") }));
+    expect(ids(specOf(doc))).toContain("a");
+    store.getState().edit(set("b", 2));
+    expect(specOf(doc).operators.find(o => o.operatorID === "b")?.operatorProperties).toEqual({ n: 2 });
+    store.getState().move({ a: { x: 5, y: 6 } });
+    expect(positionsOf(doc).a).toEqual({ x: 5, y: 6 });
+  });
+
+  it("is not changed by taking back this person's own step, until it is free again", () => {
+    const { doc, store } = start();
+    store.getState().edit(set("a", 1));
+    expect(store.getState().canUndo).toBe(true);
+    store.getState().setHeld(new Set(["a"]));
+    expect(store.getState().canUndo).toBe(false);
+    store.getState().undo();
+    expect(specOf(doc).operators.find(o => o.operatorID === "a")?.operatorProperties).toEqual({ n: 1 });
+    store.getState().setHeld(new Set());
+    expect(store.getState().canUndo).toBe(true);
+    store.getState().undo();
+    expect(specOf(doc).operators.find(o => o.operatorID === "a")?.operatorProperties).toEqual({});
+  });
+});
+

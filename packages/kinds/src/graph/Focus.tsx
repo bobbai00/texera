@@ -11,11 +11,13 @@ import { Button, cn, Skeleton } from "@texera/ui";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { executionQuery } from "../execution/queries";
+import type { Hold } from "../live/holds";
 import { resourceQuery } from "../queries";
 import { ResourceView } from "../ResourceView";
 import { type ResultLabel, ResultsWindow } from "../results/ResultsWindow";
 import { ProjectScope } from "../scope";
 import { KindIcon } from "../shell/KindIcon";
+import { LookOnly } from "../shell/may";
 import { OpenError } from "../shell/OpenError";
 import type { KindId } from "../types";
 import { parseUri, refOf } from "../uri";
@@ -52,7 +54,8 @@ export function FocusLayer({
   onTo,
   onGo,
   onClose,
-  render = entry => <EntryView entry={entry} view={view} onGo={onGo} />,
+  heldBy,
+  render = entry => <EntryView entry={entry} view={view} onGo={onGo} heldBy={heldBy?.(entry)} />,
 }: {
   /** What the person went into, in order; never empty. */
   trail: FocusEntry[];
@@ -67,6 +70,8 @@ export function FocusLayer({
   onGo: (entry: FocusEntry) => void;
   /** Puts the layer away: the graph again. */
   onClose: () => void;
+  /** Who else holds an entry, if someone does. */
+  heldBy?: (entry: FocusEntry) => Hold | undefined;
   /** What an entry shows: its view. */
   render?: (entry: FocusEntry) => ReactNode;
 }) {
@@ -244,11 +249,23 @@ export function EntryView({
   entry,
   view,
   onGo,
+  heldBy,
 }: {
   entry: FocusEntry;
   view: GraphView;
   onGo: (e: FocusEntry) => void;
+  heldBy?: Hold;
 }) {
+  // A workflow is held operator by operator on its canvas; anything else, as a whole.
+  if (heldBy && !(entry.kind === "resource" && entry.ref.kind === "workflow"))
+    return (
+      <LookOnly value>
+        <p className="shrink-0 border-b bg-muted/40 px-3 py-1.5 text-xs" data-graph-look-only={heldBy.name}>
+          {heldBy.name} is {heldBy.doing} this. You can look at it, not change it.
+        </p>
+        <EntryView entry={entry} view={view} onGo={onGo} />
+      </LookOnly>
+    );
   if (entry.kind === "resource")
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-graph-view={entry.ref.kind}>

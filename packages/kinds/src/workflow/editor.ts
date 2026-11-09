@@ -3,8 +3,10 @@
 // live session's, or one version to look at): an edit is written into the document and comes
 // back from it, the same way someone else's edit arrives. Saving is the session's work, so
 // the store only says whether what was written has got there and whether the catalog took it.
+// Everything a person changes comes through here, so this is where what someone else holds is
+// refused.
 
-import { normalizeSpec, type Point, type Positions, placeMissing, same, type WorkflowSpec } from "@texera/workflow-model";
+import { changedOperators, normalizeSpec, type Point, type Positions, placeMissing, same, type WorkflowSpec } from "@texera/workflow-model";
 import { createStore, type StoreApi } from "zustand";
 import { updateMetadata } from "../api";
 import type { SyncState, WorkflowDocument } from "./document";
@@ -29,6 +31,8 @@ export interface EditorState {
   positions: Positions;
   readonly: boolean;
   selected: string | null;
+  /** The operators someone else holds: looked at here, not changed. Where they sit and their wires stay free. */
+  held: ReadonlySet<string>;
   saveState: SaveState;
   /** Why the catalog did not take the workflow as a version, while that stands. */
   refusal?: string;
@@ -43,6 +47,7 @@ export interface EditorState {
   move: (moves: Record<string, Point>) => void;
   rename: (name: string) => void;
   select: (operatorId: string | null) => void;
+  setHeld: (held: ReadonlySet<string>) => void;
   /** Takes the head and the name the catalog reports for the workflow. */
   follow: (headVno: number, name: string) => void;
   /** Resolves once the catalog has a version of everything written here, with that version's number. */
@@ -69,6 +74,13 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
     // holds what the catalog has, and takes only what a person changes.
     const read = (previous?: WorkflowSpec) => normalizeSpec(document.spec(previous));
     const first = read();
+    const isHeld = (ids: Iterable<string>) => [...ids].some(id => get().held.has(id));
+    /** Whether a step of this person's history may be taken: not over an operator someone else holds. */
+    const free = (step: "undo" | "redo") => !get().readonly && !isHeld(document.history?.touches(step) ?? []);
+    const steps = () => ({
+      canUndo: !!document.history?.canUndo() && free("undo"),
+      canRedo: !!document.history?.canRedo() && free("redo"),
+    });
     const stop = [
       document.watch(() => {
         // The same spec object while only the layout changed: whatever is computed from the
@@ -78,7 +90,7 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
         set({ spec, positions: placeMissing(spec, document.positions()) });
       }),
       document.watchState(() => set({ saveState: document.state(), refusal: document.refusal() })),
-      document.history?.watch(() => set({ canUndo: !!document.history?.canUndo(), canRedo: !!document.history?.canRedo() })) ?? (() => undefined),
+      document.history?.watch(() => set(steps())) ?? (() => undefined),
     ];
     return {
       rid: workflow.rid,
@@ -88,20 +100,22 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
       positions: placeMissing(first, document.positions()),
       readonly: workflow.readonly,
       selected: null,
+      held: new Set(),
       saveState: document.state(),
       refusal: document.refusal(),
       canUndo: false,
       canRedo: false,
       undo: () => {
-        if (!get().readonly) document.history?.undo();
+        if (free("undo")) document.history?.undo();
       },
       redo: () => {
-        if (!get().readonly) document.history?.redo();
+        if (free("redo")) document.history?.redo();
       },
       edit: change => {
         if (get().readonly) return;
-        const next = change(get().spec);
-        if (next !== get().spec) document.change(get().spec, next);
+        const before = get().spec;
+        const next = change(before);
+        if (next !== before && !isHeld(changedOperators(before, next))) document.change(before, next);
       },
       move: moves => {
         if (!get().readonly) document.move(moves);
@@ -113,6 +127,10 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
         void deps.rename(get().rid, next).catch(e => set({ saveError: e instanceof Error ? e.message : String(e) }));
       },
       select: id => set({ selected: id }),
+      setHeld: held => {
+        set({ held });
+        set(steps());
+      },
       follow: (headVno, name) => set({ headVno, name }),
       flush: () => document.settle(),
       close: () => {

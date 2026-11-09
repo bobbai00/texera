@@ -6,6 +6,7 @@ import type { ConversationGraph } from "@texera/catalog-client/types";
 import { cn } from "@texera/ui";
 import { List, Network } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import { useHolds } from "../live/room";
 import { FromThisChat } from "../shell/FromThisChat";
 import { type ViewHost, ViewHostContext } from "../shell/host";
 import { FocusLayer, type Rect, rectWithin } from "./Focus";
@@ -51,6 +52,9 @@ export function ResourcePanel({
     setTrail(t => pushed(t, entry));
   };
   const focused = trail.length > 0;
+  // Going into a box is having hold of it; someone who may only read the chat holds nothing.
+  const top = trail.at(-1);
+  const held = useHolds(rid, top?.id && onComment ? { id: top.id, doing: "viewing" } : null);
   const tabs = (
     <div className="flex items-center gap-1" role="tablist">
       {(
@@ -90,6 +94,7 @@ export function ResourcePanel({
             bar={tabs}
             onOpen={(id, el) => enter(id, el)}
             onComment={onComment}
+            held={held}
             inert={focused}
           />
         ) : (
@@ -107,6 +112,7 @@ export function ResourcePanel({
             onTo={i => setTrail(t => t.slice(0, i + 1))}
             onGo={entry => setTrail(t => pushed(t, entry))}
             onClose={() => setTrail([])}
+            heldBy={entry => (entry.id ? held.get(entry.id) : undefined)}
           />
         )}
       </section>

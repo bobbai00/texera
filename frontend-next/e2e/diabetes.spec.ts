@@ -153,10 +153,8 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   const run = graph.locator('[data-graph-role="run"]');
   await expect(run).toHaveCount(1);
   await expect(run).toHaveAttribute("data-graph-state", "completed");
-  const workflowCard = graph.locator('[data-graph-role="workflow"]').first();
   await expect(graph.locator('[data-graph-role="model"]')).toHaveCount(1);
   await expect(graph.locator('[data-graph-edge="uses"]')).toHaveCount(1);
-  await expect(workflowCard.locator('[data-graph-role="function"]')).not.toHaveCount(0);
   await expect(graph.locator('[data-graph-role="unit"]').filter({ hasText: "Team unit" })).toHaveCount(1);
   await graph.locator("[data-graph-fit]").click();
   await page.waitForTimeout(800);
@@ -218,11 +216,11 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   await shot(page, "8-each-others-pointers");
 
   // What he adds appears on her canvas, with no reload, and goes into the next version.
-  const before = await page.locator(".react-flow__node").count();
+  const before = await page.locator(".react-flow__node-operator").count();
   const palette = await operatorList(bobs);
   await palette.getByPlaceholder("Search operators").fill("Limit");
   await palette.locator('[data-palette-operator="Limit"]').click();
-  await expect(page.locator(".react-flow__node")).toHaveCount(before + 1, { timeout: 15_000 });
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(before + 1, { timeout: 15_000 });
   await expect(page.locator('.react-flow__node [data-operator-type="Limit"]')).toHaveCount(1);
   await bobs.locator("[data-operator-done]").click();
   await expect

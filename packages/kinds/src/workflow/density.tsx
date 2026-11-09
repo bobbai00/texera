@@ -3,10 +3,10 @@
 // taller, so while they do, the rows are drawn further apart by one factor for the whole
 // canvas: nothing is moved in the workflow, and a card does not lie on the one below it.
 
-import { Segmented } from "@texera/ui";
+import { Button, Segmented } from "@texera/ui";
 import { ORIGIN, type Point, type Positions, ROW } from "@texera/workflow-model";
 import { useStore as useFlowStore } from "@xyflow/react";
-import { LayoutList, Rows3 } from "lucide-react";
+import { Link2, LayoutList, Rows3 } from "lucide-react";
 import { useStore } from "zustand";
 import type { CanvasView, Density } from "./canvas-view";
 
@@ -29,14 +29,14 @@ export const unspread = (at: Point, k: number): Point =>
   k === 1 ? at : { x: at.x, y: ORIGIN.y + (at.y - ORIGIN.y) / k };
 
 /** The spread of the canvas this is on, from the cards as they are measured; the card open for editing lies over the others and is not counted. */
-export function useRowSpread(editing: string | null): number {
+export function useRowSpread(editing: string | null, above = 0): number {
   const tallest = useFlowStore(s => {
     let max = 0;
     for (const node of s.nodeLookup.values()) if (node.id !== editing) max = Math.max(max, node.measured.height ?? 0);
     return max;
   });
   // In steps, so a pixel more or less on one card does not move the whole canvas.
-  return Math.ceil(rowSpread(tallest) * 8) / 8;
+  return Math.ceil(rowSpread(tallest + above) * 8) / 8;
 }
 
 /** The viewer's choice of how much every card says. */
@@ -70,3 +70,23 @@ export function DensityToggle({ view }: { view: CanvasView }) {
     />
   );
 }
+
+/** The viewer's choice of whether the datasets and models operators use are drawn. */
+export function ResourcesToggle({ view }: { view: CanvasView }) {
+  const shown = useStore(view, s => s.resources);
+  const label = shown ? "Hide the data and models operators use" : "Show the data and models operators use";
+  return (
+    <Button
+      variant={shown ? "secondary" : "outline"}
+      size="icon-sm"
+      className="shadow-xs"
+      aria-label={label}
+      aria-pressed={shown}
+      title={label}
+      onClick={() => view.getState().setResources(!shown)}
+      data-canvas-resources={shown ? "shown" : "hidden"}>
+      <Link2 />
+    </Button>
+  );
+}
+

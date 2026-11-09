@@ -18,7 +18,7 @@ export interface Present extends Person {
   state: Record<string, unknown>;
 }
 
-const isPerson = (v: unknown): v is Person =>
+export const isPerson = (v: unknown): v is Person =>
   typeof v === "object" && v !== null && typeof (v as Person).pid === "string" && typeof (v as Person).name === "string";
 
 /**

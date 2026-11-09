@@ -11,7 +11,7 @@ import (
 )
 
 // The graph beside a chat is what it read, made and ran, and how they connect: the data a
-// workflow reads, the function and the unit it uses and runs on, the table its newest run
+// workflow reads, the function and the unit it uses and runs on, the tables each execution
 // kept; and what its plan said it would make that it has not made yet. Nothing else: not a
 // dataset it never touched, not the chat itself.
 func TestAChatsGraphIsWhatItReadMadeAndRan(t *testing.T) {
@@ -116,6 +116,32 @@ func TestAChatsGraphIsWhatItReadMadeAndRan(t *testing.T) {
 	}
 	if len(graph.Planned) != 1 || graph.Planned[0].Name != "Overnight risk" || graph.Planned[0].Turn != turn.Turn {
 		t.Fatalf("what the plan said and was not made: %+v", graph.Planned)
+	}
+
+	// A later execution keeps its results, and the earlier one keeps its own; each says the
+	// version of the workflow it ran.
+	again, _ := runOnUnit(t, h, "alice", rid(wf), map[string]any{}, inChat...)
+	report(t, h, again, "tir", map[string]any{"opid": "tir", "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": "e_" + strings.ReplaceAll(rid(again), "-", "") + ".tir_output_0", "tupleCount": 1}})
+	finish(t, h, again, "completed")
+	h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
+	tables := map[string]bool{}
+	for _, n := range graph.Nodes {
+		if n.Name == "tir" && n.Run != nil {
+			tables[string(*n.Run)] = true
+		}
+		if n.Runs != nil {
+			if len(*n.Runs) != 2 {
+				t.Fatalf("the executions: %+v", *n.Runs)
+			}
+			for _, run := range *n.Runs {
+				if run.Version == nil || *run.Version != 1 {
+					t.Errorf("the version an execution ran: %v", run.Version)
+				}
+			}
+		}
+	}
+	if !tables[string(exec.Metadata.Uri)] || !tables[string(again.Metadata.Uri)] {
+		t.Fatalf("each execution's results, by execution: %v", tables)
 	}
 }
 

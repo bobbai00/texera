@@ -1162,6 +1162,10 @@ export type GraphRun = {
      * The unit it ran on, when the caller may see it.
      */
     unit?: Uri;
+    /**
+     * The version of the workflow it ran.
+     */
+    version?: Vno;
 };
 
 /**

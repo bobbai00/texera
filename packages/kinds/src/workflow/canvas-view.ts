@@ -1,10 +1,12 @@
-// How a canvas is looked at: how much each operator's card says, whether the map of a large
-// workflow is open, which card is open for editing, and which result is on screen. None of it
+// How a canvas is looked at: how much each operator's card says, whether the resources operators
+// use are drawn, whether the map of a large workflow is open, which card is open for editing, and
+// which result is on screen. None of it
 // is the workflow's; it is the viewer's, so none of it is in the document or in a version.
 
 import type { Compilation, OperatorSchema } from "@texera/workflow-model";
 import { createContext, use } from "react";
 import { createStore, type StoreApi } from "zustand";
+import type { Hold } from "../live/holds";
 import type { EditorStore } from "./editor";
 
 /** How much a card says: its settings in one line, or each of them on a line of its own. */
@@ -13,6 +15,7 @@ export type Density = "compact" | "detailed";
 // What the viewer chose for every canvas is kept in the browser, for the next one they open.
 const DENSITY_KEY = "texera-canvas-density";
 const MAP_KEY = "texera-canvas-map";
+const RESOURCES_KEY = "texera-canvas-resources";
 
 function remembered(key: string): string | null {
   try {
@@ -43,6 +46,8 @@ export interface Covered {
 
 export interface CanvasViewState {
   density: Density;
+  /** Whether the datasets and models operators use are drawn above their cards. */
+  resources: boolean;
   /** Whether the map of a workflow too large to see at once is open. It lies over the canvas, so it is closed until asked for. */
   map: boolean;
   /** The operator whose settings are open in its card. */
@@ -56,6 +61,7 @@ export interface CanvasViewState {
   /** What the results window covers of the canvas: cards brought into view stay clear of it. */
   covered: Covered | null;
   setDensity: (density: Density) => void;
+  setResources: (shown: boolean) => void;
   setMap: (open: boolean) => void;
   edit: (operatorID: string | null, fresh?: boolean) => void;
   show: (result: string | null) => void;
@@ -68,6 +74,7 @@ export type CanvasView = StoreApi<CanvasViewState>;
 export function createCanvasView(): CanvasView {
   return createStore<CanvasViewState>()(set => ({
     density: remembered(DENSITY_KEY) === "detailed" ? "detailed" : "compact",
+    resources: remembered(RESOURCES_KEY) !== "hidden",
     map: remembered(MAP_KEY) === "open",
     editing: null,
     fresh: false,
@@ -77,6 +84,10 @@ export function createCanvasView(): CanvasView {
     setDensity: density => {
       remember(DENSITY_KEY, density);
       set({ density });
+    },
+    setResources: shown => {
+      remember(RESOURCES_KEY, shown ? "shown" : "hidden");
+      set({ resources: shown });
     },
     setMap: open => {
       remember(MAP_KEY, open ? "open" : "closed");
@@ -102,8 +113,8 @@ export interface Canvas {
   run?: (operatorID: string) => void;
   /** Operators that arrived from elsewhere a moment ago (the agent's, another person's). */
   arrived?: ReadonlySet<string>;
-  /** Who else has a card open, by operator. */
-  openBy?: ReadonlyMap<string, { pid: string; name: string }>;
+  /** Who else holds an operator, by operator. */
+  heldBy?: ReadonlyMap<string, Hold>;
   /** A small picture of a workflow (the card of one in a chat): an operator is its icon with its name under it. */
   picture?: boolean;
 }
