@@ -2,6 +2,31 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 16, part 6): the chat shares its page, and what the agent shows can be picked
+
+- **The chat and what is beside it share the page** (`chat/chat-window.ts`). The grip at the chat's
+  left sizes it and the width is kept in this browser; the page's room decides: the chat keeps at
+  least 320 px, what is beside it at least 380, and where both do not fit the chat lies over it. A
+  minus folds the chat to a button in the corner, the same button as the dock's (`ChatBubble`), with
+  what was half written kept. The graph and the project no longer disappear below a breakpoint.
+- **A URI alone on a line is that resource's card** (`chat/resource-lines.ts`), and a URI in
+  backticks reads as its name. There is no new tool or part: the identifier is the structure, the
+  words stay plain text in the catalog, and what they show is decided as they are read. The runtime
+  tells every agent so (`agent/system-prompt.ts`), since it is the chat that draws them.
+- **Any card can go with the next message** (`CardPickingContext` in `CardShell`). A chat provides
+  it around the agent's messages, so every kind has the button and a person's own message does not.
+  A card picked is marked and stands as a chip in the box; it is sent as an attachment with no name,
+  which is how a resource differs from a file brought to the chat.
+- `load.py` brings the project's copy of the platform's agent level with it on every load.
+- The start page's cards are shorter, each resource's name right under the card's header.
+
+Verified on the OrbStack stack: the browser suite, 73 of 74. The one failure was the manual-mode
+test's screenshot step catching a message as its live copy gave way to the saved one; it passed with
+the other affected specs on the final images, and that step no longer depends on the moment. The new
+`chat-page.spec.ts`, the runtime's 109 tests, the app's 407 and typecheck. With the real model, four
+different questions came back with cards (a dataset, a workflow, models, a function), and a model
+picked from its card was what "this one" meant in the next answer. `k8s.sh check` not run.
+
 ## 2026-11-08 (session 16, part 5): the demo wears dkNET AI, and a start page that plays
 
 - **A look has a large logo and words of its own** (`Branding.logoLargeUrl`, `description`), each

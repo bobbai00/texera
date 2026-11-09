@@ -79,8 +79,11 @@ export function attachedFiles(history: Message[]): AttachedFile[] {
 
 /** A person's attachment as the model reads it: its kind, the name they gave it, its URI. A dataset attached is a file of the chat. */
 function attachedLine(uri: string, name?: string): string {
-  const kind = /^texera:\/\/([a-z-]+?)s?\//.exec(uri)?.[1] ?? "resource";
-  const file = kind === "dataset" && /@\d+$/.test(uri);
+  // An execution is named under its workflow.
+  const kind = /^texera:\/\/workflows\/[^/@]+\/executions\//.test(uri)
+    ? "execution"
+    : (/^texera:\/\/([a-z-]+?)s?\//.exec(uri)?.[1] ?? "resource");
+  const file = kind === "dataset" && name !== undefined && /@\d+$/.test(uri);
   return `Attached ${file ? "file" : kind}${name ? ` ${JSON.stringify(name)}` : ""} (${uri})`;
 }
 

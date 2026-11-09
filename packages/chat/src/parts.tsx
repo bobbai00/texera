@@ -2,19 +2,40 @@
 // tool itself is a one-line step. Everything comes from the kinds registry, never from
 // a tool name. A handoff is a divider between the agents of a conversation.
 
-import { isKindId, KindIcon, PrincipalName, UriChip } from "@texera/kinds";
+import { isKindId, KindIcon, PrincipalName, ResourceCard, refOf, UriChip } from "@texera/kinds";
 import { Button, cn } from "@texera/ui";
 import { AlertTriangle, ArrowRightLeft, Brain, Check, ChevronDown, CircleHelp, ListChecks, Loader2, Network, ShieldCheck, Wrench, X } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, type ReactNode, Suspense, useMemo, useState } from "react";
 import type { Part } from "./model";
+import { blocksOf, isResourceUri } from "./resource-lines";
 
 const Markdown = lazy(() => import("@texera/ui/markdown"));
 
+/** A URI in backticks reads as the resource's name. */
+const chipOf = (code: string): ReactNode | undefined => (isResourceUri(code) ? <UriChip uri={code} emphasis /> : undefined);
+
+/** What the agent wrote: words, and cards for the resources it put on lines of their own. */
 export function TextPart({ text, streaming }: { text: string; streaming: boolean }) {
+  const blocks = useMemo(() => blocksOf(text), [text]);
   return (
-    <Suspense fallback={<p className="whitespace-pre-wrap">{text}</p>}>
-      <Markdown text={text} animating={streaming} />
-    </Suspense>
+    <>
+      {blocks.map((block, i) =>
+        block.type === "words" ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: blocks are positional and only grow at the end
+          <Suspense key={i} fallback={<p className="whitespace-pre-wrap">{block.text}</p>}>
+            <Markdown text={block.text} animating={streaming && i === blocks.length - 1} inline={chipOf} />
+          </Suspense>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: blocks are positional and only grow at the end
+          <div key={i} className="grid grid-cols-[repeat(auto-fill,minmax(min(17rem,100%),1fr))] gap-2" data-part="resources">
+            {block.uris.map(uri => {
+              const ref = refOf(uri);
+              return ref ? <ResourceCard key={uri} ref={ref} /> : <UriChip key={uri} uri={uri} />;
+            })}
+          </div>
+        )
+      )}
+    </>
   );
 }
 

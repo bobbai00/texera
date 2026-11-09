@@ -19,8 +19,9 @@ import {
   viewingContext,
 } from "@texera/kinds";
 import { Button, cn, Tooltip } from "@texera/ui";
-import { Maximize2, MessageCircle, SquarePen, X } from "lucide-react";
+import { Maximize2, SquarePen, X } from "lucide-react";
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChatBubble } from "./ChatBubble";
 import { ChatView } from "./ChatView";
 import { dockChat, withDockChat } from "./dock";
 import { DEFAULT_WINDOW, type DockWindow, fitted, moved, remember, remembered, resized } from "./dock-window";
@@ -33,11 +34,7 @@ export function ChatDock({ page, getToken }: { page: ResourceRef; getToken: () =
       {open ? (
         <Dock page={page} getToken={getToken} onClose={() => setOpen(false)} />
       ) : (
-        <Tooltip content="Ask about this page" side="left">
-          <Button size="icon" className="pointer-events-auto size-12 rounded-full shadow-lg" aria-label="Ask about this page" onClick={() => setOpen(true)} data-chat-dock-button>
-            <MessageCircle className="size-5" />
-          </Button>
-        </Tooltip>
+        <ChatBubble label="Ask about this page" className="pointer-events-auto" onClick={() => setOpen(true)} data-chat-dock-button />
       )}
     </div>
   );

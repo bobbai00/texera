@@ -58,7 +58,7 @@ function Face({ resource, kind, className, away }: { resource: Resource; kind: K
       type="button"
       inert={away}
       onClick={() => expand({ kind: isKindId(resource.kind) ? resource.kind : kind, rid: m.rid, parent: m.parent })}
-      className={`absolute inset-0 flex flex-col justify-end gap-0.5 px-4 pb-3 text-left ${className ?? ""}`}
+      className={`absolute inset-0 flex flex-col justify-start gap-0.5 px-4 pt-1.5 pb-3 text-left ${className ?? ""}`}
       data-deck-face={away ? undefined : m.name}>
       <span className="truncate text-sm font-semibold">{m.name}</span>
       {about && <span className="truncate text-xs text-muted-foreground">{about}</span>}
@@ -76,7 +76,7 @@ function Card({ kind, title, items, after }: { kind: KindId; title: string; item
   const before = size > 1 && step > 0 ? items[(step - 1) % size] : undefined;
   return (
     <section
-      className="flex h-36 flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition-shadow hover:shadow-md"
+      className="flex h-28 flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition-shadow hover:shadow-md"
       onPointerEnter={() => setHeld(true)}
       onPointerLeave={() => setHeld(false)}
       aria-label={title}
@@ -95,7 +95,7 @@ function Card({ kind, title, items, after }: { kind: KindId; title: string; item
         {shown ? (
           <Face key={`in:${step}`} resource={shown} kind={kind} className={step > 0 ? "animate-roll-in" : undefined} />
         ) : (
-          <p className="absolute inset-x-4 bottom-3 text-sm text-muted-foreground">None yet</p>
+          <p className="absolute inset-x-4 top-1.5 text-sm text-muted-foreground">None yet</p>
         )}
       </div>
     </section>

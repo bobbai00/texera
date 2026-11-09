@@ -414,7 +414,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
     await route.fulfill({ response, json: body });
   });
   await page.setViewportSize({ width: 1000, height: 700 });
-  await expect(graph).toBeHidden();
+  await expect(graph).toBeVisible();
   changed = true;
   await page.waitForResponse("**/conversations/*/graph", { timeout: 20_000 });
   await page.waitForTimeout(300);

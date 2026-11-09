@@ -52,7 +52,7 @@ test("in manual mode the agent says its plan, and each change waits for an appro
       // Before the first approval nothing exists yet: the chat made no workflow.
       const made: { resource: { kind: string }; made: boolean }[] = await asAlice("GET", `/conversations/${conversation}/resources`);
       expect(made.filter(m => m.made && m.resource.kind === "workflow")).toEqual([]);
-      await waiting.first().scrollIntoViewIfNeeded();
+      await expect(waiting.first()).toBeInViewport();
       await page.screenshot({ path: "test-results/manual-work-approval.png" });
     }
     await waiting.first().locator("[data-approve]").click();

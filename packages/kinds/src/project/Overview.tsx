@@ -40,7 +40,8 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
           </button>
         )}
       </header>
-      <ul className="divide-y">
+      {/* Beside a chat the list can be narrow: what is left out then is the labels, not its right edge. */}
+      <ul className="divide-y @container">
         {items.slice(0, SHOWN).map(r => {
           const id = isKindId(r.kind) ? r.kind : kind;
           const open = () => expand({ kind: id, rid: r.metadata.rid, parent: r.metadata.parent });
@@ -52,7 +53,9 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={text}>
                 {text}
               </span>
-              <ResourceLabels metadata={r.metadata} />
+              <span className="hidden @[30rem]:block">
+                <ResourceLabels metadata={r.metadata} />
+              </span>
             </li>
           );
         })}

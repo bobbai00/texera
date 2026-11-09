@@ -22,17 +22,19 @@ interface Props {
   onFilesChange: (files: File[]) => void;
   autoFocus?: boolean;
   placeholder?: string;
+  /** What goes with the message besides its words and files, shown above them. */
+  context?: ReactNode;
   status?: string;
   /** What the chat runs with, shown in the box's foot: its agent, model and add-ons. */
   controls?: ReactNode;
 }
 
-export function Composer({ busy, disabled: waiting = false, readOnly = false, onSend, onNote, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
+export function Composer({ context, busy, disabled: waiting = false, readOnly = false, onSend, onNote, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
   const disabled = waiting || readOnly;
   const brand = useLook().name;
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-  const empty = !text.trim() && files.length === 0;
+  const empty = !text.trim() && files.length === 0 && !context;
 
   /** Hands the draft over; it comes back into the box when it could not be sent. */
   const hand = async (to: (message: { text: string; files: File[] }) => Promise<boolean>) => {
@@ -54,6 +56,11 @@ export function Composer({ busy, disabled: waiting = false, readOnly = false, on
       onSubmit={submit}
       data-composer
       className="rounded-2xl border bg-card shadow-sm transition-shadow focus-within:shadow-md focus-within:ring-[3px] focus-within:ring-ring/15">
+      {context && (
+        <div className="flex flex-wrap gap-2 px-3 pt-3" data-composer-context>
+          {context}
+        </div>
+      )}
       {files.length > 0 && (
         <div className="flex flex-wrap gap-2 px-3 pt-3">
           {files.map(f => (

@@ -1,4 +1,4 @@
-import { KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
+import { type CardPicking, CardPickingContext, KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
 import { cn } from "@texera/ui";
 import { memo } from "react";
 import { type ChatMessage, visibleParts } from "./model";
@@ -18,6 +18,7 @@ export const MessageItem = memo(function MessageItem({
   showAuthor = false,
   answers,
   openGraph,
+  picking,
 }: {
   message: ChatMessage;
   streaming: boolean;
@@ -33,6 +34,8 @@ export const MessageItem = memo(function MessageItem({
   answers?: { pick: (label: string) => void; decide: (toolCallId: string, approved: boolean) => void };
   /** In the chat that floats over a page, a plan offers the chat's own page, where its graph is. */
   openGraph?: () => void;
+  /** Lets the person pick what the agent shows for their next message. */
+  picking?: CardPicking;
 }) {
   if (message.role === "user") {
     const texts = message.parts.filter(p => p.type === "text");
@@ -92,43 +95,45 @@ export const MessageItem = memo(function MessageItem({
   const held = new Set(parts.flatMap(p => (p.type === "approval" ? [p.toolCallId] : [])));
   const calls = new Map(parts.flatMap(p => (p.type === "tool" ? [[p.id, p] as const] : [])));
   return (
-    <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role} data-template={label?.name}>
-      {showLabel && label && (
-        <div className="flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase" data-message-template={label.name}>
-          <KindIcon kind="agent-template" className="size-5 rounded-md [&_svg]:size-3" />
-          {label.name}
-          {label.vno !== undefined && <span className="normal-case opacity-70">v{label.vno}</span>}
-          {model && (
-            <span className="normal-case opacity-70" data-message-model={model.name}>
-              · {model.name}
-            </span>
-          )}
-        </div>
-      )}
-      {parts.map((part, i) => {
-        const key = `${message.id}-${i}`;
-        switch (part.type) {
-          case "text":
-            return <TextPart key={key} text={part.text} streaming={streaming && i === parts.length - 1} />;
-          case "reasoning":
-            return <ReasoningPart key={key} text={part.text} />;
-          case "tool":
-            if (held.has(part.id)) return null;
-            if (part.name === "start_work" && part.input !== undefined) return <PlanPart key={key} part={part} onOpenGraph={openGraph} />;
-            if (part.name === "ask" && part.input !== undefined) return <AskPart key={key} part={part} onPick={answers?.pick} />;
-            return <ToolCallPart key={key} part={part} />;
-          case "approval":
-            return <ApprovalPart key={key} part={part} call={calls.get(part.toolCallId)} onDecide={answers ? approved => answers.decide(part.toolCallId, approved) : undefined} />;
-          case "resource":
-            return <ResourceCard key={key} ref={part.ref} />;
-          case "handoff":
-            return <HandoffPart key={key} part={part} toName={labels.get(part.to)?.name ?? part.name} />;
-          case "error":
-            return <ErrorPart key={key} message={part.message} />;
-          default:
-            return null;
-        }
-      })}
-    </div>
+    <CardPickingContext value={picking}>
+      <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role} data-template={label?.name}>
+        {showLabel && label && (
+          <div className="flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase" data-message-template={label.name}>
+            <KindIcon kind="agent-template" className="size-5 rounded-md [&_svg]:size-3" />
+            {label.name}
+            {label.vno !== undefined && <span className="normal-case opacity-70">v{label.vno}</span>}
+            {model && (
+              <span className="normal-case opacity-70" data-message-model={model.name}>
+                · {model.name}
+              </span>
+            )}
+          </div>
+        )}
+        {parts.map((part, i) => {
+          const key = `${message.id}-${i}`;
+          switch (part.type) {
+            case "text":
+              return <TextPart key={key} text={part.text} streaming={streaming && i === parts.length - 1} />;
+            case "reasoning":
+              return <ReasoningPart key={key} text={part.text} />;
+            case "tool":
+              if (held.has(part.id)) return null;
+              if (part.name === "start_work" && part.input !== undefined) return <PlanPart key={key} part={part} onOpenGraph={openGraph} />;
+              if (part.name === "ask" && part.input !== undefined) return <AskPart key={key} part={part} onPick={answers?.pick} />;
+              return <ToolCallPart key={key} part={part} />;
+            case "approval":
+              return <ApprovalPart key={key} part={part} call={calls.get(part.toolCallId)} onDecide={answers ? approved => answers.decide(part.toolCallId, approved) : undefined} />;
+            case "resource":
+              return <ResourceCard key={key} ref={part.ref} />;
+            case "handoff":
+              return <HandoffPart key={key} part={part} toName={labels.get(part.to)?.name ?? part.name} />;
+            case "error":
+              return <ErrorPart key={key} message={part.message} />;
+            default:
+              return null;
+          }
+        })}
+      </div>
+    </CardPickingContext>
   );
 });

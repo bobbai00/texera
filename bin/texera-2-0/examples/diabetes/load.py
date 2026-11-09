@@ -340,14 +340,18 @@ def wear(person: Person, project: str, brand: dict, **defaults) -> None:
 def brand_agent(person: Person, project: str, brand_name: str) -> str:
     """The platform's agent, as the project's own under the brand's name."""
     name = f"{brand_name} Agent"
-    found = named(person, "agent-templates", project, name)
-    if found:
-        print(f"   {name}: there")
-        return found["metadata"]["uri"]
     query = urllib.parse.urlencode({"scope": project, "limit": 100})
     agents = person.must("GET", f"/agent-templates?{query}")["items"]
     platform = next(a for a in agents if a["metadata"]["name"] == "Texera Agent")
     spec = json.loads(json.dumps(platform["spec"]).replace("Texera Agent", name))
+    found = named(person, "agent-templates", project, name)
+    if found:
+        if found["spec"] != spec:
+            person.must("PUT", f"/agent-templates/{found['metadata']['rid']}", {"spec": spec})
+            print(f"   {name}: brought level with the platform's agent")
+        else:
+            print(f"   {name}: there")
+        return found["metadata"]["uri"]
     made = person.must(
         "POST",
         "/agent-templates",

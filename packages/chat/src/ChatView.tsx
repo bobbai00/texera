@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, EditableName, FromThisChat, keysOf, KindIcon, ProjectOverview, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, resourceQuery, settleViewing, ShareButton, updateMetadata, updateSpec, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
+import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, EditableName, FromThisChat, keysOf, KindIcon, ProjectOverview, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateMetadata, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
-import { Loader2, Maximize2, Minimize2, PanelRight } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, Minus, PanelRight, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ScrollPoint, staysPinned } from "./chat-scroll";
+import { useChatPane } from "./chat-window";
+import { ChatBubble } from "./ChatBubble";
 import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
 import { useResourceLabels } from "./labels";
-import { useChatMaximized } from "./maximized";
 import { MessageItem } from "./MessageItem";
 import { writersOf } from "./model";
 import { StatePart } from "./parts";
@@ -64,8 +65,28 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   const busy = chat.running || uploading || starting;
   // The chat's resource graph, followed while the agent works, and again with every message.
   const { graph, started, refresh } = useChatGraph(rid, { enabled: !dock, live: chat.running });
-  const [maximized, toggleMaximized] = useChatMaximized();
-  const graphBeside = !dock && !maximized && started && !!graph;
+  const pane = useChatPane(!dock);
+  const maximized = !dock && pane.maximized;
+  // A minimized chat is a bubble in the corner, and whatever was beside it has the whole page. It
+  // stays mounted, with what is half written in its box.
+  const [minimized, setMinimized] = useState(false);
+  const minimize = () => {
+    pane.setMaximized(false);
+    setMinimized(true);
+  };
+  const hasBeside = !dock && !maximized;
+  // Where the chat lies over what is beside it, there is no graph to see the people on.
+  const graphShown = hasBeside && started && !!graph && (minimized || pane.width !== undefined);
+  // What the person picked from the agent's cards, for their next message.
+  const [picks, setPicks] = useState<ResourceRef[]>([]);
+  const picking = useMemo<CardPicking | undefined>(() => {
+    if (readOnly) return undefined;
+    const chosen = new Set(picks.map(p => uriOf(p)));
+    return {
+      picked: ref => chosen.has(uriOf(ref)),
+      toggle: ref => setPicks(now => (now.some(p => uriOf(p) === uriOf(ref)) ? now.filter(p => uriOf(p) !== uriOf(ref)) : [...now, ref])),
+    };
+  }, [picks, readOnly]);
   const rename = useMutation({
     mutationFn: (name: string) => updateMetadata(rid, { name }, conversation.metadata.etag),
     onSuccess: () => {
@@ -109,7 +130,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   /** Sends what is in the box: to the agent, or as a note to the people in the chat. */
   const send = async ({ text, files: attached }: { text: string; files: File[] }, ask = true) => {
     setNoteError(undefined);
-    const attachments: Attachment[] = [];
+    const attachments: Attachment[] = picks.map(ref => ({ ref }));
     if (attached.length) {
       try {
         setUpload({ status: "Preparing upload" });
@@ -124,18 +145,19 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
       setUpload({});
     }
     setFiles([]);
-    if (!ask) {
+    if (ask) {
+      // The agent reads what the person sees: an edit of the page still on its way is saved first.
+      if (context) await settleViewing();
+      void chat.send(text, attachments);
+    } else {
       try {
         await chat.note(text, attachments);
       } catch (e) {
         setNoteError(e);
         return false;
       }
-      return true;
     }
-    // The agent reads what the person sees: an edit of the page still on its way is saved first.
-    if (context) await settleViewing();
-    void chat.send(text, attachments);
+    setPicks([]);
     return true;
   };
 
@@ -192,6 +214,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
     <ProjectScope project={project}>
     {/* biome-ignore lint/a11y/noStaticElementInteractions: a file drop zone; the attach button is the keyboard path */}
     <div
+      ref={pane.root}
       className="relative flex h-full min-h-0"
       data-chat={rid}
       onDragOver={e => {
@@ -207,17 +230,30 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
         if (e.dataTransfer.files.length) setFiles(f => [...f, ...Array.from(e.dataTransfer.files)]);
       }}>
       {/* Behind the chat, what the project holds; once the chat starts work, what it reads, makes and runs. */}
-      {!dock &&
-        !maximized &&
+      {hasBeside &&
         (started && graph ? (
-          <ResourcePanel rid={rid} graph={graph} className="hidden min-w-0 flex-1 xl:flex" onComment={readOnly ? undefined : comment} />
+          <ResourcePanel rid={rid} graph={graph} className="flex min-w-0 flex-1" onComment={readOnly ? undefined : comment} />
         ) : (
-          <div className="scrollbar-thin hidden min-w-0 flex-1 overflow-y-auto xl:block" data-chat-behind>
+          <div className="scrollbar-thin min-w-0 flex-1 overflow-y-auto" data-chat-behind>
             <FromThisChat rid={rid} className="mx-auto max-w-5xl px-6 pt-6" />
             <ProjectOverview rid={project} />
           </div>
         ))}
-      <div className={cn("flex min-h-0 min-w-0 flex-col", dock || maximized ? "flex-1" : "flex-1 xl:m-3 xl:w-[30rem] xl:flex-none xl:overflow-hidden xl:rounded-2xl xl:border xl:bg-background xl:shadow-xl")} data-chat-window data-chat-maximized={maximized ? "true" : undefined}>
+      {hasBeside && !minimized && pane.width !== undefined && (
+        <div {...pane.grip} className="group flex w-3 shrink-0 cursor-col-resize touch-none items-center justify-center outline-none" data-chat-resize>
+          <span className="h-10 w-1 rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-active:bg-primary" />
+        </div>
+      )}
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col",
+          !hasBeside ? "flex-1" : cn("overflow-hidden rounded-2xl border bg-background shadow-xl", pane.width === undefined ? "absolute inset-2 z-30" : "my-3 mr-3 flex-none"),
+          minimized && "hidden"
+        )}
+        style={hasBeside && pane.width !== undefined ? { width: pane.width } : undefined}
+        data-chat-window
+        data-chat-maximized={maximized ? "true" : undefined}
+        data-chat-over={hasBeside && pane.width === undefined ? "true" : undefined}>
       {!dock && (
         <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2" data-chat-header>
           <KindIcon kind="conversation" className="size-7" />
@@ -227,15 +263,16 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
               with <span data-current-template>{agent?.name ?? "…"}</span> · started by <PrincipalName pid={conversation.metadata.createdBy} />
             </div>
           </div>
-          {/* Beside the graph the people show on it; where the graph is not drawn, they show here. */}
-          <div className={cn(graphBeside && "xl:hidden")}>
-            <Presence rid={rid} />
-          </div>
+          {/* Beside the graph the people show on it; where the graph is not in view, they show here. */}
+          {!graphShown && <Presence rid={rid} />}
           <ShareButton ref={{ kind: "conversation", rid }} />
           <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
             <PanelRight />
           </Button>
-          <Button variant="ghost" size="icon-sm" className="hidden xl:inline-flex" aria-label={maximized ? "Show the graph and project again" : "Maximize the chat"} title={maximized ? "Show the graph and project again" : "Maximize the chat"} aria-pressed={maximized} onClick={toggleMaximized} data-chat-maximize>
+          <Button variant="ghost" size="icon-sm" aria-label="Minimize the chat" title="Minimize the chat" onClick={minimize} data-chat-minimize>
+            <Minus />
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label={maximized ? "Show the graph and project again" : "Maximize the chat"} title={maximized ? "Show the graph and project again" : "Maximize the chat"} aria-pressed={maximized} onClick={() => pane.setMaximized(!maximized)} data-chat-maximize>
             {maximized ? <Minimize2 /> : <Maximize2 />}
           </Button>
         </header>
@@ -270,6 +307,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
                     showAuthor={message.author !== undefined && message.author !== myPid}
                     answers={canAnswer && i === items.length - 1 && message.role === "assistant" ? answers : undefined}
                     openGraph={dock ? openGraph : undefined}
+                    picking={picking}
                   />
                 </div>
               ))}
@@ -302,6 +340,9 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
               onStop={chat.stop}
               files={files}
               onFilesChange={setFiles}
+              context={
+                picks.length > 0 ? picks.map(ref => <PickedChip key={uriOf(ref)} ref={ref} onRemove={() => picking?.toggle(ref)} />) : undefined
+              }
               autoFocus
               status={uploading ? `${upload.status}…` : chat.steps.at(-1)}
               // What the chat runs with is chosen on the chat's own page; the dock is for asking.
@@ -309,11 +350,24 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
             />
           </div>
         </div>
+      {minimized && <ChatBubble label="Show the chat" working={chat.running} className="absolute right-4 bottom-4 z-30" onClick={() => setMinimized(false)} data-chat-restore />}
       <div className={cn("pointer-events-none absolute inset-3 hidden items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-sm font-medium text-primary", dragging && "flex")}>
         Drop files to attach them to this chat
       </div>
     </div>
     </ProjectScope>
+  );
+}
+
+/** Something picked from the agent's cards, in the box it goes with. */
+function PickedChip({ ref, onRemove }: { ref: ResourceRef; onRemove: () => void }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-0.5 rounded-lg border border-primary/40 bg-primary/10 py-0.5 pr-1 pl-0.5" data-composer-pick={uriOf(ref)}>
+      <UriChip uri={uriOf(ref)} emphasis className="border-0 hover:bg-primary/15" />
+      <button type="button" className="rounded p-0.5 hover:bg-primary/15" aria-label="Take it out of this message" onClick={onRemove}>
+        <X className="size-3" />
+      </button>
+    </span>
   );
 }
 

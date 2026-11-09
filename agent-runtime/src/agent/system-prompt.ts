@@ -8,7 +8,24 @@ const DEFAULT_SYSTEM = [
   "Be concise. State what you did and what the person should look at.",
 ].join("\n");
 
-/** Composes the system prompt: the template's prompt, the skills, the handoffs. */
+/** What a chat does with a URI, whichever agent is writing in it. */
+const SHOWING_RESOURCES = [
+  "## Showing resources",
+  "",
+  "The chat draws a resource from its URI. A URI alone on a line is the resource's card, and the person can add a card to their next message.",
+  "Whenever your answer is about resources (what there is, what fits, what you found or made, even a single one), give each its card: what you have to say about it, then on the next line its URI and nothing else.",
+  "",
+  "Two models fit. The first screens from questionnaire answers.",
+  "texera://models/<rid>",
+  "",
+  "The second needs clinic measurements.",
+  "texera://models/<rid>",
+  "",
+  "To mention a resource in passing, inside a sentence about something else, write its URI in backticks and it reads as the resource's name. Do not write a URI any other way, or on a line with other words. Use only URIs you have read.",
+  'A resource the person picked reaches you on their message as an "Attached" line with its URI: it is what they mean by "this".',
+].join("\n");
+
+/** Composes the system prompt: the template's prompt, how a chat shows resources, the skills, the handoffs. */
 export function composeSystemPrompt(
   template: TemplateRecord,
   skills: SkillRecord[],
@@ -17,6 +34,7 @@ export function composeSystemPrompt(
   const sections: string[] = [];
   const card = template.spec.card;
   sections.push(template.spec.prompt?.trim() || `${DEFAULT_SYSTEM}\n\nYou are "${card.name}": ${card.description}`);
+  sections.push(SHOWING_RESOURCES);
   const skillsSection = skillsPromptSection(skills);
   if (skillsSection) sections.push(skillsSection);
   const handoffSection = handoffPromptSection(handoffs);

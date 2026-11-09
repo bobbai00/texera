@@ -126,10 +126,18 @@ once and steadily (it used to blink without end), the dataset drawn "Not shared 
 
 `graph.spec.ts`, a second test: two people on one chat see each other's icon and pointer on the
 graph; a comment on a box, while a turn is going, lands in the chat as a note for the other person
-too, with the box attached; the graph comes back as it was when it changed while the page was too
-narrow to show it (it used to collapse); a box one person went into says so to the other, whose
+too, with the box attached; the graph comes back as it was when it changed while the window was narrow (it used to collapse); a box one person went into says so to the other, whose
 view of it is read-only; the chat maximizes and gives the page back; a chat and a
 dataset are renamed in place, and an overview row is one line with who can see it and who made it.
+
+`chat-page.spec.ts`: an agent's message, written as the runtime writes it, so no model is needed,
+shows each URI alone on a line as its card and a URI in a sentence as the resource's name, with no
+URI to read anywhere; a card picked is marked and stands in the box, can be taken out from either,
+goes with a message even with no words, and leaves the card and the box empty after; a person's own
+message offers no pick. The chat beside its graph: the grip sizes it and a reload keeps the size, an
+arrow key moves it, a double click resets it; minimized, the graph has the page, the button is in
+the corner and what was half written is still there after; at 1000 px both stand side by side; at
+760 px the chat lies over the graph, and minimizing shows the graph.
 
 `graph.spec.ts`: the graph beside a chat, made the way the runtime makes it, in a turn, so no
 model is needed: a workflow over iris, its execution a box beside it with the unit it ran on at its

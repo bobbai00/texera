@@ -1,13 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Resource } from "@texera/catalog-client/types";
 import { Button, Skeleton, Tooltip, cn } from "@texera/ui";
-import { Maximize2, PanelRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { Check, Maximize2, PanelRight, Plus } from "lucide-react";
+import { createContext, type ReactNode, use } from "react";
 import { resourceQuery } from "../queries";
 import { KINDS } from "../registry";
 import type { KindCardProps, ResourceRef } from "../types";
 import { KindIcon } from "./KindIcon";
 import { useOpenResource } from "./navigation";
+
+/** What lets a person pick the cards under it: a chat, for its next message. */
+export interface CardPicking {
+  picked: (ref: ResourceRef) => boolean;
+  toggle: (ref: ResourceRef) => void;
+}
+
+export const CardPickingContext = createContext<CardPicking | undefined>(undefined);
 
 export interface CardSummary {
   name: string;
@@ -39,11 +47,18 @@ export function CardShell({
 }) {
   const spec = KINDS[ref.kind];
   const { beside, expand } = useOpenResource();
+  const picking = use(CardPickingContext);
+  const picked = picking?.picked(ref) === true;
   return (
     <div
       data-resource-card={ref.kind}
       data-rid={ref.rid}
-      className={cn("not-prose overflow-hidden rounded-xl border bg-card text-card-foreground shadow-xs", className)}>
+      data-card-picked={picked ? "true" : undefined}
+      className={cn(
+        "not-prose overflow-hidden rounded-xl border bg-card text-card-foreground shadow-xs transition-shadow",
+        picked && "border-primary ring-2 ring-primary/30",
+        className
+      )}>
       <div className="flex items-center gap-3 border-b px-3 py-2.5">
         <KindIcon kind={ref.kind} />
         <div className="min-w-0 flex-1">
@@ -54,6 +69,19 @@ export function CardShell({
           {summary ? <div className="truncate text-sm font-semibold">{summary.name}</div> : <Skeleton className="mt-1 h-4 w-40" />}
         </div>
         {actions}
+        {picking && (
+          <Tooltip content={picked ? "Take it out of your next message" : "Add it to your next message"}>
+            <Button
+              variant={picked ? "default" : "ghost"}
+              size="icon-sm"
+              onClick={() => picking.toggle(ref)}
+              aria-label={picked ? "Take it out of your next message" : "Add it to your next message"}
+              aria-pressed={picked}
+              data-card-pick>
+              {picked ? <Check /> : <Plus />}
+            </Button>
+          </Tooltip>
+        )}
         <Tooltip content="Open beside">
           <Button variant="ghost" size="icon-sm" onClick={() => beside(ref)} aria-label="Open beside">
             <PanelRight />

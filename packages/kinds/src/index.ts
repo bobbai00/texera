@@ -9,7 +9,7 @@ export { useChangePreferences } from "./preferences";
 export { useWatch, watchOnce, type WatchHandlers, type WatchOutcome } from "./watch";
 export { ResourceView, ResourceCard } from "./ResourceView";
 export { KindIcon } from "./shell/KindIcon";
-export { CardShell, GenericCard, useCardSummary } from "./shell/CardShell";
+export { CardPickingContext, type CardPicking, CardShell, GenericCard, useCardSummary } from "./shell/CardShell";
 export { KindHeader } from "./shell/KindHeader";
 export { ProjectDeck } from "./project/Deck";
 export { Presence } from "./shell/Presence";

@@ -211,13 +211,16 @@ describe("what a person attached", () => {
 
   test("is a message of its own when there is no text", () => {
     expect(toModelMessages([user([{ type: "resource", resource: "texera://datasets/d1@1" }])])).toEqual([
-      { role: "user", content: "Attached file (texera://datasets/d1@1)" },
+      { role: "user", content: "Attached dataset (texera://datasets/d1@1)" },
     ]);
   });
 
   test("names the kind from the URI, for any kind", () => {
     expect(toModelMessages([user([{ type: "resource", resource: "texera://computing-units/u1" }])])).toEqual([
       { role: "user", content: "Attached computing-unit (texera://computing-units/u1)" },
+    ]);
+    expect(toModelMessages([user([{ type: "resource", resource: "texera://workflows/w1/executions/e1" }])])).toEqual([
+      { role: "user", content: "Attached execution (texera://workflows/w1/executions/e1)" },
     ]);
   });
 });

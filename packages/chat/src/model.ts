@@ -88,17 +88,17 @@ export function visibleParts(parts: Part[]): Part[] {
 }
 
 /** A person's message as a run's input: attachments go by URI, as AG-UI binary content. */
-export function messageContent(text: string, attachments: { ref: ResourceRef; name: string }[]): NonNullable<AgUiMessage["content"]> {
+export function messageContent(text: string, attachments: { ref: ResourceRef; name?: string }[]): NonNullable<AgUiMessage["content"]> {
   if (attachments.length === 0) return text;
   return [
     ...(text ? [{ type: "text", text }] : []),
-    ...attachments.map(a => ({ type: "binary", mimeType: "application/vnd.texera.resource", url: uriOf(a.ref), filename: a.name })),
+    ...attachments.map(a => ({ type: "binary", mimeType: "application/vnd.texera.resource", url: uriOf(a.ref), ...(a.name ? { filename: a.name } : {}) })),
   ];
 }
 
 /** What a person said as the catalog keeps it: the words, and what they attached by its URI and name. */
-export function messageParts(text: string, attachments: { ref: ResourceRef; name: string }[]): MessagePart[] {
-  return [...(text ? [{ type: "text" as const, text }] : []), ...attachments.map(a => ({ type: "resource" as const, resource: uriOf(a.ref), text: a.name }))];
+export function messageParts(text: string, attachments: { ref: ResourceRef; name?: string }[]): MessagePart[] {
+  return [...(text ? [{ type: "text" as const, text }] : []), ...attachments.map(a => ({ type: "resource" as const, resource: uriOf(a.ref), ...(a.name ? { text: a.name } : {}) }))];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;

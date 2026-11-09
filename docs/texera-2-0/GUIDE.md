@@ -50,7 +50,10 @@ choice: they go where any execution goes (see "Computing units"), and you say "r
 unit" in words when you want another. A file you attach from the box is the chat's own, shown
 as a card of your message: the agent reads it and a workflow can use it, it is in no list of the
 project, and it goes with the chat unless something still uses it. Ask the agent to keep it and
-it becomes a dataset of the project. What the agent makes shows as a card in its message. Each answer is labelled with the version of the
+it becomes a dataset of the project. What the agent makes shows as a card in its message, and so does anything it offers you to look
+at or choose from (ask which models fit, and each is a card). The **+** on a card adds that resource
+to your next message: the card is marked, it stands as a chip in the box until you send or take it
+out, and the agent reads it as what you mean by "this". Each answer is labelled with the version of the
 agent and the model that wrote it. A turn that fails says why in the chat, and still does after
 a reload.
 
@@ -80,8 +83,15 @@ at the top of the graph, and their pointers on it with their names. Hovering a b
 bubble: a comment posted there goes into the chat with the box attached, so the agent answers it
 and everyone sees it; while the agent is busy it goes in as a note the agent reads next. Going into a box is holding
 it: the others see "Alice is viewing" on it, and going in themselves they can look at it, not change
-it. A workflow is held operator by operator on its canvas instead. The button
-at the top right of the chat gives it the whole page and back. The List tab holds the same as a tree, "From this chat": a section per kind,
+it. A workflow is held operator by operator on its canvas instead.
+
+The chat and what is beside it share the page. The grip at the chat's left edge sizes it, and the
+width is remembered; a double click puts it back. The minus at the top right folds the chat into a
+button in the corner of the page, keeping what you were writing, and the button brings it back; the
+button after it gives the chat the whole page and back. In a window too narrow for both, the chat
+lies over the graph, and minimizing it shows the graph.
+
+The List tab holds the same as a tree, "From this chat": a section per kind,
 each resource, its versions, and under a version the executions that ran it or the files it
 holds; what the chat worked from (what you attached, what its workflows read) is dimmed, and
 what a search only returned is not in it.

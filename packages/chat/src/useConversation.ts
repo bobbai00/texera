@@ -12,7 +12,8 @@ import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory,
 
 export interface Attachment {
   ref: ResourceRef;
-  name: string;
+  /** The name a file came in under; a resource picked in the chat goes by its URI alone. */
+  name?: string;
 }
 
 export interface ConversationOptions {
