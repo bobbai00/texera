@@ -1,3 +1,4 @@
+import { useLook } from "@texera/kinds";
 import { Button, formatBytes, Tooltip } from "@texera/ui";
 import { ArrowUp, MessageSquareText, Paperclip, Square, X } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useRef, useState } from "react";
@@ -28,6 +29,7 @@ interface Props {
 
 export function Composer({ busy, disabled: waiting = false, readOnly = false, onSend, onNote, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
   const disabled = waiting || readOnly;
+  const brand = useLook().name;
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const empty = !text.trim() && files.length === 0;
@@ -73,7 +75,7 @@ export function Composer({ busy, disabled: waiting = false, readOnly = false, on
         rows={1}
         // biome-ignore lint/a11y/noAutofocus: the composer is the page's primary input
         autoFocus={autoFocus}
-        placeholder={readOnly ? "Shared with you to read" : (placeholder ?? "Ask Texera to find, analyze or build something…")}
+        placeholder={readOnly ? "Shared with you to read" : (placeholder ?? `Ask ${brand || "here"} to find, analyze or build something…`)}
         disabled={readOnly}
         aria-label="Message"
         className="block max-h-60 min-h-12 w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm outline-none [field-sizing:content] placeholder:text-muted-foreground"

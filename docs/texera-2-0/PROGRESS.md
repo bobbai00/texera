@@ -2,6 +2,31 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 16, part 5): the demo wears dkNET AI, and a start page that plays
+
+- **A look has a large logo and words of its own** (`Branding.logoLargeUrl`, `description`), each
+  inherited like the rest. The app's name, placeholder, search, tab title and icon, and the sign-in
+  page all say the look; nothing hard-codes the name any more. `load.py` reads a `brand/` folder
+  beside the data, so no brand is in the repo: the project wears it and runs the platform's agent
+  under the brand's name, and `--sign-in-page` gives the whole deployment that look.
+- **The start page, and only it, is a deck** (`project/Deck.tsx`): the project's logo over four
+  cards, Dataset, Model, Workflow and Recent chat, each rolling through its kind every 3.6 s, a
+  quarter of the way apart, still while pointed at or for someone who asks for less motion. The chat
+  box is right under them. The project's own page keeps the list.
+- **Name tags** say "Owned by me" or "Created by X". The people are off the overview.
+- **Three more datasets and models** from UCI (a symptom questionnaire, the CDC's survey, retinal
+  images), each read by its own columns, so the demo's model is still the only one that fits the
+  screening file; five more workflows, one summary over each main dataset.
+
+- **`clean.py` goes by a label.** `load.py` labels what it puts in the project (`texera.demo`) and
+  the reset takes away the rest. It used to take whatever was newer than the Team unit, which more
+  data loaded later would have been.
+
+Verified on the OrbStack stack: the browser suite, 70 of 72; both failures came from the demo test's
+cleanup leaving a project behind (its agent is named by the project's settings), and with that fixed
+the demo, those two and the two-browser graph test pass. The catalog's suite, the app's 399 tests
+and typecheck. `k8s.sh check` not run.
+
 ## 2026-11-08 (session 16, part 4): holds, the resources on a canvas, and every execution's results
 
 Checkpoint `39a2d7fa3` is parts 1 to 3. The user's next list:

@@ -153,9 +153,13 @@ func TestTexerasAdminsChangeItAndNobodyElse(t *testing.T) {
 
 	// They make alice an admin too, and she administers Texera from then on.
 	h.mustJSON("admin", "PUT", p+"/resources/"+root+"/grants/"+principalOf(h, "alice"), map[string]any{"relation": "owner"}, nil)
-	h.mustJSON("alice", "PUT", p+"/projects/"+root, map[string]any{"spec": map[string]any{"branding": map[string]any{"name": "Alice's Texera"}}}, nil)
-	if name := projectSettings(h, "bob", me(h, "bob").HomeProject).Branding.Name; name == nil || *name != "Alice's Texera" {
-		t.Fatalf("bob's home looks like %v", name)
+	h.mustJSON("alice", "PUT", p+"/projects/"+root, map[string]any{"spec": map[string]any{"branding": map[string]any{"name": "Alice's Texera", "logoLargeUrl": "https://lab.example/large.png", "description": "The lab's platform"}}}, nil)
+	look := projectSettings(h, "bob", me(h, "bob").HomeProject).Branding
+	if look.Name == nil || *look.Name != "Alice's Texera" {
+		t.Fatalf("bob's home looks like %v", look.Name)
+	}
+	if look.LogoLargeUrl == nil || *look.LogoLargeUrl != "https://lab.example/large.png" || look.Description == nil || *look.Description != "The lab's platform" {
+		t.Fatalf("its large logo and its words are inherited too: %+v", look)
 	}
 
 	// Texera stays what everything rests on.

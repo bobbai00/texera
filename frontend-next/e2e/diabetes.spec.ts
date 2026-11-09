@@ -50,7 +50,9 @@ async function emptied(as: Caller, project: string) {
     const runs = (await as("GET", `/workflows/${w.metadata.rid}/executions?limit=50`)) as { items: { metadata: { rid: string } }[] };
     for (const e of runs.items) await as.attempt("DELETE", `/workflows/${w.metadata.rid}/executions/${e.metadata.rid}`);
   }
-  for (const kind of ["workflow", "conversation", "dataset", "model", "operator", "computing-unit"])
+  // What the project's settings name cannot go while they do.
+  await as.attempt("PUT", `/projects/${project}`, { spec: {} });
+  for (const kind of ["workflow", "conversation", "dataset", "model", "operator", "computing-unit", "agent-template"])
     for (const r of of(kind)) await as.attempt("DELETE", `/resources/${r.metadata.rid}`);
   await as.attempt("DELETE", `/projects/${project}`);
 }
@@ -83,29 +85,40 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   // The badge is the app following at once; the catalog keeps the pick a moment later.
   await expect.poll(async () => ((await alice("GET", "/me")) as { preferences: { project?: string } }).preferences.project).toBe(project.rid);
 
-  // Part 1: the landing page is the project, by kind, with the chat over it.
+  // Part 1: the new-chat page is the project's logo over four cards that roll through what it holds.
   await page.goto("/");
+  const deck = page.locator(`[data-project-deck="${project.rid}"]`);
+  await expect(deck.locator("[data-project-logo]")).toBeVisible();
+  for (const kind of ["dataset", "model", "workflow", "conversation"])
+    await expect(deck.locator(`[data-deck-card="${kind}"]`)).toBeVisible();
+  await expect(deck.locator("[data-deck-card]")).toHaveCount(4);
+  const model = deck.locator('[data-deck-card="model"] [data-deck-face]');
+  const first = await model.innerText();
+  await expect(model).toContainText("Owned by me");
+  await expect.poll(() => model.innerText(), { timeout: 12_000 }).not.toBe(first);
+  await expect(page.locator("[data-new-chat] [data-composer]")).toBeInViewport();
+  // With a brand in the data folder, the project wears it.
+  if (existsSync(`${DATA}/brand/brand.json`)) await expect(page.locator("[data-look]")).toHaveAttribute("data-look", "dkNET AI");
+  await shot(page, "1-landing");
+
+  // The project's own page has the whole list, by kind, each saying what it is.
+  await page.goto(`/projects/${project.rid}`);
   const overview = page.locator(`[data-project-overview="${project.rid}"]`);
-  for (const [kind, name] of [
-    ["dataset", "Pima diabetes cohort"],
-    ["model", "Diabetes onset risk"],
+  for (const [kind, said] of [
+    ["dataset", "View all 7"],
+    ["model", "View all 6"],
+    ["workflow", "View all 6"],
     ["operator", "ROC AUC"],
-    ["workflow", "CGM metrics per adolescent"],
     ["computing-unit", "Team unit"],
   ] as const)
-    await expect(overview.locator(`[data-overview-section="${kind}"]`)).toContainText(name);
-  // Every resource says what it is: a model its description, a custom operator what its code says.
-  await expect(overview.locator('[data-overview-section="model"]')).toContainText("routine clinic measurements");
+    await expect(overview.locator(`[data-overview-section="${kind}"]`)).toContainText(said);
   await expect(overview.locator('[data-overview-section="operator"]')).toContainText("area under the ROC curve");
   // The project's own operators come first, the built-in ones are counted.
   await expect(overview.locator('[data-overview-section="operator"]')).toContainText("built-in");
-  await expect(overview.locator('[data-overview-person="owner"]')).toContainText("Alice Liddell");
-  await expect(overview.locator('[data-overview-person="editor"]')).toContainText("Bob Builder");
-  await expect(page.locator("[data-new-chat] [data-composer]")).toBeInViewport();
-  await shot(page, "1-landing");
+  await expect(overview.locator("[data-overview-person]")).toHaveCount(0);
 
   // A model's page says what it is, from its README.
-  await overview.locator('[data-overview-section="model"] [data-resource-row="model"]').filter({ hasText: "Diabetes onset risk" }).locator("button").first().click();
+  await page.goto(`/models/${(await alice("GET", `/models?project=${project.rid}&limit=50`)).items.find((m: { metadata: { name: string } }) => m.metadata.name === "Diabetes onset risk").metadata.rid}`);
   await expect(page.locator("[data-model-card]")).toContainText("Estimates who is likely");
   await expect(page.locator("[data-model-contract]")).toContainText("Glucose");
   await shot(page, "2-the-model");

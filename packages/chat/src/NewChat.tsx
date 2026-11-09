@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec } from "@texera/catalog-client/types";
-import { createResource, newChatSettingsQuery, useDestination } from "@texera/kinds";
+import { createResource, newChatSettingsQuery, useDestination, useLook } from "@texera/kinds";
 import { ErrorNote, Select } from "@texera/ui";
 import { FolderKanban } from "lucide-react";
 import { useState } from "react";
@@ -20,20 +20,21 @@ export function NewChat({
   greeting,
   onCreated,
   dock = false,
-  floating = false,
+  alone = false,
   about,
   suggested,
 }: {
   greeting: string;
   onCreated: (rid: string) => void;
   dock?: boolean;
-  /** Over the project's overview: the box alone, which says for itself what it is for. */
-  floating?: boolean;
+  /** Under the project's cards: the box alone, which says for itself what it is for. */
+  alone?: boolean;
   about?: string;
   /** The project to start from when the person is asked: the one the page's resource is in. */
   suggested?: string;
 }) {
   const queryClient = useQueryClient();
+  const look = useLook();
   const { project, asking, projects, choose } = useDestination(suggested);
   const { data: settings, error: settingsError } = useQuery({ ...newChatSettingsQuery(project ?? ""), enabled: project !== undefined });
   const [choices, setChoices] = useState<ConversationSpec>({});
@@ -70,16 +71,16 @@ export function NewChat({
       className={dock ? "flex h-full flex-col justify-end gap-3 p-3" : "mx-auto w-full max-w-2xl space-y-6"}
       data-new-chat
       data-new-chat-in={project ?? ""}>
-      {floating ? null : dock ? (
+      {alone ? null : dock ? (
         <p className="flex-1 content-center text-center text-sm text-muted-foreground">{greeting}</p>
       ) : (
         <div className="flex flex-col items-center gap-3">
-          <img src="/texera-mark.png" alt="" className="size-14" />
+          {look.logoLargeUrl && <img src={look.logoLargeUrl} alt="" className="size-14" />}
           <h1 className="text-center text-3xl font-semibold tracking-tight">{greeting}</h1>
           <p className="text-center text-sm text-muted-foreground">Ask about your data or the literature, or attach a CSV.</p>
         </div>
       )}
-      <div className={floating ? "space-y-2 rounded-2xl shadow-xl" : "space-y-2"}>
+      <div className={alone ? "space-y-2 rounded-2xl shadow-lg" : "space-y-2"}>
         <Composer
           busy={start.isPending}
           disabled={project === undefined}

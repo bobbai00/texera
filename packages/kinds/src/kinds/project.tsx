@@ -82,6 +82,8 @@ const text = (value: string | undefined) => (value ? <span className="text-sm">{
 const ROWS: { path: string; label: string; show: Show }[] = [
   { path: "branding.name", label: "Name", show: s => text(s.branding.name) },
   { path: "branding.logoUrl", label: "Logo", show: s => (s.branding.logoUrl ? <img src={s.branding.logoUrl} alt="" className="size-6 rounded" /> : undefined) },
+  { path: "branding.logoLargeUrl", label: "Large logo", show: s => (s.branding.logoLargeUrl ? <img src={s.branding.logoLargeUrl} alt="" className="size-10 rounded" /> : undefined) },
+  { path: "branding.description", label: "Description", show: s => text(s.branding.description) },
   { path: "defaults.agentTemplate", label: "Agent", show: s => uri(s.defaults.agentTemplate) },
   { path: "defaults.modelEndpoint", label: "Model", show: s => uri(s.defaults.modelEndpoint) },
   { path: "defaults.mcpServers", label: "Add-ons", show: s => uris(s.defaults.mcpServers) },

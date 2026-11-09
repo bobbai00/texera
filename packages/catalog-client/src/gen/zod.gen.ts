@@ -55,7 +55,9 @@ export const zAuthzRequest = z.object({
  */
 export const zBranding = z.object({
     name: z.string().optional(),
-    logoUrl: z.string().optional()
+    logoUrl: z.string().optional(),
+    logoLargeUrl: z.string().optional(),
+    description: z.string().optional()
 });
 
 /**

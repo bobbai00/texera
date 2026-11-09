@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { NewChat } from "@texera/chat";
-import { ProjectOverview, useDestination } from "@texera/kinds";
+import { ProjectDeck, useDestination } from "@texera/kinds";
 import { useSession } from "@/auth/session";
 
 export const Route = createFileRoute("/_app/")({ component: NewChatPage });
@@ -11,9 +11,9 @@ function greeting() {
 }
 
 /**
- * "/" is the project the person works in, with the chat over it: they see what is there and ask.
- * The first message creates the conversation. With every project in view there is no one project
- * to show, and the page is the box alone.
+ * "/" is the project the person works in: its logo, cards that roll through what it holds, and
+ * the box to ask in. The first message creates the conversation. With every project in view there
+ * is no one project to show, and the page is the box alone.
  */
 function NewChatPage() {
   const user = useSession();
@@ -31,14 +31,10 @@ function NewChatPage() {
     );
   }
   return (
-    <div className="relative h-full" data-landing>
-      <div className="scrollbar-thin h-full overflow-y-auto pb-52">
-        <ProjectOverview rid={project} />
-      </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background/70 to-transparent px-4 pt-12 pb-4">
-        <div className="pointer-events-auto w-full max-w-2xl">
-          <NewChat greeting={hello} onCreated={open} floating />
-        </div>
+    <div className="scrollbar-thin h-full overflow-y-auto" data-landing>
+      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-6 px-6 py-8">
+        <ProjectDeck rid={project} />
+        <NewChat greeting={hello} onCreated={open} alone />
       </div>
     </div>
   );

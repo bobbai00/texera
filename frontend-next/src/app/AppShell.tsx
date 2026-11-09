@@ -1,6 +1,6 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { ChatDock } from "@texera/chat";
-import { pageResource, panelRef, ResourceView } from "@texera/kinds";
+import { pageResource, panelRef, ResourceView, useDocumentLook } from "@texera/kinds";
 import { Shell, useOpenPanel } from "@texera/ui";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { getAccessToken } from "@/auth/session";
@@ -12,6 +12,7 @@ const CommandMenu = lazy(() => import("./CommandMenu").then(m => ({ default: m.C
 
 /** The signed-in layout: sidebar | page | the resource open beside it, and the agent over a resource's page. */
 export function AppShell() {
+  useDocumentLook();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoaded, setSearchLoaded] = useState(false);

@@ -25,7 +25,7 @@ until --apply:
 
 For each person:
 
-- the demo's project goes back to what load.py made: whatever was made after its team unit goes
+- the demo's project goes back to what load.py put there, which it labelled: everything else goes
   (chats and the files attached to them, workflows, executions, a dataset someone kept);
 - their home project is emptied;
 - every other project they own goes whole;
@@ -39,7 +39,7 @@ import argparse
 import sys
 import urllib.parse
 
-from load import PROJECT, UNIT, Person
+from load import LOADED, PROJECT, Person
 
 # Deleted in this order, so nothing goes while something still reads it: a chat's attached files
 # go with the chat, once no workflow reads them.
@@ -58,9 +58,8 @@ def in_order(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda i: rank.get(i["kind"], len(ORDER)))
 
 
-def created(resource: dict) -> str:
-    """When a resource was made, to the second: the catalog's times are all UTC, one format."""
-    return resource["metadata"]["createdAt"][:19]
+def is_loaded(resource: dict) -> bool:
+    return LOADED in (resource["metadata"].get("labels") or {})
 
 
 def show(items: list[dict]) -> None:
@@ -80,17 +79,15 @@ class Cleaner:
             self.failed += 1
             print(f"     ! {what}: {status} {str(out)[:200]}")
 
-    def executions(self, workflow: dict, after: str = "") -> None:
-        """A workflow's executions, those made after a moment when one is given."""
+    def executions(self, workflow: dict) -> None:
+        """A workflow's executions."""
         rid = workflow["metadata"]["rid"]
-        made = self.person.must("GET", f"/workflows/{rid}/executions?limit=500")["items"]
-        for e in made:
-            if created(e) > after:
-                self.attempt(
-                    f"execution of {workflow['metadata']['name']}",
-                    "DELETE",
-                    f"/workflows/{rid}/executions/{e['metadata']['rid']}",
-                )
+        for e in self.person.must("GET", f"/workflows/{rid}/executions?limit=500")["items"]:
+            self.attempt(
+                f"execution of {workflow['metadata']['name']}",
+                "DELETE",
+                f"/workflows/{rid}/executions/{e['metadata']['rid']}",
+            )
 
     def remove(self, items: list[dict]) -> None:
         """Units stop first, a workflow's executions go before it, and then each thing, in order."""
@@ -143,24 +140,22 @@ def main() -> None:
         if demo:
             rid = demo["metadata"]["rid"]
             held = holdings(person, rid)
-            unit = next(
-                (i for i in held if i["kind"] == "computing-unit" and i["metadata"]["name"] == UNIT),
-                None,
-            )
-            if unit is None:
-                print(f"   {args.project}: left as it is, for it has no {UNIT} to go by; run load.py")
+            kept = [i for i in held if is_loaded(i)]
+            if not kept:
+                print(f"   {args.project}: left as it is, for nothing in it is marked as load.py's; run load.py")
             else:
-                print(f"   {args.project}: back to what load.py made")
-                after = created(unit)
-                going = [i for i in held if created(i) > after]
+                print(f"   {args.project}: back to what load.py put there")
+                going = [i for i in held if not is_loaded(i)]
                 show(going)
                 if args.apply:
                     cleaner.remove(going)
-                    for workflow in held:
-                        if workflow["kind"] == "workflow" and workflow not in going:
-                            cleaner.executions(workflow, after)
-                phase = person.must("GET", f"/computing-units/{unit['metadata']['rid']}")["status"].get("phase")
-                print(f"   {UNIT}: {phase}")
+                    for workflow in kept:
+                        if workflow["kind"] == "workflow":
+                            cleaner.executions(workflow)
+                for unit in kept:
+                    if unit["kind"] == "computing-unit":
+                        phase = person.must("GET", f"/computing-units/{unit['metadata']['rid']}")["status"].get("phase")
+                        print(f"   {unit['metadata']['name']}: {phase}")
 
         for project in owned:
             rid, name = project["metadata"]["rid"], project["metadata"]["name"]
@@ -170,6 +165,8 @@ def main() -> None:
             print(f"   {name}: {'emptied' if rid == home else 'goes whole'}")
             show(held)
             if args.apply:
+                # What a project's settings name cannot go while they do.
+                cleaner.attempt(f"settings of {name}", "PUT", f"/projects/{rid}", {"spec": {}})
                 cleaner.remove(held)
                 if rid != home:
                     cleaner.attempt(f"project {name}", "DELETE", f"/projects/{rid}")

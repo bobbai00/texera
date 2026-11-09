@@ -96,9 +96,10 @@ configure() {
   k create configmap keycloak-realm --from-file=texera-realm.json="$HERE/keycloak/texera-realm.json" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   # The sign-in pages in Texera's look: one flat config map, laid out as a theme where it is mounted.
+  # TEXERA2_LOGIN_LOGO puts a deployment's own logo there instead.
   local theme="$HERE/keycloak/themes/texera/login"
   k create configmap keycloak-theme --from-file=theme.properties="$theme/theme.properties" \
-    --from-file=texera.css="$theme/resources/css/texera.css" --from-file=texera-logo.png="$theme/resources/img/texera-logo.png" \
+    --from-file=texera.css="$theme/resources/css/texera.css" --from-file=texera-logo.png="${TEXERA2_LOGIN_LOGO:-$theme/resources/img/texera-logo.png}" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   k create configmap postgres-init --from-file=init.sql="$HERE/postgres/init.sql" \
     --dry-run=client -o yaml | k apply -f - >/dev/null

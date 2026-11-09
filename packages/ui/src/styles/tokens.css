@@ -210,3 +210,34 @@
 @utility control {
   @apply min-w-0 rounded-lg border border-input bg-transparent text-sm shadow-xs transition-[color,box-shadow] placeholder:text-muted-foreground disabled:opacity-50;
 }
+
+/* A card of the start page rolling on to its next resource. */
+@keyframes roll-in {
+  from {
+    transform: translateY(70%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes roll-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-70%);
+    opacity: 0;
+  }
+}
+
+@utility animate-roll-in {
+  animation: roll-in 0.5s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+@utility animate-roll-out {
+  animation: roll-out 0.5s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}

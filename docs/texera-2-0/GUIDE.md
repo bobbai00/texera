@@ -54,6 +54,11 @@ it becomes a dataset of the project. What the agent makes shows as a card in its
 agent and the model that wrote it. A turn that fails says why in the chat, and still does after
 a reload.
 
+**The start page.** With a project picked, the new-chat page is its logo over four cards, Dataset,
+Model, Workflow and Recent chat, each rolling through what the project holds of that kind at its own
+moment. A card stands still while you point at it, a click opens what it shows, and the box to ask
+in is right under them. The project's own page has the whole list.
+
 **The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
 the left of the chat page shows what the chat read, made and ran, left to right: Data above Model,
 Workflow, Execution, Result. Each execution is a box of its own beside its workflow, the newest on
@@ -132,7 +137,7 @@ its admin administers too, or from Texera, which is open to everyone; the base's
 a project back to Texera; a chain never loops; a project others inherit from cannot be
 deleted; and a project is public only when everything it inherits is.
 
-**A project's settings** are its spec: its look (`branding`: a name and a logo the app wears
+**A project's settings** are its spec: its look (`branding`: a name, a small and a large logo, and the words the sign-in page says, which the app wears
 inside it), its `defaults` (the agent, the model, the computing unit, the profile a new unit is
 made from, the warehouse, the add-on tools and the work mode of its chats) and its `limits`
 (how long results are kept, which object stores a warehouse may use). What a project leaves

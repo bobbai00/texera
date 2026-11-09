@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { href, isKindId, KINDS, KindIcon, searchQuery } from "@texera/kinds";
+import { href, isKindId, KINDS, KindIcon, searchQuery, useLook } from "@texera/kinds";
 import { Command } from "cmdk";
 import { SquarePen } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
@@ -12,6 +12,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const q = useDeferredValue(query.trim());
+  const look = useLook();
   const { data } = useQuery({ ...searchQuery({ q: q || undefined, limit: 50 }), enabled: open });
 
   const go = (to: string) => {
@@ -52,7 +53,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     <Command.Dialog
       open={open}
       onOpenChange={onOpenChange}
-      label="Search Texera"
+      label={`Search ${look.name}`}
       shouldFilter={false}
       value={picked}
       onValueChange={setPicked}

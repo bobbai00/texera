@@ -1,15 +1,13 @@
-// A project at a glance, by kind of resource, one line each: what it is, who can see it and who
-// made it. It is the project's own page and what the chat floats over, so everyone starts from
-// what is there.
+// A project at a glance, by kind of resource, one line each: what it is, who can see it and whose
+// it is. It is the project's own page and what the chat floats over before it starts work.
 
 import { useQuery } from "@tanstack/react-query";
 import type { Resource } from "@texera/catalog-client/types";
-import { Badge, Skeleton } from "@texera/ui";
+import { Skeleton } from "@texera/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { describe, operatorsOf } from "../library/describe";
-import { grantsQuery, resourceQuery, searchAllQuery, unitsQuery } from "../queries";
+import { resourceQuery, searchAllQuery, unitsQuery } from "../queries";
 import { KINDS, isKindId } from "../registry";
-import { PrincipalName } from "../shell/Chips";
 import { KindIcon } from "../shell/KindIcon";
 import { useMay } from "../shell/may";
 import { useOpenResource } from "../shell/navigation";
@@ -18,8 +16,6 @@ import { type KindId, kindEntry } from "../types";
 
 /** How many of a kind the overview shows; the rest are a click away. */
 const SHOWN = 4;
-
-const ROLE: Record<string, string> = { owner: "admin", editor: "member", viewer: "viewer", user: "user" };
 
 /** What a row says beside a resource's name: a unit what it has, the rest what they are. */
 function rowText(r: Resource, kind: KindId): string {
@@ -66,7 +62,7 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
 }
 
 /**
- * What a project holds and who is in it. `titled` says whether it names the project itself: the
+ * What a project holds. `titled` says whether it names the project itself: the
  * project's own page has a header for that.
  */
 export function ProjectOverview({ rid, titled = true }: { rid: string; titled?: boolean }) {
@@ -75,7 +71,6 @@ export function ProjectOverview({ rid, titled = true }: { rid: string; titled?: 
   const { data, isPending } = useQuery({ ...searchAllQuery({ project: rid }), refetchInterval: 5_000 });
   const { data: operators } = useQuery(searchAllQuery({ kind: "operator", scope: rid }));
   const { data: units } = useQuery(unitsQuery(rid));
-  const { data: grants } = useQuery(grantsQuery(rid));
   const may = useMay(rid);
   const held = data?.items ?? [];
   const of = (kind: KindId) => held.filter(r => r.kind === kind);
@@ -97,21 +92,16 @@ export function ProjectOverview({ rid, titled = true }: { rid: string; titled?: 
   const shown = sections.filter(s => s.items.length > 0);
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 px-6 py-6" data-project-overview={rid}>
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        {titled && <h1 className="text-xl font-semibold tracking-tight">{project?.metadata.name}</h1>}
-        {grants && grants.length > 0 && (
-          <ul className="flex flex-wrap items-center gap-1.5" aria-label="People in this project" data-overview-people>
-            {grants.map(g => (
-              <li key={g.principal}>
-                <Badge data-overview-person={g.relation}>
-                  <PrincipalName pid={g.principal} /> · {ROLE[g.relation] ?? g.relation}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-        {titled && project?.metadata.description && <p className="w-full truncate text-sm text-muted-foreground" title={project.metadata.description}>{project.metadata.description}</p>}
-      </header>
+      {titled && (
+        <header className="space-y-1">
+          <h1 className="text-xl font-semibold tracking-tight">{project?.metadata.name}</h1>
+          {project?.metadata.description && (
+            <p className="truncate text-sm text-muted-foreground" title={project.metadata.description}>
+              {project.metadata.description}
+            </p>
+          )}
+        </header>
+      )}
       {isPending ? (
         <Skeleton className="h-64" />
       ) : shown.length === 0 ? (

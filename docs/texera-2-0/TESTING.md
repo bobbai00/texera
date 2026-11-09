@@ -122,6 +122,8 @@ workflow and its executions as cards with the arrows' words, then the file, the 
 ran and each result; a person the workflow is shared with, without its dataset, sees the graph
 once and steadily (it used to blink without end), the dataset drawn "Not shared with you".
 
+`diabetes.spec.ts` starts on the new-chat page: the project's logo over four cards, one of which is seen to roll on to its next resource.
+
 `graph.spec.ts`, a second test: two people on one chat see each other's icon and pointer on the
 graph; a comment on a box, while a turn is going, lands in the chat as a note for the other person
 too, with the box attached; the graph comes back as it was when it changed while the page was too

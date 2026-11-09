@@ -29,7 +29,7 @@ export function SidebarRail({ onExpand, onSearch }: { onExpand: () => void; onSe
       aria-label="Main, collapsed"
       data-sidebar-rail>
       <Link to="/" aria-label={look.name} className="mb-1">
-        <img src={look.logoUrl ?? "/texera-mark.png"} alt="" className="size-7" />
+        {look.logoUrl && <img src={look.logoUrl} alt="" className="size-7" />}
       </Link>
       <Tooltip content="Expand sidebar" side="right">
         <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label="Expand sidebar">
@@ -74,7 +74,7 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
           to="/"
           className="flex min-w-0 items-center gap-2 px-1 text-[15px] font-semibold tracking-tight"
           data-look={look.name}>
-          <img src={look.logoUrl ?? "/texera-mark.png"} alt="" className="size-7 shrink-0 rounded" />
+          {look.logoUrl && <img src={look.logoUrl} alt="" className="size-7 shrink-0 rounded" />}
           <span className="truncate">{look.name}</span>
         </Link>
         <div className="flex-1" />

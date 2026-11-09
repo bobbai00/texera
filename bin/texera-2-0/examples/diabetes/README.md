@@ -58,8 +58,15 @@ A 0 in Glucose, BloodPressure, SkinThickness, Insulin or BMI means the measureme
 | model | Diabetes onset risk | Who is likely to develop diabetes within five years, from six routine measurements; AUC 0.847 on women it never saw |
 | model | 30-day readmission risk | Whether a hospital patient with diabetes comes back within 30 days; AUC 0.663 |
 | model | Progression regressor | How far the disease of someone who already has it will progress in a year; R2 0.407 |
+| dataset | Early-stage diabetes symptoms | 520 hospital patients: 14 symptoms from a questionnaire and the diagnosis (UCI) |
+| dataset | CDC diabetes health indicators | 20,000 US adults of the CDC's 2015 survey: 21 health indicators (UCI) |
+| dataset | Diabetic retinopathy features | 1,151 retinal images: features of each and signs of retinopathy (UCI) |
+| model | Early-stage symptom screen | Diabetes from a symptom questionnaire; AUC 0.992 |
+| model | Survey health-indicator risk | Diabetes or prediabetes from a telephone survey; AUC 0.806 |
+| model | Retinopathy signs classifier | Signs of retinopathy from image features; AUC 0.799 |
 | operator | ROC AUC, Risk calibration, Odds ratio, CGM metrics | The team's Python functions |
 | workflow | CGM metrics per adolescent | Built with those operators |
+| workflow | Five summaries | One over each of the other main datasets, by a column that matters |
 | computing unit | Team unit | The team's own, 2 GB with pandas, numpy and scikit-learn |
 | people | Alice and Bob | Alice's project, Bob on the team |
 
@@ -82,10 +89,16 @@ uv venv ~/texera-diabetes-prep && VIRTUAL_ENV=~/texera-diabetes-prep uv pip inst
 python3 load.py --data ~/texera-diabetes --gw http://localhost:28088
 ```
 
+A folder `brand/` in the data folder gives the project a look of its own: `brand.json` with a `name`
+and a `description`, `logo-small.png` and `logo-large.png`. `load.py` makes the project wear it and
+its chats run the platform's agent under that name; `--sign-in-page` gives the whole deployment the
+look as well, the sign-in page included. The identity provider's own form takes its logo from
+`TEXERA2_LOGIN_LOGO` when `k8s.sh up` runs, and its title from the realm's display name.
+
 ## Start clean
 
-`clean.py` leaves a person's space as the demo starts from. In the demo's project, what was made
-after its Team unit goes: chats and their files, workflows, executions, a dataset someone kept.
+`clean.py` leaves a person's space as the demo starts from. In the demo's project, what `load.py`
+did not put there goes: chats and their files, workflows, executions, a dataset someone kept.
 Their home project is emptied, any other project they own goes whole, and they land on the demo's
 project. It only says what would go until `--apply`, and other people's projects are left alone.
 
@@ -100,10 +113,10 @@ Run it between rehearsals; the Team unit stays up, so the next run starts at onc
 
 ### Part 1: what the project has (signed in as alice)
 
-Pick **Diabetes research** in the sidebar. The landing page is the project: who is in it, then its
-data, models, operators, workflows, computing units and recent chats, one line each: what it is, who
-can see it and who made it; each unit says its cores and memory. A name changes in place with the
-pencil on its row. The chat box floats over it, so everything starts from what the team already has.
+Pick **Diabetes research** in the sidebar. The new-chat page is the project at a glance: its logo, and
+four cards that roll through its datasets, models, workflows and recent chats, with the chat box under
+them; a card stands still while you point at it, and a click opens what it shows. The project's own
+page has the whole list, one line each, with whose each thing is; each unit says its cores and memory.
 Open a model to read its card, and **Operators** to see the team's own first.
 
 ### Part 2: bring a file, and ask (still alice)

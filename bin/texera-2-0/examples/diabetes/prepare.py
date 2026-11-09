@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Prepares a diabetes research team's project from public data: four datasets and three models
+"""Prepares a diabetes research team's project from public data: seven datasets and six models
 fitted on them, which load.py puts into a Texera stack, and the file someone brings in the demo,
 uploads/screening_cohort.csv: the 154 women the onset-risk model never saw.
 
@@ -37,6 +37,13 @@ The data is downloaded from where its authors published it; nothing is redistrib
   (Cronin, Dunne, O'Gorman and Cremona, University of Limerick, 2024; Zenodo
   doi:10.5281/zenodo.13749141, CC BY-NC 4.0): seven days of 5-minute CGM readings of seven
   adolescents, with their characteristics, activity and diet.
+- Early stage diabetes risk prediction (Islam, Ferdousi, Rahman and Bushra 2020; UCI): 520 patients
+  of Sylhet Diabetes Hospital, Bangladesh, their age, gender and 14 symptoms asked in a
+  questionnaire, and whether a doctor diagnosed diabetes.
+- CDC Diabetes Health Indicators (BRFSS 2015; UCI): a telephone survey of 253,680 US adults, of
+  whom a random 20,000 are kept here, with 21 health indicators and whether they have diabetes.
+- Diabetic Retinopathy Debrecen (Antal and Hajdu 2014; UCI): 1,151 retinal images of the Messidor
+  set, the features extracted from each, and whether it shows signs of diabetic retinopathy.
 
 The models are fitted with scikit-learn, whose version must be the one the computing units run:
 a pickled estimator loads only under the version that saved it. It needs pandas, numpy,
@@ -68,6 +75,9 @@ SOURCES = {
     "hospitals": "https://archive.ics.uci.edu/static/public/296/diabetes+130-us+hospitals+for+years+1999-2008.zip",
     "progression": "https://www4.stat.ncsu.edu/~boos/var.select/diabetes.tab.txt",
     "cgm": "https://zenodo.org/api/records/13749141/files/Data_for_T1D_Mapping_Study.zip/content",
+    "early-stage": "https://archive.ics.uci.edu/static/public/529/early+stage+diabetes+risk+prediction+dataset.zip",
+    "health-indicators": "https://archive.ics.uci.edu/static/public/891/data.csv",
+    "retinopathy": "https://archive.ics.uci.edu/static/public/329/diabetic+retinopathy+debrecen.zip",
 }
 SEED = 7
 
@@ -316,6 +326,102 @@ not for commercial use, with this attribution.
 
 
 # ---- models ------------------------------------------------------------------------------
+
+
+def early_stage(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    archive = zipfile.ZipFile(io.BytesIO(fetch("early-stage", cache)))
+    frame = pd.read_csv(io.BytesIO(archive.read("diabetes_data_upload.csv")))
+    frame.columns = [snake(c) for c in frame.columns]
+    frame = frame.rename(columns={"class": "diagnosis"})
+    folder = out / "datasets" / "early-stage"
+    write(
+        folder,
+        {
+            "early_stage.csv": frame,
+            "README.md": DATA_README.format(
+                title="Early-stage diabetes symptoms",
+                what="520 patients of Sylhet Diabetes Hospital, Bangladesh: their age, gender, 14 symptoms asked in a questionnaire (Yes or No), and `diagnosis`, Positive when a doctor diagnosed diabetes.",
+                source="Islam MMF, Ferdousi R, Rahman S, Bushra HY. Likelihood prediction of diabetes at early stage using data mining techniques. 2020. UCI Machine Learning Repository, dataset 529. Column names here are in snake case.",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="Early-stage diabetes symptoms",
+        description="520 patients of a hospital in Bangladesh: age, gender, 14 symptoms from a questionnaire, and whether a doctor diagnosed diabetes (UCI).",
+        message="Early stage diabetes risk prediction, as the UCI repository has it, its columns in snake case",
+    )
+    return frame
+
+
+def health_indicators(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    frame = pd.read_csv(io.BytesIO(fetch("health-indicators", cache))).drop(columns="ID")
+    sample = frame.sample(20_000, random_state=SEED).reset_index(drop=True)
+    folder = out / "datasets" / "health-indicators"
+    write(
+        folder,
+        {
+            "health_indicators.csv": sample,
+            "README.md": DATA_README.format(
+                title="CDC diabetes health indicators",
+                what="A random 20,000 of the 253,680 US adults in the CDC's 2015 telephone survey: 21 health indicators (blood pressure, cholesterol, BMI, smoking, activity, income and more) and `Diabetes_binary`, 1 for diabetes or prediabetes.",
+                source="CDC Behavioral Risk Factor Surveillance System 2015. CDC Diabetes Health Indicators, UCI Machine Learning Repository, dataset 891.",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="CDC diabetes health indicators",
+        description="A random 20,000 of the 253,680 US adults in the CDC's 2015 survey: 21 health indicators and whether they have diabetes or prediabetes (UCI).",
+        message="A random 20,000 respondents of CDC Diabetes Health Indicators, as the UCI repository has it",
+    )
+    return sample
+
+
+RETINOPATHY_COLUMNS = [
+    "image_quality",
+    "pre_screening",
+    *[f"microaneurysms_{n}" for n in range(1, 7)],
+    *[f"exudates_{n}" for n in range(1, 9)],
+    "macula_optic_distance",
+    "optic_disc_diameter",
+    "am_fm",
+    "signs_of_retinopathy",
+]
+
+
+def retinopathy(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    archive = zipfile.ZipFile(io.BytesIO(fetch("retinopathy", cache)))
+    text = archive.read("messidor_features.arff").decode()
+    rows = text[text.lower().index("@data") + len("@data") :].strip()
+    frame = pd.read_csv(io.StringIO(rows), header=None, names=RETINOPATHY_COLUMNS)
+    folder = out / "datasets" / "retinopathy"
+    write(
+        folder,
+        {
+            "retinal_features.csv": frame,
+            "README.md": DATA_README.format(
+                title="Diabetic retinopathy features",
+                what="1,151 retinal images of the Messidor set: the quality of each, how many microaneurysms and how much exudate were detected at several confidence levels, the distance from macula to optic disc, the optic disc's diameter, and `signs_of_retinopathy`, 1 when the image shows them.",
+                source="Antal B, Hajdu A. An ensemble-based system for automatic screening of diabetic retinopathy. Knowledge-Based Systems 2014;60:20-27. UCI Machine Learning Repository, dataset 329. Column names are given here from the repository's description.",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="Diabetic retinopathy features",
+        description="1,151 retinal images (Messidor): features extracted from each image and whether it shows signs of diabetic retinopathy (UCI).",
+        message="Diabetic Retinopathy Debrecen, as the UCI repository has it, with its columns named",
+    )
+    return frame
+
+
+DATA_README = """# {title}
+
+{what}
+
+Source: {source}
+"""
 
 
 def contract(framework, entry, inputs, outputs, **more):
@@ -584,6 +690,116 @@ predict adds `predicted_progression`.
 """
 
 
+def simple_classifier(
+    frame: pd.DataFrame,
+    label: pd.Series,
+    out: pathlib.Path,
+    folder: str,
+    numeric: list[str],
+    categories: list[str],
+    outputs: tuple[str, str],
+    name: str,
+    what: str,
+) -> dict:
+    """Logistic regression, checked on a held-out fifth of its table, saved as every model here is."""
+    features = numeric + categories
+    train, test, train_label, test_label = train_test_split(
+        frame[features], label, test_size=0.2, random_state=SEED, stratify=label
+    )
+    prepare = ColumnTransformer(
+        [
+            ("numbers", StandardScaler(), numeric),
+            ("categories", OneHotEncoder(handle_unknown="ignore"), categories),
+        ]
+    )
+    model = Pipeline([("prepare", prepare), ("fit", LogisticRegression(max_iter=2000))])
+    model.fit(train, train_label)
+    risk = model.predict_proba(test)[:, 1]
+    metrics = {
+        "test_auc": round(roc_auc_score(test_label, risk), 3),
+        "test_accuracy": round(accuracy_score(test_label, model.predict(test)), 3),
+        "train": len(train),
+        "test": len(test),
+    }
+    numeric_type = {c: "integer" if frame[c].dtype.kind in "iu" else "double" for c in numeric}
+    save_model(
+        out / "models" / folder,
+        model,
+        None,
+        MODEL_README.format(
+            name=name,
+            what=what,
+            sklearn=sklearn.__version__,
+            columns=", ".join(f"`{c}`" for c in features),
+            **metrics,
+        ),
+        name=name,
+        description=f"{what} AUC {metrics['test_auc']} on {metrics['test']} rows it never saw.",
+        spec={"framework": "sklearn", "format": "joblib", "task": "classification"},
+        contract=contract(
+            "sklearn",
+            "model.joblib",
+            [(c, numeric_type[c]) for c in numeric] + [(c, "string") for c in categories],
+            [(outputs[0], "long"), (outputs[1], "double")],
+        ),
+        message=f"Fitted on four fifths of its dataset, version 1 (scikit-learn {sklearn.__version__})",
+        metrics=metrics,
+    )
+    return metrics
+
+
+MODEL_README = """# {name}
+
+{what}
+
+A logistic regression fitted with scikit-learn {sklearn} on {train} rows, and checked on {test} rows it never saw: AUC {test_auc}, accuracy {test_accuracy}.
+
+It reads {columns}.
+"""
+
+
+def more_models(early: pd.DataFrame, indicators: pd.DataFrame, retina: pd.DataFrame, out: pathlib.Path) -> dict:
+    """A model for each dataset that has none. Each reads columns of its own."""
+    symptoms = [c for c in early.columns if c not in ("age", "diagnosis")]
+    survey = [c for c in indicators.columns if c != "Diabetes_binary"]
+    images = [c for c in retina.columns if c != "signs_of_retinopathy"]
+    return {
+        "early-stage": simple_classifier(
+            early,
+            (early["diagnosis"] == "Positive").astype(int),
+            out,
+            "early-stage",
+            ["age"],
+            symptoms,
+            ("symptoms_predicted", "symptoms_risk"),
+            name="Early-stage symptom screen",
+            what="Whether a person has diabetes, from their age, gender and 14 symptoms asked in a questionnaire.",
+        ),
+        "health-indicators": simple_classifier(
+            indicators,
+            indicators["Diabetes_binary"].astype(int),
+            out,
+            "health-indicators",
+            survey,
+            [],
+            ("survey_predicted", "survey_risk"),
+            name="Survey health-indicator risk",
+            what="Whether a US adult has diabetes or prediabetes, from 21 health indicators of a telephone survey.",
+        ),
+        "retinopathy": simple_classifier(
+            retina,
+            retina["signs_of_retinopathy"],
+            out,
+            "retinopathy",
+            images,
+            [],
+            ("retinopathy_predicted", "retinopathy_risk"),
+            name="Retinopathy signs classifier",
+            what="Whether a retinal image shows signs of diabetic retinopathy, from features extracted from the image.",
+        ),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -602,12 +818,16 @@ def main() -> None:
     encounters = hospitals(cache, args.out)
     frame = progression(cache, args.out)
     readings = cgm(cache, args.out)
+    early = early_stage(cache, args.out)
+    indicators = health_indicators(cache, args.out)
+    retina = retinopathy(cache, args.out)
     print(
         f"datasets: {len(team)} women, {len(encounters)} encounters, {len(frame)} patients, {len(readings)} CGM readings"
     )
     print("onset risk", onset_risk(team, screening, args.out))
     print("readmission risk", readmission_risk(encounters, args.out))
     print("progression", progression_model(frame, args.out))
+    print("more", more_models(early, indicators, retina, args.out))
     print(
         f"written to {args.out}, models fitted with scikit-learn {sklearn.__version__}"
     )

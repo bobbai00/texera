@@ -48,7 +48,8 @@ export async function ask(page: Page, text: string) {
   await expect(page.locator("[data-new-chat]")).toBeVisible();
   await say(page, text);
   await expect(page).toHaveURL(/\/conversations\//);
-  await expect(page.locator("[data-current-template]")).toHaveText(AGENT);
+  // The platform's agent, or the project's own under its look's name.
+  await expect(page.locator("[data-current-template]")).toHaveText(/Agent$/);
 }
 
 /** Picks one of a select's options by its name. */

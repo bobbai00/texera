@@ -17,17 +17,24 @@
 # under the License.
 
 """Puts a diabetes research team's project into a Texera stack: the datasets and models prepare.py
-wrote, the team's Python operators in operators/, a workflow they made, a computing unit of the
+wrote, the team's Python operators in operators/, workflows they made, a computing unit of the
 team's, and the teammate who works in it.
 
     python load.py --data ~/texera-diabetes                         # http://localhost:8088, alice's, bob on the team
     python load.py --data ~/texera-diabetes --gw http://localhost:28088
 
 What is already there by name is left as it is, so a second run adds only what is missing.
+
+A folder brand/ beside the data gives the project a look of its own: brand.json with a `name` and
+a `description`, logo-small.png and logo-large.png. The project then wears them, its description
+is that one, and its chats run the platform's agent under the brand's name. --sign-in-page gives
+the whole deployment that look as well, the sign-in page included, as its administrator.
+
 Only the standard library is used.
 """
 
 import argparse
+import base64
 import json
 import pathlib
 import sys
@@ -40,6 +47,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 PROJECT = "Diabetes research"
 UNIT = "Team unit"
+# What this script puts in the project carries this label: the demo's own work does not, which is
+# how clean.py tells them apart.
+LOADED = "texera.demo"
 PROJECT_DESCRIPTION = (
     "The diabetes team's data, models and tools: a cohort followed for diabetes onset, hospital "
     "encounters with readmission, disease progression after a year, and a week of CGM of "
@@ -72,8 +82,8 @@ def token(gw: str, user: str, password: str) -> str:
 class Person:
     """One caller of the catalog API through the gateway."""
 
-    def __init__(self, gw: str, user: str):
-        self.gw, self.user, self.token = gw, user, token(gw, user, user)
+    def __init__(self, gw: str, user: str, password: str | None = None):
+        self.gw, self.user, self.token = gw, user, token(gw, user, password or user)
 
     def call(
         self,
@@ -194,54 +204,165 @@ def model(person: Person, project: str, folder: pathlib.Path) -> str:
     return made["metadata"]["uri"]
 
 
-def cgm_workflow(person: Person, project: str, readings: str, metrics: str) -> None:
-    """A workflow the team already made: the CGM metrics of each adolescent."""
-    name = "CGM metrics per adolescent"
-    if named(person, "workflows", project, name):
+def workflow(person: Person, project: str, name: str, description: str, file: str, step: dict) -> str:
+    """A workflow the team already made: a scan of a file, and one step that keeps its result."""
+    found = named(person, "workflows", project, name)
+    if found:
         print(f"   {name}: there")
-        return
-    operator = person.must("GET", f"/operators/{metrics.rsplit('/', 1)[1]}")
+        return found["metadata"]["uri"]
     spec = {
         "operators": [
             {
                 "operatorID": "readings",
                 "operatorType": "scan",
-                "operatorProperties": {"file": f"{readings}@1/files/cgm.csv"},
+                "operatorProperties": {"file": file},
             },
-            {
-                "operatorID": "metrics",
-                "operatorType": f"{metrics}@{operator['metadata']['head']}",
-                "operatorProperties": {},
-                "viewResult": True,
-            },
+            {"operatorID": "summary", "viewResult": True, **step},
         ],
         "links": [
             {
-                "linkID": "readings-metrics",
+                "linkID": "readings-summary",
                 "source": {"operatorID": "readings", "portID": "output-0"},
-                "target": {"operatorID": "metrics", "portID": "input-0"},
+                "target": {"operatorID": "summary", "portID": "input-0"},
             }
         ],
     }
-    person.must(
+    made = person.must(
         "POST",
         "/workflows",
-        {
-            "name": name,
-            "description": "The consensus CGM metrics of each of the seven adolescents with type 1 diabetes.",
-            "parent": project,
-            "spec": spec,
-        },
+        {"name": name, "description": description, "parent": project, "spec": spec},
     )
     print(f"   {name}")
+    return made["metadata"]["uri"]
 
 
-def team_unit(person: Person, project: str, name: str, profile_name: str) -> None:
+def team_workflows(person: Person, project: str, datasets: dict[str, str], metrics: str) -> list[str]:
+    """The workflows the team already made, one over each of its main datasets."""
+    operator = person.must("GET", f"/operators/{metrics.rsplit('/', 1)[1]}")
+    made = [workflow(
+        person,
+        project,
+        "CGM metrics per adolescent",
+        "The consensus CGM metrics of each of the seven adolescents with type 1 diabetes.",
+        f"{datasets['cgm']}@1/files/cgm.csv",
+        {"operatorType": f"{metrics}@{operator['metadata']['head']}", "operatorProperties": {}},
+    )]
+    summaries = [
+        (
+            "Onset rate by pregnancies",
+            "How often women were diagnosed within five years, by their number of pregnancies.",
+            "pima",
+            "pima_cohort.csv",
+            ["Pregnancies"],
+            ["women = count(*)", "onset_rate = avg(Outcome)"],
+        ),
+        (
+            "Readmission by HbA1c result",
+            "Hospital encounters by the HbA1c result and whether the patient came back.",
+            "hospitals",
+            "encounters.csv",
+            ["A1Cresult", "readmitted"],
+            ["encounters = count(*)"],
+        ),
+        (
+            "Diabetes by age band",
+            "The share of US adults with diabetes or prediabetes, by the survey's age band.",
+            "health-indicators",
+            "health_indicators.csv",
+            ["Age"],
+            ["people = count(*)", "share_with_diabetes = avg(Diabetes_binary)"],
+        ),
+        (
+            "Diagnosis by gender",
+            "How many patients were diagnosed, and how old they were, by gender.",
+            "early-stage",
+            "early_stage.csv",
+            ["diagnosis", "gender"],
+            ["patients = count(*)", "mean_age = avg(age)"],
+        ),
+        (
+            "Retinopathy image findings",
+            "What the retinal images with signs of retinopathy show, against those without.",
+            "retinopathy",
+            "retinal_features.csv",
+            ["signs_of_retinopathy"],
+            ["images = count(*)", "mean_microaneurysms = avg(microaneurysms_1)"],
+        ),
+    ]
+    for name, description, folder, file, by, outputs in summaries:
+        made.append(
+            workflow(
+                person,
+                project,
+                name,
+                description,
+                f"{datasets[folder]}@1/files/{file}",
+                {"operatorType": "aggregate", "operatorProperties": {"by": by, "outputs": outputs}},
+            )
+        )
+    return made
+
+
+def mark(person: Person, uris: list[str]) -> None:
+    """Labels what this script put in the project, keeping any other labels."""
+    for uri in uris:
+        rid = uri.split("/")[-1].split("@")[0]
+        labels = person.must("GET", f"/resources/{rid}")["metadata"].get("labels") or {}
+        if LOADED not in labels:
+            person.must("PATCH", f"/resources/{rid}", {"labels": {**labels, LOADED: "team"}})
+
+
+def data_url(path: pathlib.Path) -> str:
+    return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode()
+
+
+def brand_of(data: pathlib.Path) -> dict | None:
+    """The look in the data folder's brand/, if it has one."""
+    folder = data / "brand"
+    if not (folder / "brand.json").exists():
+        return None
+    return {
+        **json.loads((folder / "brand.json").read_text()),
+        "logoUrl": data_url(folder / "logo-small.png"),
+        "logoLargeUrl": data_url(folder / "logo-large.png"),
+    }
+
+
+def wear(person: Person, project: str, brand: dict, **defaults) -> None:
+    """Gives a project a look, keeping the rest of its settings."""
+    spec = person.must("GET", f"/projects/{project}").get("spec") or {}
+    spec["branding"] = brand
+    if defaults:
+        spec["defaults"] = {**(spec.get("defaults") or {}), **defaults}
+    person.must("PUT", f"/projects/{project}", {"spec": spec})
+
+
+def brand_agent(person: Person, project: str, brand_name: str) -> str:
+    """The platform's agent, as the project's own under the brand's name."""
+    name = f"{brand_name} Agent"
+    found = named(person, "agent-templates", project, name)
+    if found:
+        print(f"   {name}: there")
+        return found["metadata"]["uri"]
+    query = urllib.parse.urlencode({"scope": project, "limit": 100})
+    agents = person.must("GET", f"/agent-templates?{query}")["items"]
+    platform = next(a for a in agents if a["metadata"]["name"] == "Texera Agent")
+    spec = json.loads(json.dumps(platform["spec"]).replace("Texera Agent", name))
+    made = person.must(
+        "POST",
+        "/agent-templates",
+        {"name": name, "description": platform["metadata"].get("description", ""), "parent": project, "spec": spec},
+    )
+    print(f"   {name}")
+    return made["metadata"]["uri"]
+
+
+def team_unit(person: Person, project: str, name: str, profile_name: str) -> str:
     """A computing unit the team keeps in its project, from one of the profiles it can use."""
     found = named(person, "computing-units", project, name)
     if found:
         print(f"   {name}: there")
-        return
+        return found["metadata"]["uri"]
     query = urllib.parse.urlencode({"scope": project, "limit": 100})
     profiles = person.must("GET", f"/profiles?{query}")["items"]
     profile = next(p for p in profiles if p["metadata"]["name"] == profile_name)
@@ -256,7 +377,7 @@ def team_unit(person: Person, project: str, name: str, profile_name: str) -> Non
         unit = person.must("GET", f"/computing-units/{made['metadata']['rid']}")
         if unit["status"].get("phase") == "ready":
             print(f"   {name}: ready")
-            return
+            return made["metadata"]["uri"]
         time.sleep(5)
     sys.exit(f"{name} did not become ready in five minutes")
 
@@ -324,6 +445,11 @@ def main() -> None:
         default="python-default",
         help="the profile of the team's computing unit",
     )
+    ap.add_argument(
+        "--sign-in-page",
+        action="store_true",
+        help="give the whole deployment the brand's look as well, as texera-admin",
+    )
     args = ap.parse_args()
     gw = args.gw.rstrip("/")
     owner = Person(gw, args.owner)
@@ -359,17 +485,27 @@ def main() -> None:
         for folder in folders(args.data / "datasets")
     }
     print("== models")
-    for folder in folders(args.data / "models"):
-        model(owner, project, folder)
+    models = [model(owner, project, folder) for folder in folders(args.data / "models")]
     print("== operators")
     operators = {
         path.stem: operator(owner, project, path)
         for path in sorted((HERE / "operators").glob("*.py"))
     }
-    print("== a workflow")
-    cgm_workflow(owner, project, datasets["cgm"], operators["cgm_metrics"])
+    print("== workflows")
+    workflows = team_workflows(owner, project, datasets, operators["cgm_metrics"])
     print("== the team's computing unit")
-    team_unit(owner, project, UNIT, args.unit_profile)
+    unit = team_unit(owner, project, UNIT, args.unit_profile)
+    loaded = [*datasets.values(), *models, *operators.values(), *workflows, unit]
+    brand = brand_of(args.data)
+    if brand:
+        print(f"== the look of {brand['name']}")
+        agent = brand_agent(owner, project, brand["name"])
+        loaded.append(agent)
+        wear(owner, project, brand, agentTemplate=agent)
+        owner.must("PATCH", f"/resources/{project}", {"description": brand["description"]})
+        if args.sign_in_page:
+            wear(Person(gw, "texera-admin", "admin"), owner.must("GET", "/me")["rootProject"], brand)
+    mark(owner, loaded)
     print(f"\n{gw}/projects/{project}")
 
 

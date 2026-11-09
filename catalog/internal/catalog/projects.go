@@ -118,6 +118,8 @@ func resolveSettings(chain []store.Resource) *api.ProjectSettings {
 		if b := spec.Branding; b != nil {
 			nearest(&out.Branding.Name, b.Name, "branding.name", from, out.From)
 			nearest(&out.Branding.LogoUrl, b.LogoUrl, "branding.logoUrl", from, out.From)
+			nearest(&out.Branding.LogoLargeUrl, b.LogoLargeUrl, "branding.logoLargeUrl", from, out.From)
+			nearest(&out.Branding.Description, b.Description, "branding.description", from, out.From)
 		}
 		if d := spec.Defaults; d != nil {
 			nearest(&out.Defaults.AgentTemplate, d.AgentTemplate, "defaults.agentTemplate", from, out.From)

@@ -19,6 +19,10 @@ model Branding {
   name?: string;
   @doc("The address of the logo the app shows beside the name.")
   logoUrl?: string;
+  @doc("The address of the logo the app shows large, on the start page and the sign-in page; absent: the other logo.")
+  logoLargeUrl?: string;
+  @doc("What the sign-in page says of the app.")
+  description?: string;
 }
 
 @doc("What the project's work runs with when nothing nearer chooses: a request, a workflow and a chat choose first. A value here wins over the one the project inherits.")

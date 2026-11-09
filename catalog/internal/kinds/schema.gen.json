@@ -353,6 +353,14 @@
     "Branding": {
       "description": "How a project looks in the app: inside it, and inside every project that inherits from it and sets no look of its own. Texera's is also the sign-in page's.",
       "properties": {
+        "description": {
+          "description": "What the sign-in page says of the app.",
+          "type": "string"
+        },
+        "logoLargeUrl": {
+          "description": "The address of the logo the app shows large, on the start page and the sign-in page; absent: the other logo.",
+          "type": "string"
+        },
         "logoUrl": {
           "description": "The address of the logo the app shows beside the name.",
           "type": "string"

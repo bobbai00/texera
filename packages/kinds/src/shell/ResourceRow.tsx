@@ -1,27 +1,42 @@
 // What a row of a list says of a resource besides what it is: its name, which can be changed where
-// it stands, and small labels for who can see it and who made it.
+// it stands, and small labels for who can see it and whose it is.
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Resource, ResourceMetadata } from "@texera/catalog-client/types";
 import { ErrorNote } from "@texera/ui";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 import { updateMetadata } from "../api";
-import { keysOf } from "../queries";
+import { keysOf, meQuery } from "../queries";
 import { PrincipalName } from "./Chips";
 
 const LABEL = "rounded border bg-background px-1.5 py-px text-xs whitespace-nowrap text-muted-foreground";
 
-/** Who can see a resource and who made it. */
+/** Whose a resource is, to the person looking: theirs, or who made it. */
+export function OwnerTag({ metadata, className }: { metadata: ResourceMetadata; className?: string }) {
+  const { data: me } = useQuery(meQuery());
+  const mine = me?.principal.pid === metadata.owner;
+  return (
+    <span className={className} data-owned-by-me={mine ? "true" : undefined} data-created-by={metadata.createdBy}>
+      {mine ? (
+        "Owned by me"
+      ) : (
+        <>
+          Created by <PrincipalName pid={metadata.createdBy} />
+        </>
+      )}
+    </span>
+  );
+}
+
+/** Who can see a resource and whose it is. */
 export function ResourceLabels({ metadata }: { metadata: ResourceMetadata }) {
   return (
     <span className="flex shrink-0 items-center gap-1.5" data-resource-labels>
       <span className={LABEL} data-visibility={metadata.visibility}>
         {metadata.visibility === "public" ? "Public" : "Private"}
       </span>
-      <span className={LABEL} title="Created by" data-created-by={metadata.createdBy}>
-        <PrincipalName pid={metadata.createdBy} />
-      </span>
+      <OwnerTag metadata={metadata} className={LABEL} />
     </span>
   );
 }

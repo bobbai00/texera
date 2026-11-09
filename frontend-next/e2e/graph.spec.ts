@@ -285,7 +285,7 @@ test("a chat's graph reads from data to results, each execution with its unit, a
   // The chat is as it was, on the same page, ready to be written in.
   expect(await page.locator("[data-message-seq]").count()).toBe(said);
   expect(new URL(page.url()).pathname).toBe(address);
-  await expect(page.getByPlaceholder(/Ask Texera/)).toBeEditable();
+  await expect(page.getByPlaceholder(/^Ask /)).toBeEditable();
 
   // The same things are a list a click away, and a row there goes in the same way.
   await page.locator('[data-resource-view="list"]').click();
@@ -443,7 +443,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   await page.goto(`/projects/${iris.project}`);
   const row = page.locator('[data-overview-section="dataset"] [data-resource-row="dataset"]').filter({ hasText: "iris" });
   await expect(row.locator('[data-visibility="private"]')).toHaveText("Private");
-  await expect(row.locator("[data-created-by]")).toContainText("Alice");
+  await expect(row.locator("[data-owned-by-me]")).toHaveText("Owned by me");
   const height = await row.evaluate(el => el.getBoundingClientRect().height);
   expect(height).toBeLessThan(48);
   await row.hover();

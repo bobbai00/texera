@@ -90,7 +90,7 @@ func (s *Service) Public(ctx context.Context) (*api.PublicInfo, error) {
 			if settings.Branding.Name != nil {
 				out.Branding.Name = settings.Branding.Name
 			}
-			out.Branding.LogoUrl = settings.Branding.LogoUrl
+			out.Branding.LogoUrl, out.Branding.LogoLargeUrl, out.Branding.Description = settings.Branding.LogoUrl, settings.Branding.LogoLargeUrl, settings.Branding.Description
 		}
 	}
 	return out, nil

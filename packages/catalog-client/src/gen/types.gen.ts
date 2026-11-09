@@ -153,6 +153,14 @@ export type Branding = {
      * The address of the logo the app shows beside the name.
      */
     logoUrl?: string;
+    /**
+     * The address of the logo the app shows large, on the start page and the sign-in page; absent: the other logo.
+     */
+    logoLargeUrl?: string;
+    /**
+     * What the sign-in page says of the app.
+     */
+    description?: string;
 };
 
 /**
