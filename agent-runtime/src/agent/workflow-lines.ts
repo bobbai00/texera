@@ -27,8 +27,8 @@ import {
   type AttachedFile,
   type CatalogAuth,
   type OperatorSpec,
-  type ParsedUri,
   parseUri,
+  uriParts,
   type Validation,
   type WorkflowRecord,
   type WorkflowSpec,
@@ -359,12 +359,7 @@ async function fileUri(named: string, line: SetLine, deps: LineToolDeps): Promis
 
 /** A file's URI as it was written; a version's URI stands for the one file the version holds. */
 async function checkedFileUri(uri: string, line: SetLine, deps: LineToolDeps): Promise<Value> {
-  let parsed: ParsedUri | undefined;
-  try {
-    parsed = parseUri(uri);
-  } catch {
-    parsed = undefined;
-  }
+  const parsed = uriParts(uri);
   const plural = parsed?.plural;
   if (!parsed || (plural !== "datasets" && plural !== "models") || parsed.vno === undefined)
     throw new LineError(line.line, `${uri} is not a file; a file is texera://datasets/<rid>@<version>/files/<path>`);

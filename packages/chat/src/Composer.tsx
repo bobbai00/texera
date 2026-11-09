@@ -57,7 +57,7 @@ export function Composer({ context, busy, disabled: waiting = false, readOnly = 
       data-composer
       className="rounded-2xl border bg-card shadow-sm transition-shadow focus-within:shadow-md focus-within:ring-[3px] focus-within:ring-ring/15">
       {context && (
-        <div className="flex flex-wrap gap-2 px-3 pt-3" data-composer-context>
+        <div className="flex flex-wrap gap-2 px-3 pt-3">
           {context}
         </div>
       )}

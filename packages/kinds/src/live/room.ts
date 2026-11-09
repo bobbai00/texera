@@ -9,7 +9,7 @@
 import { Forbidden } from "@hocuspocus/common";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { askAgain, meQuery } from "../queries";
 import { accessToken } from "../watch";
 import { AWAY_AFTER_MS, CLAIM, claimFor, claimOf, type Hold, holdsIn, holdsOfOthers, sameHolds, type Wanted } from "./holds";
@@ -128,6 +128,30 @@ function useAway(ms: number): boolean {
 const NOBODY: ReadonlyMap<string, Hold> = new Map();
 
 /**
+ * How this person says something that changes fast in a session, such as where they point: at most
+ * once a frame, and only with someone there to see it. Null when they have nothing to say.
+ */
+export function useFramedField<T>(rid: string | undefined, field: string): (value: T | null) => void {
+  const room = useRoom(rid);
+  const frame = useRef(0);
+  const next = useRef<T | null>(null);
+  const say = useCallback(
+    (value: T | null) => {
+      next.current = value;
+      if (frame.current) return;
+      frame.current = requestAnimationFrame(() => {
+        frame.current = 0;
+        const awareness = room?.awareness;
+        if (awareness && awareness.getStates().size > 1) awareness.setLocalStateField(field, next.current);
+      });
+    },
+    [room, field]
+  );
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  return say;
+}
+
+/**
  * What the others hold in a session, by what is held; and this person takes what they want when
  * nobody has it, for as long as they want it and are there. `wanted` is null for someone who
  * wants nothing, or who may only read and so holds nothing.
@@ -138,7 +162,6 @@ export function useHolds(rid: string | undefined, wanted: Wanted | null): Readon
   const pid = me?.principal.pid;
   const away = useAway(AWAY_AFTER_MS);
   const [held, setHeld] = useState(NOBODY);
-  const shown = useRef(NOBODY);
   const id = away ? undefined : wanted?.id;
   const doing = away ? undefined : wanted?.doing;
   useEffect(() => {
@@ -147,10 +170,7 @@ export function useHolds(rid: string | undefined, wanted: Wanted | null): Readon
     const settle = () => {
       const holds = holdsIn(awareness.getStates() as Map<number, Record<string, unknown>>);
       const others = holdsOfOthers(holds, pid);
-      if (!sameHolds(shown.current, others)) {
-        shown.current = others;
-        setHeld(others);
-      }
+      setHeld(shown => (sameHolds(shown, others) ? shown : others));
       const mine = claimOf(awareness.getLocalState());
       const next = claimFor(id && doing ? { id, doing } : null, holds, pid, mine, Date.now());
       if (next?.id !== mine?.id || next?.doing !== mine?.doing) awareness.setLocalStateField(CLAIM, next);

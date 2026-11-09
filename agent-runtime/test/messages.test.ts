@@ -133,7 +133,7 @@ describe("toModelMessages", () => {
         role: "user",
         parts: [
           { type: "text", text: "Run it." },
-          { type: "resource", resource: "texera://datasets/d@1", text: "sales.csv" },
+          { type: "resource", resource: "texera://datasets/11111111-1111-4111-8111-111111111111@1", text: "sales.csv" },
         ],
       },
       { ...base, author: "p-bob", seq: 3, role: "assistant", parts: [{ type: "text", text: "Done." }] },
@@ -144,7 +144,11 @@ describe("toModelMessages", () => {
     ]);
     expect(toModelMessages(history, { people })).toEqual([
       { role: "user", content: "[Alice Liddell] Use the 2020 data." },
-      { role: "user", content: '[Bob Builder] Run it.\nAttached file "sales.csv" (texera://datasets/d@1)' },
+      {
+        role: "user",
+        content:
+          '[Bob Builder] Run it.\nAttached file "sales.csv" (texera://datasets/11111111-1111-4111-8111-111111111111@1)',
+      },
       // What the agent said is its own, whoever it was answering.
       { role: "assistant", content: [{ type: "text", text: "Done." }] },
     ]);
@@ -201,26 +205,55 @@ describe("what a person attached", () => {
     const messages = toModelMessages([
       user([
         { type: "text", text: "What is in this file?" },
-        { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
+        { type: "resource", resource: "texera://datasets/11111111-1111-4111-8111-111111111111@1", text: "iris.csv" },
       ]),
     ]);
     expect(messages).toEqual([
-      { role: "user", content: 'What is in this file?\nAttached file "iris.csv" (texera://datasets/d1@1)' },
+      {
+        role: "user",
+        content:
+          'What is in this file?\nAttached file "iris.csv" (texera://datasets/11111111-1111-4111-8111-111111111111@1)',
+      },
     ]);
   });
 
   test("is a message of its own when there is no text", () => {
-    expect(toModelMessages([user([{ type: "resource", resource: "texera://datasets/d1@1" }])])).toEqual([
-      { role: "user", content: "Attached dataset (texera://datasets/d1@1)" },
+    expect(
+      toModelMessages([
+        user([{ type: "resource", resource: "texera://datasets/11111111-1111-4111-8111-111111111111@1" }]),
+      ]),
+    ).toEqual([
+      { role: "user", content: "Attached dataset (texera://datasets/11111111-1111-4111-8111-111111111111@1)" },
     ]);
   });
 
   test("names the kind from the URI, for any kind", () => {
-    expect(toModelMessages([user([{ type: "resource", resource: "texera://computing-units/u1" }])])).toEqual([
-      { role: "user", content: "Attached computing-unit (texera://computing-units/u1)" },
+    expect(
+      toModelMessages([
+        user([{ type: "resource", resource: "texera://computing-units/11111111-1111-4111-8111-111111111111" }]),
+      ]),
+    ).toEqual([
+      {
+        role: "user",
+        content: "Attached computing-unit (texera://computing-units/11111111-1111-4111-8111-111111111111)",
+      },
     ]);
-    expect(toModelMessages([user([{ type: "resource", resource: "texera://workflows/w1/executions/e1" }])])).toEqual([
-      { role: "user", content: "Attached execution (texera://workflows/w1/executions/e1)" },
+    expect(
+      toModelMessages([
+        user([
+          {
+            type: "resource",
+            resource:
+              "texera://workflows/11111111-1111-4111-8111-111111111111/executions/22222222-2222-4222-8222-222222222222",
+          },
+        ]),
+      ]),
+    ).toEqual([
+      {
+        role: "user",
+        content:
+          "Attached execution (texera://workflows/11111111-1111-4111-8111-111111111111/executions/22222222-2222-4222-8222-222222222222)",
+      },
     ]);
   });
 });

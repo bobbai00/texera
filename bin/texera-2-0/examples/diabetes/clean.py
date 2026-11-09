@@ -70,8 +70,8 @@ def show(items: list[dict]) -> None:
 
 
 class Cleaner:
-    def __init__(self, person: Person, apply: bool):
-        self.person, self.apply, self.failed = person, apply, 0
+    def __init__(self, person: Person):
+        self.person, self.failed = person, 0
 
     def attempt(self, what: str, method: str, path: str, body=None) -> None:
         status, out = self.person.call(method, path, body)
@@ -127,7 +127,7 @@ def main() -> None:
         person = Person(gw, user)
         me = person.must("GET", "/me")
         pid, home = me["principal"]["pid"], me["homeProject"]
-        cleaner = Cleaner(person, args.apply)
+        cleaner = Cleaner(person)
         print(f"== {user}")
 
         owned = [

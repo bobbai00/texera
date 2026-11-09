@@ -118,7 +118,6 @@ function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => 
           mayAdd !== undefined && (
             <NewChat
               dock
-              about={name}
               suggested={mayAdd ? project : undefined}
               greeting={`Ask about this ${label}. The agent reads it as it is now.`}
               onCreated={rid => remember.mutate(rid)}

@@ -113,6 +113,28 @@ const post = (app: ReturnType<typeof createApp>, body: unknown, token = "user-to
     body: JSON.stringify(body),
   });
 
+describe("a chat's name", () => {
+  /** The renames a turn made, once naming, which goes on beside the turn, has had time to finish. */
+  const renamed = async (fake: ReturnType<typeof makeApp>["fake"]) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return fake.calls.filter((c) => c.method === "PATCH").map((c) => (c.body as { name: string }).name);
+  };
+
+  test("is given by the first thing asked in a chat that has none", async () => {
+    const { app, fake, model } = makeApp([{ text: "Here they are." }], {}, { conversationName: "New chat" });
+    await readSse(await post(app, runInput("Which models fit diabetes screening?")));
+    expect(await renamed(fake)).toEqual(["A scripted name"]);
+    expect(JSON.stringify(model.doGenerateCalls[0]?.prompt)).toContain("Which models fit diabetes screening?");
+  });
+
+  test("stands when someone gave it", async () => {
+    const { app, fake, model } = makeApp([{ text: "Here they are." }]);
+    await readSse(await post(app, runInput("Which models fit diabetes screening?")));
+    expect(await renamed(fake)).toEqual([]);
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+});
+
 describe("POST /agents/conversations/:rid/ag-ui", () => {
   test("streams a full turn with a tool call and persists both messages with the turn and the template", async () => {
     const getResource = tool({
@@ -399,7 +421,7 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
   const iris = {
     type: "binary",
     mimeType: "application/vnd.texera.resource",
-    url: "texera://datasets/d1@1",
+    url: "texera://datasets/11111111-1111-4111-8111-111111111111@1",
     filename: "iris.csv",
   };
 
@@ -411,10 +433,10 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
     expect(fake.messages[0]?.parts).toEqual([
       { type: "text", text: "What is in this file?" },
-      { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
+      { type: "resource", resource: "texera://datasets/11111111-1111-4111-8111-111111111111@1", text: "iris.csv" },
     ]);
     expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain(
-      'Attached file \\"iris.csv\\" (texera://datasets/d1@1)',
+      'Attached file \\"iris.csv\\" (texera://datasets/11111111-1111-4111-8111-111111111111@1)',
     );
   });
 
@@ -423,7 +445,7 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     const events = await readSse(await post(app, withAttachment([iris])));
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
     expect(fake.messages[0]?.parts).toEqual([
-      { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
+      { type: "resource", resource: "texera://datasets/11111111-1111-4111-8111-111111111111@1", text: "iris.csv" },
     ]);
   });
 

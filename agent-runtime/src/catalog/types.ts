@@ -132,6 +132,15 @@ export function parseUri(uri: string): ParsedUri {
   };
 }
 
+/** The parts of a URI, or undefined for something that is not one. */
+export function uriParts(uri: string): ParsedUri | undefined {
+  try {
+    return parseUri(uri);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The resource URI without version and subresource. */
 export function baseUri(uri: string): string {
   const { plural, rid } = parseUri(uri);

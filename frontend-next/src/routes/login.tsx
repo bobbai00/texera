@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { publicReadOptions } from "@texera/catalog-client/query";
-import { Button } from "@texera/ui";
+import { Button, lookOf } from "@texera/ui";
 import { LogIn } from "lucide-react";
 import { useState } from "react";
 import { safeRedirect } from "@/auth/safe-redirect";
@@ -22,7 +22,7 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
   // The deployment's own look, which the catalog says to anyone.
   const brand = useQuery({ ...publicReadOptions(), staleTime: 60_000 }).data?.branding;
-  const logo = brand && (brand.logoLargeUrl || brand.logoUrl || "/texera-mark.png");
+  const logo = brand && lookOf(brand).logoLargeUrl;
   return (
     <main className="flex h-full items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-6 rounded-2xl border bg-card p-8 text-center shadow-sm" data-login>

@@ -101,7 +101,7 @@ func shippedAgent() (shipped, error) {
 }
 
 // Seed creates the platform principal and Texera, the project every project inherits from, and
-// brings into Texera what this release ships: the profiles and the deployment's unit made from
+// brings into Texera what this release ships: the profiles and the public unit made from
 // one, the warehouse, the catalog's MCP server and the bio add-on, the credentials and the model
 // endpoint, the skills and the agent. Texera's admins may change or delete any of it, and a
 // release leaves what they did as it is (release.go). Texera's settings get the shipped defaults
@@ -149,7 +149,7 @@ func (s *Service) Seed(ctx context.Context) error {
 	// one it was fitted with (one fitted with 1.7 does not load in 1.9), so every unit the release
 	// makes runs the one the teams fit their models with, which the dev stack's Python has too.
 	const fitsModels = "scikit-learn==1.7.2"
-	// The profile the deployment's unit is made from: a node of 2 CPUs and 2 GB with the Python
+	// The profile the public unit is made from: a node of 2 CPUs and 2 GB with the Python
 	// libraries most analyses use.
 	cpu, memory, packages := "2", "2Gi", []string{"pandas", "numpy", fitsModels}
 	profile, err := ship("profile", "python-default", "2 CPUs and 2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Cpu: &cpu, Memory: &memory, Packages: &packages}, nil)
@@ -157,9 +157,11 @@ func (s *Service) Seed(ctx context.Context) error {
 		return err
 	}
 
-	// The ladder the agent offers: sizes for data work, and for models on CPU or on a GPU.
+	// The ladder the agent offers: sizes for data work, and for models on CPU or on a GPU. A new
+	// unit starts from the smallest of them.
+	var smallest *store.Resource
 	// Each says, when read, whether this deployment can start it: a cluster without GPUs starts
-	// no GPU unit, and on Compose a unit from a profile is the deployment's own unit.
+	// no GPU unit, and on Compose a unit from a profile is the public unit.
 	data := []string{"pandas", "numpy", "pyarrow", "scipy", fitsModels, "statsmodels"}
 	ml := append(append([]string{}, data...), "torch", "xgboost", "onnxruntime")
 	for _, rung := range []struct {
@@ -177,8 +179,12 @@ func (s *Service) Seed(ctx context.Context) error {
 		if rung.gpu > 0 {
 			spec.Gpu = &rung.gpu
 		}
-		if _, err := ship("profile", rung.name, rung.description, spec, nil); err != nil {
+		shipped, err := ship("profile", rung.name, rung.description, spec, nil)
+		if err != nil {
 			return err
+		}
+		if rung.name == "Small" {
+			smallest = shipped
 		}
 	}
 
@@ -193,7 +199,7 @@ func (s *Service) Seed(ctx context.Context) error {
 		if s.Config.StaticUnitClientID != "" {
 			spec.ClientId = &s.Config.StaticUnitClientID
 		}
-		if unit, err = ship("computing-unit", s.Config.StaticUnitName, "The computing unit of this deployment", spec, nil); err != nil {
+		if unit, err = ship("computing-unit", s.Config.StaticUnitName, "Shared by everyone here and ready now: enough for small tables and light models", spec, nil); err != nil {
 			return err
 		}
 		if unit != nil {
@@ -205,7 +211,7 @@ func (s *Service) Seed(ctx context.Context) error {
 			}
 			identity, err := s.unitIdentityFor(ctx, unit, current)
 			if err != nil {
-				return fmt.Errorf("the deployment's unit's identity: %w", err)
+				return fmt.Errorf("the public unit's identity: %w", err)
 			}
 			if identity != nil {
 				if err := s.recordUnitIdentity(ctx, unit, identity); err != nil {
@@ -334,7 +340,7 @@ func (s *Service) Seed(ctx context.Context) error {
 	return s.fillRootSettings(ctx, caller, api.ProjectSpec{
 		Branding: &api.Branding{Name: &s.Config.BrandName},
 		// No model: a chat's agent brings its own unless a chat or a project chooses another.
-		Defaults: &api.ProjectDefaults{AgentTemplate: uriOf(agent), ComputingUnit: uriOf(unit), Profile: uriOf(profile), Warehouse: uriOf(warehouse)},
+		Defaults: &api.ProjectDefaults{AgentTemplate: uriOf(agent), ComputingUnit: uriOf(unit), Profile: uriOf(smallest), Warehouse: uriOf(warehouse)},
 	}, gone)
 }
 

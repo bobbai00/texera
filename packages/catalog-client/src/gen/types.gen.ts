@@ -305,7 +305,10 @@ export type ComputingUnit = {
  * A computing unit to make from a profile.
  */
 export type ComputingUnitFromProfile = {
-    name: string;
+    /**
+     * What to call it. Left out, it is called after its profile: Small unit.
+     */
+    name?: string;
     /**
      * The project the unit goes into; absent: the chat's project in a chat, else the caller's own.
      */

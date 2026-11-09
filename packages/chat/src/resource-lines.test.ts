@@ -24,6 +24,12 @@ describe("what the agent wrote", () => {
     expect(blocksOf(code)).toEqual([{ type: "words", text: code }]);
   });
 
+  it("reads a URI among words as the resource's name, bare or as a link", () => {
+    expect(blocksOf(`See ${M}, and ${D}.`)).toEqual([{ type: "words", text: `See \`${M}\`, and \`${D}\`.` }]);
+    expect(blocksOf(`The [model](${M}) is here`)).toEqual([{ type: "words", text: `The \`${M}\` is here` }]);
+    expect(blocksOf(`Open it: ${D}@2/files/a.csv.`)).toEqual([{ type: "words", text: `Open it: \`${D}@2/files/a.csv\`.` }]);
+  });
+
   it("does not take a URI still being written for a resource", () => {
     expect(blocksOf("texera://models/1111")).toEqual([{ type: "words", text: "texera://models/1111" }]);
   });

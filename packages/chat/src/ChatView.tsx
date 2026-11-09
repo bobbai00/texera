@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, EditableName, FromThisChat, keysOf, KindIcon, ProjectOverview, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateMetadata, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
+import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, EditableName, FromThisChat, keysOf, KindIcon, ProjectOverview, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource, useRename } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, Maximize2, Minimize2, Minus, PanelRight, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -87,13 +87,15 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
       toggle: ref => setPicks(now => (now.some(p => uriOf(p) === uriOf(ref)) ? now.filter(p => uriOf(p) !== uriOf(ref)) : [...now, ref])),
     };
   }, [picks, readOnly]);
-  const rename = useMutation({
-    mutationFn: (name: string) => updateMetadata(rid, { name }, conversation.metadata.etag),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
-    },
-  });
+  const rename = useRename(rid, conversation.metadata.etag);
+  // A chat names itself from its first message: the lists that show it follow.
+  const name = conversation.metadata.name;
+  const shownAs = useRef(name);
+  useEffect(() => {
+    if (shownAs.current === name) return;
+    shownAs.current = name;
+    queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+  }, [name, queryClient]);
   const said = chat.messages.length;
   useEffect(() => {
     if (said > 0) refresh();
@@ -127,6 +129,22 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   }, []);
 
   const [noteError, setNoteError] = useState<unknown>();
+  /** Puts something in the chat: asks the agent, or leaves a note for the people in it. */
+  const deliver = async (text: string, attachments: Attachment[], ask: boolean) => {
+    if (ask) {
+      // The agent reads what the person sees: an edit of the page still on its way is saved first.
+      if (context) await settleViewing();
+      void chat.send(text, attachments);
+      return true;
+    }
+    try {
+      await chat.note(text, attachments);
+      return true;
+    } catch (e) {
+      setNoteError(e);
+      return false;
+    }
+  };
   /** Sends what is in the box: to the agent, or as a note to the people in the chat. */
   const send = async ({ text, files: attached }: { text: string; files: File[] }, ask = true) => {
     setNoteError(undefined);
@@ -145,42 +163,23 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
       setUpload({});
     }
     setFiles([]);
-    if (ask) {
-      // The agent reads what the person sees: an edit of the page still on its way is saved first.
-      if (context) await settleViewing();
-      void chat.send(text, attachments);
-    } else {
-      try {
-        await chat.note(text, attachments);
-      } catch (e) {
-        setNoteError(e);
-        return false;
-      }
-    }
-    setPicks([]);
-    return true;
+    const delivered = await deliver(text, attachments, ask);
+    if (delivered) setPicks([]);
+    return delivered;
   };
 
   /**
    * A comment on a thing of the graph: a message of the chat that names the thing and has it
    * attached. It asks the agent, unless a turn is going: then the agent reads it in the next one.
    */
-  const comment = async (on: { uri: string; name: string }, text: string) => {
+  const comment = (on: { uri: string; name: string }, text: string) => {
     const ref = refOf(on.uri);
-    const attachments: Attachment[] = ref ? [{ ref, name: on.name }] : [];
-    const words = `Comment on ${on.name}: ${text}`;
-    if (busy || othersTurn !== undefined) {
-      try {
-        await chat.note(words, attachments);
-      } catch (e) {
-        setNoteError(e);
-        return false;
-      }
-      return true;
-    }
-    void chat.send(words, attachments);
-    return true;
+    return deliver(`Comment on ${on.name}: ${text}`, ref ? [{ ref, name: on.name }] : [], !busy && othersTurn === undefined);
   };
+  // The graph beside the chat holds on to this: it stays one function, or every word that arrives would draw the graph again.
+  const latestComment = useRef(comment);
+  latestComment.current = comment;
+  const commentOn = useCallback<typeof comment>((on, text) => latestComment.current(on, text), []);
 
   const sendFirst = useRef(send);
   sendFirst.current = send;
@@ -232,7 +231,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
       {/* Behind the chat, what the project holds; once the chat starts work, what it reads, makes and runs. */}
       {hasBeside &&
         (started && graph ? (
-          <ResourcePanel rid={rid} graph={graph} className="flex min-w-0 flex-1" onComment={readOnly ? undefined : comment} />
+          <ResourcePanel rid={rid} graph={graph} className="flex min-w-0 flex-1" onComment={readOnly ? undefined : commentOn} />
         ) : (
           <div className="scrollbar-thin min-w-0 flex-1 overflow-y-auto" data-chat-behind>
             <FromThisChat rid={rid} className="mx-auto max-w-5xl px-6 pt-6" />

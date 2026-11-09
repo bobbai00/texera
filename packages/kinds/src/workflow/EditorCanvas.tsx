@@ -4,6 +4,7 @@ import {
   addLink,
   addOperator,
   type CanvasNode,
+  canvasFlow,
   COLUMN,
   type Compilation,
   deleteLinks,
@@ -13,9 +14,7 @@ import {
   linkProblem,
   newOperator,
   type OperatorOverlay,
-  resourceLayer,
   resourceRoom,
-  toFlow,
 } from "@texera/workflow-model";
 import {
   Background,
@@ -213,13 +212,7 @@ export function EditorCanvas({
     const placed = Object.fromEntries(
       Object.entries(drawn).map(([id, p]) => [id, room[id] ? { x: p.x, y: p.y + room[id] } : p])
     );
-    const operators = toFlow(spec, placed, overlay);
-    if (!showResources) return operators;
-    const resources = resourceLayer(spec, placed);
-    return {
-      nodes: [...operators.nodes, ...resources.nodes] as CanvasNode[],
-      edges: [...operators.edges, ...resources.edges],
-    };
+    return canvasFlow(spec, placed, overlay, showResources);
   }, [spec, drawn, room, overlay, showResources]);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);

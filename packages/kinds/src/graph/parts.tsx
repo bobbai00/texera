@@ -131,7 +131,6 @@ export function DataCard({
       <div
         {...nodeProps(item.id, `Dataset ${name}`, h)}
         data-graph-role="data"
-        data-graph-made={n?.made ? "true" : "false"}
         style={style}
         className={cn(
           "group/node absolute w-[13em] rounded-[1em] border border-kind-dataset/35 bg-card px-[0.85em] pt-[0.75em] pb-[0.6em] shadow-xs",
@@ -172,7 +171,6 @@ export function DataCard({
       {...nodeProps(item.id, `${planned ? "Planned dataset" : "Dataset"} ${name}`, h)}
       data-graph-role={planned ? "planned" : "data"}
       data-graph-planned={planned ? "true" : undefined}
-      data-graph-made={n?.made ? "true" : "false"}
       style={style}
       className={cn(
         "group/node absolute flex items-center gap-[0.6em] rounded-[1.6em] border bg-card py-[0.45em] pr-[1.5em] pl-[0.45em] shadow-xs",
@@ -221,7 +219,6 @@ export function ModelCard({
     <div
       {...nodeProps(node.uri, `Model ${node.name}`, h)}
       data-graph-role="model"
-      data-graph-made={node.made ? "true" : "false"}
       style={style}
       className={cn(
         "group/node absolute flex items-center gap-[0.6em] rounded-[0.9em] border border-kind-model/35 bg-card py-[0.45em] pr-[1.5em] pl-[0.45em] shadow-xs",
@@ -268,7 +265,6 @@ export function ResultTile({
     <div
       {...nodeProps(node.uri, `Table ${node.name}`, h)}
       data-graph-role="data"
-      data-graph-made="true"
       data-graph-of={of}
       style={style}
       className={cn(
@@ -402,7 +398,6 @@ export function WorkCard({
       {...nodeProps(work.id, `${planned ? "Planned workflow" : "Workflow"} ${name}`, h)}
       data-graph-role={planned ? "planned" : "workflow"}
       data-graph-planned={planned ? "true" : undefined}
-      data-graph-made={n?.made ? "true" : "false"}
       style={style}
       className={cn(
         "group/node absolute overflow-hidden rounded-[0.95em] border bg-card",
@@ -574,7 +569,7 @@ export function RunBox({
         <look.Icon className={cn("size-[1.15em] shrink-0", look.tone, going && "animate-spin")} aria-hidden />
         <span className={cn("truncate text-[0.92em]", waiting ? "font-medium" : "font-semibold")}>{look.word}</span>
         {level !== "overview" && (run?.version !== undefined || took) && (
-          <span className="ml-auto shrink-0 text-[0.82em] text-muted-foreground tabular-nums" data-graph-ran-version={run?.version}>
+          <span className="ml-auto shrink-0 text-[0.82em] text-muted-foreground tabular-nums">
             {[run?.version !== undefined ? `v${run.version}` : "", took].filter(Boolean).join(" · ")}
           </span>
         )}

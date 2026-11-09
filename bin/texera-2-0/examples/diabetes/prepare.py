@@ -16,9 +16,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Prepares a diabetes research team's project from public data: seven datasets and six models
-fitted on them, which load.py puts into a Texera stack, and the file someone brings in the demo,
-uploads/screening_cohort.csv: the 154 women the onset-risk model never saw.
+"""Prepares a research team's project on diabetes, kidney and liver disease from public data:
+twelve datasets, fifteen models (fitted on them, or published clinical equations), which load.py
+puts into a Texera stack, and the file someone brings in the demo, uploads/screening_cohort.csv:
+the 154 women the onset-risk model never saw.
 
     python prepare.py --out ~/texera-diabetes
 
@@ -44,13 +45,26 @@ The data is downloaded from where its authors published it; nothing is redistrib
   whom a random 20,000 are kept here, with 21 health indicators and whether they have diabetes.
 - Diabetic Retinopathy Debrecen (Antal and Hajdu 2014; UCI): 1,151 retinal images of the Messidor
   set, the features extracted from each, and whether it shows signs of diabetic retinopathy.
+- NHANES 2017-2018 (CDC National Center for Health Statistics, public domain): the adults examined,
+  their HbA1c, fasting glucose and insulin, kidney and liver panels, liver elastography and history.
+- Chronic Kidney Disease (Rubini, Soundarapandian and Eswaran 2015; UCI, CC BY 4.0): 400 patients
+  of a hospital in India, 24 clinical values and whether they have chronic kidney disease.
+- HCV data (Lichtinghagen, Klawonn and Hoffmann 2020; UCI, CC BY 4.0): 615 blood donors and people
+  with hepatitis C, their laboratory values, and how far the liver disease has gone.
+- Cirrhosis Patient Survival (Dickson et al. 1989; UCI, CC BY 4.0): the Mayo Clinic's 418 patients
+  with primary biliary cirrhosis, their laboratory values and how they fared.
+- Gene expression of beta cells in type 2 diabetes (Marselli et al. 2010; NCBI GEO, GDS3782):
+  pancreatic beta cells laser-captured from 10 donors with type 2 diabetes and 10 without.
 
-The models are fitted with scikit-learn, whose version must be the one the computing units run:
-a pickled estimator loads only under the version that saved it. It needs pandas, numpy,
-scikit-learn, joblib and openpyxl.
+The fitted models use scikit-learn, whose version must be the one the computing units run: a
+pickled estimator loads only under the version that saved it. The equations are the files of
+equations/, each checked against an example worked by hand. It needs pandas, numpy, scikit-learn,
+joblib and openpyxl.
 """
 
 import argparse
+import gzip
+import importlib.util
 import io
 import json
 import pathlib
@@ -78,8 +92,51 @@ SOURCES = {
     "early-stage": "https://archive.ics.uci.edu/static/public/529/early+stage+diabetes+risk+prediction+dataset.zip",
     "health-indicators": "https://archive.ics.uci.edu/static/public/891/data.csv",
     "retinopathy": "https://archive.ics.uci.edu/static/public/329/diabetic+retinopathy+debrecen.zip",
+    "kidney": "https://archive.ics.uci.edu/static/public/336/data.csv",
+    "hepatitis-c": "https://archive.ics.uci.edu/static/public/571/hcv+data.zip",
+    "biliary-cirrhosis": "https://archive.ics.uci.edu/static/public/878/data.csv",
+    "beta-cells": "https://ftp.ncbi.nlm.nih.gov/geo/datasets/GDS3nnn/GDS3782/soft/GDS3782.soft.gz",
 }
+# Each NHANES 2017-2018 table used, and what its columns are called here.
+NHANES_TABLES = {
+    "DEMO_J": {
+        "RIDSTATR": "exam_status",
+        "RIDAGEYR": "age_years",
+        "RIAGENDR": "sex",
+        "RIDRETH3": "race_ethnicity",
+        "INDFMPIR": "income_poverty_ratio",
+        "WTMEC2YR": "exam_weight",
+    },
+    "BMX_J": {"BMXBMI": "bmi", "BMXWAIST": "waist_cm"},
+    "BPX_J": {f"BPX{side}{n}": f"{side}{n}" for side in ("SY", "DI") for n in (1, 2, 3)},
+    "GHB_J": {"LBXGH": "hba1c_pct"},
+    "GLU_J": {"LBXGLU": "fasting_glucose_mg_dl", "WTSAF2YR": "fasting_weight"},
+    "INS_J": {"LBXIN": "fasting_insulin_uu_ml"},
+    "BIOPRO_J": {
+        "LBXSCR": "creatinine_mg_dl",
+        "LBXSASSI": "ast_u_l",
+        "LBXSATSI": "alt_u_l",
+        "LBXSGTSI": "ggt_u_l",
+        "LBXSAL": "albumin_g_dl",
+    },
+    "CBC_J": {"LBXPLTSI": "platelets_k_ul"},
+    "ALB_CR_J": {"URDACT": "uacr_mg_g"},
+    "TRIGLY_J": {"LBXTR": "triglycerides_mg_dl"},
+    "HDL_J": {"LBDHDD": "hdl_mg_dl"},
+    "TCHOL_J": {"LBXTC": "total_cholesterol_mg_dl"},
+    "DIQ_J": {"DIQ010": "diagnosed_diabetes", "DIQ050": "on_insulin", "DIQ070": "on_diabetes_pills"},
+    "MCQ_J": {"MCQ300C": "family_history_diabetes"},
+    "BPQ_J": {"BPQ020": "ever_high_bp", "BPQ050A": "on_bp_medication"},
+    "LUX_J": {"LUXSMED": "liver_stiffness_kpa", "LUXCAPM": "liver_steatosis_cap"},
+}
+SOURCES.update(
+    {
+        f"nhanes-{table}": f"https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/{table}.xpt"
+        for table in NHANES_TABLES
+    }
+)
 SEED = 7
+EQUATIONS = pathlib.Path(__file__).resolve().parent / "equations"
 
 
 def fetch(name: str, cache: pathlib.Path) -> bytes:
@@ -416,6 +473,300 @@ def retinopathy(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
     return frame
 
 
+YES_NO = {1: "yes", 2: "no"}
+
+
+def nhanes(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    """The adults examined, one row each, the tables joined on the respondent's number."""
+    frame = None
+    for table, columns in NHANES_TABLES.items():
+        part = pd.read_sas(io.BytesIO(fetch(f"nhanes-{table}", cache)), format="xport", encoding="utf-8")
+        part = part[["SEQN", *columns]].rename(columns=columns)
+        frame = part if frame is None else frame.merge(part, on="SEQN", how="left")
+    frame = frame[(frame["exam_status"] == 2) & (frame["age_years"] >= 20)].copy()
+    frame["systolic_bp"] = frame[["SY1", "SY2", "SY3"]].mean(axis=1)
+    frame["diastolic_bp"] = frame[["DI1", "DI2", "DI3"]].mean(axis=1)
+    frame["sex"] = frame["sex"].map({1: "male", 2: "female"})
+    frame["race_ethnicity"] = frame["race_ethnicity"].map(
+        {
+            1: "Mexican American",
+            2: "Other Hispanic",
+            3: "Non-Hispanic White",
+            4: "Non-Hispanic Black",
+            6: "Non-Hispanic Asian",
+            7: "Other or multiracial",
+        }
+    )
+    frame["diagnosed_diabetes"] = frame["diagnosed_diabetes"].map({**YES_NO, 3: "borderline"})
+    for column in ("on_insulin", "on_diabetes_pills", "family_history_diabetes", "ever_high_bp", "on_bp_medication"):
+        frame[column] = frame[column].map(YES_NO)
+    frame["respondent_id"] = frame["SEQN"].astype(int)
+    frame["age_years"] = frame["age_years"].astype(int)
+    frame = frame[
+        [
+            "respondent_id",
+            "age_years",
+            "sex",
+            "race_ethnicity",
+            "income_poverty_ratio",
+            "bmi",
+            "waist_cm",
+            "systolic_bp",
+            "diastolic_bp",
+            "hba1c_pct",
+            "fasting_glucose_mg_dl",
+            "fasting_insulin_uu_ml",
+            "creatinine_mg_dl",
+            "ast_u_l",
+            "alt_u_l",
+            "ggt_u_l",
+            "albumin_g_dl",
+            "platelets_k_ul",
+            "uacr_mg_g",
+            "triglycerides_mg_dl",
+            "hdl_mg_dl",
+            "total_cholesterol_mg_dl",
+            "diagnosed_diabetes",
+            "on_insulin",
+            "on_diabetes_pills",
+            "family_history_diabetes",
+            "ever_high_bp",
+            "on_bp_medication",
+            "liver_stiffness_kpa",
+            "liver_steatosis_cap",
+            "exam_weight",
+            "fasting_weight",
+        ]
+    ].round(3)
+    folder = out / "datasets" / "nhanes"
+    write(folder, {"nhanes_2017_2018.csv": frame, "README.md": NHANES_README.format(people=f"{len(frame):,}")})
+    card(
+        folder,
+        name="NHANES 2017-18 metabolic panel",
+        description=f"{len(frame):,} US adults examined in the CDC's National Health and Nutrition Examination Survey: HbA1c, fasting glucose and insulin, kidney and liver panels, blood pressure, liver elastography, and whether they were told they have diabetes.",
+        message="The adults examined in NHANES 2017-2018, its tables joined on the respondent",
+    )
+    return frame
+
+
+NHANES_README = """# NHANES 2017-18 metabolic panel
+
+{people} adults aged 20 or more who were examined in the National Health and Nutrition Examination
+Survey 2017-2018, one row each, its tables joined on the respondent's number. CDC National Center
+for Health Statistics, public domain. https://wwwn.cdc.gov/nchs/nhanes/
+
+| Column | Meaning |
+| --- | --- |
+| respondent_id | SEQN, the survey's number for the person |
+| age_years, sex, race_ethnicity | As reported |
+| income_poverty_ratio | Family income over the poverty guideline, 5 for 5 or more |
+| bmi, waist_cm | Body mass index, waist circumference |
+| systolic_bp, diastolic_bp | Mean of up to three readings, mm Hg |
+| hba1c_pct | Glycated hemoglobin, % |
+| fasting_glucose_mg_dl, fasting_insulin_uu_ml | Morning fasting subsample only |
+| creatinine_mg_dl, albumin_g_dl | Serum |
+| ast_u_l, alt_u_l, ggt_u_l | Liver enzymes, U/L |
+| platelets_k_ul | Platelets, 1000 per uL |
+| uacr_mg_g | Urine albumin over creatinine |
+| triglycerides_mg_dl | Morning fasting subsample only |
+| hdl_mg_dl, total_cholesterol_mg_dl | Serum lipids |
+| diagnosed_diabetes | Told by a doctor: yes, no or borderline |
+| on_insulin, on_diabetes_pills, on_bp_medication | Yes or no, each asked of those it applies to |
+| family_history_diabetes | A close relative has diabetes |
+| ever_high_bp | Ever told of high blood pressure |
+| liver_stiffness_kpa, liver_steatosis_cap | Liver elastography: median stiffness and controlled attenuation (dB/m) |
+| exam_weight, fasting_weight | Survey weights |
+
+The survey is a complex sample: to speak for the US population, weight rows by exam_weight, or by
+fasting_weight where a fasting value is used. An empty value was not measured or not asked.
+"""
+
+
+def kidney(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    frame = pd.read_csv(io.BytesIO(fetch("kidney", cache))).rename(
+        columns={
+            "bp": "blood_pressure",
+            "sg": "specific_gravity",
+            "al": "albumin_grade",
+            "su": "sugar_grade",
+            "rbc": "red_blood_cells",
+            "pc": "pus_cells",
+            "pcc": "pus_cell_clumps",
+            "ba": "bacteria",
+            "bgr": "blood_glucose_random",
+            "bu": "blood_urea",
+            "sc": "serum_creatinine",
+            "sod": "sodium",
+            "pot": "potassium",
+            "hemo": "hemoglobin",
+            "pcv": "packed_cell_volume",
+            "wbcc": "white_cell_count",
+            "rbcc": "red_cell_count",
+            "htn": "hypertension",
+            "dm": "diabetes_mellitus",
+            "cad": "coronary_artery_disease",
+            "appet": "appetite",
+            "pe": "pedal_edema",
+            "ane": "anemia",
+            "class": "diagnosis",
+        }
+    )
+    # The source has stray tabs around a few of its words.
+    words = frame.select_dtypes(exclude="number").columns
+    frame[words] = frame[words].apply(lambda column: column.str.strip())
+    frame.insert(0, "patient_id", range(1, len(frame) + 1))
+    folder = out / "datasets" / "kidney"
+    write(
+        folder,
+        {
+            "kidney_patients.csv": frame,
+            "README.md": DATA_README.format(
+                title="Chronic kidney disease patients",
+                what="400 patients of a hospital in India, followed for two months: blood pressure (mm Hg), urine dipstick grades, blood glucose (mg/dL), urea (mg/dL), creatinine (mg/dL), sodium and potassium (mEq/L), hemoglobin (g/dL), cell counts, comorbidities, and whether they have chronic kidney disease (diagnosis, ckd or notckd). An empty value was not recorded. It has no sex column, so equations that need one do not apply.",
+                source="Rubini L, Soundarapandian P, Eswaran P. Chronic Kidney Disease, UCI Machine Learning Repository, 2015. doi:10.24432/C5G020. CC BY 4.0.",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="Chronic kidney disease patients",
+        description="400 patients of a hospital in India: urine and blood tests, comorbidities, and whether they have chronic kidney disease (UCI).",
+        message="Chronic Kidney Disease, as the UCI repository has it, its columns named for what they measure",
+    )
+    return frame
+
+
+def hepatitis_c(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    archive = zipfile.ZipFile(io.BytesIO(fetch("hepatitis-c", cache)))
+    frame = pd.read_csv(io.BytesIO(archive.read("hcvdat0.csv")), index_col=0).rename(
+        columns={
+            "Category": "category",
+            "Age": "age",
+            "Sex": "sex",
+            "ALB": "albumin",
+            "ALP": "alkaline_phosphatase",
+            "ALT": "alt",
+            "AST": "ast",
+            "BIL": "bilirubin",
+            "CHE": "cholinesterase",
+            "CHOL": "cholesterol",
+            "CREA": "creatinine",
+            "GGT": "ggt",
+            "PROT": "protein",
+        }
+    )
+    frame["category"] = frame["category"].str.replace(r"^\w+=", "", regex=True)
+    frame.insert(0, "person_id", range(1, len(frame) + 1))
+    folder = out / "datasets" / "hepatitis-c"
+    write(
+        folder,
+        {
+            "hepatitis_c.csv": frame,
+            "README.md": DATA_README.format(
+                title="Hepatitis C laboratory panel",
+                what="615 blood donors and people with hepatitis C at Hannover Medical School: age, sex, ten laboratory values (albumin and protein in g/L; ALP, ALT, AST and GGT in U/L; bilirubin and creatinine in umol/L; cholinesterase in kU/L; cholesterol in mmol/L), and category: Blood Donor, suspect Blood Donor, Hepatitis, Fibrosis or Cirrhosis.",
+                source="Lichtinghagen R, Pietsch D, Bantel H, Manns MP, Brand K, Bahr MJ. The Enhanced Liver Fibrosis (ELF) score: normal values, influence factors and proposed cut-off values. J Hepatol 2013;59(2):236-242. HCV data, UCI Machine Learning Repository, 2020. doi:10.24432/C5D612. CC BY 4.0.",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="Hepatitis C laboratory panel",
+        description="615 blood donors and people with hepatitis C: ten laboratory values and how far the liver disease has gone, from hepatitis to fibrosis to cirrhosis (UCI).",
+        message="HCV data, as the UCI repository has it, its columns named for what they measure",
+    )
+    return frame
+
+
+def biliary_cirrhosis(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    raw = pd.read_csv(io.BytesIO(fetch("biliary-cirrhosis", cache)))
+    frame = pd.DataFrame(
+        {
+            "patient_id": raw["ID"],
+            "followup_days": raw["N_Days"],
+            "status": raw["Status"].map({"D": "died", "C": "alive", "CL": "transplanted"}),
+            "drug": raw["Drug"],
+            "age_years": (raw["Age"] / 365.25).round(1),
+            "sex": raw["Sex"],
+            "ascites": raw["Ascites"],
+            "hepatomegaly": raw["Hepatomegaly"],
+            "spiders": raw["Spiders"],
+            "edema": raw["Edema"],
+            "bilirubin_mg_dl": raw["Bilirubin"],
+            "cholesterol_mg_dl": raw["Cholesterol"],
+            "albumin_g_dl": raw["Albumin"],
+            "urine_copper_ug_day": raw["Copper"],
+            "alk_phos_u_l": raw["Alk_Phos"],
+            "ast_u_ml": raw["SGOT"],
+            "triglycerides_mg_dl": raw["Tryglicerides"],
+            "platelets_k_ul": raw["Platelets"],
+            "prothrombin_s": raw["Prothrombin"],
+            "histologic_stage": raw["Stage"],
+        }
+    )
+    folder = out / "datasets" / "biliary-cirrhosis"
+    write(
+        folder,
+        {
+            "biliary_cirrhosis.csv": frame,
+            "README.md": DATA_README.format(
+                title="Primary biliary cirrhosis trial",
+                what="The 418 patients of the Mayo Clinic's trial of D-penicillamine for primary biliary cirrhosis, 1974-1984: how long each was followed (followup_days) and how it ended (died, transplanted, or alive at the end), the laboratory values at entry, and the histologic stage. edema is N for none, S for edema without diuretics or resolved by them, Y for edema despite them. The last 112 took part in the follow-up only, so their drug and some values are empty.",
+                source="Dickson ER, Grambsch PM, Fleming TR, Fisher LD, Langworthy A. Prognosis in primary biliary cirrhosis: model for decision making. Hepatology 1989;10(1):1-7. Cirrhosis Patient Survival Prediction, UCI Machine Learning Repository, 2023. doi:10.24432/C5R02G. CC BY 4.0.",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="Primary biliary cirrhosis trial",
+        description="The Mayo Clinic's 418 patients with primary biliary cirrhosis: laboratory values at entry, histologic stage, and how long each survived (UCI).",
+        message="Cirrhosis Patient Survival, as the UCI repository has it, age in years and columns named for what they measure",
+    )
+    return frame
+
+
+def beta_cells(cache: pathlib.Path, out: pathlib.Path) -> pd.DataFrame:
+    """The GEO dataset in long form: a row per gene and donor, probes of one gene averaged."""
+    lines = gzip.decompress(fetch("beta-cells", cache)).decode().splitlines()
+    condition: dict[str, str] = {}
+    about = ""
+    for line in lines:
+        if line.startswith("!subset_description"):
+            about = line.split("=", 1)[1].strip()
+        elif line.startswith("!subset_sample_id"):
+            for sample in line.split("=", 1)[1].split(","):
+                condition[sample.strip()] = about
+    begin, end = lines.index("!dataset_table_begin"), lines.index("!dataset_table_end")
+    table = pd.read_csv(io.StringIO("\n".join(lines[begin + 1 : end])), sep="\t")
+    samples = [column for column in table.columns if column in condition]
+    # A control, or a probe with no gene, has its own name or a sequence's accession where the gene would be.
+    named = (table["IDENTIFIER"] != table["ID_REF"]) & ~table["IDENTIFIER"].str.fullmatch(r"--.*|LOC\d+|[A-Z]{1,2}\d{5,8}")
+    genes = table[named].groupby("IDENTIFIER")[samples].mean()
+    frame = genes.reset_index().melt(id_vars="IDENTIFIER", var_name="sample", value_name="signal")
+    frame = frame.rename(columns={"IDENTIFIER": "gene"})
+    frame.insert(2, "condition", frame["sample"].map(condition))
+    frame["signal"] = frame["signal"].round(2)
+    folder = out / "datasets" / "beta-cells"
+    write(
+        folder,
+        {
+            "beta_cell_expression.csv": frame.sort_values(["gene", "sample"]),
+            "README.md": DATA_README.format(
+                title="Beta-cell gene expression in type 2 diabetes",
+                what=f"Pancreatic beta cells laser-captured from 10 donors with type 2 diabetes and 10 without, measured on Affymetrix arrays: {genes.shape[0]:,} genes, a row per gene and donor. signal is the array's MAS5 value, averaged over the gene's probes; condition is type 2 diabetes or non-diabetic control.",
+                source="Marselli L, Thorne J, Dahiya S, et al. Gene expression profiles of beta-cell enriched tissue obtained by laser capture microdissection from subjects with type 2 diabetes. PLoS One 2010;5(7):e11499. NCBI GEO GDS3782 (GSE20966).",
+            ),
+        },
+    )
+    card(
+        folder,
+        name="Beta-cell gene expression in T2D",
+        description=f"Pancreatic beta cells of 10 donors with type 2 diabetes and 10 without: expression of {genes.shape[0]:,} genes (Marselli et al. 2010, NCBI GEO).",
+        message="GEO dataset GDS3782 in long form, probes of a gene averaged",
+    )
+    return frame
+
+
 DATA_README = """# {title}
 
 {what}
@@ -706,12 +1057,14 @@ def simple_classifier(
     train, test, train_label, test_label = train_test_split(
         frame[features], label, test_size=0.2, random_state=SEED, stratify=label
     )
-    prepare = ColumnTransformer(
+    numbers = Pipeline([("fill", SimpleImputer(strategy="median")), ("scale", StandardScaler())])
+    words = Pipeline(
         [
-            ("numbers", StandardScaler(), numeric),
-            ("categories", OneHotEncoder(handle_unknown="ignore"), categories),
+            ("fill", SimpleImputer(strategy="constant", fill_value="unknown")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore")),
         ]
     )
+    prepare = ColumnTransformer([("numbers", numbers, numeric), ("categories", words, categories)])
     model = Pipeline([("prepare", prepare), ("fit", LogisticRegression(max_iter=2000))])
     model.fit(train, train_label)
     risk = model.predict_proba(test)[:, 1]
@@ -754,7 +1107,7 @@ MODEL_README = """# {name}
 
 A logistic regression fitted with scikit-learn {sklearn} on {train} rows, and checked on {test} rows it never saw: AUC {test_auc}, accuracy {test_accuracy}.
 
-It reads {columns}.
+It reads {columns}. A missing number is read as the median of the rows it was fitted on, a missing category as a category of its own.
 """
 
 
@@ -800,6 +1153,195 @@ def more_models(early: pd.DataFrame, indicators: pd.DataFrame, retina: pd.DataFr
     }
 
 
+def more_disease_models(panel: pd.DataFrame, patients: pd.DataFrame, people: pd.DataFrame, out: pathlib.Path) -> dict:
+    """What can be learned from the population survey, the kidney patients and the hepatitis C panel."""
+    undiagnosed = panel[(panel["diagnosed_diabetes"] != "yes") & panel["hba1c_pct"].notna()]
+    known = people[people["category"] != "suspect Blood Donor"]
+    tests = [c for c in patients.select_dtypes("number").columns if c != "patient_id"]
+    answers = ["hypertension", "diabetes_mellitus", "coronary_artery_disease", "appetite", "pedal_edema", "anemia"]
+    panel_values = ["albumin", "alkaline_phosphatase", "alt", "ast", "bilirubin", "cholinesterase", "cholesterol", "creatinine", "ggt", "protein"]
+    return {
+        "undiagnosed-diabetes": simple_classifier(
+            undiagnosed,
+            (undiagnosed["hba1c_pct"] >= 6.5).astype(int),
+            out,
+            "undiagnosed-diabetes",
+            ["age_years", "bmi", "waist_cm", "systolic_bp"],
+            ["sex", "family_history_diabetes", "ever_high_bp"],
+            ("undiagnosed_predicted", "undiagnosed_risk"),
+            name="Undiagnosed diabetes risk",
+            what="Whether a US adult never told of diabetes has it unknowingly (HbA1c of 6.5% or more), from a clinic visit with no blood test. Few do, so read the risk: at a threshold of 0.5 it rarely says yes.",
+        ),
+        "kidney": simple_classifier(
+            patients,
+            (patients["diagnosis"] == "ckd").astype(int),
+            out,
+            "kidney",
+            tests,
+            answers,
+            ("ckd_predicted", "ckd_risk"),
+            name="Chronic kidney disease detector",
+            what="Whether a patient has chronic kidney disease, from blood and urine tests and comorbidities. Fitted on 400 patients of one hospital, so treat its figures as provisional.",
+        ),
+        "hepatitis-c": simple_classifier(
+            known,
+            (known["category"] != "Blood Donor").astype(int),
+            out,
+            "hepatitis-c",
+            ["age", *panel_values],
+            ["sex"],
+            ("liver_disease_predicted", "liver_disease_risk"),
+            name="Hepatitis C liver disease detector",
+            what="Whether someone has hepatitis C liver disease rather than being a healthy donor, from age, sex and ten laboratory values. Fitted on one centre's patients, the donors far outnumbering the sick.",
+        ),
+    }
+
+
+def worked(module, examples: list[tuple[dict, dict]], name: str) -> None:
+    """Stops if an equation disagrees with an example worked by hand."""
+    for row, expected in examples:
+        said = module.predict(None, pd.DataFrame([row])).iloc[0]
+        for column, value in expected.items():
+            if said[column] != value:
+                raise SystemExit(f"{name}: {row} gives {column} {said[column]}, not {value}")
+
+
+def equation(out: pathlib.Path, folder: str, file: str, name: str, what: str, reads: list, adds: list, examples: list) -> str:
+    """A published equation as a model version: its file, a card, and what it reads and adds."""
+    source = (EQUATIONS / file).read_bytes()
+    spec = importlib.util.spec_from_file_location(file, EQUATIONS / file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    worked(module, examples, name)
+    target = out / "models" / folder
+    write(
+        target,
+        {
+            "model.py": source,
+            "README.md": EQUATION_README.format(
+                name=name,
+                what=what,
+                doc=module.__doc__.strip(),
+                reads=", ".join(f"`{column}`" for column, _ in reads),
+                adds=", ".join(f"`{column}`" for column, _ in adds),
+            ),
+            "contract.json": json.dumps(contract("python", "model.py", reads, adds), indent=2) + "\n",
+        },
+    )
+    card(
+        target,
+        name=name,
+        description=what,
+        spec={"framework": "python", "format": "python", "task": "clinical equation"},
+        message="The published equation, checked against an example worked by hand",
+        metrics={"checked_examples": len(examples)},
+    )
+    return name
+
+
+EQUATION_README = """# {name}
+
+{what}
+
+A published clinical equation, computed as written: nothing here was fitted.
+
+{doc}
+
+It reads {reads}, and adds {adds}. A row missing any of what it reads gets no value.
+"""
+
+
+def clinical_equations(out: pathlib.Path) -> list[str]:
+    return [
+        equation(
+            out,
+            "egfr",
+            "ckd_epi.py",
+            "CKD-EPI 2021 eGFR",
+            "Estimated kidney function (eGFR, mL/min/1.73 m2) and the CKD stage it means, from age, sex and serum creatinine: the race-free equation recommended in the US since 2021.",
+            [("age_years", "integer"), ("sex", "string"), ("creatinine_mg_dl", "double")],
+            [("egfr", "double"), ("ckd_stage", "string")],
+            [
+                ({"age_years": 50, "sex": "female", "creatinine_mg_dl": 1.0}, {"egfr": 68.6, "ckd_stage": "G2"}),
+                ({"age_years": 50, "sex": "male", "creatinine_mg_dl": 1.0}, {"egfr": 91.7, "ckd_stage": "G1"}),
+                ({"age_years": 70, "sex": "male", "creatinine_mg_dl": 2.5}, {"egfr": 27.0, "ckd_stage": "G4"}),
+                ({"age_years": 30, "sex": "female", "creatinine_mg_dl": 0.6}, {"egfr": 123.8, "ckd_stage": "G1"}),
+            ],
+        ),
+        equation(
+            out,
+            "kidney-failure",
+            "kfre.py",
+            "Kidney failure risk (KFRE)",
+            "The risk of kidney failure within two and five years for someone with an eGFR under 60, from age, sex, eGFR and the urine albumin-to-creatinine ratio: the 4-variable equation, North American calibration. Run it after CKD-EPI 2021 eGFR, which gives the eGFR it reads.",
+            [("age_years", "integer"), ("sex", "string"), ("egfr", "double"), ("uacr_mg_g", "double")],
+            [("kidney_failure_risk_2y", "double"), ("kidney_failure_risk_5y", "double")],
+            [
+                (
+                    {"age_years": 60, "sex": "male", "egfr": 30.0, "uacr_mg_g": 300.0},
+                    {"kidney_failure_risk_2y": 0.0863, "kidney_failure_risk_5y": 0.2456},
+                ),
+                (
+                    {"age_years": 70, "sex": "female", "egfr": 45.0, "uacr_mg_g": 30.0},
+                    {"kidney_failure_risk_2y": 0.0038, "kidney_failure_risk_5y": 0.0117},
+                ),
+            ],
+        ),
+        equation(
+            out,
+            "fib4",
+            "fib4.py",
+            "FIB-4 liver fibrosis index",
+            "How likely advanced liver fibrosis is, from age, AST, ALT and platelets: under 1.3 low risk, 2.67 or more high.",
+            [("age_years", "integer"), ("ast_u_l", "double"), ("alt_u_l", "double"), ("platelets_k_ul", "double")],
+            [("fib4", "double"), ("fibrosis_band", "string")],
+            [
+                ({"age_years": 50, "ast_u_l": 40.0, "alt_u_l": 25.0, "platelets_k_ul": 200.0}, {"fib4": 2.0, "fibrosis_band": "indeterminate"}),
+            ],
+        ),
+        equation(
+            out,
+            "homa",
+            "homa.py",
+            "HOMA insulin resistance",
+            "Insulin resistance (HOMA-IR) and beta-cell function (HOMA-beta) from fasting glucose and insulin.",
+            [("fasting_glucose_mg_dl", "double"), ("fasting_insulin_uu_ml", "double")],
+            [("homa_ir", "double"), ("homa_beta", "double")],
+            [
+                ({"fasting_glucose_mg_dl": 100.0, "fasting_insulin_uu_ml": 10.0}, {"homa_ir": 2.47, "homa_beta": 97.3}),
+            ],
+        ),
+        equation(
+            out,
+            "fatty-liver",
+            "fatty_liver_index.py",
+            "Fatty Liver Index",
+            "Whether fatty liver is likely, from triglycerides, BMI, GGT and the waist: under 30 rules it out, 60 or more rules it in.",
+            [("triglycerides_mg_dl", "double"), ("bmi", "double"), ("ggt_u_l", "double"), ("waist_cm", "double")],
+            [("fatty_liver_index", "double"), ("fatty_liver_band", "string")],
+            [
+                (
+                    {"triglycerides_mg_dl": 150.0, "bmi": 30.0, "ggt_u_l": 40.0, "waist_cm": 100.0},
+                    {"fatty_liver_index": 75.9, "fatty_liver_band": "ruled in"},
+                ),
+            ],
+        ),
+        equation(
+            out,
+            "mayo-pbc",
+            "mayo_pbc.py",
+            "Mayo PBC risk score",
+            "The prognosis of a patient with primary biliary cirrhosis, from age, bilirubin, albumin, prothrombin time and edema: the higher, the worse.",
+            [("age_years", "double"), ("bilirubin_mg_dl", "double"), ("albumin_g_dl", "double"), ("prothrombin_s", "double"), ("edema", "string")],
+            [("mayo_risk", "double")],
+            [
+                ({"age_years": 50.0, "bilirubin_mg_dl": 1.0, "albumin_g_dl": 3.5, "prothrombin_s": 10.5, "edema": "N"}, {"mayo_risk": 4.39}),
+                ({"age_years": 60.0, "bilirubin_mg_dl": 5.0, "albumin_g_dl": 3.0, "prothrombin_s": 12.0, "edema": "Y"}, {"mayo_risk": 7.76}),
+            ],
+        ),
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -821,13 +1363,22 @@ def main() -> None:
     early = early_stage(cache, args.out)
     indicators = health_indicators(cache, args.out)
     retina = retinopathy(cache, args.out)
+    panel = nhanes(cache, args.out)
+    patients = kidney(cache, args.out)
+    people = hepatitis_c(cache, args.out)
+    cirrhosis = biliary_cirrhosis(cache, args.out)
+    expression = beta_cells(cache, args.out)
     print(
-        f"datasets: {len(team)} women, {len(encounters)} encounters, {len(frame)} patients, {len(readings)} CGM readings"
+        f"datasets: {len(team)} women, {len(encounters)} encounters, {len(frame)} patients, {len(readings)} CGM readings, "
+        f"{len(panel)} NHANES adults, {len(patients)} kidney patients, {len(people)} in the hepatitis C panel, "
+        f"{len(cirrhosis)} with cirrhosis, {len(expression)} expression rows"
     )
     print("onset risk", onset_risk(team, screening, args.out))
     print("readmission risk", readmission_risk(encounters, args.out))
     print("progression", progression_model(frame, args.out))
     print("more", more_models(early, indicators, retina, args.out))
+    print("disease models", more_disease_models(panel, patients, people, args.out))
+    print("equations", clinical_equations(args.out))
     print(
         f"written to {args.out}, models fitted with scikit-learn {sklearn.__version__}"
     )

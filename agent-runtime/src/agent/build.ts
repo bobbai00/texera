@@ -25,6 +25,7 @@ import {
   runReactLoop,
 } from "../run/react-loop.ts";
 import { type ChatPeople, chatContext } from "./chat-context.ts";
+import { nameFor } from "./chat-name.ts";
 import { candidatesOf, HANDOFF_TOOL, type HandoffCandidate, handoffTool } from "./handoff.ts";
 import {
   type McpMount,
@@ -97,6 +98,8 @@ export interface BuiltAgent {
   temperature: number;
   /** Runs one loop; the generator's return value says how it ended. */
   run(input: RunInput): AsyncGenerator<LoopEvent, LoopOutcome>;
+  /** A name for the chat, from what was just asked in it. */
+  nameFor(asked: string): Promise<string | undefined>;
   close(): Promise<void>;
 }
 
@@ -207,6 +210,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
         toolApproval: approvalOf(input.work, mcp.changes),
         renderContext: (state, step) => `${renderTurnState(state, step)}\n\n${chat}`,
       }),
+    nameFor: (asked) => nameFor(model, asked, input.app),
     close: () => mcp.close(),
   };
 }

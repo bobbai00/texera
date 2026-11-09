@@ -31,7 +31,7 @@ Bob) goes through a guard fixture that puts it back.
 | Running a workflow in three phases: the dry run's plan is the execution's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution, through later executions and the unit's idle release; an execution deleted with its tables | `test_results.py` | slow | 1 min |
 | A project's limit expires its own old results, nobody else's; the record stays; a kept execution does not expire; Texera's admins sweep | `test_results.py` | | 20 s |
-| A unit made from a profile has its packages: a Python function that imports one fails on the deployment's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned; on Compose the unit is the deployment's own with the profile's packages | `test_profile.py` | slow | 3 min on a cluster, seconds on Compose |
+| A unit made from a profile has its packages: a Python function that imports one fails on the public unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned; on Compose the unit is the deployment's own with the profile's packages | `test_profile.py` | slow | 3 min on a cluster, seconds on Compose |
 | A custom operator as a resource, used by URI and run, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 1 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
 | What others shared with a person is one list whatever its kind and project (a project, a chat, a workflow, a dataset), not what is inside a project they were given; a grant taken back takes the thing off it | `test_sharing.py` | | 5 s |
@@ -78,7 +78,7 @@ collapsed to a rail that lies over nothing, a
 chat's model, unit and add-ons chosen in its box, a turn that fails and says why across a
 reload, a long first answer that ends up on screen, the operator page with its versions and
 sharing, a computing unit made from a profile with a size of its own (its page says how it
-differs from the profile, and a package added there is saved on it), the deployment's unit
+differs from the profile, and a package added there is saved on it), the public unit
 saved as a profile of one's own in the project one works in, a project's Settings tab saying what it
 inherits from and where each value comes from (its admin sends it back to Texera, and working in it
 the app wears its look), a warehouse made from its page and kept as its
@@ -121,6 +121,15 @@ on a double click, and says "ran v1" once the workflow moves on.
 workflow and its executions as cards with the arrows' words, then the file, the version that
 ran and each result; a person the workflow is shared with, without its dataset, sees the graph
 once and steadily (it used to blink without end), the dataset drawn "Not shared with you".
+
+`diabetes.spec.ts`, with the real model and two browsers, has the demo's two stories. In the first
+Alice asks what models and data there are and gets cards, the chat names itself, she picks one of
+each and asks for an inference, the agent asks where it runs in the words Public unit, Small, Medium
+and Large, she picks Small and it runs on that unit over at least a thousand people; she shares the
+chat from its header, Bob finds it under Shared with me and sees all of it with the results, each
+sees the other on the graph, Bob asks the agent and Alice sees his words, his turn and the answer
+with no reload, her note reaches him without asking the agent, everything is there after a reload,
+and they edit the workflow together. In the second she brings a file to the chat.
 
 `diabetes.spec.ts` starts on the new-chat page: the project's logo over four cards, one of which is seen to roll on to its next resource.
 

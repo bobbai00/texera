@@ -9,7 +9,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Button, cn, Skeleton } from "@texera/ui";
 import { ArrowLeft, ChevronRight } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { reducedMotion } from "@texera/ui";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { executionQuery } from "../execution/queries";
 import type { Hold } from "../live/holds";
 import { resourceQuery } from "../queries";
@@ -40,8 +41,6 @@ export function rectWithin(el: Element, root: Element): Rect {
   return { x: a.left - b.left, y: a.top - b.top, w: a.width, h: a.height };
 }
 
-const reducedMotion = () =>
-  typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 const clipTo = (r: Rect, W: number, H: number) =>
   `inset(${Math.max(0, r.y)}px ${Math.max(0, W - r.x - r.w)}px ${Math.max(0, H - r.y - r.h)}px ${Math.max(0, r.x)}px round 12px)`;
 const WHOLE = "inset(0px 0px 0px 0px round 0px)";
@@ -55,7 +54,6 @@ export function FocusLayer({
   onGo,
   onClose,
   heldBy,
-  render = entry => <EntryView entry={entry} view={view} onGo={onGo} heldBy={heldBy?.(entry)} />,
 }: {
   /** What the person went into, in order; never empty. */
   trail: FocusEntry[];
@@ -72,8 +70,6 @@ export function FocusLayer({
   onClose: () => void;
   /** Who else holds an entry, if someone does. */
   heldBy?: (entry: FocusEntry) => Hold | undefined;
-  /** What an entry shows: its view. */
-  render?: (entry: FocusEntry) => ReactNode;
 }) {
   const layer = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -217,7 +213,7 @@ export function FocusLayer({
         </div>
       )}
       <div ref={content} className="relative flex min-h-0 flex-1 flex-col overflow-hidden" key={keyOf(top)}>
-        {render(top)}
+        <EntryView entry={top} view={view} onGo={onGo} heldBy={heldBy?.(top)} />
       </div>
     </div>
   );
@@ -245,7 +241,7 @@ function EntryName({ entry }: { entry: FocusEntry }) {
 }
 
 /** The view an entry shows. */
-export function EntryView({
+function EntryView({
   entry,
   view,
   onGo,

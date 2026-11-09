@@ -47,6 +47,7 @@ import { memo, type ReactElement, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import { UriChip } from "../shell/Chips";
 import { useNamed } from "../shell/RanOn";
+import { isUri } from "../uri";
 import { toneOf } from "./Cursors";
 import { type Canvas, useCanvas } from "./canvas-view";
 import type { EditorStore } from "./editor";
@@ -109,13 +110,13 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
   const editor = readonly || heldBy ? undefined : canvas.editor;
   const title = titleOf(data, schema?.userFriendlyName);
   // Under the name: the settings in one line; with each on its own line below, the type instead.
-  const named = useNamed(lines.find(l => l.short.startsWith("texera://"))?.short);
+  const named = useNamed(lines.find(l => isUri(l.short))?.short);
   const under =
     editing || detailed
       ? title === schema?.userFriendlyName
         ? ""
         : (schema?.userFriendlyName ?? "")
-      : summarize(lines.map(l => (l.short.startsWith("texera://") ? { ...l, short: named } : l)));
+      : summarize(lines.map(l => (isUri(l.short) ? { ...l, short: named } : l)));
   const ports = Math.max(data.inputs.length, data.outputs.length);
   // Just arrived from elsewhere (the agent, another person): pointed out for a moment.
   const arrived = canvas.arrived?.has(id) === true;
@@ -151,8 +152,7 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
           className="absolute -top-2.5 right-3 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap text-white shadow-xs"
           style={{ background: toneOf(heldBy.pid) }}
           title={`${heldBy.name} has this. You can look at it, not change it.`}
-          data-held-by={heldBy.name}
-          data-held-doing={heldBy.doing}>
+          data-held-by={heldBy.name}>
           {heldBy.name} is {heldBy.doing}
         </span>
       )}

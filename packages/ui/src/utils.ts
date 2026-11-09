@@ -54,3 +54,26 @@ export function formatDuration(from: string | undefined, to: string | undefined)
 
 /** The first characters of a UUID, for labels where the whole id would be noise. */
 export const shortId = (id: string) => id.slice(0, 8);
+
+/** What this browser kept under a key, if it still reads as what is wanted. */
+export function recalled<T>(key: string, reads: (saved: unknown) => T | undefined): T | undefined {
+  try {
+    return reads(JSON.parse(localStorage.getItem(key) ?? "null"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keeps a value in this browser under a key; undefined forgets it. */
+export function keepHere(key: string, value: unknown): void {
+  try {
+    if (value === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* kept for this page only */
+  }
+}
+
+/** Whether the person asked for less motion. */
+export const reducedMotion = () =>
+  typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;

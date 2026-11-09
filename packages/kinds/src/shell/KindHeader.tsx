@@ -6,6 +6,7 @@ import type { ResourceRef } from "../types";
 import { useViewHost } from "./host";
 import { KindIcon } from "./KindIcon";
 import { useOpenResource } from "./navigation";
+import { nameKeys } from "./rename";
 import { Presence } from "./Presence";
 import { ShareButton } from "./Share";
 
@@ -100,13 +101,7 @@ export function EditableName({
                 if (sizer.current) sizer.current.textContent = value;
               });
           }}
-          onKeyDown={e => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") {
-              e.currentTarget.value = value;
-              e.currentTarget.blur();
-            }
-          }}
+          onKeyDown={nameKeys(value)}
           className="col-start-1 row-start-1 block w-full min-w-8 truncate rounded bg-transparent text-sm font-semibold outline-none focus:bg-accent/50 disabled:opacity-100"
           data-resource-name
         />
@@ -120,8 +115,7 @@ export function EditableName({
             input.current?.focus();
             input.current?.select();
           }}
-          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/name:opacity-100 hover:text-foreground focus-visible:opacity-100"
-          data-rename-name>
+          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/name:opacity-100 hover:text-foreground focus-visible:opacity-100">
           <Pencil className="size-3.5" />
         </button>
       )}

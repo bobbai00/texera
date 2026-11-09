@@ -5,7 +5,7 @@
 import type { ConversationGraph } from "@texera/catalog-client/types";
 import { cn } from "@texera/ui";
 import { List, Network } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { useHolds } from "../live/room";
 import { FromThisChat } from "../shell/FromThisChat";
 import { type ViewHost, ViewHostContext } from "../shell/host";
@@ -14,7 +14,7 @@ import { entryFor, entryForRef, type FocusEntry, pushed } from "./focus-trail";
 import { viewOf } from "./model";
 import { type CommentOn, ResourceGraph } from "./ResourceGraph";
 
-export function ResourcePanel({
+export const ResourcePanel = memo(function ResourcePanel({
   rid,
   graph,
   className,
@@ -118,4 +118,4 @@ export function ResourcePanel({
       </section>
     </ViewHostContext.Provider>
   );
-}
+});

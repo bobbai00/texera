@@ -1,7 +1,7 @@
 // Queries shared by every kind: the caller, a project's settings, envelopes, versions, lineage,
 // grants, principals, search, units and operator types.
 
-import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { type QueryClient, queryOptions, useQueries } from "@tanstack/react-query";
 import { evaluationEvaluate, operatorsList, resourcesRead, resourcesResolve, resourcesSearch } from "@texera/catalog-client";
 import {
   computingUnitsAvailableOptions,
@@ -18,7 +18,7 @@ import {
 } from "@texera/catalog-client/query";
 import type { LineageDirection, Resource, ResourceKind, SettingSource } from "@texera/catalog-client/types";
 import { schemaMap } from "@texera/workflow-model";
-import type { ResourceRef } from "./types";
+import type { KindId, ResourceRef } from "./types";
 import { baseUri } from "./uri";
 
 export const meQuery = () => ({ ...meGetOptions(), staleTime: 5 * 60_000 });
@@ -103,6 +103,30 @@ export const searchAllQuery = (filter: Omit<SearchFilter, "limit">) =>
         const page = (await resourcesSearch({ query: { ...filter, limit: 200, ...(cursor ? { cursor } : {}) }, throwOnError: true })).data;
         items.push(...page.items);
         if (!page.nextCursor || items.length >= LIST_AT_MOST) return { items };
+        cursor = page.nextCursor;
+      }
+    },
+  });
+
+/** What a project holds of some kinds, asked for again every few seconds: what the agent and the others add arrives while the page is open. */
+export function useHoldings(project: string, kinds: readonly KindId[]) {
+  const answers = useQueries({ queries: kinds.map(kind => ({ ...searchAllQuery({ kind, project }), refetchInterval: 5_000 })) });
+  return {
+    of: (kind: KindId) => answers[kinds.indexOf(kind)]?.data?.items ?? [],
+    isPending: answers.some(answer => answer.isPending),
+  };
+}
+
+/** Every operator usable in a scope, without the schemas an editor needs: for what lists them. */
+export const operatorListQuery = (scope: string) =>
+  queryOptions({
+    queryKey: [{ _id: "resourcesSearch", operators: scope }],
+    queryFn: async () => {
+      const items: Resource[] = [];
+      for (let cursor: string | undefined; ; ) {
+        const page = (await operatorsList({ query: { limit: 200, scope, cursor }, throwOnError: true })).data;
+        items.push(...page.items);
+        if (!page.nextCursor) return { items };
         cursor = page.nextCursor;
       }
     },

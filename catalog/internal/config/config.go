@@ -122,7 +122,7 @@ func FromEnv() (Config, error) {
 		LakeKeyPrefix:       env("TEXERA_LAKE_KEY_PREFIX", "warehouse"),
 		LineageCallbackURL:  env("TEXERA_LINEAGE_CALLBACK_URL", "http://localhost:8090/lineage/v1/events"),
 		StaticUnitEndpoint:  env("TEXERA_STATIC_UNIT_ENDPOINT", "http://localhost:28085"),
-		StaticUnitName:      env("TEXERA_STATIC_UNIT_NAME", "local unit"),
+		StaticUnitName:      env("TEXERA_STATIC_UNIT_NAME", "Public unit"),
 		StaticUnitClientID:  env("TEXERA_STATIC_UNIT_CLIENT_ID", "texera-unit"),
 		KubeNamespace:       env("TEXERA_KUBE_NAMESPACE", ""),
 		KubeUnitImage:       env("TEXERA_KUBE_UNIT_IMAGE", "texera/computing-unit-master:2.0-dev"),

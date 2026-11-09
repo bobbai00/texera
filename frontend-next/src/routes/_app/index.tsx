@@ -31,7 +31,7 @@ function NewChatPage() {
     );
   }
   return (
-    <div className="scrollbar-thin h-full overflow-y-auto" data-landing>
+    <div className="scrollbar-thin h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-6 px-6 py-8">
         <ProjectDeck rid={project} />
         <NewChat greeting={hello} onCreated={open} alone />

@@ -102,7 +102,7 @@ export const hereFacts = (status: { startable?: boolean; notHere?: string; sized
   status?.startable === false && status.notHere
     ? [`not here: ${status.notHere}`]
     : status?.sized === false
-      ? ["on this deployment's own unit"]
+      ? ["on the public unit"]
       : [];
 
 /** One way a node differs from its profile: a size, or a package added, removed or asked for otherwise. */

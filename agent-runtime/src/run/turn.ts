@@ -17,6 +17,7 @@ import type { Message as AGUIMessage, RunAgentInput, RunFinishedOutcome } from "
 import type { ToolSet } from "ai";
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
 import type { ChatPeople } from "../agent/chat-context.ts";
+import { UNNAMED_CHAT } from "../agent/chat-name.ts";
 import { HANDOFF_TOOL, handoffTarget } from "../agent/handoff.ts";
 import { serverOfTool } from "../agent/mcp-tools.ts";
 import { TurnContext } from "../agent/turn-context.ts";
@@ -112,6 +113,29 @@ async function writersOf(
   if (pids.length < 2) return undefined;
   const names = await Promise.all(pids.map((pid) => name(pid).catch(() => "someone")));
   return new Map(pids.map((pid, i) => [pid, names[i] as string]));
+}
+
+/**
+ * Names a chat that has no name yet from what was just asked, beside the turn: the person's chat
+ * does not wait for it, and if it fails the next message tries again. Someone who names the chat
+ * meanwhile keeps their name.
+ */
+async function nameChat(
+  deps: TurnDeps,
+  rid: string,
+  built: BuiltAgent,
+  asked: string,
+  auth: CatalogAuth,
+  log: Logger,
+): Promise<void> {
+  const unnamed = async () => (await deps.catalog.getConversation(rid, auth)).metadata.name === UNNAMED_CHAT;
+  try {
+    if (!(await unnamed())) return;
+    const name = await built.nameFor(asked);
+    if (name && (await unnamed())) await deps.catalog.renameConversation(rid, name, auth);
+  } catch (err) {
+    log.warn("could not name the chat", { error: (err as Error).message });
+  }
 }
 
 /** A person's answer to a change that waited for their approval. */
@@ -261,6 +285,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         work,
         attached: attachedFiles(history),
       });
+      if (hop === 0 && text) void nameChat(deps, rid, built, text, plain, log);
       let outcome: Awaited<ReturnType<BuiltAgent["run"]>["return"]> extends never
         ? never
         : import("./react-loop.ts").LoopOutcome;

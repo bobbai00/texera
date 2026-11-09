@@ -66,7 +66,6 @@ spec:
           env:
             - { name: TEXERA_DATABASE_URL, value: "postgres://texera:texera@postgres:5432/catalog?sslmode=disable" }
             - { name: TEXERA_SECRETS_URL, value: "http://openbao:8200" }
-            - { name: TEXERA_STATIC_UNIT_NAME, value: "cluster unit" }
             # Units of provider kubernetes become Deployments in this namespace.
             - name: TEXERA_KUBE_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }

@@ -76,7 +76,7 @@ export class CatalogClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST" | "PUT" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     auth: CatalogAuth,
     body?: unknown,
@@ -169,6 +169,10 @@ export class CatalogClient {
 
   getConversation(rid: string, auth: CatalogAuth): Promise<Conversation> {
     return this.request("GET", `${API}/conversations/${encodeURIComponent(rid)}`, auth);
+  }
+
+  renameConversation(rid: string, name: string, auth: CatalogAuth): Promise<unknown> {
+    return this.request("PATCH", `${API}/resources/${encodeURIComponent(rid)}`, auth, { name });
   }
 
   createConversation(name: string, template: string, auth: CatalogAuth): Promise<Conversation> {

@@ -17,8 +17,8 @@
 # under the License.
 
 """Puts a diabetes research team's project into a Texera stack: the datasets and models prepare.py
-wrote, the team's Python operators in operators/, workflows they made, a computing unit of the
-team's, and the teammate who works in it.
+wrote, the team's Python operators in operators/, workflows they made, and the teammate who
+works in it.
 
     python load.py --data ~/texera-diabetes                         # http://localhost:8088, alice's, bob on the team
     python load.py --data ~/texera-diabetes --gw http://localhost:28088
@@ -38,7 +38,6 @@ import base64
 import json
 import pathlib
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,14 +45,13 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 
 PROJECT = "Diabetes research"
-UNIT = "Team unit"
 # What this script puts in the project carries this label: the demo's own work does not, which is
 # how clean.py tells them apart.
 LOADED = "texera.demo"
 PROJECT_DESCRIPTION = (
-    "The diabetes team's data, models and tools: a cohort followed for diabetes onset, hospital "
-    "encounters with readmission, disease progression after a year, and a week of CGM of "
-    "adolescents with type 1 diabetes."
+    "The team's data, models and tools on diabetes, kidney and liver disease: cohorts followed for "
+    "onset and survival, hospital encounters, a national survey of US adults, gene expression of "
+    "beta cells, and the clinical equations the field uses."
 )
 # The operators' names as people say them, by the function each is.
 OPERATOR_NAMES = {
@@ -123,9 +121,13 @@ class Person:
         return out
 
 
-def named(person: Person, plural: str, project: str, name: str):
-    """The resource of a kind named so in the project, if there is one."""
-    query = urllib.parse.urlencode({"project": project, "limit": 500})
+def rid_of(uri: str) -> str:
+    return uri.split("/")[-1].split("@")[0]
+
+
+def named(person: Person, plural: str, project: str, name: str, where: str = "project"):
+    """The resource of a kind named so in the project, or what the project can use with `scope`, if there is one."""
+    query = urllib.parse.urlencode({where: project, "limit": 500})
     for item in person.must("GET", f"/{plural}?{query}")["items"]:
         if item["metadata"]["name"] == name:
             return item
@@ -204,27 +206,23 @@ def model(person: Person, project: str, folder: pathlib.Path) -> str:
     return made["metadata"]["uri"]
 
 
-def workflow(person: Person, project: str, name: str, description: str, file: str, step: dict) -> str:
-    """A workflow the team already made: a scan of a file, and one step that keeps its result."""
+def workflow(person: Person, project: str, name: str, description: str, file: str, steps: list[dict]) -> str:
+    """A workflow the team already made: a scan of a file, and steps in a line; the last keeps its result."""
     found = named(person, "workflows", project, name)
     if found:
         print(f"   {name}: there")
         return found["metadata"]["uri"]
+    scan = {"operatorID": "readings", "operatorType": "scan", "operatorProperties": {"file": file}}
+    line = [scan, *steps[:-1], {**steps[-1], "viewResult": True}]
     spec = {
-        "operators": [
-            {
-                "operatorID": "readings",
-                "operatorType": "scan",
-                "operatorProperties": {"file": file},
-            },
-            {"operatorID": "summary", "viewResult": True, **step},
-        ],
+        "operators": line,
         "links": [
             {
-                "linkID": "readings-summary",
-                "source": {"operatorID": "readings", "portID": "output-0"},
-                "target": {"operatorID": "summary", "portID": "input-0"},
+                "linkID": f"{source['operatorID']}-{target['operatorID']}",
+                "source": {"operatorID": source["operatorID"], "portID": "output-0"},
+                "target": {"operatorID": target["operatorID"], "portID": "input-0"},
             }
+            for source, target in zip(line, line[1:])
         ],
     }
     made = person.must(
@@ -236,77 +234,129 @@ def workflow(person: Person, project: str, name: str, description: str, file: st
     return made["metadata"]["uri"]
 
 
-def team_workflows(person: Person, project: str, datasets: dict[str, str], metrics: str) -> list[str]:
-    """The workflows the team already made, one over each of its main datasets."""
-    operator = person.must("GET", f"/operators/{metrics.rsplit('/', 1)[1]}")
-    made = [workflow(
-        person,
-        project,
-        "CGM metrics per adolescent",
-        "The consensus CGM metrics of each of the seven adolescents with type 1 diabetes.",
-        f"{datasets['cgm']}@1/files/cgm.csv",
-        {"operatorType": f"{metrics}@{operator['metadata']['head']}", "operatorProperties": {}},
-    )]
+def summary(by: list[str], outputs: list[str]) -> dict:
+    return {"operatorID": "summary", "operatorType": "aggregate", "operatorProperties": {"by": by, "outputs": outputs}}
+
+
+def team_workflows(
+    person: Person, project: str, datasets: dict[str, str], models: dict[str, str], metrics: str
+) -> list[str]:
+    """The workflows the team already made: one over each of its main datasets, some through its models."""
+    operator = person.must("GET", f"/operators/{rid_of(metrics)}")
+
+    def apply(folder: str) -> dict:
+        return {"operatorID": folder, "operatorType": "predict", "operatorProperties": {"model": f"{models[folder]}@1"}}
+
+    survey = "nhanes", "nhanes_2017_2018.csv"
+    made = [
+        workflow(
+            person,
+            project,
+            "CGM metrics per adolescent",
+            "The consensus CGM metrics of each of the seven adolescents with type 1 diabetes.",
+            f"{datasets['cgm']}@1/files/cgm.csv",
+            [{"operatorID": "summary", "operatorType": f"{metrics}@{operator['metadata']['head']}", "operatorProperties": {}}],
+        )
+    ]
     summaries = [
         (
             "Onset rate by pregnancies",
             "How often women were diagnosed within five years, by their number of pregnancies.",
-            "pima",
-            "pima_cohort.csv",
-            ["Pregnancies"],
-            ["women = count(*)", "onset_rate = avg(Outcome)"],
+            ("pima", "pima_cohort.csv"),
+            [summary(["Pregnancies"], ["women = count(*)", "onset_rate = avg(Outcome)"])],
         ),
         (
             "Readmission by HbA1c result",
             "Hospital encounters by the HbA1c result and whether the patient came back.",
-            "hospitals",
-            "encounters.csv",
-            ["A1Cresult", "readmitted"],
-            ["encounters = count(*)"],
+            ("hospitals", "encounters.csv"),
+            [summary(["A1Cresult", "readmitted"], ["encounters = count(*)"])],
         ),
         (
             "Diabetes by age band",
             "The share of US adults with diabetes or prediabetes, by the survey's age band.",
-            "health-indicators",
-            "health_indicators.csv",
-            ["Age"],
-            ["people = count(*)", "share_with_diabetes = avg(Diabetes_binary)"],
+            ("health-indicators", "health_indicators.csv"),
+            [summary(["Age"], ["people = count(*)", "share_with_diabetes = avg(Diabetes_binary)"])],
         ),
         (
             "Diagnosis by gender",
             "How many patients were diagnosed, and how old they were, by gender.",
-            "early-stage",
-            "early_stage.csv",
-            ["diagnosis", "gender"],
-            ["patients = count(*)", "mean_age = avg(age)"],
+            ("early-stage", "early_stage.csv"),
+            [summary(["diagnosis", "gender"], ["patients = count(*)", "mean_age = avg(age)"])],
         ),
         (
             "Retinopathy image findings",
             "What the retinal images with signs of retinopathy show, against those without.",
-            "retinopathy",
-            "retinal_features.csv",
-            ["signs_of_retinopathy"],
-            ["images = count(*)", "mean_microaneurysms = avg(microaneurysms_1)"],
+            ("retinopathy", "retinal_features.csv"),
+            [summary(["signs_of_retinopathy"], ["images = count(*)", "mean_microaneurysms = avg(microaneurysms_1)"])],
+        ),
+        (
+            "Known diabetes in US adults",
+            "How many US adults were told they have diabetes, and the HbA1c of each group.",
+            survey,
+            [summary(["diagnosed_diabetes"], ["people = count(*)", "mean_hba1c = avg(hba1c_pct)"])],
+        ),
+        (
+            "Kidney function of US adults",
+            "Each adult's eGFR by the CKD-EPI 2021 equation, and how many stand at each stage of chronic kidney disease.",
+            survey,
+            [apply("egfr"), summary(["ckd_stage"], ["people = count(*)", "mean_egfr = avg(egfr)"])],
+        ),
+        (
+            "Kidney failure risk by CKD stage",
+            "The five-year risk of kidney failure of the US adults with an eGFR under 60, by stage.",
+            survey,
+            [
+                apply("egfr"),
+                apply("kidney-failure"),
+                summary(["ckd_stage"], ["people = count(*)", "mean_risk_5y = avg(kidney_failure_risk_5y)"]),
+            ],
+        ),
+        (
+            "FIB-4 against measured liver stiffness",
+            "Whether the FIB-4 band of an adult goes with the stiffness of the liver measured by elastography.",
+            survey,
+            [apply("fib4"), summary(["fibrosis_band"], ["people = count(*)", "mean_stiffness_kpa = avg(liver_stiffness_kpa)"])],
+        ),
+        (
+            "Fatty Liver Index against measured steatosis",
+            "Whether the Fatty Liver Index goes with the fat measured in the liver by elastography.",
+            survey,
+            [apply("fatty-liver"), summary(["fatty_liver_band"], ["people = count(*)", "mean_cap = avg(liver_steatosis_cap)"])],
+        ),
+        (
+            "Kidney disease with and without diabetes",
+            "Patients by diabetes and chronic kidney disease, and their creatinine.",
+            ("kidney", "kidney_patients.csv"),
+            [summary(["diabetes_mellitus", "diagnosis"], ["patients = count(*)", "mean_creatinine = avg(serum_creatinine)"])],
+        ),
+        (
+            "Liver enzymes by hepatitis C stage",
+            "AST and ALT of donors and of people at each stage of hepatitis C liver disease.",
+            ("hepatitis-c", "hepatitis_c.csv"),
+            [summary(["category"], ["people = count(*)", "mean_ast = avg(ast)", "mean_alt = avg(alt)"])],
+        ),
+        (
+            "Mayo risk by how patients fared",
+            "The Mayo risk score of patients with primary biliary cirrhosis, by whether they died, were transplanted or lived.",
+            ("biliary-cirrhosis", "biliary_cirrhosis.csv"),
+            [apply("mayo-pbc"), summary(["status"], ["patients = count(*)", "mean_risk = avg(mayo_risk)"])],
+        ),
+        (
+            "Beta-cell expression by condition",
+            "The mean expression of each gene in beta cells of donors with and without type 2 diabetes.",
+            ("beta-cells", "beta_cell_expression.csv"),
+            [summary(["gene", "condition"], ["mean_signal = avg(signal)"])],
         ),
     ]
-    for name, description, folder, file, by, outputs in summaries:
-        made.append(
-            workflow(
-                person,
-                project,
-                name,
-                description,
-                f"{datasets[folder]}@1/files/{file}",
-                {"operatorType": "aggregate", "operatorProperties": {"by": by, "outputs": outputs}},
-            )
-        )
+    for name, description, (folder, file), steps in summaries:
+        made.append(workflow(person, project, name, description, f"{datasets[folder]}@1/files/{file}", steps))
     return made
 
 
 def mark(person: Person, uris: list[str]) -> None:
     """Labels what this script put in the project, keeping any other labels."""
     for uri in uris:
-        rid = uri.split("/")[-1].split("@")[0]
+        rid = rid_of(uri)
         labels = person.must("GET", f"/resources/{rid}")["metadata"].get("labels") or {}
         if LOADED not in labels:
             person.must("PATCH", f"/resources/{rid}", {"labels": {**labels, LOADED: "team"}})
@@ -340,9 +390,7 @@ def wear(person: Person, project: str, brand: dict, **defaults) -> None:
 def brand_agent(person: Person, project: str, brand_name: str) -> str:
     """The platform's agent, as the project's own under the brand's name."""
     name = f"{brand_name} Agent"
-    query = urllib.parse.urlencode({"scope": project, "limit": 100})
-    agents = person.must("GET", f"/agent-templates?{query}")["items"]
-    platform = next(a for a in agents if a["metadata"]["name"] == "Texera Agent")
+    platform = named(person, "agent-templates", project, "Texera Agent", where="scope")
     spec = json.loads(json.dumps(platform["spec"]).replace("Texera Agent", name))
     found = named(person, "agent-templates", project, name)
     if found:
@@ -359,31 +407,6 @@ def brand_agent(person: Person, project: str, brand_name: str) -> str:
     )
     print(f"   {name}")
     return made["metadata"]["uri"]
-
-
-def team_unit(person: Person, project: str, name: str, profile_name: str) -> str:
-    """A computing unit the team keeps in its project, from one of the profiles it can use."""
-    found = named(person, "computing-units", project, name)
-    if found:
-        print(f"   {name}: there")
-        return found["metadata"]["uri"]
-    query = urllib.parse.urlencode({"scope": project, "limit": 100})
-    profiles = person.must("GET", f"/profiles?{query}")["items"]
-    profile = next(p for p in profiles if p["metadata"]["name"] == profile_name)
-    made = person.must(
-        "POST",
-        "/computing-units/from-profile",
-        {"name": name, "parent": project, "profile": profile["metadata"]["uri"]},
-    )
-    print(f"   {name}: from the profile {profile_name}")
-    # The team's unit is ready when the demo starts: a unit still starting is not offered.
-    for _ in range(60):
-        unit = person.must("GET", f"/computing-units/{made['metadata']['rid']}")
-        if unit["status"].get("phase") == "ready":
-            print(f"   {name}: ready")
-            return made["metadata"]["uri"]
-        time.sleep(5)
-    sys.exit(f"{name} did not become ready in five minutes")
 
 
 def operator(person: Person, project: str, path: pathlib.Path) -> str:
@@ -445,11 +468,6 @@ def main() -> None:
     ap.add_argument("--team", default="bob", help="who else edits it; empty for nobody")
     ap.add_argument("--project", default=PROJECT, help="the project's name")
     ap.add_argument(
-        "--unit-profile",
-        default="python-default",
-        help="the profile of the team's computing unit",
-    )
-    ap.add_argument(
         "--sign-in-page",
         action="store_true",
         help="give the whole deployment the brand's look as well, as texera-admin",
@@ -489,17 +507,15 @@ def main() -> None:
         for folder in folders(args.data / "datasets")
     }
     print("== models")
-    models = [model(owner, project, folder) for folder in folders(args.data / "models")]
+    models = {folder.name: model(owner, project, folder) for folder in folders(args.data / "models")}
     print("== operators")
     operators = {
         path.stem: operator(owner, project, path)
         for path in sorted((HERE / "operators").glob("*.py"))
     }
     print("== workflows")
-    workflows = team_workflows(owner, project, datasets, operators["cgm_metrics"])
-    print("== the team's computing unit")
-    unit = team_unit(owner, project, UNIT, args.unit_profile)
-    loaded = [*datasets.values(), *models, *operators.values(), *workflows, unit]
+    workflows = team_workflows(owner, project, datasets, models, operators["cgm_metrics"])
+    loaded = [*datasets.values(), *models.values(), *operators.values(), *workflows]
     brand = brand_of(args.data)
     if brand:
         print(f"== the look of {brand['name']}")

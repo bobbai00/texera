@@ -37,7 +37,7 @@ export function AboutModel({ resource }: { resource: Resource }) {
   });
   if (vno === 0) return <EmptyState>No version yet. Upload the model's files, then commit them as the first version.</EmptyState>;
   return (
-    <div className="scrollbar-thin space-y-6 overflow-y-auto p-6" data-model-about>
+    <div className="scrollbar-thin space-y-6 overflow-y-auto p-6">
       {readme && (isPending ? <Skeleton className="h-40" /> : (
         <Suspense fallback={<Skeleton className="h-40" />}>
           <div className="max-w-3xl text-sm" data-model-card>

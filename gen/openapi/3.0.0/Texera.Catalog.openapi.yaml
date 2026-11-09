@@ -5473,11 +5473,11 @@ components:
     ComputingUnitFromProfile:
       type: object
       required:
-        - name
         - profile
       properties:
         name:
           type: string
+          description: 'What to call it. Left out, it is called after its profile: Small unit.'
         parent:
           allOf:
             - $ref: '#/components/schemas/Rid'

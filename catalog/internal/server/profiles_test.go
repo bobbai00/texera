@@ -51,6 +51,12 @@ func TestAUnitIsMadeFromAProfile(t *testing.T) {
 		t.Fatalf("a unit waited for: %s after %s", status.Phase, time.Since(started))
 	}
 	// A profile that is not there, or not the caller's to read, makes no unit.
+	// With no name of its own, a unit is called after its profile.
+	var unnamed envelope
+	h.mustJSON("alice", "POST", p+"/computing-units/from-profile", map[string]any{"profile": string(profile.Metadata.Uri)}, &unnamed)
+	if want := profile.Metadata.Name + " unit"; unnamed.Metadata.Name != want {
+		t.Fatalf("a unit with no name is called %q, not %q", unnamed.Metadata.Name, want)
+	}
 	wantError(t, h, "POST", p+"/computing-units/from-profile", map[string]any{"name": "nowhere", "profile": "texera://profiles/00000000-0000-4000-8000-000000000099"}, http.StatusNotFound, "not_found", "")
 }
 

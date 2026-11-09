@@ -43,6 +43,7 @@ const levelSpec = (l: Level) => LEVELS.find(x => x.id === l) ?? (LEVELS[1] as (t
 const WIDE: Record<Level, number> = { overview: 55, standard: 63, detail: 67 };
 
 const GOING = new Set(["pending", "provisioning", "running"]);
+const RESIZE_SETTLES_MS = 80;
 
 /** The graph of a chat, and whether the chat has started work: made something, or planned to. */
 export function useChatGraph(
@@ -140,8 +141,8 @@ export function ResourceGraph({
   laidRef.current = laid;
   // What the camera does once the next layout is known: frame everything, or keep a thing where it is on screen.
   const pending = useRef<{ fit?: boolean; anchor?: { id: string; sx: number; sy: number } }>({ fit: true });
-  // Nobody has moved the graph since it was last framed: a change of size frames it again.
-  const framed = useRef(false);
+  // The camera the last framing left: while it stands, nobody has moved the graph, and a change of size frames it again.
+  const framed = useRef<typeof cam | undefined>(undefined);
   const [tick, setTick] = useState(0);
   const key = `${level}|${said}`;
   const [hover, setHover] = useState<string>();
@@ -184,8 +185,8 @@ export function ResourceGraph({
       }
       const k = level === "overview" ? Math.min(Math.max(fits, K_MIN), T1 - 0.01) : Math.min(Math.max(fits, T1), 1.12);
       pending.current = {};
-      framed.current = true;
-      setCam({ k, tx: Math.max(14, (W - wide * k) / 2), ty: 16 });
+      framed.current = { k, tx: Math.max(14, (W - wide * k) / 2), ty: 16 };
+      setCam(framed.current);
       return;
     }
     if (p.anchor) {
@@ -202,24 +203,32 @@ export function ResourceGraph({
     const vp = viewport.current;
     if (!vp) return;
     let size = { w: 0, h: 0 };
-    const watch = new ResizeObserver(() => {
+    let settling: ReturnType<typeof setTimeout> | undefined;
+    const settled = () => {
       const now = { w: vp.clientWidth, h: vp.clientHeight };
       const was = size;
       size = now;
       if (now.w < 40 || now.h < 40 || (now.w === was.w && now.h === was.h)) return;
-      if (framed.current && was.w >= 40) {
+      if (framed.current === camRef.current && was.w >= 40) {
         pending.current = { fit: true };
         setCam(c => ({ ...c, k: 1 }));
       }
       setTick(t => t + 1);
+    };
+    // A window or a grip being dragged changes the size at every step: the graph is framed when it rests.
+    const watch = new ResizeObserver(() => {
+      clearTimeout(settling);
+      settling = setTimeout(settled, RESIZE_SETTLES_MS);
     });
     watch.observe(vp);
-    return () => watch.disconnect();
+    return () => {
+      clearTimeout(settling);
+      watch.disconnect();
+    };
   }, []);
 
   /** Zooms to k about a point of the viewport; a new level keeps the thing nearest it in place. */
   const zoomAt = useCallback((next: number, sx: number, sy: number) => {
-    framed.current = false;
     const c = camRef.current;
     const k = Math.min(K_MAX, Math.max(K_MIN, next));
     const wx = (sx - c.tx) / c.k;
@@ -241,7 +250,6 @@ export function ResourceGraph({
     setTick(t => t + 1);
   };
   const toLevel = (l: Level) => {
-    framed.current = false;
     const layout = laidRef.current?.layout;
     const c = camRef.current;
     const { x, y } = centre();
@@ -269,7 +277,6 @@ export function ResourceGraph({
           e.clientY - r.top
         );
       else {
-        framed.current = false;
         setCam(c => ({ ...c, tx: c.tx - e.deltaX, ty: c.ty - e.deltaY }));
       }
     };
@@ -337,7 +344,6 @@ export function ResourceGraph({
     if (!d.moved && Math.hypot(dx, dy) < 4) return;
     if (!d.moved) {
       d.moved = true;
-      framed.current = false;
       viewport.current?.setPointerCapture(e.pointerId);
     }
     setCam(c => ({ ...c, tx: d.tx + dx, ty: d.ty + dy }));
@@ -376,7 +382,7 @@ export function ResourceGraph({
     return b ? { left: b.x, top: b.y, ...(stretch ? { height: b.h } : {}) } : { left: 0, top: 0, visibility: "hidden" };
   };
   const dim = (id: string) => near && !near.has(id) && "opacity-25";
-  const lit = (ends: string[]) => !!near && ends.every(e => near.has(e));
+  const lit = (a: string, b: string) => !!near && near.has(a) && near.has(b);
   const boxes = [...view.runs.values()];
   const madeBy = (id: string) => boxes.find(b => b.results.includes(id));
   const opOf = (id: string) => {
@@ -499,7 +505,7 @@ export function ResourceGraph({
                 height={Math.ceil(layout.height + 8)}
                 aria-hidden>
                 {layout.arrows.map(a => {
-                  const hot = lit([a.from, a.to]);
+                  const hot = lit(a.from, a.to);
                   return (
                     <g
                       key={a.key}
@@ -639,8 +645,8 @@ function CommentBox({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const submit = async (e?: FormEvent) => {
-    e?.preventDefault();
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
     if (!text.trim() || sending) return;
     setSending(true);
     const sent = await onSend(text.trim());

@@ -3,7 +3,7 @@
 // setting is its value, not JSON: `where glucose < 70`, `by participant`, `keep 6 columns`.
 
 import type { GraphNode, GraphStep } from "@texera/catalog-client/types";
-import { baseOf } from "./model";
+import { baseOf } from "@texera/workflow-model";
 
 export interface StepLine {
   /** What the step does: scan, filter, predict, or a function's name. */

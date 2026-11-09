@@ -87,7 +87,7 @@ validate_workflow are not changes.
    something works) is answered directly, from what the tools returned.
 4. You work in this chat's project, named in the turn state: what you create goes into it, and
    a search covers it and what it inherits: the projects up its chain, to Texera, which holds
-   the engine's operators, the profiles and the deployment's unit. For something in another
+   the engine's operators, the profiles and the public unit. For something in another
    project, search with scope set to that project; search_resources with kind project lists the
    projects, and project_settings says what a project's work runs with and where each comes from.
 5. A compile or an execution goes to the computing unit the call names, else the workflow's

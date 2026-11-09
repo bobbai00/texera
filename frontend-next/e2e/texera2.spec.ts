@@ -574,7 +574,7 @@ test("a computing unit is made from a profile, with the size asked for, and says
   await expect(dialog.locator('[data-field="profile"]')).toHaveValue(profile);
   await expect(dialog.locator('[data-field="memory"]')).toHaveValue(made.spec.memory);
   await expect(dialog.locator('[data-field="cpu"]')).toHaveValue(made.spec.cpu);
-  await dialog.locator('[data-field="memory"]').selectOption({ label: "4 GB" });
+  await dialog.locator('[data-field="memory"]').selectOption({ label: "2 GB" });
   await dialog.locator('[data-field="cpu"]').selectOption({ label: "1 core" });
   await page.screenshot({ path: "test-results/unit-new.png" });
   await page.getByRole("button", { name: "Create" }).click();
@@ -587,13 +587,13 @@ test("a computing unit is made from a profile, with the size asked for, and says
   const unit = await call("GET", `/computing-units/${rid}`);
   // Made from the profile's version, with its packages, at the size asked for.
   expect(unit.spec.computingNodes).toEqual([
-    { name: "master", role: "master", profile: `${profile}@${made.metadata.head}`, memory: "4Gi", cpu: "1", packages: made.spec.packages },
+    { name: "master", role: "master", profile: `${profile}@${made.metadata.head}`, memory: "2Gi", cpu: "1", packages: made.spec.packages },
   ]);
   expect(unit.metadata.name).toBe(name);
   // Its page says what it is made of, and how it differs from its profile.
   const madeOf = page.locator("[data-made-of]");
   await expect(madeOf.locator("[data-unit-profile]")).toContainText(`${made.metadata.name}@${made.metadata.head}`);
-  await expect(madeOf.locator("[data-unit-changes]")).toContainText("memory 2 GB → 4 GB");
+  await expect(madeOf.locator("[data-unit-changes]")).toContainText("memory 4 GB → 2 GB");
   await expect(madeOf.locator("[data-unit-changes]")).toContainText("CPU 2 cores → 1 core");
   await expect(madeOf.locator("[data-unit-packages]")).toContainText("pandas");
   // A package added on the page is the unit's: saved, it is one more change from the profile.
@@ -605,11 +605,11 @@ test("a computing unit is made from a profile, with the size asked for, and says
   await page.screenshot({ path: "test-results/unit-made-of.png", fullPage: true });
 });
 
-test("the deployment's unit is saved as a profile of one's own, which units can be made from", async ({ page, request }) => {
+test("the public unit is saved as a profile of one's own, which units can be made from", async ({ page, request }) => {
   const call = await api(request);
   const settings = (await call("GET", `/projects/${(await call("GET", "/me")).rootProject}/settings`)).defaults;
   const unit = await call("GET", settings.computingUnit.replace("texera://", "/"));
-  const profile = await call("GET", settings.profile.replace("texera://", "/"));
+  const profile = await call("GET", unit.spec.computingNodes[0].profile.split("@")[0].replace("texera://", "/"));
   const home: string = (await call("GET", "/me")).homeProject;
   await signIn(page);
   await page.goto(`/computing-units/${unit.metadata.rid}`);
@@ -873,7 +873,7 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   const platform = (await asBob("GET", "/me")).rootProject as string;
   const units: Array<{ metadata: { uri: string }; spec: { provider: string; endpoint?: string; clientId?: string } }> = await asBob("GET", `/computing-units/available?scope=${platform}`);
   const base = units.find(u => u.spec.provider === "static");
-  expect(base, "the deployment's own unit").toBeDefined();
+  expect(base, "the public unit").toBeDefined();
   const unitName = `bob's unit ${Date.now()}`;
   const unit = await asBob("POST", "/computing-units", { name: unitName, parent: iris.project, spec: { provider: "static", endpoint: base?.spec.endpoint, ...(base?.spec.clientId ? { clientId: base.spec.clientId } : {}) } });
   let conversation: string | undefined;
@@ -894,7 +894,7 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   await expect(page.locator(`[data-message-template="${AGENT}"]`).first()).toBeVisible();
   // The turn is over and the end of the answer is where the person is looking.
   await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
-  await expect(answer.getByText(/5\.55/).last()).toBeInViewport();
+  await expect(answer.locator(":scope > *").last()).toBeInViewport();
 
   // Where it ran: the unit bob named, which the agent passed on. Where it was made: the project
   // the chat is in.

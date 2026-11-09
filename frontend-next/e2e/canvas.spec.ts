@@ -501,7 +501,8 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
     await alice.attempt("DELETE", `/resources/${lab.metadata.rid}`);
   });
   const defaults = (await alice("GET", `/projects/${(await alice("GET", "/me")).rootProject}/settings`)).defaults;
-  const profile = await alice("GET", defaults.profile.replace("texera://", "/"));
+  const unit = await alice("GET", defaults.computingUnit.replace("texera://", "/"));
+  const profile = await alice("GET", unit.spec.computingNodes[0].profile.split("@")[0].replace("texera://", "/"));
   const platform = await alice("GET", defaults.warehouse.replace("texera://", "/"));
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
@@ -516,7 +517,7 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
   await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
   const [ran] = (await alice("GET", `/workflows/${rid}/executions?limit=1`)).items;
   expect(ran.spec.warehouse).toBe(lab.metadata.uri);
-  expect(ran.spec.computing.profile.split("@")[0]).toBe(defaults.profile);
+  expect(ran.spec.computing.profile.split("@")[0]).toBe(profile.metadata.uri);
 
   // Its page says where it ran and what the unit had, each package as installed.
   await page.goto(`/workflows/${rid}/executions/${ran.metadata.rid}`);

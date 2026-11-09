@@ -8,8 +8,6 @@
 import type { ConversationGraph, GraphNode, GraphRun, GraphStep, PlannedItem } from "@texera/catalog-client/types";
 import { baseOf, namesIn } from "@texera/workflow-model";
 
-export { baseOf };
-
 /** How close the graph is drawn: the whole of it, each thing with its facts, or a workflow's steps. */
 export type Level = "overview" | "standard" | "detail";
 

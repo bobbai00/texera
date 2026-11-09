@@ -79,7 +79,8 @@ model ComputingUnitStatus {
 
 @doc("A computing unit to make from a profile.")
 model ComputingUnitFromProfile {
-  name: string;
+  @doc("What to call it. Left out, it is called after its profile: Small unit.")
+  name?: string;
   @doc("The project the unit goes into; absent: the chat's project in a chat, else the caller's own.")
   parent?: Rid;
   @doc("The profile, with `@vno`, or its head.")

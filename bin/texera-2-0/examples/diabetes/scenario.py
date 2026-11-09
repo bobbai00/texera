@@ -18,7 +18,7 @@
 
 """The README's demo without a browser: attaches the screening cohort to a new chat in the project
 load.py made, then says what the demo says, answering the agent's question about where to run
-with the team's unit. Each turn prints the tools the agent called and its answer; at the end, what
+with a Small unit. Each turn prints the tools the agent called and its answer; at the end, what
 the chat's graph holds and the outside sources it consulted. The transcript is written as JSON.
 
     python scenario.py --data ~/texera-diabetes                       # against http://localhost:8088
@@ -34,8 +34,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-PROJECT = "Diabetes research"
-UNIT = "Team unit"
+from load import PROJECT, Person
 
 # What the presenter says, in order; the first with the file attached.
 MESSAGES = [
@@ -44,40 +43,6 @@ MESSAGES = [
     "How does that compare with what has been published on models like this? Cite what you find.",
     "Please keep this file as a dataset called Screening cohort.",
 ]
-
-
-def token(gw: str, user: str) -> str:
-    data = urllib.parse.urlencode(
-        {
-            "grant_type": "password",
-            "client_id": "texera-app",
-            "username": user,
-            "password": user,
-        }
-    ).encode()
-    with urllib.request.urlopen(
-        f"{gw}/auth/realms/texera/protocol/openid-connect/token", data, timeout=60
-    ) as r:
-        return json.load(r)["access_token"]
-
-
-def call(gw: str, bearer: str, method: str, path: str, body=None, raw=None):
-    req = urllib.request.Request(
-        f"{gw}/catalog/v1{path}",
-        method=method,
-        data=raw
-        if raw is not None
-        else (None if body is None else json.dumps(body).encode()),
-        headers={
-            "Authorization": f"Bearer {bearer}",
-            "Content-Type": "application/octet-stream"
-            if raw is not None
-            else "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        out = r.read()
-        return json.loads(out) if out[:1] in (b"{", b"[") else out
 
 
 def ask(gw: str, bearer: str, chat: str, message: str, attached=None) -> dict:
@@ -131,24 +96,22 @@ def ask(gw: str, bearer: str, chat: str, message: str, attached=None) -> dict:
     return turn
 
 
-def attach(gw: str, bearer: str, project: str, chat: str, path: pathlib.Path) -> tuple[str, str]:
+def attach(person: Person, project: str, chat: str, path: pathlib.Path) -> tuple[str, str]:
     """What the chat's attach button does: the file is the chat's own, a dataset no list shows."""
-    made = call(
-        gw,
-        bearer,
+    made = person.must(
         "POST",
         "/datasets",
         {"name": path.name, "parent": project, "spec": {}, "labels": {"texera.attachment": chat}},
     )
     rid = made["metadata"]["rid"]
-    call(gw, bearer, "PUT", f"/datasets/{rid}/files/{path.name}", raw=path.read_bytes())
-    version = call(gw, bearer, "POST", f"/datasets/{rid}/commit", {"message": "Attached"})
+    person.must("PUT", f"/datasets/{rid}/files/{path.name}", raw=path.read_bytes(), content_type="application/octet-stream")
+    version = person.must("POST", f"/datasets/{rid}/commit", {"message": "Attached"})
     return f"{made['metadata']['uri']}@{version['vno']}", path.name
 
 
-def question_asked(gw: str, bearer: str, chat: str):
+def question_asked(person: Person, chat: str):
     """The question the agent's last message ends on, if it does."""
-    messages = call(gw, bearer, "GET", f"/conversations/{chat}/messages?limit=200")["items"]
+    messages = person.must("GET", f"/conversations/{chat}/messages?limit=200")["items"]
     if not messages or messages[-1]["role"] != "assistant":
         return None
     asks = [
@@ -176,8 +139,8 @@ def main() -> None:
     )
     args = ap.parse_args()
     gw = args.gw.rstrip("/")
-    bearer = token(gw, args.user)
-    projects = call(gw, bearer, "GET", "/projects?limit=500")["items"]
+    person = Person(gw, args.user)
+    projects = person.must("GET", "/projects?limit=500")["items"]
     project = next(
         (p["metadata"]["rid"] for p in projects if p["metadata"]["name"] == args.project),
         None,
@@ -186,31 +149,28 @@ def main() -> None:
         raise SystemExit(f"no project {args.project} this person may open: run load.py first")
 
     # Auto mode: each change goes through as the agent makes it; in manual mode each waits for a yes.
-    chat = call(
-        gw,
-        bearer,
+    chat = person.must(
         "POST",
         "/conversations",
         {"name": "The screening cohort", "parent": project, "spec": {"workMode": "auto"}},
     )
     rid = chat["metadata"]["rid"]
     print(f"chat {gw}/conversations/{rid}", flush=True)
-    attached = attach(gw, bearer, project, rid, args.data / "uploads" / "screening_cohort.csv")
+    attached = attach(person, project, rid, args.data / "uploads" / "screening_cohort.csv")
     turns = []
     for n, message in enumerate(MESSAGES, 1):
         print(f"\n== {n}. {message}", flush=True)
         # A turn can outlast a token: a fresh one for each.
-        bearer = token(gw, args.user)
-        turns.append(ask(gw, bearer, rid, message, attached if n == 1 else None))
-        asked = question_asked(gw, bearer, rid)
+        person = Person(gw, args.user)
+        turns.append(ask(gw, person.token, rid, message, attached if n == 1 else None))
+        asked = question_asked(person, rid)
         if asked:
             labels = [o["label"] for o in asked.get("options", [])]
-            pick = next((label for label in labels if UNIT in label), labels[0])
+            pick = next((label for label in labels if label.startswith("Small")), labels[0])
             print(f"   [{asked.get('question')}] answering: {pick}", flush=True)
-            turns.append(ask(gw, token(gw, args.user), rid, pick))
+            turns.append(ask(gw, Person(gw, args.user).token, rid, pick))
 
-    bearer = token(gw, args.user)
-    graph = call(gw, bearer, "GET", f"/conversations/{rid}/graph")
+    graph = Person(gw, args.user).must("GET", f"/conversations/{rid}/graph")
     made = sorted(f"{n['role']} {n['name']}" for n in graph["nodes"] if n["made"])
     print(f"the graph: {len(graph['nodes'])} nodes, made: {', '.join(made) or 'nothing'}")
     for source in graph["sources"]:

@@ -3,6 +3,7 @@
 // next. What lies beside it keeps room to be read: on a page too narrow for both, the chat lies
 // over it, and minimizing the chat shows it.
 
+import { keepHere, recalled } from "@texera/ui";
 import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export const CHAT_DEFAULT_WIDTH = 480;
@@ -28,15 +29,11 @@ interface Pane {
   width: number;
 }
 
-function read(): Pane {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<Pane> | null;
-    if (saved && typeof saved.width === "number") return { maximized: saved.maximized === true, width: saved.width };
-  } catch {
-    /* nothing kept, or nothing readable */
-  }
-  return { maximized: false, width: CHAT_DEFAULT_WIDTH };
-}
+const read = (): Pane =>
+  recalled(KEY, saved => {
+    const pane = saved as Partial<Pane> | null;
+    return pane && typeof pane.width === "number" ? { maximized: pane.maximized === true, width: pane.width } : undefined;
+  }) ?? { maximized: false, width: CHAT_DEFAULT_WIDTH };
 
 /**
  * The chat on its own page. `root` goes on what the chat and what stands beside it share; `width`
@@ -55,12 +52,12 @@ export function useChatPane(enabled: boolean) {
     watch.observe(el);
     return () => watch.disconnect();
   }, [enabled]);
+  const held = useRef<{ x: number; from: number } | null>(null);
+  const latest = useRef(pane);
+  latest.current = pane;
+  // Kept when the grip is let go, not at every step of a drag.
   useEffect(() => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(pane));
-    } catch {
-      /* kept for this page only */
-    }
+    if (!held.current) keepHere(KEY, pane);
   }, [pane]);
 
   const width = room === undefined ? pane.width : widthIn(room, pane.width);
@@ -68,7 +65,6 @@ export function useChatPane(enabled: boolean) {
     const fits = room === undefined ? undefined : widthIn(room, wanted);
     if (fits !== undefined) setPane(p => ({ ...p, width: fits }));
   };
-  const held = useRef<{ x: number; from: number } | null>(null);
   const grip = {
     role: "separator",
     "aria-orientation": "vertical",
@@ -88,6 +84,7 @@ export function useChatPane(enabled: boolean) {
     },
     onLostPointerCapture: () => {
       held.current = null;
+      keepHere(KEY, latest.current);
     },
     onDoubleClick: () => ask(CHAT_DEFAULT_WIDTH),
     onKeyDown: (e: KeyboardEvent<HTMLElement>) => {

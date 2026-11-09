@@ -13,7 +13,8 @@ const CommandMenu = lazy(() => import("./CommandMenu").then(m => ({ default: m.C
 /** The signed-in layout: sidebar | page | the resource open beside it, and the agent over a resource's page. */
 export function AppShell() {
   useDocumentLook();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On a phone the page needs the room; the rail brings the sidebar back.
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoaded, setSearchLoaded] = useState(false);
   const panel = useOpenPanel();

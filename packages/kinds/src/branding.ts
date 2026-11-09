@@ -3,6 +3,7 @@
 // a look of its own, and the projects that inherit from it wear it unless they set their own.
 
 import { useQuery } from "@tanstack/react-query";
+import { lookOf, MARK } from "@texera/ui";
 import { useEffect } from "react";
 import { meQuery, projectSettingsQuery } from "./queries";
 import { ALL_PROJECTS, useWorkingProject } from "./scope";
@@ -16,18 +17,13 @@ export interface Look {
   logoLargeUrl?: string;
 }
 
-/** The mark of a project that has no logo of its own. */
-const MARK = "/texera-mark.png";
-
 /** The look of the project the person works in. */
 export function useLook(): Look {
   const { data: me } = useQuery(meQuery());
   const { current } = useWorkingProject();
   const project = current === undefined || current === ALL_PROJECTS ? me?.rootProject : current;
   const { data } = useQuery({ ...projectSettingsQuery(project ?? ""), enabled: !!project });
-  if (!data) return { name: "" };
-  const logoUrl = data.branding.logoUrl || MARK;
-  return { name: data.branding.name || "Texera", logoUrl, logoLargeUrl: data.branding.logoLargeUrl || logoUrl };
+  return data ? lookOf(data.branding) : { name: "" };
 }
 
 /** Has the browser say the look too: the tab's title and icon. */

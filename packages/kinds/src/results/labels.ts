@@ -8,6 +8,7 @@ import {
   summarize,
   type WorkflowSpec,
 } from "@texera/workflow-model";
+import { isUri } from "../uri";
 import type { ResultLabel } from "./ResultsWindow";
 
 export function resultLabel(
@@ -20,7 +21,7 @@ export function resultLabel(
   const schema = schemas?.get(op.operatorType);
   const title = op.customDisplayName || schema?.userFriendlyName || operatorLabel(op);
   // A resource's URI says nothing to a person reading a tab.
-  const said = schema ? describeProperties(schema.jsonSchema, op.operatorProperties ?? {}).filter(l => !l.short.startsWith("texera://")) : [];
+  const said = schema ? describeProperties(schema.jsonSchema, op.operatorProperties ?? {}).filter(l => !isUri(l.short)) : [];
   const summary = summarize(said);
   return { title, type: op.operatorType, ...(summary ? { summary } : {}) };
 }

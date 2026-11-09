@@ -3,18 +3,34 @@
 // name. The words stay plain text in the catalog; what they show is decided here, as they are read.
 // Pure, so it is tested on its own.
 
+import { parseUri } from "@texera/kinds";
+
 /** A part of what the agent wrote: words, or the resources it put on lines of their own. */
-export type Block = { type: "words"; text: string } | { type: "resources"; uris: string[] };
+type Block = { type: "words"; text: string } | { type: "resources"; uris: string[] };
 
 // A rid is 36 characters, so a URI still arriving letter by letter stays words until it is whole.
-const URI = "texera://[a-z-]+/[0-9a-f-]{36}(?:@\\d+)?(?:/[^\\s`]*)?";
+const URI = "texera://[a-z-]+/[0-9a-f-]{36}(?:@\\d+)?(?:/[^\\s`]*[^\\s`.,;:)])?";
 /** A line that is one URI and nothing more, as a list item or in backticks too. */
 const ALONE = new RegExp(`^\\s*(?:(?:[-*+]|\\d+[.)])\\s+)?\`?(${URI})\`?\\s*$`);
 const WHOLE = new RegExp(`^${URI}$`);
 const FENCE = /^\s*(```|~~~)/;
+/** Pieces of a line that are code already, and those that are not, in turn. */
+const INLINE_CODE = /(`[^`]*`)/;
+const LINK_TO_URI = new RegExp(`\\[[^\\]]*\\]\\((${URI})\\)`, "g");
+const AMONG_WORDS = new RegExp(`(?<![\\w/])${URI}`, "g");
+
+/** However a URI is written among words, bare or as a link, it reads as the resource's name. */
+function namingUris(line: string): string {
+  const named = (uri: string) => (parseUri(uri) ? `\`${uri}\`` : uri);
+  return line
+    .replace(LINK_TO_URI, (_, uri: string) => named(uri))
+    .split(INLINE_CODE)
+    .map((piece, i) => (i % 2 ? piece : piece.replace(AMONG_WORDS, named)))
+    .join("");
+}
 
 /** Whether some inline code is a resource's URI and nothing more. */
-export const isResourceUri = (text: string) => WHOLE.test(text);
+export const isResourceUri = (text: string) => WHOLE.test(text) && !!parseUri(text);
 
 /** Splits what the agent wrote into words and runs of resources, in order. */
 export function blocksOf(text: string): Block[] {
@@ -28,13 +44,13 @@ export function blocksOf(text: string): Block[] {
   for (const line of text.split("\n")) {
     if (FENCE.test(line)) fenced = !fenced;
     const uri = fenced ? undefined : ALONE.exec(line)?.[1];
-    if (uri) {
+    if (uri && parseUri(uri)) {
       const last = blocks.at(-1);
       if (last?.type === "resources") last.uris.push(uri);
       else blocks.push({ type: "resources", uris: [uri] });
     } else if (line.trim() === "" && blocks.at(-1)?.type === "resources") {
       // Blank lines between resources keep them one run.
-    } else words(line);
+    } else words(fenced ? line : namingUris(line));
   }
   return blocks.flatMap((b): Block[] =>
     b.type === "resources" ? [{ ...b, uris: [...new Set(b.uris)] }] : b.text.trim() ? [b] : []

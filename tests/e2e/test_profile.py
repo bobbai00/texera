@@ -3,7 +3,7 @@ platform's runtime. A unit made from a profile has them: a Python function that 
 runs there and fails on a unit without it; the execution records the profile version and each
 package as the unit installed it. Saving the unit as a profile makes the profile's next version,
 its packages pinned, or a new profile; the unit is then made from what was saved. On a cluster the
-unit is a pod of the profile's size; on Compose it is the deployment's own unit, with the
+unit is a pod of the profile's size; on Compose it is the public unit, with the
 profile's packages."""
 import re
 
@@ -30,9 +30,9 @@ def test_a_unit_made_from_a_profile_has_its_packages(alice, project, iris, unit)
     wrid = wf["metadata"]["rid"]
     assert alice.post(f"/workflows/{wrid}/validate", {})["ok"]
 
-    # The deployment's unit has no humanize. The engine names the missing module when its Python
+    # The public unit has no humanize. The engine names the missing module when its Python
     # is 3.11 or newer; the cluster image's 3.10 cannot (`add_note`): a bare ModuleNotFoundError.
-    plain = w.run(alice, wrid, "on the deployment's unit", computingUnit=unit)
+    plain = w.run(alice, wrid, "on the public unit", computingUnit=unit)
     assert plain["status"]["phase"] == "failed" and w.missing_module(plain, "humanize")
 
     run = w.run(alice, wrid, "on the humanize unit", wait=600, computingUnit=uri)

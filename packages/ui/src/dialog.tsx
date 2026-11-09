@@ -8,6 +8,18 @@ export const DialogRoot = BaseDialog.Root;
 export const DialogTrigger = BaseDialog.Trigger;
 export const DialogClose = BaseDialog.Close;
 
+/** A modal surface with nothing of its own in it, for what lays itself out, such as a search. */
+export function DialogSurface({ children, className }: { children?: ReactNode; className?: string }) {
+  return (
+    <BaseDialog.Portal>
+      <BaseDialog.Backdrop className="fixed inset-0 z-50 bg-black/30 backdrop-blur-[2px]" />
+      <BaseDialog.Popup className={cn("fixed left-1/2 z-50 w-full -translate-x-1/2 overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-2xl", className)}>
+        {children}
+      </BaseDialog.Popup>
+    </BaseDialog.Portal>
+  );
+}
+
 /** A modal dialog. Control it with `open`/`onOpenChange` on `DialogRoot`. */
 export function DialogContent({
   title,

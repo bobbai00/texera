@@ -55,7 +55,7 @@ type Config struct {
 	// asked again; 15 seconds when unset.
 	WatchBeat time.Duration
 	// ProfileUnits is where a unit made from a profile runs: on the deployment's Kubernetes
-	// (kubernetes, the default), or as the deployment's own unit (static), which takes the
+	// (kubernetes, the default), or as the public unit (static), which takes the
 	// profile's packages but keeps its own size, as on Compose.
 	ProfileUnits api.UnitProvider
 	// The seeds of the dev stack.

@@ -6,8 +6,10 @@ import { FolderKanban } from "lucide-react";
 import { useState } from "react";
 import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
-import { chatName } from "./naming";
 import { leaveFirstMessage } from "./pending";
+
+/** What a chat is called until the first thing asked in it names it: the agent runtime looks for this name. */
+const UNNAMED_CHAT = "New chat";
 
 /**
  * The start of a chat: say what you want. The chat is created in the project the person works
@@ -21,7 +23,6 @@ export function NewChat({
   onCreated,
   dock = false,
   alone = false,
-  about,
   suggested,
 }: {
   greeting: string;
@@ -29,7 +30,6 @@ export function NewChat({
   dock?: boolean;
   /** Under the project's cards: the box alone, which says for itself what it is for. */
   alone?: boolean;
-  about?: string;
   /** The project to start from when the person is asked: the one the page's resource is in. */
   suggested?: string;
 }) {
@@ -42,7 +42,7 @@ export function NewChat({
   const start = useMutation({
     mutationFn: async (first: { text: string; files: File[] }) => {
       if (project === undefined) throw new Error("Choose the project this chat goes into first.");
-      const conversation = await createResource("conversation", { name: chatName(about, new Date()), parent: project, spec: choices });
+      const conversation = await createResource("conversation", { name: UNNAMED_CHAT, parent: project, spec: choices });
       leaveFirstMessage(conversation.metadata.rid, first);
       return conversation.metadata.rid;
     },

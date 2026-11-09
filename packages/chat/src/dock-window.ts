@@ -13,6 +13,8 @@ export interface DockWindow {
 export const DEFAULT_WINDOW: DockWindow = { right: 16, bottom: 16, width: 416, height: 640 };
 const SMALLEST = { width: 320, height: 360 };
 const MARGIN = 8;
+import { keepHere, recalled } from "@texera/ui";
+
 const KEY = "texera-chat-window";
 
 /** The window as it fits the screen: no smaller than it can be used, no larger than the screen, all of it on screen. */
@@ -38,22 +40,10 @@ export const resized = (w: DockWindow, dx: number, dy: number): DockWindow => ({
   height: w.height - dy,
 });
 
-export function remembered(): DockWindow {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<DockWindow> | null;
-    if (saved && ["right", "bottom", "width", "height"].every(k => typeof saved[k as keyof DockWindow] === "number"))
-      return saved as DockWindow;
-  } catch {
-    /* nothing kept, or nothing readable */
-  }
-  return DEFAULT_WINDOW;
-}
+export const remembered = (): DockWindow =>
+  recalled(KEY, saved => {
+    const box = saved as Partial<DockWindow> | null;
+    return box && ["right", "bottom", "width", "height"].every(k => typeof box[k as keyof DockWindow] === "number") ? (box as DockWindow) : undefined;
+  }) ?? DEFAULT_WINDOW;
 
-export function remember(w: DockWindow | undefined): void {
-  try {
-    if (w) localStorage.setItem(KEY, JSON.stringify(w));
-    else localStorage.removeItem(KEY);
-  } catch {
-    /* kept for this page only */
-  }
-}
+export const remember = (w: DockWindow | undefined): void => keepHere(KEY, w);

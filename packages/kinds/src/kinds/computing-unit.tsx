@@ -349,6 +349,12 @@ function Actions({ resource, readonly }: { resource: Resource; readonly?: boolea
   );
 }
 
+/** The profiles smallest first, by the memory each asks for. */
+const sizeOrder = (profiles: Resource[]) => {
+  const gigabytes = (p: Resource) => Number.parseFloat((p.spec as ProfileSpec).memory ?? "0");
+  return [...profiles].sort((a, b) => gigabytes(a) - gigabytes(b));
+};
+
 /**
  * What a new unit is made from: a profile, whose size can be changed here; its packages come
  * with it and are changed on the unit's page.
@@ -370,7 +376,7 @@ function NewUnit({ spec, onChange }: { spec: unknown; onChange: (spec: unknown) 
           onChange={e => onChange(madeFrom(unit, e.target.value || undefined))}
           className="w-full"
           data-field="profile">
-          {profiles?.items.map(p => {
+          {sizeOrder(profiles?.items ?? []).map(p => {
             // A profile this deployment cannot start says why beside its name, and one whose unit is
             // the deployment's own says so.
             const status = p.status as ProfileStatus | undefined;

@@ -41,7 +41,8 @@ The same stack on Kubernetes: `bin/texera-2-0/k8s.sh up`, then http://localhost:
 ## 2. The workspace
 
 **A chat.** The home page is where a chat starts: say what you want, and your first message
-makes the chat, in the project you work in. Every chat runs the Texera Agent: it answers data
+makes the chat, in the project you work in. The chat names itself from that message within a
+couple of seconds; a name you give it stands. Every chat runs the Texera Agent: it answers data
 questions by building and running workflows, and grounds research questions in the biomedical
 literature. The foot of the box shows what the chat runs with: the agent, its model and the
 add-on tools. Change one and the chat stores your choice; a chat you never touch stores nothing
@@ -165,7 +166,7 @@ On its Settings tab its admins say what it is for, choose what it inherits from,
 projects that inherit from it, each with "Send back to Texera"
 (`GET /projects/{rid}/inheritors`). Texera is a
 project like any other: the release ships into it (the agent, its skills and MCP servers, the
-model endpoint, the deployment's unit and its profile, the profile ladder, the warehouse, the
+model endpoint, the public unit and its profile, the profile ladder, the warehouse, the
 engine's operators), and its admins change, add or delete any of it for everyone; a later
 release updates only what they left alone and never brings back what they deleted. Taking an
 engine operator out of Texera takes it from every workflow: a workflow runs only operators its
@@ -491,7 +492,7 @@ deployment's grace period (`TEXERA_UPLOAD_GRACE`, a day).
 ## 6. Computing units
 
 A computing unit is the engine deployment an execution goes to, and a resource: `provider:
-static` is a unit already running at an `endpoint` (the dev stack's "local unit", started by
+static` is a unit already running at an `endpoint` (the "Public unit", started by
 `run-unit.sh`, which presents the realm's `texera-unit` client to the lake), `provider:
 kubernetes` is one the catalog starts and reconciles on the cluster (section 8): one pod of
 the engine, with the memory, CPU and GPUs its master node asks for (a GPU is an
@@ -501,6 +502,11 @@ through the catalog, which authorizes and compiles first. Toward the lake and th
 unit has an identity of its own, and reaches only the namespaces of the executions it ran.
 Grant `user` on a unit to let someone run on it; `GET /computing-units/available` lists the
 ones you may use.
+
+Everyone can run on the **Public unit**, which is ready and shared. For more room you make a unit
+of your own, by size: **Small** (2 CPUs, 4 GB), **Medium** (4 CPUs, 8 GB) or **Large** (8 CPUs,
+16 GB). The agent asks which before a model's first run in a chat, and offers the sizes this
+deployment can start; "New computing unit" starts from Small.
 
 An execution goes to the unit the request names, else the workflow's default unit, the
 project's or the platform's, the same for a run you start and one the agent starts in a chat.
@@ -513,10 +519,10 @@ too. Naming a unit gives no right to it: you must be allowed to run on it.
 Python packages it adds to the platform's runtime (PEP 508 lines), versioned. A unit is made
 from a profile version ("New computing unit" proposes the settings' default profile and lets
 you change the size; `POST /computing-units/from-profile` with `waitSeconds` waits until it is
-ready): its node gets the profile's size and packages and names the version. On a cluster the
+ready, and with no `name` calls the unit after its profile, such as Small unit): its node gets the profile's size and packages and names the version. On a cluster the
 unit is a pod of that size; a profile the cluster cannot start, a GPU where no node has one, is
 refused with the reason (409 `not_here`), and its status says so when read (`startable`,
-`notHere`). On Compose, with no cluster, a unit from a profile is the deployment's own unit
+`notHere`). On Compose, with no cluster, a unit from a profile is the public unit
 with the profile's packages, not its size (the profile's status says `sized: false`), and a
 GPU profile does not start. A unit may change
 since, another size or a package added on its page, and its page says how it differs from its

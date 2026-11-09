@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { href, isKindId, KINDS, KindIcon, searchQuery, useLook } from "@texera/kinds";
+import { DialogRoot, DialogSurface } from "@texera/ui";
 import { Command } from "cmdk";
 import { SquarePen } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
@@ -50,45 +51,41 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     </Command.Group>
   );
   return (
-    <Command.Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      label={`Search ${look.name}`}
-      shouldFilter={false}
-      value={picked}
-      onValueChange={setPicked}
-      overlayClassName="fixed inset-0 z-50 bg-black/30 backdrop-blur-[2px]"
-      contentClassName="fixed top-[15vh] left-1/2 z-50 w-full max-w-xl -translate-x-1/2 overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-2xl">
-      <Command.Input
-        value={query}
-        onValueChange={setQuery}
-        placeholder="Search workflows, datasets, agents, chats…"
-        className="h-12 w-full border-b bg-transparent px-4 text-sm outline-none"
-      />
-      <Command.List className="scrollbar-thin max-h-96 overflow-y-auto p-2">
-        <Command.Empty className="py-6 text-center text-sm text-muted-foreground">No results.</Command.Empty>
-        {!searching && actions}
-        {[...groups.entries()].map(([kind, items]) =>
-          isKindId(kind) ? (
-            <Command.Group
-              key={kind}
-              heading={KINDS[kind].plural}
-              className="text-xs text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
-              {items.map(r => (
-                <Command.Item
-                  key={r.metadata.rid}
-                  value={`${r.metadata.name} ${kind} ${r.metadata.rid}`}
-                  onSelect={() => go(href({ kind, rid: r.metadata.rid, parent: r.metadata.parent }))}
-                  className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent">
-                  <KindIcon kind={kind} className="size-6 [&_svg]:size-3.5" />
-                  <span className="truncate">{r.metadata.name}</span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null
-        )}
-        {searching && actions}
-      </Command.List>
-    </Command.Dialog>
+    <DialogRoot open={open} onOpenChange={onOpenChange}>
+      <DialogSurface className="top-[15vh] max-w-xl">
+        <Command label={`Search ${look.name}`} shouldFilter={false} value={picked} onValueChange={setPicked}>
+          <Command.Input
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search workflows, datasets, agents, chats…"
+            className="h-12 w-full border-b bg-transparent px-4 text-sm outline-none"
+          />
+          <Command.List className="scrollbar-thin max-h-96 overflow-y-auto p-2">
+            <Command.Empty className="py-6 text-center text-sm text-muted-foreground">No results.</Command.Empty>
+            {!searching && actions}
+            {[...groups.entries()].map(([kind, items]) =>
+              isKindId(kind) ? (
+                <Command.Group
+                  key={kind}
+                  heading={KINDS[kind].plural}
+                  className="text-xs text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
+                  {items.map(r => (
+                    <Command.Item
+                      key={r.metadata.rid}
+                      value={`${r.metadata.name} ${kind} ${r.metadata.rid}`}
+                      onSelect={() => go(href({ kind, rid: r.metadata.rid, parent: r.metadata.parent }))}
+                      className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent">
+                      <KindIcon kind={kind} className="size-6 [&_svg]:size-3.5" />
+                      <span className="truncate">{r.metadata.name}</span>
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              ) : null
+            )}
+            {searching && actions}
+          </Command.List>
+        </Command>
+      </DialogSurface>
+    </DialogRoot>
   );
 }

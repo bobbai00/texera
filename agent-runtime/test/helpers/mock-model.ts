@@ -54,10 +54,19 @@ function chunksFor(response: ScriptedResponse): Part[] {
   return chunks;
 }
 
-/** Builds a mock model that plays the scripted responses in order, one per model call. */
-export function scriptedModel(responses: ScriptedResponse[]): MockLanguageModelV3 {
+/**
+ * Builds a mock model that plays the scripted responses in order, one per streamed call. A call
+ * that does not stream, as naming a chat does, gets `name`.
+ */
+export function scriptedModel(responses: ScriptedResponse[], name = "A scripted name"): MockLanguageModelV3 {
   return new MockLanguageModelV3({
     modelId: "scripted",
+    doGenerate: {
+      content: [{ type: "text", text: name }],
+      finishReason: { unified: "stop", raw: "scripted" },
+      usage,
+      warnings: [],
+    } as never,
     doStream: responses.map((r) => ({
       stream: simulateReadableStream({ chunks: chunksFor(r) as never[], chunkDelayInMs: r.chunkDelayMs }),
     })) as never,

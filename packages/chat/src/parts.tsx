@@ -5,7 +5,7 @@
 import { isKindId, KindIcon, PrincipalName, ResourceCard, refOf, UriChip } from "@texera/kinds";
 import { Button, cn } from "@texera/ui";
 import { AlertTriangle, ArrowRightLeft, Brain, Check, ChevronDown, CircleHelp, ListChecks, Loader2, Network, ShieldCheck, Wrench, X } from "lucide-react";
-import { lazy, type ReactNode, Suspense, useMemo, useState } from "react";
+import { lazy, memo, type ReactNode, Suspense, useMemo, useState } from "react";
 import type { Part } from "./model";
 import { blocksOf, isResourceUri } from "./resource-lines";
 
@@ -13,6 +13,12 @@ const Markdown = lazy(() => import("@texera/ui/markdown"));
 
 /** A URI in backticks reads as the resource's name. */
 const chipOf = (code: string): ReactNode | undefined => (isResourceUri(code) ? <UriChip uri={code} emphasis /> : undefined);
+
+/** A resource on a line of its own, as its card. Apart, so that more words arriving do not draw it again. */
+const ResourceLine = memo(function ResourceLine({ uri }: { uri: string }) {
+  const ref = refOf(uri);
+  return ref ? <ResourceCard ref={ref} /> : null;
+});
 
 /** What the agent wrote: words, and cards for the resources it put on lines of their own. */
 export function TextPart({ text, streaming }: { text: string; streaming: boolean }) {
@@ -28,10 +34,9 @@ export function TextPart({ text, streaming }: { text: string; streaming: boolean
         ) : (
           // biome-ignore lint/suspicious/noArrayIndexKey: blocks are positional and only grow at the end
           <div key={i} className="grid grid-cols-[repeat(auto-fill,minmax(min(17rem,100%),1fr))] gap-2" data-part="resources">
-            {block.uris.map(uri => {
-              const ref = refOf(uri);
-              return ref ? <ResourceCard key={uri} ref={ref} /> : <UriChip key={uri} uri={uri} />;
-            })}
+            {block.uris.map(uri => (
+              <ResourceLine key={uri} uri={uri} />
+            ))}
           </div>
         )
       )}

@@ -7,7 +7,7 @@
 import { isPerson, type Person } from "./presence";
 
 /** What a person does with what they hold. */
-export type Doing = "viewing" | "editing";
+type Doing = "viewing" | "editing";
 
 /** What a person would hold, if nobody has it. */
 export interface Wanted {

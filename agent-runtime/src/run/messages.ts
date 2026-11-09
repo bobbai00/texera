@@ -6,7 +6,7 @@
  * theirs. What a person attached reaches the model as a line that names it.
  */
 import type { ModelMessage } from "ai";
-import type { AttachedFile, Message, MessagePart } from "../catalog/types.ts";
+import { type AttachedFile, type Message, type MessagePart, uriParts } from "../catalog/types.ts";
 import type { CollectedTurn } from "./ag-ui-events.ts";
 
 export interface HistoryOptions {
@@ -70,8 +70,8 @@ export function attachedFiles(history: Message[]): AttachedFile[] {
     m.role !== "user"
       ? []
       : m.parts.flatMap((p) =>
-          p.type === "resource" && p.resource && p.text && /^texera:\/\/datasets\/.+@\d+$/.test(p.resource)
-            ? p.text.split(", ").map((name) => ({ name, uri: p.resource as string }))
+          p.type === "resource" && p.resource && isAttachedFile(p.resource, p.text)
+            ? (p.text as string).split(", ").map((name) => ({ name, uri: p.resource as string }))
             : [],
         ),
   );
@@ -79,12 +79,18 @@ export function attachedFiles(history: Message[]): AttachedFile[] {
 
 /** A person's attachment as the model reads it: its kind, the name they gave it, its URI. A dataset attached is a file of the chat. */
 function attachedLine(uri: string, name?: string): string {
+  const parts = uriParts(uri);
   // An execution is named under its workflow.
-  const kind = /^texera:\/\/workflows\/[^/@]+\/executions\//.test(uri)
+  const kind = parts?.subresource?.startsWith("executions/")
     ? "execution"
-    : (/^texera:\/\/([a-z-]+?)s?\//.exec(uri)?.[1] ?? "resource");
-  const file = kind === "dataset" && name !== undefined && /@\d+$/.test(uri);
-  return `Attached ${file ? "file" : kind}${name ? ` ${JSON.stringify(name)}` : ""} (${uri})`;
+    : (parts?.plural.replace(/s$/, "") ?? "resource");
+  return `Attached ${isAttachedFile(uri, name) ? "file" : kind}${name ? ` ${JSON.stringify(name)}` : ""} (${uri})`;
+}
+
+/** Whether an attachment is a file of the chat: one version of a dataset, under the name it came with. */
+function isAttachedFile(uri: string, name: string | undefined): boolean {
+  const parts = uriParts(uri);
+  return !!name && parts?.plural === "datasets" && parts.vno !== undefined && parts.subresource === undefined;
 }
 
 type AssistantContent =

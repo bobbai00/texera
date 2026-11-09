@@ -7,8 +7,8 @@ import type { Resource } from "@texera/catalog-client/types";
 import { Badge, Button, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList } from "@texera/ui";
 import { Braces, GitBranch, History, Settings2, Trash2, Users } from "lucide-react";
 import { useState } from "react";
-import { deleteResource, updateMetadata } from "../api";
-import { isAbout, keysOf, resourceQuery } from "../queries";
+import { deleteResource } from "../api";
+import { isAbout, resourceQuery } from "../queries";
 import { KINDS } from "../registry";
 import { kindEntry, type KindViewProps, type ResourceRef } from "../types";
 import { Access } from "./Access";
@@ -22,6 +22,7 @@ import { useOpenResource } from "./navigation";
 import { SpecEditor } from "./SpecEditor";
 import { Versions } from "./Versions";
 import { OpenError } from "./OpenError";
+import { useRename } from "./rename";
 import { useNavigate } from "@tanstack/react-router";
 import { useWatch } from "../watch";
 
@@ -60,12 +61,7 @@ export function ResourcePage({
   const [vno, setVno] = useState<number | undefined>(ref.vno);
   const first = spec.tabs?.[0]?.value ?? "spec";
   const [tab, setTab] = useState(first);
-  const rename = useMutation({
-    mutationFn: (name: string) => updateMetadata(resource.metadata.rid, { name }, resource.metadata.etag),
-    onSuccess: () => {
-      for (const key of keysOf(resource.metadata.rid)) queryClient.invalidateQueries({ queryKey: key });
-    },
-  });
+  const rename = useRename(resource.metadata.rid, resource.metadata.etag);
   const remove = useMutation({
     mutationFn: () => deleteResource(resource.metadata.rid),
     onSuccess: () => {

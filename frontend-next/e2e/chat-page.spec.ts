@@ -141,7 +141,7 @@ test("the chat beside its graph is sized by its grip, minimized to the corner, a
     const [g, c] = [await graph.boundingBox(), await chat.boundingBox()];
     return g && c ? c.x - (g.x + g.width) >= 0 : false;
   }).toBe(true);
-  expect(await width(graph)).toBeGreaterThanOrEqual(380);
+  await expect.poll(() => width(graph)).toBeGreaterThanOrEqual(380);
   await page.screenshot({ path: "test-results/chat-narrow.png" });
 
   // Narrower than both can share, the chat lies over the graph, and minimizing it shows the graph.

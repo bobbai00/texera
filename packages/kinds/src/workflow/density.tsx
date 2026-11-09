@@ -29,7 +29,7 @@ export const unspread = (at: Point, k: number): Point =>
   k === 1 ? at : { x: at.x, y: ORIGIN.y + (at.y - ORIGIN.y) / k };
 
 /** The spread of the canvas this is on, from the cards as they are measured; the card open for editing lies over the others and is not counted. */
-export function useRowSpread(editing: string | null, above = 0): number {
+export function useRowSpread(editing: string | null, above: number): number {
   const tallest = useFlowStore(s => {
     let max = 0;
     for (const node of s.nodeLookup.values()) if (node.id !== editing) max = Math.max(max, node.measured.height ?? 0);

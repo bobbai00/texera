@@ -2,6 +2,45 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-09 (session 16, part 7): chats name themselves, more of the field's data and models, and a cleanup
+
+- **A chat names itself** (`agent/chat-name.ts`). The app starts a chat as "New chat"; the first
+  thing asked in it goes to the chat's own model for a few words, beside the turn, and the name
+  reaches the page through the catalog's event stream. Only a chat still called that is named, so a
+  name someone gave stands, and a failure leaves it for the next message.
+- **The demo's project covers the field dkNET serves.** Five datasets (NHANES 2017-18, chronic kidney
+  disease, hepatitis C, the Mayo PBC trial, beta-cell expression from GEO) and nine models. Six are
+  published equations run as written (`examples/diabetes/equations/`: CKD-EPI 2021, KFRE, FIB-4,
+  HOMA, Fatty Liver Index, Mayo PBC), each checked in `prepare.py` against examples worked by hand;
+  three are fitted. Nine workflows over them, some through two models in a row.
+- **Cleanup, from four reviews of this branch's last commits**: one way to say a fast-changing thing
+  in a session and one pointer mark; `useRename` for the three renames; one storage helper for the
+  three remembered windows; `lookOf` for the look's fallbacks; `canvasFlow` for both canvases; one
+  walker of a value's strings; the runtime reads URIs with its parser. Less work: the start page and
+  the overview ask for the four kinds they draw instead of everything every 5 s, the overview reads
+  operators without their schemas, the graph and the overview are not drawn again for every word,
+  nor the agent's cards, and a resize frames the graph when it rests. Dead props, exports and data
+  attributes are gone.
+
+- **Units are the Public unit and sizes.** The shared unit is called the Public unit, and what a
+  person picks is Small, Medium or Large, a unit of their own, called after its size unless named
+  otherwise; a new unit starts from Small. The demo's project keeps no unit. What Texera holds reads
+  "Public" in lists, since it is open to everyone.
+- **The chat reads URIs as names however they are written.** A URI among words, bare or as a Markdown
+  link, reads as the resource's name, since a model does not always write it as asked. Only a
+  resource alone on a line is a card, and listing resources no longer leaves a card per item.
+
+Left as found, for a decision: a turn's lock is released by the age of `updated_at`, which a long
+turn does not touch; an attachment's label is set by the client; a commit can still carry a
+`contract` field beside `contract.json`, which only tests use.
+
+Verified on the OrbStack stack, on the final images: the browser suite, 75 of 75, with the real model,
+both demo stories included; `k8s.sh check`'s 57 scenarios against the API; the catalog's suite, the
+runtime's 114 tests, the live service's 18, the app's 407 and typecheck. Every new workflow and model
+ran, and the figures checked against pandas agree. A walk through every page at three window sizes
+and in the dark theme, 108 page views, had no console error, failed request or sideways scroll.
+The demo's project was left with only what `load.py` puts there.
+
 ## 2026-11-08 (session 16, part 6): the chat shares its page, and what the agent shows can be picked
 
 - **The chat and what is beside it share the page** (`chat/chat-window.ts`). The grip at the chat's

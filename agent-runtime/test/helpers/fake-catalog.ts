@@ -48,6 +48,8 @@ export interface FakeCatalogOptions {
   conversationModel?: string;
   /** The chat's work mode as its settings resolve it; default `auto`, the platform's. */
   workMode?: "auto" | "manual";
+  /** What the chat is called at the start; default a name someone gave it. */
+  conversationName?: string;
 }
 
 function envelope(kind: string, rid: string, name: string, spec: unknown, head = 1, status?: unknown) {
@@ -90,6 +92,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
   };
   const analystHead = Math.max(1, ...Object.keys(options.templateVersions ?? {}).map(Number));
   const conversation = {
+    name: options.conversationName ?? "chat",
     spec: {
       template: options.conversationTemplate ?? ANALYST_URI,
       ...(options.conversationModel ? { modelEndpoint: options.conversationModel } : {}),
@@ -100,7 +103,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const conversationEnvelope = () => ({
-    ...envelope("conversation", CONVERSATION_RID, "chat", conversation.spec, 0),
+    ...envelope("conversation", CONVERSATION_RID, conversation.name, conversation.spec, 0),
     status: conversation.status,
   });
 
@@ -208,6 +211,10 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       return json(401, { code: "unauthenticated", message: "no token" });
 
     const p = url.pathname;
+    if (method === "PATCH" && p === `/catalog/v1/resources/${CONVERSATION_RID}`) {
+      conversation.name = body.name;
+      return json(200, conversationEnvelope());
+    }
     if (p === "/catalog/v1/resources/resolve") {
       const uri = url.searchParams.get("uri") ?? "";
       const m = /^texera:\/\/([a-z-]+)\/([0-9a-f-]{36})(?:@(\d+))?$/i.exec(uri);

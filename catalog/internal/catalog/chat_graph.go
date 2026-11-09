@@ -356,14 +356,11 @@ func (s *Service) unitNode(ctx context.Context, caller *auth.Caller, g *chatGrap
 // sizeUnitNode says on a unit's node what its main node has.
 func sizeUnitNode(n *api.GraphNode, r *store.Resource) {
 	var spec api.ComputingUnitSpec
-	if json.Unmarshal(r.Spec, &spec) != nil || spec.ComputingNodes == nil {
+	if json.Unmarshal(r.Spec, &spec) != nil {
 		return
 	}
-	for _, node := range *spec.ComputingNodes {
-		if node.Role == api.ComputingNodeSpecRoleMaster {
-			n.Cpu, n.Memory, n.Gpu = node.Cpu, node.Memory, node.Gpu
-			return
-		}
+	if node := masterOf(&spec); node != nil {
+		n.Cpu, n.Memory, n.Gpu = node.Cpu, node.Memory, node.Gpu
 	}
 }
 

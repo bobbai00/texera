@@ -7,7 +7,7 @@ import { conversationsResourcesOptions } from "@texera/catalog-client/query";
 import type { ChatResource, ComputingUnitStatus, ExecutionStatus } from "@texera/catalog-client/types";
 import { SectionTitle, cn, timeAgo } from "@texera/ui";
 import { ChevronRight, FileText } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { memo, type ReactNode, useMemo, useState } from "react";
 import { PhaseIcon } from "../execution/PhaseIcon";
 import { filesQuery } from "../files/api";
 import { KINDS } from "../registry";
@@ -38,7 +38,7 @@ const runsOn = (items: ChatResource[] | undefined) =>
  * The chat's tree under the title "From this chat". A chat with nothing in it shows `empty`
  * under the title, or nothing at all when there is no `empty`.
  */
-export function FromThisChat({ rid, className, empty = null }: { rid: string; className?: string; empty?: ReactNode }) {
+export const FromThisChat = memo(function FromThisChat({ rid, className, empty = null }: { rid: string; className?: string; empty?: ReactNode }) {
   const { data } = useQuery({
     ...conversationsResourcesOptions({ path: { rid } }),
     staleTime: 10_000,
@@ -69,7 +69,7 @@ export function FromThisChat({ rid, className, empty = null }: { rid: string; cl
       )}
     </section>
   );
-}
+});
 
 function Chevron({ open }: { open: boolean }) {
   return <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />;

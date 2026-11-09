@@ -5,22 +5,25 @@ import { useQuery } from "@tanstack/react-query";
 import type { Resource } from "@texera/catalog-client/types";
 import { Skeleton } from "@texera/ui";
 import { useNavigate } from "@tanstack/react-router";
+import { memo } from "react";
 import { describe, operatorsOf } from "../library/describe";
-import { resourceQuery, searchAllQuery, unitsQuery } from "../queries";
-import { KINDS, isKindId } from "../registry";
+import { operatorListQuery, resourceQuery, unitsQuery, useHoldings } from "../queries";
+import { KINDS } from "../registry";
 import { KindIcon } from "../shell/KindIcon";
 import { useMay } from "../shell/may";
 import { useOpenResource } from "../shell/navigation";
 import { ResourceLabels, RowName } from "../shell/ResourceRow";
-import { type KindId, kindEntry } from "../types";
+import type { KindId } from "../types";
+import { pluralOf } from "../uri";
 
 /** How many of a kind the overview shows; the rest are a click away. */
 const SHOWN = 4;
+const LISTED: KindId[] = ["dataset", "model", "workflow", "conversation"];
 
 /** What a row says beside a resource's name: a unit what it has, the rest what they are. */
 function rowText(r: Resource, kind: KindId): string {
   if (kind === "computing-unit") return (KINDS[kind].facts?.(r) ?? []).join(" · ");
-  return describe(r) ?? "";
+  return describe(r);
 }
 
 /** A kind's section, the most recently changed first, as the catalog answers. */
@@ -35,7 +38,7 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
         <h2 className="text-sm font-semibold">{title}</h2>
         <span className="text-xs text-muted-foreground">{items.length}</span>
         {rest > 0 && (
-          <button type="button" onClick={() => void navigate({ to: "/$plural", params: { plural: kindEntry(kind).plural } })} className="ml-auto text-xs text-muted-foreground hover:text-foreground">
+          <button type="button" onClick={() => void navigate({ to: "/$plural", params: { plural: pluralOf(kind) } })} className="ml-auto text-xs text-muted-foreground hover:text-foreground">
             {moreLabel ?? `View all ${items.length}`}
           </button>
         )}
@@ -43,9 +46,8 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
       {/* Beside a chat the list can be narrow: what is left out then is the labels, not its right edge. */}
       <ul className="divide-y @container">
         {items.slice(0, SHOWN).map(r => {
-          const id = isKindId(r.kind) ? r.kind : kind;
-          const open = () => expand({ kind: id, rid: r.metadata.rid, parent: r.metadata.parent });
-          const text = rowText(r, id);
+          const open = () => expand({ kind, rid: r.metadata.rid, parent: r.metadata.parent });
+          const text = rowText(r, kind);
           return (
             // biome-ignore lint/a11y/useKeyWithClickEvents: the name in the row is the keyboard's way in
             <li key={r.metadata.rid} data-resource-row={r.kind} onClick={open} className="group/row flex cursor-pointer items-center gap-3 px-4 py-2 hover:bg-accent/50">
@@ -68,15 +70,12 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
  * What a project holds. `titled` says whether it names the project itself: the
  * project's own page has a header for that.
  */
-export function ProjectOverview({ rid, titled = true }: { rid: string; titled?: boolean }) {
+export const ProjectOverview = memo(function ProjectOverview({ rid, titled = true }: { rid: string; titled?: boolean }) {
   const { data: project } = useQuery(resourceQuery(rid));
-  // What the agent and the others add arrives while the page is open.
-  const { data, isPending } = useQuery({ ...searchAllQuery({ project: rid }), refetchInterval: 5_000 });
-  const { data: operators } = useQuery(searchAllQuery({ kind: "operator", scope: rid }));
+  const { of, isPending } = useHoldings(rid, LISTED);
+  const { data: operators } = useQuery(operatorListQuery(rid));
   const { data: units } = useQuery(unitsQuery(rid));
   const may = useMay(rid);
-  const held = data?.items ?? [];
-  const of = (kind: KindId) => held.filter(r => r.kind === kind);
   const { own, builtIn } = operatorsOf(operators?.items ?? [], rid);
   const sections: { kind: KindId; title: string; items: Resource[]; more?: number; moreLabel?: string }[] = [
     { kind: "dataset", title: "Data", items: of("dataset") },
@@ -86,7 +85,7 @@ export function ProjectOverview({ rid, titled = true }: { rid: string; titled?: 
       title: "Operators",
       items: own,
       more: builtIn.length,
-      moreLabel: builtIn.length ? `${builtIn.length} built-in` : undefined,
+      moreLabel: `${builtIn.length} built-in`,
     },
     { kind: "workflow", title: "Workflows", items: of("workflow") },
     { kind: "computing-unit", title: "Computing units", items: units ?? [] },
@@ -114,4 +113,4 @@ export function ProjectOverview({ rid, titled = true }: { rid: string; titled?: 
       )}
     </div>
   );
-}
+});

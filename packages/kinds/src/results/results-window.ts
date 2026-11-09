@@ -18,6 +18,8 @@ const SMALLEST = { width: 360, height: 180 };
 /** How tall the window is folded: its title bar. */
 export const TITLE_HEIGHT = 44;
 const MARGIN = 8;
+import { keepHere, recalled } from "@texera/ui";
+
 const KEY = "texera-results-window";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
@@ -50,22 +52,12 @@ export const resized = (w: ResultsPlace, dx: number, dy: number): ResultsPlace =
   height: w.height - dy,
 });
 
-export function remembered(): ResultsPlace {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<ResultsPlace> | null;
-    if (saved && ["left", "bottom", "width", "height"].every(k => typeof saved[k as keyof ResultsPlace] === "number"))
-      return { ...DEFAULT_PLACE, ...saved, folded: saved.folded === true };
-  } catch {
-    /* nothing kept, or nothing readable */
-  }
-  return DEFAULT_PLACE;
-}
+export const remembered = (): ResultsPlace =>
+  recalled(KEY, saved => {
+    const place = saved as Partial<ResultsPlace> | null;
+    return place && ["left", "bottom", "width", "height"].every(k => typeof place[k as keyof ResultsPlace] === "number")
+      ? { ...DEFAULT_PLACE, ...place, folded: place.folded === true }
+      : undefined;
+  }) ?? DEFAULT_PLACE;
 
-export function remember(w: ResultsPlace | undefined): void {
-  try {
-    if (w) localStorage.setItem(KEY, JSON.stringify(w));
-    else localStorage.removeItem(KEY);
-  } catch {
-    /* kept for this page only */
-  }
-}
+export const remember = (w: ResultsPlace | undefined): void => keepHere(KEY, w);

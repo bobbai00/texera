@@ -204,12 +204,12 @@ func (s *Service) nodesFromProfiles(ctx context.Context, caller *auth.Caller, sp
 	return mustJSON(doc), nil
 }
 
-// sharesTheUnit says whether a unit made from a profile is the deployment's own unit, with the
+// sharesTheUnit says whether a unit made from a profile is the public unit, with the
 // profile's packages and the unit's size, rather than one started at the profile's size.
 func (s *Service) sharesTheUnit() bool { return s.Config.ProfileUnits == api.UnitProviderStatic }
 
 // profileUnit is the spec of a unit made from a profile with this master node: started on the
-// deployment's Kubernetes, or the deployment's own unit where units from profiles share it.
+// deployment's Kubernetes, or the public unit where units from profiles share it.
 func (s *Service) profileUnit(master api.ComputingNodeSpec) api.ComputingUnitSpec {
 	master.Name, master.Role = "master", api.ComputingNodeSpecRoleMaster
 	spec := api.ComputingUnitSpec{Provider: api.UnitProviderKubernetes, ComputingNodes: &[]api.ComputingNodeSpec{master}}
@@ -250,7 +250,18 @@ func (s *Service) UnitFromProfile(ctx context.Context, caller *auth.Caller, in a
 		}
 		parent = &p
 	}
-	unit, _, err := s.Create(ctx, caller, CreateInput{Kind: unitKind, Name: in.Name, Parent: parent, Spec: mustJSON(spec)})
+	name := ""
+	if in.Name != nil {
+		name = strings.TrimSpace(*in.Name)
+	}
+	if name == "" {
+		named, err := s.resourceByURI(ctx, caller, string(profile), &profileKind)
+		if err != nil {
+			return nil, err
+		}
+		name = named.Name + " unit"
+	}
+	unit, _, err := s.Create(ctx, caller, CreateInput{Kind: unitKind, Name: name, Parent: parent, Spec: mustJSON(spec)})
 	if err != nil || in.WaitSeconds == nil || *in.WaitSeconds <= 0 {
 		return unit, err
 	}

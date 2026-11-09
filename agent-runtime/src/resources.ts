@@ -66,12 +66,8 @@ export function findResourceRefs(value: unknown, depth = 0): ResourceRef[] {
     }
   };
   const walk = (v: unknown, d: number) => {
-    if (d > 8) return;
-    if (Array.isArray(v)) {
-      for (const item of v) walk(item, d + 1);
-      return;
-    }
-    if (!isRecord(v)) return;
+    // A list is what the agent looked through, not what it touched.
+    if (d > 8 || !isRecord(v)) return;
     const metadata = v.metadata;
     if (
       typeof v.kind === "string" &&
@@ -94,11 +90,7 @@ export function findResourceRefs(value: unknown, depth = 0): ResourceRef[] {
       if (typeof v.uri === "string") ref.uri = v.uri;
       add(ref);
     }
-    // Listings (a page's items) are what the agent looked through, not what it touched.
-    for (const [k, child] of Object.entries(v)) {
-      if (k === "items" && Array.isArray(child)) continue;
-      walk(child, d + 1);
-    }
+    for (const child of Object.values(v)) walk(child, d + 1);
   };
   walk(value, depth);
   return refs;

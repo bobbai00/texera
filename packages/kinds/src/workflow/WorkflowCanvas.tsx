@@ -2,12 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { cn, useDark } from "@texera/ui";
 import {
   type CanvasNode,
+  canvasFlow,
   type OperatorOverlay,
   pictureOf,
   placeMissing,
-  resourceLayer,
   resourceRoom,
-  toFlow,
   type WorkflowSpec,
 } from "@texera/workflow-model";
 import {
@@ -76,13 +75,7 @@ function Shown({ spec, overlay, view: shared, className, children }: Props) {
   const picture = shared === undefined;
   const flow = useMemo(() => {
     const placed = picture ? pictureOf(spec) : spread(placeMissing(spec, spec.layout ?? {}), k);
-    const operators = toFlow(spec, placed, overlay);
-    if (!showResources) return operators;
-    const resources = resourceLayer(spec, placed);
-    return {
-      nodes: [...operators.nodes, ...resources.nodes] as CanvasNode[],
-      edges: [...operators.edges, ...resources.edges],
-    };
+    return canvasFlow(spec, placed, overlay, showResources);
   }, [spec, picture, k, overlay, showResources]);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(flow.nodes);
   const [edges, setEdges] = useEdgesState<Edge>(flow.edges);

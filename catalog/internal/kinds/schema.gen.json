@@ -677,6 +677,7 @@
       "description": "A computing unit to make from a profile.",
       "properties": {
         "name": {
+          "description": "What to call it. Left out, it is called after its profile: Small unit.",
           "type": "string"
         },
         "parent": {
@@ -694,7 +695,6 @@
         }
       },
       "required": [
-        "name",
         "profile"
       ],
       "type": "object"
