@@ -127,16 +127,19 @@ func (s *Service) Seed(ctx context.Context) error {
 
 	// What this start ships, by kind and name.
 	ships := map[string]map[string]bool{}
-	ship := func(kind, name, description string, spec any, status any) (*store.Resource, error) {
-		if ships[kind] == nil {
-			ships[kind] = map[string]bool{}
+	shipIn := func(in shipment) (*store.Resource, error) {
+		if ships[in.kind] == nil {
+			ships[in.kind] = map[string]bool{}
 		}
-		ships[kind][name] = true
+		ships[in.kind][in.name] = true
+		return s.ship(ctx, caller, in)
+	}
+	ship := func(kind, name, description string, spec any, status any) (*store.Resource, error) {
 		in := shipment{kind: kind, name: name, description: description, spec: mustJSON(spec)}
 		if status != nil {
 			in.status = mustJSON(status)
 		}
-		return s.ship(ctx, caller, in)
+		return shipIn(in)
 	}
 	uriOf := func(r *store.Resource) *api.Uri {
 		if r == nil {
@@ -221,15 +224,20 @@ func (s *Service) Seed(ctx context.Context) error {
 		}
 	}
 	// The deployment's warehouse, where an execution keeps its results unless something names
-	// another. Its storage is looked at on every start: the store's address may have changed.
-	warehouse, err := ship("warehouse", s.Config.Warehouse, "The warehouse of this deployment", api.WarehouseSpec{}, api.WarehouseStatus{Name: &s.Config.Warehouse})
+	// another. It is the deployment's from the moment it is made, since its storage is decided
+	// then: the configured place, not a place of its own (storageOf). Its storage is looked at
+	// on every start: the store's address may have changed.
+	rid := uuid.New()
+	s.setWarehouse(rid)
+	warehouse, err := shipIn(shipment{
+		kind: "warehouse", name: s.Config.Warehouse, description: "The warehouse of this deployment",
+		spec: mustJSON(api.WarehouseSpec{}), status: mustJSON(api.WarehouseStatus{Name: &s.Config.Warehouse}), rid: &rid,
+	})
 	if err != nil {
 		return err
 	}
 	if warehouse != nil {
-		s.mu.Lock()
-		s.warehouse = warehouse.RID
-		s.mu.Unlock()
+		s.setWarehouse(warehouse.RID)
 		if err := s.provisionWarehouse(ctx, warehouse); err != nil {
 			return fmt.Errorf("the deployment's warehouse: %w", err)
 		}
@@ -416,6 +424,12 @@ func (s *Service) shippedWarehouse() uuid.UUID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.warehouse
+}
+
+func (s *Service) setWarehouse(rid uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warehouse = rid
 }
 
 func strPtrOf(s string) *string { return &s }

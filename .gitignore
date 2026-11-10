@@ -149,3 +149,10 @@ amber/venv
 
 # The uv-managed Python environment (pyproject.toml); uv.lock is committed.
 .venv/
+
+# Terraform (deploy/aws): the state, the providers and what deploy.sh generates stay on the
+# machine; the lock files are committed.
+deploy/aws/**/.terraform/
+deploy/aws/**/terraform.tfstate*
+deploy/aws/**/*.auto.tfvars.json
+deploy/aws/**/*.tfplan

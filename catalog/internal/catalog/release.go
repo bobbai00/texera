@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/kinds"
 	"github.com/apache/texera/catalog/internal/store"
@@ -35,6 +37,8 @@ type shipment struct {
 	message string
 	// typed: the resource is an operator, found by the type its spec names rather than by name.
 	typed bool
+	// rid, when set, is the id a new resource gets: for what must be known before it is made.
+	rid *uuid.UUID
 }
 
 // ShippedDigest is what the ledger compares: a resource's spec and description.
@@ -87,7 +91,7 @@ func (s *Service) ship(ctx context.Context, caller *auth.Caller, in shipment) (*
 	desc := in.description
 	if r == nil {
 		owner := caller.PID()
-		r, _, err = s.Create(ctx, caller, CreateInput{Kind: k, Name: in.name, Description: &desc, Parent: &root.RID, Spec: in.spec, Status: in.status, Owner: &owner})
+		r, _, err = s.Create(ctx, caller, CreateInput{Kind: k, RID: in.rid, Name: in.name, Description: &desc, Parent: &root.RID, Spec: in.spec, Status: in.status, Owner: &owner})
 		if err != nil {
 			return nil, fmt.Errorf("ship %s %s: %w", in.kind, in.name, err)
 		}

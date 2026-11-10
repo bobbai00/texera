@@ -40,7 +40,8 @@ type Config struct {
 	SecretsToken string
 	SecretsMount string
 
-	// Blobs (S3).
+	// Blobs (S3). Without a key, the store is reached as the catalog itself (a pod identity, an
+	// instance role), and without an endpoint it is the region's own S3.
 	S3Endpoint       string
 	S3PublicEndpoint string
 	S3Region         string
@@ -53,11 +54,16 @@ type Config struct {
 	IcebergCatalogURI string
 	IcebergWarehouse  string
 	// The lake as the catalog reaches it, and the warehouse's store as Lakekeeper and the
-	// units reach it (the warehouse profile the catalog creates).
-	LakeURL        string
-	LakeS3Endpoint string
-	LakeBucket     string
-	LakeKeyPrefix  string
+	// units reach it (the warehouse profile the catalog creates). With the S3 key above, an
+	// S3-compatible store at LakeS3Endpoint; without one, AWS S3 itself: the lake uses its own
+	// identity and assumes LakeS3RoleArn, which trusts it by LakeS3ExternalID, for its reads and
+	// for the credentials it vends to units.
+	LakeURL          string
+	LakeS3Endpoint   string
+	LakeBucket       string
+	LakeKeyPrefix    string
+	LakeS3RoleArn    string
+	LakeS3ExternalID string
 	// LineageCallbackURL is where units post OpenLineage events.
 	LineageCallbackURL string
 
@@ -120,6 +126,8 @@ func FromEnv() (Config, error) {
 		LakeS3Endpoint:      env("TEXERA_LAKE_S3_ENDPOINT", "http://127.0.0.1:19001"),
 		LakeBucket:          env("TEXERA_LAKE_BUCKET", "texera"),
 		LakeKeyPrefix:       env("TEXERA_LAKE_KEY_PREFIX", "warehouse"),
+		LakeS3RoleArn:       env("TEXERA_LAKE_S3_ROLE_ARN", ""),
+		LakeS3ExternalID:    env("TEXERA_LAKE_S3_EXTERNAL_ID", ""),
 		LineageCallbackURL:  env("TEXERA_LINEAGE_CALLBACK_URL", "http://localhost:8090/lineage/v1/events"),
 		StaticUnitEndpoint:  env("TEXERA_STATIC_UNIT_ENDPOINT", "http://localhost:28085"),
 		StaticUnitName:      env("TEXERA_STATIC_UNIT_NAME", "Public unit"),

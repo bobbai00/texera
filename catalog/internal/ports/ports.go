@@ -155,15 +155,20 @@ type Lake interface {
 	DropNamespace(ctx context.Context, warehouse, namespace string) error
 }
 
-// WarehouseStorage is where a warehouse keeps its tables: a place in an S3-compatible store,
-// as the lake and the units reach it, and the key to it.
+// WarehouseStorage is where a warehouse keeps its tables, as the lake and the units reach it,
+// and how the lake gets in. With a key: an S3-compatible store at Endpoint, reached by path,
+// the key handed to the lake. Without one: AWS S3 itself, in Region; the lake uses its own
+// identity and assumes RoleArn, which trusts it by ExternalID, for its reads and for the
+// credentials it vends to units.
 type WarehouseStorage struct {
-	Endpoint  string
-	Region    string
-	Bucket    string
-	KeyPrefix string
-	AccessKey string
-	SecretKey string
+	Endpoint   string
+	Region     string
+	Bucket     string
+	KeyPrefix  string
+	AccessKey  string
+	SecretKey  string
+	RoleArn    string
+	ExternalID string
 }
 
 // ErrStorageRefused is returned when the lake could not use a warehouse's storage.

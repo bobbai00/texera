@@ -1,0 +1,56 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The secret store as a service rather than in dev mode: its data on a volume, unsealed by the
+# KMS key through its service account's pod identity (openbao-config is rendered in main.tf). One
+# replica, recreated rather than rolled, since the volume attaches to one node at a time. It
+# answers ready while uninitialized or sealed too, so that the init job can reach it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao
+spec:
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      serviceAccountName: openbao
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: openbao
+          args: ["server", "-config=/openbao/config/server.hcl"]
+          env:
+            - name: BAO_DEV_ROOT_TOKEN_ID
+              $patch: delete
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?uninitcode=200&sealedcode=200
+              port: 8200
+          volumeMounts:
+            - name: config
+              mountPath: /openbao/config
+              readOnly: true
+            - name: data
+              mountPath: /openbao/file
+      volumes:
+        - name: config
+          configMap:
+            name: openbao-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: openbao-data

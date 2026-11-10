@@ -245,3 +245,13 @@ func TestAFileAttachedToAChatIsTheChatsUntilKept(t *testing.T) {
 		t.Fatalf("a kept file stays: %d", status)
 	}
 }
+
+// The deployment's warehouse is made in the configured place from the start: the lake, which
+// lets no warehouse change its key prefix once made, is never asked to.
+func TestTheDeploymentsWarehouseIsMadeInItsPlaceFromTheStart(t *testing.T) {
+	h := newHarness(t)
+	kept, ok := h.lake.Warehouses["texera"]
+	if !ok || kept.Bucket != "texera" || kept.KeyPrefix != "warehouse" {
+		t.Fatalf("the deployment's warehouse in the lake: %+v (%v)", kept, ok)
+	}
+}

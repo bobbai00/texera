@@ -16,8 +16,9 @@
 # under the License.
 
 # OpenBao, the secret store, in dev mode as in the dev stack: in-memory, unsealed, one root
-# token. Credentials people create live as long as the pod does; the platform's model key is
-# written on every `k8s.sh up` by the openbao-init job from the texera2-llm Secret.
+# token (texera2-clients' secrets-token, which the catalog uses). Credentials people create live
+# as long as the pod does; the platform's model key is written on every `k8s.sh up` by the
+# openbao-init job from the texera2-llm Secret. deploy/aws runs it with a volume and a KMS seal.
 apiVersion: v1
 kind: Service
 metadata:
@@ -42,9 +43,11 @@ spec:
       containers:
         - name: openbao
           image: openbao/openbao:2.4.1
-          args: ["server", "-dev", "-dev-root-token-id=texera-dev-root", "-dev-listen-address=0.0.0.0:8200"]
+          args: ["server", "-dev", "-dev-root-token-id=$(BAO_DEV_ROOT_TOKEN_ID)", "-dev-listen-address=0.0.0.0:8200"]
           env:
             - { name: BAO_ADDR, value: "http://127.0.0.1:8200" }
+            - name: BAO_DEV_ROOT_TOKEN_ID
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: secrets-token } }
           securityContext:
             capabilities:
               add: ["IPC_LOCK"]
@@ -69,7 +72,8 @@ spec:
           image: openbao/openbao:2.4.1
           env:
             - { name: BAO_ADDR, value: "http://openbao:8200" }
-            - { name: BAO_TOKEN, value: texera-dev-root }
+            - name: BAO_TOKEN
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: secrets-token } }
             - name: ANTHROPIC_API_KEY
               valueFrom: { secretKeyRef: { name: texera2-llm, key: ANTHROPIC_API_KEY, optional: true } }
           command: ["/bin/sh", "-c"]

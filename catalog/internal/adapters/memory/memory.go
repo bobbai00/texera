@@ -299,6 +299,10 @@ func (l *Lake) EnsureWarehouse(_ context.Context, warehouse string, storage port
 			return fmt.Errorf("%w: %s", ports.ErrStorageRefused, reason)
 		}
 	}
+	// Like Lakekeeper: a warehouse that exists keeps its bucket and its key prefix.
+	if kept, ok := l.Warehouses[warehouse]; ok && (kept.Bucket != storage.Bucket || kept.KeyPrefix != storage.KeyPrefix) {
+		return fmt.Errorf("%w: the bucket and the key prefix of %s cannot change", ports.ErrStorageRefused, warehouse)
+	}
 	l.Warehouses[warehouse] = storage
 	return nil
 }

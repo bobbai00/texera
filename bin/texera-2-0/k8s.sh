@@ -162,9 +162,9 @@ case "${1:-}" in
     [ "${2:-}" = "--no-build" ] || build
     load
     configure
-    kubectl --context "$CONTEXT" apply -k "$ROOT/deploy/kubernetes" >/dev/null
-    # Jobs are immutable: a rerun recreates them so the key and the mounts are refreshed.
-    for job in openbao-init; do k delete job "$job" --ignore-not-found >/dev/null; done
+    # Jobs are immutable: a rerun recreates them, before the apply, so the key and the mounts are
+    # refreshed and a changed job spec goes through.
+    for job in rustfs-buckets openbao-init; do k delete job "$job" --ignore-not-found >/dev/null; done
     kubectl --context "$CONTEXT" apply -k "$ROOT/deploy/kubernetes" >/dev/null
     # Same tags, new images or config: restart what already runs so it picks them up.
     for app in "${APPS[@]}"; do k rollout restart "deploy/$app" >/dev/null 2>&1 || true; done

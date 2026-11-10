@@ -18,6 +18,8 @@
 # The Texera services. Browsers and tokens use the public URL (the gateway's LoadBalancer port on
 # localhost, a secure context for the app's PKCE sign-in); the services reach each other, Keycloak
 # included, by their cluster names. Change both together: texera2-public and the gateway Service.
+# What differs from one deployment to the next lives in this config map and the secret below;
+# deploy/aws replaces both for a cluster in the cloud.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,6 +28,23 @@ data:
   public-url: http://localhost:28088
   issuer: http://localhost:28088/auth/realms/texera
   keycloak-hostname: http://localhost:28088/auth
+  # The engine image the catalog starts units from: the same build as its own.
+  unit-image: texera/computing-unit-master:2.0-dev
+---
+# The deployment's own secrets, with the dev stack's values: the realm's service clients
+# (keycloak/texera-realm.json names the same), the bio server's key, Keycloak's first
+# administrator, Lakekeeper's key for the credentials it stores, and the secret store's token.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: texera2-clients
+stringData:
+  services-client-secret: texera-services-secret
+  unit-client-secret: texera-unit-secret
+  biomcp-key: texera-bio-dev-key
+  keycloak-admin-password: admin
+  lakekeeper-encryption-key: texera2-dev-only-encryption-key
+  secrets-token: texera-dev-root
 ---
 apiVersion: v1
 kind: Service
@@ -66,10 +85,17 @@ spec:
           env:
             - { name: TEXERA_DATABASE_URL, value: "postgres://texera:texera@postgres:5432/catalog?sslmode=disable" }
             - { name: TEXERA_SECRETS_URL, value: "http://openbao:8200" }
+            - name: TEXERA_SECRETS_TOKEN
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: secrets-token } }
+            - name: TEXERA_SERVICE_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: services-client-secret } }
+            - name: TEXERA_BIOMCP_KEY
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: biomcp-key } }
             # Units of provider kubernetes become Deployments in this namespace.
             - name: TEXERA_KUBE_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
-            - { name: TEXERA_KUBE_UNIT_IMAGE, value: "texera/computing-unit-master:2.0-dev" }
+            - name: TEXERA_KUBE_UNIT_IMAGE
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: unit-image } }
             - name: TEXERA_PUBLIC_URL
               valueFrom: { configMapKeyRef: { name: texera2-public, key: public-url } }
             - name: TEXERA_OIDC_ISSUER
@@ -134,7 +160,8 @@ spec:
             # The cluster unit's identity toward the lake: the realm's texera-unit client (dev
             # values, like the realm's); units the catalog provisions get clients of their own.
             - { name: STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID, value: texera-unit }
-            - { name: STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET, value: texera-unit-secret }
+            - name: STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: unit-client-secret } }
             - { name: STORAGE_ICEBERG_CATALOG_REST_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
             - { name: STORAGE_S3_ENDPOINT, value: "http://rustfs:9000" }
             - { name: STORAGE_S3_REGION, value: us-east-1 }
@@ -187,6 +214,8 @@ spec:
               valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
             - { name: TEXERA_OIDC_JWKS_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/certs" }
             - { name: TEXERA_OIDC_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
+            - name: TEXERA_SERVICE_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: services-client-secret } }
           ports:
             - containerPort: 23002
           readinessProbe:
@@ -230,6 +259,8 @@ spec:
             # Like the agent runtime, it calls the catalog through the gateway.
             - { name: TEXERA_CATALOG_URL, value: "http://gateway:28088" }
             - { name: TEXERA_OIDC_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
+            - name: TEXERA_SERVICE_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: services-client-secret } }
           ports:
             - containerPort: 23003
           readinessProbe:
@@ -297,7 +328,8 @@ spec:
           env:
             - { name: PORT, value: "23010" }
             - { name: MCP_PATH, value: /bio-mcp }
-            - { name: BIOMCP_API_KEY, value: texera-bio-dev-key }
+            - name: BIOMCP_API_KEY
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: biomcp-key } }
           ports:
             - containerPort: 23010
           readinessProbe:

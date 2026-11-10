@@ -94,15 +94,25 @@ type storageProfile struct {
 	Bucket          string `json:"bucket"`
 	KeyPrefix       string `json:"key-prefix,omitempty"`
 	Region          string `json:"region"`
-	Endpoint        string `json:"endpoint"`
+	Endpoint        string `json:"endpoint,omitempty"`
 	PathStyleAccess bool   `json:"path-style-access"`
 	Flavor          string `json:"flavor"`
 	StsEnabled      bool   `json:"sts-enabled"`
+	// On AWS: the role the lake assumes, as itself, for its reads and for the credentials it vends.
+	StsRoleArn    string `json:"sts-role-arn,omitempty"`
+	AssumeRoleArn string `json:"assume-role-arn,omitempty"`
 }
 
-// profileOf is a storage as Lakekeeper takes it: an S3-compatible store reached by path, with
-// credential vending on, so a unit never holds a key to the whole warehouse.
+// profileOf is a storage as Lakekeeper takes it, with credential vending on, so a unit never
+// holds a key to the whole warehouse. With a key: an S3-compatible store reached by path at its
+// endpoint. Without one: AWS S3 itself, through the role the lake assumes.
 func profileOf(storage ports.WarehouseStorage) storageProfile {
+	if storage.AccessKey == "" {
+		return storageProfile{
+			Type: "s3", Bucket: storage.Bucket, KeyPrefix: storage.KeyPrefix, Region: storage.Region,
+			Flavor: "aws", StsEnabled: true, StsRoleArn: storage.RoleArn, AssumeRoleArn: storage.RoleArn,
+		}
+	}
 	return storageProfile{
 		Type: "s3", Bucket: storage.Bucket, KeyPrefix: storage.KeyPrefix, Region: storage.Region,
 		Endpoint: storage.Endpoint, PathStyleAccess: true, Flavor: "s3-compat", StsEnabled: true,
@@ -117,7 +127,12 @@ func (p storageProfile) samePlace(o storageProfile) bool {
 	return p == o
 }
 
+// credentialOf is how the lake gets in: with the key, or as itself, which the role trusts by
+// the external id.
 func credentialOf(storage ports.WarehouseStorage) map[string]any {
+	if storage.AccessKey == "" {
+		return map[string]any{"type": "s3", "credential-type": "aws-system-identity", "external-id": storage.ExternalID}
+	}
 	return map[string]any{"type": "s3", "credential-type": "access-key", "aws-access-key-id": storage.AccessKey, "aws-secret-access-key": storage.SecretKey}
 }
 

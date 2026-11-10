@@ -48,7 +48,8 @@ spec:
           args: ["start-dev", "--import-realm", "--http-relative-path=/auth"]
           env:
             - { name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin }
-            - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, value: admin }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: texera2-clients, key: keycloak-admin-password } }
             - { name: KC_DB, value: postgres }
             - { name: KC_DB_URL, value: "jdbc:postgresql://postgres:5432/keycloak" }
             - { name: KC_DB_USERNAME, value: texera }

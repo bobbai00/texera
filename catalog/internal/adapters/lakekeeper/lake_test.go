@@ -183,3 +183,46 @@ func TestAWarehouseIsRemovedOnceItIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// onAws is a storage with no key: AWS S3 itself, reached through a role.
+var onAws = ports.WarehouseStorage{Region: "us-east-2", Bucket: "texera-lake", KeyPrefix: "warehouse", RoleArn: "arn:aws:iam::1:role/lake", ExternalID: "the-external-id"}
+
+// keptAws is an AWS warehouse as Lakekeeper lists it.
+func keptAws(id, name string, s ports.WarehouseStorage) map[string]any {
+	return map[string]any{"id": id, "name": name, "storage-profile": map[string]any{
+		"type": "s3", "bucket": s.Bucket, "key-prefix": s.KeyPrefix, "region": s.Region, "path-style-access": false, "sts-enabled": true, "flavor": "aws",
+		"sts-role-arn": s.RoleArn, "assume-role-arn": s.RoleArn, "sts-token-validity-seconds": 3600,
+	}}
+}
+
+func TestAWarehouseOnAwsIsReachedAsTheLakeItselfThroughItsRole(t *testing.T) {
+	f := &lakekeeper{}
+	lake := newLake(t, f)
+	if err := lake.EnsureWarehouse(context.Background(), "texera", onAws); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 || f.calls[0].Path != "/management/v1/warehouse" {
+		t.Fatalf("the calls: %+v", f.calls)
+	}
+	profile, _ := f.calls[0].Body["storage-profile"].(map[string]any)
+	credential, _ := f.calls[0].Body["storage-credential"].(map[string]any)
+	if _, set := profile["endpoint"]; set {
+		t.Fatalf("an endpoint for AWS: %v", profile)
+	}
+	if profile["flavor"] != "aws" || profile["path-style-access"] != false || profile["sts-enabled"] != true ||
+		profile["sts-role-arn"] != onAws.RoleArn || profile["assume-role-arn"] != onAws.RoleArn || profile["bucket"] != "texera-lake" {
+		t.Fatalf("the profile: %v", profile)
+	}
+	if credential["credential-type"] != "aws-system-identity" || credential["external-id"] != "the-external-id" || credential["aws-access-key-id"] != nil {
+		t.Fatalf("the credential: %v", credential)
+	}
+
+	// Listed back by Lakekeeper, it is the same place: only the credential is refreshed.
+	f.warehouses, f.calls = []map[string]any{keptAws("id-2", "texera", onAws)}, nil
+	if err := lake.EnsureWarehouse(context.Background(), "texera", onAws); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 || f.calls[0].Path != "/management/v1/warehouse/id-2/storage-credential" {
+		t.Fatalf("the calls: %+v", f.calls)
+	}
+}

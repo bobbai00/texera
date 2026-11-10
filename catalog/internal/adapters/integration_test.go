@@ -29,11 +29,14 @@ func TestOpenBao(t *testing.T) {
 }
 
 func TestS3CAS(t *testing.T) {
-	b := s3cas.New(s3cas.Options{
+	b, err := s3cas.New(s3cas.Options{
 		Endpoint: env("TEXERA_S3_ENDPOINT", "http://localhost:19001"), Region: "us-east-1",
 		AccessKey: env("TEXERA_S3_ACCESS_KEY", "texera"), SecretKey: env("TEXERA_S3_SECRET_KEY", "texera-secret"),
 		Bucket: env("TEXERA_S3_BUCKET", "datasets"), PathStyle: true,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	contracttest.BlobStore(t, b)
 }
 

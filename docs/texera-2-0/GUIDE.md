@@ -583,6 +583,7 @@ bin/texera-2-0/test.sh evals       # the real agents through the real model
 bin/texera-2-0/test.sh gate        # a wiped stack, then everything
 bin/texera-2-0/k8s.sh up           # the stack on a local kind cluster at http://localhost:28088
 bin/texera-2-0/k8s.sh check        # the scenarios and Playwright against the cluster, plus a unit made as a resource
+deploy/aws/deploy.sh up            # the stack on AWS (EKS), from Terraform; deploy/aws/README.md
 ```
 
 `docs/texera-2-0/TESTING.md` explains the layers, what each scenario proves, the fixtures and

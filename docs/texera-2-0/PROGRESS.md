@@ -2,6 +2,87 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-09 (session 16, part 8): the stack on AWS, from Terraform
+
+- **`deploy/aws`: everything the local cluster runs, on EKS in `us-east-2`, from one command**
+  (`deploy/aws/deploy.sh up`; `deploy/aws/README.md`). Two Terraform root modules. `cluster/`
+  makes a VPC of its own, the EKS cluster (access by IAM, managed add-ons only, Pod Identity, the
+  EBS CSI driver), one managed node group of Graviton nodes whose metadata service pods cannot
+  reach, a registry repository per image, the KMS key that unseals the secret store, and a
+  network load balancer to the gateway's node port, made before the stack so that its name is the
+  public URL the stack is configured with. The domain and the certificate are two variables:
+  set, ACM issues and validates through the Route 53 zone, 443 serves and 80 redirects.
+  `texera/` is `deploy/kubernetes` as it is, through an overlay for the cloud, applied as
+  Terraform resources: images by digest, the public URL where the base says `localhost:28088`,
+  generated secrets, the config maps `k8s.sh` renders imperatively as generators, S3 where the
+  base has RustFS, volumes on EBS, and OpenBao with a volume and the KMS seal instead of dev
+  mode, initialized once by a job over its API. `deploy.sh` builds the images for the nodes'
+  architecture, pushes them, applies both modules, loads the model key into the store from
+  stdin, and runs the cluster checks against the public URL as the deployment's own service
+  clients.
+- **The object store can be S3 itself, with nobody holding a key.** The catalog's blob store
+  reaches the store as the catalog itself when no key is configured (the SDK's own chain: a pod
+  identity on EKS), at the region's own S3 when no endpoint is. A warehouse's storage without a
+  key is an AWS profile for the lake (`lakekeeper.profileOf`): the lake uses its own identity,
+  assumes the role the storage names (`TEXERA_LAKE_S3_ROLE_ARN`, by `TEXERA_LAKE_S3_EXTERNAL_ID`)
+  for its reads, and vends credentials to the units from it. With a key, everything is as
+  before: an S3-compatible store at an endpoint.
+- **The deployment's warehouse is the deployment's from the moment it is made.** Its rid is
+  chosen before it is shipped, so the creation hook already gives it the configured place
+  (`warehouse`) and not a place of its own (`w/<rid>`). Before, the first start on a store that
+  was not up yet ended in a warehouse the lake would never let change its key prefix, and every
+  start after failed on it; the in-memory lake now refuses such a change like Lakekeeper does,
+  and a test pins the place.
+- **What differs between deployments is in one config map and one secret.** The base's
+  `texera2-public` gained the engine image the catalog starts units from, and a new
+  `texera2-clients` Secret holds the dev stack's service-client secrets, Keycloak's first
+  administrator, the bio server's key, Lakekeeper's encryption key and the secret store's token;
+  every manifest reads them from there. The cloud overlay replaces both. The tests take the
+  service client's secret from `TEXERA_E2E_SERVICES_CLIENT_SECRET`, like the lake's.
+- `k8s.sh up` deletes the jobs before its one apply: a changed job spec used to fail as
+  immutable on the first apply. RustFS's pod names its group (`fsGroup`), since a fresh volume
+  belongs to root and the host paths of a local cluster hid that.
+
+- **The demo's project is checked where it is loaded** (`examples/diabetes/verify.py`), without a
+  model: what `load.py` puts there is all there, every file of every dataset and model reads back
+  as the folder's bytes, every workflow executes and keeps rows, a unit made from the Small
+  profile starts, runs one to the same rows and ends, the teammate reads the project, an
+  execution's lineage names the data and the model it read. With `--against` the same workflows
+  are executed on a second stack and the rows compared: a new deployment against one known to
+  be right.
+- **The sign-in page says what it cannot do.** A browser signs a page in only at a secure address
+  (https, or localhost), since the exchange needs Web Crypto. Over plain http the button went
+  grey for good; now the page says the address is not secure, and a sign-in that does not start
+  gives the button back with the reason (`e2e/login.spec.ts`).
+- **A deployment's public URL can change in place.** `deploy.sh stack` sees the address in the
+  cluster differ from the one configured, restarts what read the old one and gives the realm's
+  app client the new one with Keycloak's own admin CLI, in its pod. `deploy.sh up` loads the
+  model key only when one is configured. The images are pushed without build attestations, so
+  an image that did not change keeps its digest and only what changed starts again.
+- Two scenarios assumed the dev stack: the import test built `https://localhost:None/...` from a
+  gateway URL with no port, and the warehouse on a store of its own needs the store's key, which
+  a deployment on S3 through identities does not have (skipped there, `TEXERA_E2E_STORE=""`).
+- A checkout on another machine works with the state copied over: `deploy.sh` initializes
+  Terraform before it reads the cluster's facts, and says what is missing when the checkout has
+  no state (an empty state is no error to Terraform). The README says what such a machine needs.
+
+Verified on the deployment made by `deploy.sh` in `us-east-2` (EKS 1.37, two Graviton nodes, the
+stack on S3, reached over plain http at the load balancer's name): the catalog's Go suite with the
+new tests; `deploy.sh check`'s API scenarios, 56 passed and the one that needs the store's key
+skipped; `verify.py` against the local stack, 25 of 25: every file of the 12 datasets and 15
+models read back byte for byte, all 15 workflows gave the rows the local stack gives, a unit made
+from the Small profile was ready in 12 s and ended, the lineage and the teammate's view held.
+Result tables were in the lake bucket while their executions existed and were purged with them.
+A second `terraform apply` of either module changes nothing. The browser suite cannot run there
+until the deployment has a domain: at that address a browser signs nobody in, which the sign-in
+page now says (seen in a browser there). The local OrbStack stack runs the same build; its
+`k8s.sh` checks of the two adjusted scenarios and the new browser spec pass. The model key is not
+on the deployment.
+
+Next: a domain for the deployment (two variables; the Route 53 zone is in the account), then the
+browser suite and the model there. The realm on a public deployment still has the dev stack's
+people and passwords.
+
 ## 2026-11-09 (session 16, part 7): chats name themselves, more of the field's data and models, and a cleanup
 
 - **A chat names itself** (`agent/chat-name.ts`). The app starts a chat as "New chat"; the first

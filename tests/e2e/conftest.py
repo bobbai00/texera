@@ -74,7 +74,9 @@ def anon(gw) -> Api:
 def service(gw) -> str:
     """The catalog's own client token, for what only a service may do."""
     from texera_e2e.client import client_token
-    status, tok = client_token(f"{gw}/auth/realms/texera/protocol/openid-connect/token", "texera-services", "texera-services-secret")
+    # The dev stack's client secret, unless the deployment under test has one of its own.
+    secret = os.environ.get("TEXERA_E2E_SERVICES_CLIENT_SECRET", "texera-services-secret")
+    status, tok = client_token(f"{gw}/auth/realms/texera/protocol/openid-connect/token", "texera-services", secret)
     assert status == 200, "the service client's token"
     return tok
 

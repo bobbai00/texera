@@ -109,6 +109,22 @@ its chats run the platform's agent under that name; `--sign-in-page` gives the w
 look as well, the sign-in page included. The identity provider's own form takes its logo from
 `TEXERA2_LOGIN_LOGO` when `k8s.sh up` runs, and its title from the realm's display name.
 
+## Check what was loaded
+
+`verify.py` checks the project on a stack against the folder it came from, and runs what it holds,
+without asking a model anything. Every dataset, model and operator is there, and every file reads
+back as the folder's bytes. Every workflow executes on the project's unit and keeps rows. A unit
+made from the Small profile starts, runs one of them to the same rows, and ends. The teammate
+reads the project, an execution's lineage names the data and the model it read, and the project
+wears the folder's brand. With `--against` the same workflows are executed on a second stack and
+the rows compared, which is how a new deployment is checked against one known to be right. Its
+executions and its unit are removed again.
+
+```bash
+python3 verify.py --data ~/texera-diabetes --gw http://localhost:28088
+python3 verify.py --data ~/texera-diabetes --gw https://texera.example.edu --against http://localhost:28088
+```
+
 ## Start clean
 
 `clean.py` leaves a person's space as the demo starts from. In the demo's project, what `load.py`

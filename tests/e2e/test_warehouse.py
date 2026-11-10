@@ -88,6 +88,8 @@ def test_a_warehouse_on_a_store_of_its_own(alice, admin, project, iris, unit, te
     # The deployment's store as the lake and the units reach it; a warehouse may always be on it.
     on_cluster = request.config.getoption("--cluster")
     endpoint = os.environ.get("TEXERA_E2E_STORE", "http://rustfs:9000" if on_cluster else "http://127.0.0.1:19001")
+    if not endpoint:
+        pytest.skip("the deployment's store is reached without a key (S3 through an identity): there is none to give a warehouse of the test's")
     place = {"endpoint": endpoint, "region": "us-east-1", "bucket": "texera", "keyPrefix": f"e2e/{project}"}
     key = alice.create("credentials", "bucket key", {"kind": "api_key"}, project=project)
     wrong = alice.create("credentials", "a wrong key", {"kind": "api_key"}, project=project)

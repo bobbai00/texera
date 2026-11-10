@@ -89,7 +89,8 @@ export type Caller = Awaited<ReturnType<typeof api>>;
  * origin, vouched for by the platform's service token. `end` ends the turn.
  */
 export async function inTurn(request: APIRequestContext, as: Caller, conversation: string, user = USER, password = PASSWORD) {
-  const form = { grant_type: "client_credentials", client_id: "texera-services", client_secret: "texera-services-secret" };
+  // The dev stack's client secret, unless the deployment under test has one of its own.
+  const form = { grant_type: "client_credentials", client_id: "texera-services", client_secret: process.env.TEXERA_E2E_SERVICES_CLIENT_SECRET ?? "texera-services-secret" };
   const tokenResponse = await request.post("/auth/realms/texera/protocol/openid-connect/token", { form });
   expect(tokenResponse.ok()).toBeTruthy();
   const service = (await tokenResponse.json()).access_token as string;

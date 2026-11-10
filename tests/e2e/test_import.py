@@ -16,10 +16,12 @@ def dataset(alice, project):
 
 def test_an_import_reaches_the_public_internet_only(alice, dataset, request):
     gw = urllib.parse.urlsplit(request.config.getoption("--gw"))
+    # The gateway's port, which its URL names only when it is not the scheme's own.
+    port = gw.port or (443 if gw.scheme == "https" else 80)
     refused = {
         # The platform's own gateway, by the name this machine knows it by and by its address.
-        f"https://localhost:{gw.port}/catalog/v1/public": "is not on the public internet",
-        f"https://127.0.0.1:{gw.port}/catalog/v1/public": "127.0.0.1 is not on the public internet",
+        f"https://localhost:{port}/catalog/v1/public": "is not on the public internet",
+        f"https://127.0.0.1:{port}/catalog/v1/public": "127.0.0.1 is not on the public internet",
         # The cloud's metadata service, a private network, the loopback of IPv6.
         "https://169.254.169.254/latest/meta-data/": "is not on the public internet",
         "https://10.0.0.1/data.csv": "10.0.0.1 is not on the public internet",

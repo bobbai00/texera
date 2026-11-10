@@ -169,3 +169,14 @@ reconciles on every status probe; it reports pending until the engine answers, a
 (the provider is fixed, and a unit with an execution on it answers 409 until it is over),
 `terminate` removes the workloads, and the catalog's service account may do nothing else in
 the cluster (`deploy/kubernetes/rbac.yaml`).
+
+## AWS
+
+The same manifests on EKS, from one command: `deploy/aws/deploy.sh up` makes the network, the
+cluster and its Graviton nodes, the registry, the load balancer and the KMS key with Terraform
+(`deploy/aws/cluster`), builds and pushes the images, applies `deploy/kubernetes` through a cloud
+overlay (`deploy/aws/texera`: images by digest, the public URL, generated secrets, S3 as the
+object store through pod identities, volumes on EBS, OpenBao with a volume and the KMS seal)
+and loads the model key; `deploy/aws/deploy.sh check` runs the cluster checks against the
+public URL. A domain and a certificate are two variables. `deploy/aws/README.md` has the whole
+of it.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -22,14 +23,17 @@ import (
 
 // Options configure the adapter.
 type Options struct {
+	// Endpoint is the store's address; empty, the region's own S3 (AWS).
 	Endpoint string
 	// PublicEndpoint is what presigned URLs point at, reachable by engines and browsers.
 	PublicEndpoint string
 	Region         string
-	AccessKey      string
-	SecretKey      string
-	Bucket         string
-	PathStyle      bool
+	// AccessKey and SecretKey open the store; empty, it is reached as whoever the process runs
+	// as (the SDK's own chain: the environment, a pod identity, an instance role).
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	PathStyle bool
 }
 
 // Blobs implements ports.BlobStore.
@@ -40,14 +44,17 @@ type Blobs struct {
 }
 
 // New builds the adapter. The presigner signs against PublicEndpoint.
-func New(opts Options) *Blobs {
+func New(opts Options) (*Blobs, error) {
+	creds, err := credentialsOf(opts)
+	if err != nil {
+		return nil, err
+	}
 	mk := func(endpoint string) *s3.Client {
-		return s3.New(s3.Options{
-			Region:       opts.Region,
-			BaseEndpoint: aws.String(endpoint),
-			UsePathStyle: opts.PathStyle,
-			Credentials:  credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""),
-		})
+		o := s3.Options{Region: opts.Region, UsePathStyle: opts.PathStyle, Credentials: creds}
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+		}
+		return s3.New(o)
 	}
 	b := &Blobs{opts: opts, client: mk(opts.Endpoint)}
 	pub := opts.PublicEndpoint
@@ -55,7 +62,18 @@ func New(opts Options) *Blobs {
 		pub = opts.Endpoint
 	}
 	b.presign = s3.NewPresignClient(mk(pub))
-	return b
+	return b, nil
+}
+
+func credentialsOf(opts Options) (aws.CredentialsProvider, error) {
+	if opts.AccessKey != "" {
+		return credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""), nil
+	}
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(opts.Region))
+	if err != nil {
+		return nil, fmt.Errorf("the store's credentials: %w", err)
+	}
+	return cfg.Credentials, nil
 }
 
 // Key returns the object key of a digest.

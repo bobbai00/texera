@@ -129,10 +129,14 @@ func run(log *slog.Logger) error {
 		log.Info("kubernetes units enabled", "namespace", cfg.KubeNamespace, "image", cfg.KubeUnitImage)
 	}
 
+	blobs, err := s3cas.New(s3cas.Options{Endpoint: cfg.S3Endpoint, PublicEndpoint: cfg.S3PublicEndpoint, Region: cfg.S3Region, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Bucket: cfg.S3Bucket, PathStyle: cfg.S3PathStyle})
+	if err != nil {
+		return err
+	}
 	svc := &catalog.Service{
 		Store: st, PDP: pdp, Relay: relay, Identity: identity,
 		Secrets:     openbao.New(cfg.SecretsURL, cfg.SecretsMount, cfg.SecretsToken),
-		Blobs:       s3cas.New(s3cas.Options{Endpoint: cfg.S3Endpoint, PublicEndpoint: cfg.S3PublicEndpoint, Region: cfg.S3Region, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Bucket: cfg.S3Bucket, PathStyle: cfg.S3PathStyle}),
+		Blobs:       blobs,
 		Units:       units,
 		Workloads:   identity,
 		Lake:        lake,
@@ -142,7 +146,7 @@ func run(log *slog.Logger) error {
 			Warehouse: cfg.IcebergWarehouse,
 			WarehouseStore: ports.WarehouseStorage{
 				Endpoint: cfg.LakeS3Endpoint, Region: cfg.S3Region, Bucket: cfg.LakeBucket, KeyPrefix: cfg.LakeKeyPrefix,
-				AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
+				AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, RoleArn: cfg.LakeS3RoleArn, ExternalID: cfg.LakeS3ExternalID,
 			},
 			LineageCallbackURL: cfg.LineageCallbackURL,
 			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes, UploadGrace: cfg.UploadGrace, ImportMaxBytes: cfg.ImportMaxBytes,

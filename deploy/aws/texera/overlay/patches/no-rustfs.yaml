@@ -1,0 +1,36 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The base's object store, RustFS, and the job that makes its buckets: on AWS the store is S3,
+# whose buckets the cluster module makes, so these leave the render.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+$patch: delete
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-buckets
+$patch: delete
