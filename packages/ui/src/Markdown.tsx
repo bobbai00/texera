@@ -4,18 +4,22 @@ import { defaultComponents, Streamdown } from "streamdown";
 const Code = defaultComponents.code as (props: ComponentProps<"code">) => ReactNode;
 
 /**
- * Agent text. Streamdown renders half-written markdown sensibly while it streams and
- * sanitizes the output, so model-written links and HTML cannot inject script. `inline`, when
- * given, may draw a piece of inline code as something else.
+ * Agent text, or a written page. Streamdown renders half-written markdown sensibly while it
+ * streams and sanitizes the output, so model-written links and HTML cannot inject script.
+ * `inline`, when given, may draw a piece of inline code as something else. `whole` is for a page
+ * someone reads (a README): its tables and code stand at their full height, where an answer in a
+ * chat keeps them short and lets them scroll.
  */
 export default function Markdown({
   text,
   animating,
   inline,
+  whole,
 }: {
   text: string;
   animating: boolean;
   inline?: (code: string) => ReactNode | undefined;
+  whole?: boolean;
 }) {
   const components = useMemo(
     () =>
@@ -29,6 +33,7 @@ export default function Markdown({
     <Streamdown
       isAnimating={animating}
       components={components || undefined}
+      {...(whole ? { tableMaxHeight: 0, codeBlockMaxHeight: 0 } : {})}
       className="space-y-3 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-base [&_h3]:font-semibold">
       {text}
     </Streamdown>

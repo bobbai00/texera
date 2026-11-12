@@ -34,7 +34,7 @@ export function AboutModel({ resource }: { resource: Resource }) {
             <section className="max-w-3xl space-y-3">
               {manifest.contract && <SectionTitle>About this model</SectionTitle>}
               <div className="text-sm" data-model-card>
-                <Markdown text={card?.text ?? ""} animating={false} />
+                <Markdown text={card?.text ?? ""} animating={false} whole />
               </div>
             </section>
           </Suspense>

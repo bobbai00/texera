@@ -19,7 +19,7 @@ const README = [
   "",
   "| Species | Flowers |",
   "|---|---|",
-  "| setosa | 50 |",
+  ...Array.from({ length: 14 }, (_, i) => `| setosa ${i + 1} | 50 |`),
   "",
 ].join("\n");
 const CODEBOOK = JSON.stringify({ SepalLengthCm: "the sepal's length, in centimetres" }, null, 2);
@@ -59,7 +59,10 @@ test("a README is drawn as the page it is, with its source a click away, and oth
   // A list is marked as one.
   await expect(drawn.getByRole("listitem")).toHaveCount(2);
   await expect(drawn.getByRole("list")).toHaveCSS("list-style-type", "disc");
-  await expect(drawn.getByRole("table")).toContainText("setosa");
+  // A page's table stands whole: its last row is on the page without scrolling inside the table.
+  await expect(drawn.getByRole("table")).toContainText("setosa 14");
+  const table = drawn.locator('[data-streamdown="table"]');
+  expect(await table.evaluate(t => (t.parentElement as HTMLElement).scrollHeight - (t.parentElement as HTMLElement).clientHeight)).toBeLessThanOrEqual(1);
   for (const sign of ["# Iris", "**", "|---|", "- `"]) await expect(drawn).not.toContainText(sign);
   await expect(preview.locator('[data-file-view="preview"]')).toHaveAttribute("aria-pressed", "true");
   await expect(preview.locator("[data-file-text]")).toHaveCount(0);

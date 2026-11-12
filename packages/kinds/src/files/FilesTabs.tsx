@@ -131,7 +131,7 @@ function Written({ kind, rid, vno, path, drawn }: Shown & { drawn: boolean }) {
         {drawn ? (
           <Suspense fallback={<Skeleton className="m-6 h-40 max-w-3xl" />}>
             <div className="max-w-3xl p-6 text-sm" data-file-markdown>
-              <Markdown text={data.text} animating={false} />
+              <Markdown text={data.text} animating={false} whole />
             </div>
           </Suspense>
         ) : (
