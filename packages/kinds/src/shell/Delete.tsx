@@ -148,14 +148,17 @@ export function DeleteButton({ ref, here = true }: { ref: ResourceRef; here?: bo
  *
  * `row` goes on the row's element (which carries `group/row`), `bin` where the bin stands in it.
  */
-export function useRowDelete(ref: ResourceRef): { row: { onPointerEnter: () => void; onFocus: () => void }; bin: ReactNode } {
+export function useRowDelete(ref: ResourceRef): { row: Record<"onPointerEnter" | "onPointerMove" | "onMouseEnter" | "onFocus", () => void>; bin: ReactNode } {
   const [near, setNear] = useState(false);
   const [open, setOpen] = useState(false);
   const may = useMayDelete(ref.rid, near);
   const label = `Delete ${KINDS[ref.kind].label.toLowerCase()}`;
   const reach = () => setNear(true);
   return {
-    row: { onPointerEnter: reach, onFocus: reach },
+    // Entering is not the only way to be on a row: a row can come up under a pointer at rest
+    // (a list drawn again), which the browser tells as a mouse entering or not at all until the
+    // pointer next moves.
+    row: { onPointerEnter: reach, onPointerMove: reach, onMouseEnter: reach, onFocus: reach },
     bin: (
       // What happens in the bin and its dialog stays there: the row under it opens on a click.
       // biome-ignore lint/a11y/noStaticElementInteractions: only keeps the row from hearing them
