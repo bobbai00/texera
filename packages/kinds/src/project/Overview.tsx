@@ -9,6 +9,7 @@ import { memo } from "react";
 import { describe, operatorsOf } from "../library/describe";
 import { operatorListQuery, unitsQuery, useHoldings } from "../queries";
 import { KINDS } from "../registry";
+import { useRowDelete } from "../shell/Delete";
 import { KindIcon } from "../shell/KindIcon";
 import { useMay } from "../shell/may";
 import { useOpenResource } from "../shell/navigation";
@@ -26,9 +27,30 @@ function rowText(r: Resource, kind: KindId): string {
   return describe(r);
 }
 
+/** One resource of a section: its name, what it is, who sees it and whose it is, and its bin for whoever may delete it. */
+function Row({ kind, resource: r, editable }: { kind: KindId; resource: Resource; editable: boolean }) {
+  const { expand } = useOpenResource();
+  const ref = { kind, rid: r.metadata.rid, parent: r.metadata.parent };
+  const remove = useRowDelete(ref);
+  const open = () => expand(ref);
+  const text = rowText(r, kind);
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the name in the row is the keyboard's way in
+    <li data-resource-row={r.kind} onClick={open} {...remove.row} className="group/row flex cursor-pointer items-center gap-3 py-2 pr-2 pl-4 hover:bg-accent/50">
+      <RowName resource={r} editable={editable} onOpen={open} />
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={text}>
+        {text}
+      </span>
+      <span className="hidden @[30rem]:block">
+        <ResourceLabels metadata={r.metadata} />
+      </span>
+      {remove.bin}
+    </li>
+  );
+}
+
 /** A kind's section, the most recently changed first, as the catalog answers. */
 function Section({ kind, title, items, more, moreLabel, project, editable }: { kind: KindId; title: string; items: Resource[]; more?: number; moreLabel?: string; project: string; editable: boolean }) {
-  const { expand } = useOpenResource();
   const navigate = useNavigate();
   const rest = more ?? items.length - SHOWN;
   return (
@@ -45,22 +67,9 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
       </header>
       {/* Beside a chat the list can be narrow: what is left out then is the labels, not its right edge. */}
       <ul className="divide-y @container">
-        {items.slice(0, SHOWN).map(r => {
-          const open = () => expand({ kind, rid: r.metadata.rid, parent: r.metadata.parent });
-          const text = rowText(r, kind);
-          return (
-            // biome-ignore lint/a11y/useKeyWithClickEvents: the name in the row is the keyboard's way in
-            <li key={r.metadata.rid} data-resource-row={r.kind} onClick={open} className="group/row flex cursor-pointer items-center gap-3 px-4 py-2 hover:bg-accent/50">
-              <RowName resource={r} editable={editable && r.metadata.project === project} onOpen={open} />
-              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={text}>
-                {text}
-              </span>
-              <span className="hidden @[30rem]:block">
-                <ResourceLabels metadata={r.metadata} />
-              </span>
-            </li>
-          );
-        })}
+        {items.slice(0, SHOWN).map(r => (
+          <Row key={r.metadata.rid} kind={kind} resource={r} editable={editable && r.metadata.project === project} />
+        ))}
       </ul>
     </section>
   );

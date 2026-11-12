@@ -2,6 +2,35 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-11 (session 17): one way to delete
+
+- **Deleting is the same wherever a resource shows.** One bin and one question
+  (`packages/kinds/src/shell/Delete.tsx`, its words and its way out in `deleting.ts`): on every
+  header (`KindHeader` puts it there for every kind; the chat's page has it too) and at the end
+  of every row of a list (the sidebar's chats, a project's lists, the library and shared tables),
+  for whoever the catalog says may delete. A row asks the catalog only once it is pointed at, so
+  a long list asks nothing. The question names the thing and says what goes with it; a refusal is
+  said in the same dialog with what stands in the way as links (`referenced`, `inherited`,
+  `running`). Afterwards every list is asked again, what was read of the thing is forgotten, a
+  panel of it closes, a view inside the graph beside a chat goes back, and its page is left for
+  where it lived. The browser's own `confirm()` on the generic page, the unasked delete on an
+  execution's page and their two copies of the aftermath are gone; a chat and a workflow had no
+  delete at all.
+- **The catalog has one rule for it, by whichever route.** `Service.Delete`
+  (`catalog/internal/catalog/resources.go`): what lives only under a resource goes with it (the
+  kinds nested in their parent: a workflow's executions, each with its tables), what it merely
+  holds stays in the way (a project's resources, `has_children`), and nothing goes while an
+  execution is still going (`running`) or something still names the resource (`referenced`); all
+  of it is checked before anything is removed. `DELETE /workflows/{rid}/executions/{eid}` is the
+  same rule by another address, so an execution still going is refused through `/resources` too,
+  which it was not. Before, a workflow that had ever run could not be deleted until each
+  execution had been.
+- Verified: catalog `go test` (new `TestWhatLivesUnderAResourceGoesWithIt`), frontend vitest
+  (`deleting.test.ts`), the API scenario `test_a_workflow_goes_with_its_executions`, and
+  Playwright `delete.spec.ts` (a chat from the sidebar and from its page, a dataset refused and
+  then deleted from a project's list and a library, a workflow with its execution from its page
+  and from the graph beside its chat, no bin for an editor).
+
 ## 2026-11-10 and 11 (session 16, parts 9 and 10): the deployment at a public address, and the chat as a window
 
 - **The deployment answers at a name of its own, over https, to the people it knows.** With a

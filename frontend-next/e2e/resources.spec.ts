@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { api, cleanups, discard, type Envelope, IRIS_CSV, signIn, tidyUp } from "./support";
+import { api, cleanups, confirmDelete, discard, type Envelope, IRIS_CSV, signIn, tidyUp } from "./support";
 
 // A resource's page keeps what the person is doing: an edit in progress survives a rename and
 // someone else's save, which is said, not lost; deleting something takes it off every page that
@@ -75,7 +75,7 @@ test("deleting an execution takes it off its workflow's page, and deleting a pro
   await expect(page.getByRole("tab", { name: "Executions (2)" })).toBeVisible();
   const shown = await page.locator("[data-results]").getAttribute("data-results");
   await page.locator("[data-open-execution]").click();
-  await page.locator("[data-delete-execution]").click();
+  await confirmDelete(page, page.locator('[data-delete="execution"]'));
   // The workflow's page counts one, and its results window shows the other execution.
   await expect(page.getByRole("tab", { name: "Executions (1)" })).toBeVisible({ timeout: 20_000 });
   await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 20_000 }).not.toBe(shown);
@@ -85,7 +85,6 @@ test("deleting an execution takes it off its workflow's page, and deleting a pro
   deleted = true;
   await page.goto(`/projects/${project.metadata.rid}`);
   await expect(page.locator("[data-resource-view]")).toBeVisible();
-  page.once("dialog", dialog => void dialog.accept());
-  await page.locator("[data-delete]").click();
+  await confirmDelete(page, page.locator('[data-delete="project"]'));
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
 });

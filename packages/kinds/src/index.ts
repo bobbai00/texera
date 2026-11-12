@@ -15,6 +15,7 @@ export { ProjectDeck } from "./project/Deck";
 export { Presence } from "./shell/Presence";
 export { EditableName } from "./shell/KindHeader";
 export { ShareButton } from "./shell/Share";
+export { DeleteButton, useRowDelete } from "./shell/Delete";
 export { OpenError } from "./shell/OpenError";
 export { SharedWithMe } from "./library/Shared";
 export { type Room, useRoom, usePresence } from "./live/room";

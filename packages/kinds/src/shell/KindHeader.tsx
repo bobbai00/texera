@@ -3,6 +3,7 @@ import { Pencil } from "lucide-react";
 import { type ReactNode, useRef } from "react";
 import { KINDS } from "../registry";
 import type { ResourceRef } from "../types";
+import { DeleteButton } from "./Delete";
 import { useViewHost } from "./host";
 import { KindIcon } from "./KindIcon";
 import { useOpenResource } from "./navigation";
@@ -17,12 +18,15 @@ export function KindHeader({
   name,
   meta,
   actions,
+  deletable = true,
 }: {
   ref: ResourceRef;
   mode: "panel" | "page";
   name: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
+  /** False while the thing cannot go (an execution still going): the header then offers no delete. */
+  deletable?: boolean;
 }) {
   const depth = usePanelStack(s => s.stack.length);
   const back = usePanelStack(s => s.back);
@@ -36,11 +40,12 @@ export function KindHeader({
       kindLabel={KINDS[ref.kind].label}
       name={name}
       meta={meta}
-      // Whoever has the resource's page open is on it, and sees who else is: at the top right,
-      // beside sharing, however much the page's own actions take.
+      // After the kind's own actions, the same on every header: delete, for whoever may; then, on
+      // the resource's page, who else has it open, and sharing.
       actions={
         <>
           {actions}
+          {deletable && ref.rid && <DeleteButton ref={ref} />}
           {mode === "page" && ref.rid && <Presence rid={ref.rid} />}
           {mode === "page" && ref.rid && <ShareButton ref={ref} />}
         </>

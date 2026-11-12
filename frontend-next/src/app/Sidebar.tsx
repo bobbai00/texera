@@ -1,6 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { ALL_PROJECTS, KINDS, LIBRARY_GROUPS, pluralOf, searchQuery, useLook, useWorkingProject } from "@texera/kinds";
+import {
+  ALL_PROJECTS,
+  KINDS,
+  LIBRARY_GROUPS,
+  pluralOf,
+  searchQuery,
+  useLook,
+  useRowDelete,
+  useWorkingProject,
+} from "@texera/kinds";
 import {
   Avatar,
   Button,
@@ -120,13 +129,7 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
           <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</h2>
           {isPending && [0, 1, 2].map(i => <Skeleton key={i} className="mx-2 my-1.5 h-6" />)}
           {chats?.items.map(chat => (
-            <Link
-              key={chat.metadata.rid}
-              to="/conversations/$rid"
-              params={{ rid: chat.metadata.rid }}
-              className="block truncate rounded-lg px-2 py-1 text-sm text-foreground/85 hover:bg-accent data-[status=active]:bg-accent data-[status=active]:text-foreground">
-              {chat.metadata.name}
-            </Link>
+            <ChatRow key={chat.metadata.rid} rid={chat.metadata.rid} name={chat.metadata.name} />
           ))}
         </section>
       </div>
@@ -158,6 +161,26 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
         </DropdownMenu>
       </div>
     </nav>
+  );
+}
+
+/** A chat in the sidebar: its name opens it, and whoever may delete it gets its bin when the row is pointed at. */
+function ChatRow({ rid, name }: { rid: string; name: string }) {
+  const remove = useRowDelete({ kind: "conversation", rid });
+  return (
+    <div
+      {...remove.row}
+      className="group/row flex items-center rounded-lg pr-1 hover:bg-accent has-[[data-status=active]]:bg-accent"
+      data-chat-row={rid}>
+      <Link
+        to="/conversations/$rid"
+        params={{ rid }}
+        title={name}
+        className="min-w-0 flex-1 truncate py-1 pl-2 text-sm text-foreground/85 data-[status=active]:text-foreground">
+        {name}
+      </Link>
+      {remove.bin}
+    </div>
   );
 }
 

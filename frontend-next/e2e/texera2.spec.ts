@@ -1,5 +1,5 @@
 import { type Browser, expect, test } from "@playwright/test";
-import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, passwordOf, pick, say, signIn, tidyUp, withIris, workAtHome, workIn, toConfigure } from "./support";
+import { AGENT, api, ask, cleanups, confirmDelete, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, passwordOf, pick, say, signIn, tidyUp, withIris, workAtHome, workIn, toConfigure } from "./support";
 
 // The pages against the real stack: sign in through Keycloak, start a chat by saying something,
 // attach a CSV (the chat's own file, in no list) and see it as a card; the agent every chat runs,
@@ -725,9 +725,8 @@ test("a project keeps its results in a warehouse made for it, and an execution s
   await page.screenshot({ path: "test-results/warehouse.png", fullPage: true });
   await view.locator('[data-warehouse-use="stop"]').click();
   await expect(view.locator('[data-warehouse-default="project"]')).toHaveCount(0);
-  page.once("dialog", d => d.accept());
-  await view.locator("[data-delete]").click();
-  await expect(page.getByText(/still keep results in/)).toBeVisible();
+  await confirmDelete(page, view.locator('[data-delete="warehouse"]'));
+  await expect(page.locator("[data-delete-refused]")).toContainText(/still keep results in/);
 });
 
 test("an execution shows the file it read in its lineage, and can be kept past the retention policy", async ({ page, request }) => {

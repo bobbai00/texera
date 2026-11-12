@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, EditableName, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource, useRename } from "@texera/kinds";
+import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, DeleteButton, EditableName, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource, useRename } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, Maximize2, Minimize2, Minus, PanelRight, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -265,6 +265,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
           </div>
           {/* Beside the graph the people show on it; where the graph is not in view, they show here. */}
           {!graphShown && <Presence rid={rid} />}
+          <DeleteButton ref={{ kind: "conversation", rid }} />
           <ShareButton ref={{ kind: "conversation", rid }} />
           <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
             <PanelRight />

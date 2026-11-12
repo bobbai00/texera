@@ -130,6 +130,18 @@ it back; this browser remembers where you left it.
 first, each with their own colour: on every kind's page and in a chat. Hover an icon for the
 name.
 
+**Deleting.** Anything is deleted the same way, by whoever may delete it (its owner, a project's
+admins): the bin at the top right of its page, in a chat's header as on a dataset's, a
+workflow's or an execution's; and the bin that shows at the end of its row when you point at it
+in a list (the sidebar's chats, a project's lists, a library page). Either asks one question
+first, which names the thing and says what goes with it: a chat's messages and the files
+attached to it that no workflow reads (what the chat made stays in the project); a dataset's or
+a model's versions and files; a workflow's versions and its executions with their results; an
+execution's results. Something still in use stays, and the same dialog says what uses it, each
+a link: delete those, or point them at something else, first. Afterwards no list shows the
+thing, and its own page is left for where it lived: the project, an execution's workflow, the
+start page for a chat.
+
 **Projects.** Everything lives in a project, and you work in one at a time, picked at the top
 of the sidebar: "Personal", your home project, until you pick another, or "All projects". The
 lists show the project you work in and what it inherits, each inherited thing saying which
@@ -607,8 +619,10 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 - **403** on a change to Texera or to what it holds, for someone who is not one of its admins;
   on a project's settings or base, for a member who is not its admin; on a base one does not
   administer.
-- **409.** A delete of something still referenced or still holding children, or of a project
-  others inherit from (the response lists them); Texera made private or deleted (`root`); a
+- **409.** A delete of something still referenced (`referenced`, with the `dependents`), of a
+  project that still holds resources (`has_children`) or that others inherit from (`inherited`;
+  the response lists them), or of a workflow or an execution while an execution is still going
+  (`running`: cancel it first; a workflow otherwise goes with its executions); Texera made private or deleted (`root`); a
   public project inheriting from a private one (`private_base`); an execution on a unit that already runs one of this
   workflow; a unit with an execution on it being changed.
 - **410** on an execution's rows: its results expired under the retention policy; keep the

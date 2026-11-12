@@ -55,6 +55,13 @@ export async function ask(page: Page, text: string) {
   await expect(page.locator("[data-current-template]")).toHaveText(/Agent$/);
 }
 
+/** Deletes what a bin stands for: the bin, on a header or a row, then the one question every delete asks. */
+export async function confirmDelete(page: Page, bin: ReturnType<Page["locator"]>) {
+  await bin.click();
+  await expect(page.locator("[data-delete-dialog]")).toBeVisible();
+  await page.locator("[data-delete-confirm]").click();
+}
+
 /** Picks one of a select's options by its name. */
 export async function pick(page: Page, select: ReturnType<Page["locator"]>, option: string | RegExp) {
   await select.click();
@@ -83,7 +90,9 @@ export async function api(request: APIRequestContext, user = USER, headers: Reco
     const r = await send(method, path, data);
     if (!r.ok()) console.warn(`${method} ${path}: ${r.status()} ${await r.text()}`);
   };
-  return Object.assign(call, { attempt });
+  /** The status alone, for a call a scenario expects to be refused, or whose target may be gone. */
+  const status = async (method: string, path: string, data?: unknown) => (await send(method, path, data)).status();
+  return Object.assign(call, { attempt, status });
 }
 export type Caller = Awaited<ReturnType<typeof api>>;
 

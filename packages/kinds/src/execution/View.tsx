@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   resourcesUpdateMetadata,
   workflowsCancelExecution,
-  workflowsDeleteExecution,
   workflowsPauseExecution,
   workflowsResumeExecution,
 } from "@texera/catalog-client";
@@ -33,13 +32,12 @@ import {
   Pause,
   Play,
   Square,
-  Trash2,
   Workflow,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { unwrap } from "../api";
 import { sizeLabel } from "../kinds/profiles";
-import { isAbout, operatorSchemasQuery } from "../queries";
+import { operatorSchemasQuery } from "../queries";
 import { resultLabel } from "../results/labels";
 import { type ResultLabel, ResultsWindow } from "../results/ResultsWindow";
 import { ProjectScope, useScope } from "../scope";
@@ -48,7 +46,6 @@ import { JsonBlock } from "../shell/JsonBlock";
 import { KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { useMay } from "../shell/may";
-import { useOpenResource } from "../shell/navigation";
 import { OpenError } from "../shell/OpenError";
 import { RanOn } from "../shell/RanOn";
 import type { KindViewProps } from "../types";
@@ -95,20 +92,8 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
     mutationFn: () => unwrap(workflowsResumeExecution({ path: { rid: workflow, eid: ref.rid } })),
     onSuccess: refresh,
   });
-  const { expand } = useOpenResource();
-  // What the person may do to it: keep it (write), delete it (delete); a viewer only looks.
+  // Whoever may change it may keep it; a viewer only looks.
   const may = useMay(ref.rid);
-  // A finished execution can be deleted with its result tables; the workflow stays open, and
-  // every list that showed the execution is asked again.
-  const remove = useMutation({
-    mutationFn: () => unwrap(workflowsDeleteExecution({ path: { rid: workflow, eid: ref.rid } })),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      void queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid: workflow } }] });
-      queryClient.removeQueries({ predicate: query => isAbout(query.queryKey, ref.rid) });
-      expand({ kind: "workflow", rid: workflow });
-    },
-  });
   // A kept execution's results stay under the retention policy: the label the hourly sweep honours.
   const keep = useMutation({
     mutationFn: (kept: boolean) => {
@@ -131,6 +116,8 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
       <KindHeader
         ref={{ kind: "execution", rid: ref.rid, parent: workflow }}
         mode={mode}
+        // One still going is stopped first.
+        deletable={!live}
         name={x.metadata.name}
         meta={
           <span className="flex items-center gap-1.5">
@@ -195,17 +182,6 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
                 {kept ? <BookmarkCheck /> : <Bookmark />} {kept ? "Kept" : "Keep"}
               </Button>
             )}
-            {!live && may.delete === true && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => remove.mutate()}
-                disabled={remove.isPending}
-                data-delete-execution
-                title="Delete this execution and its result tables">
-                <Trash2 /> Delete
-              </Button>
-            )}
           </>
         }
       />
@@ -215,7 +191,6 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
       {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the execution" className="m-3" />}
       {pause.error && <ErrorNote error={pause.error} prefix="Could not pause the execution" className="m-3" />}
       {resume.error && <ErrorNote error={resume.error} prefix="Could not resume the execution" className="m-3" />}
-      {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the execution" className="m-3" />}
       {keep.error && (
         <ErrorNote error={keep.error} prefix="Could not change the execution's keep mark" className="m-3" />
       )}
