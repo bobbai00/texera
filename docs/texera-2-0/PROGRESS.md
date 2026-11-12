@@ -2,7 +2,7 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-11 (session 17): one way to delete
+## 2026-11-11 (session 17): one way to delete, and a model drawn as input, model, output
 
 - **Deleting is the same wherever a resource shows.** One bin and one question
   (`packages/kinds/src/shell/Delete.tsx`, its words and its way out in `deleting.ts`): on every
@@ -25,11 +25,15 @@ Newest first. Each entry: what was done, how it was verified, what is next.
   same rule by another address, so an execution still going is refused through `/resources` too,
   which it was not. Before, a workflow that had ever run could not be deleted until each
   execution had been.
+- **A model's page draws what it reads and what it adds** (`files/ModelSignature.tsx`): Input,
+  the model, Output, each column with its type and a sign for it, across where there is room and
+  one under the other where there is not; an input of nine columns or more stands in two. It
+  replaced two rows of chips under the README. A model's card says the same in two lines.
 - Verified: catalog `go test` (new `TestWhatLivesUnderAResourceGoesWithIt`), frontend vitest
   (`deleting.test.ts`), the API scenario `test_a_workflow_goes_with_its_executions`, and
   Playwright `delete.spec.ts` (a chat from the sidebar and from its page, a dataset refused and
   then deleted from a project's list and a library, a workflow with its execution from its page
-  and from the graph beside its chat, no bin for an editor).
+  and from the graph beside its chat, no bin for an editor) and `model.spec.ts`.
 
 ## 2026-11-10 and 11 (session 16, parts 9 and 10): the deployment at a public address, and the chat as a window
 

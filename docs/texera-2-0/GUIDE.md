@@ -142,6 +142,12 @@ a link: delete those, or point them at something else, first. Afterwards no list
 thing, and its own page is left for where it lived: the project, an execution's workflow, the
 start page for a chat.
 
+**A model's page.** Its About tab opens with a picture of what the model does to a table: the
+columns it reads from each row on the left (Input), the model in the middle, the columns it
+adds on the right (Output), each column with its type, in the order the model's contract names
+them. The model's own words (its README) follow. A model's card in a chat says the same in two
+lines, Reads and Adds, so a model can be chosen for the columns you have.
+
 **Projects.** Everything lives in a project, and you work in one at a time, picked at the top
 of the sidebar: "Personal", your home project, until you pick another, or "All projects". The
 lists show the project you work in and what it inherits, each inherited thing saying which
