@@ -2,7 +2,7 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-11 (session 17): one way to delete, and a model drawn as input, model, output
+## 2026-11-11 (session 17): one way to delete, a model drawn as input, model, output, and a README drawn
 
 - **Deleting is the same wherever a resource shows.** One bin and one question
   (`packages/kinds/src/shell/Delete.tsx`, its words and its way out in `deleting.ts`): on every
@@ -29,11 +29,21 @@ Newest first. Each entry: what was done, how it was verified, what is next.
   the model, Output, each column with its type and a sign for it, across where there is room and
   one under the other where there is not; an input of nine columns or more stands in two. It
   replaced two rows of chips under the README. A model's card says the same in two lines.
+- **A README is drawn, not refused.** The Files tab previewed tables only and answered "No
+  preview for this kind of file" to everything else. A file is now shown by what its name says
+  it is (`files/preview.ts`): a table's first rows; markdown as the page it is, drawn by
+  default, with its source a click away; other text as written; nothing for the rest. The
+  model's About reads its README through the same query.
+- **Markdown had lost its marks everywhere.** The stylesheet looked for Streamdown's classes in
+  the root `node_modules`, where the install does not put the package (each workspace links its
+  own), so none of them was ever generated: lists had no bullets or numbers and were not
+  indented, a quote was not set apart, a code block's header overlapped its buttons. In the
+  agent's answers as in a README. `tokens.css` now also looks where the package stands.
 - Verified: catalog `go test` (new `TestWhatLivesUnderAResourceGoesWithIt`), frontend vitest
   (`deleting.test.ts`), the API scenario `test_a_workflow_goes_with_its_executions`, and
   Playwright `delete.spec.ts` (a chat from the sidebar and from its page, a dataset refused and
   then deleted from a project's list and a library, a workflow with its execution from its page
-  and from the graph beside its chat, no bin for an editor) and `model.spec.ts`.
+  and from the graph beside its chat, no bin for an editor), `model.spec.ts` and `files.spec.ts`.
 
 ## 2026-11-10 and 11 (session 16, parts 9 and 10): the deployment at a public address, and the chat as a window
 

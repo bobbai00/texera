@@ -142,6 +142,13 @@ a link: delete those, or point them at something else, first. Afterwards no list
 thing, and its own page is left for where it lived: the project, an execution's workflow, the
 start page for a chat.
 
+**A version's files.** The Files tab of a dataset or a model shows each file of the version as
+what it is. A table (`.csv`, `.tsv`, `.txt`) shows its first rows, and says of how many. A
+markdown file (a `README.md`) is drawn as the page it is: headings, lists, tables and code; its
+source is one click away (Preview, Source). Other text (a `contract.json`, a model's `.py`) is
+shown as it is written, and a file that is not text says it has no preview. A version opens on
+its data, and without any on the first file there is something to show of.
+
 **A model's page.** Its About tab opens with a picture of what the model does to a table: the
 columns it reads from each row on the left (Input), the model in the middle, the columns it
 adds on the right (Output), each column with its type, in the order the model's contract names

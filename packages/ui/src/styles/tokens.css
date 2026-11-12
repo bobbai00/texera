@@ -1,5 +1,8 @@
 @import "tailwindcss";
+/* Streamdown's own classes (a list's marks, a table's lines): where the package stands when the
+   install hoists it to the root, and where it stands when each workspace links its own. */
 @source "../../../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/streamdown/dist/*.js";
 @source "../../../../packages/*/src/**/*.{ts,tsx}";
 
 @custom-variant dark (&:where(.dark, .dark *));

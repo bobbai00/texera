@@ -5,23 +5,17 @@ import { useQuery } from "@tanstack/react-query";
 import type { Resource } from "@texera/catalog-client/types";
 import { EmptyState, SectionTitle, Skeleton } from "@texera/ui";
 import { lazy, Suspense } from "react";
-import { fileApi, filesQuery } from "./api";
+import { filesQuery, textQuery } from "./api";
 import { ModelSignature } from "./ModelSignature";
 
 const Markdown = lazy(() => import("@texera/ui/markdown"));
-
-const README_BYTES = 64 * 1024;
 
 export function AboutModel({ resource }: { resource: Resource }) {
   const rid = resource.metadata.rid;
   const vno = resource.metadata.head;
   const { data: manifest } = useQuery({ ...filesQuery("model", rid, vno), enabled: vno > 0 });
   const readme = manifest?.files.find(f => /^readme\.md$/i.test(f.path));
-  const { data: card, isPending } = useQuery({
-    queryKey: ["model-card", rid, vno],
-    queryFn: () => fileApi("model").download(rid, vno, readme?.path ?? "", README_BYTES),
-    enabled: readme !== undefined,
-  });
+  const { data: card, isPending } = useQuery({ ...textQuery("model", rid, vno, readme?.path ?? ""), enabled: readme !== undefined });
   if (vno === 0) return <EmptyState>No version yet. Upload the model's files, then commit them as the first version.</EmptyState>;
   if (!manifest) return <Skeleton className="m-6 h-56" />;
   return (
@@ -40,7 +34,7 @@ export function AboutModel({ resource }: { resource: Resource }) {
             <section className="max-w-3xl space-y-3">
               {manifest.contract && <SectionTitle>About this model</SectionTitle>}
               <div className="text-sm" data-model-card>
-                <Markdown text={card ?? ""} animating={false} />
+                <Markdown text={card?.text ?? ""} animating={false} />
               </div>
             </section>
           </Suspense>

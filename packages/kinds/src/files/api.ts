@@ -48,7 +48,8 @@ export const filesQuery = (kind: KindId, rid: string, vno: number) =>
 export const stagedQuery = (kind: KindId, rid: string) =>
   queryOptions({ queryKey: ["staged", kind, rid], queryFn: () => fileApi(kind).staged(rid) });
 
-const PREVIEW_BYTES = 256 * 1024;
+/** How much of a file a preview reads. */
+export const PREVIEW_BYTES = 256 * 1024;
 
 /** The first rows of a tabular file of a version, read through the catalog. */
 export const previewQuery = (kind: KindId, rid: string, vno: number, path: string) =>
@@ -57,6 +58,23 @@ export const previewQuery = (kind: KindId, rid: string, vno: number, path: strin
     queryFn: async (): Promise<TablePreview> => {
       const data = await fileApi(kind).download(rid, vno, path, PREVIEW_BYTES);
       return previewCsv(data, { truncated: data.length >= PREVIEW_BYTES, delimiter: delimiterFor(path) });
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+export interface TextPreview {
+  text: string;
+  /** Only the file's beginning was read. */
+  partial: boolean;
+}
+
+/** A text file of a version as it is written (markdown, a contract, code), read through the catalog: whole unless it is long. */
+export const textQuery = (kind: KindId, rid: string, vno: number, path: string) =>
+  queryOptions({
+    queryKey: ["file-text", kind, rid, vno, path],
+    queryFn: async (): Promise<TextPreview> => {
+      const text = await fileApi(kind).download(rid, vno, path, PREVIEW_BYTES);
+      return { text, partial: text.length >= PREVIEW_BYTES };
     },
     staleTime: Number.POSITIVE_INFINITY,
   });
