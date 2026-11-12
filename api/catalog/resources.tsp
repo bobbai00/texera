@@ -89,6 +89,7 @@ namespace Routes {
     @extension("x-texera-permission", "write")
     updateMetadata(@path rid: Rid, @header("If-Match") ifMatch?: string, @body body: UpdateMetadata): Resource | Error;
 
+    @doc("Delete a resource of any kind, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it (`referenced`, with the `dependents`), while it holds resources of their own (`has_children`), or while an execution of it is still going (`running`).")
     @delete
     @route("/{rid}")
     @extension("x-texera-permission", "delete")

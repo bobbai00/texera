@@ -5,11 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/authz"
 	"github.com/apache/texera/catalog/internal/kinds"
@@ -424,7 +426,10 @@ func (s *Service) UpdateMetadata(ctx context.Context, caller *auth.Caller, in Me
 	return updated, nil
 }
 
-// Delete removes a resource that nothing references and that has no children.
+// Delete removes a resource that nothing references. What lives only under it goes with it: a
+// workflow's executions, each with its tables. What it merely holds, as a project holds its
+// resources, must go or move first. Nothing goes unless everything may, so a refusal leaves the
+// resource as it was.
 func (s *Service) Delete(ctx context.Context, caller *auth.Caller, kind *kinds.Kind, rid uuid.UUID) error {
 	r, err := s.Get(ctx, caller, kind, rid)
 	if err != nil {
@@ -436,30 +441,90 @@ func (s *Service) Delete(ctx context.Context, caller *auth.Caller, kind *kinds.K
 	if s.isRoot(r) {
 		return Conflict("root", "Texera holds what every project inherits: it cannot be deleted", nil)
 	}
-	if n, err := s.Store.CountChildren(ctx, r.RID); err != nil {
+	under, err := s.nestedUnder(ctx, r)
+	if err != nil {
 		return err
-	} else if n > 0 {
-		return Conflict("has_children", fmt.Sprintf("%s holds %d resources; delete or move them first", r.Name, n), nil)
+	}
+	for i := range under {
+		if err := s.deletable(ctx, &under[i], nil); err != nil {
+			return err
+		}
+	}
+	if err := s.deletable(ctx, r, under); err != nil {
+		return err
+	}
+	for i := range under {
+		if err := s.remove(ctx, &under[i]); err != nil {
+			return err
+		}
+	}
+	if err := s.remove(ctx, r); err != nil {
+		return err
+	}
+	s.Relay.Flush(ctx)
+	return nil
+}
+
+// nestedUnder lists what lives only under a resource, the kinds that are nested in their parent.
+// A resource that holds anything else is not deleted: those are resources of their own.
+func (s *Service) nestedUnder(ctx context.Context, r *store.Resource) ([]store.Resource, error) {
+	var nested []store.Resource
+	held := 0
+	for offset := 0; ; {
+		page, err := s.Store.ListResources(ctx, store.ResourceFilter{ParentRID: &r.RID, Limit: 500, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		for i := range page {
+			if k, ok := kinds.ByName(page[i].Kind); ok && k.Nested {
+				nested = append(nested, page[i])
+			} else {
+				held++
+			}
+		}
+		if len(page) < 500 {
+			break
+		}
+		offset += len(page)
+	}
+	if held > 0 {
+		return nil, Conflict("has_children", fmt.Sprintf("%s holds %d resources; delete or move them first", r.Name, held), nil)
+	}
+	return nested, nil
+}
+
+// deletable refuses to delete what is still going or still referenced. What goes together with
+// the resource (`with`) does not hold it back.
+func (s *Service) deletable(ctx context.Context, r *store.Resource, with []store.Resource) error {
+	if r.Kind == "execution" {
+		var st api.ExecutionStatus
+		_ = json.Unmarshal(r.Status, &st)
+		if !isTerminal(st.Phase) {
+			return Conflict("running", fmt.Sprintf("%s is still going; cancel it first", r.Name), map[string]any{"execution": URI(r).String()})
+		}
 	}
 	deps, err := s.Store.Dependents(ctx, r.RID, 0)
 	if err != nil {
 		return err
 	}
-	if len(deps) > 0 {
-		var from []string
-		for _, d := range deps {
+	var from []string
+	for _, d := range deps {
+		if !slices.ContainsFunc(with, func(w store.Resource) bool { return w.RID == d.FromRID }) {
 			from = append(from, d.From)
 		}
+	}
+	if len(from) > 0 {
 		return Conflict("referenced", fmt.Sprintf("%s is referenced by %d resources", r.Name, len(from)), map[string]any{"dependents": from})
 	}
+	return nil
+}
+
+// remove deletes one resource, with what its kind holds outside the store.
+func (s *Service) remove(ctx context.Context, r *store.Resource) error {
 	if err := s.beforeDelete(ctx, r); err != nil {
 		return err
 	}
-	if err := s.Store.DeleteResource(ctx, r.RID); err != nil {
-		return wrap(err, r.Kind)
-	}
-	s.Relay.Flush(ctx)
-	return nil
+	return wrap(s.Store.DeleteResource(ctx, r.RID), r.Kind)
 }
 
 // Versions lists a resource's versions, newest first.

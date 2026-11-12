@@ -427,40 +427,15 @@ func (s *Service) control(ctx context.Context, caller *auth.Caller, workflowRID,
 	return r, wrap(err, "execution")
 }
 
-// DeleteExecution removes a finished execution with its tables. One still going must be
-// cancelled first; one a dataset version derives from stays, as its lineage says.
+// DeleteExecution removes a finished execution with its tables, by the workflow it is of. One
+// still going must be cancelled first; one a dataset version derives from stays, as its lineage
+// says: the rules of Delete.
 func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) error {
 	r, err := s.Execution(ctx, caller, workflowRID, eid)
 	if err != nil {
 		return err
 	}
-	if err := s.require(ctx, caller, authz.Delete, r.RID); err != nil {
-		return err
-	}
-	var st api.ExecutionStatus
-	_ = json.Unmarshal(r.Status, &st)
-	if !isTerminal(st.Phase) {
-		return Conflict("running", "the execution is still going; cancel it first", nil)
-	}
-	deps, err := s.Store.Dependents(ctx, r.RID, 0)
-	if err != nil {
-		return err
-	}
-	if len(deps) > 0 {
-		var from []string
-		for _, d := range deps {
-			from = append(from, d.From)
-		}
-		return Conflict("referenced", fmt.Sprintf("%s is referenced by %d resources", r.Name, len(from)), map[string]any{"dependents": from})
-	}
-	if err := s.beforeDelete(ctx, r); err != nil {
-		return err
-	}
-	if err := s.Store.DeleteResource(ctx, r.RID); err != nil {
-		return wrap(err, "execution")
-	}
-	s.Relay.Flush(ctx)
-	return nil
+	return s.Delete(ctx, caller, nil, r.RID)
 }
 
 // plannedTable is the table the catalog named for a port, bare, "" when the plan has none.

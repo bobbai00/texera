@@ -148,7 +148,7 @@ export const agentTemplatesCreateMutation = (options?: Partial<Options<AgentTemp
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const agentTemplatesDeleteMutation = (options?: Partial<Options<AgentTemplatesDeleteData>>): UseMutationOptions<AgentTemplatesDeleteResponse, AgentTemplatesDeleteError, Options<AgentTemplatesDeleteData>> => {
     const mutationOptions: UseMutationOptions<AgentTemplatesDeleteResponse, AgentTemplatesDeleteError, Options<AgentTemplatesDeleteData>> = {
@@ -351,7 +351,7 @@ export const computingUnitsFromProfileMutation = (options?: Partial<Options<Comp
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const computingUnitsDeleteMutation = (options?: Partial<Options<ComputingUnitsDeleteData>>): UseMutationOptions<ComputingUnitsDeleteResponse, ComputingUnitsDeleteError, Options<ComputingUnitsDeleteData>> => {
     const mutationOptions: UseMutationOptions<ComputingUnitsDeleteResponse, ComputingUnitsDeleteError, Options<ComputingUnitsDeleteData>> = {
@@ -541,7 +541,7 @@ export const conversationsCreateMutation = (options?: Partial<Options<Conversati
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const conversationsDeleteMutation = (options?: Partial<Options<ConversationsDeleteData>>): UseMutationOptions<ConversationsDeleteResponse, ConversationsDeleteError, Options<ConversationsDeleteData>> => {
     const mutationOptions: UseMutationOptions<ConversationsDeleteResponse, ConversationsDeleteError, Options<ConversationsDeleteData>> = {
@@ -816,7 +816,7 @@ export const credentialsCreateMutation = (options?: Partial<Options<CredentialsC
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const credentialsDeleteMutation = (options?: Partial<Options<CredentialsDeleteData>>): UseMutationOptions<CredentialsDeleteResponse, CredentialsDeleteError, Options<CredentialsDeleteData>> => {
     const mutationOptions: UseMutationOptions<CredentialsDeleteResponse, CredentialsDeleteError, Options<CredentialsDeleteData>> = {
@@ -961,7 +961,7 @@ export const datasetsCreateMutation = (options?: Partial<Options<DatasetsCreateD
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const datasetsDeleteMutation = (options?: Partial<Options<DatasetsDeleteData>>): UseMutationOptions<DatasetsDeleteResponse, DatasetsDeleteError, Options<DatasetsDeleteData>> => {
     const mutationOptions: UseMutationOptions<DatasetsDeleteResponse, DatasetsDeleteError, Options<DatasetsDeleteData>> = {
@@ -1325,7 +1325,7 @@ export const mcpServersCreateMutation = (options?: Partial<Options<McpServersCre
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const mcpServersDeleteMutation = (options?: Partial<Options<McpServersDeleteData>>): UseMutationOptions<McpServersDeleteResponse, McpServersDeleteError, Options<McpServersDeleteData>> => {
     const mutationOptions: UseMutationOptions<McpServersDeleteResponse, McpServersDeleteError, Options<McpServersDeleteData>> = {
@@ -1528,7 +1528,7 @@ export const modelEndpointsCreateMutation = (options?: Partial<Options<ModelEndp
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const modelEndpointsDeleteMutation = (options?: Partial<Options<ModelEndpointsDeleteData>>): UseMutationOptions<ModelEndpointsDeleteResponse, ModelEndpointsDeleteError, Options<ModelEndpointsDeleteData>> => {
     const mutationOptions: UseMutationOptions<ModelEndpointsDeleteResponse, ModelEndpointsDeleteError, Options<ModelEndpointsDeleteData>> = {
@@ -1639,7 +1639,7 @@ export const modelsCreateMutation = (options?: Partial<Options<ModelsCreateData>
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const modelsDeleteMutation = (options?: Partial<Options<ModelsDeleteData>>): UseMutationOptions<ModelsDeleteResponse, ModelsDeleteError, Options<ModelsDeleteData>> => {
     const mutationOptions: UseMutationOptions<ModelsDeleteResponse, ModelsDeleteError, Options<ModelsDeleteData>> = {
@@ -1938,7 +1938,7 @@ export const operatorsCreateMutation = (options?: Partial<Options<OperatorsCreat
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const operatorsDeleteMutation = (options?: Partial<Options<OperatorsDeleteData>>): UseMutationOptions<OperatorsDeleteResponse, OperatorsDeleteError, Options<OperatorsDeleteData>> => {
     const mutationOptions: UseMutationOptions<OperatorsDeleteResponse, OperatorsDeleteError, Options<OperatorsDeleteData>> = {
@@ -2139,7 +2139,7 @@ export const profilesCreateMutation = (options?: Partial<Options<ProfilesCreateD
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const profilesDeleteMutation = (options?: Partial<Options<ProfilesDeleteData>>): UseMutationOptions<ProfilesDeleteResponse, ProfilesDeleteError, Options<ProfilesDeleteData>> => {
     const mutationOptions: UseMutationOptions<ProfilesDeleteResponse, ProfilesDeleteError, Options<ProfilesDeleteData>> = {
@@ -2496,6 +2496,9 @@ export const resourcesResolveOptions = (options: Options<ResourcesResolveData>) 
     queryKey: resourcesResolveQueryKey(options)
 });
 
+/**
+ * Delete a resource of any kind, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it (`referenced`, with the `dependents`), while it holds resources of their own (`has_children`), or while an execution of it is still going (`running`).
+ */
 export const resourcesDeleteMutation = (options?: Partial<Options<ResourcesDeleteData>>): UseMutationOptions<ResourcesDeleteResponse, ResourcesDeleteError, Options<ResourcesDeleteData>> => {
     const mutationOptions: UseMutationOptions<ResourcesDeleteResponse, ResourcesDeleteError, Options<ResourcesDeleteData>> = {
         mutationFn: async (fnOptions) => {
@@ -2811,7 +2814,7 @@ export const skillsCreateMutation = (options?: Partial<Options<SkillsCreateData>
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const skillsDeleteMutation = (options?: Partial<Options<SkillsDeleteData>>): UseMutationOptions<SkillsDeleteResponse, SkillsDeleteError, Options<SkillsDeleteData>> => {
     const mutationOptions: UseMutationOptions<SkillsDeleteResponse, SkillsDeleteError, Options<SkillsDeleteData>> = {
@@ -2979,7 +2982,7 @@ export const warehousesCreateMutation = (options?: Partial<Options<WarehousesCre
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const warehousesDeleteMutation = (options?: Partial<Options<WarehousesDeleteData>>): UseMutationOptions<WarehousesDeleteResponse, WarehousesDeleteError, Options<WarehousesDeleteData>> => {
     const mutationOptions: UseMutationOptions<WarehousesDeleteResponse, WarehousesDeleteError, Options<WarehousesDeleteData>> = {
@@ -3090,7 +3093,7 @@ export const workflowsCreateMutation = (options?: Partial<Options<WorkflowsCreat
 };
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const workflowsDeleteMutation = (options?: Partial<Options<WorkflowsDeleteData>>): UseMutationOptions<WorkflowsDeleteResponse, WorkflowsDeleteError, Options<WorkflowsDeleteData>> => {
     const mutationOptions: UseMutationOptions<WorkflowsDeleteResponse, WorkflowsDeleteError, Options<WorkflowsDeleteData>> = {

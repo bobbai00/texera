@@ -51,7 +51,7 @@ export const agentTemplatesCreate = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const agentTemplatesDelete = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesDeleteData, ThrowOnError>): RequestResult<AgentTemplatesDeleteResponses, AgentTemplatesDeleteErrors, ThrowOnError> => (options.client ?? client).delete<AgentTemplatesDeleteResponses, AgentTemplatesDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -132,7 +132,7 @@ export const computingUnitsFromProfile = <ThrowOnError extends boolean = false>(
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const computingUnitsDelete = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsDeleteData, ThrowOnError>): RequestResult<ComputingUnitsDeleteResponses, ComputingUnitsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ComputingUnitsDeleteResponses, ComputingUnitsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -219,7 +219,7 @@ export const conversationsCreate = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const conversationsDelete = <ThrowOnError extends boolean = false>(options: Options<ConversationsDeleteData, ThrowOnError>): RequestResult<ConversationsDeleteResponses, ConversationsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ConversationsDeleteResponses, ConversationsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -347,7 +347,7 @@ export const credentialsCreate = <ThrowOnError extends boolean = false>(options:
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const credentialsDelete = <ThrowOnError extends boolean = false>(options: Options<CredentialsDeleteData, ThrowOnError>): RequestResult<CredentialsDeleteResponses, CredentialsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<CredentialsDeleteResponses, CredentialsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -420,7 +420,7 @@ export const datasetsCreate = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const datasetsDelete = <ThrowOnError extends boolean = false>(options: Options<DatasetsDeleteData, ThrowOnError>): RequestResult<DatasetsDeleteResponses, DatasetsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DatasetsDeleteResponses, DatasetsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -577,7 +577,7 @@ export const mcpServersCreate = <ThrowOnError extends boolean = false>(options: 
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const mcpServersDelete = <ThrowOnError extends boolean = false>(options: Options<McpServersDeleteData, ThrowOnError>): RequestResult<McpServersDeleteResponses, McpServersDeleteErrors, ThrowOnError> => (options.client ?? client).delete<McpServersDeleteResponses, McpServersDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -658,7 +658,7 @@ export const modelEndpointsCreate = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const modelEndpointsDelete = <ThrowOnError extends boolean = false>(options: Options<ModelEndpointsDeleteData, ThrowOnError>): RequestResult<ModelEndpointsDeleteResponses, ModelEndpointsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ModelEndpointsDeleteResponses, ModelEndpointsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -705,7 +705,7 @@ export const modelsCreate = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const modelsDelete = <ThrowOnError extends boolean = false>(options: Options<ModelsDeleteData, ThrowOnError>): RequestResult<ModelsDeleteResponses, ModelsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ModelsDeleteResponses, ModelsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -840,7 +840,7 @@ export const operatorsCreate = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const operatorsDelete = <ThrowOnError extends boolean = false>(options: Options<OperatorsDeleteData, ThrowOnError>): RequestResult<OperatorsDeleteResponses, OperatorsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<OperatorsDeleteResponses, OperatorsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -914,7 +914,7 @@ export const profilesCreate = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const profilesDelete = <ThrowOnError extends boolean = false>(options: Options<ProfilesDeleteData, ThrowOnError>): RequestResult<ProfilesDeleteResponses, ProfilesDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ProfilesDeleteResponses, ProfilesDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -1057,6 +1057,9 @@ export const resourcesResolve = <ThrowOnError extends boolean = false>(options: 
     ...options
 });
 
+/**
+ * Delete a resource of any kind, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it (`referenced`, with the `dependents`), while it holds resources of their own (`has_children`), or while an execution of it is still going (`running`).
+ */
 export const resourcesDelete = <ThrowOnError extends boolean = false>(options: Options<ResourcesDeleteData, ThrowOnError>): RequestResult<ResourcesDeleteResponses, ResourcesDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ResourcesDeleteResponses, ResourcesDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/resources/{rid}',
@@ -1194,7 +1197,7 @@ export const skillsCreate = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const skillsDelete = <ThrowOnError extends boolean = false>(options: Options<SkillsDeleteData, ThrowOnError>): RequestResult<SkillsDeleteResponses, SkillsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<SkillsDeleteResponses, SkillsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -1253,7 +1256,7 @@ export const warehousesCreate = <ThrowOnError extends boolean = false>(options: 
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const warehousesDelete = <ThrowOnError extends boolean = false>(options: Options<WarehousesDeleteData, ThrowOnError>): RequestResult<WarehousesDeleteResponses, WarehousesDeleteErrors, ThrowOnError> => (options.client ?? client).delete<WarehousesDeleteResponses, WarehousesDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -1300,7 +1303,7 @@ export const workflowsCreate = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
- * Delete the resource; refused with 409 while another resource references it.
+ * Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
  */
 export const workflowsDelete = <ThrowOnError extends boolean = false>(options: Options<WorkflowsDeleteData, ThrowOnError>): RequestResult<WorkflowsDeleteResponses, WorkflowsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<WorkflowsDeleteResponses, WorkflowsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

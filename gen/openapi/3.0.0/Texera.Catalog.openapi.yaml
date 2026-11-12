@@ -162,7 +162,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: AgentTemplates_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -430,7 +430,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: ComputingUnits_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -725,7 +725,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Conversations_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -1106,7 +1106,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Credentials_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -1317,7 +1317,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Datasets_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -1903,7 +1903,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: McpServers_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -2167,7 +2167,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: ModelEndpoints_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -2317,7 +2317,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Models_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -2810,7 +2810,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Operators_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -3089,7 +3089,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Profiles_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -3584,6 +3584,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Resources_delete
+      description: Delete a resource of any kind, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it (`referenced`, with the `dependents`), while it holds resources of their own (`has_children`), or while an execution of it is still going (`running`).
       parameters:
         - name: rid
           in: path
@@ -4104,7 +4105,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Skills_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -4318,7 +4319,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Warehouses_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path
@@ -4477,7 +4478,7 @@ paths:
       x-texera-permission: write
     delete:
       operationId: Workflows_delete
-      description: Delete the resource; refused with 409 while another resource references it.
+      description: Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.
       parameters:
         - name: rid
           in: path

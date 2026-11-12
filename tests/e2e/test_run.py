@@ -48,3 +48,24 @@ def test_validate_run_results_and_lineage(alice, project, iris, unit):
     # Kept: the mark the retention sweep honours.
     kept = alice.call("PATCH", f"/resources/{eid}", {"labels": {"texera.keep": "true"}})
     assert kept[0] == 200 and kept[1]["metadata"]["labels"]["texera.keep"] == "true"
+
+
+def test_a_workflow_goes_with_its_executions(alice, project, iris, unit):
+    """Deleting has one rule, by whichever route: what lives only under a resource goes with it. A
+    workflow takes its finished executions and their tables along, and what it read is free again."""
+    wf = alice.create("workflows", "run, then deleted", w.average_by_species(iris.file), project=project)
+    rid = wf["metadata"]["rid"]
+    run = w.run(alice, rid, "goes with its workflow", computingUnit=unit)
+    eid = run["metadata"]["rid"]
+    assert run["status"]["phase"] == "completed", w.error_text(run)
+    assert len(w.rows(alice, rid, eid)["rows"]) == 3
+
+    status, refused = alice.call("DELETE", f"/resources/{iris.rid}")
+    assert status == 409 and refused["code"] == "referenced", "the dataset the workflow reads stays while it does"
+    assert any(uri_rid(d) == rid for d in refused["details"]["dependents"]), refused
+
+    assert alice.status("DELETE", f"/resources/{rid}") == 204, "the workflow goes, its execution with it"
+    assert alice.status("GET", f"/workflows/{rid}") == 404
+    assert alice.status("GET", f"/resources/{eid}") == 404, "the execution went with its workflow"
+    assert eid not in {e["metadata"]["rid"] for e in alice.get(f"/executions?project={project}&limit=100")["items"]}
+    assert alice.status("DELETE", f"/resources/{iris.rid}") == 204, "nothing reads the dataset any more"

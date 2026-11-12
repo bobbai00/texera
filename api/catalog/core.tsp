@@ -288,7 +288,7 @@ interface KindRoutes<T, TPage, TCreate, TUpdate> {
   @extension("x-texera-permission", "write")
   update(@path rid: Rid, @header("If-Match") ifMatch?: string, @body body: TUpdate): T | Error;
 
-  @doc("Delete the resource; refused with 409 while another resource references it.")
+  @doc("Delete the resource, with what lives only under it (a workflow's executions and their result tables); refused with 409 while another resource references it, while it holds resources of their own (a project), or while one of its executions is still going.")
   @delete
   @route("/{rid}")
   @extension("x-texera-permission", "delete")

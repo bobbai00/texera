@@ -70,7 +70,8 @@ func TestRunOpensTheLakeForTheUnit(t *testing.T) {
 		t.Fatalf("the rows request names the warehouse and the namespace: %q", h.unit.lastResultPlace())
 	}
 
-	// Deleting the execution drops its namespace.
+	// Deleting the execution, once it no longer goes, drops its namespace.
+	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec)+"/cancel", map[string]any{}, nil)
 	caller := callerOf(t, h, "alice")
 	k, _ := kinds.ByName("execution")
 	if err := h.svc.Delete(context.Background(), caller, &k, uuid.MustParse(rid(exec))); err != nil {
