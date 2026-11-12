@@ -25,7 +25,7 @@ holds. No model is asked anything.
 What it checks: what load.py puts in the project is all there; every file of every dataset and
 model reads back as the bytes in the folder; every workflow executes on the project's unit and
 keeps rows; a unit made from the Small profile starts, runs a workflow to the same rows and ends;
-the teammate reads the project; an execution's lineage names the data and the model it read; the
+each teammate reads the project; an execution's lineage names the data and the model it read; the
 project wears the folder's brand. With --against, the same workflows are executed on that stack
 too and their rows compared: the same project gives the same answers wherever it runs.
 
@@ -257,8 +257,8 @@ def main() -> None:
     ap.add_argument("--data", type=pathlib.Path, required=True, help="the folder prepare.py wrote and load.py loaded")
     ap.add_argument("--gw", default="http://localhost:8088", help="the gateway of the stack to check")
     ap.add_argument("--against", default="", help="the gateway of another stack with the same project: its rows are compared")
-    ap.add_argument("--owner", default="alice", help="whose project it is (password = name, as on the dev stack)")
-    ap.add_argument("--team", default="bob", help="who else edits it; empty for nobody")
+    ap.add_argument("--owner", default="alice", help="whose project it is (passwords: the dev stack's, or TEXERA_PASSWORDS)")
+    ap.add_argument("--team", default="bob", help="who else edits it, names separated by commas; empty for nobody")
     ap.add_argument("--project", default=load.PROJECT, help="the project's name")
     ap.add_argument("--no-unit", action="store_true", help="do not make a unit from a profile")
     args = ap.parse_args()
@@ -281,11 +281,11 @@ def main() -> None:
     print("== files")
     file_bytes(report, owner, args.data, has)
 
-    print("== the teammate")
-    if args.team:
-        mate = load.Person(gw, args.team)
+    print("== the team")
+    for name in filter(None, args.team.split(",")):
+        mate = load.Person(gw, name)
         theirs = loaded(mate, project)
-        report.check({k: set(v) for k, v in theirs.items()} == {k: set(v) for k, v in has.items()}, f"{args.team} sees what {args.owner} sees")
+        report.check({k: set(v) for k, v in theirs.items()} == {k: set(v) for k, v in has.items()}, f"{name} sees what {args.owner} sees")
         first = next(iter(cards(args.data / "datasets").items()), None)
         if first and first[0] in has.get("dataset", {}):
             item, (file, path) = has["dataset"][first[0]], next(iter(files_of(first[1]).items()))

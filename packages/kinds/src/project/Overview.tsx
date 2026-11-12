@@ -7,7 +7,7 @@ import { Skeleton } from "@texera/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { memo } from "react";
 import { describe, operatorsOf } from "../library/describe";
-import { operatorListQuery, resourceQuery, unitsQuery, useHoldings } from "../queries";
+import { operatorListQuery, unitsQuery, useHoldings } from "../queries";
 import { KINDS } from "../registry";
 import { KindIcon } from "../shell/KindIcon";
 import { useMay } from "../shell/may";
@@ -66,12 +66,8 @@ function Section({ kind, title, items, more, moreLabel, project, editable }: { k
   );
 }
 
-/**
- * What a project holds. `titled` says whether it names the project itself: the
- * project's own page has a header for that.
- */
-export const ProjectOverview = memo(function ProjectOverview({ rid, titled = true }: { rid: string; titled?: boolean }) {
-  const { data: project } = useQuery(resourceQuery(rid));
+/** What a project holds, on the project's own page. */
+export const ProjectOverview = memo(function ProjectOverview({ rid }: { rid: string }) {
   const { of, isPending } = useHoldings(rid, LISTED);
   const { data: operators } = useQuery(operatorListQuery(rid));
   const { data: units } = useQuery(unitsQuery(rid));
@@ -94,16 +90,6 @@ export const ProjectOverview = memo(function ProjectOverview({ rid, titled = tru
   const shown = sections.filter(s => s.items.length > 0);
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 px-6 py-6" data-project-overview={rid}>
-      {titled && (
-        <header className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">{project?.metadata.name}</h1>
-          {project?.metadata.description && (
-            <p className="truncate text-sm text-muted-foreground" title={project.metadata.description}>
-              {project.metadata.description}
-            </p>
-          )}
-        </header>
-      )}
       {isPending ? (
         <Skeleton className="h-64" />
       ) : shown.length === 0 ? (

@@ -146,7 +146,7 @@ test("lineage says who made each thing: a person, or the agent in a chat someone
 test("a person a workflow is shared with sees its lineage steadily, what is not shared with them named so", async ({ page, request }) => {
   test.setTimeout(240_000);
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const lab = await withIris(alice, "shared lineage");
   const workflow = await alice("POST", "/workflows", {
     name: `petals for bob ${Date.now()}`,
@@ -169,7 +169,7 @@ test("a person a workflow is shared with sees its lineage steadily, what is not 
   const bobPid = (await bob("GET", "/me")).principal.pid as string;
   await alice("PUT", `/resources/${rid}/grants/${bobPid}`, { relation: "viewer" });
 
-  await signIn(page, "bob", "bob");
+  await signIn(page, "bob");
   await page.goto(`/workflows/${rid}`);
   await page.getByRole("tab", { name: "Lineage" }).click();
   const lineage = page.locator("[data-lineage]");

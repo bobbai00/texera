@@ -118,7 +118,7 @@ its page), which takes its tables with it; one a dataset version derives from is
 | 23003 | Live service (Hocuspocus, Yjs): the sessions people share on a resource, behind the gateway at `/live/` |
 | 5174 | Frontend (vite) |
 | 23010 | Bio MCP server (PubMed, genes, variants, proteins), behind the gateway at `/bio-mcp`; its key is a seeded credential |
-| 18081 | Keycloak (admin/admin; users alice/alice, bob/bob, texera-admin/admin) |
+| 18081 | Keycloak (admin/admin; users alice/alice, bob/bob, charlie/charlie, dave/dave, texera-admin/admin) |
 | 18082 | OpenFGA HTTP API (gRPC 8081 inside the network, for Lakekeeper) |
 | 19001 | RustFS S3 (texera / texera-secret) |
 | 18181 | Lakekeeper Iceberg REST and management API (a token is required; the catalog is the operator) |

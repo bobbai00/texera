@@ -1,7 +1,7 @@
 // What part of a canvas is on screen. A workflow is shown whole when it fits at a size its
-// words can be read at; a longer one is shown from its beginning at that size, and is moved
-// by hand from there. The operator whose result is on screen is kept in view, so its lit port
-// can be seen, and so is an operator that just arrived from elsewhere.
+// words can still be read at; a longer one is shown from its beginning at a size they are read
+// at with ease, and is moved by hand from there. The operator whose result is on screen is kept
+// in view, so its lit port can be seen, and so is an operator that just arrived from elsewhere.
 
 import { CARD } from "@texera/workflow-model";
 import { useNodesInitialized, useReactFlow, useStoreApi } from "@xyflow/react";
@@ -9,8 +9,10 @@ import { type RefObject, useCallback, useEffect } from "react";
 import { useStore } from "zustand";
 import type { CanvasView, Covered } from "./canvas-view";
 
-/** Never smaller than this by itself: a card's words stay readable. */
-export const FIT = { padding: 0.18, minZoom: 0.85, maxZoom: 1 };
+/** Never smaller than this by itself: a card's words can still be read. */
+export const FIT = { padding: 0.18, minZoom: 0.7, maxZoom: 1 };
+/** The size a workflow too long to show whole is shown at: its cards' words are read with ease. */
+const EASY = 0.85;
 const MARGIN = 48;
 
 /** How far the bottom of a canvas is out of use at a card's place: under the results window when the card is above it. */
@@ -67,23 +69,30 @@ export function useFrame(view: CanvasView): () => Promise<void> {
     if (!seen() || flow.getNodes().length === 0) return;
     // Over the results window's top, when it lies over the canvas.
     const covered = view.getState().covered;
-    await flow.fitView(
-      covered
-        ? {
-            ...FIT,
-            padding: { top: "8%", left: "8%", right: "8%", bottom: `${covered.bottom + covered.height + 24}px` },
-          }
-        : FIT
-    );
+    const fit = (minZoom: number) =>
+      flow.fitView(
+        covered
+          ? {
+              ...FIT,
+              minZoom,
+              padding: { top: "8%", left: "8%", right: "8%", bottom: `${covered.bottom + covered.height + 24}px` },
+            }
+          : { ...FIT, minZoom }
+      );
+    const bounds = flow.getNodesBounds(flow.getNodes());
+    /** Whether the workflow is wider than the canvas at the size it is now shown at. */
+    const tooLong = () => bounds.width * store.getState().transform[2] > store.getState().width - 2 * MARGIN;
+    await fit(FIT.minZoom);
     // It may have gone from the screen meanwhile (another tab was picked): what was fitted
     // into no room is put right when it is back (`useReframe`).
     if (!seen()) return;
-    const { width, transform } = store.getState();
-    const [, y, zoom] = transform;
-    const bounds = flow.getNodesBounds(flow.getNodes());
-    const x = MARGIN - bounds.x * zoom;
-    if (bounds.width * zoom > width - 2 * MARGIN && Number.isFinite(x) && Number.isFinite(y))
-      await flow.setViewport({ x, y, zoom });
+    if (tooLong()) {
+      await fit(EASY);
+      if (!seen()) return;
+      const [, y, zoom] = store.getState().transform;
+      const x = MARGIN - bounds.x * zoom;
+      if (Number.isFinite(x) && Number.isFinite(y)) await flow.setViewport({ x, y, zoom });
+    }
     const shown = operatorOf(view.getState().result);
     if (shown) show(shown, false);
   }, [flow, store, show, view]);

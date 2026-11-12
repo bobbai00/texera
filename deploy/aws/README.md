@@ -23,6 +23,7 @@ Everything the local cluster runs (`deploy/kubernetes`), on EKS, from one comman
 
 ```
 deploy/aws/deploy.sh up            # the cluster, the images, the stack, the model key; prints the URL
+deploy/aws/deploy.sh passwords     # each person's password
 deploy/aws/deploy.sh check         # the scenarios and Playwright against the public URL
 deploy/aws/deploy.sh status        # pods, services, jobs, volumes
 deploy/aws/deploy.sh kubectl ...   # kubectl in the stack's namespace
@@ -80,12 +81,74 @@ realm sends the app back to it, Lakekeeper reads the identity provider from it. 
 after the first deployment, and nothing people made is touched: `deploy.sh cluster` with the
 new variables, then `deploy.sh stack`, which sees the address changed, restarts what read the
 old one and gives the realm's app client the new one (Keycloak imports its realm only once, so
-that is done with its admin CLI, in its pod).
+that is done with its admin CLI, in its pod). It restarts them one after the other: Keycloak
+until its old pod has gone, then the lake, then the services that hold a token of their own. A
+token and the provider's description name the address Keycloak started with, and what reads
+them keeps them: a service its token for an hour, the lake the provider until it starts again.
+
+From one name to another, `deploy.sh cluster` alone removes the old name's record before the new
+certificate is issued, and the site is away for as long as that takes. Applied in two steps, it
+stays up meanwhile: the listener first, which issues the certificate and takes it once it is
+valid, then the rest, which moves the name.
+
+```
+terraform -chdir=deploy/aws/cluster apply -target=aws_lb_listener.https
+deploy/aws/deploy.sh cluster
+deploy/aws/deploy.sh stack
+```
+
+The new name's zone must be delegated before any of it, and nothing should look the name up
+before its record exists: a resolver keeps "no such record" for up to fifteen minutes.
 
 A deployment people use needs the domain. A browser gives a page Web Crypto (which the sign-in's
 PKCE and the app's identifiers use) only at a secure address: `https://`, or `http://localhost`.
 Over plain HTTP on the load balancer's name the API answers, `verify.py` and the API scenarios
 pass, but nobody can sign in with a browser: the sign-in page says so.
+
+## Who signs in
+
+The address is public, so nobody registers themselves, and nobody's password is their name.
+The people are the realm's (`bin/texera-2-0/keycloak/texera-realm.json`: alice, bob, charlie,
+dave and the administrator, texera-admin), each with a password Terraform generates:
+
+```
+deploy/aws/deploy.sh passwords     # each person's password, as JSON by name
+```
+
+A person added to the realm file can sign in after the next `deploy.sh stack`, which gives the
+realm that is already up the people and passwords it was rendered with, and how they sign in
+(Keycloak imports a realm only once, so this too is done with its admin CLI, in its pod).
+`deploy.sh plan` cannot show that change before the stack has generated the new password. A
+password changed by hand in Keycloak lasts until the next `deploy.sh stack`.
+
+What signs in as a person takes the passwords from `TEXERA_PASSWORDS`, the same JSON:
+`deploy.sh check` sets it, and the demo's scripts read it, e.g.
+
+```
+TEXERA_PASSWORDS=$(deploy/aws/deploy.sh passwords) \
+  python bin/texera-2-0/examples/diabetes/verify.py --data ~/texera-diabetes --gw https://texera.example.edu
+```
+
+A name signed in to with wrong passwords is locked for a while: Keycloak's brute force detection
+is on, with its defaults (after 30 wrong passwords one minute, a minute more with every 30 after
+that, fifteen at most; two wrong ones within a second lock the name for a minute at once). It
+unlocks by itself, and nobody is locked for good. The accounts here are shared, so anyone can
+lock one for those minutes; the administrator unlocks them all with
+`kcadm.sh delete attack-detection/brute-force/users -r texera`.
+
+Keycloak answers at the public address for the realm people sign in to (`/auth/realms/texera`)
+and for its pages' files (`/auth/resources`), and for nothing else: its administration (the
+console, the admin API, the master realm an administrator signs in to) has no route at the
+gateway. The administrator works in Keycloak's pod with its admin CLI, as `deploy.sh` does for
+the realm's people and how they sign in:
+
+```
+deploy/aws/deploy.sh kubectl exec -it deployment/keycloak -- bash
+kcadm.sh() { /opt/keycloak/bin/kcadm.sh "$@"; }
+kcadm.sh config credentials --server http://localhost:8080/auth --realm master \
+  --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"
+kcadm.sh get users -r texera --fields username,enabled
+```
 
 ## What differs from the local cluster, and why
 
@@ -127,10 +190,17 @@ pass, but nobody can sign in with a browser: the sign-in page says so.
   own user gets its volume through `fsGroup`, since a fresh volume belongs to root.
 - **Nodes.** Graviton (`m7g.2xlarge`, 8 CPUs and 32 GB, two of them) by default: the images are
   built on Apple silicon for arm64, and every third-party image ships arm64. `node_instance_type`
-  and `node_architecture` go together; `deploy.sh images` builds for the latter. Pods cannot reach
-  the instance metadata (hop limit 1), so a computing unit's Python cannot use the node's role;
-  what needs AWS (the EBS driver, OpenBao) has a pod identity. A unit of the Large profile asks
-  for 8 CPUs and needs a bigger node.
+  and `node_architecture` go together, set in `cluster/` like the domain, and `deploy.sh images`
+  builds for the latter: x86 nodes are `node_architecture = "x86_64"` with a type of that kind
+  (`m6a.2xlarge` is the same size). Pods cannot reach the instance metadata (hop limit 1), so a
+  computing unit's Python cannot use the node's role; what needs AWS (the EBS driver, OpenBao)
+  has a pod identity. A unit of the Large profile asks for 8 CPUs and needs a bigger node.
+
+  On a deployment that is up, a change of either variable replaces the node group, and the stack
+  is down from `deploy.sh cluster` (ten minutes for the nodes) until `deploy.sh images` and
+  `deploy.sh stack` have run again. The volumes stay where they are, and one of the new nodes has
+  to stand in their zone (`kubectl get pv` names it): two nodes take two of the three zones as
+  they come, and may miss it. A third node, for the while, lands in the zone left out.
 - **Images by digest.** The overlay sets each image to `repository@sha256:...` from
   `texera/images.auto.tfvars.json`, so a tag pushed again is still a change and `IfNotPresent`
   is safe. The images are built without attestations: those are made anew by every build, and
@@ -156,17 +226,18 @@ writes kubectl's access to a kubeconfig of its own (`~/.kube/texera2-aws.yaml`, 
 administers the cluster; `admin_principal_arns` adds others.
 
 Another machine can work on the deployment too. It needs a clone of this branch, the tools
-above, AWS credentials of a principal the cluster admits, and three files git does not carry,
-copied from the machine that deployed: `cluster/terraform.tfstate`, `texera/terraform.tfstate`
-and `texera/images.auto.tfvars.json`. The state holds the generated secrets in plain text, so
-it is copied over SSH and never committed. `deploy.sh` makes `.terraform/` and the kubeconfig
+above, AWS credentials of a principal the cluster admits, and the files git does not carry,
+copied from the machine that deployed: `cluster/terraform.tfstate`, `texera/terraform.tfstate`,
+`texera/images.auto.tfvars.json`, and the variables set for this deployment
+(`cluster/*.auto.tfvars.json`, say: its domain, its nodes). The state holds the generated
+secrets in plain text, so it is copied over SSH and never committed. `deploy.sh` makes `.terraform/` and the kubeconfig
 again. A deployment with its own logo needs `TEXERA2_LOGIN_LOGO` there too, or the next
 `deploy.sh stack` puts the default back. `deploy.sh plan` says "No changes" for both modules
 when the copy is right; do that first, since `deploy.sh up` or `cluster` without the state would
 build a second deployment beside this one. A state file has no lock between machines, so apply
 from one at a time and carry the state along, or make it shared as above. On a machine of
 another architecture, `deploy.sh images` needs Docker's emulation of the nodes' one
-(`docker run --privileged --rm tonistiigi/binfmt --install arm64`).
+(`docker run --privileged --rm tonistiigi/binfmt --install arm64`, or `amd64`).
 
 ## Checking it
 
@@ -180,11 +251,12 @@ with its key is skipped, since this store has no key. For kubectl by hand: `depl
 get pods`.
 
 The demo's project goes onto the deployment as onto any stack, and is checked there against a
-stack known to be right (`bin/texera-2-0/examples/diabetes`):
+stack known to be right (`bin/texera-2-0/examples/diabetes`). `--team` names who edits it beside
+its owner; with the passwords as above:
 
 ```
-python3 bin/texera-2-0/examples/diabetes/load.py --data ~/texera-diabetes --gw <public URL> --sign-in-page
-python3 bin/texera-2-0/examples/diabetes/verify.py --data ~/texera-diabetes --gw <public URL> --against http://localhost:28088
+python3 bin/texera-2-0/examples/diabetes/load.py --data ~/texera-diabetes --gw <public URL> --team bob,charlie,dave --sign-in-page
+python3 bin/texera-2-0/examples/diabetes/verify.py --data ~/texera-diabetes --gw <public URL> --team bob,charlie,dave --against http://localhost:28088
 ```
 
 ## Left for later

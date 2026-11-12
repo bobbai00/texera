@@ -232,11 +232,16 @@ export function EditorCanvas({
   // changed it (an operator just added is picked): a pick made on the canvas is the canvas's,
   // several cards at once included, which the store knows as no single one. What the canvas
   // last told the store is remembered, so the store's answer is not taken for a new pick.
+  // A store made anew (the live session joined, with an operator already picked) has no pick
+  // of its own to put there either: the canvas keeps its pick and tells the new store. Taken
+  // for the app's, its empty pick and the canvas's answered each other without end.
   const picked = useRef(selected);
+  const pickedIn = useRef(store);
   const fromCanvas = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    const told = picked.current !== selected && selected !== fromCanvas.current;
+    const told = pickedIn.current === store && picked.current !== selected && selected !== fromCanvas.current;
     picked.current = selected;
+    pickedIn.current = store;
     fromCanvas.current = undefined;
     setNodes(previous => {
       const before = new Map(previous.map(n => [n.id, n]));
@@ -256,7 +261,7 @@ export function EditorCanvas({
       const picked = new Set(previous.filter(e => e.selected).map(e => e.id));
       return flow.edges.map(e => ({ ...e, selected: picked.has(e.id) }));
     });
-  }, [flow, selected, editing, setNodes, setEdges]);
+  }, [flow, selected, editing, store, setNodes, setEdges]);
 
   const edit = store.getState().edit;
 

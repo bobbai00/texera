@@ -29,7 +29,8 @@ For each person:
   (chats and the files attached to them, workflows, executions, a dataset someone kept);
 - their home project is emptied;
 - every other project they own goes whole;
-- the project they work in becomes the demo's, so the first page is the project.
+- the project they work in becomes the demo's, so the first page is the project: its owner's, and
+  anyone's on its team.
 
 Projects of other people are left alone. Run load.py afterwards if the demo's project is not there
 yet. Only the standard library is used.
@@ -130,12 +131,11 @@ def main() -> None:
         cleaner = Cleaner(person)
         print(f"== {user}")
 
-        owned = [
-            p
-            for p in person.must("GET", "/projects?limit=500")["items"]
-            if p["metadata"].get("owner") == pid
-        ]
+        seen = person.must("GET", "/projects?limit=500")["items"]
+        owned = [p for p in seen if p["metadata"].get("owner") == pid]
         demo = next((p for p in owned if p["metadata"]["name"] == args.project), None)
+        # The demo's project is its owner's to put back, and anyone's on its team to work in.
+        works_in = demo or next((p for p in seen if p["metadata"]["name"] == args.project), None)
 
         if demo:
             rid = demo["metadata"]["rid"]
@@ -171,7 +171,7 @@ def main() -> None:
                 if rid != home:
                     cleaner.attempt(f"project {name}", "DELETE", f"/projects/{rid}")
 
-        if demo:
+        if works_in:
             print(f"   works in {args.project}")
             if args.apply:
                 # A person's last chats are gone with the chats: only the working project stays.
@@ -179,7 +179,7 @@ def main() -> None:
                     "the working project",
                     "PUT",
                     "/me/preferences",
-                    {"project": demo["metadata"]["rid"]},
+                    {"project": works_in["metadata"]["rid"]},
                 )
         failed += cleaner.failed
 

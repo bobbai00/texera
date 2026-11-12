@@ -17,6 +17,7 @@ import type { Hold } from "../live/holds";
 import { KindIcon } from "../shell/KindIcon";
 import { Presence } from "../shell/Presence";
 import { toneOf } from "../workflow/Cursors";
+import { KEEPS_CLEAR } from "./clear";
 import { rectWithin } from "./Focus";
 import { GraphCursors, useGraphPointer } from "./GraphCursors";
 import { type Layout, layOut, type Measured } from "./layout";
@@ -45,7 +46,10 @@ const WIDE: Record<Level, number> = { overview: 55, standard: 63, detail: 67 };
 const GOING = new Set(["pending", "provisioning", "running"]);
 const RESIZE_SETTLES_MS = 80;
 
-/** The graph of a chat, and whether the chat has started work: made something, or planned to. */
+/**
+ * The graph of a chat, whether the chat has started work (made something, or planned to), and
+ * what the graph draws once it has, in short: `drawn` changes whenever the graph is drawn again.
+ */
 export function useChatGraph(
   rid: string,
   { enabled = true, live = false }: { enabled?: boolean; live?: boolean } = {}
@@ -60,9 +64,10 @@ export function useChatGraph(
   });
   const graph = query.data;
   const started = !!graph && (graph.planned.length > 0 || graph.nodes.some(n => n.made));
+  const drawn = useMemo(() => (started && graph ? fingerprint(graph) : undefined), [started, graph]);
   const { refetch } = query;
   const refresh = useCallback(() => void refetch(), [refetch]);
-  return { graph, started, refresh };
+  return { graph, started, drawn, refresh };
 }
 
 /** A short fingerprint of what the catalog said, so a layout is redone only when it changes. */
@@ -393,7 +398,7 @@ export function ResourceGraph({
   };
   return (
     <div className={cn("flex min-h-0 flex-col bg-background", className)} data-resource-graph inert={inert}>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5" data-page-bar>
         {bar}
         <div className="ml-auto flex items-center gap-1">
           <Presence rid={rid} />
@@ -449,7 +454,8 @@ export function ResourceGraph({
         </div>
       </div>
       {graph.sources.length > 0 && <Consulted sources={graph.sources} />}
-      <div ref={area} className="relative flex min-h-0 flex-1">
+      {/* Below the bar, what stands over the panel's side (the chat's window) is kept clear of. */}
+      <div ref={area} className={cn(KEEPS_CLEAR, "relative flex min-h-0 flex-1")}>
         <div
           ref={viewport}
           className="relative min-w-0 flex-1 cursor-grab touch-none overflow-hidden outline-none select-none active:cursor-grabbing"

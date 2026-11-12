@@ -13,7 +13,7 @@ const BOB = "Bob Builder";
 async function browserOf(browser: Browser, user: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await signIn(page, user, user);
+  await signIn(page, user);
   cleanups.push(() => context.close());
   return page;
 }
@@ -129,7 +129,7 @@ test("what a person shares from its page, the other finds under Shared with me a
 test("a link to something that was not shared says so on the page of every kind, and opens once it is shared", async ({ browser, request }) => {
   test.setTimeout(240_000);
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { pages, project } = await aPageOfEveryKind(alice);
   const chat: Envelope = await alice("POST", "/conversations", { name: `not shared ${Date.now()}`, parent: project, spec: {} });
   cleanups.push(() => alice.attempt("DELETE", `/resources/${chat.metadata.rid}`));
@@ -164,7 +164,7 @@ test("a link to something that was not shared says so on the page of every kind,
 
 test("a grant taken back takes the thing off the other's list and closes its page", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const made = await fourOfAlices(alice);
   const bobPid = (await bob("GET", "/me")).principal.pid as string;
   await alice("PUT", `/resources/${made.workflow.metadata.rid}/grants/${bobPid}`, { relation: "editor" });
@@ -200,7 +200,7 @@ test("a grant taken back takes the thing off the other's list and closes its pag
 // uses (its lineage: the dataset it reads), and one step shares that with them too.
 test("sharing a workflow says what the person cannot open of what it uses, and shares that too in one step", async ({ page, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const stamp = Date.now();
   const project: Envelope = await alice("POST", "/projects", { name: `uses ${stamp}`, spec: {} });
   const dataset: Envelope = await alice("POST", "/datasets", { name: `iris ${stamp}`, parent: project.metadata.rid, spec: { format: "csv" } });
@@ -233,7 +233,7 @@ test("sharing a workflow says what the person cannot open of what it uses, and s
 
 test("a person shared a workflow but not what it reads is told, before Run, what is missing and whom to ask", async ({ browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const stamp = Date.now();
   const project: Envelope = await alice("POST", "/projects", { name: `lent workflow ${stamp}`, spec: {} });
   const dataset: Envelope = await alice("POST", "/datasets", { name: "iris", parent: project.metadata.rid, spec: { format: "csv" } });
@@ -279,7 +279,7 @@ test("a person shared a workflow but not what it reads is told, before Run, what
 test("a person is offered only what the catalog lets them do: a viewer reads, an editor changes, only the owner deletes", async ({ browser, request }) => {
   test.setTimeout(240_000);
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const stamp = Date.now();
   const project: Envelope = await alice("POST", "/projects", { name: `lent things ${stamp}`, spec: {} });
   const dataset: Envelope = await alice("POST", "/datasets", { name: "iris", parent: project.metadata.rid, spec: { format: "csv" } });

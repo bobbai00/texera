@@ -86,11 +86,14 @@ and everyone sees it; while the agent is busy it goes in as a note the agent rea
 it: the others see "Alice is viewing" on it, and going in themselves they can look at it, not change
 it. A workflow is held operator by operator on its canvas instead.
 
-The chat and what is beside it share the page. The grip at the chat's left edge sizes it, and the
-width is remembered; a double click puts it back. The minus at the top right folds the chat into a
-button in the corner of the page, keeping what you were writing, and the button brings it back; the
-button after it gives the chat the whole page and back. In a window too narrow for both, the chat
-lies over the graph, and minimizing it shows the graph.
+Until the agent starts work the chat is the whole page. Then the chat and its graph share the
+page: the chat is a window over the graph's right, which the graph keeps clear of. Any side or
+corner of the window sizes it (the grip on the side that faces the graph takes the arrow keys too),
+its header moves it, to the page's left as well, and where it stands is remembered; a double click
+on a side puts it back. The minus at the top right folds the chat into a button in the corner of
+the page, keeping what you were writing, and the button brings it back; the button after it gives
+the chat the whole page, until the graph has something new to show. In a window too narrow for
+both, the chat lies over the graph, and minimizing it shows the graph.
 
 The List tab holds the same as a tree, "From this chat": a section per kind,
 each resource, its versions, and under a version the executions that ran it or the files it

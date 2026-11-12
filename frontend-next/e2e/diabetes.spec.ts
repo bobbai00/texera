@@ -43,7 +43,7 @@ function teamProject(): { rid: string } {
 async function browserOf(browser: Browser, user: string) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
-  await signIn(page, user, user);
+  await signIn(page, user);
   cleanups.push(() => context.close());
   return page;
 }
@@ -168,7 +168,8 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   await expect(overview.locator("[data-overview-person]")).toHaveCount(0);
 
   // A model's page says what it is, from its README.
-  await page.goto(`/models/${(await alice("GET", `/models?project=${project.rid}&limit=50`)).items.find((m: { metadata: { name: string } }) => m.metadata.name === "Diabetes onset risk").metadata.rid}`);
+  const onset = ((await alice("GET", `/models?project=${project.rid}&limit=50`)) as { items: { metadata: { name: string; rid: string } }[] }).items.find(m => m.metadata.name === "Diabetes onset risk")?.metadata.rid as string;
+  await page.goto(`/models/${onset}`);
   await expect(page.locator("[data-model-card]")).toContainText("Estimates who is likely");
   await expect(page.locator("[data-model-contract]")).toContainText("Glucose");
   await shot(page, "2-the-model");
@@ -185,16 +186,18 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   await page.locator("[data-attach-input]").setInputFiles(FILE);
   await ask(page, CHECK);
   const chat = conversationOf(page);
-  await expect(page.locator(`[data-chat-behind] [data-project-overview="${project.rid}"]`)).toBeVisible();
+  // Until the chat starts work it is the page: the project is not under it.
+  await expect(page.locator("[data-project-overview]")).toHaveCount(0);
   await turnEnds(page);
   let said = await messagesOf(alice, chat);
   expect(toolsOf(said)).toContain("read_dataset_file");
   expect(toolsOf(said)).not.toContain("create_dataset");
-  expect(answerOf(said)).toMatch(/onset.?risk/i);
+  // It recommends the team's onset-risk model: in words, or by its link, which the chat shows as the model's card.
+  expect(answerOf(said)).toMatch(new RegExp(`onset.?risk|texera://models/${onset}`, "i"));
   const listed = async () => ((await alice("GET", `/datasets?project=${project.rid}&limit=20`)) as { items: { metadata: { name: string } }[] }).items.map(d => d.metadata.name);
   expect(await listed()).not.toContain("screening_cohort.csv");
 
-  // It says where it would run: she picks, it builds the pipeline, and the graph takes the overview's place.
+  // It says where it would run: she picks, it builds the pipeline, and the graph shows beside the chat.
   const card = page.locator('[data-part="ask"]').last();
   if ((await card.count()) === 0) {
     // A model is free to stop at its recommendation: the README says what to say then.
@@ -211,7 +214,7 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   await expect(page.locator("[data-message-seq]").last()).toBeInViewport({ timeout: 15_000 });
   const graph = page.locator("[data-resource-graph]");
   await expect(graph).toBeVisible({ timeout: 60_000 });
-  await expect(page.locator("[data-chat-behind]")).toHaveCount(0);
+  await expect(page.locator("[data-chat-window]")).not.toHaveAttribute("data-chat-maximized", "true");
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "screening_cohort" }).first()).toBeVisible();
   const run = graph.locator('[data-graph-role="run"]');
   await expect(run).toHaveCount(1);
@@ -271,7 +274,7 @@ test("the story: what models and data there are, an inference on the ones picked
   test.setTimeout(2_400_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const project = teamProject();
   cleanups.push(() => emptied(alice, project.rid));
   await signIn(page);

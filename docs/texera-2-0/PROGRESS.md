@@ -2,6 +2,37 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-10 and 11 (session 16, parts 9 and 10): the deployment at a public address, and the chat as a window
+
+- **The deployment answers at a name of its own, over https, to the people it knows.** With a
+  domain, the cluster module issues the certificate and serves 443 (`deploy/aws/README.md`:
+  "The domain", and how to move from one name to another without the site going away). The
+  address is public, so nobody registers themselves and nobody's password is their name:
+  Terraform generates one per person of the realm (`deploy.sh passwords`), and what signs in as a
+  person reads them from `TEXERA_PASSWORDS` (the browser and API tests, `load.py`, `verify.py`,
+  `clean.py`, `walkthrough.py`; `deploy.sh check` sets it). Charlie and Dave joined the realm and
+  the demo's team (`--team bob,charlie,dave`). Keycloak imports a realm once, so `deploy.sh
+  stack` gives the realm that is up its people, their passwords and how they sign in (wrong
+  passwords lock a name for a while) with Keycloak's admin CLI in its pod; at the gateway
+  Keycloak answers for the realm and its pages' files and for nothing else. After a change of
+  address the stack restarts Keycloak, then the lake, then the services that hold a token, one
+  after the other: restarted together, they kept a token and a provider description of the old
+  address, and executions failed until they were restarted again.
+- **Nodes are x86, images amd64**, built where they run; the frontend's image builds on the
+  build platform (its files are the same for every platform), which an emulated Node once hung on.
+- **A card picked before a workflow's live session was joined brought the page down** (React
+  #185): the canvas and the editor's new store answered each other without end. A store made
+  anew is now told what is picked, not obeyed (`EditorCanvas.tsx`; `canvas.spec.ts`).
+- **The chat on its own page.** Until it has a graph, the chat is the page: no project list under
+  it. With one, it is a window below the page's bar, sized by every side and corner and moved by
+  its header to the page's left or right; what is under it keeps clear of it
+  (`chat-window.ts`, `graph/clear.ts`), and a chat given the whole page gives it back when its
+  graph has something new to draw. Whoever says something reads on from the chat's end. A
+  workflow opened beside a chat shows whole down to a smaller zoom (`framing.ts`).
+- Verified at the public address on Nov 11: API scenarios 56 passed and 1 skipped by design,
+  Playwright with the model 80 of 80, the agent scenarios with the model 6 of 6, `verify.py
+  --team bob,charlie,dave` 26 of 26.
+
 ## 2026-11-09 (session 16, part 8): the stack on AWS, from Terraform
 
 - **`deploy/aws`: everything the local cluster runs, on EKS in `us-east-2`, from one command**

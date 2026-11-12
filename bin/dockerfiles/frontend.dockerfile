@@ -22,7 +22,9 @@
 #
 #   docker build -f bin/dockerfiles/frontend.dockerfile -t texera/frontend:dev .
 
-FROM docker.io/oven/bun:1.3.14-alpine AS build
+# What is built is static files, the same for every platform, so the build runs on the machine's
+# own platform whatever the image is for: an emulated one is slow, and has been seen to hang.
+FROM --platform=$BUILDPLATFORM docker.io/oven/bun:1.3.14-alpine AS build
 WORKDIR /texera
 COPY package.json bun.lock ./
 COPY api/package.json api/

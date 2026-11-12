@@ -45,9 +45,32 @@ locals {
     "address: host.docker.internal, port_value: 23003", "address: live, port_value: 23003"),
     "address: host.docker.internal, port_value: 23010", "address: bio-mcp, port_value: 23010"),
   "address: host.docker.internal, port_value: 5174", "address: frontend, port_value: 8080")
-  gateway = replace(replace(local.gateway_services,
+  gateway = replace(replace(replace(local.gateway_services,
     "issuer: http://localhost:8088/auth/realms/texera", "issuer: ${var.public_url}/auth/realms/texera"),
+    local.keycloak_dev, local.keycloak_public),
   "  listeners:\n", "  listeners:\n${local.redirect_listener}")
+  # Keycloak at a public address answers for the realm people sign in to and for its pages'
+  # files, and for nothing else: its administration (the console, the admin API, the master
+  # realm an administrator signs in to) has no route. The dev stack's one route for all of
+  # /auth/ becomes those two and a 404 for the rest, which keeps the dev route's own filter
+  # settings. An administrator works in Keycloak's pod, as `deploy.sh` does.
+  keycloak_dev      = "- match: { prefix: \"/auth/\" }\n                          route: { cluster: keycloak, timeout: 60s }\n"
+  keycloak_public   = <<EOT
+- match: { path_separated_prefix: "/auth/realms/texera" }
+                          route: { cluster: keycloak, timeout: 60s }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+                        - match: { path_separated_prefix: "/auth/resources" }
+                          route: { cluster: keycloak, timeout: 60s }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+                        - match: { prefix: "/auth/" }
+                          direct_response: { status: 404 }
+EOT
   redirect_listener = <<EOT
     - name: redirect
       address:
@@ -79,10 +102,33 @@ EOT
     "texera-services" = var.secrets.services_client_secret
     "texera-unit"     = var.secrets.unit_client_secret
   }
-  realm = jsonencode(merge(local.realm_dev, {
+  # The people are the dev stack's too, each with this deployment's password instead of their
+  # name. `deploy.sh stack` gives a realm that is already up the same people and passwords.
+  people = [for user in local.realm_dev.users : user.username if can(user.credentials)]
+  # How people sign in at a public address. Nobody registers themselves: the accounts are the
+  # deployment's. And a name signed in to with wrong passwords is locked for a while, by
+  # Keycloak's own defaults, spelled out: after 30 wrong ones for a minute, a minute more with
+  # every 30 after that, fifteen minutes at most; two wrong ones within a second lock it for a
+  # minute at once; twelve hours without one start the count again. Nobody is locked for good.
+  # `deploy.sh stack` gives a realm that is already up the same.
+  sign_in = {
+    registrationAllowed          = false
+    bruteForceProtected          = true
+    permanentLockout             = false
+    failureFactor                = 30
+    waitIncrementSeconds         = 60
+    maxFailureWaitSeconds        = 900
+    quickLoginCheckMilliSeconds  = 1000
+    minimumQuickLoginWaitSeconds = 60
+    maxDeltaTimeSeconds          = 43200
+  }
+  realm = jsonencode(merge(local.realm_dev, local.sign_in, {
     clients = [for client in local.realm_dev.clients : merge(client,
       { for id, secret in local.client_secrets : "secret" => secret if id == client.clientId },
       { for id in ["texera-app"] : "redirectUris" => ["${var.public_url}/*"] if id == client.clientId },
+    )]
+    users = [for user in local.realm_dev.users : merge(user,
+      can(user.credentials) ? { credentials = [{ type = "password", value = var.passwords[user.username], temporary = false }] } : {},
     )]
   }))
 
@@ -131,13 +177,12 @@ data "kustomization_overlay" "texera" {
     }
   }
 
-  # The config maps k8s.sh renders from the dev stack's files.
+  # The config maps k8s.sh renders from the dev stack's files. The gateway reads its config
+  # when it starts, so the config's map is named after what it says: a config that changed is
+  # another map, and the gateway starts again with it.
   config_map_generator {
     name     = "gateway-config"
     literals = ["envoy.yaml=${local.gateway}"]
-    options {
-      disable_name_suffix_hash = true
-    }
   }
 
   config_map_generator {
@@ -211,6 +256,10 @@ data "kustomization_overlay" "texera" {
     precondition {
       condition     = !strcontains(local.gateway, "host.docker.internal") && !strcontains(local.gateway, "localhost:8088")
       error_message = "The gateway config still points at the dev host; update the substitutions here as in bin/texera-2-0/k8s.sh."
+    }
+    precondition {
+      condition     = strcontains(local.gateway, "direct_response: { status: 404 }") && !strcontains(local.gateway, "- match: { prefix: \"/auth/\" }\n                          route:")
+      error_message = "The gateway config still routes all of /auth/ to Keycloak, its administration included; update keycloak_dev here to the dev stack's route as bin/texera-2-0/envoy/envoy.yaml has it."
     }
     precondition {
       condition     = var.openbao_service_account == "openbao"

@@ -14,7 +14,7 @@ test.afterEach(tidyUp);
 async function browserOf(browser: Browser, user: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await signIn(page, user, user);
+  await signIn(page, user);
   cleanups.push(() => context.close());
   return page;
 }
@@ -91,7 +91,7 @@ test("whoever has a page open is shown at its top right, on the page of every ki
 
 test("two people on one page see each other, and see when the other leaves", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid, alicePid, bobPid } = await sharedWorkflow(alice, bob, "viewer");
 
   await signIn(page);
@@ -116,7 +116,7 @@ test("two people on one page see each other, and see when the other leaves", asy
 
 test("two people edit one workflow at the same moment, and what they made is saved in both their names", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid, alicePid, bobPid } = await sharedWorkflow(alice, bob, "editor");
 
   await signIn(page);
@@ -178,6 +178,8 @@ test("where operators sit goes into the next version: a move makes none, and an 
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
   await expect(node(page, "avg")).toBeVisible();
+  // The head is shown, to look at, until the workflow's live session is joined: a card moves after.
+  await expect(page.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "true");
   const below = async () => ((await node(page, "scan").boundingBox())?.y ?? 0) - ((await node(page, "avg").boundingBox())?.y ?? 0);
   expect(Math.abs(await below())).toBeLessThan(5);
 
@@ -240,7 +242,7 @@ test("what the agent adds to an open workflow arrives beside what it reads from,
 
 test("people on one canvas see where the other points, and what one has hold of the other can look at, not change", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid } = await sharedWorkflow(alice, bob, "editor");
   const aliceName = (await alice("GET", "/me")).principal.displayName as string;
   await signIn(page);
@@ -289,7 +291,7 @@ test("people on one canvas see where the other points, and what one has hold of 
 
 test("someone who may only view a workflow watches it change and cannot change it", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid } = await sharedWorkflow(alice, bob, "viewer");
 
   await signIn(page);
@@ -340,7 +342,7 @@ test("a version written elsewhere arrives on an open canvas, beside an edit not 
 
 test("a workflow the catalog does not take as a version says so on everyone's page, and does not run", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid } = await sharedWorkflow(alice, bob, "editor");
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
@@ -394,7 +396,7 @@ const said = (page: Page, text: string) => page.locator('[data-message-role="use
 
 test("a note is said to the people in a chat from its box, and asks the agent nothing", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid, bobs, alicePid, bobPid } = await chatOfTwo(page, browser, alice, bob, "notes");
 
   // Bob writes in the box and posts it as a note: on his own page it is marked as one.
@@ -425,7 +427,7 @@ test("a note is said to the people in a chat from its box, and asks the agent no
 
 test("what a chat runs with is one choice for everyone in it, and changes on every page at once", async ({ page, browser, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { rid, bobs } = await chatOfTwo(page, browser, alice, bob, "one configuration");
   const addOns = (on: Page) => on.locator("[data-composer] [data-chat-add-ons]");
   await expect(addOns(page)).toHaveAttribute("data-chat-add-ons", "1");
@@ -450,7 +452,7 @@ test("one of two people asks the agent, which knows who said what, and the other
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(240_000);
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const { bobs, alicePid } = await chatOfTwo(page, browser, alice, bob, "asked together");
 
   // Bob tells the others something only he knows, as a note; then alice asks the agent about it.

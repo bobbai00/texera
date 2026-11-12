@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -134,9 +135,15 @@ class Api:
             return e.code, _decode(e.read())
 
 
-def token(gw: str, user: str, password: str) -> str:
+def password_of(user: str) -> str:
+    """A person's password: on the dev stack their own name (`admin` for the administrator); a
+    deployment with passwords of its own gives them in TEXERA_PASSWORDS, a JSON object by name."""
+    return {"texera-admin": "admin", **json.loads(os.environ.get("TEXERA_PASSWORDS") or "{}")}.get(user, user)
+
+
+def token(gw: str, user: str) -> str:
     """A person's access token from Keycloak, through the gateway."""
-    data = urllib.parse.urlencode({"grant_type": "password", "client_id": "texera-app", "username": user, "password": password}).encode()
+    data = urllib.parse.urlencode({"grant_type": "password", "client_id": "texera-app", "username": user, "password": password_of(user)}).encode()
     with urllib.request.urlopen(f"{gw}/auth/realms/texera/protocol/openid-connect/token", data, timeout=60) as r:
         return json.load(r)["access_token"]
 

@@ -27,6 +27,17 @@ output "image_tag" {
   value = var.image_tag
 }
 
+# Each person's password, by name: `deploy.sh passwords` shows them, `deploy.sh check` signs in
+# with them.
+output "sign_in" {
+  value = module.overlay.sign_in
+}
+
+output "passwords" {
+  sensitive = true
+  value     = { for name, password in random_password.person : name => password.result }
+}
+
 # What deploy.sh needs to load the model key and to run the checks as a service.
 output "secrets" {
   sensitive = true

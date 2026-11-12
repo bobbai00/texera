@@ -25,6 +25,16 @@ output "manifests" {
   value       = data.kustomization_overlay.texera.manifests
 }
 
+output "people" {
+  description = "Who signs in with a password: the root module generates one for each."
+  value       = local.people
+}
+
+output "sign_in" {
+  description = "How people sign in, as the realm is rendered with: deploy.sh gives a realm that is already up the same."
+  value       = local.sign_in
+}
+
 output "realm" {
   description = "The realm Keycloak imports, rendered for this deployment: the root module makes its config map."
   sensitive   = true

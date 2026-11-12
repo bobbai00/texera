@@ -315,7 +315,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
     await alice("POST", "/conversations", { name: `the graph together ${Date.now()}`, parent: iris.project, spec: {} })
   ).metadata.rid as string;
   cleanups.push(() => iris.clear(conversation, []));
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const me = (await bob("GET", "/me")).principal.pid as string;
   await alice("PUT", `/resources/${iris.project}/grants/${me}`, { relation: "editor" });
   const file = `texera://datasets/${iris.dataset}@1/files/iris.csv`;
@@ -346,7 +346,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   const other = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   cleanups.push(() => other.close());
   const bobPage = await other.newPage();
-  await signIn(bobPage, "bob", "bob");
+  await signIn(bobPage, "bob");
   await bobPage.goto(`/conversations/${conversation}`);
   const bobsGraph = bobPage.locator("[data-resource-graph]");
   await expect(bobsGraph.locator('[data-graph-role="data"]').filter({ hasText: "iris" })).toBeVisible();
@@ -377,7 +377,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   await expect(graph.locator("[data-graph-held]")).toHaveCount(0);
 
   // A comment on a box, while a turn is going, is a note the agent reads next.
-  agent = await inTurn(request, bob, conversation, "bob", "bob");
+  agent = await inTurn(request, bob, conversation, "bob");
   await expect(page.locator("[data-turn-of]")).toBeVisible({ timeout: 20_000 });
   await dataset.hover();
   await dataset.locator("[data-graph-comment]").click();
@@ -421,7 +421,6 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   await page.setViewportSize({ width: 1500, height: 900 });
   await expect(graph).toBeVisible();
   await expect.poll(async () => spread(await places())).toBeGreaterThan(2);
-  await page.unroute("**/conversations/*/graph");
 
   // The chat can take the whole page and give it back.
   await page.locator("[data-chat-maximize]").click();
@@ -431,6 +430,13 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   await page.screenshot({ path: "test-results/chat-maximized.png" });
   await page.locator("[data-chat-maximize]").click();
   await expect(graph).toBeVisible();
+  // Taken again, it gives the page back by itself when the graph has something new to show: here
+  // the catalog's own answer, after the changed one.
+  await page.locator("[data-chat-maximize]").click();
+  await expect(graph).toHaveCount(0);
+  await page.unroute("**/conversations/*/graph");
+  await expect(graph).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("[data-chat-window]")).not.toHaveAttribute("data-chat-maximized", "true");
 
   // A chat takes a meaningful name, there and in the list of the project.
   const renamed = `Iris review ${Date.now()}`;

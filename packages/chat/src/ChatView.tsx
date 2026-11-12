@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, EditableName, FromThisChat, keysOf, KindIcon, ProjectOverview, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource, useRename } from "@texera/kinds";
+import { type AppContext, baseUri, type CardPicking, chatSettingsQuery, createDatasetVersion, EditableName, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, refOf, ResourcePanel, type ResourceRef, resourceQuery, settleViewing, ShareButton, updateSpec, UriChip, uriOf, useChatGraph, useMay, useOpenResource, useRename } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, Maximize2, Minimize2, Minus, PanelRight, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ScrollPoint, staysPinned } from "./chat-scroll";
-import { useChatPane } from "./chat-window";
+import { EDGES, type Edge, handlePlace, placed, UNCOVERED, useChatPane } from "./chat-window";
 import { ChatBubble } from "./ChatBubble";
 import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
@@ -25,7 +25,7 @@ export interface ChatViewProps {
   dock?: boolean;
 }
 
-/** A conversation: its messages, the composer, the agent it runs, and the resources it produced beside it. */
+/** A conversation: its messages, the composer, the agent it runs, and beside it the graph of what it reads, makes and runs. */
 export function ChatView({ rid, ...rest }: ChatViewProps) {
   const { data: conversation, error } = useQuery({ ...resourceQuery(rid), staleTime: 5_000 });
   if (error) return <OpenError error={error} kind="conversation" />;
@@ -64,19 +64,25 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   const [starting, setStarting] = useState(() => awaitsFirstMessage(rid));
   const busy = chat.running || uploading || starting;
   // The chat's resource graph, followed while the agent works, and again with every message.
-  const { graph, started, refresh } = useChatGraph(rid, { enabled: !dock, live: chat.running });
-  const pane = useChatPane(!dock);
-  const maximized = !dock && pane.maximized;
-  // A minimized chat is a bubble in the corner, and whatever was beside it has the whole page. It
-  // stays mounted, with what is half written in its box.
+  const { graph, started, drawn, refresh } = useChatGraph(rid, { enabled: !dock, live: chat.running });
+  // Until the chat starts work there is no graph to stand beside, and the chat is the page.
+  const withGraph = !dock && started && !!graph;
+  // A chat that has the whole page gives it back when its graph has something new to show.
+  const pane = useChatPane(withGraph, drawn);
+  const maximized = withGraph && pane.maximized;
+  // A minimized chat is a bubble in the corner, and the graph has the whole page. It stays
+  // mounted, with what is half written in its box.
   const [minimized, setMinimized] = useState(false);
   const minimize = () => {
     pane.setMaximized(false);
     setMinimized(true);
   };
-  const hasBeside = !dock && !maximized;
-  // Where the chat lies over what is beside it, there is no graph to see the people on.
-  const graphShown = hasBeside && started && !!graph && (minimized || pane.width !== undefined);
+  const hasBeside = withGraph && !maximized;
+  // Where the chat lies over all that is under it, there is no graph to see the people on.
+  const graphShown = hasBeside && (minimized || pane.box !== undefined);
+  // What the chat's window stands over keeps clear of it.
+  const covered = hasBeside && !minimized ? pane.covered : UNCOVERED;
+  const place = pane.place;
   // What the person picked from the agent's cards, for their next message.
   const [picks, setPicks] = useState<ResourceRef[]>([]);
   const picking = useMemo<CardPicking | undefined>(() => {
@@ -129,8 +135,13 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   }, []);
 
   const [noteError, setNoteError] = useState<unknown>();
-  /** Puts something in the chat: asks the agent, or leaves a note for the people in it. */
+  /**
+   * Puts something in the chat: asks the agent, or leaves a note for the people in it. Whoever
+   * says something reads on from the chat's end, wherever they had scrolled to.
+   */
   const deliver = async (text: string, attachments: Attachment[], ask: boolean) => {
+    pinned.current = true;
+    if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
     if (ask) {
       // The agent reads what the person sees: an edit of the page still on its way is saved first.
       if (context) await settleViewing();
@@ -228,33 +239,23 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
         setDragging(false);
         if (e.dataTransfer.files.length) setFiles(f => [...f, ...Array.from(e.dataTransfer.files)]);
       }}>
-      {/* Behind the chat, what the project holds; once the chat starts work, what it reads, makes and runs. */}
-      {hasBeside &&
-        (started && graph ? (
-          <ResourcePanel rid={rid} graph={graph} className="flex min-w-0 flex-1" onComment={readOnly ? undefined : commentOn} />
-        ) : (
-          <div className="scrollbar-thin min-w-0 flex-1 overflow-y-auto" data-chat-behind>
-            <FromThisChat rid={rid} className="mx-auto max-w-5xl px-6 pt-6" />
-            <ProjectOverview rid={project} />
-          </div>
-        ))}
-      {hasBeside && !minimized && pane.width !== undefined && (
-        <div {...pane.grip} className="group flex w-3 shrink-0 cursor-col-resize touch-none items-center justify-center outline-none" data-chat-resize>
-          <span className="h-10 w-1 rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-active:bg-primary" />
-        </div>
-      )}
+      {/* Under the chat once it starts work: what it reads, makes and runs. */}
+      {hasBeside && graph && <ResourcePanel rid={rid} graph={graph} className="flex min-w-0 flex-1" covered={covered} onComment={readOnly ? undefined : commentOn} />}
+      {/* The chat: the whole page, or a window over the graph, below the page's bar. */}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col",
-          !hasBeside ? "flex-1" : cn("overflow-hidden rounded-2xl border bg-background shadow-xl", pane.width === undefined ? "absolute inset-2 z-30" : "my-3 mr-3 flex-none"),
+          !hasBeside ? "flex-1" : cn("absolute z-30 overflow-hidden rounded-2xl border bg-background shadow-xl", !place && "inset-2"),
           minimized && "hidden"
         )}
-        style={hasBeside && pane.width !== undefined ? { width: pane.width } : undefined}
+        style={hasBeside && place ? placed(place) : undefined}
         data-chat-window
+        data-chat-side={hasBeside && place ? place.side : undefined}
         data-chat-maximized={maximized ? "true" : undefined}
-        data-chat-over={hasBeside && pane.width === undefined ? "true" : undefined}>
+        data-chat-over={hasBeside && !place ? "true" : undefined}>
       {!dock && (
-        <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2" data-chat-header>
+        // The window is moved by its header.
+        <header className={cn("flex shrink-0 items-center gap-2 border-b px-3 py-2", hasBeside && place && "cursor-move touch-none select-none")} {...(hasBeside && place ? pane.header : undefined)} data-chat-header>
           <KindIcon kind="conversation" className="size-7" />
           <div className="min-w-0 flex-1">
             <EditableName value={conversation.metadata.name} onChange={name => rename.mutateAsync(name)} disabled={may.write !== true} label="Chat name" />
@@ -268,12 +269,17 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
           <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
             <PanelRight />
           </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Minimize the chat" title="Minimize the chat" onClick={minimize} data-chat-minimize>
-            <Minus />
-          </Button>
-          <Button variant="ghost" size="icon-sm" aria-label={maximized ? "Show the graph and project again" : "Maximize the chat"} title={maximized ? "Show the graph and project again" : "Maximize the chat"} aria-pressed={maximized} onClick={() => pane.setMaximized(!maximized)} data-chat-maximize>
-            {maximized ? <Minimize2 /> : <Maximize2 />}
-          </Button>
+          {/* With a graph to share the page with, the chat gives it the page or takes it. */}
+          {withGraph && (
+            <>
+              <Button variant="ghost" size="icon-sm" aria-label="Minimize the chat" title="Minimize the chat" onClick={minimize} data-chat-minimize>
+                <Minus />
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label={maximized ? "Show the graph again" : "Maximize the chat"} title={maximized ? "Show the graph again" : "Maximize the chat"} aria-pressed={maximized} onClick={() => pane.setMaximized(!maximized)} data-chat-maximize>
+                {maximized ? <Minimize2 /> : <Maximize2 />}
+              </Button>
+            </>
+          )}
         </header>
       )}
           <div
@@ -349,6 +355,20 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
             />
           </div>
         </div>
+      {/* The window is sized by any of its sides and corners; the grip on the side that faces the graph takes the keys too. */}
+      {hasBeside &&
+        !minimized &&
+        place &&
+        EDGES.map(which =>
+          which === pane.facing ? (
+            <div key={which} {...pane.grip} style={handlePlace(which, place)} className="group absolute z-30 flex cursor-col-resize touch-none items-center justify-center outline-none" data-chat-resize={which}>
+              <span className="h-10 w-1 rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-active:bg-primary" />
+            </div>
+          ) : (
+            // biome-ignore lint/a11y/noStaticElementInteractions: a pointer's handle; the keys size the chat by its grip
+            <div key={which} {...pane.edge(which)} style={handlePlace(which, place)} className={cn("absolute z-30 touch-none rounded-full transition-colors hover:bg-primary/25 active:bg-primary/40", CURSORS[which])} aria-hidden data-chat-resize={which} />
+          )
+        )}
       {minimized && <ChatBubble label="Show the chat" working={chat.running} className="absolute right-4 bottom-4 z-30" onClick={() => setMinimized(false)} data-chat-restore />}
       <div className={cn("pointer-events-none absolute inset-3 hidden items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-sm font-medium text-primary", dragging && "flex")}>
         Drop files to attach them to this chat
@@ -369,6 +389,18 @@ function PickedChip({ ref, onRemove }: { ref: ResourceRef; onRemove: () => void 
     </span>
   );
 }
+
+/** The pointer over each handle of the chat's window says which way it sizes. */
+const CURSORS: Record<Edge, string> = {
+  left: "cursor-ew-resize",
+  right: "cursor-ew-resize",
+  top: "cursor-ns-resize",
+  bottom: "cursor-ns-resize",
+  "top-left": "cursor-nwse-resize",
+  "bottom-right": "cursor-nwse-resize",
+  "top-right": "cursor-nesw-resize",
+  "bottom-left": "cursor-nesw-resize",
+};
 
 /** How many messages at the end of a chat are always laid out: a whole turn, a handoff included. */
 const NEWEST_LAID_OUT = 6;

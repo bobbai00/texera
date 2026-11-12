@@ -95,3 +95,9 @@ variable "secrets" {
     secrets_token             = string
   })
 }
+
+variable "passwords" {
+  sensitive   = true
+  description = "Each person's password, by name (the `people` output names them): the dev stack's, which are the names themselves, are not used at a public address."
+  type        = map(string)
+}

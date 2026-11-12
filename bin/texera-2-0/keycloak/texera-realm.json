@@ -252,6 +252,44 @@
       "id": "3c3d71a1-8d68-49cd-bb11-967d10a38c70"
     },
     {
+      "username": "charlie",
+      "enabled": true,
+      "email": "charlie@texera.local",
+      "emailVerified": true,
+      "firstName": "Charlie",
+      "lastName": "Bucket",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "charlie",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "user"
+      ],
+      "id": "ec4e91dc-18b8-4cf4-b4fd-f235521d585c"
+    },
+    {
+      "username": "dave",
+      "enabled": true,
+      "email": "dave@texera.local",
+      "emailVerified": true,
+      "firstName": "Dave",
+      "lastName": "Bowman",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dave",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "user"
+      ],
+      "id": "176f2268-656c-46b0-891b-f67505c4e044"
+    },
+    {
       "username": "texera-admin",
       "enabled": true,
       "email": "admin@texera.local",

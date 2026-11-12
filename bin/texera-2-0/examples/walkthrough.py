@@ -29,6 +29,7 @@ Only the standard library is used; the same calls as curl would make them.
 """
 import argparse
 import json
+import os
 import pathlib
 import sys
 import time
@@ -40,9 +41,15 @@ import uuid
 HERE = pathlib.Path(__file__).resolve().parent
 
 
-def token(gw: str, user: str, password: str) -> str:
+def password_of(user: str) -> str:
+    """A person's password: on the dev stack their own name; a deployment with passwords of its
+    own gives them in TEXERA_PASSWORDS, a JSON object by name."""
+    return json.loads(os.environ.get("TEXERA_PASSWORDS") or "{}").get(user, user)
+
+
+def token(gw: str, user: str) -> str:
     """A person's access token: Keycloak's password grant on the public client texera-app."""
-    data = urllib.parse.urlencode({"grant_type": "password", "client_id": "texera-app", "username": user, "password": password}).encode()
+    data = urllib.parse.urlencode({"grant_type": "password", "client_id": "texera-app", "username": user, "password": password_of(user)}).encode()
     with urllib.request.urlopen(f"{gw}/auth/realms/texera/protocol/openid-connect/token", data, timeout=60) as r:
         return json.load(r)["access_token"]
 
@@ -50,8 +57,8 @@ def token(gw: str, user: str, password: str) -> str:
 class Person:
     """One caller of the catalog API through the gateway."""
 
-    def __init__(self, gw: str, user: str, password: str):
-        self.gw, self.user, self.token = gw, user, token(gw, user, password)
+    def __init__(self, gw: str, user: str):
+        self.gw, self.user, self.token = gw, user, token(gw, user)
 
     def call(self, method: str, path: str, body=None, *, raw: bytes | None = None, content_type="application/json"):
         """Returns (status, decoded body) for a call to /catalog/v1{path}."""
@@ -90,8 +97,9 @@ def main() -> None:
     gw = args.gw.rstrip("/")
 
     step("sign in as alice and bob (Keycloak password grant, client texera-app)")
-    alice, bob = Person(gw, "alice", "alice"), Person(gw, "bob", "bob")
-    show("POST", f"{gw}/auth/realms/texera/protocol/openid-connect/token", "grant_type=password&client_id=texera-app&username=alice&password=alice")
+    alice, bob = Person(gw, "alice"), Person(gw, "bob")
+    shown = "alice" if password_of("alice") == "alice" else "<her password>"
+    show("POST", f"{gw}/auth/realms/texera/protocol/openid-connect/token", f"grant_type=password&client_id=texera-app&username=alice&password={shown}")
 
     step("who am I: the principal and the home project")
     me = alice.must("GET", "/me")

@@ -21,7 +21,7 @@ function Contents({ resource }: { resource: Resource }) {
   return (
     <ProjectScope project={resource.metadata.rid}>
       <div className="scrollbar-thin overflow-y-auto">
-        <ProjectOverview rid={resource.metadata.rid} titled={false} />
+        <ProjectOverview rid={resource.metadata.rid} />
       </div>
     </ProjectScope>
   );

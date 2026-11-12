@@ -1,5 +1,5 @@
 import { type Browser, expect, test } from "@playwright/test";
-import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn, toConfigure } from "./support";
+import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, passwordOf, pick, say, signIn, tidyUp, withIris, workAtHome, workIn, toConfigure } from "./support";
 
 // The pages against the real stack: sign in through Keycloak, start a chat by saying something,
 // attach a CSV (the chat's own file, in no list) and see it as a card; the agent every chat runs,
@@ -20,7 +20,7 @@ test("the sign-in page wears Texera's look", async ({ page }) => {
   expect(await page.locator("#kc-header-wrapper").evaluate(el => getComputedStyle(el).backgroundImage)).toContain("texera-logo.png");
   await page.screenshot({ path: "test-results/sign-in.png" });
   await page.locator("#username").fill("alice");
-  await page.locator("#password").fill("alice");
+  await page.locator("#password").fill(passwordOf("alice"));
   await page.locator("#kc-login").click();
   await expect(page.locator("[data-new-chat]")).toBeVisible();
 });
@@ -72,10 +72,13 @@ test("signs in, starts a chat by saying something and attaches a CSV that stays 
   await expect(mine.locator('[data-resource-card="dataset"]')).toBeVisible();
   await expect(mine).toContainText("What is in this file?");
   await expect(mine.getByText("texera://")).toHaveCount(0);
-  // Beside the chat, what it worked from: the attached dataset, dimmed, made elsewhere; unfolded,
-  // its version and the version's file. At this width the panel beside leaves it no room.
+  // A chat that has not started work is the whole page. What it worked from is in its details,
+  // beside it: the attached dataset, dimmed, made elsewhere; unfolded, its version and the
+  // version's file.
   await page.locator("[data-side-panel]").getByRole("button", { name: "Close panel" }).click();
-  const tree = page.locator("[data-chat-tree]");
+  await expect(page.locator("[data-chat-tree]")).toHaveCount(0);
+  await page.getByLabel("Open the chat's details beside").click();
+  const tree = page.locator("[data-side-panel] [data-chat-tree]");
   const attached = tree.locator('[data-tree-section="dataset"] [data-tree-resource="dataset"][data-made="false"]');
   await expect(attached).toBeVisible();
   await attached.getByRole("button", { name: /^Unfold / }).first().click();
@@ -209,7 +212,7 @@ test("a project's page says what it inherits and runs with, and its admins manag
     await call.attempt("DELETE", `/projects/${lab.metadata.rid}`);
   });
   const texera = (await call("GET", "/me")).rootProject as string;
-  const bob = (await (await api(request, "bob", "bob"))("GET", "/me")).principal.pid as string;
+  const bob = (await (await api(request, "bob"))("GET", "/me")).principal.pid as string;
   await signIn(page);
   await page.goto(`/projects/${study.metadata.rid}`);
   const view = page.locator('[data-resource-view="project"]');
@@ -285,7 +288,7 @@ test("a project's page says what it inherits and runs with, and its admins manag
 async function browserOf(browser: Browser, user: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await signIn(page, user, user);
+  await signIn(page, user);
   cleanups.push(() => context.close());
   return page;
 }
@@ -775,7 +778,7 @@ test("an execution shows the file it read in its lineage, and can be kept past t
 
 test("two people in one chat: a shared conversation shows the other's messages and turn as they happen", async ({ browser, page, request }) => {
   const alice = await api(request);
-  const bob = await api(request, "bob", "bob");
+  const bob = await api(request, "bob");
   const bobPid = (await bob("GET", "/me")).principal.pid as string;
   const alicePid = (await alice("GET", "/me")).principal.pid as string;
 
@@ -785,7 +788,7 @@ test("two people in one chat: a shared conversation shows the other's messages a
   await alice("PUT", `/resources/${rid}/grants/${bobPid}`, { relation: "editor" });
   const bobsBrowser = await browser.newContext();
   const bobsPage = await bobsBrowser.newPage();
-  await signIn(bobsPage, "bob", "bob");
+  await signIn(bobsPage, "bob");
   await bobsPage.goto(`/conversations/${rid}`);
   await expect(bobsPage.locator("[data-composer]")).toBeVisible();
 
@@ -867,7 +870,7 @@ test("an execution's page follows it as it goes, and pauses and resumes it", asy
 test("the agent answers from a workflow it built, in the chat's project and on the unit named in words", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(300_000);
-  const asBob = await api(request, "bob", "bob");
+  const asBob = await api(request, "bob");
   const iris = await withIris(asBob, "core loop e2e");
   // A second unit at the deployment's engine, so the execution's unit tells where the agent sent it.
   const platform = (await asBob("GET", "/me")).rootProject as string;
@@ -880,7 +883,7 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   cleanups.push(async () => {
     await iris.clear(conversation, [unit.metadata.rid]);
   });
-  await signIn(page, "bob", "bob");
+  await signIn(page, "bob");
   await workIn(page, iris.name);
   await ask(page, `${IRIS_QUESTION} Run it on my computing unit named "${unitName}".`);
   conversation = conversationOf(page);
@@ -957,7 +960,7 @@ test("one agent researches, analyzes and shares in one chat", async ({ page, req
   await say(page, "Share my iris dataset with Bob so he can read it.");
   await expect(page.locator('[data-tool="grant_access"][data-tool-state="done"]').first()).toBeVisible({ timeout: 180_000 });
   await turnOver();
-  const asBob = await api(request, "bob", "bob");
+  const asBob = await api(request, "bob");
   const bob = await asBob("GET", "/me");
   const visible = await asBob("GET", "/datasets?q=iris");
   expect(visible.items.some((d: { metadata: { name: string; owner: string } }) => d.metadata.name === "iris" && d.metadata.owner !== bob.principal.pid)).toBe(true);

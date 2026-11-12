@@ -102,6 +102,14 @@ resource "random_password" "secrets_token" {
   special = false
 }
 
+# The people's passwords: the realm's are the dev stack's, each the person's own name, which
+# at a public address would let anybody in.
+resource "random_password" "person" {
+  for_each = toset(module.overlay.people)
+  length   = 16
+  special  = false
+}
+
 module "overlay" {
   source = "./overlay"
 
@@ -127,6 +135,7 @@ module "overlay" {
     lakekeeper_encryption_key = random_password.lakekeeper_encryption.result
     secrets_token             = random_password.secrets_token.result
   }
+  passwords = { for name, password in random_password.person : name => password.result }
 }
 
 # The namespace first; then the two objects made of generated values, which the render leaves

@@ -22,6 +22,7 @@ works in it.
 
     python load.py --data ~/texera-diabetes                         # http://localhost:8088, alice's, bob on the team
     python load.py --data ~/texera-diabetes --gw http://localhost:28088
+    python load.py --data ~/texera-diabetes --team bob,charlie,dave  # a bigger team
 
 What is already there by name is left as it is, so a second run adds only what is missing.
 
@@ -36,6 +37,7 @@ Only the standard library is used.
 import argparse
 import base64
 import json
+import os
 import pathlib
 import sys
 import urllib.error
@@ -62,13 +64,20 @@ OPERATOR_NAMES = {
 }
 
 
-def token(gw: str, user: str, password: str) -> str:
+def password_of(user: str) -> str:
+    """A person's password: on the dev stack their own name (`admin` for the administrator); a
+    deployment with passwords of its own gives them in TEXERA_PASSWORDS, a JSON object by name."""
+    own = json.loads(os.environ.get("TEXERA_PASSWORDS") or "{}")
+    return {"texera-admin": "admin", **own}.get(user, user)
+
+
+def token(gw: str, user: str) -> str:
     data = urllib.parse.urlencode(
         {
             "grant_type": "password",
             "client_id": "texera-app",
             "username": user,
-            "password": password,
+            "password": password_of(user),
         }
     ).encode()
     with urllib.request.urlopen(
@@ -80,8 +89,8 @@ def token(gw: str, user: str, password: str) -> str:
 class Person:
     """One caller of the catalog API through the gateway."""
 
-    def __init__(self, gw: str, user: str, password: str | None = None):
-        self.gw, self.user, self.token = gw, user, token(gw, user, password or user)
+    def __init__(self, gw: str, user: str):
+        self.gw, self.user, self.token = gw, user, token(gw, user)
 
     def call(
         self,
@@ -463,9 +472,9 @@ def main() -> None:
     ap.add_argument(
         "--owner",
         default="alice",
-        help="whose project it is (password = name, as on the dev stack)",
+        help="whose project it is (passwords: the dev stack's, or TEXERA_PASSWORDS)",
     )
-    ap.add_argument("--team", default="bob", help="who else edits it; empty for nobody")
+    ap.add_argument("--team", default="bob", help="who else edits it, names separated by commas; empty for nobody")
     ap.add_argument("--project", default=PROJECT, help="the project's name")
     ap.add_argument(
         "--sign-in-page",
@@ -494,12 +503,12 @@ def main() -> None:
         )
     )["metadata"]["rid"]
     print(f"   {args.project}: {project}")
-    if args.team:
-        member = Person(gw, args.team).must("GET", "/me")["principal"]["pid"]
+    for name in filter(None, args.team.split(",")):
+        member = Person(gw, name).must("GET", "/me")["principal"]["pid"]
         owner.must(
             "PUT", f"/resources/{project}/grants/{member}", {"relation": "editor"}
         )
-        print(f"   {args.team} edits it")
+        print(f"   {name} edits it")
 
     print("== datasets")
     datasets = {
@@ -524,7 +533,7 @@ def main() -> None:
         wear(owner, project, brand, agentTemplate=agent)
         owner.must("PATCH", f"/resources/{project}", {"description": brand["description"]})
         if args.sign_in_page:
-            wear(Person(gw, "texera-admin", "admin"), owner.must("GET", "/me")["rootProject"], brand)
+            wear(Person(gw, "texera-admin"), owner.must("GET", "/me")["rootProject"], brand)
     mark(owner, loaded)
     print(f"\n{gw}/projects/{project}")
 

@@ -15,7 +15,7 @@ from texera_e2e import chat, kube
 from texera_e2e.client import Api, ApiError, token
 
 IRIS = pathlib.Path(__file__).resolve().parents[2] / "bin" / "texera-2-0" / "examples" / "iris.csv"
-PEOPLE = {"alice": "alice", "bob": "bob", "texera-admin": "admin"}
+PEOPLE = ("alice", "bob", "texera-admin")
 
 
 def pytest_addoption(parser):
@@ -47,7 +47,7 @@ def run_id() -> str:
 
 @pytest.fixture(scope="session")
 def people(gw) -> dict[str, Api]:
-    return {user: Api(gw, token(gw, user, password)) for user, password in PEOPLE.items()}
+    return {user: Api(gw, token(gw, user)) for user in PEOPLE}
 
 
 @pytest.fixture(scope="session")

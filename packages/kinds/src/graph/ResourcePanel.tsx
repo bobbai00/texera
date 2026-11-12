@@ -5,7 +5,8 @@
 import type { ConversationGraph } from "@texera/catalog-client/types";
 import { cn } from "@texera/ui";
 import { List, Network } from "lucide-react";
-import { memo, useMemo, useRef, useState } from "react";
+import { type CSSProperties, memo, useMemo, useRef, useState } from "react";
+import { KEEPS_CLEAR } from "./clear";
 import { useHolds } from "../live/room";
 import { FromThisChat } from "../shell/FromThisChat";
 import { type ViewHost, ViewHostContext } from "../shell/host";
@@ -18,11 +19,17 @@ export const ResourcePanel = memo(function ResourcePanel({
   rid,
   graph,
   className,
+  covered,
   onComment,
 }: {
   rid: string;
   graph: ConversationGraph;
   className?: string;
+  /**
+   * How much of the panel's left and right something stands over (the chat's window), in pixels:
+   * the panel's bars run its whole width, and what is below them keeps clear of it.
+   */
+  covered?: { left: number; right: number };
   /** Posts a comment on a thing of the graph into the chat. */
   onComment?: (on: CommentOn, text: string) => Promise<boolean>;
 }) {
@@ -85,6 +92,7 @@ export const ResourcePanel = memo(function ResourcePanel({
         ref={section}
         aria-label="What this chat read, made and ran"
         className={cn("relative flex min-h-0 flex-col", className)}
+        style={{ "--covered-left": `${covered?.left ?? 0}px`, "--covered-right": `${covered?.right ?? 0}px` } as CSSProperties}
         data-resource-panel>
         {tab === "graph" ? (
           <ResourceGraph
@@ -99,8 +107,10 @@ export const ResourcePanel = memo(function ResourcePanel({
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col" inert={focused}>
-            <div className="flex shrink-0 items-center border-b px-3 py-1.5">{tabs}</div>
-            <FromThisChat rid={rid} className="flex-1 overflow-y-auto p-3" />
+            <div className="flex shrink-0 items-center border-b px-3 py-1.5" data-page-bar>
+              {tabs}
+            </div>
+            <FromThisChat rid={rid} className={cn(KEEPS_CLEAR, "flex-1 overflow-y-auto p-3")} />
           </div>
         )}
         {focused && (

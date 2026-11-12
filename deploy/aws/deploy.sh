@@ -23,6 +23,7 @@
 #   deploy/aws/deploy.sh images       # build the images for the nodes' architecture and push them
 #   deploy/aws/deploy.sh stack        # the stack on the cluster (texera/), then wait for the gateway
 #   deploy/aws/deploy.sh model-key    # the platform's model key into the secret store
+#   deploy/aws/deploy.sh passwords    # each person's password, as JSON by name
 #   deploy/aws/deploy.sh check        # test.sh cluster: the scenarios and Playwright against the public URL
 #   deploy/aws/deploy.sh status       # pods, services, jobs, volumes
 #   deploy/aws/deploy.sh kubectl ...  # kubectl in the stack's namespace
@@ -122,20 +123,73 @@ stack() {
   apply_stack
   kubeconfig
   if [ -n "$before" ] && [ "$before" != "$PUBLIC" ]; then moved; fi
+  sign_in
+  people
   wait_ready
+}
+
+# sign_in gives the realm how people sign in as the overlay renders it (its `sign_in`: nobody
+# registers themselves, wrong passwords lock a name for a while), for the reason `people` has:
+# Keycloak imported its realm once.
+sign_in() {
+  need jq
+  local settings
+  settings=$(tf texera output -json sign_in | jq -r 'to_entries | map("-s \(.key)=\(.value)") | join(" ")')
+  kube rollout status deployment/keycloak --timeout=900s >/dev/null
+  # shellcheck disable=SC2086 # each setting is two words of its own
+  kube exec deployment/keycloak -c keycloak -- sh -c '
+    set -e
+    kc=/opt/keycloak/bin/kcadm.sh
+    $kc config credentials --server http://localhost:8080/auth --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null 2>&1
+    $kc update realms/texera "$@"
+    echo "realm: people sign in as this deployment sets it"
+  ' sh $settings
+}
+
+# people gives the realm the people it was rendered with. Keycloak imported its realm once: a
+# person added since, or a password generated since, is put there with Keycloak's own admin
+# CLI, in its pod, as `moved` does for the app's address. Each line the pod reads is a person:
+# name, first name, last name, email, password.
+people() {
+  need jq
+  kube rollout status deployment/keycloak --timeout=900s >/dev/null
+  kube get configmap keycloak-realm -o jsonpath='{.data.texera-realm\.json}' |
+    jq -r '.users[] | select(.credentials) | [.username, .firstName, .lastName, .email, .credentials[0].value] | @tsv' |
+    kube exec -i deployment/keycloak -c keycloak -- sh -c '
+      set -e
+      kc=/opt/keycloak/bin/kcadm.sh
+      $kc config credentials --server http://localhost:8080/auth --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null 2>&1 </dev/null
+      tab=$(printf "\t")
+      while IFS="$tab" read -r name first last email password; do
+        id=$($kc get users -r texera -q "username=$name" -q exact=true --fields id --format csv --noquotes </dev/null)
+        if [ -z "$id" ]; then
+          $kc create users -r texera -s "username=$name" -s enabled=true -s emailVerified=true -s "firstName=$first" -s "lastName=$last" -s "email=$email" >/dev/null 2>&1 </dev/null || { echo "realm: $name could not be added" >&2; exit 1; }
+          echo "realm: $name can sign in"
+        fi
+        $kc set-password -r texera --username "$name" --new-password "$password" </dev/null
+      done
+      echo "realm: each person has the password of this deployment"
+    '
 }
 
 # moved is what a changed public URL needs beyond the apply (a domain given, say, where the
 # load balancer's own name was). Keycloak imported its realm once, with the app sent back to
 # the old address: the app's client is given the new one with Keycloak's own admin CLI, in its
 # pod, so the administrator's password never leaves it. And what read the old address at its
-# start starts again. Nothing that people made is touched.
-MOVES=(keycloak gateway catalog unit agent-runtime lakekeeper)
+# start starts again; the gateway does by itself, for the address is in its config, and a
+# config that changed is another config map. Nothing that people made is touched.
+#
+# One after the other, for what is read from Keycloak is kept. A token it issues and the
+# provider it describes name the address it started with; a service keeps its own token until
+# it expires, and the lake keeps the provider it read at its start. So Keycloak first, until its
+# old pod has gone; then the lake, which the catalog asks at its own start; then the services
+# that hold a token of their own. Started together, the lake and the catalog can still read
+# from the old Keycloak, and then refuse each other and the unit for as long as a token lasts.
+TOKEN_HOLDERS=(catalog unit agent-runtime live)
 moved() {
   local app
   echo "== the public URL is now $PUBLIC"
-  for app in "${MOVES[@]}"; do kube rollout restart "deployment/$app" >/dev/null; done
-  kube rollout status deployment/keycloak --timeout=900s >/dev/null
+  replaced keycloak
   kube exec deployment/keycloak -- sh -c '
     set -e
     kc=/opt/keycloak/bin/kcadm.sh
@@ -144,7 +198,17 @@ moved() {
     $kc update "clients/$id" -r texera -s "redirectUris=[\"$1/*\"]"
     echo "realm: the app is sent back to $1"
   ' sh "$PUBLIC"
-  for app in "${MOVES[@]}"; do kube rollout status "deployment/$app" --timeout=900s >/dev/null; done
+  replaced lakekeeper
+  for app in "${TOKEN_HOLDERS[@]}"; do kube rollout restart "deployment/$app" >/dev/null; done
+  for app in "${TOKEN_HOLDERS[@]}"; do kube rollout status "deployment/$app" --timeout=900s >/dev/null; done
+}
+
+# replaced starts a deployment again and returns once only its new pods are left: `rollout
+# status` returns while the old pod is still ending, and until it has ended it can still answer.
+replaced() {
+  kube rollout restart "deployment/$1" >/dev/null
+  kube rollout status "deployment/$1" --timeout=900s >/dev/null
+  while [ -n "$(kube get pods -l "app=$1" -o jsonpath='{.items[*].metadata.deletionTimestamp}')" ]; do sleep 2; done
 }
 
 # apply_stack applies the stack. An object an earlier apply made but did not record, because
@@ -152,6 +216,9 @@ moved() {
 # adopted into the state and the apply runs once more.
 apply_stack() {
   local log ids id
+  # The people's passwords first, alone: the provider cannot plan a change to the realm's config
+  # map, which exists, from a password not generated yet (a person added to the realm since).
+  tf texera apply -input=false -auto-approve "$(stack_vars)" -target=random_password.person >/dev/null
   log=$(mktemp)
   if tf texera apply -input=false -auto-approve "$(stack_vars)" 2>&1 | tee "$log"; then rm -f "$log"; return 0; fi
   grep -q 'already exists' "$log" || { rm -f "$log"; return 1; }
@@ -189,6 +256,10 @@ model_key() {
   token=$(tf texera output -json secrets | jq -r .secrets_token)
   printf '%s\n%s' "$token" "$key" | kube exec -i deploy/openbao -c openbao -- \
     sh -c 'read -r BAO_TOKEN; export BAO_TOKEN; bao kv put -mount=texera platform/anthropic value=- >/dev/null && echo "platform model key loaded"'
+  # The catalog notes whether a platform credential has its secret when it starts: it starts
+  # again, so the credential's page says the key is there.
+  kube rollout restart deployment/catalog >/dev/null
+  kube rollout status deployment/catalog --timeout=600s >/dev/null
 }
 
 # check runs the cluster checks against the public URL, as this deployment's service clients.
@@ -203,6 +274,7 @@ check() {
   TEXERA_E2E_SERVICES_CLIENT_SECRET=$(jq -r .services_client_secret <<<"$secrets") \
     TEXERA_E2E_UNIT_CLIENT_SECRET=$(jq -r .unit_client_secret <<<"$secrets") \
     TEXERA_E2E_SECRETS_TOKEN=$(jq -r .secrets_token <<<"$secrets") \
+    TEXERA_PASSWORDS=$(tf texera output -json passwords) \
     TEXERA_E2E_STORE="" \
     TEXERA2_PUBLIC_URL=$PUBLIC TEXERA2_KUBE_CONTEXT=$CONTEXT KUBECONFIG=$KUBECONFIG_FILE \
     exec "$ROOT/bin/texera-2-0/test.sh" cluster "$@"
@@ -219,12 +291,13 @@ case "${1:-}" in
     else
       echo "model key: none (set TEXERA_ENV_FILE or ANTHROPIC_API_KEY and run $0 model-key to chat)"
     fi
-    echo "== up: $PUBLIC (alice/alice, bob/bob)"
+    echo "== up: $PUBLIC (who signs in, and with what: $0 passwords)"
     ;;
   cluster) cluster ;;
   images) images ;;
   stack) stack ;;
   model-key) model_key ;;
+  passwords) need jq; init texera; tf texera output -json passwords | jq . ;;
   kubeconfig) load; kubeconfig ;;
   status) load; kube get pods,svc,jobs,pvc ;;
   kubectl) shift; load; kube "$@" ;;
@@ -239,5 +312,5 @@ case "${1:-}" in
     ;;
   down) load; init texera; tf texera destroy -input=false -auto-approve "$(stack_vars)" ;;
   destroy) "$0" down; tf cluster destroy -input=false -auto-approve ;;
-  *) echo "usage: $0 up | cluster | images | stack | model-key | check [pytest args] | status | kubectl ... | plan | down | destroy" >&2; exit 2 ;;
+  *) echo "usage: $0 up | cluster | images | stack | model-key | passwords | check [pytest args] | status | kubectl ... | plan | down | destroy" >&2; exit 2 ;;
 esac

@@ -23,6 +23,7 @@ import { OpenError } from "../shell/OpenError";
 import type { KindId } from "../types";
 import { parseUri, refOf } from "../uri";
 import { createCanvasView, portKey } from "../workflow/canvas-view";
+import { KEEPS_CLEAR } from "./clear";
 import { entryFor, type FocusEntry, keyOf } from "./focus-trail";
 import { type GraphView, nameOf, type RunItem, relationsOf, runStateOf, SOMEWHERE } from "./model";
 import { lineOf } from "./steps";
@@ -153,7 +154,7 @@ export function FocusLayer({
       className="absolute inset-0 z-20 flex min-h-0 flex-col bg-background"
       data-graph-focus={keyOf(top)}
       data-graph-focus-kind={top.kind}>
-      <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5">
+      <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5" data-page-bar>
         <Button ref={backButton} variant="ghost" size="sm" onClick={back} data-graph-back aria-label="Back">
           <ArrowLeft /> Back
         </Button>
@@ -188,7 +189,7 @@ export function FocusLayer({
       </div>
       {related.length > 0 && (
         <div
-          className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/30 px-3 py-1.5 text-xs"
+          className={cn(KEEPS_CLEAR, "flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/30 px-3 py-1.5 text-xs")}
           data-graph-related>
           {related.map(group => (
             <span key={group.label} className="flex min-w-0 flex-wrap items-center gap-1">
@@ -212,7 +213,7 @@ export function FocusLayer({
           ))}
         </div>
       )}
-      <div ref={content} className="relative flex min-h-0 flex-1 flex-col overflow-hidden" key={keyOf(top)}>
+      <div ref={content} className={cn(KEEPS_CLEAR, "relative flex min-h-0 flex-1 flex-col overflow-hidden")} key={keyOf(top)}>
         <EntryView entry={top} view={view} onGo={onGo} heldBy={heldBy?.(top)} />
       </div>
     </div>

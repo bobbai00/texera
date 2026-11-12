@@ -33,8 +33,12 @@ import { DensityToggle, ResourcesToggle, spread, useRowSpread } from "./density"
 import { useFollow, useFrame, useReframe } from "./framing";
 import { nodeTypes } from "./OperatorNode";
 
-/** A picture shows the whole workflow, however small. */
-const PICTURE_FIT = { padding: 0.15, maxZoom: 1 };
+/**
+ * A picture shows the whole workflow, however small, with the names under its icons: a name hangs
+ * below its icon and is wider than it, so the picture keeps room for the names at its sides and
+ * under its lowest row.
+ */
+const PICTURE_FIT = { padding: { top: "16px", right: "52px", bottom: "40px", left: "52px" }, maxZoom: 1 } as const;
 
 interface Props {
   spec: WorkflowSpec;

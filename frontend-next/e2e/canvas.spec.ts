@@ -192,6 +192,41 @@ test("several cards are picked at once and go with one key, and Ctrl+Z brings th
   await expect(page.locator(".react-flow__node-operator")).toHaveCount(0);
 });
 
+// The page shows the head while the workflow's live session is being joined, and a card can be
+// picked then. Joining gives the canvas the live document to read in the head's place: the pick
+// stays, and the page with it (the two once answered each other without end, and the page fell).
+test("a card picked while the workflow's live session is still being joined stays picked once it is", async ({ page, request }) => {
+  const as = await api(request);
+  const spec = { operators: [{ operatorID: "limit", operatorType: "Limit", operatorProperties: { limit: 5 } }], links: [] };
+  const workflow: Envelope = await as("POST", "/workflows", { name: `pick while joining ${Date.now()}`, spec });
+  cleanups.push(() => discard(as, [workflow.metadata.rid]));
+  await signIn(page);
+  // The session's socket is held back until the card is picked, however fast the stack answers;
+  // what the page says meanwhile is kept and sent on.
+  let join = () => {};
+  const held = new Promise<void>(resolve => {
+    join = resolve;
+  });
+  await page.routeWebSocket(/\/live\/sessions/, async socket => {
+    const early: (string | Buffer)[] = [];
+    socket.onMessage(message => early.push(message));
+    await held;
+    const server = socket.connectToServer();
+    for (const message of early) server.send(message);
+    socket.onMessage(message => server.send(message));
+  });
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  const canvas = page.locator("[data-workflow-canvas]");
+  await expect(canvas).toHaveAttribute("data-editable", "false");
+  const card = page.locator('.react-flow__node[data-id="limit"]');
+  await card.click();
+  await expect(card).toHaveClass(/selected/);
+
+  join();
+  await expect(canvas).toHaveAttribute("data-editable", "true");
+  await expect(card).toHaveClass(/selected/);
+});
+
 test("a new operator opens ready to set: typing and Backspace edit its setting, never remove it, and it says what it lacks", async ({ page, request }) => {
   const alice = await api(request);
   const { rid } = await irisWorkflow(alice, "new card");
@@ -316,6 +351,8 @@ test("Tidy up lays a workflow out left to right: a join stands between its branc
   await signIn(page);
   await page.goto(`/workflows/${workflow.metadata.rid}`);
   await expect(operatorCard(page, "join")).toBeVisible();
+  // The cards have their full size once the canvas has joined the workflow's live session.
+  await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
   // The join lists no ports: it has the two its links use, and every arrow is drawn.
   await expect(page.locator(".react-flow__edge:not([data-id^='resource:'])")).toHaveCount(3);
 
@@ -329,7 +366,8 @@ test("Tidy up lays a workflow out left to right: a join stands between its branc
     }
     return false;
   };
-  expect(await crosses("right", "join", "filter")).toBe(true);
+  // As placed, once the cards have settled into their sizes.
+  await expect.poll(() => crosses("right", "join", "filter")).toBe(true);
 
   await page.locator("[data-tidy]").click();
   await expect.poll(() => crosses("right", "join", "filter")).toBe(false);

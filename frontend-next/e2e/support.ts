@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 export const USER = process.env.TEXERA_E2E_USER ?? "alice";
-export const PASSWORD = process.env.TEXERA_E2E_PASSWORD ?? "alice";
+// A person's password: on the dev stack their own name (`admin` for the administrator); a
+// deployment with passwords of its own gives them in TEXERA_PASSWORDS, a JSON object by name.
+const PASSWORDS: Record<string, string> = { "texera-admin": "admin", ...JSON.parse(process.env.TEXERA_PASSWORDS || "{}") };
+export const passwordOf = (user: string) => PASSWORDS[user] ?? user;
 export const IRIS_QUESTION =
   "Using my dataset named iris, what is the average petal length for each species? Build and run a Texera workflow to compute it, then report the numbers.";
 // The flowers the model scenarios ask about. Each scenario makes its own copy and removes it.
@@ -19,12 +22,12 @@ export async function tidyUp() {
   for (const clean of cleanups.splice(0).reverse()) await clean();
 }
 
-export async function signIn(page: Page, user = USER, password = PASSWORD) {
+export async function signIn(page: Page, user = USER) {
   await page.goto("/");
   await page.locator("[data-sign-in]").first().click();
   // Keycloak's login form.
   await page.locator("#username").fill(user);
-  await page.locator("#password").fill(password);
+  await page.locator("#password").fill(passwordOf(user));
   await page.locator("#kc-login").click();
   await expect(page.locator("[data-new-chat]")).toBeVisible();
 }
@@ -62,8 +65,8 @@ export async function pick(page: Page, select: ReturnType<Page["locator"]>, opti
 export const workIn = (page: Page, project: string) => pick(page, page.getByLabel("Project", { exact: true }), project);
 
 /** A token and a JSON caller for the API, as the smoke tests use it; `headers` go on every call. */
-export async function api(request: APIRequestContext, user = USER, password = PASSWORD, headers: Record<string, string> = {}) {
-  const form = { grant_type: "password", client_id: "texera-app", username: user, password };
+export async function api(request: APIRequestContext, user = USER, headers: Record<string, string> = {}) {
+  const form = { grant_type: "password", client_id: "texera-app", username: user, password: passwordOf(user) };
   const tokenResponse = await request.post("/auth/realms/texera/protocol/openid-connect/token", { form });
   expect(tokenResponse.ok()).toBeTruthy();
   const token = (await tokenResponse.json()).access_token as string;
@@ -88,7 +91,7 @@ export type Caller = Awaited<ReturnType<typeof api>>;
  * The person's calls made in a turn of a chat, as the agent runtime makes them: the chat as their
  * origin, vouched for by the platform's service token. `end` ends the turn.
  */
-export async function inTurn(request: APIRequestContext, as: Caller, conversation: string, user = USER, password = PASSWORD) {
+export async function inTurn(request: APIRequestContext, as: Caller, conversation: string, user = USER) {
   // The dev stack's client secret, unless the deployment under test has one of its own.
   const form = { grant_type: "client_credentials", client_id: "texera-services", client_secret: process.env.TEXERA_E2E_SERVICES_CLIENT_SECRET ?? "texera-services-secret" };
   const tokenResponse = await request.post("/auth/realms/texera/protocol/openid-connect/token", { form });
@@ -96,7 +99,7 @@ export async function inTurn(request: APIRequestContext, as: Caller, conversatio
   const service = (await tokenResponse.json()).access_token as string;
   const turn = await as("POST", `/conversations/${conversation}/turns`, {});
   const origin = `conversation=${conversation};turn=${turn.turn};template=${turn.template}`;
-  const agent = await api(request, user, password, { "X-Texera-Origin": origin, "X-Texera-Service-Token": service });
+  const agent = await api(request, user, { "X-Texera-Origin": origin, "X-Texera-Service-Token": service });
   return Object.assign(agent, { turn: turn.turn as string, end: () => as("DELETE", `/conversations/${conversation}/turns/${turn.turn}`) });
 }
 
