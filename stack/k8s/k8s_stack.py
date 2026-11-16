@@ -54,6 +54,10 @@ DEFAULT_SOURCE = Path("/Users/jiadongb/Desktop/projects/texera-worktrees/self-co
 CONTEXT = os.environ.get("SCE_K8S_CONTEXT", "orbstack")
 DEFAULT_NAMESPACE = os.environ.get("SCE_K8S_NAMESPACE", "sce-k8s")
 DEFAULT_PORT = int(os.environ.get("SCE_K8S_PORT", "30080"))
+DEFAULT_FORWARD = os.environ.get("SCE_K8S_FORWARD", "relay")
+RELAY = HERE / "gateway_relay.py"
+# Apple-signed, so macOS lets it reach the cluster's 192.168.x.x addresses (see host_reaches).
+RELAY_PYTHON = os.environ.get("SCE_K8S_RELAY_PYTHON", "/usr/bin/python3")
 DEFAULT_REGISTRY = "ghcr.io/apache"
 DEFAULT_TAG = "latest"
 
@@ -470,7 +474,9 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
             "agent-service, litellm, notebook migration and the example loader are disabled",
             f"pullPolicy {pull_policy} for the Texera services and (KUBERNETES_IMAGE_PULL_POLICY) the unit pods",
             f"units in namespace {unit_namespace(ns)} (workflowComputingUnitPool.namespace)",
-            "the gateway is reached by kubectl port-forward (OrbStack k8s.expose_services is off)",
+            "the gateway is forwarded to 127.0.0.1:<port> (OrbStack k8s.expose_services is off): a TCP "
+            "relay to the envoy Service's ClusterIP; kubectl port-forward exits whenever Envoy resets "
+            "one forwarded connection (websocket closes do)",
         ],
         "port": port,
         "gateway_url": f"http://127.0.0.1:{port}",
@@ -556,6 +562,12 @@ def preflight(ns: str, port: int) -> dict:
         die("GatewayClass `eg` exists and belongs to release "
             f"{ann.get('meta.helm.sh/release-namespace', '?')}/{ann.get('meta.helm.sh/release-name', '?')} "
             "(the chart creates it cluster-wide); remove that release first")
+    if gc:  # ours, left by an interrupted `down` (its controller's finalizer never cleared)
+        kubectl("patch", "gatewayclass", "eg", "--type=merge", "-p", '{"metadata":{"finalizers":null}}',
+                check=False, capture=True, timeout=60)
+        kubectl("delete", "gatewayclass", "eg", "--ignore-not-found", "--timeout=30s", check=False,
+                capture=True, timeout=60)
+        log("removed this release's leftover GatewayClass eg")
     api = kjson("get", "apiservice", "v1beta1.metrics.k8s.io", check=False)
     if api and not owned_by_us(api, ns):
         facts["metrics_server"] = False
@@ -673,11 +685,33 @@ def wait_ready(ns: str, timeout: int) -> dict:
 # ------------------------------------------------------------------ port-forward
 
 
-def envoy_service(ns: str) -> str | None:
+def envoy_service_obj(ns: str) -> dict | None:
     sel = (f"gateway.envoyproxy.io/owning-gateway-name={GATEWAY_NAME},"
            f"gateway.envoyproxy.io/owning-gateway-namespace={ns}")
     items = kjson("get", "services", "-l", sel, ns=ns, check=False).get("items", [])
-    return items[0]["metadata"]["name"] if items else None
+    return items[0] if items else None
+
+
+def envoy_service(ns: str) -> str | None:
+    svc = envoy_service_obj(ns)
+    return svc["metadata"]["name"] if svc else None
+
+
+def relay_target(ns: str) -> tuple[str, int] | None:
+    """The envoy Service's ClusterIP and HTTP port, which OrbStack routes from macOS."""
+    svc = envoy_service_obj(ns)
+    if not svc or not (svc.get("spec") or {}).get("clusterIP"):
+        return None
+    ports = svc["spec"].get("ports") or []
+    port = next((p["port"] for p in ports if p.get("port") == 80), ports[0]["port"] if ports else 80)
+    return svc["spec"]["clusterIP"], int(port)
+
+
+def host_reaches(ip: str, port: int) -> bool:
+    """Checked with the relay's own interpreter: macOS's Local Network privacy check refuses
+    192.168.x.x to the venv's ad-hoc-signed Python (EHOSTUNREACH) but not to /usr/bin/python3."""
+    p = run([RELAY_PYTHON, str(RELAY), "--check", f"{ip}:{port}"], check=False, capture=True, timeout=20)
+    return p.returncode == 0
 
 
 def _pid_alive(pid: int) -> bool:
@@ -698,20 +732,56 @@ def pf_running() -> int | None:
     if not _pid_alive(pid):
         return None
     cmd = run(["ps", "-o", "command=", "-p", str(pid)], check=False, capture=True).stdout
-    return pid if "_pf-supervise" in cmd else None
+    return pid if ("_pf-supervise" in cmd or RELAY.name in cmd) else None
 
 
-def pf_start(ns: str, port: int) -> None:
+def pf_mode() -> str | None:
+    try:
+        return PF_PID.read_text().split()[3]
+    except (OSError, IndexError):
+        return None
+
+
+def pf_start(ns: str, port: int, mode: str) -> dict:
+    """Expose the gateway on 127.0.0.1:<port>, supervised in a background process.
+
+    relay (default): gateway_relay.py, a TCP relay to the envoy Service's ClusterIP, which
+      OrbStack routes from macOS. Each connection is independent.
+    kubectl: `kubectl port-forward svc/<envoy>`, restarted whenever it exits. It exits
+      ("lost connection to pod") as soon as the pod side resets any one forwarded
+      connection, which closing a workflow websocket through Envoy does; requests in the
+      second until the restart fail. Used when the ClusterIP is not reachable."""
     if pf_running():
-        return
+        return {"mode": pf_mode(), "already_running": True}
+    info: dict = {"mode": mode}
+    if mode == "relay":
+        target = relay_target(ns)
+        if not target or not host_reaches(*target):
+            log(f"the envoy Service's ClusterIP ({target}) is not reachable from this host; "
+                "using kubectl port-forward")
+            mode = info["mode"] = "kubectl"
+            info["relay_unreachable"] = f"{target}"
+        else:
+            info["target"] = f"{target[0]}:{target[1]}"
+    info["service"] = envoy_service(ns)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     logf = open(PF_LOG, "a")
-    proc = subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "--namespace", ns, "_pf-supervise",
-         "--port", str(port)],
-        stdin=subprocess.DEVNULL, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
-    PF_PID.write_text(f"{proc.pid} {ns} {port}\n")
-    log(f"port-forward supervisor pid {proc.pid}: 127.0.0.1:{port} -> envoy (log {PF_LOG})")
+    if mode == "relay":
+        selector = (f"gateway.envoyproxy.io/owning-gateway-name={GATEWAY_NAME},"
+                    f"gateway.envoyproxy.io/owning-gateway-namespace={ns}")
+        cmd = [RELAY_PYTHON, str(RELAY), "--listen", f"127.0.0.1:{port}", "--target", info["target"],
+               "--context", CONTEXT, "--namespace", ns, "--selector", selector]
+        info["interpreter"] = RELAY_PYTHON
+    else:
+        cmd = [sys.executable, str(Path(__file__).resolve()), "--namespace", ns, "_pf-supervise",
+               "--port", str(port)]
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=logf, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+    PF_PID.write_text(f"{proc.pid} {ns} {port} {mode}\n")
+    info["pid"] = proc.pid
+    log(f"gateway forward ({mode}{' to ' + info['target'] if info.get('target') else ''}) pid {proc.pid}: "
+        f"127.0.0.1:{port} -> svc/{info['service']} (log {PF_LOG})")
+    return info
 
 
 def pf_stop() -> None:
@@ -725,12 +795,16 @@ def pf_stop() -> None:
             if not _pid_alive(pid):
                 break
             time.sleep(0.1)
-        log(f"port-forward supervisor {pid} stopped")
+        log(f"gateway forward {pid} stopped")
     PF_PID.unlink(missing_ok=True)
 
 
+def _stamp() -> str:
+    return dt.datetime.now().isoformat(timespec="seconds")
+
+
 def cmd_pf_supervise(a) -> None:
-    """Keep `kubectl port-forward` to the envoy service alive (it exits when its pod goes)."""
+    """Background process behind pf_start in kubectl mode: kubectl port-forward kept alive."""
     ns, port = a.namespace, a.port
     child: list[subprocess.Popen] = []
 
@@ -745,17 +819,15 @@ def cmd_pf_supervise(a) -> None:
     while True:
         svc = envoy_service(ns)
         if not svc:
-            print(f"{dt.datetime.now().isoformat(timespec='seconds')} no envoy service yet", flush=True)
+            print(f"{_stamp()} no envoy service yet", flush=True)
             time.sleep(3)
             continue
-        print(f"{dt.datetime.now().isoformat(timespec='seconds')} port-forward svc/{svc} "
-              f"127.0.0.1:{port}->80", flush=True)
+        print(f"{_stamp()} port-forward svc/{svc} 127.0.0.1:{port}->80", flush=True)
         p = subprocess.Popen(["kubectl", "--context", CONTEXT, "-n", ns, "port-forward",
                               "--address", "127.0.0.1", f"svc/{svc}", f"{port}:80"])
         child[:] = [p]
         rc = p.wait()
-        print(f"{dt.datetime.now().isoformat(timespec='seconds')} port-forward exited {rc}; restarting",
-              flush=True)
+        print(f"{_stamp()} port-forward exited {rc}; restarting", flush=True)
         time.sleep(1)
 
 
@@ -823,51 +895,82 @@ def cmd_up(a) -> None:
         if "warning" in line.lower():
             log(f"helm: {line.strip()[:200]}")
     facts.update(wait_ready(ns, a.timeout))
-    pf_start(ns, port)
+    forward = pf_start(ns, port, a.forward)
     probes = wait_gateway(port, 300)
     m.update({"deployed_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
               "up_seconds": round(time.time() - t0), "envoy": facts.get("envoy_deployments"),
-              "envoy_service": envoy_service(ns), "gateway_probes": probes})
+              "envoy_service": envoy_service(ns), "gateway_forward": forward, "gateway_probes": probes})
     write_json(MANIFEST, m)
     log(f"stack is up: http://127.0.0.1:{port} (login texera / texera; units are created on request "
         f"in {unit_namespace(ns)})")
 
 
 def cmd_down(a) -> None:
+    """Remove everything `up` created. Nothing in the two namespaces is kept, so pods are
+    removed without their grace periods: Envoy's proxy otherwise drains for minutes and the
+    JVM services wait out 30 s each (a waiting uninstall took 8 minutes)."""
     ns = a.namespace
+    t0 = time.time()
     pf_stop()
     cluster_reachable()
+    namespaces = (unit_namespace(ns), ns)
     if release_exists(ns):
+        # While the release's Envoy Gateway controller still runs: it removes the proxy it made
+        # for the Gateway, and the finalizer it put on GatewayClass `eg`, which nothing removes
+        # once the controller is gone (the class then never finishes deleting).
+        kubectl("delete", "gateway", GATEWAY_NAME, "--ignore-not-found", "--timeout=90s", ns=ns,
+                check=False, capture=True, timeout=120)
+        gc = kjson("get", "gatewayclass", "eg", check=False)
+        if gc and owned_by_us(gc, ns):
+            kubectl("delete", "gatewayclass", "eg", "--ignore-not-found", "--timeout=30s",
+                    check=False, capture=True, timeout=60)
         log(f"helm uninstall {RELEASE} -n {ns}")
-        helm("uninstall", RELEASE, "--wait", "--timeout", "300s", ns=ns, check=False, capture=True,
-             timeout=420)
-    for n in (unit_namespace(ns), ns):
-        if namespace_exists(n):
-            log(f"deleting namespace {n}")
-            p = kubectl("delete", "namespace", n, "--wait=true", "--timeout=300s", check=False,
-                        capture=True, timeout=360)
-            if p.returncode != 0:
-                log(f"namespace {n} not gone yet: {(p.stderr or p.stdout).strip()[:300]}")
+        p = helm("uninstall", RELEASE, "--timeout", "120s", ns=ns, check=False, capture=True, timeout=240)
+        if p.returncode != 0:
+            log(f"helm uninstall: {(p.stderr or p.stdout).strip()[:300]}")
+    present = [n for n in namespaces if namespace_exists(n)]
+    for n in present:
+        kubectl("delete", "pods", "--all", "--grace-period=0", "--force", "--wait=false", ns=n,
+                check=False, capture=True, timeout=120)
+        kubectl("delete", "namespace", n, "--wait=false", "--ignore-not-found", check=False,
+                capture=True, timeout=60)
+    if present:
+        log(f"deleting namespace(s) {', '.join(present)}")
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        present = [n for n in namespaces if namespace_exists(n)]
+        if not present:
+            break
+        for n in present:  # pods a controller started before the namespace began terminating
+            kubectl("delete", "pods", "--all", "--grace-period=0", "--force", "--wait=false", ns=n,
+                    check=False, capture=True, timeout=120)
+        time.sleep(3)
     left = delete_hook_leftovers(ns)
     # Cluster-scoped objects the release created that uninstall did not remove.
     for kind in ("gatewayclass", "apiservice", "clusterrole", "clusterrolebinding",
                  "mutatingwebhookconfiguration", "validatingwebhookconfiguration"):
         for obj in kjson("get", kind, check=False).get("items", []):
             if owned_by_us(obj, ns):
-                kubectl("delete", kind, obj["metadata"]["name"], "--ignore-not-found", check=False,
+                name = obj["metadata"]["name"]
+                if obj["metadata"].get("finalizers"):
+                    # ours and its controller is gone (e.g. GatewayClass eg's Envoy Gateway finalizer)
+                    kubectl("patch", kind, name, "--type=merge", "-p", '{"metadata":{"finalizers":null}}',
+                            check=False, capture=True, timeout=60)
+                kubectl("delete", kind, name, "--ignore-not-found", "--timeout=30s", check=False,
                         capture=True, timeout=60)
-                left.append(f"{kind}/{obj['metadata']['name']}")
+                left.append(f"{kind}/{name}")
     if left:
         log(f"removed leftover cluster-scoped objects: {', '.join(left)}")
     pvs = [pv["metadata"]["name"] for pv in kjson("get", "pv", check=False).get("items", [])
-           if ((pv.get("spec") or {}).get("claimRef") or {}).get("namespace") in (ns, unit_namespace(ns))]
+           if ((pv.get("spec") or {}).get("claimRef") or {}).get("namespace") in namespaces]
     for pv in pvs:
         kubectl("delete", "pv", pv, "--ignore-not-found", "--wait=false", check=False, capture=True,
                 timeout=60)
-    still = [n for n in (ns, unit_namespace(ns)) if namespace_exists(n)]
+    still = [n for n in namespaces if namespace_exists(n)]
     if still:
-        die(f"namespaces still present: {', '.join(still)}")
-    log(f"down: release {RELEASE}, namespaces {ns} and {unit_namespace(ns)} removed")
+        die(f"namespaces still present after {time.time() - t0:.0f}s: {', '.join(still)}")
+    log(f"down in {time.time() - t0:.0f}s: release {RELEASE}, namespaces {ns} and {unit_namespace(ns)} "
+        "removed")
 
 
 def _pods_table(ns: str) -> list[str]:
@@ -917,7 +1020,7 @@ def cmd_status(a) -> None:
         print("\n".join(rows) if rows else "  (none)")
     pid = pf_running()
     port = m.get("port", a.port)
-    print(f"port-forward: {'pid ' + str(pid) if pid else 'not running'} -> 127.0.0.1:{port}")
+    print(f"gateway forward: {f'pid {pid} ({pf_mode()})' if pid else 'not running'} -> 127.0.0.1:{port}")
     code, _ = http_status(f"http://127.0.0.1:{port}/api/healthcheck")
     print(f"http://127.0.0.1:{port}/api/healthcheck -> {code or 'not answering'}")
 
@@ -953,13 +1056,13 @@ def cmd_logs(a) -> None:
 
 def cmd_port_forward(a) -> None:
     if a.action == "start":
-        pf_start(a.namespace, a.port)
+        pf_start(a.namespace, a.port, a.forward)
         wait_gateway(a.port, 120)
     elif a.action == "stop":
         pf_stop()
     else:
         pid = pf_running()
-        print(f"port-forward supervisor: {'pid ' + str(pid) if pid else 'not running'}")
+        print(f"gateway forward: {f'pid {pid} ({pf_mode()})' if pid else 'not running'}")
 
 
 def cmd_collect_logs(a) -> None:
@@ -1061,6 +1164,10 @@ def main() -> None:
     p.add_argument("--timeout", type=int, default=int(os.environ.get("SCE_K8S_UP_TIMEOUT", "900")),
                    help="seconds to wait for every workload (default %(default)s)")
     p.add_argument("--helm-timeout", type=int, default=900, help="helm install --timeout in seconds")
+    p.add_argument("--forward", choices=["relay", "kubectl"], default=DEFAULT_FORWARD,
+                   help="how 127.0.0.1:<port> reaches the gateway: a TCP relay to the envoy Service's "
+                        "ClusterIP (OrbStack routes it from macOS) or kubectl port-forward (default "
+                        "%(default)s; relay falls back to kubectl when the ClusterIP is unreachable)")
     sub.add_parser("down", help="uninstall, delete both namespaces and leftover cluster objects")
     p = sub.add_parser("status", help="release, pods, port-forward, healthcheck")
     p.add_argument("--json", action="store_true")
@@ -1072,6 +1179,7 @@ def main() -> None:
     p = sub.add_parser("port-forward", help="start | stop | status the gateway port-forward")
     p.add_argument("action", choices=["start", "stop", "status"])
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p.add_argument("--forward", choices=["relay", "kubectl"], default=DEFAULT_FORWARD)
     p = sub.add_parser("collect-logs", help="dump logs, events and objects of both namespaces")
     p.add_argument("dir", type=Path)
     p = sub.add_parser("follow-units", help="stream every unit pod's log into a directory")
