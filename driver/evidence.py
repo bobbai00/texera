@@ -715,7 +715,9 @@ class Evidence:
         end = self._mark_stmt(end_id)
         begin = self._mark_stmt(self._begin_mark)
         for run in self.runs:
-            if run.eid is None and resolve_eid is not None and (run.start_mark or run.create_mark):
+            # Only a run started on `ws` lacks its eid (the unit created it); a refused
+            # create has none and must not borrow the workflow's latest one.
+            if run.eid is None and resolve_eid is not None and run.start_mark:
                 try:
                     run.eid = resolve_eid(run)
                 except Exception as e:  # noqa: BLE001

@@ -128,6 +128,7 @@ class Run:
         self.paused = threading.Event()
         self.killed = threading.Event()
         self.pending_updates: list[dict] = []
+        self.checkpoints = 0
         self.ops = {o["operatorID"]: dict(o) for o in plan["operators"]}
         self.rows_out: list[dict] = []
         self.thread: threading.Thread | None = None
@@ -492,7 +493,9 @@ class FakeTexera:
             m = re.fullmatch(r"/api/executions/(\d+)/interactions/(\d+)", path)
             if m:
                 e = self.executions.get(int(m.group(2)))
-                return 200, (["interaction-1", "interaction-2"] if e and e.get("log") else [])
+                run = self.runs.get(int(m.group(2)))
+                n = run.checkpoints if run else 0
+                return 200, ([f"Checkpoint_{i}" for i in range(n)] if e and e.get("log") else [])
             m = re.fullmatch(r"/api/executions/(\d+)", path)
             if m and method == "GET":
                 wid = int(m.group(1))
@@ -705,6 +708,8 @@ class FakeTexera:
                         current.pending_updates.append(op)
                         conn.send({"type": "ModifyLogicResponse", "opId": op["operatorID"], "isValid": True,
                                    "errorMessage": ""})
+                    elif typ == "WorkflowCheckpointRequest" and current:
+                        current.checkpoints += 1
                     elif typ == "WorkflowPauseRequest" and current:
                         current.pause()
                     elif typ == "WorkflowResumeRequest" and current:

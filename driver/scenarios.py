@@ -987,8 +987,9 @@ UDF_SLOW_TAG = udf_tag("replayed")
 
 def scenario_m(ctx: Ctx) -> None:
     """Replay: the refusals always (source without a log, source of another
-    workflow: 400, no row); with --with-replay-log a run, its interactions, a replay
-    created from the last one and started."""
+    workflow: 400, no row); with --with-replay-log a run with a global checkpoint
+    (the only interaction the engine records), its interactions, a replay created
+    from the last one and started."""
     _need_create_ws(ctx)
     wf1, src1 = _tiny(ctx, "m-replay-source")
     first = ctx.start(wf1, view=[src1])
@@ -1025,10 +1026,17 @@ def scenario_m(ctx: Ctx) -> None:
     run = ctx.start(wf3, view=[udf])
     run.wait_for_state("Running", timeout=ctx.timeout)
     run.wait_until(lambda: run.output_rows(udf) >= 3, ctx.timeout, "the UDF to emit 3 rows")
-    run.pause()
-    run.wait_for_state("Paused", timeout=120)
-    run.resume()
-    run.wait_for_state("Completed", timeout=ctx.timeout)
+    # An interaction (a replay destination) is recorded only when an embedded control
+    # message propagates: a global checkpoint. Pause and resume record none (seen on
+    # step2wip, 2026-11-16).
+    run.send_raw({"type": "WorkflowCheckpointRequest"}, "WorkflowCheckpointRequest")
+    try:
+        run.wait_for_state("Completed", timeout=ctx.timeout)
+    except RunFailed as e:
+        ctx.check("m the replay-logged source run completes after a checkpoint", False,
+                  f"{e} -- on 2026-11-16 the engine failed every global checkpoint with 'portId has not "
+                  f"been set for channel ... call setPortId before getPortId' (upstream, not step 2)")
+        return
     wid3, eid3 = ctx.rec.wid, run.eid
     interactions = ctx.api.execution_interactions(wid3, eid3)
     ctx.check("m the replay-logged run lists its interactions", len(interactions) >= 1, f"{interactions[:5]}")

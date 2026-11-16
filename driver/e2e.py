@@ -185,7 +185,7 @@ def main() -> int:
         report["setup"]["dataset"] = {"name": ds_name, **ds}
 
         whid, wh_status = api.ensure_warehouse(a.warehouse_name)
-        wh_name = _lakekeeper_name(wh_status, whid)
+        wh_name = _lakekeeper_name(wh_status, whid, api.uid)
         report["setup"]["warehouse"] = {
             "enabled": bool(wh_status and wh_status.get("enabled")),
             "whid": whid,
@@ -209,7 +209,8 @@ def main() -> int:
             other_api = api.ensure_user(OTHER_USER, OTHER_EMAIL, OTHER_PASSWORD)
             other_unit = other_api.ensure_local_unit(f"{OTHER_USER}-unit", a.unit_uri)
             o_whid, o_status = other_api.ensure_warehouse(f"{OTHER_USER}-wh")
-            other = OtherUser(other_api, int(other_unit["cuid"]), o_whid, _lakekeeper_name(o_status, o_whid))
+            other = OtherUser(other_api, int(other_unit["cuid"]), o_whid,
+                              _lakekeeper_name(o_status, o_whid, other_api.uid))
             report["setup"]["other_user"] = {"uid": other_api.uid, "role": other_api.role,
                                              "cuid": other.cuid, "whid": o_whid,
                                              "warehouse": other.warehouse_name}
@@ -315,12 +316,16 @@ def main() -> int:
     return 0 if report["summary"]["result"] == "PASS" else 1
 
 
-def _lakekeeper_name(status: dict | None, whid: int | None) -> str | None:
-    """The Lakekeeper name (user-<uid>-<whid>) of warehouse `whid` from /api/warehouse/status."""
+def _lakekeeper_name(status: dict | None, whid: int | None, uid: int) -> str | None:
+    """The Lakekeeper name of warehouse `whid`: /api/warehouse/status gives it on
+    newer Dashboards; older ones (the published images) do not, and the name is
+    the Dashboard's convention user-<uid>-<whid> (WarehouseResource)."""
+    if whid is None:
+        return None
     for w in (status or {}).get("warehouses") or []:
-        if whid is not None and int(w.get("whid", -1)) == whid:
-            return w.get("lakekeeperWarehouseName")
-    return None
+        if int(w.get("whid", -1)) == whid and w.get("lakekeeperWarehouseName"):
+            return w["lakekeeperWarehouseName"]
+    return f"user-{uid}-{whid}"
 
 
 def _apply_evidence(evidence: Evidence, rec, waited, api: TexeraApi, negative: bool) -> None:
