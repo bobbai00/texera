@@ -39,13 +39,18 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{
   BoundResources,
+  CostHints,
   ExecutionMode,
+  ExecutionPlan,
   GlobalPortIdentity,
+  InputFile,
   OutputPort,
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
+  PlanInput,
   PortIdentity,
+  ReplaySource,
   RepositoryMounts,
   ResourceBinding,
   WorkflowContext,
@@ -120,6 +125,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
+import scala.util.Try
 
 /**
   * Regression guard for the consolidated init-error reporting path (#5921):
@@ -580,7 +586,10 @@ class WorkflowExecutionServiceSpec
     )
 
   private def saved(context: WorkflowContext, plan: PhysicalPlan): String =
-    PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(context, plan))
+    saved(ExecutionPlan(context, plan))
+
+  private def saved(executionPlan: ExecutionPlan): String =
+    PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(executionPlan))
 
   /** `savedPlan`, handed to the engine with the logical plan of `loneTextPlan`. */
   private def handed(savedPlan: String): PlanToRun =
@@ -933,9 +942,10 @@ class WorkflowExecutionServiceSpec
       val planToRun = run.planToRun.getOrElse(fail("no plan was made"))
       val engineWorkflow = run.engineWorkflow.getOrElse(fail("the engine was handed no workflow"))
 
-      val (planContext, readBack) =
+      val executionPlan =
         PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
-      engineWorkflow.physicalPlan shouldBe readBack
+      val planContext = executionPlan.context
+      engineWorkflow.physicalPlan shouldBe executionPlan.plan
       // Read back, not compiled: no operator keeps the schema function its compile gave it, which
       // the saved text does not hold.
       engineWorkflow.physicalPlan.operators.map(_.propagateSchema) shouldBe
@@ -977,8 +987,8 @@ class WorkflowExecutionServiceSpec
       run.service.executeWorkflow() shouldBe None
       run.errors shouldBe empty
       val planToRun = run.planToRun.getOrElse(fail("no plan was handed"))
-      val (planContext, _) =
-        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+      val planContext =
+        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan)).context
       val storedPorts = planContext.workflowSettings.outputPortsNeedingStorage
       storedPorts.map(_.opId.logicalOpId) shouldBe Set(OperatorIdentity("lone-text"))
 
@@ -1060,7 +1070,7 @@ class WorkflowExecutionServiceSpec
 
     workflow.physicalPlan shouldBe PhysicalPlanCodec
       .decode(PhysicalPlanCodec.fromJson(savedPlan))
-      ._2
+      .plan
     workflow.logicalPlan should be theSameInstanceAs planToRun.logicalPlan
     // The run's own context, which takes the saved settings, the ports whose results are stored
     // included, and keeps its computing unit.
@@ -1069,10 +1079,39 @@ class WorkflowExecutionServiceSpec
     run.workflowSettings.outputPortsNeedingStorage.toList shouldBe
       savedPlanContext().workflowSettings.outputPortsNeedingStorage.toList
     run.cuid shouldBe Some(testCuid)
+    run.costHints shouldBe None
+  }
+
+  it should "run under the cost hints saved with the plan, in place of any the run had" in {
+    val hints = CostHints(ExecutionIdentity(testEid.longValue() - 1), Map("stored-text" -> 4.5))
+    val planContext = savedPlanContext()
+    planContext.costHints = Some(hints)
+    val savedPlan = saved(planContext, PhysicalPlan(Set(storedSource), Set.empty))
+    Seq(None, Some(CostHints(ExecutionIdentity(1), Map("other" -> 1.0)))).foreach { before =>
+      withClue(s"the run's own hints were $before: ") {
+        val run = requestedContext()
+        run.costHints = before
+
+        WorkflowExecutionService.workflowToRun(handed(savedPlan), run, Some(unitMountRoot))
+
+        run.costHints shouldBe Some(hints)
+      }
+    }
+    // and a plan saved with none leaves the run with none
+    val run = requestedContext()
+    run.costHints = Some(hints)
+    WorkflowExecutionService.workflowToRun(
+      handed(saved(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))),
+      run,
+      Some(unitMountRoot)
+    )
+    run.costHints shouldBe None
   }
 
   it should "refuse a plan saved for another run, naming what differs, and leave the run's context alone" in {
-    val savedPlan = saved(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
+    val planContext = savedPlanContext()
+    planContext.costHints = Some(CostHints(ExecutionIdentity(1), Map("stored-text" -> 1.0)))
+    val savedPlan = saved(planContext, PhysicalPlan(Set(storedSource), Set.empty))
     val nextWid = testWid.longValue() + 1
     val nextEid = testEid.longValue() + 1
     val differences: Seq[(WorkflowContext => Unit, String)] = Seq(
@@ -1106,6 +1145,7 @@ class WorkflowExecutionServiceSpec
         failure.getMessage shouldBe
           s"The plan handed to execution ${run.executionId.id} is not its own: $difference."
         run.workflowSettings shouldBe settings
+        run.costHints shouldBe None
       }
     }
   }
@@ -1118,20 +1158,70 @@ class WorkflowExecutionServiceSpec
     run.workflowSettings shouldBe requestedContext().workflowSettings
   }
 
-  it should "refuse a plan this unit cannot run, whose code reads datasets under another root" in {
-    val mounting = sourceOp("reads-a-dataset").copy(
+  it should "refuse a plan this unit cannot run, whose code reads datasets under another root, and leave the run's context alone" in {
+    // The source whose results are stored, its code reading a dataset under another root; saved
+    // with settings that store its results, which the run's lack, and with cost hints.
+    val mounting = storedSource.copy(
       repositoryMounts = Some(RepositoryMounts("/plan/root", Set(readableLocator)))
     )
-    val savedPlan = saved(requestedContext(), PhysicalPlan(Set(mounting), Set.empty))
+    val planContext = savedPlanContext()
+    planContext.costHints = Some(CostHints(ExecutionIdentity(1), Map("stored-text" -> 1.0)))
+    val savedPlan = saved(planContext, PhysicalPlan(Set(mounting), Set.empty))
+    val run = requestedContext()
 
     val failure = the[IllegalStateException] thrownBy
-      WorkflowExecutionService.workflowToRun(
-        handed(savedPlan),
-        requestedContext(),
-        Some(unitMountRoot)
-      )
+      WorkflowExecutionService.workflowToRun(handed(savedPlan), run, Some(unitMountRoot))
     failure.getMessage should include("/plan/root")
     failure.getMessage should include(unitMountRoot.toString)
+    // Neither the saved settings, stored ports included, nor the saved cost hints were taken.
+    run.workflowSettings shouldBe requestedContext().workflowSettings
+    run.costHints shouldBe None
+  }
+
+  it should "refuse a plan that replays, writes a replay log or reads inputs, which it does not take from a saved plan, and leave the run's context alone" in {
+    val plan = PhysicalPlan(Set(storedSource), Set.empty)
+    val planContext = savedPlanContext()
+    planContext.costHints = Some(CostHints(ExecutionIdentity(1), Map("stored-text" -> 1.0)))
+    val sourceEid = testEid.longValue() - 1
+    val replay = ReplaySource(
+      ExecutionIdentity(sourceEid),
+      new URI("file:///var/texera/logs/1/"),
+      "interaction-1"
+    )
+    val replayLog = new URI("file:///var/texera/logs/2/")
+    def input(name: String): PlanInput =
+      PlanInput(OperatorIdentity("stored-text"), name, InputFile(Long.MaxValue, 1L))
+    Seq(
+      ExecutionPlan(planContext, plan, replay = Some(replay)) ->
+        s"replays the log of execution $sourceEid",
+      ExecutionPlan(planContext, plan, replayLog = Some(replayLog)) -> "writes a replay log",
+      ExecutionPlan(planContext, plan, inputs = Seq(input("a.csv"))) ->
+        "reads 1 input from outside the run",
+      ExecutionPlan(
+        planContext,
+        plan,
+        Some(replay),
+        Some(replayLog),
+        Seq(input("a.csv"), input("b.csv"))
+      ) -> (s"replays the log of execution $sourceEid, writes a replay log and reads 2 inputs " +
+        "from outside the run")
+    ).foreach {
+      case (executionPlan, asked) =>
+        withClue(s"$asked: ") {
+          val run = requestedContext()
+          val failure = the[IllegalStateException] thrownBy
+            WorkflowExecutionService.workflowToRun(
+              handed(saved(executionPlan)),
+              run,
+              Some(unitMountRoot)
+            )
+          failure.getMessage shouldBe
+            s"The plan handed to execution $testEid $asked, which the engine does not take " +
+              "from a saved plan."
+          run.workflowSettings shouldBe requestedContext().workflowSettings
+          run.costHints shouldBe None
+        }
+    }
   }
 
   it should "log the saved plan's size, and at debug level the plan without what executors are given" in {
@@ -1181,6 +1271,66 @@ class WorkflowExecutionServiceSpec
     debug.head should include(s"(left out: ${code.length} characters, SHA-256 ${sha256(code)})")
     debug.head should not include "hunter2"
     debug.head should not include "s3cr3t"
+  }
+
+  it should "leave the user name and password in a replay log's location out of the debug log" in {
+    // A replay log can be kept where a URI's user info signs in: sftp://user:password@host/...
+    val plan = PhysicalPlan(Set(storedSource), Set.empty)
+    def replayFrom(location: String): Option[ReplaySource] =
+      Some(ReplaySource(ExecutionIdentity(1), new URI(location), "interaction-1"))
+
+    /** What the run logs at debug level for `savedPlan`, whether or not it goes on to run it. */
+    def debugLogOf(savedPlan: String): String = {
+      val events = eventsLoggedAt(WorkflowExecutionService.getClass.getName, Level.DEBUG) {
+        Try(
+          WorkflowExecutionService.workflowToRun(
+            handed(savedPlan),
+            requestedContext(),
+            Some(unitMountRoot)
+          )
+        )
+      }
+      val debug = events.filter(_.getLevel == Level.DEBUG).map(_.getFormattedMessage)
+      debug should have size 1
+      debug.head
+    }
+
+    val withPassword = saved(
+      ExecutionPlan(
+        savedPlanContext(),
+        plan,
+        replay = replayFrom("sftp://texera:hunter2@logs.example:2222/replay/40/"),
+        replayLog = Some(new URI("file:///var/texera/logs/42/"))
+      )
+    )
+    withPassword should include("hunter2") // the saved plan holds it, as the store needs it
+    val logged = debugLogOf(withPassword)
+    logged should include("\"sftp://(user info left out)@logs.example:2222/replay/40/\"")
+    // A location with no user info is logged as it is.
+    logged should include("\"file:///var/texera/logs/42/\"")
+    logged should not include "hunter2"
+
+    // A user name alone is left out too.
+    val withUser = saved(
+      ExecutionPlan(
+        savedPlanContext(),
+        plan,
+        replayLog = Some(new URI("sftp://texera@logs.example/replay/42/"))
+      )
+    )
+    val loggedWithUser = debugLogOf(withUser)
+    loggedWithUser should include("\"sftp://(user info left out)@logs.example/replay/42/\"")
+    loggedWithUser should not include "texera@"
+
+    // Where that is not a URI, which reading the plan refuses, all of it is left out.
+    val notAUri = PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec
+        .encode(ExecutionPlan(savedPlanContext(), plan))
+        .withReplayLogLocation("sftp://texera:hunter 2@logs.example/replay/42/")
+    )
+    val loggedNotAUri = debugLogOf(notAUri)
+    loggedNotAUri should include("\"replayLogLocation\": \"(left out: not a URI)\"")
+    loggedNotAUri should not include "hunter"
   }
 
   "WorkflowExecutionService.requireRunnableUnder" should

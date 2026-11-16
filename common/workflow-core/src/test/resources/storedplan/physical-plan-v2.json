@@ -1,5 +1,5 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "workflowId": {
     "id": "7"
   },
@@ -652,6 +652,35 @@
       "toPortId": {
         "id": 1,
         "internal": false
+      }
+    }
+  ],
+  "replay": {
+    "sourceExecutionId": "40",
+    "logLocation": "file:///var/texera/logs/7/40/",
+    "interaction": "replay-to"
+  },
+  "replayLogLocation": "file:///var/texera/logs/7/42/",
+  "costHints": {
+    "sourceExecutionId": "41",
+    "operators": [
+      {
+        "logicalOperatorId": "join",
+        "seconds": 12.5
+      },
+      {
+        "logicalOperatorId": "udf",
+        "seconds": 3.0
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "logicalOperatorId": "scan",
+      "name": "dataset:///ds-1/d4t4/a.csv",
+      "file": {
+        "expiresAtMs": "1763856000000",
+        "sizeBytes": "412"
       }
     }
   ]

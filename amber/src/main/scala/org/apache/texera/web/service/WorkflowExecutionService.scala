@@ -24,7 +24,12 @@ import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCod
 import org.apache.texera.amber.core.storage.{FileResolver, RepositoryMountManager}
 import org.apache.texera.amber.core.storedplan.StoredPhysicalPlan
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalPlan, PhysicalPlanCodec, WorkflowContext}
+import org.apache.texera.amber.core.workflow.{
+  ExecutionPlan,
+  PhysicalPlan,
+  PhysicalPlanCodec,
+  WorkflowContext
+}
 import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
@@ -48,6 +53,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.security.MessageDigest
 import scala.collection.mutable
+import scala.util.{Failure, Success, Try}
 
 object WorkflowExecutionService extends LazyLogging {
   def getLatestExecutionId(
@@ -68,16 +74,21 @@ object WorkflowExecutionService extends LazyLogging {
     * The plan must be the run's own: saved for its workflow and execution, with the batch size
     * and execution mode its request asks for, and its warehouse. The computing unit is the run's
     * own too, as a saved plan names none. The output ports whose results are stored are the
-    * plan's, which the compile that made it found: `context` takes the saved settings, stored
-    * ports included. And the engine must be able to run the plan on this unit
-    * ([[requireRunnableUnder]]). A plan refused leaves `context` as it was.
+    * plan's, which the compile that made it found, and so are the cost hints: `context` takes
+    * the saved settings, stored ports included, and the saved cost hints. And the engine must be
+    * able to run the plan on this unit ([[requireRunnableUnder]]). A plan that replays, writes a
+    * replay log or reads inputs from outside the run is refused rather than run without them:
+    * here the run's coordinator configuration says where it replays from and writes its replay
+    * log, and nothing checks an input's link before the run starts. A plan refused leaves
+    * `context` as it was.
     *
-    * Logs the saved plan's size, and at debug level the saved plan with each executor's settings
-    * or code left out: they may hold an operator's credentials.
+    * Logs the saved plan's size, and at debug level the saved plan without what may hold
+    * credentials: each executor's settings or code, and the user info of a replay log's location.
     *
     * @param unitMountRoot the directory this computing unit mounts datasets and models under
     * @throws IllegalArgumentException if the saved plan is not one the engine reads
-    * @throws IllegalStateException    if the plan is another run's, or cannot run on this unit
+    * @throws IllegalStateException    if the plan is another run's, cannot run on this unit, or
+    *                                  replays, writes a replay log or reads inputs
     */
   def workflowToRun(
       planToRun: PlanToRun,
@@ -93,20 +104,22 @@ object WorkflowExecutionService extends LazyLogging {
     val stored = PhysicalPlanCodec.fromJson(savedPlan)
     logger.debug(
       s"The saved plan of execution $executionId, without what its executors are given:\n" +
-        PhysicalPlanCodec.toJson(withoutExecutorContents(stored))
+        PhysicalPlanCodec.toJson(withoutCredentials(stored))
     )
-    val (planContext, plan) = PhysicalPlanCodec.decode(stored)
-    requirePlanOf(context, planContext)
-    requireRunnableUnder(plan, unitMountRoot)
-    context.workflowSettings = planContext.workflowSettings
-    Workflow(context, planToRun.logicalPlan, plan)
+    val executionPlan = PhysicalPlanCodec.decode(stored)
+    requirePlanOf(context, executionPlan.context)
+    requireRunnableUnder(executionPlan.plan, unitMountRoot)
+    requireNoReplayOrInputs(executionId, executionPlan)
+    context.workflowSettings = executionPlan.context.workflowSettings
+    context.costHints = executionPlan.context.costHints
+    Workflow(context, planToRun.logicalPlan, executionPlan.plan)
   }
 
   /**
     * Fails unless `planContext`, the context a saved plan was read back with, agrees with
     * `runContext` on all the run's request fixes: the workflow and execution, the batch size and
-    * execution mode, and the warehouse. The output ports whose results are stored are left out,
-    * as the run knows them only from the plan.
+    * execution mode, and the warehouse. The output ports whose results are stored and the cost
+    * hints are left out: the run takes the plan's, as only what made the plan knows them.
     */
   private def requirePlanOf(runContext: WorkflowContext, planContext: WorkflowContext): Unit = {
     def differ[A](what: String, saved: A, run: A)(show: A => String): Option[String] =
@@ -134,11 +147,40 @@ object WorkflowExecutionService extends LazyLogging {
   }
 
   /**
-    * `stored` with each executor's settings (an operator's descriptor) or code replaced by its
-    * length and SHA-256 digest, for the log: they may hold the operator's credentials, a SQL
-    * source's password say. The rest of the plan, what the engine schedules by, is kept.
+    * Fails if `executionPlan` asks for what the engine does not take from a saved plan: a replay
+    * or a replay log, which the run's coordinator configuration gives here, or inputs from
+    * outside the run, whose links nothing here checks before the run starts. Run without them,
+    * such a plan would run otherwise than it was saved.
     */
-  private def withoutExecutorContents(stored: StoredPhysicalPlan): StoredPhysicalPlan = {
+  private def requireNoReplayOrInputs(executionId: Long, executionPlan: ExecutionPlan): Unit = {
+    val inputs = executionPlan.inputs.size
+    val asked = Seq(
+      executionPlan.replay.map(replay =>
+        s"replays the log of execution ${replay.sourceExecutionId.id}"
+      ),
+      executionPlan.replayLog.map(_ => "writes a replay log"),
+      Option.when(inputs > 0)(
+        s"reads $inputs ${if (inputs == 1) "input" else "inputs"} from outside the run"
+      )
+    ).flatten
+    if (asked.nonEmpty) {
+      val said =
+        if (asked.size == 1) asked.head else s"${asked.init.mkString(", ")} and ${asked.last}"
+      throw new IllegalStateException(
+        s"The plan handed to execution $executionId $said, which the engine does not take from " +
+          "a saved plan."
+      )
+    }
+  }
+
+  /**
+    * `stored` without what may hold credentials, for the log: each executor's settings (an
+    * operator's descriptor) or code is replaced by its length and SHA-256 digest, as they may hold
+    * the operator's credentials, a SQL source's password say; and the location of each replay
+    * log, the one the run replays and the one it writes, loses its user info (see
+    * [[withoutUserInfo]]). The rest of the plan, what the engine schedules by, is kept.
+    */
+  private def withoutCredentials(stored: StoredPhysicalPlan): StoredPhysicalPlan = {
     def digest(content: String): String = {
       val sha256 = MessageDigest
         .getInstance("SHA-256")
@@ -147,15 +189,40 @@ object WorkflowExecutionService extends LazyLogging {
         .mkString
       s"(left out: ${content.length} characters, SHA-256 $sha256)"
     }
-    stored.copy(operators = stored.operators.map { op =>
-      op.copy(opExecInitInfo = op.opExecInitInfo match {
-        case OpExecWithClassName(className, descString) =>
-          OpExecWithClassName(className, digest(descString))
-        case OpExecWithCode(code, language) => OpExecWithCode(digest(code), language)
-        case none                           => none
-      })
-    })
+    stored.copy(
+      operators = stored.operators.map { op =>
+        op.copy(opExecInitInfo = op.opExecInitInfo match {
+          case OpExecWithClassName(className, descString) =>
+            OpExecWithClassName(className, digest(descString))
+          case OpExecWithCode(code, language) => OpExecWithCode(digest(code), language)
+          case none                           => none
+        })
+      },
+      replay =
+        stored.replay.map(replay => replay.withLogLocation(withoutUserInfo(replay.logLocation))),
+      replayLogLocation = stored.replayLogLocation.map(withoutUserInfo)
+    )
   }
+
+  /**
+    * `location` with the user info of its authority left out, for the log: a log store can sign
+    * in with it (sftp://user:password@host/...). All of `location` is left out if it is not a URI,
+    * as the user info cannot be told apart then.
+    */
+  private def withoutUserInfo(location: String): String =
+    Try(new URI(location)) match {
+      case Failure(_) => "(left out: not a URI)"
+      case Success(uri) =>
+        val authority = Option(uri.getRawAuthority).getOrElse("")
+        val userInfoEnd = authority.lastIndexOf('@')
+        if (userInfoEnd < 0) location
+        else {
+          // The authority comes right after the first "//", as a scheme holds no slash.
+          val start = location.indexOf("//") + 2
+          location.substring(0, start) + "(user info left out)" +
+            authority.substring(userInfoEnd) + location.substring(start + authority.length)
+        }
+    }
 
   /**
     * Fails unless the engine can run `plan` on a computing unit that mounts datasets and models

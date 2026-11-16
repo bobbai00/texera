@@ -21,6 +21,7 @@ package org.apache.texera.web.service
 
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
+  CostHints,
   ExecutionMode,
   PhysicalPlanCodec,
   PortIdentity,
@@ -100,19 +101,42 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val storedPorts = compiledContext.workflowSettings.outputPortsNeedingStorage
     storedPorts should not be empty
 
-    val (planContext, plan) =
-      PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+    val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+    val planContext = executionPlan.context
     planContext.workflowId shouldBe context.workflowId
     planContext.executionId shouldBe context.executionId
     planContext.workflowSettings shouldBe
       newContext().workflowSettings.copy(outputPortsNeedingStorage = storedPorts)
     planContext.warehouse shouldBe context.warehouse
+    planContext.costHints shouldBe None
     // A plan does not choose the computing unit it runs on.
     planContext.cuid shouldBe None
-    TestUtils.assertReadBackFrom(compiled.physicalPlan, plan)
+    TestUtils.assertReadBackFrom(compiled.physicalPlan, executionPlan.plan)
+    // Nothing makes a run replay, write a replay log or read inputs through links yet.
+    executionPlan.replay shouldBe None
+    executionPlan.replayLog shouldBe None
+    executionPlan.inputs shouldBe empty
 
     // The logical plan comes with it, for an operator changed while the run is paused.
     planToRun.logicalPlan.getTerminalOperatorIds shouldBe List(operators.last.operatorIdentifier)
+  }
+
+  it should "save the run's cost hints with the plan, whatever operators they name" in {
+    val operators = searches(1)
+    val context = newContext()
+    val hints = CostHints(
+      ExecutionIdentity(30),
+      Map(operators.head.operatorIdentifier.id -> 2.5, "an-operator-removed-since" -> 0.0)
+    )
+    context.costHints = Some(hints)
+
+    val planToRun = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+
+    PhysicalPlanCodec
+      .decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+      .context
+      .costHints shouldBe Some(hints)
+    context.costHints shouldBe Some(hints)
   }
 
   it should "leave the run's context as it was, as the engine takes the settings from the plan" in {
@@ -128,6 +152,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     context.workflowSettings.outputPortsNeedingStorage shouldBe empty
     context.cuid shouldBe untouched.cuid
     context.warehouse shouldBe untouched.warehouse
+    context.costHints shouldBe untouched.costHints
   }
 
   it should "save a workflow as the same text every time" in {

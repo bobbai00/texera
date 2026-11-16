@@ -27,6 +27,7 @@ import org.apache.texera.amber.core.storedplan.StoredPartitionRule.Rule
 import org.apache.texera.amber.core.storedplan.StoredPhysicalOp.{
   LocationPreference => StoredLocation
 }
+import org.apache.texera.amber.core.storedplan.StoredPlanInput.Source
 import org.apache.texera.amber.core.storedplan.StoredWorkflowSettings.{ExecutionMode => StoredMode}
 import org.apache.texera.amber.core.storedplan._
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
@@ -39,15 +40,15 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.PhysicalPlanRoundTrip.{
   assertRoundTrips,
-  assertSameContext,
-  assertSamePlan
+  assertSameExecutionPlan
 }
 import org.json4s.jackson.JsonMethods.{compact, parse}
-import org.json4s.{JArray, JDouble, JInt, JObject, JString, JValue}
+import org.json4s.{JArray, JDouble, JInt, JNull, JObject, JString, JValue}
 import org.scalatest.flatspec.AnyFlatSpec
 import scalapb.descriptors.{Descriptor, ScalaType}
 
 import java.lang.reflect.Modifier
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import scala.collection.mutable
@@ -122,10 +123,22 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   private def contextOf(
       settings: WorkflowSettings = WorkflowSettings(400, ExecutionMode.PIPELINED),
-      warehouse: Option[String] = None
+      warehouse: Option[String] = None,
+      costHints: Option[CostHints] = None
   ): WorkflowContext =
     // The computing unit is not saved: a plan does not choose the unit it runs on.
-    new WorkflowContext(workflowId, executionId, settings, cuid = Some(3), warehouse = warehouse)
+    new WorkflowContext(
+      workflowId,
+      executionId,
+      settings,
+      cuid = Some(3),
+      warehouse = warehouse,
+      costHints = costHints
+    )
+
+  /** Saves `plan`, made to run under `context`, with nothing else for the run. */
+  private def save(context: WorkflowContext, plan: PhysicalPlan): StoredPhysicalPlan =
+    PhysicalPlanCodec.encode(ExecutionPlan(context, plan))
 
   // ----- a plan that sets every field -----
 
@@ -199,11 +212,44 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         GlobalPortIdentity(udf.id, PortIdentity(0))
       )
     ),
-    warehouse = Some("lake-wh")
+    warehouse = Some("lake-wh"),
+    // An operator the plan no longer has among them, as the workflow may have changed since.
+    costHints = Some(
+      CostHints(
+        ExecutionIdentity(41),
+        Map("udf" -> 12.5, "scan" -> 0.0, "agg" -> 1e-3, "removed-since" -> 7200.25)
+      )
+    )
+  )
+
+  // Out of the order they are saved in, by the operator's id and then the name.
+  private val fullInputs = Seq(
+    PlanInput(
+      OperatorIdentity("scan"),
+      "dataset:///ds-1/d4t4/résumé.csv",
+      InputFile(1763856000000L, 412L)
+    ),
+    PlanInput(OperatorIdentity("agg"), "a", InputFile(1L, 0L)),
+    PlanInput(
+      OperatorIdentity("scan"),
+      "dataset:///ds-1/d4t4/a.csv",
+      InputFile(Long.MaxValue, Long.MaxValue)
+    )
+  )
+
+  private val fullReplay =
+    ReplaySource(ExecutionIdentity(40), new URI("file:///var/texera/logs/7/40/"), "interaction-3")
+
+  private val fullExecutionPlan = ExecutionPlan(
+    fullContext,
+    fullPlan,
+    replay = Some(fullReplay),
+    replayLog = Some(new URI("hdfs://namenode:8020/texera/logs/7/42/")),
+    inputs = fullInputs
   )
 
   "PhysicalPlanCodec" should "save a plan that sets every field and read the same plan back" in {
-    assertRoundTrips(fullContext, fullPlan)
+    assertRoundTrips(fullExecutionPlan)
   }
 
   it should "save and read back every partitioning, as a requirement and as a fixed rule" in {
@@ -300,11 +346,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     AttributeType.values.foreach { kind =>
       withClue(s"$kind: ") {
         val op = withPorts(operator("op"), outputs = Seq(OutputPort() -> schemaOf("c" -> kind)))
-        val (_, read) = PhysicalPlanCodec.decode(
-          PhysicalPlanCodec.fromJson(
-            assertRoundTrips(contextOf(), planOf(Seq(op), Nil))
+        val read = PhysicalPlanCodec
+          .decode(
+            PhysicalPlanCodec.fromJson(
+              assertRoundTrips(contextOf(), planOf(Seq(op), Nil))
+            )
           )
-        )
+          .plan
         assert(
           read.getOperator(op.id).outputPorts(PortIdentity())._3 == Right(schemaOf("c" -> kind))
         )
@@ -319,11 +367,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     val named = StoredType.values.filterNot(_ == StoredType.ATTRIBUTE_TYPE_UNSPECIFIED)
     assert(named.size == AttributeType.values.length)
     val op = withPorts(operator("op"), outputs = Seq(OutputPort() -> keyed))
-    val valid = PhysicalPlanCodec.encode(contextOf(), planOf(Seq(op), Nil))
+    val valid = save(contextOf(), planOf(Seq(op), Nil))
     val read = named.map { kind =>
-      val (_, plan) = PhysicalPlanCodec.decode(
-        valid.update(_.operators(0).outputPorts(0).schema.attributes(0).attributeType := kind)
-      )
+      val plan = PhysicalPlanCodec
+        .decode(
+          valid.update(_.operators(0).outputPorts(0).schema.attributes(0).attributeType := kind)
+        )
+        .plan
       plan.operators.head.outputPorts(PortIdentity())._3.toOption.get.attributes.head.getType
     }
     assert(read.toSet == AttributeType.values.toSet)
@@ -374,10 +424,10 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     val plan = planOf(Seq(op), Nil)
 
     val json = assertRoundTrips(context, plan)
-    val (readContext, read) = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(json))
-    assert(read.getOperator(op.id).inputPorts.keys.toList == inputOrder)
-    assert(read.getOperator(op.id).outputPorts.keys.toList == outputOrder)
-    assert(readContext.workflowSettings.outputPortsNeedingStorage.toList == stored)
+    val read = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(json))
+    assert(read.plan.getOperator(op.id).inputPorts.keys.toList == inputOrder)
+    assert(read.plan.getOperator(op.id).outputPorts.keys.toList == outputOrder)
+    assert(read.context.workflowSettings.outputPortsNeedingStorage.toList == stored)
   }
 
   it should "keep the order each port lists its links in, apart from the plan's order" in {
@@ -402,7 +452,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assert(plan.links.toList == links)
 
     assertRoundTrips(contextOf(), plan)
-    val (_, read) = PhysicalPlanCodec.decode(PhysicalPlanCodec.encode(contextOf(), plan))
+    val read = PhysicalPlanCodec.decode(save(contextOf(), plan)).plan
     assert(read.getOperator(union.id).inputPorts(PortIdentity())._2 == List(fromC, fromA, fromB))
   }
 
@@ -440,18 +490,17 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       )
       planOf(ops, ops.sliding(2).map { case Seq(from, to) => link(from, to) }.toSeq)
     }
-    val stored = PhysicalPlanCodec.encode(contextOf(), chain())
+    val stored = save(contextOf(), chain())
     assert(
       stored.operators.flatMap(_.id).map(_.logicalOpId.id) == Seq("a", "b", "c", "d", "e", "f")
     )
-    val texts =
-      (1 to 5).map(_ => PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(contextOf(), chain())))
+    val texts = (1 to 5).map(_ => PhysicalPlanCodec.toJson(save(contextOf(), chain())))
     assert(texts.distinct.size == 1, "two saves of one plan give different text")
     assert(texts.head == PhysicalPlanCodec.toJson(stored))
   }
 
   it should "read back a plan whose operators cannot derive their schemas again" in {
-    val (_, read) = PhysicalPlanCodec.decode(PhysicalPlanCodec.encode(fullContext, fullPlan))
+    val read = PhysicalPlanCodec.decode(save(fullContext, fullPlan)).plan
     assert(read.operators.nonEmpty)
     read.operators.foreach { op =>
       withClue(s"operator ${op.id.logicalOpId.id}-${op.id.layerName}: ") {
@@ -471,6 +520,86 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         }
       }
     }
+  }
+
+  // ----- what a run needs besides its plan -----
+
+  it should "save and read back a replay, a replay log, cost hints and inputs, each one alone or absent" in {
+    val bare = ExecutionPlan(contextOf(), fullPlan)
+    val withHints = ExecutionPlan(
+      contextOf(costHints = fullContext.costHints),
+      fullPlan
+    )
+    Seq(
+      "none of them" -> bare,
+      "a replay" -> bare.copy(replay = Some(fullReplay)),
+      "a replay log" -> bare.copy(replayLog = fullExecutionPlan.replayLog),
+      "cost hints" -> withHints,
+      "inputs" -> bare.copy(inputs = fullInputs),
+      "all of them" -> fullExecutionPlan
+    ).foreach {
+      case (what, plan) =>
+        withClue(s"$what: ") {
+          assertRoundTrips(plan)
+        }
+    }
+  }
+
+  it should "save and read back cost hints that name no operator, and costs of 0 and of the largest finite number" in {
+    Seq(Map.empty[String, Double], Map("udf" -> 0.0), Map("udf" -> Double.MaxValue)).foreach {
+      seconds =>
+        withClue(s"$seconds: ") {
+          val hints = CostHints(ExecutionIdentity(Long.MaxValue), seconds)
+          assertRoundTrips(ExecutionPlan(contextOf(costHints = Some(hints)), fullPlan))
+        }
+    }
+  }
+
+  it should "save and read back a replay and a replay log at URIs of any scheme, unicode included" in {
+    Seq(
+      "file:///tmp/logs/7/40/",
+      "hdfs://namenode:8020/logs/7/40",
+      "s3://bucket/r%C3%A9sum%C3%A9/7/40/",
+      "file:///tmp/résumé/"
+    ).foreach { location =>
+      withClue(s"$location: ") {
+        val uri = new URI(location)
+        assertRoundTrips(
+          ExecutionPlan(
+            contextOf(),
+            fullPlan,
+            replay = Some(ReplaySource(ExecutionIdentity(1), uri, "ünï")),
+            replayLog = Some(uri)
+          )
+        )
+      }
+    }
+  }
+
+  it should "save cost hints and inputs in the order of their operators' ids, then the names, the same text whatever order they come in" in {
+    val stored = PhysicalPlanCodec.encode(fullExecutionPlan)
+    assert(
+      stored.getCostHints.operators.map(_.logicalOperatorId) ==
+        Seq("agg", "removed-since", "scan", "udf")
+    )
+    assert(
+      stored.inputs.map(input => (input.logicalOperatorId, input.name)) == Seq(
+        ("agg", "a"),
+        ("scan", "dataset:///ds-1/d4t4/a.csv"),
+        ("scan", "dataset:///ds-1/d4t4/résumé.csv")
+      )
+    )
+    val texts = fullInputs.permutations.map { inputs =>
+      val hints = fullContext.costHints.map(hints =>
+        hints.copy(secondsByLogicalOperator = hints.secondsByLogicalOperator.toSeq.reverse.toMap)
+      )
+      val context = contextOf(fullContext.workflowSettings, fullContext.warehouse, hints)
+      PhysicalPlanCodec.toJson(
+        PhysicalPlanCodec.encode(fullExecutionPlan.copy(context = context, inputs = inputs))
+      )
+    }.toSeq
+    assert(texts.size == 6)
+    assert(texts.distinct == Seq(PhysicalPlanCodec.toJson(stored)))
   }
 
   // ----- what a saved plan holds -----
@@ -532,17 +661,65 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       classOf[WorkflowContext].getDeclaredFields.toSeq
         .filterNot(field => field.isSynthetic || Modifier.isStatic(field.getModifiers))
         .map(_.getName),
-      saved = Set("workflowId", "executionId", "workflowSettings", "warehouse"),
+      saved = Set("workflowId", "executionId", "workflowSettings", "warehouse", "costHints"),
       leftOut = Map("cuid" -> "the computing unit the plan runs on, which it does not choose")
+    )
+  }
+
+  it should "save every field of what a run needs besides its plan, and of a change to an operator" in {
+    val update = OperatorUpdate(executionId, "update-1", udf.id, udf.opExecInitInfo, None)
+    Seq[(String, Product, Set[String])](
+      ("ExecutionPlan", fullExecutionPlan, Set("context", "plan", "replay", "replayLog", "inputs")),
+      ("ReplaySource", fullReplay, Set("sourceExecutionId", "logLocation", "interaction")),
+      (
+        "CostHints",
+        fullContext.costHints.get,
+        Set("sourceExecutionId", "secondsByLogicalOperator")
+      ),
+      ("PlanInput", fullInputs.head, Set("logicalOperatorId", "name", "file")),
+      ("InputFile", fullInputs.head.file, Set("expiresAtMs", "sizeBytes")),
+      (
+        "OperatorUpdate",
+        update,
+        Set("executionId", "updateId", "opId", "opExecInitInfo", "repositoryMounts")
+      )
+    ).foreach {
+      case (what, value, saved) =>
+        assertAccountedFor(what, value.productElementNames.toSeq, saved, Map.empty)
+    }
+    // A change holds only what the engine changes in the running operator; the rest of it stays.
+    val keptRunning = "the running operator's stays"
+    assertAccountedFor(
+      "PhysicalOp, in a change to it",
+      operator("op").productElementNames.toSeq,
+      saved = Set("id", "opExecInitInfo", "repositoryMounts"),
+      leftOut = Map(
+        "workflowId" -> keptRunning,
+        "executionId" -> "the change's, saved once",
+        "parallelizable" -> keptRunning,
+        "locationPreference" -> keptRunning,
+        "partitionRequirement" -> keptRunning,
+        "outputPartitionRule" -> keptRunning,
+        "inputPorts" -> keptRunning,
+        "outputPorts" -> keptRunning,
+        "propagateSchema" -> keptRunning,
+        "isOneToManyOp" -> keptRunning,
+        "requiresMaterializedExecution" -> keptRunning,
+        "isLoopStart" -> keptRunning,
+        "suggestedWorkerNum" -> keptRunning,
+        "pveName" -> "a worker's interpreter is fixed when it starts; the running operator's stays",
+        "resourceBinding" -> "an operator made to run holds none, and saving one is refused"
+      )
     )
   }
 
   // ----- the format, pinned -----
 
-  // Two small plans in format version 1, one for each execution mode, that use every name the
-  // format has between them (a case below checks it). Their JSON is checked in: a change to what
-  // the codec writes for them fails here, and a change to the format comes with a new format
-  // version and golden files for it.
+  // Two small plans in format version 2, one for each execution mode, that use every name the
+  // format has between them (a case below checks it): the first sets every field, the second
+  // none it may leave out. And a change to an operator that sets every field. Their JSON is
+  // checked in: a change to what the codec writes for them fails here, and a change to the
+  // format comes with a new format version and golden files for it.
 
   // A column of each attribute type.
   private val goldenRow = schemaOf(
@@ -629,7 +806,23 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         GlobalPortIdentity(goldenUdf.id, PortIdentity(0))
       )
     ),
-    warehouse = Some("wh-1")
+    warehouse = Some("wh-1"),
+    costHints = Some(CostHints(ExecutionIdentity(41), Map("udf" -> 3.0, "join" -> 12.5)))
+  )
+  private val goldenExecutionPlan = ExecutionPlan(
+    goldenContext,
+    goldenPlan,
+    replay = Some(
+      ReplaySource(ExecutionIdentity(40), new URI("file:///var/texera/logs/7/40/"), "replay-to")
+    ),
+    replayLog = Some(new URI("file:///var/texera/logs/7/42/")),
+    inputs = Seq(
+      PlanInput(
+        OperatorIdentity("scan"),
+        "dataset:///ds-1/d4t4/a.csv",
+        InputFile(1763856000000L, 412L)
+      )
+    )
   )
 
   private val goldenSource = withPorts(
@@ -644,13 +837,23 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   )
 
-  private val goldenPlans: Seq[(String, WorkflowContext, PhysicalPlan)] = Seq(
-    ("physical-plan-v1.json", goldenContext, goldenPlan),
-    (
-      "physical-plan-v1-materialized.json",
-      goldenMaterializedContext,
-      planOf(Seq(goldenSource), Nil)
-    )
+  private val goldenPlans: Seq[(String, ExecutionPlan)] = Seq(
+    "physical-plan-v2.json" -> goldenExecutionPlan,
+    "physical-plan-v2-materialized.json" ->
+      ExecutionPlan(goldenMaterializedContext, planOf(Seq(goldenSource), Nil))
+  )
+
+  // The UDF's code changed while the run is paused; it reads the same datasets and models.
+  private val goldenUpdateFile = "operator-update-v2.json"
+  private val goldenUpdateId = "update-1"
+  private val goldenChangedUdf =
+    goldenUdf.copy(opExecInitInfo = OpExecWithCode("yield tuple_  # changed", "python"))
+  private val goldenUpdate = OperatorUpdate(
+    executionId,
+    goldenUpdateId,
+    goldenUdf.id,
+    goldenChangedUdf.opExecInitInfo,
+    goldenUdf.repositoryMounts
   )
 
   /** The golden file's text, with no newline at its end; empty if there is no such file. */
@@ -660,13 +863,17 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       finally stream.close()
     }
 
-  it should "write each golden plan in format version 1 exactly as its golden file has it" in {
-    val differing = goldenPlans.flatMap {
-      case (file, context, plan) =>
-        val written = PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(context, plan))
-        Option.when(written != golden(file)) {
+  it should "write each golden plan and change in format version 2 exactly as its golden file has it" in {
+    val written = goldenPlans.map {
+      case (file, plan) => file -> PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(plan))
+    } :+ goldenUpdateFile -> PhysicalPlanCodec.updateToJson(
+      PhysicalPlanCodec.encodeUpdate(executionId, goldenUpdateId, goldenChangedUdf)
+    )
+    val differing = written.flatMap {
+      case (file, text) =>
+        Option.when(text != golden(file)) {
           val actual = Files.createTempFile(file.stripSuffix(".json") + "-", ".json")
-          Files.write(actual, (written + "\n").getBytes(StandardCharsets.UTF_8))
+          Files.write(actual, (text + "\n").getBytes(StandardCharsets.UTF_8))
           s"$file (the codec writes $actual)"
         }
     }
@@ -677,21 +884,28 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   }
 
-  it should "read each golden file in format version 1 back to its plan" in {
+  it should "read each golden file in format version 2 back to its plan or change" in {
     goldenPlans.foreach {
-      case (file, context, plan) =>
+      case (file, plan) =>
         withClue(s"$file: ") {
           assert(golden(file).nonEmpty, "the golden file is missing from the test resources")
-          val (readContext, read) =
+          assertSameExecutionPlan(
+            plan,
             PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(golden(file)))
-          assertSameContext(context, readContext)
-          assertSamePlan(plan, read)
+          )
         }
+    }
+    withClue(s"$goldenUpdateFile: ") {
+      assert(golden(goldenUpdateFile).nonEmpty, "the golden file is missing")
+      assert(
+        PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(golden(goldenUpdateFile)))
+          == goldenUpdate
+      )
     }
   }
 
   it should "use every field, oneof case and enum value of the format in its golden files" in {
-    val text = goldenPlans.map { case (file, _, _) => golden(file) }.mkString("\n")
+    val text = (goldenPlans.map(_._1) :+ goldenUpdateFile).map(golden).mkString("\n")
     // Every field (a oneof's cases are fields too) and enum value, at any depth, reused messages
     // included; an UNSPECIFIED value is in no plan.
     val fields = mutable.SortedSet[String]()
@@ -710,7 +924,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         }
       }
     walk(StoredPhysicalPlan.scalaDescriptor)
+    walk(StoredOperatorUpdate.scalaDescriptor)
     assert(fields.contains("opExecWithCode") && values.contains("SINGLE_SNAPSHOT"))
+    assert(fields.contains("expiresAtMs") && fields.contains("updateId"))
 
     val unused = fields.toSeq.filterNot(name => text.contains(s""""$name": """)) ++
       values.toSeq.filterNot(name => text.contains(s""""$name""""))
@@ -719,6 +935,12 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       s"No golden file uses ${unused.mkString(", ")}, so nothing checks what the format writes " +
         "for it. Use each in a golden plan."
     )
+    // A field of a change that a plan has too, such as opId, is used by the change's own file.
+    val updateFields = parse(golden(goldenUpdateFile)) match {
+      case JObject(fields) => fields.map(_._1).toSet
+      case other           => fail(s"$goldenUpdateFile is not a JSON object: $other")
+    }
+    assert(updateFields == StoredOperatorUpdate.scalaDescriptor.fields.map(_.name).toSet)
   }
 
   // ----- what it refuses to save -----
@@ -746,19 +968,19 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "refuse to save an operator that still holds a resource binding" in {
     val binding: ResourceBinding = (_, _) => fail("saving a plan must not bind anything")
     assertRefused(
-      PhysicalPlanCodec.encode(fullContext, fullPlanWithUdf(_.withResourceBinding(Some(binding))))
+      save(fullContext, fullPlanWithUdf(_.withResourceBinding(Some(binding))))
     )("udf-main", "never resolved")
   }
 
   it should "refuse to save an operator of another workflow or execution" in {
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         fullPlanWithUdf(_.copy(workflowId = WorkflowIdentity(8)))
       )
     )("udf-main", "workflow 8", "workflow 7")
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         fullPlanWithUdf(_.copy(executionId = ExecutionIdentity(1)))
       )
@@ -768,7 +990,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "refuse to save a port with no schema" in {
     val missing = Left(new SchemaNotAvailableException("schema is not available"))
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         fullPlanWithUdf { op =>
           val (port, links, _) = op.inputPorts(PortIdentity(1))
@@ -777,7 +999,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       )
     )("input port 1", "udf-main", "no schema", "schema is not available")
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         fullPlanWithUdf { op =>
           val (port, links, _) = op.outputPorts(PortIdentity(0))
@@ -789,13 +1011,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   it should "refuse to save an operator with no executor, or a port under another id" in {
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         fullPlanWithUdf(_.copy(opExecInitInfo = OpExecInitInfo.Empty))
       )
     )("udf-main", "no executor")
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         fullPlanWithUdf { op =>
           op.copy(inputPorts = op.inputPorts.map {
@@ -810,26 +1032,26 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "refuse to save a plan whose links and ports disagree" in {
     val ghost = PhysicalLink(udf.id, PortIdentity(0), opId("ghost"), PortIdentity(0))
     assertRefused(
-      PhysicalPlanCodec.encode(fullContext, fullPlan.copy(links = fullPlan.links + ghost))
+      save(fullContext, fullPlan.copy(links = fullPlan.links + ghost))
     )("udf-main[0] -> ghost-main[0]", "names operator ghost-main")
     val unlisted = fullPlanWithUdf { op =>
       val (port, _, schema) = op.inputPorts(PortIdentity(1))
       op.copy(inputPorts = op.inputPorts + (PortIdentity(1) -> (port, Nil, schema)))
     }
-    assertRefused(PhysicalPlanCodec.encode(fullContext, unlisted))(
+    assertRefused(save(fullContext, unlisted))(
       "scan-main[0] -> udf-main[1]",
       "listed 0 times on the input port 1 of operator udf-main"
     )
     val twin = fullPlan.operators.find(_.id == udf.id).get.withPveName("another")
     assertRefused(
-      PhysicalPlanCodec.encode(fullContext, fullPlan.copy(operators = fullPlan.operators + twin))
+      save(fullContext, fullPlan.copy(operators = fullPlan.operators + twin))
     )("2 operators udf-main")
   }
 
   it should "refuse to save a plan whose links form a cycle" in {
     val back = PhysicalLink(globalAgg.id, PortIdentity(0), udf.id, PortIdentity(1))
     assertRefused(
-      PhysicalPlanCodec.encode(
+      save(
         fullContext,
         planOf(Seq(scan, udf, localAgg, globalAgg), fullLinks :+ back)
       )
@@ -838,7 +1060,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   it should "refuse to save an input port that depends on a port its operator does not have" in {
     assertRefused(
-      PhysicalPlanCodec.encode(fullContext, fullPlanWithUdf(dependingOn(PortIdentity(7))))
+      save(fullContext, fullPlanWithUdf(dependingOn(PortIdentity(7))))
     )(
       "input port 1 of operator udf-main depends on its input port 7, which the operator does " +
         "not have"
@@ -855,13 +1077,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         Set(GlobalPortIdentity(udf.id, PortIdentity(4)))
       )
     )
-    assertRefused(PhysicalPlanCodec.encode(context, fullPlan))("output port 4 of operator udf-main")
+    assertRefused(save(context, fullPlan))("output port 4 of operator udf-main")
   }
 
   it should "refuse to save settings that send batches of no tuple" in {
     Seq(0, -5).foreach { size =>
       assertRefused(
-        PhysicalPlanCodec.encode(
+        save(
           contextOf(WorkflowSettings(size, ExecutionMode.PIPELINED)),
           planOf(Seq(operator("op")), Nil)
         )
@@ -869,9 +1091,98 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
+  /** `fullExecutionPlan` with its context's cost hints replaced. */
+  private def hinting(hints: CostHints): ExecutionPlan =
+    fullExecutionPlan.copy(context =
+      contextOf(fullContext.workflowSettings, fullContext.warehouse, Some(hints))
+    )
+
+  it should "refuse to save a replay of no execution, from a log at no absolute URI, or up to no interaction" in {
+    def replaying(replay: ReplaySource) =
+      PhysicalPlanCodec.encode(fullExecutionPlan.copy(replay = Some(replay)))
+    Seq(0L, -1L, Long.MinValue).foreach { id =>
+      assertRefused(replaying(fullReplay.copy(sourceExecutionId = ExecutionIdentity(id))))(
+        s"replays the log of execution $id, but an execution's id is at least 1"
+      )
+    }
+    Seq("logs/7/40", "/var/texera/logs/7/40/", "").foreach { location =>
+      assertRefused(replaying(fullReplay.copy(logLocation = new URI(location))))(
+        s"replays the log of execution 40 at '$location', which is not an absolute URI"
+      )
+    }
+    Seq("", " \t\n").foreach { interaction =>
+      assertRefused(replaying(fullReplay.copy(interaction = interaction)))(
+        "replays the log of execution 40 up to an interaction it does not name"
+      )
+    }
+  }
+
+  it should "refuse to save a replay log at no absolute URI" in {
+    Seq("logs/7/42", "/var/texera/logs/7/42/").foreach { location =>
+      assertRefused(
+        PhysicalPlanCodec.encode(fullExecutionPlan.copy(replayLog = Some(new URI(location))))
+      )(s"writes its replay log to '$location', which is not an absolute URI")
+    }
+  }
+
+  it should "refuse to save cost hints of no execution, of an operator with no id, or that give a cost that is not a finite number of seconds, at least 0" in {
+    val hints = fullContext.costHints.get
+    Seq(0L, -7L).foreach { id =>
+      assertRefused(
+        PhysicalPlanCodec.encode(hinting(hints.copy(sourceExecutionId = ExecutionIdentity(id))))
+      )(s"cost hints come from execution $id, but an execution's id is at least 1")
+    }
+    Seq(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity, -1e-9, -5.0).foreach {
+      seconds =>
+        assertRefused(
+          PhysicalPlanCodec.encode(
+            hinting(
+              hints.copy(secondsByLogicalOperator =
+                hints.secondsByLogicalOperator + ("udf" -> seconds)
+              )
+            )
+          )
+        )(
+          s"give operator udf $seconds seconds",
+          "a cost is a finite number of seconds, at least 0"
+        )
+    }
+    assertRefused(
+      PhysicalPlanCodec.encode(
+        hinting(hints.copy(secondsByLogicalOperator = Map("" -> 1.0)))
+      )
+    )("cost hints name an operator with no id")
+  }
+
+  it should "refuse to save inputs of an operator the plan does not have, with no name, given twice, or of a file whose link expires at the epoch or before, or whose size is below 0" in {
+    def reading(inputs: PlanInput*) =
+      PhysicalPlanCodec.encode(fullExecutionPlan.copy(inputs = fullInputs ++ inputs))
+    val input = fullInputs.head
+    assertRefused(reading(input.copy(logicalOperatorId = OperatorIdentity("ghost"))))(
+      s"Input ${input.name} names operator 'ghost', which the plan does not have"
+    )
+    assertRefused(reading(input.copy(logicalOperatorId = OperatorIdentity(""))))(
+      "names operator '', which the plan does not have"
+    )
+    assertRefused(reading(input.copy(name = "")))("An input of operator scan has no name")
+    // the same operator and name, whatever the file
+    assertRefused(reading(input.copy(file = InputFile(5L, 5L))))(
+      s"Input ${input.name} of operator scan appears twice"
+    )
+    Seq(0L, -1L).foreach { expiresAtMs =>
+      assertRefused(reading(input.copy(name = "late.csv", file = InputFile(expiresAtMs, 1L))))(
+        s"The link to the input late.csv of operator scan expires at $expiresAtMs ms since the " +
+          "epoch, which is not after it"
+      )
+    }
+    assertRefused(reading(input.copy(name = "short.csv", file = InputFile(1L, -1L))))(
+      "The input short.csv of operator scan is a file of -1 bytes"
+    )
+  }
+
   // ----- what it refuses to read -----
 
-  private val valid: StoredPhysicalPlan = PhysicalPlanCodec.encode(fullContext, fullPlan)
+  private val valid: StoredPhysicalPlan = PhysicalPlanCodec.encode(fullExecutionPlan)
 
   private def indexOf(id: PhysicalOpIdentity): Int = valid.operators.indexWhere(_.id.contains(id))
 
@@ -903,14 +1214,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertRefused(PhysicalPlanCodec.decode(stored))(expected: _*)
 
   it should "read the plan it refuses nothing in" in {
-    val (context, plan) = PhysicalPlanCodec.decode(valid)
-    assertSameContext(fullContext, context)
-    assertSamePlan(fullPlan, plan)
+    assertSameExecutionPlan(fullExecutionPlan, PhysicalPlanCodec.decode(valid))
   }
 
   it should "refuse a plan in another format version, naming both versions" in {
-    assertUnreadable(valid.copy(formatVersion = 2))("format version 2", "reads version 1")
-    assertUnreadable(valid.copy(formatVersion = 0))("names no format version", "reads version 1")
+    assertUnreadable(valid.copy(formatVersion = 1))("format version 1", "reads version 2")
+    assertUnreadable(valid.copy(formatVersion = 3))("format version 3", "reads version 2")
+    assertUnreadable(valid.copy(formatVersion = 0))("names no format version", "reads version 2")
   }
 
   it should "refuse a plan that names no workflow or execution, or has no settings" in {
@@ -1136,6 +1446,102 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   }
 
+  it should "refuse a replay of no execution, from a log at no absolute URI, or up to no interaction" in {
+    assertUnreadable(valid.update(_.replay.sourceExecutionId := 0L))(
+      "replays the log of execution 0, but an execution's id is at least 1"
+    )
+    Seq("logs/7/40", "/var/texera/logs/7/40/", "").foreach { location =>
+      assertUnreadable(valid.update(_.replay.logLocation := location))(
+        s"replays the log of execution 40 at '$location', which is not an absolute URI"
+      )
+    }
+    assertUnreadable(valid.update(_.replay.logLocation := "file:///var/texera logs/"))(
+      "replays the log of execution 40 at 'file:///var/texera logs/', which is not a URI"
+    )
+    Seq("", "  ").foreach { interaction =>
+      assertUnreadable(valid.update(_.replay.interaction := interaction))(
+        "up to an interaction it does not name"
+      )
+    }
+  }
+
+  it should "refuse a replay log at no absolute URI" in {
+    assertUnreadable(valid.update(_.replayLogLocation := "logs/7/42"))(
+      "writes its replay log to 'logs/7/42', which is not an absolute URI"
+    )
+    assertUnreadable(valid.update(_.replayLogLocation := ""))(
+      "writes its replay log to '', which is not an absolute URI"
+    )
+    assertUnreadable(valid.update(_.replayLogLocation := "hdfs://name node/logs"))(
+      "writes its replay log to 'hdfs://name node/logs', which is not a URI"
+    )
+  }
+
+  it should "refuse cost hints of no execution, out of order, naming an operator twice or with no id, or that give a cost that is not a finite number of seconds, at least 0" in {
+    val costs = valid.getCostHints.operators
+    assert(costs.map(_.logicalOperatorId) == Seq("agg", "removed-since", "scan", "udf"))
+    assertUnreadable(valid.update(_.costHints.sourceExecutionId := -1L))(
+      "cost hints come from execution -1, but an execution's id is at least 1"
+    )
+    assertUnreadable(valid.update(_.costHints.operators := costs.reverse))(
+      "The plan's cost hints are not in the order of their operators' ids: operator udf comes " +
+        "before operator scan."
+    )
+    assertUnreadable(valid.update(_.costHints.operators :+= costs.head.withSeconds(2.0)))(
+      "The cost of operator agg appears twice"
+    )
+    assertUnreadable(valid.update(_.costHints.operators(0).logicalOperatorId := ""))(
+      "cost hints name an operator with no id"
+    )
+    Seq(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity, -0.25).foreach { seconds =>
+      assertUnreadable(valid.update(_.costHints.operators(2).seconds := seconds))(
+        s"give operator scan $seconds seconds, but a cost is a finite number of seconds, at least 0"
+      )
+    }
+  }
+
+  it should "refuse inputs out of order, given twice, of an operator the plan does not have, with no name or no source, or of a file whose link expires at the epoch or before, or whose size is below 0" in {
+    val inputs = valid.inputs
+    assert(
+      inputs.map(input => (input.logicalOperatorId, input.name)) == Seq(
+        ("agg", "a"),
+        ("scan", "dataset:///ds-1/d4t4/a.csv"),
+        ("scan", "dataset:///ds-1/d4t4/résumé.csv")
+      )
+    )
+    assertUnreadable(valid.update(_.inputs := Seq(inputs(0), inputs(2), inputs(1))))(
+      "The plan's inputs are not in the order of their operators' ids, then their names: input " +
+        "dataset:///ds-1/d4t4/résumé.csv of operator scan comes before input " +
+        "dataset:///ds-1/d4t4/a.csv of operator scan."
+    )
+    assertUnreadable(valid.update(_.inputs := Seq(inputs(1), inputs(0))))(
+      "input dataset:///ds-1/d4t4/a.csv of operator scan comes before input a of operator agg"
+    )
+    assertUnreadable(valid.update(_.inputs :+= inputs.last))(
+      "Input dataset:///ds-1/d4t4/résumé.csv of operator scan appears twice"
+    )
+    assertUnreadable(valid.update(_.inputs(0).logicalOperatorId := "ghost"))(
+      "Input a names operator 'ghost', which the plan does not have"
+    )
+    // an operator's logical id, not a physical operator's
+    assertUnreadable(valid.update(_.inputs(0).logicalOperatorId := "agg-localAgg"))(
+      "names operator 'agg-localAgg', which the plan does not have"
+    )
+    assertUnreadable(valid.update(_.inputs(0).name := ""))("An input of operator agg has no name")
+    assertUnreadable(valid.update(_.inputs(0).source := Source.Empty))(
+      "The input a of operator agg names nothing it reads"
+    )
+    Seq(0L, Long.MinValue).foreach { expiresAtMs =>
+      assertUnreadable(valid.update(_.inputs(0).file.expiresAtMs := expiresAtMs))(
+        s"The link to the input a of operator agg expires at $expiresAtMs ms since the epoch, " +
+          "which is not after it"
+      )
+    }
+    assertUnreadable(valid.update(_.inputs(0).file.sizeBytes := -1L))(
+      "The input a of operator agg is a file of -1 bytes"
+    )
+  }
+
   // ----- its JSON -----
 
   private val validJson = PhysicalPlanCodec.toJson(valid)
@@ -1159,7 +1565,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "write every field out, a port 0 and every default value included" in {
     val written = compact(parse(validJson))
     Seq(
-      "\"formatVersion\":1",
+      "\"formatVersion\":2",
       // proto3 JSON would leave out a PortIdentity at its default, so port 0 would not show
       "\"fromPortId\":{\"id\":0,\"internal\":false}",
       "\"port\":{\"id\":{\"id\":0,\"internal\":false},\"displayName\":\"\"," +
@@ -1173,15 +1579,33 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "\"isLoopStart\":false",
       "\"pveName\":\"\"",
       "\"warehouse\":\"lake-wh\"",
-      "\"suggestedWorkerNum\":3"
+      "\"suggestedWorkerNum\":3",
+      "\"replay\":{\"sourceExecutionId\":\"40\",\"logLocation\":\"file:///var/texera/logs/7/40/\"," +
+        "\"interaction\":\"interaction-3\"}",
+      "\"replayLogLocation\":\"hdfs://namenode:8020/texera/logs/7/42/\"",
+      "\"costHints\":{\"sourceExecutionId\":\"41\",\"operators\":[{\"logicalOperatorId\":\"agg\"," +
+        "\"seconds\":0.001},",
+      // a cost of 0, and a file of 0 bytes
+      "{\"logicalOperatorId\":\"scan\",\"seconds\":0.0}",
+      "\"inputs\":[{\"logicalOperatorId\":\"agg\",\"name\":\"a\",\"file\":{\"expiresAtMs\":\"1\"," +
+        "\"sizeBytes\":\"0\"}},"
     ).foreach(field => assert(written.contains(field), s"[$field] is not in $written"))
     // An optional field that is none is left out: absent means none.
     val noneOfThem = PhysicalPlanCodec.toJson(
-      PhysicalPlanCodec.encode(contextOf(), planOf(Seq(operator("op")), Nil))
+      save(contextOf(), planOf(Seq(operator("op")), Nil))
     )
-    Seq("warehouse", "suggestedWorkerNum", "repositoryMounts").foreach { field =>
+    Seq(
+      "warehouse",
+      "suggestedWorkerNum",
+      "repositoryMounts",
+      "replay",
+      "replayLogLocation",
+      "costHints"
+    ).foreach { field =>
       assert(!noneOfThem.contains("\"" + field + "\""), s"$field is written though it is none")
     }
+    // A list is written, empty or not.
+    assert(compact(parse(noneOfThem)).contains("\"links\":[],\"inputs\":[]"))
   }
 
   it should "read a plan whatever the order of its fields and its spacing" in {
@@ -1227,30 +1651,45 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assert(repeated != validJson)
     assertRefused(PhysicalPlanCodec.fromJson(repeated))("not JSON", "Duplicate field 'pveName'")
     // the version too, which is read before anything else
-    assertRefused(PhysicalPlanCodec.fromJson("{\"formatVersion\": 2, " + validJson.drop(1)))(
+    assertRefused(PhysicalPlanCodec.fromJson("{\"formatVersion\": 1, " + validJson.drop(1)))(
       "Duplicate field 'formatVersion'"
     )
   }
 
   it should "refuse JSON in another format version before looking at its fields" in {
     val laterVersion = editedJson(validJson) {
-      case ("formatVersion", _) => Some("formatVersion" -> JInt(2))
-      case ("pveName", name)    => Some("aFieldOfVersion2" -> name)
+      case ("formatVersion", _) => Some("formatVersion" -> JInt(3))
+      case ("pveName", name)    => Some("aFieldOfVersion3" -> name)
     }
-    assertRefused(PhysicalPlanCodec.fromJson(laterVersion))("format version 2", "reads version 1")
-    Seq(JString("3") -> "\"3\"", JString("1") -> "\"1\"", JDouble(2.0) -> "2.0").foreach {
+    assertRefused(PhysicalPlanCodec.fromJson(laterVersion))("format version 3", "reads version 2")
+    Seq(JString("3") -> "\"3\"", JString("2") -> "\"2\"", JDouble(2.0) -> "2.0").foreach {
       case (version, written) =>
         val json = editedJson(validJson) {
           case ("formatVersion", _) => Some("formatVersion" -> version)
         }
         assertRefused(PhysicalPlanCodec.fromJson(json))(
           s"format version is $written, not a whole number",
-          "reads version 1"
+          "reads version 2"
         )
     }
     val noVersion = editedJson(validJson) { case ("formatVersion", _) => None }
     assertRefused(PhysicalPlanCodec.fromJson(noVersion))("names no format version")
   }
+
+  it should "refuse a plan saved in format version 1, which has none of version 2's fields" in {
+    val version1 = editedJson(validJson) {
+      case ("formatVersion", _)                         => Some("formatVersion" -> JInt(1))
+      case (field, _) if version2Fields.contains(field) => None
+    }
+    assert(version2Fields.forall(field => !version1.contains(s""""$field"""")))
+    assert(
+      refusal(PhysicalPlanCodec.fromJson(version1)) ==
+        "The plan is in format version 1, but this reader reads version 2."
+    )
+  }
+
+  // The fields format version 2 added to a plan.
+  private val version2Fields = Set("replay", "replayLogLocation", "costHints", "inputs")
 
   it should "refuse JSON that leaves out a field, or writes a value otherwise than a saved plan" in {
     def assertMisread(json: String)(where: String): Unit =
@@ -1283,6 +1722,40 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertMisread(validJson.replace("\"warehouse\": \"lake-wh\"", "\"warehouse\": null"))(
       "/warehouse is null, but a saved plan leaves it out"
     )
+    // the same of the fields format version 2 added
+    assertMisread(editedJson(validJson) { case ("inputs", _) => None })("/inputs is missing")
+    assertMisread(editedJson(validJson) { case ("interaction", _) => None })(
+      "/replay/interaction is missing"
+    )
+    assertMisread(editedJson(validJson) { case ("sizeBytes", _) => None })(
+      "/inputs/0/file/sizeBytes is missing"
+    )
+    assertMisread(editedJson(validJson) { case ("replay", _) => Some("replay" -> JNull) })(
+      "/replay is null, but a saved plan leaves it out"
+    )
+    assertMisread(editedJson(validJson) {
+      case ("expiresAtMs", JString("1")) => Some("expiresAtMs" -> JInt(1))
+    })("/inputs/0/file/expiresAtMs is 1, which a saved plan writes as \"1\"")
+    assertMisread(editedJson(validJson) {
+      case ("seconds", JDouble(0.0)) => Some("seconds" -> JInt(0))
+    })("/costHints/operators/2/seconds is 0, which a saved plan writes as 0.0")
+  }
+
+  it should "read an input of no source, a cost that is no number, or a replay log left empty, and refuse each" in {
+    assertUnreadable(PhysicalPlanCodec.fromJson(editedJson(validJson) {
+      case ("file", _) => None
+    }))("The input a of operator agg names nothing it reads")
+    Seq("NaN", "Infinity", "-Infinity").foreach { seconds =>
+      val json = editedJson(validJson) {
+        case ("seconds", JDouble(0.0)) => Some("seconds" -> JString(seconds))
+      }
+      assertRefused(PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(json)))(
+        s"give operator scan $seconds seconds"
+      )
+    }
+    assertUnreadable(PhysicalPlanCodec.fromJson(editedJson(validJson) {
+      case ("replayLogLocation", _) => Some("replayLogLocation" -> JString(""))
+    }))("writes its replay log to '', which is not an absolute URI")
   }
 
   it should "refuse an enum value the format does not name, and read one it names but refuses" in {
@@ -1303,5 +1776,198 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       case ("noRequirement", _) => None
     })
     assertUnreadable(unsaid)("partition requirement on input port 1 of operator udf-main")
+  }
+
+  // ----- a change to an operator of a paused run -----
+
+  // The UDF of `fullPlan`, its code changed while the run is paused; its ports and the rest of it
+  // are as the running plan has them.
+  private val changedUdf =
+    udf.copy(opExecInitInfo = OpExecWithCode("yield {'k': 2}  # ünï\n", "python"))
+
+  private val updateId = "update-1b2c"
+
+  /**
+    * Saves the change of `op` and reads it back from the message and from its JSON text; fails
+    * unless both give `op`'s id, executor and mounts under `updateId`.
+    *
+    * @return the JSON text
+    */
+  private def assertUpdateRoundTrips(op: PhysicalOp, updateId: String = updateId): String = {
+    val stored = PhysicalPlanCodec.encodeUpdate(executionId, updateId, op)
+    val json = PhysicalPlanCodec.updateToJson(stored)
+    assert(
+      PhysicalPlanCodec.updateFromJson(json) == stored,
+      s"the JSON reads back otherwise:\n$json"
+    )
+    val expected =
+      OperatorUpdate(executionId, updateId, op.id, op.opExecInitInfo, op.repositoryMounts)
+    assert(PhysicalPlanCodec.decodeUpdate(stored) == expected)
+    assert(PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(json)) == expected)
+    json
+  }
+
+  it should "save a change to an operator and read it back, from the message and from its JSON" in {
+    Seq(
+      "new code that reads datasets" -> changedUdf,
+      "new code that reads none" -> changedUdf.copy(repositoryMounts = None),
+      "new settings" -> udf.copy(
+        opExecInitInfo = OpExecWithClassName("org.example.FilterOpExec", """{"value":"é"}"""),
+        repositoryMounts = None
+      ),
+      "an executor with empty strings" -> udf.copy(opExecInitInfo = OpExecWithCode("", "")),
+      "an operator of an internal layer" -> localAgg
+    ).foreach {
+      case (what, op) =>
+        withClue(s"$what: ") {
+          assertUpdateRoundTrips(op)
+        }
+    }
+    assertUpdateRoundTrips(changedUdf, updateId = "update-ünï 1")
+  }
+
+  it should "save of a change only the operator's id, its executor and what its code reads" in {
+    val json = assertUpdateRoundTrips(changedUdf)
+    val fields = parse(json) match {
+      case JObject(fields) => fields.toMap
+      case other           => fail(s"not a JSON object: $other")
+    }
+    assert(
+      fields.keySet ==
+        Set(
+          "formatVersion",
+          "executionId",
+          "updateId",
+          "opId",
+          "opExecInitInfo",
+          "repositoryMounts"
+        )
+    )
+    assert(fields("formatVersion") == JInt(2))
+    assert(compact(fields("opId")) == """{"logicalOpId":{"id":"udf"},"layerName":"main"}""")
+    // no port, link, schema or partitioning of the running operator
+    Seq("inputPorts", "outputPorts", "links", "schema", "partitionRequirement").foreach { field =>
+      assert(!json.contains(s""""$field""""), s"$field is in a change")
+    }
+    // mounts that are none are left out
+    val noMounts = assertUpdateRoundTrips(changedUdf.copy(repositoryMounts = None))
+    assert(!noMounts.contains("\"repositoryMounts\""))
+  }
+
+  it should "refuse to save a change to an operator that holds a resource binding, has no executor or belongs to another execution, or under a blank id" in {
+    val binding: ResourceBinding = (_, _) => fail("saving a change must not bind anything")
+    assertRefused(
+      PhysicalPlanCodec.encodeUpdate(
+        executionId,
+        updateId,
+        changedUdf.withResourceBinding(Some(binding))
+      )
+    )("Operator udf-main names datasets or models that were never resolved")
+    assertRefused(
+      PhysicalPlanCodec.encodeUpdate(
+        executionId,
+        updateId,
+        changedUdf.copy(opExecInitInfo = OpExecInitInfo.Empty)
+      )
+    )("The update of operator udf-main gives it no executor")
+    assertRefused(
+      PhysicalPlanCodec.encodeUpdate(ExecutionIdentity(43), updateId, changedUdf)
+    )("Operator udf-main belongs to execution 42, but the update is saved for execution 43")
+    Seq("", " \t").foreach { blank =>
+      assertRefused(PhysicalPlanCodec.encodeUpdate(executionId, blank, changedUdf))(
+        "The operator update has no update id"
+      )
+    }
+  }
+
+  private val validUpdate: StoredOperatorUpdate =
+    PhysicalPlanCodec.encodeUpdate(executionId, updateId, changedUdf)
+
+  private def assertUpdateUnreadable(stored: StoredOperatorUpdate)(expected: String*): Unit =
+    assertRefused(PhysicalPlanCodec.decodeUpdate(stored))(expected: _*)
+
+  it should "refuse a change in another format version, of no execution or operator, under a blank id, with no executor, or with mounts RepositoryMounts refuses" in {
+    assertUpdateUnreadable(validUpdate.withFormatVersion(1))(
+      "The operator update is in format version 1, but this reader reads version 2."
+    )
+    assertUpdateUnreadable(validUpdate.withFormatVersion(0))(
+      "The operator update names no format version; this reader reads version 2."
+    )
+    assertUpdateUnreadable(validUpdate.clearExecutionId)("The operator update names no execution.")
+    assertUpdateUnreadable(validUpdate.clearOpId)("The operator update names no operator.")
+    Seq("", "   ").foreach { blank =>
+      assertUpdateUnreadable(validUpdate.withUpdateId(blank))(
+        "The operator update has no update id."
+      )
+    }
+    assertUpdateUnreadable(validUpdate.withOpExecInitInfo(OpExecInitInfo.Empty))(
+      "The update of operator udf-main gives it no executor."
+    )
+    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts.locators := Nil))(
+      "udf-main cannot mount",
+      "name no repository"
+    )
+    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts.root := ""))(
+      "udf-main cannot mount",
+      "no directory"
+    )
+    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts.locators :+= "dataset-1:d4t4"))(
+      "Repository dataset-1:d4t4 of operator udf-main appears twice"
+    )
+  }
+
+  it should "read a change's JSON only as it writes it" in {
+    val json = PhysicalPlanCodec.updateToJson(validUpdate)
+    def refused(text: String)(expected: String*): Unit =
+      assertRefused(PhysicalPlanCodec.updateFromJson(text))(expected: _*)
+    // whatever the order of its fields and its spacing
+    assert(PhysicalPlanCodec.updateFromJson(s"\n$json\n") == validUpdate)
+    assert(
+      PhysicalPlanCodec.updateFromJson(compact(parse(json) match {
+        case JObject(fields) => JObject(fields.reverse)
+        case other           => other
+      })) == validUpdate
+    )
+    // a field the format does not have, at the top or deeper
+    refused(editedJson(json) { case ("updateId", id) => Some("updateIds" -> id) })("updateIds")
+    refused(editedJson(json) { case ("layerName", name) => Some("layer" -> name) })("layer")
+    // a field left out
+    refused(editedJson(json) { case ("updateId", _) => None })(
+      "The operator update is not written as a saved operator update is: /updateId is missing."
+    )
+    refused(editedJson(json) { case ("root", _) => None })("/repositoryMounts/root is missing")
+    // a value written otherwise
+    refused(editedJson(json) {
+      case ("executionId", _) => Some("executionId" -> JObject("id" -> JInt(42)))
+    })("/executionId/id is 42, which a saved operator update writes as \"42\"")
+    refused(editedJson(json) { case ("repositoryMounts", _) => Some("repositoryMounts" -> JNull) })(
+      "/repositoryMounts is null, but a saved operator update leaves it out"
+    )
+    // another version, or none, before anything else
+    refused(editedJson(json) {
+      case ("formatVersion", _) => Some("formatVersion" -> JInt(3))
+      case ("updateId", id)     => Some("aFieldOfVersion3" -> id)
+    })("The operator update is in format version 3, but this reader reads version 2.")
+    refused(editedJson(json) { case ("formatVersion", _) => Some("formatVersion" -> JInt(1)) })(
+      "The operator update is in format version 1, but this reader reads version 2."
+    )
+    refused(editedJson(json) {
+      case ("formatVersion", _) => Some("formatVersion" -> JString("2"))
+    })(
+      "The operator update's format version is \"2\", not a whole number"
+    )
+    refused(editedJson(json) { case ("formatVersion", _) => None })(
+      "The operator update names no format version"
+    )
+    // not one JSON object
+    refused(json.take(json.length / 2))("The operator update is not JSON")
+    refused("")("The operator update is not JSON")
+    refused("[]")("The operator update is not a JSON object")
+    refused(json + json)("The operator update is not JSON", "Trailing token")
+    refused(json.replaceFirst("\"updateId\": ", "\"updateId\": \"x\", \"updateId\": "))(
+      "Duplicate field 'updateId'"
+    )
+    // a plan is not a change
+    refused(validJson)("The operator update is not a saved operator update")
   }
 }

@@ -36,31 +36,58 @@ object PhysicalPlanRoundTrip extends Assertions {
   private val smallSetSize = 4
 
   /**
-    * Saves `plan`, made to run under `context`, and reads it back from the message and from its
-    * JSON text. Fails unless both reads give `context` (with no computing unit) and `plan` (see
-    * [[assertSamePlan]]), and saving what was read gives the same message again.
+    * Saves `plan`, made to run under `context`, with no replay, replay log or input, and reads it
+    * back, as `assertRoundTrips(ExecutionPlan(context, plan))`.
     *
     * @return the JSON text
     */
-  def assertRoundTrips(context: WorkflowContext, plan: PhysicalPlan): String = {
-    val stored = PhysicalPlanCodec.encode(context, plan)
+  def assertRoundTrips(context: WorkflowContext, plan: PhysicalPlan): String =
+    assertRoundTrips(ExecutionPlan(context, plan))
+
+  /**
+    * Saves `plan` and reads it back from the message and from its JSON text. Fails unless both
+    * reads give `plan` (see [[assertSameExecutionPlan]]), and saving what was read gives the same
+    * message again.
+    *
+    * @return the JSON text
+    */
+  def assertRoundTrips(plan: ExecutionPlan): String = {
+    val stored = PhysicalPlanCodec.encode(plan)
     val json = PhysicalPlanCodec.toJson(stored)
     val parsed = PhysicalPlanCodec.fromJson(json)
     assert(parsed == stored, s"the JSON reads back to another message:\n$json")
     Seq("the message" -> stored, "its JSON" -> parsed).foreach {
       case (source, message) =>
         withClue(s"read from $source: ") {
-          val (readContext, readPlan) = PhysicalPlanCodec.decode(message)
-          assertSameContext(context, readContext)
-          assertSamePlan(plan, readPlan)
-          val savedAgain = PhysicalPlanCodec.encode(readContext, readPlan)
+          val read = PhysicalPlanCodec.decode(message)
+          assertSameExecutionPlan(plan, read)
+          val savedAgain = PhysicalPlanCodec.encode(read)
           assert(savedAgain == stored, "saving the plan read back gives another message")
         }
     }
     json
   }
 
-  /** Fails unless `read` has the ids, settings and warehouse of `original`, and no unit. */
+  /**
+    * Fails unless `read` is `original` as a saved plan reads back: the same context (see
+    * [[assertSameContext]]) and physical plan (see [[assertSamePlan]]), replay and replay log,
+    * and inputs, in the order a saved plan lists them: by the operator's id, then the name.
+    */
+  def assertSameExecutionPlan(original: ExecutionPlan, read: ExecutionPlan): Unit = {
+    assertSameContext(original.context, read.context)
+    assertSamePlan(original.plan, read.plan)
+    assert(read.replay == original.replay)
+    assert(read.replayLog == original.replayLog)
+    assert(
+      read.inputs == original.inputs.sortBy(input => (input.logicalOperatorId.id, input.name)),
+      "the inputs differ, or are not in the order of their operators' ids, then their names"
+    )
+  }
+
+  /**
+    * Fails unless `read` has the ids, settings, warehouse and cost hints of `original`, and no
+    * unit.
+    */
   def assertSameContext(original: WorkflowContext, read: WorkflowContext): Unit = {
     assert(read.workflowId == original.workflowId)
     assert(read.executionId == original.executionId)
@@ -71,6 +98,7 @@ object PhysicalPlanRoundTrip extends Assertions {
       "the stored ports are iterated in another order"
     )
     assert(read.warehouse == original.warehouse)
+    assert(read.costHints == original.costHints)
     assert(read.cuid.isEmpty, "a saved plan does not choose the computing unit it runs on")
   }
 

@@ -1,5 +1,5 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "workflowId": {
     "id": "7"
   },
@@ -75,5 +75,6 @@
       "pveName": ""
     }
   ],
-  "links": []
+  "links": [],
+  "inputs": []
 }

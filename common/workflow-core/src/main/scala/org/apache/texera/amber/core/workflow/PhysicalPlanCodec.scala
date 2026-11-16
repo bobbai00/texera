@@ -30,11 +30,13 @@ import org.apache.texera.amber.core.storedplan.StoredPartitionRule.Rule
 import org.apache.texera.amber.core.storedplan.StoredPhysicalOp.{
   LocationPreference => StoredLocation
 }
+import org.apache.texera.amber.core.storedplan.StoredPlanInput.Source
 import org.apache.texera.amber.core.storedplan.StoredWorkflowSettings.{ExecutionMode => StoredMode}
 import org.apache.texera.amber.core.storedplan._
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
+  OperatorIdentity,
   PhysicalOpIdentity,
   WorkflowIdentity
 }
@@ -46,35 +48,44 @@ import scalapb.descriptors.{PEmpty, PMessage, PRepeated, ScalaType}
 import scalapb.json4s.{Parser, Printer}
 import scalapb.{GeneratedEnum, GeneratedMessage, GeneratedMessageCompanion}
 
+import java.net.{URI, URISyntaxException}
 import scala.util.control.NonFatal
 
 /**
-  * Saves a physical plan made to run, with the settings it runs under, and reads it back.
+  * Saves an execution's plan, a physical plan made to run with the context it runs under and
+  * what else the run needs ([[ExecutionPlan]]), and reads it back; and likewise a change to one
+  * operator of a paused run ([[OperatorUpdate]]).
   *
   * A plan is saved as a [[StoredPhysicalPlan]] message (storedplan.proto), and the message as
   * JSON text. Reading it back gives the plan the engine runs: the same operators, executors,
-  * ports, schemas, links and settings. The plan read back is built by inserting in the order the
-  * message lists things, so it iterates its links, each operator's ports, each port's links and
-  * the ports whose results are stored in the order the saved plan did, since the engine's
-  * scheduling can depend on it; and its operators too, when there are at most four. A set of more
-  * than four operators iterates in the order of their hash codes, which take in identity hashes
-  * (of a schema propagation function, say): that order differs between two compiles of a
-  * workflow, and no order saved could bring it back. Such operators are saved in the order of
-  * their ids instead, so a plan is saved as the same text every time.
+  * ports, schemas, links and settings, with the run's cost hints, where it replays from, where
+  * it writes its replay log, and what its operators read from outside it. The plan read back is
+  * built by inserting in the order the message lists things, so it iterates its links, each
+  * operator's ports, each port's links and the ports whose results are stored in the order the
+  * saved plan did, since the engine's scheduling can depend on it; and its operators too, when
+  * there are at most four. A set of more than four operators iterates in the order of their hash
+  * codes, which take in identity hashes (of a schema propagation function, say): that order
+  * differs between two compiles of a workflow, and no order saved could bring it back. Such
+  * operators are saved in the order of their ids instead, and the cost hints and inputs, which
+  * the plan holds in no order, by their operators' ids and the inputs' names, so a plan is saved
+  * as the same text every time.
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding, every port
   * has its schema, and the links form no cycle. A plan read back can be run but not compiled
   * again: each port keeps its schema, but no operator keeps the function that derived it
   * ([[ReadBackSchemaPropagation]] takes its place).
   *
-  * The text is read only in the form [[toJson]] writes, but for the order of an object's fields
-  * and the spacing: a plan cut short, edited by hand, or written by another writer that differs
-  * is refused, rather than read with defaults in place of what it leaves out.
+  * A change to an operator is saved as a [[StoredOperatorUpdate]], in the same format version:
+  * only what the engine applies to the running operator, its executor and what its code reads.
+  *
+  * Text is read only in the form [[toJson]] and [[updateToJson]] write, but for the order of an
+  * object's fields and the spacing: a plan cut short, edited by hand, or written by another
+  * writer that differs is refused, rather than read with defaults in place of what it leaves out.
   */
 object PhysicalPlanCodec {
 
   /** The version of the format this codec writes, and the only one it reads. */
-  val FormatVersion: Int = 1
+  val FormatVersion: Int = 2
 
   /**
     * The schema propagation function of every operator read back. A saved plan holds each port's
@@ -139,34 +150,61 @@ object PhysicalPlanCodec {
     .`with`(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 
   /**
-    * Saves `plan`, made to run under `context`. The ids, settings and warehouse come from
-    * `context`; its computing unit does not, since a plan does not choose the unit it runs on.
+    * A kind of message the codec saves as text, for what is shared between them: the version
+    * check, and reading and writing JSON.
     *
-    * @throws IllegalArgumentException if `plan` is not one made to run under `context`: an
-    *                                  operator still holds a resource binding, has no executor,
-    *                                  belongs to another workflow or execution, or has a port
-    *                                  with no schema; its links and ports disagree, its links
-    *                                  form a cycle, or a port depends on one its operator does
-    *                                  not have; or the settings store the results of a port it
-    *                                  does not have, or send batches of fewer than one tuple
+    * @param noun      what messages call one: "plan", say
+    * @param title     what it is, for a message that says text is not one
+    * @param companion the message's companion
     */
-  def encode(context: WorkflowContext, plan: PhysicalPlan): StoredPhysicalPlan = {
-    plan.operators.foreach(requireRunnableUnder(context, _))
-    requireConsistent(plan, context.workflowSettings.outputPortsNeedingStorage)
+  private final case class Saved[M <: GeneratedMessage](
+      noun: String,
+      title: String,
+      companion: GeneratedMessageCompanion[M]
+  )
+
+  private val SavedPlan = Saved("plan", "saved physical plan", StoredPhysicalPlan)
+  private val SavedUpdate = Saved("operator update", "saved operator update", StoredOperatorUpdate)
+
+  /**
+    * Saves `plan`. The ids, settings, warehouse and cost hints come from its context; the
+    * computing unit does not, since a plan does not choose the unit it runs on. Its cost hints
+    * are saved in the order of their operators' ids, and its inputs in the order of their
+    * operators' ids, then their names.
+    *
+    * @throws IllegalArgumentException if the physical plan is not one made to run under the
+    *                                  context: an operator still holds a resource binding, has no
+    *                                  executor, belongs to another workflow or execution, or has
+    *                                  a port with no schema; its links and ports disagree, its
+    *                                  links form a cycle, or a port depends on one its operator
+    *                                  does not have; or the settings store the results of a port
+    *                                  it does not have, or send batches of fewer than one tuple.
+    *                                  Or if what else the run needs is not one [[decode]] reads
+    *                                  back: see [[decode]].
+    */
+  def encode(plan: ExecutionPlan): StoredPhysicalPlan = {
+    val context = plan.context
+    val physicalPlan = plan.plan
+    physicalPlan.operators.foreach(requireRunnableUnder(context, _))
+    requireConsistent(physicalPlan, context.workflowSettings.outputPortsNeedingStorage)
     StoredPhysicalPlan(
       formatVersion = FormatVersion,
       workflowId = Some(context.workflowId),
       executionId = Some(context.executionId),
       settings = Some(encodeSettings(context.workflowSettings)),
       warehouse = context.warehouse,
-      operators = storedOrder(plan.operators).map(encodeOperator),
-      links = plan.links.toSeq
+      operators = storedOrder(physicalPlan.operators).map(encodeOperator),
+      links = physicalPlan.links.toSeq,
+      replay = plan.replay.map(encodeReplay),
+      replayLogLocation = plan.replayLog.map(requireAbsolute(writesReplayLogTo, _)).map(_.toString),
+      costHints = context.costHints.map(encodeCostHints),
+      inputs = encodeInputs(plan.inputs, physicalPlan)
     )
   }
 
   /**
-    * Reads a saved plan back, with the context it runs under: the plan's ids, settings and
-    * warehouse, and no computing unit.
+    * Reads a saved plan back, with the context it runs under: the plan's ids, settings,
+    * warehouse and cost hints, and no computing unit.
     *
     * The plan is for running, not for compiling again. Each port has the schema the compile gave
     * it, but each operator's `propagateSchema` is [[ReadBackSchemaPropagation]], since the
@@ -176,14 +214,19 @@ object PhysicalPlanCodec {
     *
     * @throws IllegalArgumentException if the plan is in another format version, leaves out
     *                                  something it must have, holds a value this version does
-    *                                  not know, or is not a plan [[encode]] saves
+    *                                  not know, or is not a plan [[encode]] saves. Of what the
+    *                                  run needs besides the physical plan, that is: a replay or
+    *                                  cost hints from an execution whose id is below 1; a replay
+    *                                  up to a blank interaction; a log not at an absolute URI;
+    *                                  cost hints for an operator with no id, or with a cost that
+    *                                  is not a finite number of seconds, at least 0; cost hints
+    *                                  or inputs out of order, or given twice; or an input of an
+    *                                  operator the plan does not have, with no name or source, or
+    *                                  of a file whose link expires at the epoch or before, or
+    *                                  whose size is below 0
     */
-  def decode(stored: StoredPhysicalPlan): (WorkflowContext, PhysicalPlan) = {
-    stored.formatVersion match {
-      case FormatVersion =>
-      case 0             => refuseNoVersion()
-      case other         => refuseVersion(other.toString)
-    }
+  def decode(stored: StoredPhysicalPlan): ExecutionPlan = {
+    requireVersion(SavedPlan, stored.formatVersion)
     val workflowId = stored.workflowId.getOrElse(refuse("The plan names no workflow."))
     val executionId = stored.executionId.getOrElse(refuse("The plan names no execution."))
     val settings = decodeSettings(stored.settings.getOrElse(refuse("The plan has no settings.")))
@@ -192,14 +235,24 @@ object PhysicalPlanCodec {
     requireDistinct(stored.links)(link => s"Link ${show(link)}")
     val plan = PhysicalPlan(operators.toSet, stored.links.toSet)
     requireConsistent(plan, settings.outputPortsNeedingStorage)
-    (new WorkflowContext(workflowId, executionId, settings, None, stored.warehouse), plan)
+    ExecutionPlan(
+      context = new WorkflowContext(
+        workflowId,
+        executionId,
+        settings,
+        cuid = None,
+        warehouse = stored.warehouse,
+        costHints = stored.costHints.map(decodeCostHints)
+      ),
+      plan = plan,
+      replay = stored.replay.map(decodeReplay),
+      replayLog = stored.replayLogLocation.map(absoluteUriOf(writesReplayLogTo, _)),
+      inputs = decodeInputs(stored.inputs, plan)
+    )
   }
 
   /** The JSON text of a saved plan. */
-  def toJson(stored: StoredPhysicalPlan): String =
-    jsonWriter.writeValueAsString(
-      withDefaultMessages(StoredPhysicalPlan, stored.toPMessage, printer.toJson(stored))
-    )
+  def toJson(stored: StoredPhysicalPlan): String = write(SavedPlan, stored)
 
   /**
     * Parses the JSON text of a saved plan, refusing one in another format version, or one not in
@@ -210,38 +263,81 @@ object PhysicalPlanCodec {
     *                                  not have; or leaves out a field, or writes one, otherwise
     *                                  than [[toJson]] does
     */
-  def fromJson(json: String): StoredPhysicalPlan = {
-    val value =
-      try Option(jsonReader.readValue[JValue](json)).getOrElse(JNull)
-      catch { case NonFatal(e) => refuse(s"The plan is not JSON: ${e.getMessage}", e) }
-    val fields = value match {
-      case JObject(fields) => fields
-      case other           => refuse(s"The plan is not a JSON object: ${excerpt(other)}")
+  def fromJson(json: String): StoredPhysicalPlan = read(SavedPlan, json)
+
+  /**
+    * Saves a change to operator `op` of the paused execution `executionId`, under `updateId`:
+    * the operator's id, its executor, and the datasets and models its code reads. Nothing else of
+    * the operator is saved; the engine keeps the rest as the running plan has it.
+    *
+    * @throws IllegalArgumentException if `updateId` is blank, or `op` is not one made to run in
+    *                                  that execution: it still holds a resource binding, has no
+    *                                  executor, or belongs to another execution
+    */
+  def encodeUpdate(
+      executionId: ExecutionIdentity,
+      updateId: String,
+      op: PhysicalOp
+  ): StoredOperatorUpdate = {
+    val name = show(op.id)
+    requireUpdateId(updateId)
+    if (op.resourceBinding.isDefined) {
+      refuse(
+        s"Operator $name names datasets or models that were never resolved: only an operator " +
+          "made to run can be saved as an update."
+      )
     }
-    // Checked first, so a plan in another version is refused for its version rather than for a
-    // field this version does not have.
-    fields.collectFirst { case ("formatVersion", version) => version } match {
-      case None                                            => refuseNoVersion()
-      case Some(JInt(version)) if version == FormatVersion =>
-      case Some(JInt(version))                             => refuseVersion(version.toString)
-      case Some(version) =>
-        refuse(
-          s"The plan's format version is ${excerpt(version)}, not a whole number; this reader " +
-            s"reads version $FormatVersion."
-        )
+    if (op.executionId != executionId) {
+      refuse(
+        s"Operator $name belongs to execution ${op.executionId.id}, but the update is saved for " +
+          s"execution ${executionId.id}."
+      )
     }
-    val stored =
-      try parser.fromJson[StoredPhysicalPlan](value)
-      catch {
-        case NonFatal(e) => refuse(s"The plan is not a saved physical plan: ${e.getMessage}", e)
-      }
-    // The parser takes a field left out as its default, and reads some values written another
-    // way (an enum as a number); a plan is read only as it is written.
-    difference(value, jsonReader.readValue[JValue](toJson(stored)), "").foreach { where =>
-      refuse(s"The plan is not written as a saved plan is: $where.")
-    }
-    stored
+    if (op.opExecInitInfo.isEmpty) refuse(s"The update of operator $name gives it no executor.")
+    StoredOperatorUpdate(
+      formatVersion = FormatVersion,
+      executionId = Some(executionId),
+      updateId = updateId,
+      opId = Some(op.id),
+      opExecInitInfo = op.opExecInitInfo,
+      repositoryMounts = op.repositoryMounts.map(encodeMounts)
+    )
   }
+
+  /**
+    * Reads a saved change to an operator back.
+    *
+    * @throws IllegalArgumentException if the change is in another format version, names no
+    *                                  execution or operator, has a blank id, gives the operator
+    *                                  no executor, or names mounts [[RepositoryMounts]] refuses
+    */
+  def decodeUpdate(stored: StoredOperatorUpdate): OperatorUpdate = {
+    requireVersion(SavedUpdate, stored.formatVersion)
+    val executionId =
+      stored.executionId.getOrElse(refuse("The operator update names no execution."))
+    requireUpdateId(stored.updateId)
+    val opId = stored.opId.getOrElse(refuse("The operator update names no operator."))
+    val name = show(opId)
+    if (stored.opExecInitInfo.isEmpty) refuse(s"The update of operator $name gives it no executor.")
+    OperatorUpdate(
+      executionId = executionId,
+      updateId = stored.updateId,
+      opId = opId,
+      opExecInitInfo = stored.opExecInitInfo,
+      repositoryMounts = stored.repositoryMounts.map(decodeMounts(name))
+    )
+  }
+
+  /** The JSON text of a saved change to an operator. */
+  def updateToJson(stored: StoredOperatorUpdate): String = write(SavedUpdate, stored)
+
+  /**
+    * Parses the JSON text of a saved change to an operator, as strictly as [[fromJson]] parses
+    * a plan's; [[decodeUpdate]] checks the rest.
+    *
+    * @throws IllegalArgumentException as [[fromJson]] does, for a change to an operator
+    */
+  def updateFromJson(json: String): StoredOperatorUpdate = read(SavedUpdate, json)
 
   // ----- encoding -----
 
@@ -332,10 +428,46 @@ object PhysicalPlanCodec {
       isLoopStart = op.isLoopStart,
       suggestedWorkerNum = op.suggestedWorkerNum,
       pveName = op.pveName,
-      repositoryMounts = op.repositoryMounts.map(mounts =>
-        StoredRepositoryMounts(mounts.root, mounts.locators.toSeq)
-      )
+      repositoryMounts = op.repositoryMounts.map(encodeMounts)
     )
+
+  private def encodeMounts(mounts: RepositoryMounts): StoredRepositoryMounts =
+    StoredRepositoryMounts(mounts.root, mounts.locators.toSeq)
+
+  private def encodeReplay(replay: ReplaySource): StoredReplaySource = {
+    val sourceExecutionId = replay.sourceExecutionId.id
+    requireReplay(sourceExecutionId, replay.interaction)
+    StoredReplaySource(
+      sourceExecutionId = sourceExecutionId,
+      logLocation = requireAbsolute(replaysLogOf(sourceExecutionId), replay.logLocation).toString,
+      interaction = replay.interaction
+    )
+  }
+
+  private def encodeCostHints(hints: CostHints): StoredCostHints = {
+    val stored = StoredCostHints(
+      sourceExecutionId = hints.sourceExecutionId.id,
+      operators = hints.secondsByLogicalOperator.toSeq.sortBy(_._1).map {
+        case (logicalOperatorId, seconds) => StoredOperatorCost(logicalOperatorId, seconds)
+      }
+    )
+    requireCostHints(stored)
+    stored
+  }
+
+  private def encodeInputs(inputs: Seq[PlanInput], plan: PhysicalPlan): Seq[StoredPlanInput] = {
+    val stored = inputs
+      .map { input =>
+        StoredPlanInput(
+          logicalOperatorId = input.logicalOperatorId.id,
+          name = input.name,
+          source = Source.File(StoredInputFile(input.file.expiresAtMs, input.file.sizeBytes))
+        )
+      }
+      .sortBy(input => (input.logicalOperatorId, input.name))
+    requireInputs(stored, plan)
+    stored
+  }
 
   private def encodePartition(partition: PartitionInfo): StoredPartitionInfo =
     StoredPartitionInfo(partition match {
@@ -448,15 +580,48 @@ object PhysicalPlanCodec {
       isLoopStart = stored.isLoopStart,
       suggestedWorkerNum = stored.suggestedWorkerNum,
       pveName = stored.pveName,
-      repositoryMounts = stored.repositoryMounts.map { mounts =>
-        requireDistinct(mounts.locators)(locator => s"Repository $locator of operator $name")
-        try RepositoryMounts(mounts.root, mounts.locators.toSet)
-        catch {
-          case e: IllegalArgumentException =>
-            refuse(s"Operator $name cannot mount what it names: ${e.getMessage}", e)
-        }
-      }
+      repositoryMounts = stored.repositoryMounts.map(decodeMounts(name))
     )
+  }
+
+  /** The mounts of operator `operator`, as [[RepositoryMounts]] takes them. */
+  private def decodeMounts(operator: String)(mounts: StoredRepositoryMounts): RepositoryMounts = {
+    requireDistinct(mounts.locators)(locator => s"Repository $locator of operator $operator")
+    try RepositoryMounts(mounts.root, mounts.locators.toSet)
+    catch {
+      case e: IllegalArgumentException =>
+        refuse(s"Operator $operator cannot mount what it names: ${e.getMessage}", e)
+    }
+  }
+
+  private def decodeReplay(stored: StoredReplaySource): ReplaySource = {
+    requireReplay(stored.sourceExecutionId, stored.interaction)
+    ReplaySource(
+      sourceExecutionId = ExecutionIdentity(stored.sourceExecutionId),
+      logLocation = absoluteUriOf(replaysLogOf(stored.sourceExecutionId), stored.logLocation),
+      interaction = stored.interaction
+    )
+  }
+
+  private def decodeCostHints(stored: StoredCostHints): CostHints = {
+    requireCostHints(stored)
+    CostHints(
+      ExecutionIdentity(stored.sourceExecutionId),
+      stored.operators.map(cost => cost.logicalOperatorId -> cost.seconds).toMap
+    )
+  }
+
+  private def decodeInputs(stored: Seq[StoredPlanInput], plan: PhysicalPlan): Seq[PlanInput] = {
+    requireInputs(stored, plan)
+    stored.map { input =>
+      // a file: requireInputs refused an input that names nothing it reads
+      val file = input.getFile
+      PlanInput(
+        OperatorIdentity(input.logicalOperatorId),
+        input.name,
+        InputFile(file.expiresAtMs, file.sizeBytes)
+      )
+    }
   }
 
   /** An operator's ports on one side, keyed by port id, built in the order they are stored. */
@@ -618,7 +783,180 @@ object PhysicalPlanCodec {
   private def requireDistinct[A](items: Seq[A])(what: A => String): Unit =
     items.diff(items.distinct).headOption.foreach(item => refuse(s"${what(item)} appears twice."))
 
+  /**
+    * Fails unless each of `items` comes before the next in `ordering`, naming the first two that
+    * do not.
+    *
+    * @param what the sentence that says the items are out of order
+    * @param name an item, as the sentence names it
+    */
+  private def requireOrdered[A](items: Seq[A], what: String)(name: A => String)(implicit
+      ordering: Ordering[A]
+  ): Unit =
+    items.iterator.zip(items.iterator.drop(1)).find { case (a, b) => !ordering.lt(a, b) }.foreach {
+      case (a, b) => refuse(s"$what: ${name(a)} comes before ${name(b)}.")
+    }
+
+  private def isBlank(text: String): Boolean = text.trim.isEmpty
+
+  // The words a message opens with when it names a location the plan holds, before the location.
+  private val writesReplayLogTo = "The plan writes its replay log to"
+  private def replaysLogOf(sourceExecutionId: Long): String =
+    s"The plan replays the log of execution $sourceExecutionId at"
+
+  /** `location`, unless it is not an absolute URI. */
+  private def requireAbsolute(what: String, location: URI): URI = {
+    if (!location.isAbsolute) refuse(s"$what '$location', which is not an absolute URI.")
+    location
+  }
+
+  /** The URI `text` is, unless it is none or not an absolute one. */
+  private def absoluteUriOf(what: String, text: String): URI = {
+    val location =
+      try new URI(text)
+      catch {
+        case e: URISyntaxException =>
+          refuse(s"$what '$text', which is not a URI: ${e.getMessage}", e)
+      }
+    requireAbsolute(what, location)
+  }
+
+  /** Fails unless a replay is from an execution and up to an interaction it names. */
+  private def requireReplay(sourceExecutionId: Long, interaction: String): Unit = {
+    if (sourceExecutionId < 1) {
+      refuse(
+        s"The plan replays the log of execution $sourceExecutionId, but an execution's id is at " +
+          "least 1."
+      )
+    }
+    if (isBlank(interaction)) {
+      refuse(
+        s"The plan replays the log of execution $sourceExecutionId up to an interaction it does " +
+          "not name."
+      )
+    }
+  }
+
+  /**
+    * Fails unless the hints come from an execution, and give each operator they name, once and
+    * in the order of the ids, a finite number of seconds, at least 0.
+    */
+  private def requireCostHints(hints: StoredCostHints): Unit = {
+    if (hints.sourceExecutionId < 1) {
+      refuse(
+        s"The plan's cost hints come from execution ${hints.sourceExecutionId}, but an " +
+          "execution's id is at least 1."
+      )
+    }
+    hints.operators.foreach { cost =>
+      if (cost.logicalOperatorId.isEmpty) {
+        refuse("The plan's cost hints name an operator with no id.")
+      }
+      val seconds = cost.seconds
+      if (seconds.isNaN || seconds.isInfinite || seconds < 0) {
+        refuse(
+          s"The plan's cost hints give operator ${cost.logicalOperatorId} $seconds seconds, but a " +
+            "cost is a finite number of seconds, at least 0."
+        )
+      }
+    }
+    val ids = hints.operators.map(_.logicalOperatorId)
+    requireDistinct(ids)(id => s"The cost of operator $id")
+    requireOrdered(ids, "The plan's cost hints are not in the order of their operators' ids")(id =>
+      s"operator $id"
+    )
+  }
+
+  /**
+    * Fails unless each input is of an operator of `plan`, has a name, is given once and in the
+    * order of the operators' ids, then the names, and is of a file whose link expires after the
+    * epoch and whose size is at least 0.
+    */
+  private def requireInputs(inputs: Seq[StoredPlanInput], plan: PhysicalPlan): Unit = {
+    val operators = plan.operators.map(_.id.logicalOpId.id)
+    inputs.foreach { input =>
+      if (input.name.isEmpty) {
+        refuse(s"An input of operator ${input.logicalOperatorId} has no name.")
+      }
+      if (!operators.contains(input.logicalOperatorId)) {
+        refuse(
+          s"Input ${input.name} names operator '${input.logicalOperatorId}', which the plan does " +
+            "not have."
+        )
+      }
+      input.source match {
+        case Source.File(file) =>
+          if (file.expiresAtMs < 1) {
+            refuse(
+              s"The link to the ${show(input)} expires at ${file.expiresAtMs} ms since the epoch, " +
+                "which is not after it."
+            )
+          }
+          if (file.sizeBytes < 0) {
+            refuse(
+              s"The ${show(input)} is a file of ${file.sizeBytes} bytes, but a file's size is at " +
+                "least 0."
+            )
+          }
+        case Source.Empty => refuse(s"The ${show(input)} names nothing it reads.")
+      }
+    }
+    val keys = inputs.map(input => (input.logicalOperatorId, input.name))
+    requireDistinct(keys) { case (operator, name) => s"Input $name of operator $operator" }
+    requireOrdered(
+      keys,
+      "The plan's inputs are not in the order of their operators' ids, then their names"
+    ) { case (operator, name) => s"input $name of operator $operator" }
+  }
+
+  private def requireUpdateId(updateId: String): Unit =
+    if (isBlank(updateId)) refuse("The operator update has no update id.")
+
   // ----- JSON -----
+
+  /** The JSON text of `message`, every field written out (see [[withDefaultMessages]]). */
+  private def write[M <: GeneratedMessage](saved: Saved[M], message: M): String =
+    jsonWriter.writeValueAsString(
+      withDefaultMessages(saved.companion, message.toPMessage, printer.toJson(message))
+    )
+
+  /**
+    * Parses JSON text into a message of `saved`'s kind, refusing text in another format version,
+    * or not in the form [[write]] writes.
+    */
+  private def read[M <: GeneratedMessage](saved: Saved[M], json: String): M = {
+    val noun = saved.noun
+    val value =
+      try Option(jsonReader.readValue[JValue](json)).getOrElse(JNull)
+      catch { case NonFatal(e) => refuse(s"The $noun is not JSON: ${e.getMessage}", e) }
+    val fields = value match {
+      case JObject(fields) => fields
+      case other           => refuse(s"The $noun is not a JSON object: ${excerpt(other)}")
+    }
+    // Checked first, so text in another version is refused for its version rather than for a
+    // field this version does not have.
+    fields.collectFirst { case ("formatVersion", version) => version } match {
+      case None                                            => refuseNoVersion(saved)
+      case Some(JInt(version)) if version == FormatVersion =>
+      case Some(JInt(version))                             => refuseVersion(saved, version.toString)
+      case Some(version) =>
+        refuse(
+          s"The $noun's format version is ${excerpt(version)}, not a whole number; this reader " +
+            s"reads version $FormatVersion."
+        )
+    }
+    val message =
+      try parser.fromJson[M](value)(saved.companion)
+      catch {
+        case NonFatal(e) => refuse(s"The $noun is not a ${saved.title}: ${e.getMessage}", e)
+      }
+    // The parser takes a field left out as its default, and reads some values written another
+    // way (an enum as a number); text is read only as it is written.
+    difference(value, jsonReader.readValue[JValue](write(saved, message)), "", noun).foreach {
+      where => refuse(s"The $noun is not written as a saved $noun is: $where.")
+    }
+    message
+  }
 
   /**
     * scalapb-json4s leaves a message field out when it holds the default instance of a message
@@ -660,11 +998,18 @@ object PhysicalPlanCodec {
     }
 
   /**
-    * Where `read` differs from `written`, the form [[toJson]] gives the plan read from it, if
+    * Where `read` differs from `written`, the form [[write]] gives the message read from it, if
     * anywhere: the path to the first difference, and what it is. An object's fields are compared
     * by name, in any order, and an array's items in order.
+    *
+    * @param noun what the messages name the text, "plan" say
     */
-  private def difference(read: JValue, written: JValue, path: String): Option[String] =
+  private def difference(
+      read: JValue,
+      written: JValue,
+      path: String,
+      noun: String
+  ): Option[String] =
     (read, written) match {
       case (JObject(readFields), JObject(writtenFields)) =>
         val readValues = readFields.toMap
@@ -673,14 +1018,14 @@ object PhysicalPlanCodec {
           .map {
             case (name, writtenValue) =>
               readValues.get(name) match {
-                case Some(readValue) => difference(readValue, writtenValue, s"$path/$name")
+                case Some(readValue) => difference(readValue, writtenValue, s"$path/$name", noun)
                 case None            => Some(s"$path/$name is missing")
               }
           }
           .collectFirst { case Some(found) => found }
           .orElse(readFields.collectFirst {
             case (name, readValue) if !writtenNames.contains(name) =>
-              s"$path/$name is ${excerpt(readValue)}, but a saved plan leaves it out"
+              s"$path/$name is ${excerpt(readValue)}, but a saved $noun leaves it out"
           })
       case (JArray(readItems), JArray(writtenItems)) if readItems.size == writtenItems.size =>
         readItems.iterator
@@ -688,13 +1033,13 @@ object PhysicalPlanCodec {
           .zipWithIndex
           .map {
             case ((readItem, writtenItem), index) =>
-              difference(readItem, writtenItem, s"$path/$index")
+              difference(readItem, writtenItem, s"$path/$index", noun)
           }
           .collectFirst { case Some(found) => found }
       case _ if read == written => None
       case _ =>
         Some(
-          s"${if (path.isEmpty) "/" else path} is ${excerpt(read)}, which a saved plan writes " +
+          s"${if (path.isEmpty) "/" else path} is ${excerpt(read)}, which a saved $noun writes " +
             s"as ${excerpt(written)}"
         )
     }
@@ -720,14 +1065,28 @@ object PhysicalPlanCodec {
     s"${if (port.input) "input" else "output"} port ${show(port.portId)} of operator " +
       show(port.opId)
 
+  private def show(input: StoredPlanInput): String =
+    s"input ${input.name} of operator ${input.logicalOperatorId}"
+
   private def refuse(message: String, cause: Throwable = null): Nothing =
     throw new IllegalArgumentException(message, cause)
 
-  private def refuseNoVersion(): Nothing =
-    refuse(s"The plan names no format version; this reader reads version $FormatVersion.")
+  /** Fails unless `version` is the one this codec reads. */
+  private def requireVersion(saved: Saved[_], version: Int): Unit =
+    version match {
+      case FormatVersion =>
+      case 0             => refuseNoVersion(saved)
+      case other         => refuseVersion(saved, other.toString)
+    }
 
-  private def refuseVersion(version: String): Nothing =
-    refuse(s"The plan is in format version $version, but this reader reads version $FormatVersion.")
+  private def refuseNoVersion(saved: Saved[_]): Nothing =
+    refuse(s"The ${saved.noun} names no format version; this reader reads version $FormatVersion.")
+
+  private def refuseVersion(saved: Saved[_], version: String): Nothing =
+    refuse(
+      s"The ${saved.noun} is in format version $version, but this reader reads version " +
+        s"$FormatVersion."
+    )
 
   private def refuseEnum(what: String, value: GeneratedEnum): Nothing =
     if (value.isUnrecognized) refuse(s"$what is ${value.value}, which this version does not know.")

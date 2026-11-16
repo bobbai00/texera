@@ -16,11 +16,16 @@
 // under the License.
 
 // A physical plan saved to be run later: what the engine needs to run it, and nothing that only
-// compiling it needs (an operator's schema propagation function, or a resource binding).
-// PhysicalPlanCodec writes it and reads it back, as JSON with these field names.
+// compiling it needs (an operator's schema propagation function, or a resource binding); with
+// what the run needs besides the plan (where it replays from, where it writes its replay log, the
+// costs an earlier run measured, what its operators read from outside it). And a change to one
+// operator of a paused run (StoredOperatorUpdate), saved in the same format version.
+// PhysicalPlanCodec writes both and reads them back, as JSON with these field names.
 //
 // - Lists keep the order the plan iterates its links, ports and operators in, since scheduling
-//   can depend on it; only a plan of more than four operators lists them by id instead.
+//   can depend on it; only a plan of more than four operators lists them by id instead. A list
+//   the plan holds in no order of its own (cost hints, inputs) is sorted, so a plan is always
+//   written as the same text.
 // - Every field is written, defaults included, except one whose comment says what its absence
 //   means. A reader refuses text in any other form: a field missing or given twice, a value
 //   written another way (an enum as a number, say), or anything after the plan. Only the order
@@ -62,6 +67,16 @@ message StoredPhysicalPlan {
   repeated StoredPhysicalOp operators = 6;
   // Every link once. Each is also listed on the two ports it joins, in that port's own order.
   repeated PhysicalLink links = 7;
+  // Where the run replays from. Absent: it replays nothing.
+  StoredReplaySource replay = 8;
+  // Where the run writes its replay log, an absolute URI. Absent: it writes none.
+  optional string replayLogLocation = 9;
+  // What an earlier run measured, for the scheduler's cost model. Absent: no earlier run, and a
+  // region costs the number of its ports whose results are stored.
+  StoredCostHints costHints = 10;
+  // What the operators read from outside the run: each (operator, name) once, in the order of
+  // the operator's id, then the name.
+  repeated StoredPlanInput inputs = 11;
 }
 
 message StoredWorkflowSettings {
@@ -189,4 +204,68 @@ message StoredRepositoryMounts {
   string root = 1;
   // Each repository once, as "<repositoryName>:<commitHash>".
   repeated string locators = 2;
+}
+
+// An earlier execution's replay log, read up to one interaction.
+message StoredReplaySource {
+  // The execution that wrote the log; at least 1.
+  int64 sourceExecutionId = 1;
+  // Where the log is, an absolute URI.
+  string logLocation = 2;
+  // The id of the embedded control message the run replays up to; not blank.
+  string interaction = 3;
+}
+
+// How long each logical operator took in an earlier execution of the workflow.
+message StoredCostHints {
+  // The execution the costs were measured in; at least 1.
+  int64 sourceExecutionId = 1;
+  // Each logical operator once, in the order of their ids. An operator the plan does not have
+  // is no error: the workflow may have changed since.
+  repeated StoredOperatorCost operators = 2;
+}
+
+message StoredOperatorCost {
+  // Not empty.
+  string logicalOperatorId = 1;
+  // Finite, and at least 0.
+  double seconds = 2;
+}
+
+// Something a logical operator of the plan reads from outside the run.
+message StoredPlanInput {
+  // An operator of the plan.
+  string logicalOperatorId = 1;
+  // The name the operator's executor knows the input by; not empty.
+  string name = 2;
+  oneof source {
+    // A file, read through a link made when the plan was made.
+    StoredInputFile file = 3;
+    // 4 is kept for a result an earlier execution stored, read in place of running the operators
+    // that would produce it again.
+  }
+}
+
+message StoredInputFile {
+  // When the link stops working, in milliseconds since the epoch; after the epoch.
+  int64 expiresAtMs = 1;
+  // The file's size in bytes; at least 0.
+  int64 sizeBytes = 2;
+}
+
+// A change to one operator of a paused run, which the engine applies when the run resumes: the
+// operator's new executor, and what its new code reads. Saved and read in the plan's format
+// version, as its own text.
+message StoredOperatorUpdate {
+  // The version of this format the change is written in; a reader refuses one it does not read.
+  int32 formatVersion = 1;
+  // The execution whose operator changes.
+  ExecutionIdentity executionId = 2;
+  // Names the change among the execution's changes; not blank.
+  string updateId = 3;
+  // The operator that changes: one of the execution's plan.
+  PhysicalOpIdentity opId = 4;
+  OpExecInitInfo opExecInitInfo = 5;
+  // The datasets and models the new code reads. Absent: none.
+  StoredRepositoryMounts repositoryMounts = 6;
 }

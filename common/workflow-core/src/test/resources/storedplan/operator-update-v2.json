@@ -1,0 +1,26 @@
+{
+  "formatVersion": 2,
+  "executionId": {
+    "id": "42"
+  },
+  "updateId": "update-1",
+  "opId": {
+    "logicalOpId": {
+      "id": "udf"
+    },
+    "layerName": "main"
+  },
+  "opExecInitInfo": {
+    "opExecWithCode": {
+      "code": "yield tuple_  # changed",
+      "language": "python"
+    }
+  },
+  "repositoryMounts": {
+    "root": "/mnt/texera-mounts",
+    "locators": [
+      "dataset-1:d4t4",
+      "model-2:m0d3l"
+    ]
+  }
+}
