@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.e2e
 import com.twitter.util.{Await, Duration, Promise, Return, Throw, Try}
 import org.apache.pekko.actor.ActorSystem
 import org.apache.texera.amber.core.executor.OpExecInitInfo
-import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{
@@ -30,7 +30,15 @@ import org.apache.texera.amber.core.virtualidentity.{
   OperatorIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.workflow.{
+  GlobalPortIdentity,
+  PhysicalOp,
+  PhysicalPlan,
+  PhysicalPlanCodec,
+  PortIdentity,
+  WorkflowContext,
+  WorkflowSettings
+}
 import org.apache.texera.amber.engine.architecture.coordinator.{
   CoordinatorConfig,
   ExecutionStateUpdate,
@@ -66,9 +74,10 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 }
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.amber.core.storage.ExecutionResultUris.getResultUriByLogicalPortId
-import org.apache.texera.web.service.ExecutionResultService
+import org.apache.texera.web.service.{ExecutionResultService, PlanToRun, WorkflowExecutionService}
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.scalatest.Assertions
 
 object TestUtils {
 
@@ -88,10 +97,19 @@ object TestUtils {
       workflowSettings = workflowSettings
     )
 
+  /**
+    * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
+    * made and saved as text (`PlanToRun.make`), and the engine's workflow read back from that
+    * (`WorkflowExecutionService.workflowToRun`), so a spec runs what a run would.
+    *
+    * @param fromSavedPlan false to keep the plan as the compile made it, never saved. Only for
+    *                      comparing a run of that plan with a run of the plan read back.
+    */
   def buildWorkflow(
       operators: List[LogicalOp],
       links: List[LogicalLink],
-      context: WorkflowContext
+      context: WorkflowContext,
+      fromSavedPlan: Boolean = true
   ): Workflow = {
     // the scan sources in these tests read fixture files on the local disk, and a UDF's datasets
     // and models are the fixture versions, read under the fixture mount root
@@ -101,13 +119,70 @@ object TestUtils {
       TestOperators.fixtureRepositoryResolver,
       Some(TestOperators.fixtureMountRoot)
     )
-    // Execution path: strict, fail-fast on compilation errors. Strict guarantees
-    // a defined physicalPlan (errors throw rather than clearing it).
-    val compilationResult = workflowCompiler.compile(
-      LogicalPlanPojo(operators, links, List(), List()),
-      CompilationErrorHandling.Strict
+    val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
+    if (fromSavedPlan) {
+      WorkflowExecutionService.workflowToRun(
+        PlanToRun.make(workflowCompiler, logicalPlan),
+        context,
+        Some(TestOperators.fixtureMountRoot)
+      )
+    } else {
+      // The compile PlanToRun.make makes a run's plan with, but not saved: strict, so an error
+      // throws rather than leaving no physical plan.
+      Workflow.fromCompilationResult(
+        context,
+        workflowCompiler.compile(logicalPlan, CompilationErrorHandling.Strict)
+      )
+    }
+  }
+
+  /**
+    * Fails unless `saved` is `compiled` read back from its saved form: every operator of `saved`
+    * was read back, none of `compiled` was, and but for that the plans are the same, down to the
+    * order the engine finds their links, ports and each port's links in, and their operators when
+    * there are at most four (a set of more keeps no order a saved plan could bring back).
+    */
+  def assertReadBackFrom(compiled: PhysicalPlan, saved: PhysicalPlan): Unit = {
+    def readBack(op: PhysicalOp): Boolean =
+      op.propagateSchema == PhysicalPlanCodec.ReadBackSchemaPropagation
+    Assertions.assert(
+      !compiled.operators.exists(readBack),
+      "the compiled plan was read back from a saved plan: it was meant to run as compiled"
     )
-    Workflow.fromCompilationResult(context, compilationResult)
+    Assertions.assert(
+      saved.operators.forall(readBack),
+      "the plan to run was not read back from its saved form"
+    )
+    // the schema functions, the one part of a plan that is not saved, set aside
+    def withoutPropagation(plan: PhysicalPlan): PhysicalPlan =
+      PhysicalPlan(
+        plan.operators.map(_.copy(propagateSchema = PhysicalPlanCodec.ReadBackSchemaPropagation)),
+        plan.links
+      )
+    Assertions.assert(
+      withoutPropagation(saved) == withoutPropagation(compiled),
+      "the plan read back is not the compiled plan"
+    )
+    Assertions.assert(saved.links.toList == compiled.links.toList, "the links are in another order")
+    if (compiled.operators.size <= 4) {
+      Assertions.assert(
+        saved.operators.toList.map(_.id) == compiled.operators.toList.map(_.id),
+        "the operators are in another order"
+      )
+    }
+    // An Attribute equals one whose name differs only in case; a saved name must not.
+    def ports(op: PhysicalOp): List[Any] =
+      (op.inputPorts.toList ++ op.outputPorts.toList).map {
+        case (id, (_, links, schema)) =>
+          (id, links, schema.toOption.map(_.getAttributes.map(a => (a.getName, a.getType))))
+      }
+    compiled.operators.foreach { op =>
+      Assertions.assert(
+        ports(saved.getOperator(op.id)) == ports(op),
+        s"the ports of operator ${op.id.logicalOpId.id}-${op.id.layerName} differ in their " +
+          "order, the order of their links, or the case of a column's name"
+      )
+    }
   }
 
   /**
@@ -223,6 +298,105 @@ object TestUtils {
       _.get().toList,
       completionTimeout
     )
+
+  /**
+    * The workflow of `operators` and `links` built twice, each under a context `newContext` makes:
+    * first with the plan its compile made, never saved, then as every run's is, with that plan
+    * saved as text and read back. Fails unless the second plan is the first read back
+    * ([[assertReadBackFrom]]), under the same settings.
+    */
+  def buildFromCompiledAndSavedPlans(
+      operators: List[LogicalOp],
+      links: List[LogicalLink],
+      newContext: () => WorkflowContext
+  ): (Workflow, Workflow) = {
+    val compiled = buildWorkflow(operators, links, newContext(), fromSavedPlan = false)
+    val saved = buildWorkflow(operators, links, newContext())
+    assertReadBackFrom(compiled.physicalPlan, saved.physicalPlan)
+    val (compiledSettings, savedSettings) =
+      (compiled.context.workflowSettings, saved.context.workflowSettings)
+    Assertions.assert(
+      savedSettings == compiledSettings,
+      "the plan read back runs under other settings than the compiled plan"
+    )
+    Assertions.assert(
+      savedSettings.outputPortsNeedingStorage.toList ==
+        compiledSettings.outputPortsNeedingStorage.toList,
+      "the ports whose results are stored are in another order"
+    )
+    (compiled, saved)
+  }
+
+  /**
+    * `runWorkflowAndReadTerminalResults`, as if no run of execution `id` came before: its rows
+    * are set up afresh, as a run records its result ports there, and what an earlier run stored
+    * for `workflow`'s output ports is dropped. A port that keeps its storage over a loop's
+    * iterations (`reuseStorage`) would otherwise keep it over runs of one execution, too, which
+    * production never makes: it gives each run an execution of its own.
+    */
+  def runAfresh(
+      system: ActorSystem,
+      workflow: Workflow,
+      id: Int,
+      completionTimeout: Duration = Duration.fromMinutes(1)
+  ): Map[OperatorIdentity, List[Tuple]] = {
+    for {
+      op <- workflow.physicalPlan.operators
+      portId <- op.outputPorts.keys
+      base = VFSURIFactory.createPortBaseURI(
+        workflow.context.workflowId,
+        workflow.context.executionId,
+        GlobalPortIdentity(op.id, portId),
+        workflow.context.warehouse
+      )
+      uri <- List(VFSURIFactory.resultURI(base), VFSURIFactory.stateURI(base))
+      if DocumentFactory.documentExists(uri)
+    } DocumentFactory.openDocument(uri)._1.clear()
+    cleanupWorkflowExecutionData(id)
+    setUpWorkflowExecutionData(id)
+    runWorkflowAndReadTerminalResults(system, workflow, completionTimeout)
+  }
+
+  /**
+    * Runs the workflow of `operators` and `links` twice, as `buildFromCompiledAndSavedPlans`
+    * builds it: first from the plan its compile made, then as every run runs, from that plan
+    * saved and read back. Fails unless the two runs give each terminal operator the same results,
+    * as multisets. The runs are of execution `id`.
+    *
+    * @return the terminal results of the run from the saved plan
+    */
+  def runFromCompiledAndSavedPlans(
+      system: ActorSystem,
+      operators: List[LogicalOp],
+      links: List[LogicalLink],
+      newContext: () => WorkflowContext,
+      id: Int,
+      completionTimeout: Duration = Duration.fromMinutes(1)
+  ): Map[OperatorIdentity, List[Tuple]] = {
+    val (compiled, saved) = buildFromCompiledAndSavedPlans(operators, links, newContext)
+    val fromCompiled = runAfresh(system, compiled, id, completionTimeout)
+    val fromSaved = runAfresh(system, saved, id, completionTimeout)
+
+    def counted(tuples: List[Tuple]): Map[Tuple, Int] =
+      tuples.groupMapReduce(identity)(_ => 1)(_ + _)
+    Assertions.assert(fromSaved.keySet == fromCompiled.keySet, "the runs read other operators")
+    fromCompiled.foreach {
+      case (opId, tuples) =>
+        val (fromCompiledPlan, fromSavedPlan) = (counted(tuples), counted(fromSaved(opId)))
+        val differing = (fromCompiledPlan.keySet ++ fromSavedPlan.keySet).toSeq.collect {
+          case tuple if fromCompiledPlan.get(tuple) != fromSavedPlan.get(tuple) =>
+            s"$tuple, ${fromCompiledPlan.getOrElse(tuple, 0)} times from the compiled plan and " +
+              s"${fromSavedPlan.getOrElse(tuple, 0)} from the saved one"
+        }
+        Assertions.assert(
+          differing.isEmpty,
+          s"operator ${opId.id} gave other results from the saved plan: ${tuples.size} rows " +
+            s"from the compiled plan, ${fromSaved(opId).size} from the saved one; " +
+            s"${differing.take(5).mkString("; ")}"
+        )
+    }
+    fromSaved
+  }
 
   /**
     * If a test case accesses the user system through singleton resources that cache the DSLContext (e.g., executes a

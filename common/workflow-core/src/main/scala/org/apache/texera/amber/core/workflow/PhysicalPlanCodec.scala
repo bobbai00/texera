@@ -64,7 +64,8 @@ import scala.util.control.NonFatal
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding, every port
   * has its schema, and the links form no cycle. A plan read back can be run but not compiled
-  * again: each port keeps its schema, but no operator keeps the function that derived it.
+  * again: each port keeps its schema, but no operator keeps the function that derived it
+  * ([[ReadBackSchemaPropagation]] takes its place).
   *
   * The text is read only in the form [[toJson]] writes, but for the order of an object's fields
   * and the spacing: a plan cut short, edited by hand, or written by another writer that differs
@@ -74,6 +75,22 @@ object PhysicalPlanCodec {
 
   /** The version of the format this codec writes, and the only one it reads. */
   val FormatVersion: Int = 1
+
+  /**
+    * The schema propagation function of every operator read back. A saved plan holds each port's
+    * schema but not the function the compile derived it with, so an operator read back cannot
+    * derive schemas again: this function fails, and `PhysicalOp.propagateSchema` records the
+    * failure on each output port. PhysicalOp's default, the identity, would instead copy each
+    * input schema onto the output port of the same number, a wrong schema that nothing reports.
+    * Nothing derives schemas in a plan that runs; this keeps a later change that does from
+    * running on wrong schemas unnoticed.
+    */
+  val ReadBackSchemaPropagation: SchemaPropagationFunc = SchemaPropagationFunc(_ =>
+    throw new UnsupportedOperationException(
+      "This operator was read back from a saved plan, which holds its schemas but not the " +
+        "function that derived them, so it cannot derive them again."
+    )
+  )
 
   private val attributeTypes: Seq[(AttributeType, StoredType)] = Seq(
     AttributeType.STRING -> StoredType.STRING,
@@ -152,10 +169,10 @@ object PhysicalPlanCodec {
     * warehouse, and no computing unit.
     *
     * The plan is for running, not for compiling again. Each port has the schema the compile gave
-    * it, but each operator's `propagateSchema` is PhysicalOp's default, the identity, since the
+    * it, but each operator's `propagateSchema` is [[ReadBackSchemaPropagation]], since the
     * function the compile used is not saved: propagating schemas through the plan, or adding a
-    * link to it, would not give what the compile gave. Operators and links are built as saved,
-    * with no schema propagated.
+    * link to it, leaves each output port it reaches with that function's error instead of a
+    * schema. Operators and links are built as saved, with no schema propagated.
     *
     * @throws IllegalArgumentException if the plan is in another format version, leaves out
     *                                  something it must have, holds a value this version does
@@ -425,6 +442,7 @@ object PhysicalPlanCodec {
           (port.port, port.links, port.schema)
         }
       )(_.id),
+      propagateSchema = ReadBackSchemaPropagation,
       isOneToManyOp = stored.isOneToManyOp,
       requiresMaterializedExecution = stored.requiresMaterializedExecution,
       isLoopStart = stored.isLoopStart,

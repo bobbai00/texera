@@ -253,6 +253,9 @@ case class WorkflowCompilationResult(
   * name (see [[bindResources]]): that is a database lookup per version, and the editing path
   * compiles on every edit.
   *
+  * @param context            the workflow and execution the compiler makes plans for: their ids
+  *                           stamp every operator. Public, so what saves a plan to run saves it
+  *                           for the run the compiler made it for.
   * @param fileResolver       resolves scan source file names to URIs.
   * @param repositoryResolver pins the dataset and model versions operators name, for the user
   *                           the plan is made for. Only a Strict compile asks it, so a compile
@@ -264,7 +267,7 @@ case class WorkflowCompilationResult(
   *                           checks its own root against that before mounting.
   */
 class WorkflowCompiler(
-    context: WorkflowContext,
+    val context: WorkflowContext,
     fileResolver: ScanFileResolver,
     repositoryResolver: RepositoryVersionResolver,
     mountRoot: Option[Path] = RepositoryMountManager.mountRoot

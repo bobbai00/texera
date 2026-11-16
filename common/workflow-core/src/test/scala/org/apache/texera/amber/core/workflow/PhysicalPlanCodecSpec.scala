@@ -450,12 +450,26 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assert(texts.head == PhysicalPlanCodec.toJson(stored))
   }
 
-  it should "read back a plan whose operators derive no schema" in {
+  it should "read back a plan whose operators cannot derive their schemas again" in {
     val (_, read) = PhysicalPlanCodec.decode(PhysicalPlanCodec.encode(fullContext, fullPlan))
-    val schemas = Map(PortIdentity(0) -> keyed, PortIdentity(1) -> everyType)
+    assert(read.operators.nonEmpty)
     read.operators.foreach { op =>
-      // PhysicalOp's default: the identity, not the function the compile used
-      assert(op.propagateSchema.func(schemas) == schemas)
+      withClue(s"operator ${op.id.logicalOpId.id}-${op.id.layerName}: ") {
+        // Neither the function the compile used nor PhysicalOp's default, the identity.
+        assert(op.propagateSchema == PhysicalPlanCodec.ReadBackSchemaPropagation)
+        val refused = intercept[UnsupportedOperationException] {
+          op.propagateSchema.func(Map(PortIdentity(0) -> keyed))
+        }
+        assert(refused.getMessage.contains("read back from a saved plan"))
+        // Deriving the schemas leaves that error on every output port, rather than a schema
+        // copied from an input port.
+        op.propagateSchema().outputPorts.values.foreach {
+          case (port, _, schema) =>
+            withClue(s"output port ${port.id.id}: ") {
+              assert(schema.left.exists(_.getMessage == refused.getMessage))
+            }
+        }
+      }
     }
   }
 

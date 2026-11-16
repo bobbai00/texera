@@ -20,9 +20,11 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
 import org.apache.texera.amber.core.storage.{FileResolver, RepositoryMountManager}
+import org.apache.texera.amber.core.storedplan.StoredPhysicalPlan
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
+import org.apache.texera.amber.core.workflow.{PhysicalPlan, PhysicalPlanCodec, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
@@ -39,13 +41,15 @@ import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutions
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
-import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.apache.texera.common.compiler.WorkflowCompiler
 
 import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
+import java.security.MessageDigest
 import scala.collection.mutable
 
-object WorkflowExecutionService {
+object WorkflowExecutionService extends LazyLogging {
   def getLatestExecutionId(
       workflowId: WorkflowIdentity,
       computingUnitId: Int
@@ -53,6 +57,104 @@ object WorkflowExecutionService {
     WorkflowExecutionsResource
       .getLatestExecutionID(workflowId.id.toInt, computingUnitId)
       .map(eid => new ExecutionIdentity(eid.longValue()))
+  }
+
+  /**
+    * The workflow the engine runs for the run under `context`: the physical plan `planToRun`
+    * saved, read back, run under the settings read back with it. The engine starts here, from the
+    * saved text and the logical plan; it is never handed the plan a compile made, so what runs is
+    * what was saved.
+    *
+    * The plan must be the run's own: saved for its workflow and execution, with the batch size
+    * and execution mode its request asks for, and its warehouse. The computing unit is the run's
+    * own too, as a saved plan names none. The output ports whose results are stored are the
+    * plan's, which the compile that made it found: `context` takes the saved settings, stored
+    * ports included. And the engine must be able to run the plan on this unit
+    * ([[requireRunnableUnder]]). A plan refused leaves `context` as it was.
+    *
+    * Logs the saved plan's size, and at debug level the saved plan with each executor's settings
+    * or code left out: they may hold an operator's credentials.
+    *
+    * @param unitMountRoot the directory this computing unit mounts datasets and models under
+    * @throws IllegalArgumentException if the saved plan is not one the engine reads
+    * @throws IllegalStateException    if the plan is another run's, or cannot run on this unit
+    */
+  def workflowToRun(
+      planToRun: PlanToRun,
+      context: WorkflowContext,
+      unitMountRoot: Option[Path]
+  ): Workflow = {
+    val executionId = context.executionId.id
+    val savedPlan = planToRun.savedPlan
+    logger.info(
+      s"Execution $executionId runs a saved plan of " +
+        s"${savedPlan.getBytes(StandardCharsets.UTF_8).length} bytes."
+    )
+    val stored = PhysicalPlanCodec.fromJson(savedPlan)
+    logger.debug(
+      s"The saved plan of execution $executionId, without what its executors are given:\n" +
+        PhysicalPlanCodec.toJson(withoutExecutorContents(stored))
+    )
+    val (planContext, plan) = PhysicalPlanCodec.decode(stored)
+    requirePlanOf(context, planContext)
+    requireRunnableUnder(plan, unitMountRoot)
+    context.workflowSettings = planContext.workflowSettings
+    Workflow(context, planToRun.logicalPlan, plan)
+  }
+
+  /**
+    * Fails unless `planContext`, the context a saved plan was read back with, agrees with
+    * `runContext` on all the run's request fixes: the workflow and execution, the batch size and
+    * execution mode, and the warehouse. The output ports whose results are stored are left out,
+    * as the run knows them only from the plan.
+    */
+  private def requirePlanOf(runContext: WorkflowContext, planContext: WorkflowContext): Unit = {
+    def differ[A](what: String, saved: A, run: A)(show: A => String): Option[String] =
+      Option.when(saved != run)(s"its $what is ${show(saved)}, the run's is ${show(run)}")
+    val (inPlan, inRun) = (planContext.workflowSettings, runContext.workflowSettings)
+    val differences = Seq(
+      differ("workflow", planContext.workflowId.id, runContext.workflowId.id)(_.toString),
+      differ("execution", planContext.executionId.id, runContext.executionId.id)(_.toString),
+      differ(
+        "data transfer batch size",
+        inPlan.dataTransferBatchSize,
+        inRun.dataTransferBatchSize
+      )(_.toString),
+      differ("execution mode", inPlan.executionMode, inRun.executionMode)(_.toString),
+      differ("warehouse", planContext.warehouse, runContext.warehouse)(
+        _.getOrElse("the default one")
+      )
+    ).flatten
+    if (differences.nonEmpty) {
+      throw new IllegalStateException(
+        s"The plan handed to execution ${runContext.executionId.id} is not its own: " +
+          s"${differences.mkString("; ")}."
+      )
+    }
+  }
+
+  /**
+    * `stored` with each executor's settings (an operator's descriptor) or code replaced by its
+    * length and SHA-256 digest, for the log: they may hold the operator's credentials, a SQL
+    * source's password say. The rest of the plan, what the engine schedules by, is kept.
+    */
+  private def withoutExecutorContents(stored: StoredPhysicalPlan): StoredPhysicalPlan = {
+    def digest(content: String): String = {
+      val sha256 = MessageDigest
+        .getInstance("SHA-256")
+        .digest(content.getBytes(StandardCharsets.UTF_8))
+        .map(byte => f"$byte%02x")
+        .mkString
+      s"(left out: ${content.length} characters, SHA-256 $sha256)"
+    }
+    stored.copy(operators = stored.operators.map { op =>
+      op.copy(opExecInitInfo = op.opExecInitInfo match {
+        case OpExecWithClassName(className, descString) =>
+          OpExecWithClassName(className, digest(descString))
+        case OpExecWithCode(code, language) => OpExecWithCode(digest(code), language)
+        case none                           => none
+      })
+    })
   }
 
   /**
@@ -146,14 +248,14 @@ class WorkflowExecutionService(
       mountRoot
     )
     try {
-      val compilationResult = compiler.compile(request.logicalPlan, CompilationErrorHandling.Strict)
-      val compiled = Workflow.fromCompilationResult(workflowContext, compilationResult)
-      WorkflowExecutionService.requireRunnableUnder(compiled.physicalPlan, mountRoot)
-      workflow = compiled
+      // The plan is made and saved; the engine's half starts from what was saved, and the run,
+      // and every service built around it below, use the plan read back from it.
+      workflow =
+        WorkflowExecutionService.workflowToRun(makePlanToRun(compiler), workflowContext, mountRoot)
     } catch {
       case err: Throwable =>
         // stop here: `workflow` is still null, so falling through would NPE
-        // below and mask the reported compilation error
+        // below and mask the reported error, of the compile or of the plan read back
         errorHandler(err)
         return Some(err)
     }
@@ -210,6 +312,11 @@ class WorkflowExecutionService(
       )
     None
   }
+
+  // Makes the plan this run runs and saves it: the half of starting a run that is meant to move
+  // to the Dashboard service. A seam, so a test can hand the engine a saved plan of its own.
+  protected def makePlanToRun(compiler: WorkflowCompiler): PlanToRun =
+    PlanToRun.make(compiler, request.logicalPlan)
 
   // Hands the plan to the engine. A seam, so a test can set a run up in full, every service
   // built around its plan, without an engine to start it.

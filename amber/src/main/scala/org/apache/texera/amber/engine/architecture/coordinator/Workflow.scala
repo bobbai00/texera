@@ -32,10 +32,15 @@ case class Workflow(
 object Workflow {
 
   /**
-    * Builds the engine `Workflow` from a Strict-mode compilation result. Also writes the
-    * result's `outputPortsNeedingStorage` back onto the context so the schedule generators
-    * materialize terminal results — every execution-path caller must do both, so they are
-    * kept together here. Strict mode guarantees `physicalPlan` is defined.
+    * The `Workflow` a Strict-mode compilation result holds, with the physical plan as the compile
+    * made it. Also writes the result's `outputPortsNeedingStorage` onto the context, whose
+    * settings the plan runs under, so the schedule generators materialize terminal results —
+    * every caller must do both, so they are kept together here. Strict mode guarantees
+    * `physicalPlan` is defined.
+    *
+    * A run does not run this plan: [[org.apache.texera.web.service.PlanToRun.make]] saves it
+    * under a context of its own, which this writes the stored ports onto, and the engine runs
+    * the plan read back from what was saved, under the settings saved with it.
     */
   def fromCompilationResult(
       context: WorkflowContext,

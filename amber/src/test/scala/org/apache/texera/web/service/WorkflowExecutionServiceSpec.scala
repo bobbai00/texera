@@ -19,6 +19,9 @@
 
 package org.apache.texera.web.service
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
+import ch.qos.logback.core.read.ListAppender
 import com.google.protobuf.timestamp.Timestamp
 import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
@@ -26,7 +29,8 @@ import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
-import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
+import org.apache.texera.amber.core.storage.RepositoryVersionResolver
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
   OperatorIdentity,
@@ -35,8 +39,12 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{
   BoundResources,
+  ExecutionMode,
+  GlobalPortIdentity,
+  OutputPort,
   PhysicalOp,
   PhysicalPlan,
+  PhysicalPlanCodec,
   PortIdentity,
   RepositoryMounts,
   ResourceBinding,
@@ -56,6 +64,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
@@ -88,7 +97,8 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
-import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.common.compiler.WorkflowCompiler
+import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.apache.texera.web.model.websocket.request.{ModifyLogicRequest, WorkflowExecuteRequest}
 import org.apache.texera.web.model.websocket.response.ModifyLogicResponse
@@ -97,14 +107,18 @@ import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
+import org.slf4j.LoggerFactory
 
 import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
+import java.security.MessageDigest
 import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
+import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
 
 /**
@@ -147,7 +161,9 @@ import scala.reflect.ClassTag
   * built around the plan, and nothing starts. They run as `testUid`, against two private datasets
   * of another user, one of them shared with `testUid`, on a unit that mounts under
   * `unitMountRoot` — so they pin what the run's compiler is given (its user, the unit's root)
-  * and that a paused edit is bound by that same compiler.
+  * and that a paused edit is bound by that same compiler. Its `makePlanToRun` seam records the
+  * plan a run saves, or hands the run one a test made, so they also pin that the engine is
+  * handed only the plan read back from the saved one, and runs under the settings saved with it.
   *
   * Known, pre-existing: `ExecutionStatsService` never shuts down its private
   * `metricsPersistThread` (it does not override `unsubscribeAll`), so the teardown
@@ -404,9 +420,20 @@ class WorkflowExecutionServiceSpec
     * A run of `logicalPlan` by `testUid`, on a unit that mounts under `unitMountRoot`, that goes
     * through `executeWorkflow` as production does: the plan is made and every service is built
     * around it. Only the engine is a `TestAmberClient`, so nothing starts.
+    *
+    * @param handPlan makes the plan the run is handed in place of the one it makes, if given,
+    *                 from the run's own compiler
+    * @param settings the settings the run's request asks for
     */
-  private final class StubbedRun(logicalPlan: LogicalPlanPojo) {
+  private final class StubbedRun(
+      logicalPlan: LogicalPlanPojo,
+      handPlan: Option[WorkflowCompiler => PlanToRun] = None,
+      settings: WorkflowSettings = WorkflowSettings()
+  ) {
     val errors: ListBuffer[Throwable] = ListBuffer.empty
+    // the plan the run was handed, saved, and the workflow the engine was then handed
+    var planToRun: Option[PlanToRun] = None
+    var engineWorkflow: Option[EngineWorkflow] = None
     val resultService =
       new ExecutionResultService(
         WorkflowIdentity(testWid.longValue()),
@@ -415,17 +442,14 @@ class WorkflowExecutionServiceSpec
       )
     val service: WorkflowExecutionService = new WorkflowExecutionService(
       CoordinatorConfig(None, None, None, None),
-      new WorkflowContext(
-        workflowId = WorkflowIdentity(testWid.longValue()),
-        executionId = ExecutionIdentity(testEid.longValue())
-      ),
+      runContext(),
       resultService,
       WorkflowExecuteRequest(
         executionName = "test",
         engineVersion = "test",
         logicalPlan = logicalPlan,
         replayFromExecution = None,
-        workflowSettings = WorkflowSettings(),
+        workflowSettings = settings,
         emailNotificationEnabled = false,
         computingUnitId = testCuid,
         warehouseId = None
@@ -437,8 +461,16 @@ class WorkflowExecutionServiceSpec
       new URI("vfs:///test"),
       mountRoot = Some(unitMountRoot)
     ) {
-      override protected def createAmberRuntime(workflow: EngineWorkflow): AmberClient =
+      override protected def makePlanToRun(compiler: WorkflowCompiler): PlanToRun = {
+        val made = handPlan.fold(super.makePlanToRun(compiler))(_(compiler))
+        planToRun = Some(made)
+        made
+      }
+
+      override protected def createAmberRuntime(workflow: EngineWorkflow): AmberClient = {
+        engineWorkflow = Some(workflow)
         new TestAmberClient
+      }
     }
 
     def close(): Unit = {
@@ -497,6 +529,88 @@ class WorkflowExecutionServiceSpec
       ExecutionIdentity(testEid.longValue()),
       OpExecWithClassName("unused")
     )
+
+  /** The context a run of the fixture execution starts with, before its request's settings. */
+  private def runContext(): WorkflowContext =
+    new WorkflowContext(
+      workflowId = WorkflowIdentity(testWid.longValue()),
+      executionId = ExecutionIdentity(testEid.longValue())
+    )
+
+  /** A lone text input, a workflow other than any request's below. */
+  private def loneTextPlan(): LogicalPlanPojo = {
+    val text = new TextInputSourceOpDesc
+    text.setOperatorId("lone-text")
+    text.textInput = "a"
+    LogicalPlanPojo(List(text), List.empty, List.empty, List.empty)
+  }
+
+  /** A compiler for the run under `context` that resolves nothing but fixture files. */
+  private def compilerFor(context: WorkflowContext): WorkflowCompiler =
+    new WorkflowCompiler(
+      context,
+      TestOperators.fixtureFileResolver,
+      RepositoryVersionResolver.Unavailable,
+      Some(unitMountRoot)
+    )
+
+  /** A source whose one output port, of one string column, has its results stored. */
+  private val storedSource: PhysicalOp =
+    sourceOp("stored-text").copy(outputPorts =
+      Map(
+        PortIdentity() -> (
+          OutputPort(),
+          List.empty,
+          Right(Schema().add("line", AttributeType.STRING))
+        )
+      )
+    )
+
+  /** The context a plan of `storedSource` alone is saved for in the workflowToRun tests. */
+  private def savedPlanContext(): WorkflowContext =
+    new WorkflowContext(
+      workflowId = WorkflowIdentity(testWid.longValue()),
+      executionId = ExecutionIdentity(testEid.longValue()),
+      workflowSettings = WorkflowSettings(
+        dataTransferBatchSize = 50,
+        executionMode = ExecutionMode.PIPELINED,
+        outputPortsNeedingStorage = Set(GlobalPortIdentity(storedSource.id, PortIdentity()))
+      ),
+      warehouse = Some("warehouse-1")
+    )
+
+  private def saved(context: WorkflowContext, plan: PhysicalPlan): String =
+    PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(context, plan))
+
+  /** `savedPlan`, handed to the engine with the logical plan of `loneTextPlan`. */
+  private def handed(savedPlan: String): PlanToRun =
+    PlanToRun(savedPlan, LogicalPlan(loneTextPlan()))
+
+  /** The context of the run `savedPlanContext` saves for, as its request sets it up. */
+  private def requestedContext(): WorkflowContext = {
+    val run = savedPlanContext()
+    // Only the plan knows the ports whose results are stored.
+    run.workflowSettings = run.workflowSettings.copy(outputPortsNeedingStorage = Set.empty)
+    run
+  }
+
+  /** Collects the events the logger named `loggerName` emits at `level` or above during `body`. */
+  private def eventsLoggedAt(loggerName: String, level: Level)(body: => Any): Seq[ILoggingEvent] = {
+    val logger = LoggerFactory.getLogger(loggerName).asInstanceOf[LogbackLogger]
+    val appender = new ListAppender[ILoggingEvent]
+    val previousLevel = logger.getLevel
+    appender.start()
+    logger.addAppender(appender)
+    logger.setLevel(level)
+    try {
+      body
+      appender.list.asScala.toList
+    } finally {
+      logger.setLevel(previousLevel)
+      logger.detachAppender(appender)
+      appender.stop()
+    }
+  }
 
   "WorkflowExecutionService" should
     "surface a recorded fatal error as a WorkflowErrorEvent via the metadata-store handler" in {
@@ -809,6 +923,264 @@ class WorkflowExecutionServiceSpec
       queued.map(op => (op.opExecInitInfo, op.repositoryMounts, op.resourceBinding)) shouldBe
         List((udf.opExecInitInfo, udf.repositoryMounts, None))
     } finally run.close()
+  }
+
+  it should "hand the engine, and the services built around the run, the plan read back from its saved plan" in {
+    val run = new StubbedRun(datasetUdfPlan(readableVersionPath))
+    try {
+      run.service.executeWorkflow() shouldBe None
+      run.errors shouldBe empty
+      val planToRun = run.planToRun.getOrElse(fail("no plan was made"))
+      val engineWorkflow = run.engineWorkflow.getOrElse(fail("the engine was handed no workflow"))
+
+      val (planContext, readBack) =
+        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+      engineWorkflow.physicalPlan shouldBe readBack
+      // Read back, not compiled: no operator keeps the schema function its compile gave it, which
+      // the saved text does not hold.
+      engineWorkflow.physicalPlan.operators.map(_.propagateSchema) shouldBe
+        Set(PhysicalPlanCodec.ReadBackSchemaPropagation)
+      // Every service is built around that same workflow, under the run's own context, whose
+      // settings, stored results included, are the ones the plan was saved with.
+      run.service.workflow should be theSameInstanceAs engineWorkflow
+      engineWorkflow.context should be theSameInstanceAs run.service.workflowContext
+      engineWorkflow.logicalPlan should be theSameInstanceAs planToRun.logicalPlan
+      planContext.workflowSettings shouldBe run.service.workflowContext.workflowSettings
+      planContext.workflowSettings.outputPortsNeedingStorage should not be empty
+    } finally run.close()
+  }
+
+  it should "run the plan it is handed, not one compiled again from its request" in {
+    val run = new StubbedRun(
+      datasetUdfPlan(readableVersionPath),
+      handPlan = Some(compiler => PlanToRun.make(compiler, loneTextPlan()))
+    )
+    try {
+      run.service.executeWorkflow() shouldBe None
+      run.errors shouldBe empty
+      run.engineWorkflow.map(_.physicalPlan.operators.map(_.id.logicalOpId)) shouldBe
+        Some(Set(OperatorIdentity("lone-text")))
+      run.service.workflow.logicalPlan.getTerminalOperatorIds shouldBe
+        List(OperatorIdentity("lone-text"))
+    } finally run.close()
+  }
+
+  it should "run under the settings saved with the plan it is handed, made under a context of its own" in {
+    // As a plan made elsewhere would be, by the Dashboard service say: for the run's ids, under a
+    // context the run does not share.
+    val makerContext = runContext()
+    val run = new StubbedRun(
+      datasetUdfPlan(readableVersionPath),
+      handPlan = Some(_ => PlanToRun.make(compilerFor(makerContext), loneTextPlan()))
+    )
+    try {
+      run.service.executeWorkflow() shouldBe None
+      run.errors shouldBe empty
+      val planToRun = run.planToRun.getOrElse(fail("no plan was handed"))
+      val (planContext, _) =
+        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+      val storedPorts = planContext.workflowSettings.outputPortsNeedingStorage
+      storedPorts.map(_.opId.logicalOpId) shouldBe Set(OperatorIdentity("lone-text"))
+
+      // The engine runs under the run's own context, which took the saved settings, stored ports
+      // included, as only the plan knows them...
+      val engineWorkflow = run.engineWorkflow.getOrElse(fail("the engine was handed no workflow"))
+      engineWorkflow.context should be theSameInstanceAs run.service.workflowContext
+      engineWorkflow.context.workflowSettings shouldBe planContext.workflowSettings
+      // ...and making the plan left the context it was made under as it was.
+      makerContext.workflowSettings shouldBe WorkflowSettings()
+    } finally run.close()
+  }
+
+  it should "refuse a plan saved for another run before it builds the engine" in {
+    val otherExecution = testEid.longValue() + 100
+    val run = new StubbedRun(
+      datasetUdfPlan(readableVersionPath),
+      handPlan = Some { _ =>
+        val otherRun = runContext()
+        otherRun.executionId = ExecutionIdentity(otherExecution)
+        PlanToRun.make(compilerFor(otherRun), loneTextPlan())
+      }
+    )
+    try {
+      val failure = run.service.executeWorkflow().getOrElse(fail("the run was set up"))
+
+      failure shouldBe an[IllegalStateException]
+      failure.getMessage should include(s"its execution is $otherExecution, the run's is $testEid")
+      run.errors shouldBe Seq(failure)
+      run.engineWorkflow shouldBe None
+      run.service.workflow shouldBe null
+      run.service.client shouldBe null
+      // The refused plan's settings were not taken.
+      run.service.workflowContext.workflowSettings shouldBe WorkflowSettings()
+    } finally run.close()
+  }
+
+  it should "refuse a run whose batches hold no tuple, naming the editor's setting, before it starts" in {
+    // The editor asks for at least 1; a request made otherwise used to run with batches of one.
+    val run = new StubbedRun(loneTextPlan(), settings = WorkflowSettings(dataTransferBatchSize = 0))
+    try {
+      val failure = run.service.executeWorkflow().getOrElse(fail("the run was set up"))
+
+      failure shouldBe an[IllegalArgumentException]
+      failure.getMessage shouldBe
+        "The workflow's Data Transfer Batch Size is 0; set it to 1 or more."
+      run.errors shouldBe Seq(failure)
+      run.planToRun shouldBe None
+      run.engineWorkflow shouldBe None
+      run.service.workflow shouldBe null
+    } finally run.close()
+  }
+
+  it should "refuse a saved plan it cannot read before it builds the engine" in {
+    val run = new StubbedRun(
+      datasetUdfPlan(readableVersionPath),
+      handPlan = Some(_ => handed("not a plan"))
+    )
+    try {
+      val failure = run.service.executeWorkflow().getOrElse(fail("the run was set up"))
+
+      failure shouldBe an[IllegalArgumentException]
+      failure.getMessage should include("not JSON")
+      run.errors shouldBe Seq(failure)
+      run.engineWorkflow shouldBe None
+      run.service.workflow shouldBe null
+    } finally run.close()
+  }
+
+  "WorkflowExecutionService.workflowToRun" should
+    "run the plan saved for the run under its saved settings, whatever computing unit the run is on" in {
+    val plan = PhysicalPlan(Set(storedSource), Set.empty)
+    val savedPlan = saved(savedPlanContext(), plan)
+    val planToRun = handed(savedPlan)
+    val run = requestedContext()
+    run.cuid = Some(testCuid)
+
+    val workflow = WorkflowExecutionService.workflowToRun(planToRun, run, Some(unitMountRoot))
+
+    workflow.physicalPlan shouldBe PhysicalPlanCodec
+      .decode(PhysicalPlanCodec.fromJson(savedPlan))
+      ._2
+    workflow.logicalPlan should be theSameInstanceAs planToRun.logicalPlan
+    // The run's own context, which takes the saved settings, the ports whose results are stored
+    // included, and keeps its computing unit.
+    workflow.context should be theSameInstanceAs run
+    run.workflowSettings shouldBe savedPlanContext().workflowSettings
+    run.workflowSettings.outputPortsNeedingStorage.toList shouldBe
+      savedPlanContext().workflowSettings.outputPortsNeedingStorage.toList
+    run.cuid shouldBe Some(testCuid)
+  }
+
+  it should "refuse a plan saved for another run, naming what differs, and leave the run's context alone" in {
+    val savedPlan = saved(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
+    val nextWid = testWid.longValue() + 1
+    val nextEid = testEid.longValue() + 1
+    val differences: Seq[(WorkflowContext => Unit, String)] = Seq(
+      (
+        _.workflowId = WorkflowIdentity(nextWid),
+        s"its workflow is $testWid, the run's is $nextWid"
+      ),
+      (
+        _.executionId = ExecutionIdentity(nextEid),
+        s"its execution is $testEid, the run's is $nextEid"
+      ),
+      (
+        run => run.workflowSettings = run.workflowSettings.copy(dataTransferBatchSize = 51),
+        "its data transfer batch size is 50, the run's is 51"
+      ),
+      (
+        run =>
+          run.workflowSettings =
+            run.workflowSettings.copy(executionMode = ExecutionMode.MATERIALIZED),
+        "its execution mode is PIPELINED, the run's is MATERIALIZED"
+      ),
+      (_.warehouse = None, "its warehouse is warehouse-1, the run's is the default one")
+    )
+    for ((change, difference) <- differences) {
+      val run = requestedContext()
+      change(run)
+      val settings = run.workflowSettings
+      withClue(s"$difference: ") {
+        val failure = the[IllegalStateException] thrownBy
+          WorkflowExecutionService.workflowToRun(handed(savedPlan), run, Some(unitMountRoot))
+        failure.getMessage shouldBe
+          s"The plan handed to execution ${run.executionId.id} is not its own: $difference."
+        run.workflowSettings shouldBe settings
+      }
+    }
+  }
+
+  it should "refuse text that is not a saved plan" in {
+    val run = requestedContext()
+    val failure = the[IllegalArgumentException] thrownBy
+      WorkflowExecutionService.workflowToRun(handed("{}"), run, Some(unitMountRoot))
+    failure.getMessage should include("format version")
+    run.workflowSettings shouldBe requestedContext().workflowSettings
+  }
+
+  it should "refuse a plan this unit cannot run, whose code reads datasets under another root" in {
+    val mounting = sourceOp("reads-a-dataset").copy(
+      repositoryMounts = Some(RepositoryMounts("/plan/root", Set(readableLocator)))
+    )
+    val savedPlan = saved(requestedContext(), PhysicalPlan(Set(mounting), Set.empty))
+
+    val failure = the[IllegalStateException] thrownBy
+      WorkflowExecutionService.workflowToRun(
+        handed(savedPlan),
+        requestedContext(),
+        Some(unitMountRoot)
+      )
+    failure.getMessage should include("/plan/root")
+    failure.getMessage should include(unitMountRoot.toString)
+  }
+
+  it should "log the saved plan's size, and at debug level the plan without what executors are given" in {
+    // What an executor is given can hold an operator's credentials: a SQL source's password in its
+    // settings, a token in a UDF's code.
+    val settings = """{"host":"db.example","password":"hunter2"}"""
+    val code = "token = 's3cr3t-t0ken'"
+    val plan = PhysicalPlan(
+      Set(
+        sourceOp("reads-a-database")
+          .copy(opExecInitInfo = OpExecWithClassName("org.example.SqlSourceOpExec", settings)),
+        sourceOp("runs-code").copy(opExecInitInfo = OpExecWithCode(code, "python"))
+      ),
+      Set.empty
+    )
+    val savedPlan = saved(requestedContext(), plan)
+    def sha256(text: String): String =
+      MessageDigest
+        .getInstance("SHA-256")
+        .digest(text.getBytes(StandardCharsets.UTF_8))
+        .map(byte => f"$byte%02x")
+        .mkString
+
+    val events = eventsLoggedAt(WorkflowExecutionService.getClass.getName, Level.DEBUG) {
+      WorkflowExecutionService.workflowToRun(
+        handed(savedPlan),
+        requestedContext(),
+        Some(unitMountRoot)
+      )
+    }
+
+    events.filter(_.getLevel == Level.INFO).map(_.getFormattedMessage) shouldBe Seq(
+      s"Execution $testEid runs a saved plan of " +
+        s"${savedPlan.getBytes(StandardCharsets.UTF_8).length} bytes."
+    )
+    val debug = events.filter(_.getLevel == Level.DEBUG).map(_.getFormattedMessage)
+    debug should have size 1
+    debug.head should startWith(
+      s"The saved plan of execution $testEid, without what its executors are given:\n"
+    )
+    // The plan, with each executor's class or language, but its settings and code left out.
+    debug.head should include("org.example.SqlSourceOpExec")
+    debug.head should include("python")
+    debug.head should include(
+      s"(left out: ${settings.length} characters, SHA-256 ${sha256(settings)})"
+    )
+    debug.head should include(s"(left out: ${code.length} characters, SHA-256 ${sha256(code)})")
+    debug.head should not include "hunter2"
+    debug.head should not include "s3cr3t"
   }
 
   "WorkflowExecutionService.requireRunnableUnder" should
