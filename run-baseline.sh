@@ -4,13 +4,17 @@
 # again unless --keep is given.
 #
 #   ./run-baseline.sh [--keep] [--reset] [--source <worktree>] [--images <registry>/<tag>]
-#                     [--label <text>] [-- <driver args>]
+#                     [--pg-statement-log] [--isolate-unit] [--with-replay-log]
+#                     [--unit-env KEY=VAL ...] [--label <text>] [-- <driver args>]
 #
 #   --images   default ghcr.io/apache/latest (the published images); a branch
 #              build from images/build.sh is sce/<tag>
 #   --reset    start from empty volumes (sce-stack.sh reset first)
 #   --keep     leave the stack running afterwards (default: sce-stack.sh down,
 #              volumes kept)
+#   --pg-statement-log, --isolate-unit, --with-replay-log, --unit-env KEY=VAL
+#              stack options for the evidence checks, passed to `sce-stack.sh up`
+#              (see the README); the driver's --evidence needs --pg-statement-log
 #   anything after `--` goes to driver/e2e.py (e.g. -- --scenario a,d)
 #
 # Exit code: the driver's (0 all pass, 1 a scenario failed, 2 setup failed),
@@ -20,7 +24,7 @@ SCE_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK="$SCE_HOME/stack/sce-stack.sh"
 
 keep=false; reset=false; images="ghcr.io/apache/latest"; label=""; source_args=()
-driver_args=()
+driver_args=(); stack_opts=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --keep) keep=true ;;
@@ -28,13 +32,21 @@ while [[ $# -gt 0 ]]; do
         --images) images="$2"; shift ;;
         --source) source_args=(--source "$2"); shift ;;
         --label) label="$2"; shift ;;
+        --pg-statement-log|--isolate-unit|--with-replay-log) stack_opts+=("$1") ;;
+        --unit-env) stack_opts+=(--unit-env "$2"); shift ;;
         --) shift; driver_args=("$@"); break ;;
-        -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1 (see --help)" >&2; exit 64 ;;
     esac
     shift
 done
-[[ -n "$label" ]] || label="images=$images"
+if [[ -z "$label" ]]; then
+    label="images=$images"
+    # the option names only: a --unit-env value may be a token
+    for o in ${stack_opts[@]+"${stack_opts[@]}"}; do
+        [[ "$o" == --* ]] && label+=" $o"
+    done
+fi
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 report="$SCE_HOME/reports/baseline-$stamp.json"
@@ -58,7 +70,7 @@ if $reset; then
 fi
 
 echo "[run-baseline] stack up with images $images"
-if ! "$STACK" ${source_args[@]+"${source_args[@]}"} up --images "$images"; then
+if ! "$STACK" ${source_args[@]+"${source_args[@]}"} up --images "$images" ${stack_opts[@]+"${stack_opts[@]}"}; then
     echo "[run-baseline] stack did not come up" >&2
     "$STACK" status || true
     exit 3

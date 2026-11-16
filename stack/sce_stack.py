@@ -17,6 +17,19 @@ single-node stack:
     answers 503 on the routes of a dropped service;
   * a healthcheck added for the computing unit, which has none upstream.
 
+Options for the evidence checks of the self-contained-engine work (all off by
+default, all recorded in MANIFEST.json):
+
+  * --pg-statement-log  Postgres logs every statement with the connection's
+    application name, database and client address (and the unit's idle
+    cleanup drops to 2 s unless --unit-env sets it);
+  * --isolate-unit      the unit sits alone on a second network, sce-unit-net,
+    with only Postgres, Lakekeeper, RustFS and nginx (and agent-service when
+    kept) beside it, so it cannot reach file-service or LakeFS;
+  * --with-replay-log   the Dashboard and the unit write replay logs under the
+    shared result volume;
+  * --unit-env KEY=VAL  extra environment for the unit (repeatable).
+
 Commands: generate | up | down | reset | status | logs. See --help.
 """
 
@@ -70,6 +83,33 @@ UNIT_HEALTHCHECK = {
     "start_period": "20s",
 }
 NGINX_SERVICE = "nginx"
+POSTGRES_SERVICE = "postgres"
+DASHBOARD_SERVICE = "dashboard-service"
+
+# --pg-statement-log: the compose service has no command upstream, so this one is
+# the image's default command plus the logging settings. Extended-protocol
+# statements log their values on a following "DETAIL:  parameters:" line of the
+# same pid; %a is the connection's application_name (texera-<service> from
+# step 2's sub-part 1 on).
+PG_LOG_LINE_PREFIX = "%m [%p] app=%a db=%d host=%h "
+PG_STATEMENT_LOG_COMMAND = ["postgres", "-c", "log_statement=all",
+                            "-c", f"log_line_prefix={PG_LOG_LINE_PREFIX}"]
+# With the statement log the unit cleans an idle workflow after 2 s instead of 30,
+# so the cleanup of one scenario's execution never lands in the next one's window.
+CLEANUP_ENV = "WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS"
+CLEANUP_SECONDS_WITH_STATEMENT_LOG = "2"
+
+# --isolate-unit: the unit's own network and the services that join it.
+UNIT_NETWORK_KEY = "unit"
+UNIT_NETWORK = "sce-unit-net"
+UNIT_NETWORK_PEERS = ("postgres", "lakekeeper", "rustfs", NGINX_SERVICE, "agent-service")
+
+# --with-replay-log: both services mount workflow_result_data at /amber/user-resources.
+REPLAY_LOG_ENV = "FAULT_TOLERANCE_LOG_STORAGE_URI"
+REPLAY_LOG_URI = "file:///amber/user-resources/recovery-logs/"
+REPLAY_LOG_SERVICES = (DASHBOARD_SERVICE, UNIT_SERVICE)
+
+_SECRET_KEY = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY", re.I)
 
 
 # --------------------------------------------------------------------------- utils
@@ -204,9 +244,73 @@ def _rewrite_ports(ports: list, bind: str) -> list:
 _REWRITTEN_KEYS = {"container_name", "networks", "depends_on", "ports", "volumes", "healthcheck"}
 
 
-def _self_check(original: dict, generated: dict, dropped: set[str]) -> None:
+class StackOptions:
+    """The evidence options of `generate` (see the module doc)."""
+
+    def __init__(self, pg_statement_log: bool = False, isolate_unit: bool = False,
+                 with_replay_log: bool = False, unit_env: list[str] | None = None):
+        self.pg_statement_log = pg_statement_log
+        self.isolate_unit = isolate_unit
+        self.with_replay_log = with_replay_log
+        self.unit_env: dict[str, str] = {}
+        for item in unit_env or []:
+            key, sep, value = item.partition("=")
+            if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                die(f"--unit-env takes KEY=VALUE, got '{item}'")
+            self.unit_env[key] = value
+
+    def unit_environment(self) -> dict[str, str]:
+        """What the unit gets on top of the source's environment, in order."""
+        env: dict[str, str] = {}
+        if self.with_replay_log:
+            env[REPLAY_LOG_ENV] = REPLAY_LOG_URI
+        if self.pg_statement_log and CLEANUP_ENV not in self.unit_env:
+            env[CLEANUP_ENV] = CLEANUP_SECONDS_WITH_STATEMENT_LOG
+        env.update(self.unit_env)
+        return env
+
+    def describe(self) -> dict:
+        def shown(key: str, value: str) -> str:
+            if _SECRET_KEY.search(key):
+                return f"<set, {len(value)} chars>"
+            return value
+
+        return {
+            "pg_statement_log": self.pg_statement_log,
+            "pg_log_line_prefix": PG_LOG_LINE_PREFIX if self.pg_statement_log else None,
+            "isolate_unit": self.isolate_unit,
+            "unit_network": UNIT_NETWORK if self.isolate_unit else None,
+            "with_replay_log": self.with_replay_log,
+            "unit_env": {k: shown(k, v) for k, v in self.unit_environment().items()},
+            "dashboard_env": ({REPLAY_LOG_ENV: REPLAY_LOG_URI} if self.with_replay_log else {}),
+        }
+
+
+def _with_env(svc: dict, extra: dict[str, str]) -> object:
+    """`svc`'s environment (a list or a mapping, as compose allows) with `extra` set;
+    a key already present is replaced in place. `$` is escaped for compose."""
+    escaped = {k: v.replace("$", "$$") for k, v in extra.items()}
+    env = svc.get("environment")
+    if isinstance(env, dict):
+        out = dict(env)
+        out.update(escaped)
+        return out
+    out_list = list(env or [])
+    for key, value in escaped.items():
+        idx = next((i for i, e in enumerate(out_list) if str(e).split("=", 1)[0] == key), None)
+        if idx is None:
+            out_list.append(f"{key}={value}")
+        else:
+            out_list[idx] = f"{key}={value}"
+    return out_list
+
+
+def _self_check(original: dict, generated: dict, dropped: set[str],
+                edits: dict[str, dict] | None = None) -> None:
     """Re-read the written compose and prove every kept service is the original
-    except for the keys the generator rewrites on purpose."""
+    except for the keys the generator rewrites on purpose and the option edits,
+    which must be exactly what the options asked for."""
+    edits = edits or {}
     problems = []
     if set(generated) != set(original) - dropped:
         problems.append(f"service set differs: {sorted(set(generated) ^ (set(original) - dropped))}")
@@ -215,8 +319,10 @@ def _self_check(original: dict, generated: dict, dropped: set[str]) -> None:
         for key in set(orig) | set(gen):
             if key in _REWRITTEN_KEYS:
                 continue
-            if orig.get(key) != gen.get(key):
-                problems.append(f"{name}.{key} changed")
+            want = edits.get(name, {}).get(key, orig.get(key))
+            if want != gen.get(key):
+                problems.append(f"{name}.{key} changed" + (" beyond the requested option" if
+                                                            key in edits.get(name, {}) else ""))
         if "healthcheck" in orig and orig["healthcheck"] != gen.get("healthcheck"):
             problems.append(f"{name}.healthcheck changed")
         dep_o, dep_g = orig.get("depends_on"), gen.get("depends_on")
@@ -227,6 +333,29 @@ def _self_check(original: dict, generated: dict, dropped: set[str]) -> None:
                 problems.append(f"{name}.depends_on differs beyond dropped services")
     if problems:
         die("generated compose failed its round-trip check: " + "; ".join(problems))
+
+
+def _check_networks(generated: dict, isolate_unit: bool) -> None:
+    """Every service is on sce-net only, except with --isolate-unit: the unit on
+    sce-unit-net only, its peers on both, each with its aliases on each."""
+    problems = []
+    for name, svc in generated.items():
+        nets = svc.get("networks") or {}
+        if not isolate_unit:
+            want = {"default"}
+        elif name == UNIT_SERVICE:
+            want = {UNIT_NETWORK_KEY}
+        elif name in UNIT_NETWORK_PEERS:
+            want = {"default", UNIT_NETWORK_KEY}
+        else:
+            want = {"default"}
+        if set(nets) != want:
+            problems.append(f"{name} is on {sorted(nets)}, want {sorted(want)}")
+        aliases = [sorted((nets.get(n) or {}).get("aliases") or []) for n in nets]
+        if any(a != aliases[0] for a in aliases) or not aliases or not aliases[0]:
+            problems.append(f"{name} lacks the same aliases on each of its networks")
+    if problems:
+        die("generated compose failed its network check: " + "; ".join(problems))
 
 
 class _Dumper(yaml.SafeDumper):
@@ -242,7 +371,10 @@ def _str_presenter(dumper: yaml.SafeDumper, data: str):
 _Dumper.add_representer(str, _str_presenter)
 
 
-def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bool) -> dict:
+def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bool,
+             options: StackOptions | None = None, out_dir: Path | None = None) -> dict:
+    options = options or StackOptions()
+    gen_dir = out_dir or GEN_DIR
     sn = source / "bin" / "single-node"
     compose_src = sn / "docker-compose.yml"
     for f in (compose_src, sn / ".env", sn / "nginx.conf", source / "sql"):
@@ -255,15 +387,30 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
     dropped = {name for name, svc in services.items() if svc.get("profiles")}
     if not with_optional:
         dropped |= OPTIONAL_SERVICES & set(services)
+    for needed in [UNIT_SERVICE, POSTGRES_SERVICE] + ([DASHBOARD_SERVICE] if options.with_replay_log else []):
+        if needed not in services or needed in dropped:
+            die(f"the source compose has no service '{needed}', which the options need")
+    if options.pg_statement_log and services[POSTGRES_SERVICE].get("command") is not None:
+        die("the source's postgres service already has a command; --pg-statement-log would replace it")
 
-    if GEN_DIR.exists():
-        shutil.rmtree(GEN_DIR)
-    GEN_DIR.mkdir(parents=True)
-    (GEN_DIR / "mounts").mkdir()
+    if gen_dir.exists():
+        shutil.rmtree(gen_dir)
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "mounts").mkdir()
 
     used_volumes: set[str] = set()
     new_services: dict = {}
     container_names: dict[str, str] = {}
+    # option edits, applied below and verified exactly by the round-trip check
+    edits: dict[str, dict] = {}
+    if options.pg_statement_log:
+        edits.setdefault(POSTGRES_SERVICE, {})["command"] = list(PG_STATEMENT_LOG_COMMAND)
+    unit_env = options.unit_environment()
+    if unit_env:
+        edits.setdefault(UNIT_SERVICE, {})["environment"] = _with_env(services[UNIT_SERVICE], unit_env)
+    if options.with_replay_log:
+        edits.setdefault(DASHBOARD_SERVICE, {})["environment"] = _with_env(
+            services[DASHBOARD_SERVICE], {REPLAY_LOG_ENV: REPLAY_LOG_URI})
     for name, svc in services.items():
         if name in dropped:
             continue
@@ -272,7 +419,15 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
         svc["container_name"] = f"{PREFIX}-{original_cn}"
         container_names[name] = svc["container_name"]
         aliases = sorted({name, original_cn})
-        svc["networks"] = {"default": {"aliases": aliases}}
+        if options.isolate_unit and name == UNIT_SERVICE:
+            svc["networks"] = {UNIT_NETWORK_KEY: {"aliases": aliases}}
+        elif options.isolate_unit and name in UNIT_NETWORK_PEERS:
+            svc["networks"] = {"default": {"aliases": aliases},
+                               UNIT_NETWORK_KEY: {"aliases": list(aliases)}}
+        else:
+            svc["networks"] = {"default": {"aliases": aliases}}
+        for key, value in edits.get(name, {}).items():
+            svc[key] = value
 
         dep = svc.get("depends_on")
         if isinstance(dep, list):
@@ -297,7 +452,7 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
             if src_part.startswith((".", "/")):
                 src_path = (sn / src_part).resolve()
                 if src_path == (source / "sql").resolve():
-                    dst = GEN_DIR / "sql"
+                    dst = gen_dir / "sql"
                     dst.mkdir()
                     # Postgres runs only the top-level scripts of the init dir.
                     for f in sorted(src_path.iterdir()):
@@ -309,7 +464,7 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
                 elif src_path.name == "nginx.conf":
                     parts[0] = "./nginx.conf"  # rewritten below
                 else:
-                    dst = GEN_DIR / "mounts" / src_path.name
+                    dst = gen_dir / "mounts" / src_path.name
                     if src_path.is_dir():
                         shutil.copytree(src_path, dst)
                     elif src_path.exists():
@@ -333,10 +488,14 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
     for key in sorted(used_volumes):
         volumes[key] = {"name": f"{VOLUME_PREFIX}{key}"}
 
+    networks = {"default": {"name": NETWORK}}
+    if options.isolate_unit:
+        # Not `internal`: a unit installing a Python environment needs the package index.
+        networks[UNIT_NETWORK_KEY] = {"name": UNIT_NETWORK}
     out = {
         "name": PROJECT,
         "services": new_services,
-        "networks": {"default": {"name": NETWORK}},
+        "networks": networks,
         "volumes": volumes,
     }
 
@@ -344,7 +503,7 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
         "# GENERATED by sce-e2e/stack/sce_stack.py -- do not edit; re-run `sce-stack.sh generate`.\n"
         f"# source: {compose_src}\n"
     )
-    (GEN_DIR / "docker-compose.yml").write_text(
+    (gen_dir / "docker-compose.yml").write_text(
         header + yaml.dump(out, Dumper=_Dumper, sort_keys=False, width=1000,
                            default_flow_style=False, allow_unicode=True)
     )
@@ -358,16 +517,17 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
         env_overrides["GUI_WORKFLOW_WORKSPACE_COPILOT_ENABLED"] = "false"
     if "notebook-migration-service" in dropped:
         env_overrides["GUI_WORKFLOW_WORKSPACE_PYTHON_NOTEBOOK_MIGRATION_ENABLED"] = "false"
-    (GEN_DIR / ".env").write_text(_rewrite_env((sn / ".env").read_text(), env_overrides))
+    (gen_dir / ".env").write_text(_rewrite_env((sn / ".env").read_text(), env_overrides))
 
     nginx_conf, disabled_routes = _rewrite_nginx((sn / "nginx.conf").read_text(), dropped)
-    (GEN_DIR / "nginx.conf").write_text(nginx_conf)
+    (gen_dir / "nginx.conf").write_text(nginx_conf)
 
-    _self_check(services, yaml.safe_load((GEN_DIR / "docker-compose.yml").read_text())["services"],
-                dropped)
+    written = yaml.safe_load((gen_dir / "docker-compose.yml").read_text())["services"]
+    _self_check(services, written, dropped, edits)
+    _check_networks(written, options.isolate_unit)
 
     env_vals = dict(
-        re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", (GEN_DIR / ".env").read_text(), re.M)
+        re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", (gen_dir / ".env").read_text(), re.M)
     )
     manifest = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -375,6 +535,8 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
         "source_git": git_info(source),
         "project": PROJECT,
         "network": NETWORK,
+        "networks": [n["name"] for n in networks.values()],
+        "options": options.describe(),
         "volumes": [v["name"] for v in volumes.values()],
         "containers": container_names,
         "dropped_services": sorted(dropped),
@@ -386,7 +548,7 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
             "rustfs": int(env_vals.get("RUSTFS_PORT", "9000") or 9000),
         },
     }
-    (GEN_DIR / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (gen_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
 
 
@@ -586,12 +748,44 @@ def wait_http(url: str, timeout: int) -> None:
 # ----------------------------------------------------------------------- commands
 
 
+def options_from_args(a) -> StackOptions:
+    return StackOptions(pg_statement_log=a.pg_statement_log, isolate_unit=a.isolate_unit,
+                        with_replay_log=a.with_replay_log, unit_env=a.unit_env)
+
+
+def describe_options(opts: dict) -> str:
+    parts = []
+    if opts.get("pg_statement_log"):
+        parts.append("Postgres statement log")
+    if opts.get("isolate_unit"):
+        parts.append(f"unit isolated on {opts.get('unit_network')}")
+    if opts.get("with_replay_log"):
+        parts.append("replay logs")
+    if opts.get("unit_env"):
+        parts.append("unit env " + ", ".join(f"{k}={v}" for k, v in opts["unit_env"].items()))
+    return "; ".join(parts) or "none"
+
+
 def cmd_generate(a) -> None:
     reg, tag = parse_images(a.images)
-    m = generate(a.source, reg, tag, a.bind, a.with_optional)
+    m = generate(a.source, reg, tag, a.bind, a.with_optional, options_from_args(a))
     log(f"generated {GEN_DIR} from {m['source']} @ {m['source_git'].get('head', '?')[:10]} "
         f"({m['source_git'].get('branch', '?')}{', dirty' if m['source_git'].get('dirty') else ''})")
     log(f"images: {reg}/texera-*:{tag}; dropped: {', '.join(m['dropped_services'])}")
+    log(f"options: {describe_options(m.get('options') or {})}")
+
+
+def remove_unit_network_if_unused() -> None:
+    """compose leaves a network that the regenerated file no longer names; drop ours
+    when nothing is attached to it (it carries our project label)."""
+    p = run(["docker", "network", "inspect", UNIT_NETWORK, "--format",
+             '{{index .Labels "com.docker.compose.project"}} {{len .Containers}}'],
+            check=False, capture=True)
+    if p.returncode != 0:
+        return
+    project, _, attached = p.stdout.strip().partition(" ")
+    if project == PROJECT and attached == "0":
+        run(["docker", "network", "rm", UNIT_NETWORK], check=False, capture=True)
 
 
 def cmd_up(a) -> None:
@@ -599,6 +793,8 @@ def cmd_up(a) -> None:
         manifest = load_manifest()
         if a.images:
             die("--images needs a regenerate; drop --no-generate")
+        if a.pg_statement_log or a.isolate_unit or a.with_replay_log or a.unit_env:
+            die("the stack options need a regenerate; drop --no-generate")
     else:
         cmd_generate(a)
         manifest = load_manifest()
@@ -607,6 +803,8 @@ def cmd_up(a) -> None:
     pull = os.environ.get("SCE_PULL", "missing")
     log(f"docker compose up -d (project {PROJECT}, pull={pull})")
     compose("up", "-d", "--remove-orphans", "--pull", pull)
+    if not (manifest.get("options") or {}).get("isolate_unit"):
+        remove_unit_network_if_unused()
     wait_healthy(a.timeout, manifest)
     # nginx resolves its upstreams once at start; a service recreated by this
     # `up` would otherwise keep receiving traffic at its old address.
@@ -621,6 +819,7 @@ def cmd_down(a) -> None:
         compose("down", "--remove-orphans")
     else:
         run(["docker", "compose", "-p", PROJECT, "down", "--remove-orphans"])
+    remove_unit_network_if_unused()
     log("stack is down (volumes kept)")
 
 
@@ -629,6 +828,7 @@ def cmd_reset(a) -> None:
         compose("down", "--remove-orphans", "--volumes")
     else:
         run(["docker", "compose", "-p", PROJECT, "down", "--remove-orphans", "--volumes"])
+    remove_unit_network_if_unused()
     # Belt and braces: anything still labelled as ours, never anything else.
     p = run(["docker", "volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"],
             capture=True)
@@ -653,7 +853,9 @@ def cmd_status(a) -> None:
     print(f"source : {manifest['source']} @ {src.get('head', '')[:10]} ({src.get('branch')})"
           f"{' dirty' if src.get('dirty') else ''}")
     print(f"images : {manifest['images']['registry']}/texera-*:{manifest['images']['tag']}")
-    print(f"network: {manifest['network']}   volumes: {', '.join(manifest['volumes'])}")
+    print(f"network: {', '.join(manifest.get('networks') or [manifest['network']])}   "
+          f"volumes: {', '.join(manifest['volumes'])}")
+    print(f"options: {describe_options(manifest.get('options') or {})}")
     if not rows:
         print("(no containers)")
         return
@@ -674,6 +876,7 @@ LOG_ALIASES = {
     "cu-manager": "workflow-computing-unit-managing-service",
     "compiler": "workflow-compiling-service",
     "files": "file-service",
+    "pg": POSTGRES_SERVICE,
 }
 
 
@@ -709,6 +912,15 @@ def main() -> None:
                        help="host IP for published ports (default %(default)s; '' = all interfaces)")
         p.add_argument("--with-optional", action="store_true",
                        help="keep LiteLLM, agent-service, Jupyter and notebook migration")
+        p.add_argument("--pg-statement-log", action="store_true",
+                       help="Postgres logs every statement with app, db and client address "
+                            f"(and the unit's idle cleanup drops to {CLEANUP_SECONDS_WITH_STATEMENT_LOG} s)")
+        p.add_argument("--isolate-unit", action="store_true",
+                       help=f"the unit alone on {UNIT_NETWORK} with Postgres, Lakekeeper, RustFS and nginx")
+        p.add_argument("--with-replay-log", action="store_true",
+                       help=f"{REPLAY_LOG_ENV}={REPLAY_LOG_URI} for the Dashboard and the unit")
+        p.add_argument("--unit-env", action="append", default=[], metavar="KEY=VAL",
+                       help="extra environment for the unit (repeatable)")
 
     p = sub.add_parser("generate", help="write stack/generated/ from the source worktree")
     gen_args(p)
