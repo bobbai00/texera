@@ -1177,11 +1177,11 @@ def cmd_up(a) -> None:
     heaps = parse_heaps(a.heap)
     m["heaps"] = heaps
     m["frontend_heap_mb"] = frontend_heap(a.source, a.frontend_heap)
+    check_ports_free(m)  # before anything is written or started
     logs = Path(a.logs or REPORTS / f"localdev-{stamp()}-logs").resolve()
     logs.mkdir(parents=True, exist_ok=True)
     m["logs_dir"] = str(logs)
     write_json(MANIFEST, m)
-    check_ports_free(m)
     timings: dict[str, float] = {}
 
     # 1. infrastructure (local-dev's `infra_up`)
