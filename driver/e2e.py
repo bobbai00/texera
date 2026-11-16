@@ -31,6 +31,8 @@ from scenarios import SCENARIOS, Ctx, resolve, run_scenario  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
 from transport import TRANSPORTS, make_transport  # noqa: E402
 
+import k8s_unit  # noqa: E402  -- Kubernetes mode (--target k8s); see driver/k8s_unit.py
+
 DATA_DIR = HERE / "data"
 DATA_FILES = ["people.csv", "depts.csv", "numbers.csv"]
 REPORTS = HERE.parent / "reports"
@@ -67,7 +69,9 @@ def main() -> int:
     ap.add_argument("--stack-manifest", type=Path,
                     help="stack/generated/MANIFEST.json to embed in the report")
     ap.add_argument("--list", action="store_true", help="list scenarios and exit")
+    k8s_unit.add_arguments(ap)  # Kubernetes mode: --target k8s, --unit-kind, --k8s-unit-*
     a = ap.parse_args()
+    k8s_unit.resolve_args(a)  # Kubernetes mode: unit kind and the gateway port-forward as --base
 
     if a.list:
         for k, (name, title, _) in SCENARIOS.items():
@@ -119,7 +123,11 @@ def main() -> int:
         }
         log(f"warehouse: {'whid ' + str(whid) if whid else 'not required by this deployment'}")
 
-        unit = api.ensure_local_unit(a.unit_name, a.unit_uri)
+        # --- Kubernetes mode: a unit pod created through the managing service (k8s_unit.py)
+        if k8s_unit.wanted(a):
+            unit = k8s_unit.setup(api, a, run_id=run_id, log=log, report=report)
+        else:
+            unit = api.ensure_local_unit(a.unit_name, a.unit_uri)
         cuid = int(unit["cuid"])
         report["setup"]["computing_unit"] = {"cuid": cuid, "uri": unit.get("uri"),
                                              "name": unit.get("name"), "type": unit.get("type")}
@@ -145,6 +153,8 @@ def main() -> int:
             log(f"=== scenario {key} {name}: {rec.outcome} ({rec.duration_s:.1f}s)")
             report["scenarios"] = [r.to_json() for r in records]
             _write(report_path, report)
+
+    k8s_unit.teardown(api, a, log=log, report=report)  # Kubernetes mode: terminate the unit
 
     finished = dt.datetime.now(dt.timezone.utc)
     report["finished_at"] = finished.isoformat(timespec="seconds")
