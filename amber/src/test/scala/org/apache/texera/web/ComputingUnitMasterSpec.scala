@@ -625,12 +625,13 @@ class ComputingUnitMasterSpec
     )
   }
 
-  it should "leave creating executions to the Dashboard" in {
+  it should "leave creating executions, and changing their paused operators, to the Dashboard" in {
     ranEnvironment.jersey.getResourceConfig.getClasses.asScala should not contain
       classOf[ExecutionResource]
     val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
 
     jersey.statusOf("POST", "/executions") should (be(404) or be(405))
+    jersey.statusOf("POST", "/executions/12/updates") should (be(404) or be(405))
     // The execution routes the unit serves still resolve: answered 401 without a signed-in user.
     jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
   }

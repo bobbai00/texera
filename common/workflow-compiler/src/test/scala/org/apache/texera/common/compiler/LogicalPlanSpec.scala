@@ -501,6 +501,56 @@ class LogicalPlanSpec extends AnyFlatSpec {
   }
 
   // ---------------------------------------------------------------------------
+  // refersToLoopVariables
+  // ---------------------------------------------------------------------------
+
+  /** src -> S -> a -> E, and src -> b, outside every block. */
+  private def blockAndOutside(): LogicalPlan =
+    LogicalPlan(
+      List(op("src"), loopStart("S"), op("a"), loopEnd("E"), op("b")),
+      List(
+        link(OperatorIdentity("src"), OperatorIdentity("S")),
+        link(OperatorIdentity("S"), OperatorIdentity("a")),
+        link(OperatorIdentity("a"), OperatorIdentity("E")),
+        link(OperatorIdentity("src"), OperatorIdentity("b"))
+      )
+    )
+
+  private def searchFor(id: String, keyword: String): LogicalOp =
+    named(TestOperators.keywordSearchOpDesc("column-1", keyword), id)
+
+  /** A Limit as the editor sends one whose limit is the loop variable `n`: a typed reference. */
+  private def limitOfN(id: String): LogicalOp =
+    objectMapper.readValue(
+      s"""{"operatorID": "$id", "operatorType": "Limit", "limit": "$$n"}""",
+      classOf[LogicalOp]
+    )
+
+  "LogicalPlan.refersToLoopVariables" should "take a whole-string '$x' for a reference only inside a loop block" in {
+    val plan = blockAndOutside()
+
+    assert(plan.refersToLoopVariables(searchFor("a", "$x")))
+    assert(!plan.refersToLoopVariables(searchFor("b", "$x")))
+    // Not the whole string: a literal everywhere.
+    assert(!plan.refersToLoopVariables(searchFor("a", "price $x")))
+    assert(!plan.refersToLoopVariables(searchFor("a", "Asia")))
+  }
+
+  it should "take a typed reference, or a sidecar entry, for one wherever the operator is" in {
+    val plan = blockAndOutside()
+
+    assert(plan.refersToLoopVariables(limitOfN("a")))
+    // Outside every block a typed reference fails the compile; it still refers to a variable.
+    assert(plan.refersToLoopVariables(limitOfN("b")))
+    // A compiled operator's sidecar lists its string references too.
+    val compiled = searchFor("b", "Asia")
+    compiled.stateReferences = Map("/keyword" -> "k")
+    assert(plan.refersToLoopVariables(compiled))
+    // An operator the plan does not have is inside no block.
+    assert(!plan.refersToLoopVariables(searchFor("ghost", "$x")))
+  }
+
+  // ---------------------------------------------------------------------------
   // resolveScanSourceOpFileName
   // ---------------------------------------------------------------------------
   //

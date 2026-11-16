@@ -60,7 +60,7 @@ import scala.util.control.NonFatal
 object ExecutionResources extends LazyLogging {
 
   /** The states of an execution that has ended, as its row records them. */
-  private val EndedStatuses: Seq[java.lang.Short] =
+  private[execution] val EndedStatuses: Seq[java.lang.Short] =
     Seq(COMPLETED, FAILED, KILLED).map(state => java.lang.Short.valueOf(maptoStatusCode(state)))
 
   /**

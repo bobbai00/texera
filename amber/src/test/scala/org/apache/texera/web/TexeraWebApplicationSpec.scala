@@ -40,7 +40,10 @@ import org.apache.texera.web.resource.dashboard.user.UserResource
 import org.apache.texera.web.resource.dashboard.user.environment.EnvironmentResource
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource
 import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource
-import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
+import org.apache.texera.web.model.http.request.execution.{
+  CreateExecutionRequest,
+  OperatorUpdateRequestBody
+}
 import org.apache.texera.web.resource.dashboard.user.workflow.{
   ExecutionResource,
   WorkflowAccessResource,
@@ -215,6 +218,18 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     request.targetOperatorIds shouldBe Nil
   }
 
+  it should "parse a change to a paused operator with the loop-variable module" in {
+    // The body of POST /api/executions/{eid}/updates: the change is refused when it refers to a
+    // loop variable, which the parse records only with the module.
+    val request = initializedBootstrap().getObjectMapper.readValue(
+      """{"operator": {"operatorType": "Limit", "operatorID": "limit-1", "limit": "$k"}}""",
+      classOf[OperatorUpdateRequestBody]
+    )
+
+    request.operator.operatorIdentifier.id shouldBe "limit-1"
+    request.operator.stateReferences shouldBe Map("/limit" -> "k")
+  }
+
   it should "serve the built frontend from the filesystem at the context root" in {
     val environment = newEnvironment()
     initializedBootstrap().run(new TexeraWebConfiguration, environment)
@@ -338,7 +353,7 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     )
   }
 
-  it should "route POST /api/executions to the create, beside the execution routes it shares a path with" in {
+  it should "route POST /api/executions and its updates, beside the execution routes they share a path with" in {
     assume(
       databaseReachable,
       "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
@@ -347,11 +362,14 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
 
     // Each resolves to a method that needs a signed-in user, so it is answered 401 without one.
     jersey.statusOf("POST", "/executions") shouldBe 401
+    jersey.statusOf("POST", "/executions/12/updates") shouldBe 401
     jersey.statusOf("GET", "/executions/12") shouldBe 401
     jersey.statusOf("GET", "/executions/12/latest") shouldBe 401
     jersey.statusOf("POST", "/executions/update_execution_name") shouldBe 401
+    jersey.statusOf("POST", "/executions/result/export/dataset") shouldBe 401
     // A route neither resource serves is not answered 401: what resolves is told from what does not.
     jersey.statusOf("DELETE", "/executions") should (be(404) or be(405))
+    jersey.statusOf("GET", "/executions/12/updates") should (be(404) or be(405))
   }
 
   it should "install the JWT auth stack and role enforcement" in {

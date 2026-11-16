@@ -19,12 +19,15 @@
 
 package org.apache.texera.common.compiler.model
 
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.texera.amber.core.state.StateReferencing.literalReferences
 import org.apache.texera.amber.core.storage.ScanFileResolver
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
+import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.jgrapht.graph.DirectedAcyclicGraph
 import org.jgrapht.util.SupplierUtil
 
@@ -130,6 +133,21 @@ case class LogicalPlan(
   }
 
   def operatorsInsideLoopBlocks: Set[OperatorIdentity] = enclosingLoopStarts.keySet
+
+  /**
+    * Whether `op`, in the place of this plan's operator of its id, refers to loop variables: its
+    * sidecar names one (on an operator a compile made final, every reference; on one just parsed,
+    * the typed ones), or it sits inside a loop block and holds a whole-string `$name`.
+    *
+    * Such an operator cannot be changed while the workflow runs: the executor rebuilt from it would
+    * parse its placeholders after the loop state that writes them into its setting has arrived
+    * (`OperatorExecutor.registerState`), so nothing would ever set them.
+    */
+  def refersToLoopVariables(op: LogicalOp): Boolean =
+    op.stateReferences.nonEmpty || (
+      operatorsInsideLoopBlocks.contains(op.operatorIdentifier) &&
+        literalReferences(objectMapper.valueToTree[ObjectNode](op)).nonEmpty
+    )
 
   /**
     * Resolves each scan source operator's user-given file name to a URI and sets it on the

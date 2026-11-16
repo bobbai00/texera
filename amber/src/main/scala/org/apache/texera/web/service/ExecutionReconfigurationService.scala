@@ -19,8 +19,6 @@
 
 package org.apache.texera.web.service
 
-import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.texera.amber.core.state.StateReferencing.literalReferences
 import org.apache.texera.amber.core.storage.RepositoryMountManager
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalOp, RepositoryMounts}
@@ -30,8 +28,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   WorkflowReconfigureRequest
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.operator.LogicalOp
-import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.web.SubscriptionManager
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.request.ModifyLogicRequest
@@ -68,7 +64,12 @@ class ExecutionReconfigurationService(
     val newOp = modifyLogicRequest.operator
     val opId = newOp.operatorIdentifier
     val currentOp = workflow.logicalPlan.getOperator(opId)
-    if (refersToLoopVariables(currentOp) || refersToLoopVariables(newOp)) {
+    // The deployed operator carries the compiler's final references; the edit, the parse's typed
+    // ones.
+    if (
+      workflow.logicalPlan.refersToLoopVariables(currentOp) ||
+      workflow.logicalPlan.refersToLoopVariables(newOp)
+    ) {
       ModifyLogicResponse(
         opId.id,
         isValid = false,
@@ -99,19 +100,6 @@ class ExecutionReconfigurationService(
       }
     }
   }
-
-  /**
-    * Whether `op`, in the deployed operator's place, refers to loop variables: its sidecar names
-    * one (the compiler's final one on the deployed operator, the parse's typed ones on an edit),
-    * or it sits inside a loop block and holds a whole-string `$name`. The rebuilt executor would
-    * parse the placeholders after the loop state that writes them into its setting has arrived
-    * (`OperatorExecutor.registerState`), so nothing would ever set them.
-    */
-  private def refersToLoopVariables(op: LogicalOp): Boolean =
-    op.stateReferences.nonEmpty || (
-      workflow.logicalPlan.operatorsInsideLoopBlocks.contains(op.operatorIdentifier) &&
-        literalReferences(objectMapper.valueToTree[ObjectNode](op)).nonEmpty
-    )
 
   // actually performs all reconfiguration requests the user made during pause
   // sends ModifyLogic messages to operators and workers,

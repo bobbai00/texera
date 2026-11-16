@@ -21,15 +21,19 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 
 import io.dropwizard.auth.Auth
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
-import org.apache.texera.web.service.execution.ExecutionCreator
+import org.apache.texera.web.model.http.request.execution.{
+  CreateExecutionRequest,
+  OperatorUpdateRequestBody
+}
+import org.apache.texera.web.service.execution.{ExecutionCreator, OperatorUpdates}
 
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs.core.{Context, MediaType, Response, UriInfo}
-import javax.ws.rs.{Consumes, POST, Path, Produces}
+import javax.ws.rs.{Consumes, POST, Path, PathParam, Produces}
 
 /**
-  * Executions as the Dashboard service creates them, before any computing unit is involved.
+  * Executions as the Dashboard service creates them, before any computing unit is involved, and
+  * the changes made to their operators while they are paused.
   *
   * Registered only by the Dashboard. It shares its path with [[WorkflowExecutionsResource]],
   * which a computing unit registers too; Jersey merges the two, and none of their methods share a
@@ -42,6 +46,9 @@ class ExecutionResource {
 
   /** Creates the executions. A seam, so a spec can create them with fixtures of its own. */
   protected def creator: ExecutionCreator = ExecutionCreator
+
+  /** Stores the changes to paused operators. A seam, as [[creator]] is. */
+  protected def updates: OperatorUpdates = OperatorUpdates
 
   /**
     * Creates an execution of a workflow, to run on a computing unit: checks the caller's rights,
@@ -66,4 +73,27 @@ class ExecutionResource {
       case Right(created) => Response.status(Response.Status.CREATED).entity(created).build()
       case Left(failed)   => Response.status(Response.Status.BAD_REQUEST).entity(failed).build()
     }
+
+  /**
+    * Stores a change to an operator of paused execution `eid`, made to run for the user who
+    * created the execution, for its computing unit to apply when the run resumes (see
+    * [[OperatorUpdates]]).
+    *
+    * @return 200 with `{updateId, operatorId}`. A refused change is answered `{code, message}`:
+    *         400 when the request names no operator or the running operator cannot take the
+    *         change, 403 unless the caller created the execution and may still read its workflow
+    *         and run workflows on its unit, 404 for an execution, a stored plan or an operator
+    *         there is not, 409 when the execution has ended or its plan is in a per-user warehouse
+    *         while those are disabled; 500 when the plan cannot be read, was made for another
+    *         user or unit, or the change cannot be stored.
+    */
+  @POST
+  @Path("/{eid}/updates")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def postUpdate(
+      @PathParam("eid") eid: Long,
+      request: OperatorUpdateRequestBody,
+      @Auth user: SessionUser
+  ): Response =
+    Response.ok(updates.store(eid, request, user.getUser)).build()
 }
