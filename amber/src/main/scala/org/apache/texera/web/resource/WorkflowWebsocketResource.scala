@@ -23,7 +23,10 @@ import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.clustering.ClusterListener
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
-import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILATION_ERROR
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
+  COMPILATION_ERROR,
+  EXECUTION_FAILURE
+}
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -33,13 +36,16 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.{WorkflowErrorEvent, WorkflowStateEvent}
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
-import org.apache.texera.web.service.WorkflowService
+import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
+import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
 import java.time.Instant
 import javax.websocket._
 import javax.websocket.server.ServerEndpoint
 import scala.jdk.CollectionConverters.MapHasAsScala
+import scala.util.Try
+import scala.util.control.NonFatal
 
 @ServerEndpoint(
   value = "/wsapi/workflow-websocket",
@@ -60,6 +66,7 @@ class WorkflowWebsocketResource extends LazyLogging {
     )
 
     sessionState.setUserComputingUnitAccess(cuAccessEnum)
+    sessionState.setComputingUnitId(cuid)
     logger.info(
       s"Websocket connection opened for workflow $wid with computing unit $cuid and access $cuAccessEnum"
     )
@@ -89,7 +96,16 @@ class WorkflowWebsocketResource extends LazyLogging {
     try {
       // Inside the try on purpose: a frame the mapper cannot bind is an error like any other, and
       // has to travel back to the client through the same reporting path as a handler failure.
-      val request = objectMapper.readValue(message, classOf[TexeraWebSocketRequest])
+      // Except a start's: a start is answered to its sender alone (below), one that cannot be
+      // read too.
+      val request =
+        try objectMapper.readValue(message, classOf[TexeraWebSocketRequest])
+        catch {
+          case NonFatal(unreadable) if isStartFrame(message) =>
+            logger.info(s"A start that could not be read: ${unreadable.getMessage}")
+            refuseStart(sessionState, "the request to start an execution could not be read")
+            return
+        }
       request match {
         case heartbeat: HeartBeatRequest =>
           sessionState.send(HeartBeatResponse())
@@ -111,6 +127,13 @@ class WorkflowWebsocketResource extends LazyLogging {
               )
             sessionState.send(modifyLogicResponse)
           }
+        case start: WorkflowStartRequest =>
+          // Answered here alone, never by the catch below: that one writes into the run in
+          // flight, which every session on the workflow sees, and a refused start is its
+          // sender's to see.
+          startStoredExecution(session, sessionState, workflowStateOpt, userOpt, start)
+        case update: OperatorUpdateRequest =>
+          sessionState.send(applyStoredUpdate(sessionState, executionStateOpt, uidOpt, update))
         case workflowExecuteRequest: WorkflowExecuteRequest =>
           if (sessionState.getUserComputingUnitAccess != PrivilegeEnum.WRITE) {
             throw new IllegalStateException("User does not have write access to the computing unit")
@@ -161,5 +184,98 @@ class WorkflowWebsocketResource extends LazyLogging {
         throw err
     }
 
+  }
+
+  /**
+    * Starts the execution `start` names, which the Dashboard service created, on this socket's
+    * workflow and computing unit, for the socket's user: a user with WRITE on the unit
+    * ([[WorkflowService.startStoredExecution]]). Once started, the run reaches every session on
+    * the workflow, as a run does. A start that is refused, or that fails before it is claimed,
+    * writes nothing and is answered with one error, to this session alone; so is a start whose
+    * run could not even be built, which its execution records as FAILED.
+    */
+  private def startStoredExecution(
+      session: Session,
+      sessionState: SessionState,
+      workflowStateOpt: Option[WorkflowService],
+      userOpt: Option[User],
+      start: WorkflowStartRequest
+  ): Unit = {
+    val refusal =
+      try {
+        val started = for {
+          _ <- Either.cond(
+            sessionState.getUserComputingUnitAccess == PrivilegeEnum.WRITE,
+            (),
+            "you do not have write access to the computing unit"
+          )
+          user <- userOpt.toRight("a signed-in user is required to start an execution")
+          workflow <- workflowStateOpt.toRight("workflow is not initialized")
+          // Set with the socket's workflow: a socket with a workflow has its unit.
+          cuid <- sessionState.getComputingUnitId.toRight("workflow is not initialized")
+          planUri <- StoredExecutionStart.planUriOf(start.planUri)
+          execution <- workflow.startStoredExecution(
+            start.executionId,
+            planUri,
+            user,
+            cuid,
+            // The socket's URI carries the user's access token in its query: only the rest of it
+            // goes on, to the run's log lines.
+            StoredExecutionStart.withoutSecrets(session.getRequestURI)
+          )
+        } yield execution
+        started.left.toOption
+      } catch {
+        case NonFatal(failure) =>
+          logger.error(s"Execution ${start.executionId} could not be started.", failure)
+          Some(
+            s"execution ${start.executionId} could not be started, because of an error on this " +
+              "computing unit"
+          )
+      }
+    refusal.foreach { message =>
+      logger.info(s"Refused to start execution ${start.executionId}: $message")
+      refuseStart(sessionState, message)
+    }
+  }
+
+  /** Answers a refused start to its sender alone, as one error, and writes nothing. */
+  private def refuseStart(sessionState: SessionState, why: String): Unit =
+    sessionState.send(
+      WorkflowErrorEvent(
+        Seq(WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), why, "", ""))
+      )
+    )
+
+  /** Whether `message` is a frame of type `WorkflowStartRequest`, whatever else it holds. */
+  private def isStartFrame(message: String): Boolean =
+    Try(objectMapper.readTree(message)).toOption
+      .flatMap(frame => Option(frame))
+      .flatMap(frame => Option(frame.get("type")))
+      .exists(_.asText() == classOf[WorkflowStartRequest].getSimpleName)
+
+  /**
+    * Applies the change to an operator that `update` names, which the Dashboard service stored, to
+    * the run of its execution on this socket's workflow
+    * ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyStoredUpdate]]): asked
+    * for by a user with WRITE on the unit, who created the execution.
+    */
+  private def applyStoredUpdate(
+      sessionState: SessionState,
+      executionStateOpt: Option[WorkflowExecutionService],
+      uidOpt: Option[Integer],
+      update: OperatorUpdateRequest
+  ): ModifyLogicResponse = {
+    def refuse(why: String): ModifyLogicResponse = ModifyLogicResponse("", isValid = false, why)
+    if (sessionState.getUserComputingUnitAccess != PrivilegeEnum.WRITE) {
+      refuse("you do not have write access to the computing unit")
+    } else {
+      executionStateOpt
+        .filter(_.workflowContext.executionId.id == update.executionId)
+        .flatMap(execution => Option(execution.executionReconfigurationService)) match {
+        case Some(service) => service.applyStoredUpdate(update.updateId, uidOpt.map(_.intValue()))
+        case None          => refuse(s"execution ${update.executionId} is not running here")
+      }
+    }
   }
 }

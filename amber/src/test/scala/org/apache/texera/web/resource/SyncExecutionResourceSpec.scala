@@ -24,6 +24,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionPlanStore,
+  PlanRecord,
+  RepositoryVersionResolver,
+  ScanFileResolver,
   VFSURIFactory,
   WarehouseUnavailableException
 }
@@ -34,12 +38,19 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
+import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.workflow.{
+  CostHints,
+  ExecutionPlan,
   GlobalPortIdentity,
+  InputPort,
+  PhysicalOp,
+  PhysicalPlan,
   PortIdentity,
   WorkflowContext,
   WorkflowSettings
 }
+import org.apache.texera.amber.engine.architecture.coordinator.{Workflow => EngineWorkflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
   ConsoleMessageType
@@ -57,17 +68,20 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorMetrics,
   OperatorStatistics
 }
-import org.apache.texera.amber.operator.LogicalOp
+import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
+import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
   OPERATOR_PORT_EXECUTIONS,
-  WORKFLOW_EXECUTIONS
+  WORKFLOW_EXECUTIONS,
+  WORKFLOW_OF_USER
 }
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
@@ -82,9 +96,14 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowComputingUnit,
   WorkflowVersion
 }
+import org.apache.texera.web.WorkflowLifecycleManager
+import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
+import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
+import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore
+import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
@@ -93,14 +112,18 @@ import java.net.URI
 import java.sql.Timestamp
 import java.util.concurrent.{FutureTask, TimeUnit}
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 /**
   * Unit tests for the synchronous "run this workflow and hand me the results" endpoint used by
   * agent-service.
   *
-  * Two of the resource's methods are public (`executeWorkflowSync`, `healthCheck`); the other
-  * sixteen are `private def`. `executeWorkflowSync` is driven for real here — one end-to-end case
-  * that gets as far as a running engine can be taken without one — but the result-shaping helpers
+  * Three of the resource's methods are public (`executeWorkflowSync`, `runStoredExecution`,
+  * `healthCheck`); the others are `private def`. `executeWorkflowSync` is driven for real here — one
+  * end-to-end case that gets as far as a running engine can be taken without one — and so is
+  * `runStoredExecution`, on executions the Dashboard's `ExecutionCreator` made, through its
+  * workflow-service seam onto a service whose runs complete as soon as they start (what a run does
+  * with its plan is `WorkflowExecutionServiceSpec`'s). The result-shaping helpers
   * it calls cannot be reached that way: every one of them only produces an observable difference
   * once the engine has populated the stats/console stores or written Iceberg results. They are
   * therefore driven through `PrivateMethodTester` over fixtures that stand in for that state, and
@@ -228,9 +251,21 @@ class SyncExecutionResourceSpec
     consoleEid = insertExecution("console-fixture")
     otherEid = insertExecution("console-fixture-other")
     resultEid = insertExecution("result-fixture")
+
+    // The user owns the workflow, so the Dashboard creates executions of it for them.
+    getDSLContext
+      .insertInto(WORKFLOW_OF_USER)
+      .set(WORKFLOW_OF_USER.UID, Integer.valueOf(testUid))
+      .set(WORKFLOW_OF_USER.WID, Integer.valueOf(testWid))
+      .execute()
   }
 
-  override protected def afterAll(): Unit = closeConnectionPool()
+  /** The plan tables of the executions the start-by-id cases create, dropped after the suite. */
+  private val madePlans = scala.collection.mutable.ArrayBuffer.empty[URI]
+
+  override protected def afterAll(): Unit =
+    try madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
+    finally closeConnectionPool()
 
   private def insertExecution(name: String): Int = {
     import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
@@ -1274,5 +1309,254 @@ class SyncExecutionResourceSpec
       .where(WORKFLOW_EXECUTIONS.EID.eq(previousEid))
       .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
       .intValue() shouldBe Utils.maptoStatusCode(KILLED).toInt
+  }
+
+  // -- running an execution the Dashboard created, by its id ---------------------------
+
+  private object NoHints extends CostHintsLoader(1) {
+    override def load(wid: Long, uid: Int): Option[CostHints] = None
+  }
+
+  /** The Dashboard's create, with the fixture resolvers and no cost hints. */
+  private object FixtureCreator extends ExecutionCreator {
+    override protected def fileResolverFor(uid: Integer): ScanFileResolver =
+      TestOperators.fixtureFileResolver
+    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
+      TestOperators.fixtureRepositoryResolver
+    override protected def mountRoot: Option[java.nio.file.Path] =
+      Some(TestOperators.fixtureMountRoot)
+    override protected def replayLogRoot: Option[URI] = None
+    override protected def warehousesEnabled: Boolean = false
+    override protected def costHintsLoader: CostHintsLoader = NoHints
+  }
+
+  private def syncUser(uid: Int = testUid): SessionUser = {
+    val user = new User
+    user.setUid(Integer.valueOf(uid))
+    user.setEmail(s"sync-exec-$uid@example.com")
+    new SessionUser(user)
+  }
+
+  /** An execution of lines of text into a Limit, which the user created for `testCuid`. */
+  private def createdExecution(): CreateExecutionResponse = {
+    val lines = new TextInputSourceOpDesc
+    lines.setOperatorId("lines")
+    lines.textInput = "a\nb"
+    val limit = new LimitOpDesc
+    limit.setOperatorId("limit")
+    limit.limit = 1
+    val response = FixtureCreator
+      .create(
+        CreateExecutionRequest(
+          wid = testWid.toLong,
+          engineVersion = "1.4.0-spec",
+          logicalPlan = LogicalPlanPojo(
+            List(lines, limit),
+            List(link("lines", "limit")),
+            List.empty,
+            List.empty
+          ),
+          workflowSettings = None,
+          computingUnitId = testCuid,
+          warehouseId = None,
+          replayFromExecution = None,
+          targetOperatorIds = List("limit")
+        ),
+        syncUser().getUser,
+        new URI("http://texera.example/api/executions")
+      )
+      .getOrElse(fail("the execution was not created"))
+    madePlans += new URI(response.planUri)
+    response
+  }
+
+  /**
+    * A service of the workflow, made for computing unit `serviceCuid`, whose runs complete as soon
+    * as they are started, with no engine: `WorkflowExecutionServiceSpec` owns what a run does with
+    * its plan. It records the plan each run is started from.
+    */
+  private class CompletingService(serviceCuid: Int = testCuid)
+      extends WorkflowService(WorkflowIdentity(testWid.toLong), serviceCuid, 3600) {
+    override val lifeCycleManager: WorkflowLifecycleManager =
+      new WorkflowLifecycleManager("SyncExecutionResourceSpec", 3600, () => ()) {
+        override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore) =
+          io.reactivex.rxjava3.disposables.Disposable.empty()
+      }
+    val started = scala.collection.mutable.ArrayBuffer.empty[(ExecutionPlan, URI)]
+    override protected def storedRun(
+        context: WorkflowContext,
+        executionStateStore: ExecutionStateStore,
+        errorHandler: Throwable => Unit
+    ): WorkflowExecutionService =
+      new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
+        override def startStored(
+            executionPlan: ExecutionPlan,
+            record: PlanRecord,
+            planUri: URI
+        ): Option[Throwable] = {
+          started += ((executionPlan, planUri))
+          this.executionStateStore.metadataStore.updateState(metadataStore =>
+            updateWorkflowState(COMPLETED, metadataStore)
+          )
+          None
+        }
+      }
+  }
+
+  /** The resource, running every workflow's executions on `service`; it records what it asks. */
+  private class ResourceOn(service: WorkflowService) extends SyncExecutionResource {
+    val asked = scala.collection.mutable.ArrayBuffer.empty[(WorkflowIdentity, Int)]
+    override protected def workflowServiceOf(
+        workflowId: WorkflowIdentity,
+        computingUnitId: Int
+    ): WorkflowService = {
+      asked += ((workflowId, computingUnitId))
+      service
+    }
+  }
+
+  private def runRequest(
+      planUri: String,
+      computingUnitId: Int = testCuid,
+      targets: List[String] = List("limit")
+  ): SyncRunRequest =
+    SyncRunRequest(planUri, computingUnitId, targets, 5, 100000, 20000)
+
+  /** Why a run was refused, once the answer is found to be a refusal and nothing more. */
+  private def refusalOf(result: SyncExecutionResult): String = {
+    result.success shouldBe false
+    result.state shouldBe "Error"
+    result.operators shouldBe empty
+    result.compilationErrors shouldBe None
+    result.errors.getOrElse(fail("no reason was given")) match {
+      case List(why) => why
+      case other     => fail(s"expected one reason, got $other")
+    }
+  }
+
+  private def statusOf(eid: Long): Int =
+    getDSLContext
+      .select(WORKFLOW_EXECUTIONS.STATUS)
+      .from(WORKFLOW_EXECUTIONS)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
+      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
+      .intValue()
+
+  "runStoredExecution" should
+    "run an execution the Dashboard created, by its id, from its stored plan, and answer once it ends" in {
+    val execution = createdExecution()
+    // The workflow's service, made for another unit by an earlier caller (#7676): the run is on
+    // the unit the request names, which the execution was created for.
+    val service = new CompletingService(serviceCuid = fixtureCuid)
+    val resource = new ResourceOn(service)
+
+    val result = resource.runStoredExecution(
+      execution.eid,
+      runRequest(execution.planUri),
+      syncUser()
+    )
+
+    // The workflow is the one the plan table belongs to, on the unit the request names.
+    resource.asked shouldBe Seq((WorkflowIdentity(testWid.toLong), testCuid))
+    // Started from its plan in the lake, claimed for that start, on the unit asked.
+    val planUri = new URI(execution.planUri)
+    ExecutionPlanStore.isStarted(planUri) shouldBe true
+    service.started should have size 1
+    val (executionPlan, startedFrom) = service.started.head
+    startedFrom shouldBe planUri
+    executionPlan.context.executionId shouldBe ExecutionIdentity(execution.eid)
+    executionPlan.context.cuid shouldBe Some(testCuid)
+    service.computingUnitId shouldBe fixtureCuid
+    // Answered as the run ended, for the target asked about.
+    result.success shouldBe true
+    result.state shouldBe "Completed"
+    result.errors shouldBe None
+    result.compilationErrors shouldBe None
+    result.operators.keySet shouldBe Set("limit")
+    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+  }
+
+  it should "refuse a run for another user, on another unit, of another plan, or a second time" in {
+    val execution = createdExecution()
+    val other = createdExecution()
+    val service = new CompletingService
+    val resource = new ResourceOn(service)
+    val eid = execution.eid
+
+    refusalOf(
+      resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser(testUid + 1000))
+    ) shouldBe s"only the user who created execution $eid may start it"
+    refusalOf(
+      resource.runStoredExecution(
+        eid,
+        runRequest(execution.planUri, computingUnitId = fixtureCuid),
+        syncUser()
+      )
+    ) shouldBe s"execution $eid was created for computing unit $testCuid, not $fixtureCuid"
+    refusalOf(resource.runStoredExecution(eid, runRequest(other.planUri), syncUser())) shouldBe
+      s"the plan is execution ${other.eid}'s, not $eid's"
+    refusalOf(resource.runStoredExecution(eid, runRequest("vfs:///no/plan"), syncUser())) shouldBe
+      "not an execution plan"
+    refusalOf(resource.runStoredExecution(eid, runRequest(null), syncUser())) shouldBe
+      "not an execution plan"
+    refusalOf(resource.runStoredExecution(eid, null, syncUser())) shouldBe
+      "The request has no body."
+    // None of them started anything, or asked for a workflow's service: each was refused by the
+    // checks made before, so none leaves a service behind, made for the unit it named.
+    resource.asked shouldBe empty
+    service.started shouldBe empty
+    ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
+    statusOf(eid) shouldBe 0
+
+    resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser()).success shouldBe
+      true
+    // The second call passes the checks, and its claim is refused on the workflow's service.
+    refusalOf(resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser())) shouldBe
+      s"execution $eid was already started"
+    resource.asked shouldBe Seq.fill(2)((WorkflowIdentity(testWid.toLong), testCuid))
+    service.started should have size 1
+  }
+
+  "expectedExternalInputsOf" should
+    "count each external input port of a target once, over the layers of the plan run" in {
+    val expectedExternalInputsOf =
+      PrivateMethod[Map[String, Int]](Symbol("expectedExternalInputsOf"))
+    val join = TestOperators.joinOpDesc("a", "b")
+    join.setOperatorId("join")
+    val built = newExecution(new ExecutionStateStore())
+    built.workflow = EngineWorkflow(
+      new WorkflowContext(),
+      LogicalPlan(List.empty, List.empty),
+      join.getPhysicalPlan(WorkflowIdentity(testWid.toLong), ExecutionIdentity(1L))
+    )
+    // The build layer takes the left input; the probe layer the right one, and the build
+    // layer's output on an internal port: two external input ports, not three.
+    built.workflow.physicalPlan.getPhysicalOpsOfLogicalOp(OperatorIdentity("join")) should
+      have size 2
+
+    resource invokePrivate expectedExternalInputsOf(built, List("join", "absent")) shouldBe
+      Map("join" -> 2, "absent" -> 0)
+
+    // Two layers of one operator that both take its external input port 0 count it once.
+    def layer(name: String): PhysicalOp =
+      PhysicalOp(
+        id = PhysicalOpIdentity(OperatorIdentity("twice"), name),
+        workflowId = WorkflowIdentity(testWid.toLong),
+        executionId = ExecutionIdentity(1L),
+        opExecInitInfo = OpExecWithClassName("unused")
+      ).withInputPorts(List(InputPort(PortIdentity(0))))
+    val twice = newExecution(new ExecutionStateStore())
+    twice.workflow = EngineWorkflow(
+      new WorkflowContext(),
+      LogicalPlan(List.empty, List.empty),
+      PhysicalPlan(Set(layer("first"), layer("second")), Set.empty)
+    )
+    resource invokePrivate expectedExternalInputsOf(twice, List("twice")) shouldBe
+      Map("twice" -> 1)
+    // A run that failed before it built its plan expects nothing.
+    resource invokePrivate expectedExternalInputsOf(
+      newExecution(new ExecutionStateStore()),
+      List("join")
+    ) shouldBe Map.empty
   }
 }

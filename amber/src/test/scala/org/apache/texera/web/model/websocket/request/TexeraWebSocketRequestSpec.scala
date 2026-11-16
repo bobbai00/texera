@@ -60,7 +60,10 @@ import org.scalatest.matchers.should.Matchers
   * `WorkflowCheckpointRequest`, `WorkflowResumeRequest`,
   * `PythonExpressionEvaluateRequest` and `DebugCommandRequest`. Renaming a Scala class
   * in this package compiles cleanly on both sides and silently breaks the UI at
-  * runtime -- that is the breakage this spec exists to catch.
+  * runtime -- that is the breakage this spec exists to catch. The server also accepts
+  * `WorkflowStartRequest` and `OperatorUpdateRequest`, which start an execution the
+  * Dashboard service created and apply a change it stored; the client sends them once it
+  * creates its executions there.
   *
   * `ResultPaginationRequest`'s default arguments are the highest-value pin here and sit
   * on the live pagination path: the TS `PaginationRequest` declares `columnOffset?`,
@@ -91,6 +94,11 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
       s""""logicalPlan":{$emptyPlanFields},"workflowSettings":{},""" +
       s""""emailNotificationEnabled":false,"computingUnitId":3"""
 
+  // A start and a change, as the browser sends them once the Dashboard created the execution.
+  private val startFields =
+    """"executionId":345,"planUri":"vfs:///wh/user-1-7/wid/12/eid/345/plan""""
+  private val updateFields = """"executionId":345,"updateId":"update-4f6c""""
+
   /**
     * (wire type id, extra JSON fields, expected concrete class). The payloads are
     * built from each subtype's own declared field names, so the table pins what the
@@ -118,6 +126,8 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
       ("RetryRequest", """"workers":["worker-1"]""", classOf[RetryRequest]),
       ("SkipTupleRequest", """"workerIds":["worker-1"]""", classOf[SkipTupleRequest]),
       ("WorkflowExecuteRequest", executeFields, classOf[WorkflowExecuteRequest]),
+      ("WorkflowStartRequest", startFields, classOf[WorkflowStartRequest]),
+      ("OperatorUpdateRequest", updateFields, classOf[OperatorUpdateRequest]),
       ("WorkflowKillRequest", "", classOf[WorkflowKillRequest]),
       ("WorkflowPauseRequest", "", classOf[WorkflowPauseRequest]),
       ("WorkflowResumeRequest", "", classOf[WorkflowResumeRequest]),
@@ -134,15 +144,17 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
       )
     )
 
-  // The 13 "type" strings the SERVER accepts, i.e. the backend registry. Spelled out
+  // The "type" strings the SERVER accepts, i.e. the backend registry. Spelled out
   // rather than derived so a rename shows up as a set diff instead of quietly
   // re-deriving.
   //
-  // Deliberately not phrased as "what the client sends": the frontend's
-  // `TexeraWebsocketRequestTypeMap` is a superset. It also declares
+  // Deliberately not phrased as "what the client sends": the two registries differ
+  // both ways. The frontend's `TexeraWebsocketRequestTypeMap` also declares
   // `ResultExportRequest`, which on the backend is an HTTP model
   // (web/model/http/request/result/, served by WorkflowExecutionsResource) and not a
-  // TexeraWebSocketRequest subtype at all — see the divergence test below.
+  // TexeraWebSocketRequest subtype at all — see the divergence test below. The server
+  // also accepts `WorkflowStartRequest` and `OperatorUpdateRequest`, which the client
+  // map gains once the browser creates its executions at the Dashboard.
   private val expectedTypeIds: Set[String] = Set(
     "HeartBeatRequest",
     "ModifyLogicRequest",
@@ -150,6 +162,8 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     "RetryRequest",
     "SkipTupleRequest",
     "WorkflowExecuteRequest",
+    "WorkflowStartRequest",
+    "OperatorUpdateRequest",
     "WorkflowKillRequest",
     "WorkflowPauseRequest",
     "WorkflowResumeRequest",
@@ -268,6 +282,39 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
       )
     ).asInstanceOf[WorkflowExecuteRequest]
     req.replayFromExecution shouldBe Some(ReplayExecutionInfo(91L, "interaction-7"))
+  }
+
+  "WorkflowStartRequest" should "bind the execution and its plan table, and write them back the same" in {
+    val req = read(frame("WorkflowStartRequest", startFields)).asInstanceOf[WorkflowStartRequest]
+    req shouldBe WorkflowStartRequest(345L, "vfs:///wh/user-1-7/wid/12/eid/345/plan")
+    // What the server writes is what it reads: the type id, then both fields.
+    val written = objectMapper.readTree(objectMapper.writeValueAsString(req))
+    written.get("type").asText() shouldBe "WorkflowStartRequest"
+    written.get("executionId").asLong() shouldBe 345L
+    written.get("planUri").asText() shouldBe "vfs:///wh/user-1-7/wid/12/eid/345/plan"
+    read(objectMapper.writeValueAsString(req)) shouldBe req
+  }
+
+  it should "bind an execution id past the Int range" in {
+    read(frame("WorkflowStartRequest", s""""executionId":${Int.MaxValue + 1L},"planUri":"p""""))
+      .asInstanceOf[WorkflowStartRequest]
+      .executionId shouldBe Int.MaxValue + 1L
+  }
+
+  it should "leave a missing plan table to the start's own check" in {
+    // The endpoint refuses it as "not an execution plan"; the mapper only binds.
+    read(frame("WorkflowStartRequest", """"executionId":345""")) shouldBe
+      WorkflowStartRequest(345L, null)
+  }
+
+  "OperatorUpdateRequest" should "bind the execution and the change's id, and write them back the same" in {
+    val req = read(frame("OperatorUpdateRequest", updateFields)).asInstanceOf[OperatorUpdateRequest]
+    req shouldBe OperatorUpdateRequest(345L, "update-4f6c")
+    val written = objectMapper.readTree(objectMapper.writeValueAsString(req))
+    written.get("type").asText() shouldBe "OperatorUpdateRequest"
+    written.get("executionId").asLong() shouldBe 345L
+    written.get("updateId").asText() shouldBe "update-4f6c"
+    read(objectMapper.writeValueAsString(req)) shouldBe req
   }
 
   "the python request payloads" should "bind each wire field to the matching parameter" in {

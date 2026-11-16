@@ -19,15 +19,33 @@
 
 package org.apache.texera.web.service
 
+import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.google.protobuf.timestamp.{Timestamp => ProtoTimestamp}
 import io.reactivex.rxjava3.disposables.Disposable
+import org.apache.iceberg.exceptions.CommitFailedException
+import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
 import org.apache.texera.amber.core.storage.result.{OperatorResultMetadata, WorkflowResultStore}
+import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
   OperatorIdentity,
+  PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{CostHints, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.workflow.{
+  CostHints,
+  ExecutionPlan,
+  OutputPort,
+  PhysicalOp,
+  PhysicalPlan,
+  PhysicalPlanCodec,
+  PortIdentity,
+  WorkflowContext,
+  WorkflowSettings
+}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
   COMPILATION_ERROR,
   EXECUTION_FAILURE
@@ -74,6 +92,7 @@ import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
   WebResultUpdateEvent,
+  WorkflowErrorEvent,
   WorkflowStateEvent
 }
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
@@ -82,7 +101,9 @@ import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+import org.slf4j.LoggerFactory
 
+import java.io.{IOException, UncheckedIOException}
 import java.net.URI
 import java.sql.Timestamp
 import java.time.Instant
@@ -92,6 +113,8 @@ import scala.collection.immutable.VectorMap
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.jdk.CollectionConverters.ListHasAsScala
+import scala.util.Try
 
 /**
   * Unit tests for the per-workflow service that outlives a single execution: it owns the
@@ -168,6 +191,12 @@ import scala.concurrent.{Await, ExecutionContext, Future}
   * no other case uses, so neither moves the newest execution of a unit another case clears. Three
   * of the superseded-run cases supersede through `initExecutionService`, whose runs stop at the
   * compile as the clean-up cases' do.
+  *
+  * The cases of a start by id (`startStoredExecution`) write their executions' plans to the lake,
+  * in the catalog the build's tests use, and drop them after the suite. Their runs record the plan
+  * they are started from instead of building an engine (`StoredStartService`):
+  * `WorkflowExecutionServiceSpec` owns what a run does with its plan, and `StoredExecutionStartSpec`
+  * every check a start makes.
   *
   * Deliberately not covered:
   *   - the replay block of `initExecutionService`. It only computes the replay the run's plan is
@@ -272,6 +301,53 @@ class WorkflowServiceSpec
       hintsLoader.getOrElse(super.costHintsLoader)
   }
 
+  /**
+    * A service of the fixture workflow, made for computing unit `serviceCuid`, whose runs of
+    * stored plans record what they are started from, and fail with `startFailure` if given,
+    * instead of building an engine: `WorkflowExecutionServiceSpec` owns what a run does with its
+    * plan. Its reads and claims go to the lake unless `read` or `claim` stands in for them.
+    * `supersedeFailure` fails its supersede, and `buildFailure` the building of a run.
+    */
+  private final class StoredStartService(
+      read: Option[URI => PlanRecord] = None,
+      claim: Option[URI => Unit] = None,
+      startFailure: Option[RuntimeException] = None,
+      serviceCuid: Int = storedCuid,
+      supersedeFailure: Option[RuntimeException] = None,
+      buildFailure: Option[RuntimeException] = None
+  ) extends WorkflowService(WorkflowIdentity(testWid.toLong), serviceCuid, cleanUpTimeoutSecs) {
+    val lifecycle = new RecordingLifecycleManager
+    override val lifeCycleManager: WorkflowLifecycleManager = lifecycle
+
+    /** What each run was started from: its plan, its plan row and its plan table. */
+    val started: ArrayBuffer[(ExecutionPlan, PlanRecord, URI)] = ArrayBuffer.empty
+
+    override protected def readPlan(planUri: URI): PlanRecord =
+      read.fold(super.readPlan(planUri))(_(planUri))
+    override protected def claimStart(planUri: URI): Unit =
+      claim.fold(super.claimStart(planUri))(_(planUri))
+    override def supersedeCurrentRun(): Unit =
+      supersedeFailure.fold(super.supersedeCurrentRun())(failure => throw failure)
+    override protected def storedRun(
+        context: WorkflowContext,
+        executionStateStore: ExecutionStateStore,
+        errorHandler: Throwable => Unit
+    ): WorkflowExecutionService = {
+      buildFailure.foreach(failure => throw failure)
+      new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
+        override def startStored(
+            executionPlan: ExecutionPlan,
+            record: PlanRecord,
+            planUri: URI
+        ): Option[Throwable] = {
+          started += ((executionPlan, record, planUri))
+          startFailure.foreach(failure => throw failure)
+          None
+        }
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Fixtures for the previous-run clean-up case. `initExecutionService` needs the whole
   // user / workflow / workflow_version / workflow_computing_unit chain before it can insert
@@ -314,6 +390,9 @@ class WorkflowServiceSpec
 
   /** The unit the case of superseding a run being set up runs on. */
   private val setUpCuid = 9422
+
+  /** The unit the executions started by id were created for. */
+  private val storedCuid = 9423
 
   // Executions carry explicit eids rather than the SERIAL's: see the header on
   // LargeBinaryManager. The relative order is load-bearing and is stated here rather than
@@ -358,6 +437,26 @@ class WorkflowServiceSpec
   /** The execution of the live run a new run supersedes, on `replaceCuid`. */
   private val replacedEid = 941108
 
+  /**
+    * Executions created for `storedCuid` and started by id: their plans are written to the lake
+    * by the cases. One is started, one is refused, one's claim fails, and one fails once claimed.
+    */
+  private val startedEid = 941109
+  private val refusedEid = 941110
+  private val unclaimedEid = 941111
+  private val failedEid = 941112
+
+  /** The run a start by id supersedes, on `storedCuid`. */
+  private val heldStoredEid = 941113
+
+  /**
+    * Executions created for `storedCuid` too: one started on a service made for another unit, one
+    * whose supersede fails before its run is published, and one whose run cannot be built.
+    */
+  private val askedUnitEid = 941114
+  private val unpublishedEid = 941115
+  private val unbuiltEid = 941116
+
   private val fixtureEids: Seq[Integer] =
     Seq(
       olderEid,
@@ -368,7 +467,15 @@ class WorkflowServiceSpec
       supersededEid,
       heldIdleEid,
       newerIdleEid,
-      replacedEid
+      replacedEid,
+      startedEid,
+      refusedEid,
+      unclaimedEid,
+      failedEid,
+      heldStoredEid,
+      askedUnitEid,
+      unpublishedEid,
+      unbuiltEid
     ).map(Integer.valueOf)
 
   /** Records the statements the cases' code sends to the database. */
@@ -417,7 +524,8 @@ class WorkflowServiceSpec
       idleCuid -> "workflow_service_spec_idle_unit",
       replaceCuid -> "workflow_service_spec_replace_unit",
       followCuid -> "workflow_service_spec_follow_unit",
-      setUpCuid -> "workflow_service_spec_set_up_unit"
+      setUpCuid -> "workflow_service_spec_set_up_unit",
+      storedCuid -> "workflow_service_spec_stored_unit"
     ).foreach {
       case (cuid, name) =>
         val unit = new WorkflowComputingUnit
@@ -438,6 +546,18 @@ class WorkflowServiceSpec
     insertExecution(heldIdleEid, testWid, idleCuid, "held-idle-run")
     insertExecution(newerIdleEid, testWid, idleCuid, "newer-idle-run")
     insertExecution(replacedEid, testWid, replaceCuid, "replaced-run")
+    Seq(
+      startedEid,
+      refusedEid,
+      unclaimedEid,
+      failedEid,
+      heldStoredEid,
+      askedUnitEid,
+      unpublishedEid,
+      unbuiltEid
+    ).foreach { eid =>
+      insertExecution(eid, testWid, storedCuid, s"stored-run-$eid")
+    }
 
     // Keep the SERIAL sequence ahead of our explicit fixture ids, so the execution that
     // production inserts below cannot land on eid 1 -- LargeBinaryManager's DEFAULT_EXECUTION_ID
@@ -484,7 +604,12 @@ class WorkflowServiceSpec
     registerPort(newerIdleEid, "newer-idle-port")
   }
 
-  override protected def afterAll(): Unit = closeConnectionPool()
+  /** The plan tables the cases write, in the catalog the build's tests use. */
+  private val madePlans = ArrayBuffer.empty[URI]
+
+  override protected def afterAll(): Unit =
+    try madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
+    finally closeConnectionPool()
 
   private def versionIdOf(wid: Int): Integer =
     getDSLContext
@@ -619,6 +744,99 @@ class WorkflowServiceSpec
       computingUnitId = cuid,
       warehouseId = None
     )
+  }
+
+  /** The plan table of fixture execution `eid`, in the default warehouse. */
+  private def planUriOf(eid: Int): URI =
+    ExecutionPlanStore.planUri(
+      WorkflowIdentity(testWid.toLong),
+      ExecutionIdentity(eid.toLong),
+      None
+    )
+
+  /**
+    * Writes the plan row the Dashboard writes for execution `eid` of the fixture workflow, made for
+    * the fixture user on `storedCuid`: a plan of one source, `lines`.
+    *
+    * @return the plan table
+    */
+  private def storePlanOf(eid: Int): URI = {
+    val context = new WorkflowContext(
+      WorkflowIdentity(testWid.toLong),
+      ExecutionIdentity(eid.toLong),
+      WorkflowSettings(dataTransferBatchSize = 64)
+    )
+    val lines = PhysicalOp
+      .sourcePhysicalOp(
+        PhysicalOpIdentity(OperatorIdentity("lines"), "main"),
+        context.workflowId,
+        context.executionId,
+        OpExecWithClassName("unused")
+      )
+      .copy(outputPorts =
+        Map(
+          PortIdentity() -> (
+            OutputPort(),
+            List.empty,
+            Right(Schema().add("line", AttributeType.STRING))
+          )
+        )
+      )
+    val planUri = planUriOf(eid)
+    madePlans += planUri
+    ExecutionPlanStore.writePlan(
+      planUri,
+      PlanRecord(
+        entryId = ExecutionPlanStore.PlanEntryId,
+        kind = ExecutionPlanStore.PlanKind,
+        formatVersion = PhysicalPlanCodec.FormatVersion,
+        body = PhysicalPlanCodec.toJson(
+          PhysicalPlanCodec.encode(ExecutionPlan(context, PhysicalPlan(Set(lines), Set.empty)))
+        ),
+        logical = "{}",
+        createdAt = new Timestamp(System.currentTimeMillis()),
+        createdBy = testUid,
+        computingUnitId = storedCuid,
+        notification = None
+      )
+    )
+    planUri
+  }
+
+  /** A run of fixture execution `eid` that is running, held by `service`. */
+  private def holdRunningRun(service: WorkflowService, eid: Int): WorkflowExecutionService = {
+    val held = newExecution(Some(eid))
+    service.executionService.onNext(held)
+    held.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
+    held
+  }
+
+  private val startUri = new URI("ws://texera.example/wsapi/workflow-websocket")
+
+  /**
+    * Runs `body` and answers what it gave, with the lines the loggers under `name` wrote
+    * meanwhile, every level, from any thread, each with the message of what it logged as its
+    * cause.
+    */
+  private def linesLoggedBy[T](name: String)(body: => T): (T, Seq[String]) = {
+    val logger = LoggerFactory.getLogger(name).asInstanceOf[LogbackLogger]
+    val appender = new ListAppender[ILoggingEvent]
+    val previousLevel = logger.getLevel
+    appender.start()
+    logger.addAppender(appender)
+    logger.setLevel(Level.ALL)
+    try {
+      val result = body
+      val lines = appender.list.asScala.toList.map { event =>
+        event.getFormattedMessage +
+          Option(event.getThrowableProxy).fold("")(cause => s" ${cause.getMessage}")
+      }
+      (result, lines)
+    } finally {
+      logger.setLevel(previousLevel)
+      logger.detachAppender(appender)
+      appender.stop()
+    }
   }
 
   /** Collects the events an execution's metadata store emits, in subscription order. */
@@ -1224,6 +1442,254 @@ class WorkflowServiceSpec
       release.countDown()
       threads.shutdownNow()
     }
+  }
+
+  "WorkflowService.startStoredExecution" should
+    "claim the execution, supersede the live run, and start a run of the plan read back on the unit asked" in {
+    val planUri = storePlanOf(startedEid)
+    val service = new StoredStartService()
+    val held = holdRunningRun(service, heldStoredEid)
+    val heldEvents = collectExecutionEvents(held)
+    heldEvents.clear()
+    // Asked with a URI that carries a secret, as a socket's does in its query.
+    val askedAt = new URI(s"$startUri?wid=$testWid&access-token=secret-token#also-secret")
+
+    val (started, logged) = linesLoggedBy("org.apache.texera.web") {
+      service
+        .startStoredExecution(startedEid, planUri, executingUser, storedCuid, askedAt)
+        .getOrElse(fail("the start was refused"))
+    }
+
+    // The start is logged, where it was asked without what can carry a secret.
+    logged.filter(_.contains(s"Execution $startedEid of workflow $testWid starts")) shouldBe Seq(
+      s"Execution $startedEid of workflow $testWid starts on computing unit $storedCuid from its " +
+        s"plan at $planUri, as asked at $startUri."
+    )
+    logged.filter(line => line.contains("secret")) shouldBe empty
+    // Claimed for its one start, in its plan table.
+    ExecutionPlanStore.isStarted(planUri) shouldBe true
+    // The run it held reads Killed, in its store and its row, and no session was told of it.
+    held.executionStateStore.metadataStore.getState.state shouldBe KILLED
+    statusOf(heldStoredEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
+    heldEvents shouldBe empty
+    // The new run is published in its place, and followed by the idle clean-up.
+    service.executionService.getValue should be theSameInstanceAs started
+    service.lifecycle.registeredStores.last should be theSameInstanceAs started.executionStateStore
+    started.executionStateStore.metadataStore.getState.executionId shouldBe
+      ExecutionIdentity(startedEid.toLong)
+    // It was started from the plan read back from the lake, the row and the table, under the
+    // context the plan was read back with: its ids and settings, and the unit the start was
+    // asked of, without which a UDF's environment would fall back to the engine's interpreter.
+    service.started should have size 1
+    val (executionPlan, record, startedFrom) = service.started.head
+    startedFrom shouldBe planUri
+    record shouldBe ExecutionPlanStore.readPlan(planUri)
+    executionPlan.plan.operators.map(_.id) shouldBe
+      Set(PhysicalOpIdentity(OperatorIdentity("lines"), "main"))
+    started.workflowContext should be theSameInstanceAs executionPlan.context
+    started.workflowContext.cuid shouldBe Some(storedCuid)
+    started.workflowContext.executionId shouldBe ExecutionIdentity(startedEid.toLong)
+    started.workflowContext.workflowSettings.dataTransferBatchSize shouldBe 64
+
+    // A second start of it is refused, however it comes, writing nothing and leaving the run
+    // started as it is.
+    val again = recorder.record {
+      service.startStoredExecution(
+        startedEid,
+        planUri,
+        executingUser,
+        storedCuid,
+        startUri
+      ) shouldBe
+        Left(s"execution $startedEid was already started")
+    }
+    again shouldBe empty
+    service.executionService.getValue should be theSameInstanceAs started
+    service.started should have size 1
+  }
+
+  it should "refuse a start the plan row was not made for, writing nothing and leaving the held run alone" in {
+    val planUri = storePlanOf(refusedEid)
+    val service = new StoredStartService()
+    val held = holdRunningRun(service, heldStoredEid)
+    val stranger = new User
+    stranger.setUid(Integer.valueOf(testUid + 1000))
+    val refusals = Seq(
+      (stranger, storedCuid, s"only the user who created execution $refusedEid may start it"),
+      (
+        executingUser,
+        testCuid,
+        s"execution $refusedEid was created for computing unit $storedCuid, not $testCuid"
+      )
+    )
+
+    refusals.foreach {
+      case (user, cuid, why) =>
+        withClue(s"$why: ") {
+          val statements = recorder.record {
+            service.startStoredExecution(refusedEid, planUri, user, cuid, startUri) shouldBe
+              Left(why)
+          }
+          statements shouldBe empty
+        }
+    }
+    // An execution with no plan in the lake.
+    recorder.record {
+      service.startStoredExecution(
+        heldStoredEid,
+        planUriOf(heldStoredEid),
+        executingUser,
+        storedCuid,
+        startUri
+      ) shouldBe Left(s"execution $heldStoredEid has no stored plan")
+    } shouldBe empty
+    // A start checked for another workflow, which the agent's path would have asked another
+    // service to start.
+    val checked = WorkflowService
+      .checkStoredStart(refusedEid, planUri, executingUser, storedCuid, socketWorkflowId = None)
+      .getOrElse(fail("the start was refused"))
+    checked.workflowId shouldBe WorkflowIdentity(testWid.toLong)
+    recorder.record {
+      service.startChecked(
+        checked.copy(workflowId = WorkflowIdentity(testWid.toLong + 1)),
+        startUri
+      ) shouldBe Left(s"the plan belongs to workflow ${testWid + 1}, not to this one")
+    } shouldBe empty
+
+    ExecutionPlanStore.isStarted(planUri) shouldBe false
+    service.started shouldBe empty
+    service.executionService.getValue should be theSameInstanceAs held
+    held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
+    held.executionStateStore.metadataStore.getState.fatalErrors shouldBe empty
+  }
+
+  it should "answer a claim or a read the lake fails as a refusal, to try again unless the row is malformed, leaving the held run alone" in {
+    val planUri = storePlanOf(unclaimedEid)
+    def refusalOf(service: StoredStartService): Either[String, WorkflowExecutionService] = {
+      val held = holdRunningRun(service, heldStoredEid)
+      val answer =
+        service.startStoredExecution(unclaimedEid, planUri, executingUser, storedCuid, startUri)
+      service.executionService.getValue should be theSameInstanceAs held
+      held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
+      service.started shouldBe empty
+      answer
+    }
+
+    // Every retry of the claim lost its commit to another commit on the table.
+    refusalOf(
+      new StoredStartService(claim = Some(_ => throw new CommitFailedException("lost the race")))
+    ) shouldBe Left(
+      s"execution $unclaimedEid could not be claimed for its start, as its plan was being " +
+        "changed; try starting it again"
+    )
+    refusalOf(
+      new StoredStartService(claim = Some(_ => throw new IllegalStateException("catalog down")))
+    ) shouldBe
+      Left(s"execution $unclaimedEid could not be claimed for its start; try starting it again")
+    refusalOf(
+      new StoredStartService(
+        read = Some(_ => throw new UncheckedIOException(new IOException("catalog down")))
+      )
+    ) shouldBe
+      Left(s"the plan of execution $unclaimedEid could not be read; try starting it again")
+    // A row the table holds that is no plan row, as `PlanRecord.fromTuple` refuses it: a second
+    // try reads the same row.
+    refusalOf(
+      new StoredStartService(
+        read = Some(_ => throw new IllegalStateException("a plan table row has no body"))
+      )
+    ) shouldBe
+      Left(
+        s"the stored plan of execution $unclaimedEid cannot be read: a plan table row has no body"
+      )
+    refusalOf(
+      new StoredStartService(read = Some(_ => throw new IllegalArgumentException()))
+    ) shouldBe Left(s"the stored plan of execution $unclaimedEid cannot be read")
+    ExecutionPlanStore.isStarted(planUri) shouldBe false
+  }
+
+  it should "report a run that fails once its execution is claimed as that run's failure" in {
+    val planUri = storePlanOf(failedEid)
+    val service =
+      new StoredStartService(startFailure = Some(new IllegalStateException("the engine is gone")))
+    val held = holdRunningRun(service, heldStoredEid)
+
+    val failed = service
+      .startStoredExecution(failedEid, planUri, executingUser, storedCuid, startUri)
+      .getOrElse(fail("the start was refused"))
+
+    // Published, superseding the held run, and failed with the reason, which every session on the
+    // workflow is sent; its row reads Failed.
+    service.executionService.getValue should be theSameInstanceAs failed
+    held.executionStateStore.metadataStore.getState.state shouldBe KILLED
+    failed.executionStateStore.metadataStore.getState.state shouldBe
+      WorkflowAggregatedState.FAILED
+    failed.executionStateStore.metadataStore.getState.fatalErrors.map(_.message) shouldBe
+      Seq("java.lang.IllegalStateException: the engine is gone")
+    statusOf(failedEid) shouldBe Utils.maptoStatusCode(WorkflowAggregatedState.FAILED).toInt
+    ExecutionPlanStore.isStarted(planUri) shouldBe true
+  }
+
+  it should "run on the unit the start was asked of, not the one the workflow's service was made for" in {
+    // The first session of a workflow makes its service, for that session's unit, and every later
+    // session of the workflow shares it, on whichever unit (#7676).
+    val planUri = storePlanOf(askedUnitEid)
+    val service = new StoredStartService(serviceCuid = testCuid)
+    service.computingUnitId shouldBe testCuid
+
+    val started = service
+      .startStoredExecution(askedUnitEid, planUri, executingUser, storedCuid, startUri)
+      .getOrElse(fail("the start was refused"))
+
+    started.workflowContext.cuid shouldBe Some(storedCuid)
+    service.started.map(_._1.context.cuid) shouldBe Seq(Some(storedCuid))
+  }
+
+  it should "publish a run that fails before it is published, so its sessions see why" in {
+    val planUri = storePlanOf(unpublishedEid)
+    val service =
+      new StoredStartService(supersedeFailure = Some(new IllegalStateException("cannot supersede")))
+    val held = holdRunningRun(service, heldStoredEid)
+
+    val failed = service
+      .startStoredExecution(unpublishedEid, planUri, executingUser, storedCuid, startUri)
+      .getOrElse(fail("the start was refused"))
+
+    // Claimed, so never to start: published FAILED in the held run's place, with the reason,
+    // which every session on the workflow is sent, and its row reads Failed.
+    ExecutionPlanStore.isStarted(planUri) shouldBe true
+    service.executionService.getValue should be theSameInstanceAs failed
+    failed.workflowContext.executionId shouldBe ExecutionIdentity(unpublishedEid.toLong)
+    failed.executionStateStore.metadataStore.getState.state shouldBe
+      WorkflowAggregatedState.FAILED
+    failed.executionStateStore.metadataStore.getState.fatalErrors.map(_.message) shouldBe
+      Seq("java.lang.IllegalStateException: cannot supersede")
+    collectExecutionEvents(failed).collect { case errors: WorkflowErrorEvent => errors } should
+      not be empty
+    statusOf(unpublishedEid) shouldBe Utils.maptoStatusCode(WorkflowAggregatedState.FAILED).toInt
+    service.started shouldBe empty
+    // The supersede failed before it touched the held run.
+    held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
+  }
+
+  it should "answer a run that cannot even be built, keeping the held run, as its execution reads Failed" in {
+    val planUri = storePlanOf(unbuiltEid)
+    val service =
+      new StoredStartService(buildFailure = Some(new IllegalStateException("cannot build")))
+    val held = holdRunningRun(service, heldStoredEid)
+
+    service.startStoredExecution(unbuiltEid, planUri, executingUser, storedCuid, startUri) shouldBe
+      Left(
+        s"execution $unbuiltEid could not be started, because of an error on this computing unit"
+      )
+
+    // Claimed, so never to start, and recorded Failed; nothing is published, and the held run
+    // goes on.
+    ExecutionPlanStore.isStarted(planUri) shouldBe true
+    statusOf(unbuiltEid) shouldBe Utils.maptoStatusCode(WorkflowAggregatedState.FAILED).toInt
+    service.executionService.getValue should be theSameInstanceAs held
+    held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
+    service.started shouldBe empty
   }
 
   "WorkflowService.getOrCreate" should "reuse one service per workflow and publish it in the registry" in {

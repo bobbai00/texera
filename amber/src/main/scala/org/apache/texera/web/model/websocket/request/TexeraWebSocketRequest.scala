@@ -32,10 +32,12 @@ import org.apache.texera.web.model.websocket.request.python.{
   Array(
     new Type(value = classOf[HeartBeatRequest]),
     new Type(value = classOf[ModifyLogicRequest]),
+    new Type(value = classOf[OperatorUpdateRequest]),
     new Type(value = classOf[ResultPaginationRequest]),
     new Type(value = classOf[RetryRequest]),
     new Type(value = classOf[SkipTupleRequest]),
     new Type(value = classOf[WorkflowExecuteRequest]),
+    new Type(value = classOf[WorkflowStartRequest]),
     new Type(value = classOf[WorkflowKillRequest]),
     new Type(value = classOf[WorkflowPauseRequest]),
     new Type(value = classOf[WorkflowResumeRequest]),
@@ -48,6 +50,22 @@ trait TexeraWebSocketRequest {}
 
 case class HeartBeatRequest() extends TexeraWebSocketRequest
 case class ModifyLogicRequest(operator: LogicalOp) extends TexeraWebSocketRequest
+
+/**
+  * Starts execution `executionId`, which the Dashboard service created, from its stored plan.
+  *
+  * @param planUri the execution's plan table, as `POST /api/executions` answered it
+  */
+case class WorkflowStartRequest(executionId: Long, planUri: String) extends TexeraWebSocketRequest
+
+/**
+  * Applies, when the paused run of execution `executionId` resumes, the change to one of its
+  * operators that the Dashboard service stored as `updateId`.
+  *
+  * @param updateId the id `POST /api/executions/{eid}/updates` answered with
+  */
+case class OperatorUpdateRequest(executionId: Long, updateId: String) extends TexeraWebSocketRequest
+
 case class ResultPaginationRequest(
     requestID: String,
     operatorID: String,

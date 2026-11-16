@@ -636,6 +636,15 @@ class ComputingUnitMasterSpec
     jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
   }
 
+  it should "serve the agent's run of an execution the Dashboard created, beside the run it compiles" in {
+    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+
+    // Both resolve, and are answered 401 without a signed-in user.
+    jersey.statusOf("POST", "/execution/12/run") shouldBe 401
+    jersey.statusOf("POST", "/execution/12/3/run") shouldBe 401
+    jersey.statusOf("GET", "/execution/12/run") shouldBe 405
+  }
+
   it should "install the JWT auth feature and the session-user value factory" in {
     val singletons = ranEnvironment.jersey.getResourceConfig.getSingletons.asScala
 

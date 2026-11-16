@@ -24,6 +24,7 @@ import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
@@ -38,6 +39,7 @@ import org.apache.texera.amber.core.workflow.{
   OutputPort,
   PhysicalOp,
   PhysicalPlan,
+  PhysicalPlanCodec,
   PortIdentity,
   RepositoryMounts,
   ResourceBinding,
@@ -48,7 +50,10 @@ import org.apache.texera.amber.engine.architecture.coordinator.{
   UpdateExecutorCompleted,
   Workflow
 }
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.WorkflowReconfigureRequest
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
+  UpdateExecutorRequest,
+  WorkflowReconfigureRequest
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.client.AmberClient
@@ -82,6 +87,10 @@ import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 
 import java.lang.reflect.{InvocationHandler, Method, Proxy}
+import java.net.URI
+import java.nio.file.{Path, Paths}
+import java.sql.Timestamp
+import java.util.UUID
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
 import scala.reflect.ClassTag
@@ -96,6 +105,8 @@ import scala.util.{Failure, Success, Try}
   *
   *   - `modifyOperatorLogic`, validating a frontend edit against the operator that is
   *     currently deployed and queueing the resulting physical op,
+  *   - `applyStoredUpdate`, queueing a change the Dashboard stored in the execution's plan table,
+  *     read from the catalog the build's tests use, as a run of a plan the Dashboard made does,
   *   - `performReconfigurationOnResume`, i.e. empty short-circuit, request construction
   *     and store reset semantics,
   *   - the two constructor-time subscriptions: the engine's UpdateExecutorCompleted
@@ -129,6 +140,7 @@ class ExecutionReconfigurationServiceSpec
       if (sharedClient != null) {
         sharedClient.dispose()
       }
+      Try(ExecutionPlanStore.drop(planTable))
       TestKit.shutdownActorSystem(system, 60.seconds, verifySystemShutdown = true)
     } finally super.afterAll()
   }
@@ -137,6 +149,16 @@ class ExecutionReconfigurationServiceSpec
   // op built from the wrong identity is a visibly different op.
   private val testWorkflowId: WorkflowIdentity = WorkflowIdentity(9231L)
   private val testExecutionId: ExecutionIdentity = ExecutionIdentity(9232L)
+
+  /**
+    * The plan table of the execution the services here run, where the Dashboard stores the
+    * changes to its operators: in the catalog the build's tests use, written only by the cases of
+    * stored changes, and dropped after the suite.
+    */
+  private val planTable: URI = ExecutionPlanStore.planUri(testWorkflowId, testExecutionId, None)
+
+  /** The user who created that execution. */
+  private val creatorUid = 9233
 
   /** The message the test-only descriptor below rejects a reconfiguration with. */
   private val rejectionMessage = "this operator refuses to be reconfigured at runtime"
@@ -250,7 +272,10 @@ class ExecutionReconfigurationServiceSpec
         client = null,
         stateStore,
         workflow = null,
-        nothingToBind
+        Some(nothingToBind),
+        planTable,
+        creatorUid,
+        mountRoot = None
       ) {
     val captured: mutable.ArrayBuffer[WorkflowReconfigureRequest] = mutable.ArrayBuffer.empty
     val mounted: mutable.ArrayBuffer[RepositoryMounts] = mutable.ArrayBuffer.empty
@@ -268,7 +293,15 @@ class ExecutionReconfigurationServiceSpec
       stateStore: ExecutionStateStore,
       workflow: Workflow,
       bindResources: PhysicalOp => PhysicalOp = nothingToBind
-  ) extends ExecutionReconfigurationService(client = null, stateStore, workflow, bindResources) {
+  ) extends ExecutionReconfigurationService(
+        client = null,
+        stateStore,
+        workflow,
+        Some(bindResources),
+        planTable,
+        creatorUid,
+        mountRoot = None
+      ) {
     override protected def registerWorkerCompletionCallback(): Unit = ()
   }
 
@@ -373,7 +406,10 @@ class ExecutionReconfigurationServiceSpec
       sharedClient,
       stateStore,
       mkWorkflow(logicalOps, physicalOps),
-      nothingToBind
+      Some(nothingToBind),
+      planTable,
+      creatorUid,
+      mountRoot = None
     )
     try body(new LiveFixture(sharedClient, stateStore, service))
     finally service.unsubscribeAll()
@@ -683,6 +719,317 @@ class ExecutionReconfigurationServiceSpec
     outside.modifyOperatorLogic(ModifyLogicRequest(filterOp("filter-a", "$x"))) shouldBe
       ModifyLogicResponse("filter-a", isValid = true, "")
     outsideStore.reconfigurationStore.getState.unscheduledReconfigurations should have size 1
+  }
+
+  // ---------------------------------------------------------------------------
+  // A change the Dashboard stored in the execution's plan table
+  // ---------------------------------------------------------------------------
+
+  /** The running operator a stored change is made to: a Limit, as the plan read back holds it. */
+  private val runningLimit: PhysicalOp =
+    PhysicalOp(
+      id = PhysicalOpIdentity(OperatorIdentity("limit-a"), "main"),
+      workflowId = testWorkflowId,
+      executionId = testExecutionId,
+      opExecInitInfo = OpExecWithClassName("limit.Class", """{"limit":1}""")
+    ).withInputPorts(List(InputPort())).withOutputPorts(List(OutputPort()))
+
+  private val changedExecutor = OpExecWithClassName("limit.Class", """{"limit":7}""")
+  private val changedMounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
+
+  /** The change the Dashboard makes of `runningLimit`: a new executor, reading a dataset. */
+  private val changedLimit: PhysicalOp =
+    runningLimit.copy(opExecInitInfo = changedExecutor, repositoryMounts = Some(changedMounts))
+
+  /** The plan table, holding the plan row the Dashboard writes when it creates the execution. */
+  private lazy val storedPlanTable: URI = {
+    ExecutionPlanStore.writePlan(
+      planTable,
+      PlanRecord(
+        entryId = ExecutionPlanStore.PlanEntryId,
+        kind = ExecutionPlanStore.PlanKind,
+        formatVersion = PhysicalPlanCodec.FormatVersion,
+        body = "{}", // a change is applied without the plan
+        logical = "{}",
+        createdAt = new Timestamp(System.currentTimeMillis()),
+        createdBy = creatorUid,
+        computingUnitId = 9234,
+        notification = None
+      )
+    )
+    planTable
+  }
+
+  /**
+    * Stores a change of `op` in the plan table as the Dashboard does, under `updateId`, with what
+    * a case changes of the row or its body.
+    *
+    * @return the change's id
+    */
+  private def storeChange(
+      op: PhysicalOp,
+      updateId: String = s"update-${UUID.randomUUID()}",
+      ofExecution: ExecutionIdentity = testExecutionId,
+      namedInBody: Option[String] = None,
+      createdBy: Int = creatorUid,
+      formatVersion: Int = PhysicalPlanCodec.FormatVersion,
+      body: Option[String] = None
+  ): String = {
+    ExecutionPlanStore.appendUpdate(
+      storedPlanTable,
+      PlanRecord(
+        entryId = updateId,
+        kind = ExecutionPlanStore.UpdateKind,
+        formatVersion = formatVersion,
+        body = body.getOrElse(
+          PhysicalPlanCodec.updateToJson(
+            PhysicalPlanCodec.encodeUpdate(
+              ofExecution,
+              namedInBody.getOrElse(updateId),
+              op.copy(executionId = ofExecution)
+            )
+          )
+        ),
+        logical = "{}",
+        createdAt = new Timestamp(System.currentTimeMillis()),
+        createdBy = createdBy,
+        computingUnitId = 9234,
+        notification = None
+      )
+    )
+    updateId
+  }
+
+  /**
+    * A service over a running plan of `physicalOps`, of the execution whose plan table is
+    * `planUri`, with no compiler, on a unit that mounts datasets and models under `mountRoot`: as
+    * a computing unit builds one for a run of a plan the Dashboard made. It records what resuming
+    * would dispatch and mount, and needs no engine. `read` stands in for reading a change from the
+    * lake, when given.
+    */
+  private class StoredChangeService(
+      stateStore: ExecutionStateStore,
+      physicalOps: Set[PhysicalOp] = Set(runningLimit),
+      planUri: URI = planTable,
+      read: Option[String => PlanRecord] = None,
+      mountRoot: Option[Path] = Some(Paths.get(changedMounts.root))
+  ) extends ExecutionReconfigurationService(
+        client = null,
+        stateStore,
+        mkWorkflow(physicalOps = physicalOps),
+        bindResources = None,
+        planUri,
+        creatorUid,
+        mountRoot
+      ) {
+    val captured: mutable.ArrayBuffer[WorkflowReconfigureRequest] = mutable.ArrayBuffer.empty
+    val mounted: mutable.ArrayBuffer[RepositoryMounts] = mutable.ArrayBuffer.empty
+    override protected def dispatch(request: WorkflowReconfigureRequest): Unit =
+      captured += request
+    override protected def ensureMounted(mounts: RepositoryMounts): Unit = mounted += mounts
+    override protected def registerWorkerCompletionCallback(): Unit = ()
+    override protected def registerCompletionDiffHandler(): Unit = ()
+    override protected def readUpdate(planUri: URI, updateId: String): PlanRecord =
+      read.fold(super.readUpdate(planUri, updateId))(_(updateId))
+  }
+
+  /** A change asked for by the user who created the execution. */
+  private val asCreator: Option[Int] = Some(creatorUid)
+
+  "applyStoredUpdate" should
+    "queue a change the Dashboard stored, which resuming dispatches with its executor and mounts" in {
+    val stateStore = new ExecutionStateStore
+    val service = new StoredChangeService(stateStore)
+    val first = storeChange(changedLimit)
+    val second =
+      storeChange(runningLimit.copy(opExecInitInfo = OpExecWithClassName("limit.Class", "{}")))
+
+    val accepted = ModifyLogicResponse("limit-a", isValid = true, "")
+    service.applyStoredUpdate(first, asCreator) shouldBe accepted
+    service.applyStoredUpdate(second, asCreator) shouldBe accepted
+
+    // The running operator, with the change's executor and what its code reads, in the order the
+    // changes came; the rest of it stays as the running plan has it.
+    val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
+    queued.map(_._2) shouldBe List(None, None)
+    queued.head._1 shouldBe changedLimit
+    queued.head._1.copy(
+      opExecInitInfo = runningLimit.opExecInitInfo,
+      repositoryMounts = runningLimit.repositoryMounts
+    ) shouldBe runningLimit
+    queued(1)._1.opExecInitInfo shouldBe OpExecWithClassName("limit.Class", "{}")
+    queued(1)._1.repositoryMounts shouldBe None
+
+    service.performReconfigurationOnResume()
+
+    service.mounted shouldBe Seq(changedMounts)
+    service.captured should have size 1
+    service.captured.head.reconfiguration shouldBe Seq(
+      UpdateExecutorRequest(runningLimit.id, changedExecutor),
+      UpdateExecutorRequest(runningLimit.id, OpExecWithClassName("limit.Class", "{}"))
+    )
+  }
+
+  it should "refuse a change it cannot apply, queueing nothing and keeping what was queued" in {
+    val stateStore = new ExecutionStateStore
+    val service = new StoredChangeService(stateStore)
+    val alreadyQueued = mkPhysicalOp("already-queued")
+    stateStore.reconfigurationStore.updateState(_ =>
+      ExecutionReconfigurationStore(unscheduledReconfigurations = List((alreadyQueued, None)))
+    )
+    val namedOtherwise = storeChange(changedLimit, namedInBody = Some("update-another"))
+    val notInPlan = mkPhysicalOp("filter-z").copy(
+      workflowId = testWorkflowId,
+      executionId = testExecutionId
+    )
+    val refusals: Seq[(String, ModifyLogicResponse)] = Seq(
+      "" -> ModifyLogicResponse("", isValid = false, "the request names no change to apply"),
+      (null: String) -> ModifyLogicResponse(
+        "",
+        isValid = false,
+        "the request names no change to apply"
+      ),
+      "update-unknown" ->
+        ModifyLogicResponse("", isValid = false, "execution 9232 has no change update-unknown"),
+      storeChange(changedLimit, ofExecution = ExecutionIdentity(9299L)) ->
+        ModifyLogicResponse(
+          "limit-a",
+          isValid = false,
+          "the change is execution 9299's, not 9232's"
+        ),
+      storeChange(changedLimit, createdBy = creatorUid + 1) ->
+        ModifyLogicResponse(
+          "",
+          isValid = false,
+          "only the user who created execution 9232 may change its operators"
+        ),
+      storeChange(changedLimit, formatVersion = 3) ->
+        ModifyLogicResponse(
+          "",
+          isValid = false,
+          s"unknown update format 3; this unit reads ${PhysicalPlanCodec.FormatVersion}"
+        ),
+      namedOtherwise ->
+        ModifyLogicResponse(
+          "limit-a",
+          isValid = false,
+          s"the change stored as $namedOtherwise names itself update-another"
+        ),
+      storeChange(notInPlan) ->
+        ModifyLogicResponse(
+          "filter-z",
+          isValid = false,
+          "operator filter-z-main is not in the running plan"
+        )
+    )
+
+    refusals.foreach {
+      case (updateId, refusal) =>
+        withClue(s"$updateId: ") { service.applyStoredUpdate(updateId, asCreator) shouldBe refusal }
+    }
+    // A body that is not a change, in the codec's words.
+    val unreadable =
+      service.applyStoredUpdate(storeChange(changedLimit, body = Some("not a change")), asCreator)
+    unreadable.isValid shouldBe false
+    unreadable.errorMessage should startWith("The operator update is not JSON")
+
+    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe
+      List((alreadyQueued, None))
+  }
+
+  it should "refuse a change anyone but the execution's creator asks for, before reading it" in {
+    val stateStore = new ExecutionStateStore
+    val service = new StoredChangeService(
+      stateStore,
+      read = Some(updateId => fail(s"$updateId was read for a user who may not apply it"))
+    )
+    Seq(Some(creatorUid + 1), None).foreach { requester =>
+      withClue(s"$requester: ") {
+        service.applyStoredUpdate("update-1", requester) shouldBe
+          ModifyLogicResponse(
+            "",
+            isValid = false,
+            "only the user who created execution 9232 may change its operators"
+          )
+      }
+    }
+    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
+  }
+
+  it should "refuse a change whose code reads datasets where this unit does not mount them" in {
+    val change = storeChange(changedLimit)
+    Seq(
+      Some(Paths.get("/mnt/elsewhere")) -> (
+        "The plan's code reads its datasets and models under /mnt/texera-mounts, but this " +
+          "computing unit mounts them under /mnt/elsewhere (TEXERA_MOUNT_IN_POD_ROOT)."
+      ),
+      None -> (
+        "TEXERA_MOUNT_IN_POD_ROOT is not set in this computing unit, so it cannot mount " +
+          "dataset-1:abc123."
+      )
+    ).foreach {
+      case (unitRoot, why) =>
+        withClue(s"$unitRoot: ") {
+          val stateStore = new ExecutionStateStore
+          val service = new StoredChangeService(stateStore, mountRoot = unitRoot)
+
+          service.applyStoredUpdate(change, asCreator) shouldBe
+            ModifyLogicResponse("limit-a", isValid = false, why)
+          // Nothing is queued, so a resume does not fail the run on it.
+          stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
+          service.performReconfigurationOnResume()
+          service.captured shouldBe empty
+        }
+    }
+    // Two spellings of the unit's root are one root; a change that reads nothing needs none.
+    val trailing = new StoredChangeService(
+      new ExecutionStateStore,
+      mountRoot = Some(Paths.get("/mnt/texera-mounts/"))
+    )
+    trailing.applyStoredUpdate(change, asCreator).isValid shouldBe true
+    val nowhere = new StoredChangeService(new ExecutionStateStore, mountRoot = None)
+    nowhere
+      .applyStoredUpdate(
+        storeChange(runningLimit.copy(opExecInitInfo = changedExecutor)),
+        asCreator
+      )
+      .isValid shouldBe true
+  }
+
+  it should "refuse a change of an execution with no plan table, or one the lake cannot answer" in {
+    val noTable = new StoredChangeService(
+      new ExecutionStateStore,
+      planUri = ExecutionPlanStore.planUri(testWorkflowId, ExecutionIdentity(9298L), None)
+    )
+    noTable.applyStoredUpdate("update-1", asCreator) shouldBe
+      ModifyLogicResponse("", isValid = false, "execution 9232 has no stored plan")
+
+    val stateStore = new ExecutionStateStore
+    val unanswered = new StoredChangeService(
+      stateStore,
+      read = Some(_ => throw new IllegalStateException("the catalog is unavailable"))
+    )
+    unanswered.applyStoredUpdate("update-1", asCreator) shouldBe
+      ModifyLogicResponse(
+        "",
+        isValid = false,
+        "change update-1 of execution 9232 could not be read"
+      )
+    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
+  }
+
+  "modifyOperatorLogic" should "refuse an edit of a run of a plan the Dashboard made, which no compiler here made" in {
+    val stateStore = new ExecutionStateStore
+    val service = new StoredChangeService(stateStore)
+
+    service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp("limit-a", 7))) shouldBe
+      ModifyLogicResponse(
+        "limit-a",
+        isValid = false,
+        "Execution 9232 runs the plan the Dashboard made for it: change its operators through " +
+          "the Dashboard."
+      )
+    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
   }
 
   "performReconfigurationOnResume" should

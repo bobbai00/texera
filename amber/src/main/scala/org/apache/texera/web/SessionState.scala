@@ -55,6 +55,7 @@ class SessionState(session: Session) {
   private var workflowSubscription = Disposable.empty()
   private var executionSubscription = Disposable.empty()
   private var userComputingUnitAccess: PrivilegeEnum = PrivilegeEnum.NONE
+  private var computingUnitId: Option[Int] = None
 
   def send(msg: TexeraWebSocketEvent): Unit = {
     session.getAsyncRemote.sendText(objectMapper.writeValueAsString(msg))
@@ -87,4 +88,10 @@ class SessionState(session: Session) {
     this.userComputingUnitAccess = cuAccess
   }
   def getUserComputingUnitAccess: PrivilegeEnum = this.userComputingUnitAccess
+
+  /** The computing unit the socket was opened for, once its handshake was read. */
+  def setComputingUnitId(cuid: Int): Unit = {
+    this.computingUnitId = Some(cuid)
+  }
+  def getComputingUnitId: Option[Int] = this.computingUnitId
 }

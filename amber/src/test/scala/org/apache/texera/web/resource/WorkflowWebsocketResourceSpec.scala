@@ -19,33 +19,100 @@
 
 package org.apache.texera.web.resource
 
+import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.fasterxml.jackson.databind.exc.InvalidTypeIdException
 import com.google.protobuf.timestamp.Timestamp
+import com.twitter.util.{Future, Promise}
+import io.reactivex.rxjava3.disposables.Disposable
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.ClusterListener
+import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionPlanStore,
+  RepositoryVersionResolver,
+  ScanFileResolver,
+  VFSURIFactory
+}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
-import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
-import org.apache.texera.amber.core.workflow.WorkflowContext
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  PhysicalOpIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{
+  CostHints,
+  InputFile,
+  PhysicalPlan,
+  PhysicalPlanCodec,
+  PlanInput,
+  PortIdentity,
+  WorkflowContext
+}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
   COMPILATION_ERROR,
   EXECUTION_FAILURE
 }
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
+import org.apache.texera.amber.engine.architecture.coordinator.{
+  CoordinatorConfig,
+  Workflow => EngineWorkflow
+}
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  READY,
+  RUNNING
+}
+import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
+import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.limit.LimitOpDesc
+import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
-import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
-import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.web.SessionState
+import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
+import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_OF_USER}
+import org.apache.texera.dao.jooq.generated.enums.{
+  PrivilegeEnum,
+  UserRoleEnum,
+  WorkflowComputingUnitTypeEnum
+}
+import org.apache.texera.dao.jooq.generated.tables.daos.{
+  UserDao,
+  WorkflowComputingUnitDao,
+  WorkflowDao,
+  WorkflowVersionDao
+}
+import org.apache.texera.dao.jooq.generated.tables.pojos.{
+  User,
+  Workflow,
+  WorkflowComputingUnit,
+  WorkflowVersion
+}
+import org.apache.texera.web.{SessionState, WorkflowLifecycleManager}
+import org.apache.texera.web.model.http.request.execution.{
+  CreateExecutionRequest,
+  OperatorUpdateRequestBody
+}
+import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.model.websocket.event.{PaginatedResultEvent, TexeraWebSocketEvent}
 import org.apache.texera.web.model.websocket.request.{
   HeartBeatRequest,
   ModifyLogicRequest,
+  OperatorUpdateRequest,
   ResultPaginationRequest,
   RetryRequest,
   TexeraWebSocketRequest,
-  WorkflowExecuteRequest
+  WorkflowExecuteRequest,
+  WorkflowStartRequest
 }
 import org.apache.texera.web.model.websocket.response.ModifyLogicResponse
+import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
 import org.apache.texera.web.service.{
   ExecutionReconfigurationService,
   ExecutionResultService,
@@ -54,19 +121,30 @@ import org.apache.texera.web.service.{
 }
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalamock.scalatest.MockFactory
-import org.scalatest.BeforeAndAfterEach
-import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.concurrent.Eventually
+import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.time.{Seconds, Span}
+import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
+import org.slf4j.LoggerFactory
 
-import io.reactivex.rxjava3.disposables.Disposable
-
+import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
+import java.nio.file.Path
+import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.{Future => JFuture}
 import javax.websocket.{RemoteEndpoint, Session}
 import scala.collection.mutable.ArrayBuffer
-import scala.jdk.CollectionConverters.{IteratorHasAsScala, MapHasAsJava, SeqHasAsJava}
+import scala.jdk.CollectionConverters.{
+  IteratorHasAsScala,
+  ListHasAsScala,
+  MapHasAsJava,
+  SeqHasAsJava
+}
+import scala.reflect.ClassTag
+import scala.util.Try
 
 /**
   * Unit tests for the websocket endpoint's message handling.
@@ -96,6 +174,18 @@ import scala.jdk.CollectionConverters.{IteratorHasAsScala, MapHasAsJava, SeqHasA
   * Everything here drives a mocked `javax.websocket.Session` (the pattern `CollaborationResourceSpec`
   * established) and registers a `SessionState` directly, so no real workflow is created.
   *
+  * Starting an execution the Dashboard created (`WorkflowStartRequest`) and applying a change it
+  * stored (`OperatorUpdateRequest`) need more: each execution is created by `ExecutionCreator`, its
+  * rows in `MockTexeraDB` and its plan in the catalog the build's tests use (the Postgres JDBC
+  * catalog in CI), and is started on a `WorkflowService` whose sessions are subscribed for real,
+  * so a session other than the sender's shows what reaches the workflow and what does not. Only
+  * the engine is a `TestAmberClient` on this suite's actor system, which answers nothing. Its
+  * coordinator tells every registered session of its regions (`RegionUpdateEvent`) once it is up,
+  * so the cases that build one wait for that before they end. A refused start is checked to reach
+  * its sender alone, to send no statement to the database, and to leave the run in flight as it
+  * was; a start frame that does not bind too. A start over a socket whose URI carries the user's
+  * access token, as a browser's does, is checked to log no line naming it.
+  *
   * Deliberately not covered, because each would pin an accidental failure rather than a contract:
   *   - `myOnOpen`'s missing-`wid`/`cuid` and bogus-privilege paths, which fail with NPE /
   *     IndexOutOfBounds / IllegalArgumentException. A harmless improvement (a default, or a clear
@@ -106,10 +196,14 @@ import scala.jdk.CollectionConverters.{IteratorHasAsScala, MapHasAsJava, SeqHasA
   *     the malformed-frame cases here are about the endpoint's handling, not the binding rules.
   */
 class WorkflowWebsocketResourceSpec
-    extends AnyFlatSpec
+    extends TestKit(ActorSystem("WorkflowWebsocketResourceSpec"))
+    with AnyFlatSpecLike
     with Matchers
     with MockFactory
-    with BeforeAndAfterEach {
+    with Eventually
+    with BeforeAndAfterEach
+    with BeforeAndAfterAll
+    with MockTexeraDB {
 
   private var resource: WorkflowWebsocketResource = _
   private val registeredSessions = ArrayBuffer[String]()
@@ -175,7 +269,8 @@ class WorkflowWebsocketResourceSpec
       uid: Option[Int] = None,
       cuAccess: String = PrivilegeEnum.WRITE.name(),
       wid: Long = 1L,
-      cuid: Int = 1
+      cuid: Int = 1,
+      requestUri: URI = new URI("ws://localhost/wsapi/workflow-websocket")
   ): (Session, ArrayBuffer[String]) = {
     val sent = ArrayBuffer[String]()
 
@@ -208,16 +303,24 @@ class WorkflowWebsocketResourceSpec
     (() => session.getRequestParameterMap).expects().returning(parameters).anyNumberOfTimes()
     (() => session.getRequestURI)
       .expects()
-      .returning(new URI("ws://localhost/wsapi/workflow-websocket"))
+      .returning(requestUri)
       .anyNumberOfTimes()
 
     (session, sent)
   }
 
-  /** Registers a SessionState for `session` and remembers it for cleanup. */
-  private def registerState(session: Session, access: PrivilegeEnum): SessionState = {
+  /**
+    * Registers a SessionState for `session` and remembers it for cleanup. `cuid` is the unit the
+    * socket was opened for, as `myOnOpen` records it.
+    */
+  private def registerState(
+      session: Session,
+      access: PrivilegeEnum,
+      cuid: Option[Int] = None
+  ): SessionState = {
     val state = new SessionState(session)
     state.setUserComputingUnitAccess(access)
+    cuid.foreach(state.setComputingUnitId)
     SessionState.setState(session.getId, state)
     registeredSessions += session.getId
     state
@@ -302,7 +405,10 @@ class WorkflowWebsocketResourceSpec
         client = null,
         stateStore,
         workflow = null,
-        bindResources = identity
+        bindResources = Some(identity),
+        planUri = new URI("vfs:///wid/1/eid/1/plan"),
+        creator = 42,
+        mountRoot = None
       ) {
     var captured: Option[ModifyLogicRequest] = None
 
@@ -785,6 +891,8 @@ class WorkflowWebsocketResourceSpec
           // READ/WRITE, never NONE: NONE is SessionState's own field default, so feeding it would
           // pass with the privilege never being set at all.
           state.getUserComputingUnitAccess shouldBe access
+          // The unit a start over this socket runs on.
+          state.getComputingUnitId shouldBe Some(cuid)
 
           // Ordered, not merely present. The state event is the "hack to refresh frontend run
           // button state" and has to go out before the workflow subscription is established.
@@ -819,6 +927,8 @@ class WorkflowWebsocketResourceSpec
     // described above but NOT asserted -- pinning it would turn a defect into a contract and make
     // this spec an obstacle to fixing it.
     bound should be theSameInstanceAs existing
+    // The socket keeps its own unit, which a start of an execution over it runs on.
+    SessionState.getState(session.getId).getComputingUnitId shouldBe Some(99)
   }
 
   "myOnClose" should "drop the state registered under that session id" in {
@@ -831,5 +941,744 @@ class WorkflowWebsocketResourceSpec
     // getState throws once the entry is gone, which is how the endpoint's own handlers would fail
     // if a frame arrived after close.
     a[NoSuchElementException] should be thrownBy SessionState.getState(session.getId)
+  }
+
+  // -- starting an execution the Dashboard created ------------------------------
+
+  // Users, workflows and units of the start cases, reserved for this suite (9741xx), with the
+  // executions they create after 974000.
+  private val creatorUid = 9741
+  private val otherUid = 9742
+  private val storedWid = 9741L
+  private val otherWid = 9742L
+  private val storedCuid = 9745
+  private val secondCuid = 9746
+  private val firstCreatedEid = 974000
+
+  /** Every plan and runtime-statistics table the start cases make, dropped after the suite. */
+  private val madePlans = ArrayBuffer.empty[URI]
+  private val madeStatistics = ArrayBuffer.empty[URI]
+
+  private var recorder: StatementRecorder = _
+
+  override protected def beforeAll(): Unit = {
+    super.beforeAll()
+    initializeDBAndReplaceDSLContext()
+    recorder = StatementRecorder.installOn(getDSLContext)
+    val cfg = getDSLContext.configuration()
+    Seq(creatorUid, otherUid).foreach { uid =>
+      val user = new User
+      user.setUid(Integer.valueOf(uid))
+      user.setName(s"websocket-spec-user-$uid")
+      user.setEmail(s"websocket-spec-$uid@example.com")
+      user.setRole(UserRoleEnum.REGULAR)
+      new UserDao(cfg).insert(user)
+    }
+    Seq(storedWid, otherWid).foreach { wid =>
+      val workflow = new Workflow
+      workflow.setWid(Integer.valueOf(wid.toInt))
+      workflow.setName(s"websocket-spec-workflow-$wid")
+      workflow.setContent("{}")
+      workflow.setDescription("")
+      workflow.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
+      workflow.setLastModifiedTime(new SqlTimestamp(System.currentTimeMillis()))
+      new WorkflowDao(cfg).insert(workflow)
+      val version = new WorkflowVersion
+      version.setWid(Integer.valueOf(wid.toInt))
+      version.setContent("{}")
+      version.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
+      new WorkflowVersionDao(cfg).insert(version)
+      getDSLContext
+        .insertInto(WORKFLOW_OF_USER)
+        .set(WORKFLOW_OF_USER.UID, Integer.valueOf(creatorUid))
+        .set(WORKFLOW_OF_USER.WID, Integer.valueOf(wid.toInt))
+        .execute()
+    }
+    Seq(storedCuid, secondCuid).foreach { cuid =>
+      val unit = new WorkflowComputingUnit
+      unit.setCuid(Integer.valueOf(cuid))
+      unit.setUid(Integer.valueOf(creatorUid))
+      unit.setName(s"websocket-spec-unit-$cuid")
+      unit.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
+      unit.setType(WorkflowComputingUnitTypeEnum.local)
+      unit.setUri("local://test")
+      unit.setResource("{}")
+      new WorkflowComputingUnitDao(cfg).insert(unit)
+    }
+    // Executions created below take ids after this one. The table is qualified from the
+    // generated metadata, as the connection's search_path does not hold texera_db.
+    getDSLContext.execute(
+      "select setval(pg_get_serial_sequence(?, ?), ?, true)",
+      s"${WORKFLOW_EXECUTIONS.getSchema.getName}.${WORKFLOW_EXECUTIONS.getName}",
+      WORKFLOW_EXECUTIONS.EID.getName,
+      Integer.valueOf(firstCreatedEid)
+    )
+  }
+
+  override protected def afterAll(): Unit =
+    try {
+      madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
+      madeStatistics.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
+      TestKit.shutdownActorSystem(system)
+    } finally {
+      closeConnectionPool()
+      super.afterAll()
+    }
+
+  private object NoHints extends CostHintsLoader(1) {
+    override def load(wid: Long, uid: Int): Option[CostHints] = None
+  }
+
+  /** The Dashboard's create, with the fixture resolvers and no cost hints. */
+  private object FixtureCreator extends ExecutionCreator {
+    override protected def fileResolverFor(uid: Integer): ScanFileResolver =
+      TestOperators.fixtureFileResolver
+    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
+      TestOperators.fixtureRepositoryResolver
+    override protected def mountRoot: Option[Path] = Some(TestOperators.fixtureMountRoot)
+    override protected def replayLogRoot: Option[URI] = None
+    override protected def warehousesEnabled: Boolean = false
+    override protected def costHintsLoader: CostHintsLoader = NoHints
+  }
+
+  /** The Dashboard's store of a change to a paused operator, with the fixture resolver. */
+  private object FixtureUpdates extends OperatorUpdates {
+    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
+      TestOperators.fixtureRepositoryResolver
+    override protected def mountRoot: Option[Path] = Some(TestOperators.fixtureMountRoot)
+    override protected def warehousesEnabled: Boolean = false
+  }
+
+  private def userOf(uid: Int): User = {
+    val user = new User
+    user.setUid(Integer.valueOf(uid))
+    user.setEmail(s"websocket-spec-$uid@example.com")
+    user
+  }
+
+  /** Lines of text into a Limit of 2, which can be changed while the run is paused. */
+  private def linesToLimit(): LogicalPlanPojo = {
+    val lines = new TextInputSourceOpDesc
+    lines.setOperatorId("lines")
+    lines.textInput = "a\nb\nc"
+    val limit = new LimitOpDesc
+    limit.setOperatorId("limit")
+    limit.limit = 2
+    LogicalPlanPojo(
+      List(lines, limit),
+      List(
+        LogicalLink(
+          lines.operatorIdentifier,
+          PortIdentity(),
+          limit.operatorIdentifier,
+          PortIdentity()
+        )
+      ),
+      List.empty,
+      List.empty
+    )
+  }
+
+  /** An execution of `storedWid` the creator created at the Dashboard for `storedCuid`. */
+  private def created(): CreateExecutionResponse = {
+    val response = FixtureCreator
+      .create(
+        CreateExecutionRequest(
+          wid = storedWid,
+          engineVersion = "1.4.0-spec",
+          logicalPlan = linesToLimit(),
+          workflowSettings = None,
+          computingUnitId = storedCuid,
+          warehouseId = None,
+          replayFromExecution = None
+        ),
+        userOf(creatorUid),
+        new URI("http://texera.example/api/executions")
+      )
+      .getOrElse(fail("the execution was not created"))
+    madePlans += new URI(response.planUri)
+    madeStatistics += VFSURIFactory.createRuntimeStatisticsURI(
+      WorkflowIdentity(storedWid),
+      ExecutionIdentity(response.eid)
+    )
+    response
+  }
+
+  /**
+    * An engine on this suite's actor system that answers nothing: the run it is built for is set
+    * up in full, every service around its plan, and never starts.
+    */
+  private final class TestAmberClient
+      extends AmberClient(
+        system,
+        new WorkflowContext(),
+        PhysicalPlan(Set.empty, Set.empty),
+        CoordinatorConfig(None, None, None, None),
+        _ => ()
+      ) {
+    override def registerCallback[T](callback: T => Unit)(implicit ct: ClassTag[T]): Disposable =
+      Disposable.empty()
+
+    override val coordinatorInterface: CoordinatorServiceFs2Grpc[Future, Unit] =
+      Proxy
+        .newProxyInstance(
+          classOf[CoordinatorServiceFs2Grpc[Future, Unit]].getClassLoader,
+          Array(classOf[CoordinatorServiceFs2Grpc[Future, Unit]]),
+          new InvocationHandler {
+            override def invoke(proxy: Any, method: Method, args: Array[AnyRef]): AnyRef =
+              method.getName match {
+                case "hashCode" => Integer.valueOf(System.identityHashCode(proxy))
+                case "equals"   => java.lang.Boolean.valueOf(proxy.asInstanceOf[AnyRef] eq args(0))
+                case "toString" => "UnansweredCoordinatorInterface"
+                case _          => Promise[Any]()
+              }
+          }
+        )
+        .asInstanceOf[CoordinatorServiceFs2Grpc[Future, Unit]]
+  }
+
+  /**
+    * The workflow's service, as `getOrCreate` makes one for the first session on `serviceCuid`,
+    * but for the engine of each run, which is a [[TestAmberClient]], and for the idle clean-up,
+    * which it never arms. Sessions subscribe to it for real.
+    */
+  private class StoredStartService(serviceCuid: Int = storedCuid)
+      extends WorkflowService(WorkflowIdentity(storedWid), serviceCuid, 3600) {
+    override val lifeCycleManager: WorkflowLifecycleManager =
+      new WorkflowLifecycleManager("WorkflowWebsocketResourceSpec", 3600, () => ()) {
+        override def increaseUserCount(): Unit = ()
+        override def decreaseUserCount(state: Option[WorkflowAggregatedState]): Unit = ()
+        override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore): Disposable =
+          Disposable.empty()
+      }
+
+    /** The workflow each run's engine was handed. */
+    val engines: ArrayBuffer[EngineWorkflow] = ArrayBuffer.empty
+
+    /** The unit and the URI each start by id was asked with. */
+    val asked: ArrayBuffer[(Int, URI)] = ArrayBuffer.empty
+
+    override def startStoredExecution(
+        executionId: Long,
+        planUri: URI,
+        user: User,
+        cuid: Int,
+        sessionUri: URI
+    ): Either[String, WorkflowExecutionService] = {
+      asked += ((cuid, sessionUri))
+      super.startStoredExecution(executionId, planUri, user, cuid, sessionUri)
+    }
+
+    override protected def storedRun(
+        context: WorkflowContext,
+        executionStateStore: ExecutionStateStore,
+        errorHandler: Throwable => Unit
+    ): WorkflowExecutionService =
+      new WorkflowExecutionService(
+        context,
+        resultService,
+        executionStateStore,
+        errorHandler,
+        Some(TestOperators.fixtureMountRoot)
+      ) {
+        override protected def createAmberRuntime(
+            workflow: EngineWorkflow,
+            coordinatorConfig: CoordinatorConfig
+        ): AmberClient = {
+          engines += workflow
+          new TestAmberClient
+        }
+      }
+  }
+
+  /** A session of `uid` on `service`'s workflow and `cuid`, subscribed to it. */
+  private def sessionOn(
+      service: WorkflowService,
+      uid: Option[Int] = Some(creatorUid),
+      access: PrivilegeEnum = PrivilegeEnum.WRITE,
+      cuid: Int = storedCuid,
+      requestUri: URI = new URI("ws://localhost/wsapi/workflow-websocket")
+  ): (Session, ArrayBuffer[String]) = {
+    val (session, sent) =
+      mockSession(uid = uid, wid = storedWid, cuid = cuid, requestUri = requestUri)
+    registerState(session, access, Some(cuid)).subscribe(service)
+    (session, sent)
+  }
+
+  private def startFrame(executionId: Long, planUri: String): String =
+    frameOf(WorkflowStartRequest(executionId, planUri))
+
+  private def stateEvents(sent: ArrayBuffer[String]): Seq[String] =
+    sent.toSeq
+      .map(objectMapper.readTree)
+      .filter(_.get("type").asText() == "WorkflowStateEvent")
+      .map(_.get("state").asText())
+
+  /** Waits until the coordinator of a run just built has told `sent`'s session of its regions. */
+  private def awaitEngineUp(sent: ArrayBuffer[String]): Unit =
+    eventually(timeout(Span(30, Seconds))) {
+      sentTypes(sent) should contain("RegionUpdateEvent")
+    }
+
+  /**
+    * A run of another execution of the workflow (974999), in flight on `service`. It never built
+    * its engine.
+    */
+  private def runInFlight(service: WorkflowService): WorkflowExecutionService = {
+    val run = newExecution()
+    run.workflowContext.executionId = ExecutionIdentity(974999L)
+    run.executionStateStore.metadataStore.updateState(
+      _.withExecutionId(ExecutionIdentity(974999L)).withState(RUNNING)
+    )
+    service.executionService.onNext(run)
+    run
+  }
+
+  /** Each `ModifyLogicResponse` the session was sent, as (opId, isValid, errorMessage). */
+  private def modifyLogicResponses(sent: ArrayBuffer[String]): Seq[(String, Boolean, String)] =
+    sent.toSeq
+      .map(objectMapper.readTree)
+      .filter(_.get("type").asText() == "ModifyLogicResponse")
+      .map(response =>
+        (
+          response.get("opId").asText(),
+          response.get("isValid").asBoolean(),
+          response.get("errorMessage").asText()
+        )
+      )
+
+  /** A browser's access token, as it opens a socket with it in the URI's query. */
+  private val accessToken = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWJzb2NrZXQtc3BlYyJ9.c2lnbmF0dXJl"
+
+  /**
+    * Runs `body` and answers what it ran with: the lines Texera's own loggers wrote meanwhile,
+    * every level, from any thread, each with the message of what it logged as its cause.
+    */
+  private def texeraLogLinesOf(body: => Unit): Seq[String] = {
+    val logger = LoggerFactory.getLogger("org.apache.texera").asInstanceOf[LogbackLogger]
+    val appender = new ListAppender[ILoggingEvent]
+    val previousLevel = logger.getLevel
+    appender.start()
+    logger.addAppender(appender)
+    logger.setLevel(Level.ALL)
+    try {
+      body
+      appender.list.asScala.toList.map { event =>
+        event.getFormattedMessage +
+          Option(event.getThrowableProxy).fold("")(cause => s" ${cause.getMessage}")
+      }
+    } finally {
+      logger.setLevel(previousLevel)
+      logger.detachAppender(appender)
+      appender.stop()
+    }
+  }
+
+  "WorkflowStartRequest" should
+    "start the execution from its stored plan, for every session on the workflow, on the socket's unit" in {
+    val execution = created()
+    // A service made for another unit, as the workflow's first session on that unit leaves one
+    // (#7676): the run is on the unit of the socket the start came over, which the execution was
+    // created for.
+    val service = new StoredStartService(serviceCuid = secondCuid)
+    try {
+      val socketUri = new URI(
+        s"ws://localhost:8085/wsapi/workflow-websocket?wid=$storedWid&uid=$creatorUid" +
+          s"&cuid=$storedCuid&access-token=$accessToken"
+      )
+      val (session, sent) = sessionOn(service, requestUri = socketUri)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      sent.clear()
+      otherSent.clear()
+
+      val logLines = texeraLogLinesOf {
+        resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+        awaitEngineUp(sent)
+        awaitEngineUp(otherSent)
+      }
+
+      val planUri = new URI(execution.planUri)
+      ExecutionPlanStore.isStarted(planUri) shouldBe true
+      // The run is set up in full on the plan read back, and READY: every session is told so.
+      val run = service.executionService.getValue
+      run.workflowContext.executionId shouldBe ExecutionIdentity(execution.eid)
+      run.executionStateStore.metadataStore.getState.state shouldBe READY
+      stateEvents(sent) shouldBe Seq("Initializing")
+      stateEvents(otherSent) shouldBe Seq("Initializing")
+      fatalErrorMessages(sent) shouldBe empty
+      // The start was asked with the socket's unit, and with the socket's URI without its query,
+      // which holds the user's access token: no line logged names the token.
+      service.asked shouldBe Seq(
+        (storedCuid, new URI("ws://localhost:8085/wsapi/workflow-websocket"))
+      )
+      val startLine = s"Execution ${execution.eid} of workflow $storedWid starts"
+      logLines.count(_.contains(startLine)) shouldBe 1
+      logLines.filter(_.contains(accessToken)) shouldBe empty
+      logLines.filter(_.contains("access-token")) shouldBe empty
+      // The engine is handed the plan the Dashboard stored, under the context it was read back
+      // with, naming the socket's unit.
+      service.engines should have size 1
+      val engine = service.engines.head
+      engine.context.cuid shouldBe Some(storedCuid)
+      service.computingUnitId shouldBe secondCuid
+      engine.context.executionId shouldBe ExecutionIdentity(execution.eid)
+      val stored = PhysicalPlanCodec
+        .decode(PhysicalPlanCodec.fromJson(ExecutionPlanStore.readPlan(planUri).body))
+        .plan
+      engine.physicalPlan.operators.map(op => (op.id, op.opExecInitInfo)) shouldBe
+        stored.operators.map(op => (op.id, op.opExecInitInfo))
+      engine.physicalPlan.links shouldBe stored.links
+      engine.physicalPlan.operators.map(_.id.logicalOpId.id) shouldBe Set("lines", "limit")
+    } finally service.unsubscribeAll()
+  }
+
+  it should "refuse a start to its sender alone, writing nothing and leaving the run in flight as it was" in {
+    val execution = created()
+    val unknownFormat = created()
+    val unknownFormatUri = new URI(unknownFormat.planUri)
+    ExecutionPlanStore.writePlan(
+      unknownFormatUri,
+      ExecutionPlanStore.readPlan(unknownFormatUri).copy(formatVersion = 3)
+    )
+    val noPlanUri = ExecutionPlanStore
+      .planUri(WorkflowIdentity(storedWid), ExecutionIdentity(firstCreatedEid - 1L), None)
+    // An execution whose plan table holds the plan of another execution.
+    val mislabeled = created()
+    val mislabeledUri = new URI(mislabeled.planUri)
+    ExecutionPlanStore.writePlan(
+      mislabeledUri,
+      ExecutionPlanStore
+        .readPlan(mislabeledUri)
+        .copy(body = ExecutionPlanStore.readPlan(new URI(execution.planUri)).body)
+    )
+    // An execution whose plan reads a file through a link that expired long ago, encoded by hand
+    // until the Dashboard makes links (sub-part 16).
+    val expired = created()
+    val expiredUri = new URI(expired.planUri)
+    val expiredRow = ExecutionPlanStore.readPlan(expiredUri)
+    val expiry = 1000L
+    ExecutionPlanStore.writePlan(
+      expiredUri,
+      expiredRow.copy(body =
+        PhysicalPlanCodec.toJson(
+          PhysicalPlanCodec.encode(
+            PhysicalPlanCodec
+              .decode(PhysicalPlanCodec.fromJson(expiredRow.body))
+              .copy(inputs =
+                Seq(PlanInput(OperatorIdentity("lines"), "lines.txt", InputFile(expiry, 3)))
+              )
+          )
+        )
+      )
+    )
+    val refusals: Seq[(String, Option[Int], PrivilegeEnum, Int, String, String)] = Seq(
+      (
+        "no write access",
+        Some(creatorUid),
+        PrivilegeEnum.READ,
+        storedCuid,
+        startFrame(execution.eid, execution.planUri),
+        "you do not have write access to the computing unit"
+      ),
+      (
+        "no user",
+        None,
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(execution.eid, execution.planUri),
+        "a signed-in user is required to start an execution"
+      ),
+      (
+        "not a plan",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(execution.eid, s"vfs:///wid/$storedWid/eid/${execution.eid}/result"),
+        "not an execution plan"
+      ),
+      (
+        "no URI",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":"::"}""",
+        "not an execution plan"
+      ),
+      // Frames that do not bind: not reported into the run in flight, as other frames are.
+      (
+        "no execution id",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        s"""{"type":"WorkflowStartRequest","executionId":"abc","planUri":"${execution.planUri}"}""",
+        "the request to start an execution could not be read"
+      ),
+      (
+        "a plan table that is not a string",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":{"x":1}}""",
+        "the request to start an execution could not be read"
+      ),
+      (
+        "another execution's plan",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(execution.eid, unknownFormat.planUri),
+        s"the plan is execution ${unknownFormat.eid}'s, not ${execution.eid}'s"
+      ),
+      (
+        "another workflow's plan",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(
+          execution.eid,
+          ExecutionPlanStore
+            .planUri(WorkflowIdentity(otherWid), ExecutionIdentity(execution.eid), None)
+            .toString
+        ),
+        s"the plan belongs to workflow $otherWid, not to this one"
+      ),
+      (
+        "another user's warehouse",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(
+          execution.eid,
+          ExecutionPlanStore
+            .planUri(
+              WorkflowIdentity(storedWid),
+              ExecutionIdentity(execution.eid),
+              Some(s"user-$otherUid-1")
+            )
+            .toString
+        ),
+        "the plan is in another user's warehouse"
+      ),
+      (
+        "the user's own warehouse, which this deployment does not serve",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(
+          execution.eid,
+          ExecutionPlanStore
+            .planUri(
+              WorkflowIdentity(storedWid),
+              ExecutionIdentity(execution.eid),
+              Some(s"user-$creatorUid-1")
+            )
+            .toString
+        ),
+        s"execution ${execution.eid} keeps its plan in warehouse 'user-$creatorUid-1', and " +
+          "per-user warehouses are disabled in this deployment"
+      ),
+      (
+        "no stored plan",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(firstCreatedEid - 1L, noPlanUri.toString),
+        s"execution ${firstCreatedEid - 1} has no stored plan"
+      ),
+      (
+        "another format",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(unknownFormat.eid, unknownFormat.planUri),
+        s"unknown plan format 3; this unit reads ${PhysicalPlanCodec.FormatVersion}"
+      ),
+      (
+        "another user",
+        Some(otherUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(execution.eid, execution.planUri),
+        s"only the user who created execution ${execution.eid} may start it"
+      ),
+      (
+        "another unit",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        secondCuid,
+        startFrame(execution.eid, execution.planUri),
+        s"execution ${execution.eid} was created for computing unit $storedCuid, not $secondCuid"
+      ),
+      (
+        "another execution's plan in its plan table",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(mislabeled.eid, mislabeled.planUri),
+        "the plan's ids do not match its location"
+      ),
+      (
+        "an expired input link",
+        Some(creatorUid),
+        PrivilegeEnum.WRITE,
+        storedCuid,
+        startFrame(expired.eid, expired.planUri),
+        s"input links expired at ${Instant.ofEpochMilli(expiry)}; run the workflow again"
+      )
+    )
+    val service = new StoredStartService
+    try {
+      val inFlight = runInFlight(service)
+      val inFlightState = inFlight.executionStateStore.metadataStore.getState
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      refusals.foreach {
+        case (name, uid, access, cuid, frame, why) =>
+          withClue(s"$name: ") {
+            val (session, sent) = sessionOn(service, uid, access, cuid)
+            sent.clear()
+            otherSent.clear()
+
+            val statements = recorder.record {
+              noException should be thrownBy resource.myOnMsg(session, frame)
+            }
+
+            statements shouldBe empty
+            sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
+            val error = objectMapper.readTree(sent.head).get("fatalErrors").get(0)
+            error.get("type").get("name").asText() shouldBe "EXECUTION_FAILURE"
+            error.get("message").asText() shouldBe why
+            error.get("operatorId").asText() shouldBe ""
+            otherSent shouldBe empty
+            service.executionService.getValue should be theSameInstanceAs inFlight
+            inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
+          }
+      }
+      ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
+      Seq(unknownFormatUri, mislabeledUri, expiredUri).foreach { uri =>
+        ExecutionPlanStore.isStarted(uri) shouldBe false
+      }
+      service.engines shouldBe empty
+    } finally service.unsubscribeAll()
+  }
+
+  it should "refuse a start on a socket with no workflow, to that socket" in {
+    val (session, sent) = mockSession(uid = Some(creatorUid), wid = storedWid, cuid = storedCuid)
+    registerState(session, PrivilegeEnum.WRITE)
+
+    noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "vfs:///x"))
+
+    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
+    fatalErrorMessages(sent) shouldBe Seq("workflow is not initialized")
+  }
+
+  it should "refuse a second start of an execution to its sender alone, leaving the run started as it was" in {
+    val execution = created()
+    val service = new StoredStartService
+    try {
+      val (session, sent) = sessionOn(service)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      awaitEngineUp(sent)
+      awaitEngineUp(otherSent)
+      val run = service.executionService.getValue
+      // A double click, or the same start from another socket of the creator, as on a reconnect.
+      val (again, againSent) = sessionOn(service)
+      Seq((session, sent), (again, againSent)).foreach {
+        case (repeating, repeatingSent) =>
+          sent.clear()
+          otherSent.clear()
+          againSent.clear()
+
+          recorder.record {
+            resource.myOnMsg(repeating, startFrame(execution.eid, execution.planUri))
+          } shouldBe empty
+
+          fatalErrorMessages(repeatingSent) shouldBe
+            Seq(s"execution ${execution.eid} was already started")
+          sentTypes(repeatingSent) shouldBe Seq("WorkflowErrorEvent")
+          (Seq(sent, otherSent, againSent).filterNot(_ eq repeatingSent).flatten) shouldBe empty
+          service.executionService.getValue should be theSameInstanceAs run
+          run.executionStateStore.metadataStore.getState.state shouldBe READY
+          run.executionStateStore.metadataStore.getState.fatalErrors shouldBe empty
+      }
+      service.engines should have size 1
+    } finally service.unsubscribeAll()
+  }
+
+  // -- applying a change the Dashboard stored -----------------------------------
+
+  "OperatorUpdateRequest" should "apply a change the Dashboard stored to the run started from its plan" in {
+    val execution = created()
+    val service = new StoredStartService
+    try {
+      val (session, sent) = sessionOn(service)
+      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      awaitEngineUp(sent)
+      val run = service.executionService.getValue
+      val changed = new LimitOpDesc
+      changed.setOperatorId("limit")
+      changed.limit = 7
+      val update = FixtureUpdates.store(
+        execution.eid,
+        OperatorUpdateRequestBody(changed),
+        userOf(creatorUid)
+      )
+      val updateFrame = frameOf(OperatorUpdateRequest(execution.eid, update.updateId))
+      // Only the creator, with WRITE on the unit, applies it: a session without WRITE, another
+      // user's and one of no user on the same run are refused, and queue nothing.
+      Seq(
+        sessionOn(service, access = PrivilegeEnum.READ) ->
+          "you do not have write access to the computing unit",
+        sessionOn(service, uid = Some(otherUid)) ->
+          s"only the user who created execution ${execution.eid} may change its operators",
+        sessionOn(service, uid = None) ->
+          s"only the user who created execution ${execution.eid} may change its operators"
+      ).foreach {
+        case ((refusedSession, refusedSent), why) =>
+          withClue(s"$why: ") {
+            refusedSent.clear()
+            resource.myOnMsg(refusedSession, updateFrame)
+            modifyLogicResponses(refusedSent) shouldBe Seq(("", false, why))
+            run.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe
+              empty
+          }
+      }
+      sent.clear()
+
+      resource.myOnMsg(session, updateFrame)
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(execution.eid, "update-unknown")))
+
+      modifyLogicResponses(sent) shouldBe Seq(
+        ("limit", true, ""),
+        ("", false, s"execution ${execution.eid} has no change update-unknown")
+      )
+      // Queued for the resume: the running Limit, with the executor the change made.
+      val queued =
+        run.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations.map(_._1)
+      queued.map(_.id) shouldBe List(PhysicalOpIdentity(OperatorIdentity("limit"), "main"))
+      objectMapper
+        .readTree(queued.head.opExecInitInfo.asInstanceOf[OpExecWithClassName].descString)
+        .get("limit")
+        .asInt() shouldBe 7
+    } finally service.unsubscribeAll()
+  }
+
+  it should "answer a change for an execution that is not running here as not applied" in {
+    val service = new StoredStartService
+    try {
+      val (session, sent) = sessionOn(service)
+      // No run at all, then a run of another execution, then one of this execution that never
+      // built its engine.
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974997L, "update-1")))
+      runInFlight(service)
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974997L, "update-1")))
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974999L, "update-1")))
+
+      modifyLogicResponses(sent) shouldBe Seq(
+        ("", false, "execution 974997 is not running here"),
+        ("", false, "execution 974997 is not running here"),
+        ("", false, "execution 974999 is not running here")
+      )
+    } finally service.unsubscribeAll()
   }
 }

@@ -157,4 +157,15 @@ class SessionStateSpec extends AnyFlatSpec with Matchers with MockFactory {
       removeStateIfPresent(sessionId)
     }
   }
+
+  it should "name no computing unit until it is given the one its socket was opened for" in {
+    val state = new SessionState(stub[Session])
+    state.getComputingUnitId shouldBe None
+    state.setComputingUnitId(7)
+    state.getComputingUnitId shouldBe Some(7)
+    // Subscribing to a workflow, whatever unit its service was made for, leaves it as it is.
+    state.subscribe(new TestWorkflowService(4L))
+    state.getComputingUnitId shouldBe Some(7)
+    state.unsubscribe()
+  }
 }

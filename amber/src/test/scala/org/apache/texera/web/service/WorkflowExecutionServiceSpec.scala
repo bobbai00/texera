@@ -92,6 +92,7 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
@@ -149,6 +150,7 @@ import java.nio.file.Paths
 import java.security.MessageDigest
 import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
+import java.util.UUID
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
@@ -201,7 +203,9 @@ import scala.util.Try
   * plan read back from the execution's plan table, and runs under the settings, replay and replay
   * log saved with it. These runs write their plan to the lake: the plan table of the fixture
   * execution, in the catalog the build's tests use (the Postgres JDBC catalog in CI), which each
-  * run replaces.
+  * run replaces. The runs of a plan the Dashboard made (`startStored`) are built as a unit builds
+  * one to start it by id (`StoredRun`), on a plan encoded and read back here, with the same engine
+  * seam; they read nothing from the lake but the changes one case stores in that plan table.
   *
   * Known, pre-existing: `ExecutionStatsService` never shuts down its private
   * `metricsPersistThread` (it does not override `unsubscribeAll`), so the teardown
@@ -968,7 +972,19 @@ class WorkflowExecutionServiceSpec
     // `workflow` is only dereferenced by the reconfiguration diff handler when a
     // reconfiguration actually completes, which is not what this test drives.
     val reconfigurationService =
-      new ExecutionReconfigurationService(client, store, workflow = null, bindResources = identity)
+      new ExecutionReconfigurationService(
+        client,
+        store,
+        workflow = null,
+        bindResources = Some(identity),
+        planUri = ExecutionPlanStore.planUri(
+          WorkflowIdentity(testWid.longValue()),
+          ExecutionIdentity(testEid.longValue()),
+          None
+        ),
+        creator = testUid,
+        mountRoot = None
+      )
     val statsService = new ExecutionStatsService(
       client,
       store,
@@ -1485,6 +1501,252 @@ class WorkflowExecutionServiceSpec
       run.service.executionStateStore.metadataStore.getState.state shouldBe READY
       answerStart(run)
       run.service.executionStateStore.metadataStore.getState.state shouldBe RUNNING
+    } finally run.close()
+  }
+
+  /**
+    * A run of a plan the Dashboard made, built as a computing unit builds one to start it by id:
+    * on the context the plan was read back with, for this unit, with no compiler. As in
+    * `StubbedRun`, only the engine is a `TestAmberClient`, so nothing starts.
+    */
+  private final class StoredRun(executionPlan: ExecutionPlan) {
+    val errors: ListBuffer[Throwable] = ListBuffer.empty
+    var engineWorkflow: Option[EngineWorkflow] = None
+    var coordinatorConfig: Option[CoordinatorConfig] = None
+    // the engine the run was given; `client` would name the service's own field below
+    var engine: Option[TestAmberClient] = None
+    val resultService =
+      new ExecutionResultService(
+        WorkflowIdentity(testWid.longValue()),
+        testCuid,
+        new WorkflowStateStore()
+      )
+    val store = new ExecutionStateStore()
+    store.metadataStore.updateState(_.withExecutionId(executionPlan.context.executionId))
+    val service: WorkflowExecutionService = new WorkflowExecutionService(
+      executionPlan.context,
+      resultService,
+      store,
+      errors += _,
+      Some(unitMountRoot)
+    ) {
+      override protected def createAmberRuntime(
+          workflow: EngineWorkflow,
+          config: CoordinatorConfig
+      ): AmberClient = {
+        engineWorkflow = Some(workflow)
+        coordinatorConfig = Some(config)
+        val built = new TestAmberClient
+        engine = Some(built)
+        built
+      }
+    }
+
+    def close(): Unit = {
+      service.unsubscribeAll()
+      resultService.unsubscribeAll()
+    }
+  }
+
+  /** `executionPlan`'s plan row, as the Dashboard writes it for `testUid` on `testCuid`. */
+  private def planRowOf(
+      executionPlan: ExecutionPlan,
+      notification: Option[String] = None
+  ): PlanRecord =
+    PlanRecord(
+      entryId = ExecutionPlanStore.PlanEntryId,
+      kind = ExecutionPlanStore.PlanKind,
+      formatVersion = PhysicalPlanCodec.FormatVersion,
+      body = PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(executionPlan)),
+      logical = "{}",
+      createdAt = new SqlTimestamp(System.currentTimeMillis()),
+      createdBy = testUid,
+      computingUnitId = testCuid,
+      notification = notification
+    )
+
+  /** `executionPlan` read back from its plan row, as a unit reads it, given the unit's id. */
+  private def readBack(executionPlan: ExecutionPlan): ExecutionPlan = {
+    val plan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planRowOf(executionPlan).body))
+    plan.context.cuid = Some(testCuid)
+    plan
+  }
+
+  private val storedPlanTable =
+    ExecutionPlanStore.planUri(
+      WorkflowIdentity(testWid.longValue()),
+      ExecutionIdentity(testEid.longValue()),
+      None
+    )
+
+  /** The context the Dashboard saves a plan of `storedSource` under, in the default warehouse. */
+  private def dashboardPlanContext(): WorkflowContext = {
+    val context = savedPlanContext()
+    context.warehouse = None
+    context
+  }
+
+  "WorkflowExecutionService.startStored" should
+    "build the engine and every service around the run on the plan it is handed, and make the run READY" in {
+    val notification = Notification("u@example.com", "the workflow", workflowPage)
+    val executionPlan = readBack(
+      ExecutionPlan(
+        dashboardPlanContext(),
+        PhysicalPlan(Set(storedSource), Set.empty),
+        replay = Some(replaySource),
+        replayLog = Some(replayLogLocation)
+      )
+    )
+    val run = new StoredRun(executionPlan)
+    try {
+      run.service.startStored(
+        executionPlan,
+        planRowOf(executionPlan, Some(Notification.toJson(notification))),
+        storedPlanTable
+      ) shouldBe None
+      run.errors shouldBe empty
+
+      // The engine is handed the plan as it was handed to the run, under its context: the one it
+      // was read back with, naming this unit.
+      val engineWorkflow = run.engineWorkflow.getOrElse(fail("the engine was handed no workflow"))
+      engineWorkflow.physicalPlan should be theSameInstanceAs executionPlan.plan
+      engineWorkflow.context should be theSameInstanceAs executionPlan.context
+      engineWorkflow.context.cuid shouldBe Some(testCuid)
+      run.coordinatorConfig shouldBe Some(
+        WorkflowExecutionService.coordinatorConfigOf(executionPlan)
+      )
+      run.service.planUri shouldBe Some(storedPlanTable)
+      // Its status emails go where the plan row says.
+      run.service.executionRuntimeService.notification shouldBe Some(notification)
+      // Every service is built, the run is READY, and the engine was asked to start.
+      run.service.executionStatsService should not be null
+      run.service.executionConsoleService should not be null
+      run.store.metadataStore.getState.state shouldBe READY
+      run.engine.getOrElse(fail("no engine")).answers.keySet should contain("startWorkflow")
+
+      // No compiler here: an operator changes only by the changes the Dashboard stored.
+      val limit = new LimitOpDesc
+      limit.setOperatorId("stored-text")
+      run.service.executionReconfigurationService.modifyOperatorLogic(
+        ModifyLogicRequest(limit)
+      ) shouldBe ModifyLogicResponse(
+        "stored-text",
+        isValid = false,
+        s"Execution $testEid runs the plan the Dashboard made for it: change its operators " +
+          "through the Dashboard."
+      )
+      run.store.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
+    } finally run.close()
+  }
+
+  it should "refuse a plan this unit cannot run, through the error handler, before it builds the engine" in {
+    val mounting = storedSource.copy(repositoryMounts =
+      Some(RepositoryMounts("/mnt/another-root", Set(readableLocator)))
+    )
+    val readingInputs = ExecutionPlan(
+      dashboardPlanContext(),
+      PhysicalPlan(Set(storedSource), Set.empty),
+      inputs = Seq(
+        PlanInput(OperatorIdentity("stored-text"), "lines.csv", InputFile(Long.MaxValue, 3))
+      )
+    )
+    Seq(
+      readBack(ExecutionPlan(dashboardPlanContext(), PhysicalPlan(Set(mounting), Set.empty))) ->
+        "under /mnt/another-root",
+      readBack(readingInputs) -> "reads 1 input from outside the run"
+    ).foreach {
+      case (executionPlan, why) =>
+        withClue(s"$why: ") {
+          val run = new StoredRun(executionPlan)
+          try {
+            val failure = run.service
+              .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
+              .getOrElse(fail("the run started"))
+            failure shouldBe an[IllegalStateException]
+            failure.getMessage should include(why)
+            run.errors shouldBe Seq(failure)
+            run.engineWorkflow shouldBe None
+            run.service.workflow shouldBe null
+            run.service.client shouldBe null
+          } finally run.close()
+        }
+    }
+  }
+
+  it should "refuse a plan row whose notification it cannot read, before it builds the engine" in {
+    val executionPlan =
+      readBack(ExecutionPlan(dashboardPlanContext(), PhysicalPlan(Set(storedSource), Set.empty)))
+    val run = new StoredRun(executionPlan)
+    try {
+      val failure = run.service
+        .startStored(
+          executionPlan,
+          planRowOf(executionPlan, Some("""{"email": 1}""")),
+          storedPlanTable
+        )
+        .getOrElse(fail("the run started"))
+      failure shouldBe an[IllegalArgumentException]
+      run.errors shouldBe Seq(failure)
+      run.engineWorkflow shouldBe None
+    } finally run.close()
+  }
+
+  it should "make no plan of its own for a run of a stored plan" in {
+    val executionPlan =
+      readBack(ExecutionPlan(dashboardPlanContext(), PhysicalPlan(Set(storedSource), Set.empty)))
+    val run = new StoredRun(executionPlan)
+    try {
+      the[IllegalStateException] thrownBy run.service.executeWorkflow() should have message
+        s"Execution $testEid runs the plan the Dashboard made for it: this unit makes no plan for it."
+      run.errors shouldBe empty
+    } finally run.close()
+  }
+
+  it should "check a change the Dashboard stored against this unit's mount root, as it checks the plan" in {
+    val executionPlan =
+      readBack(ExecutionPlan(dashboardPlanContext(), PhysicalPlan(Set(storedSource), Set.empty)))
+    val record = planRowOf(executionPlan)
+    // The plan table, holding the plan row and the changes, in the catalog the build's tests use.
+    ExecutionPlanStore.writePlan(storedPlanTable, record)
+    def storedChange(mountRoot: String): String = {
+      val updateId = s"update-${UUID.randomUUID()}"
+      val changed = storedSource.copy(
+        opExecInitInfo = OpExecWithClassName("changed"),
+        repositoryMounts = Some(RepositoryMounts(mountRoot, Set(readableLocator)))
+      )
+      ExecutionPlanStore.appendUpdate(
+        storedPlanTable,
+        PlanRecord(
+          entryId = updateId,
+          kind = ExecutionPlanStore.UpdateKind,
+          formatVersion = PhysicalPlanCodec.FormatVersion,
+          body = PhysicalPlanCodec.updateToJson(
+            PhysicalPlanCodec
+              .encodeUpdate(ExecutionIdentity(testEid.longValue()), updateId, changed)
+          ),
+          logical = "{}",
+          createdAt = new SqlTimestamp(System.currentTimeMillis()),
+          createdBy = testUid,
+          computingUnitId = testCuid,
+          notification = None
+        )
+      )
+      updateId
+    }
+    val run = new StoredRun(executionPlan)
+    try {
+      run.service.startStored(executionPlan, record, storedPlanTable) shouldBe None
+      val reconfiguration = run.service.executionReconfigurationService
+      val creator = Some(testUid.intValue())
+
+      reconfiguration
+        .applyStoredUpdate(storedChange(unitMountRoot.toString), creator)
+        .isValid shouldBe true
+      val elsewhere = reconfiguration.applyStoredUpdate(storedChange("/mnt/another-root"), creator)
+      elsewhere.isValid shouldBe false
+      elsewhere.errorMessage should include("under /mnt/another-root")
+      elsewhere.errorMessage should include(s"mounts them under $unitMountRoot")
+      run.store.reconfigurationStore.getState.unscheduledReconfigurations should have size 1
     } finally run.close()
   }
 

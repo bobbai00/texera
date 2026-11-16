@@ -55,6 +55,7 @@ import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.service.WorkflowService
+import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.net.URI
@@ -79,6 +80,24 @@ case class SyncExecutionRequest(
     // while per-user warehouses are enabled; absent keeps the shared default when the
     // feature is off (#7751).
     warehouseId: Option[Int] = None
+)
+
+/**
+  * The body of `POST /api/execution/{eid}/run`: run an execution the Dashboard service created, on
+  * this computing unit, and answer with what it produced.
+  *
+  * @param planUri           the execution's plan table, as `POST /api/executions` answered it
+  * @param computingUnitId   the computing unit the execution was created for: this one
+  * @param targetOperatorIds the operators whose results are answered; with exactly one, the
+  *                          execution was created to run up to it, and is answered once it completes
+  */
+case class SyncRunRequest(
+    planUri: String,
+    computingUnitId: Int,
+    targetOperatorIds: List[String],
+    timeoutSeconds: Int,
+    maxOperatorResultCharLimit: Int,
+    maxOperatorResultCellCharLimit: Int
 )
 
 case class ConsoleMessageInfo(
@@ -129,6 +148,14 @@ class SyncExecutionResource extends LazyLogging {
   private val MAX_OPERATOR_RESULT_CHARS = 100000
   private val MAX_OPERATOR_RESULT_CELL_CHARS = 20000
 
+  // The service of a workflow's runs on this unit, shared with its sessions. A seam, so a test can
+  // start runs on a service of its own.
+  protected def workflowServiceOf(
+      workflowId: WorkflowIdentity,
+      computingUnitId: Int
+  ): WorkflowService =
+    WorkflowService.getOrCreate(workflowId, computingUnitId)
+
   @POST
   @Path("/{wid}/{cuid}/run")
   @RolesAllowed(Array("REGULAR", "ADMIN"))
@@ -152,10 +179,7 @@ class SyncExecutionResource extends LazyLogging {
     )
 
     try {
-      val workflowService = WorkflowService.getOrCreate(
-        WorkflowIdentity(workflowId),
-        computingUnitId
-      )
+      val workflowService = workflowServiceOf(WorkflowIdentity(workflowId), computingUnitId)
 
       // "Execute To" semantics: when a single target is given, run only its upstream sub-DAG.
       val effectiveLogicalPlan =
@@ -192,12 +216,6 @@ class SyncExecutionResource extends LazyLogging {
         )
       }
 
-      // Snapshot before subscribing — handles the race where a fast execution finishes
-      // before the Observable below sees any state change.
-      val currentState = executionService.executionStateStore.metadataStore.getState
-      val currentConsoleState = executionService.executionStateStore.consoleStore.getState
-      val currentStatsState = executionService.executionStateStore.statsStore.getState
-
       // Multi-region operators (e.g., HashJoin: build region then probe region) report their
       // aggregated logical state as COMPLETED for a brief window after the first region
       // terminates and before the second region's workers are added to regionExecutions.
@@ -209,145 +227,260 @@ class SyncExecutionResource extends LazyLogging {
         .map(op => op.operatorIdentifier.id -> op.operatorInfo.inputPorts.count(!_.id.internal))
         .toMap
 
-      // Require COMPLETED, not just "has output", so upstream operators finish flushing
-      // their data downstream before we tear the execution down.
-      def allTargetsCompleted(stats: ExecutionStatsStore): Boolean = {
-        request.targetOperatorIds.nonEmpty && request.targetOperatorIds.forall { opId =>
-          stats.operatorInfo.get(opId).exists { metrics =>
-            val externalInputPortsReporting =
-              metrics.operatorStatistics.inputMetrics.count(!_.portId.internal)
-            val expectedExternalInputs = targetExpectedExternalInputs.getOrElse(opId, 0)
-            metrics.operatorState == COMPLETED &&
-            externalInputPortsReporting >= expectedExternalInputs
-          }
-        }
-      }
-
-      val terminationReason: TerminationReason =
-        if (isTerminalState(currentState.state)) {
-          TerminalStateReached(currentState)
-        } else if (hasConsoleError(currentConsoleState)) {
-          ConsoleErrorDetected(currentConsoleState)
-        } else if (allTargetsCompleted(currentStatsState)) {
-          TargetResultsReady(currentStatsState)
-        } else {
-          val terminalStateObservable: Observable[TerminationReason] =
-            executionService.executionStateStore.metadataStore.getStateObservable
-              .filter((state: ExecutionMetadataStore) => isTerminalState(state.state))
-              .map[TerminationReason](state => TerminalStateReached(state))
-
-          val consoleErrorObservable: Observable[TerminationReason] =
-            executionService.executionStateStore.consoleStore.getStateObservable
-              .filter((consoleState: ExecutionConsoleStore) => hasConsoleError(consoleState))
-              .map[TerminationReason](consoleState => ConsoleErrorDetected(consoleState))
-
-          val targetResultsObservable: Observable[TerminationReason] =
-            executionService.executionStateStore.statsStore.getStateObservable
-              .filter((stats: ExecutionStatsStore) => allTargetsCompleted(stats))
-              .map[TerminationReason](stats => TargetResultsReady(stats))
-
-          try {
-            Observable
-              .amb(
-                java.util.Arrays.asList(
-                  terminalStateObservable,
-                  consoleErrorObservable,
-                  targetResultsObservable
-                )
-              )
-              .firstOrError()
-              .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
-              .blockingGet()
-          } catch {
-            case e: Exception if isCausedByTimeout(e) =>
-              killExecution(executionService)
-              return SyncExecutionResult(
-                success = false,
-                state = "Killed",
-                operators = Map.empty,
-                compilationErrors = None,
-                errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
-              )
-            case e: Exception =>
-              logger.error(s"Error waiting for execution: ${e.getMessage}", e)
-              return SyncExecutionResult(
-                success = false,
-                state = "Error",
-                operators = Map.empty,
-                compilationErrors = None,
-                errors = Some(List(e.getMessage))
-              )
-          }
-        }
-
-      val (finalState, terminatedByConsoleError, terminatedByTargetResults) =
-        terminationReason match {
-          case TerminalStateReached(state) =>
-            (state, false, false)
-          case ConsoleErrorDetected(_) =>
-            killExecution(executionService)
-            (executionService.executionStateStore.metadataStore.getState, true, false)
-          case TargetResultsReady(_) =>
-            // RegionExecutionManager caches upstream results asynchronously after operators
-            // complete; sleep gives that caching a chance to finish before we shut down the client.
-            // TODO: replace with a synchronous signal from the engine.
-            Thread.sleep(500)
-            killExecution(executionService)
-            // Override to COMPLETED — we have everything we asked for, even though the engine
-            // sees this as a kill.
-            executionService.executionStateStore.metadataStore.updateState(metadataStore =>
-              updateWorkflowState(COMPLETED, metadataStore)
-            )
-            (executionService.executionStateStore.metadataStore.getState, false, true)
-        }
-
-      // Let the result writer flush before we read storage.
-      Thread.sleep(500)
-
-      // Console DB writes lag the in-memory store; pass the latter so error extraction
-      // can fall back when the row hasn't landed yet.
-      val inMemoryConsoleState = terminationReason match {
-        case ConsoleErrorDetected(consoleState) => Some(consoleState)
-        case _                                  => None
-      }
-
-      val executionId = executionService.workflowContext.executionId
-      val operatorInfos = collectOperatorInfos(
-        executionId,
+      awaitResults(
         executionService,
         request.targetOperatorIds,
+        targetExpectedExternalInputs,
+        timeoutSeconds,
         maxOperatorResultCharLimit,
-        maxOperatorResultCellCharLimit,
-        inMemoryConsoleState
+        maxOperatorResultCellCharLimit
       )
-
-      val fatalErrors = finalState.fatalErrors
-        .map(err => s"${err.`type`}: ${err.message}")
-        .toList
-
-      val hasOperatorConsoleError = operatorInfos.values.exists(_.error.isDefined)
-
-      val stateString =
-        if (terminatedByConsoleError) "Failed"
-        else if (terminatedByTargetResults) "Completed"
-        else stateToString(finalState.state)
-
-      val isSuccess = (finalState.state == COMPLETED || terminatedByTargetResults) &&
-        !hasOperatorConsoleError && !terminatedByConsoleError
-
-      SyncExecutionResult(
-        success = isSuccess,
-        state = stateString,
-        operators = operatorInfos,
-        compilationErrors = None,
-        errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
-      )
-
     } catch {
       case e: Exception =>
         logger.error(s"Sync execution error: ${e.getMessage}", e)
         handleExecutionError(e)
     }
+  }
+
+  /**
+    * Runs execution `executionId`, which the Dashboard service created for the caller, on this
+    * computing unit, from the plan stored in its plan table, and answers once it ends, once its
+    * targets complete, or once an operator logs an error, as [[executeWorkflowSync]] does.
+    *
+    * The workflow is the one the plan table belongs to; the execution must have been created for
+    * the caller, on `computingUnitId`, and not started before. The start is checked
+    * ([[WorkflowService.checkStoredStart]]) before the workflow's service is asked for, so a start
+    * its checks refuse leaves no service behind; then it is started on that service
+    * ([[WorkflowService.startChecked]]). A start that is refused is answered at once, as an error
+    * that names why, and writes nothing.
+    */
+  @POST
+  @Path("/{eid}/run")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def runStoredExecution(
+      @PathParam("eid") executionId: Long,
+      request: SyncRunRequest,
+      @Auth user: SessionUser
+  ): SyncExecutionResult = {
+    def refused(message: String): SyncExecutionResult =
+      SyncExecutionResult(
+        success = false,
+        state = "Error",
+        operators = Map.empty,
+        compilationErrors = None,
+        errors = Some(List(message))
+      )
+    if (request == null) return refused("The request has no body.")
+    val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
+    try {
+      val started = for {
+        planUri <- StoredExecutionStart.planUriOf(request.planUri)
+        checked <- WorkflowService.checkStoredStart(
+          executionId,
+          planUri,
+          user.getUser,
+          request.computingUnitId,
+          socketWorkflowId = None
+        )
+        execution <- workflowServiceOf(checked.workflowId, request.computingUnitId)
+          .startChecked(checked, new URI(s"sync-execution://${checked.workflowId.id}"))
+      } yield execution
+      started match {
+        case Left(message) =>
+          logger.info(s"Refused to start execution $executionId: $message")
+          refused(message)
+        case Right(execution) =>
+          awaitResults(
+            execution,
+            targetOperatorIds,
+            expectedExternalInputsOf(execution, targetOperatorIds),
+            request.timeoutSeconds,
+            Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS),
+            Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
+          )
+      }
+    } catch {
+      case e: Exception =>
+        logger.error(s"Sync execution error: ${e.getMessage}", e)
+        handleExecutionError(e)
+    }
+  }
+
+  /**
+    * How many external input ports each of `targets`, a logical operator, has in the plan
+    * `execution` runs: the distinct port ids over its physical operators, which the unit has in
+    * place of the logical operator. A HashJoin's two layers have two external input ports between
+    * them, the build layer's port 0 and the probe layer's port 1. Empty for a run that failed
+    * before it built its plan, which has ended already.
+    */
+  private def expectedExternalInputsOf(
+      execution: org.apache.texera.web.service.WorkflowExecutionService,
+      targets: List[String]
+  ): Map[String, Int] =
+    Option(execution.workflow).fold(Map.empty[String, Int]) { workflow =>
+      targets.map { target =>
+        target -> workflow.physicalPlan
+          .getPhysicalOpsOfLogicalOp(OperatorIdentity(target))
+          .flatMap(_.inputPorts.keys)
+          .filterNot(_.internal)
+          .map(_.id)
+          .distinct
+          .size
+      }.toMap
+    }
+
+  /**
+    * Waits for `executionService`'s run to end, for every one of `targetOperatorIds` to complete
+    * with each of its external input ports reporting (`targetExpectedExternalInputs`), or for an
+    * operator to log an error, at most `timeoutSeconds`; then answers what the run produced.
+    */
+  private def awaitResults(
+      executionService: org.apache.texera.web.service.WorkflowExecutionService,
+      targetOperatorIds: List[String],
+      targetExpectedExternalInputs: Map[String, Int],
+      timeoutSeconds: Int,
+      maxOperatorResultCharLimit: Int,
+      maxOperatorResultCellCharLimit: Int
+  ): SyncExecutionResult = {
+    // Snapshot before subscribing — handles the race where a fast execution finishes
+    // before the Observable below sees any state change.
+    val currentState = executionService.executionStateStore.metadataStore.getState
+    val currentConsoleState = executionService.executionStateStore.consoleStore.getState
+    val currentStatsState = executionService.executionStateStore.statsStore.getState
+
+    // Require COMPLETED, not just "has output", so upstream operators finish flushing
+    // their data downstream before we tear the execution down.
+    def allTargetsCompleted(stats: ExecutionStatsStore): Boolean = {
+      targetOperatorIds.nonEmpty && targetOperatorIds.forall { opId =>
+        stats.operatorInfo.get(opId).exists { metrics =>
+          val externalInputPortsReporting =
+            metrics.operatorStatistics.inputMetrics.count(!_.portId.internal)
+          val expectedExternalInputs = targetExpectedExternalInputs.getOrElse(opId, 0)
+          metrics.operatorState == COMPLETED &&
+          externalInputPortsReporting >= expectedExternalInputs
+        }
+      }
+    }
+
+    val terminationReason: TerminationReason =
+      if (isTerminalState(currentState.state)) {
+        TerminalStateReached(currentState)
+      } else if (hasConsoleError(currentConsoleState)) {
+        ConsoleErrorDetected(currentConsoleState)
+      } else if (allTargetsCompleted(currentStatsState)) {
+        TargetResultsReady(currentStatsState)
+      } else {
+        val terminalStateObservable: Observable[TerminationReason] =
+          executionService.executionStateStore.metadataStore.getStateObservable
+            .filter((state: ExecutionMetadataStore) => isTerminalState(state.state))
+            .map[TerminationReason](state => TerminalStateReached(state))
+
+        val consoleErrorObservable: Observable[TerminationReason] =
+          executionService.executionStateStore.consoleStore.getStateObservable
+            .filter((consoleState: ExecutionConsoleStore) => hasConsoleError(consoleState))
+            .map[TerminationReason](consoleState => ConsoleErrorDetected(consoleState))
+
+        val targetResultsObservable: Observable[TerminationReason] =
+          executionService.executionStateStore.statsStore.getStateObservable
+            .filter((stats: ExecutionStatsStore) => allTargetsCompleted(stats))
+            .map[TerminationReason](stats => TargetResultsReady(stats))
+
+        try {
+          Observable
+            .amb(
+              java.util.Arrays.asList(
+                terminalStateObservable,
+                consoleErrorObservable,
+                targetResultsObservable
+              )
+            )
+            .firstOrError()
+            .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
+            .blockingGet()
+        } catch {
+          case e: Exception if isCausedByTimeout(e) =>
+            killExecution(executionService)
+            return SyncExecutionResult(
+              success = false,
+              state = "Killed",
+              operators = Map.empty,
+              compilationErrors = None,
+              errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
+            )
+          case e: Exception =>
+            logger.error(s"Error waiting for execution: ${e.getMessage}", e)
+            return SyncExecutionResult(
+              success = false,
+              state = "Error",
+              operators = Map.empty,
+              compilationErrors = None,
+              errors = Some(List(e.getMessage))
+            )
+        }
+      }
+
+    val (finalState, terminatedByConsoleError, terminatedByTargetResults) =
+      terminationReason match {
+        case TerminalStateReached(state) =>
+          (state, false, false)
+        case ConsoleErrorDetected(_) =>
+          killExecution(executionService)
+          (executionService.executionStateStore.metadataStore.getState, true, false)
+        case TargetResultsReady(_) =>
+          // RegionExecutionManager caches upstream results asynchronously after operators
+          // complete; sleep gives that caching a chance to finish before we shut down the client.
+          // TODO: replace with a synchronous signal from the engine.
+          Thread.sleep(500)
+          killExecution(executionService)
+          // Override to COMPLETED — we have everything we asked for, even though the engine
+          // sees this as a kill.
+          executionService.executionStateStore.metadataStore.updateState(metadataStore =>
+            updateWorkflowState(COMPLETED, metadataStore)
+          )
+          (executionService.executionStateStore.metadataStore.getState, false, true)
+      }
+
+    // Let the result writer flush before we read storage.
+    Thread.sleep(500)
+
+    // Console DB writes lag the in-memory store; pass the latter so error extraction
+    // can fall back when the row hasn't landed yet.
+    val inMemoryConsoleState = terminationReason match {
+      case ConsoleErrorDetected(consoleState) => Some(consoleState)
+      case _                                  => None
+    }
+
+    val executionId = executionService.workflowContext.executionId
+    val operatorInfos = collectOperatorInfos(
+      executionId,
+      executionService,
+      targetOperatorIds,
+      maxOperatorResultCharLimit,
+      maxOperatorResultCellCharLimit,
+      inMemoryConsoleState
+    )
+
+    val fatalErrors = finalState.fatalErrors
+      .map(err => s"${err.`type`}: ${err.message}")
+      .toList
+
+    val hasOperatorConsoleError = operatorInfos.values.exists(_.error.isDefined)
+
+    val stateString =
+      if (terminatedByConsoleError) "Failed"
+      else if (terminatedByTargetResults) "Completed"
+      else stateToString(finalState.state)
+
+    val isSuccess = (finalState.state == COMPLETED || terminatedByTargetResults) &&
+      !hasOperatorConsoleError && !terminatedByConsoleError
+
+    SyncExecutionResult(
+      success = isSuccess,
+      state = stateString,
+      operators = operatorInfos,
+      compilationErrors = None,
+      errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
+    )
   }
 
   private def killExecution(
