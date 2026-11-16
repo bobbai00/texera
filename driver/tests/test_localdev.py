@@ -309,5 +309,373 @@ class StackGenerateTest(unittest.TestCase):
                             if "PASSWORD" in k or "SECRET" in k or "KEY" in k))
 
 
+# A docker CLI for the schema-step test: it logs the containers it is asked about and answers
+# psql like a texera_db whose sql/ ran at init (so the `feedback` table exists). A changeSet
+# whose SQL says FAILME fails with a "does not exist" error, one that says ALREADY with an
+# "already exists" error; INSERTs into databasechangelog are kept in a file.
+FAKE_DOCKER = r"""#!/usr/bin/env bash
+state="$FAKE_DOCKER_STATE"
+args=("$@")
+[[ "${args[0]}" == exec ]] || exit 0
+i=1
+[[ "${args[1]}" == -i ]] && i=2
+[[ "${args[1]}" == -u ]] && i=3
+echo "${args[$i]}" >> "$state/containers.log"
+rest="${args[*]:$((i + 1))}"
+case "$rest" in
+    pg_isready*) exit 0 ;;
+    *"tablename='feedback'"*) echo 1 ;;
+    *"SELECT id FROM public.databasechangelog"*) cat "$state/recorded" 2>/dev/null ;;
+    *"CREATE TABLE IF NOT EXISTS public.databasechangelog"*) : ;;
+    *"INSERT INTO public.databasechangelog"*)
+        printf '%s\n' "$rest" | sed -n "s/.*VALUES ('\([^']*\)'.*/\1/p" >> "$state/recorded" ;;
+    *"ON_ERROR_STOP=1 -f -"*)
+        sql=$(cat)
+        if [[ "$sql" == *FAILME* ]]; then
+            echo 'psql:<stdin>:3: ERROR:  constraint "ck_x" of relation "user" does not exist' >&2; exit 3
+        fi
+        if [[ "$sql" == *ALREADY* ]]; then
+            echo 'psql:<stdin>:2: ERROR:  relation "t_already" already exists' >&2; exit 3
+        fi ;;
+esac
+exit 0
+"""
+
+
+@unittest.skipUnless(HAS_SOURCE, f"no local-dev source worktree at {SOURCE}")
+class SchemaStepTest(unittest.TestCase):
+    """local-dev's schema step, its functions taken from the source's main.sh and run by bash,
+    against a fake docker: what it applies, accepts, records, and where it stops."""
+
+    CONTAINER = "e2e-localdev-texera-postgres"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.state = root / "state"
+        self.state.mkdir()
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        (fake_bin / "docker").write_text(FAKE_DOCKER)
+        (fake_bin / "docker").chmod(0o755)
+        self.env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "FAKE_DOCKER_STATE": str(self.state)}
+        self.src = root / "src"
+        (self.src / "bin" / "local-dev").mkdir(parents=True)
+        (self.src / "bin" / "local-dev" / "main.sh").write_text((SOURCE / "bin" / "local-dev" / "main.sh").read_text())
+        (self.src / "sql" / "updates").mkdir(parents=True)
+        self.logs = root / "logs"
+        self.logs.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def changelog(self, bodies: list[str]) -> None:
+        sets = []
+        for i, body in enumerate(bodies, 1):
+            (self.src / "sql" / "updates" / f"{i}.sql").write_text(f"\\c texera_db\n-- {body}\nSELECT 1;\n")
+            sets.append(f'    <changeSet id="{i}" author="t">\n        <sqlFile path="sql/updates/{i}.sql"/>\n'
+                        "    </changeSet>")
+        (self.src / "sql" / "changelog.xml").write_text(
+            "<databaseChangeLog>\n" + "\n".join(sets)
+            + '\n    <!-- <changeSet id="99" author="x">\n        <sqlFile path="sql/updates/99.sql"/> -->\n'
+            "</databaseChangeLog>\n")
+
+    def run_step(self) -> dict:
+        with mock.patch.dict("os.environ", self.env):
+            return ls.run_schema_step({"containers": {"postgres": self.CONTAINER}}, self.src, self.logs)
+
+    def test_local_devs_step_ends_up_when_it_fails(self):
+        spec = ls.schema_step_spec(SOURCE)
+        self.assertTrue(spec["stops_up_on_failure"], spec["why"])
+        self.assertEqual(set(spec["functions"]), set(ls.SCHEMA_FUNCTIONS))
+
+    def test_stops_at_the_first_changeset_that_fails_for_another_reason(self):
+        self.changelog(["fine", "ALREADY", "FAILME", "never reached"])
+        s = self.run_step()
+        self.assertFalse(s["ok"])
+        self.assertEqual(s["exit_code"], 1)
+        self.assertEqual(s["applied"], ["1"])
+        self.assertEqual(s["already_in_schema"], ["2"])
+        self.assertEqual(s["failed"]["id"], "3")
+        self.assertEqual(s["failed"]["path"], "sql/updates/3.sql")
+        self.assertIn('constraint "ck_x" of relation "user" does not exist', s["failed"]["error"])
+        self.assertEqual(s["recorded"], ["1", "2"])
+        self.assertEqual(s["not_recorded"], ["3", "4"])
+        self.assertEqual(s["changesets"], 4)  # the commented-out example is not one
+        # local-dev's container name never reaches docker
+        self.assertEqual(set((self.state / "containers.log").read_text().split()), {self.CONTAINER})
+
+        m: dict = {}
+        ls.schema_verdict(m, s, strict=False)  # the default: go on, record the deviation
+        (dev,) = m["local_dev_deviations"]
+        self.assertEqual(dev["failed_changeset"], "3")
+        self.assertIn("does not exist", dev["error"])
+        self.assertEqual(dev["not_recorded"], ["3", "4"])
+        with self.assertRaises(SystemExit):
+            ls.schema_verdict({}, s, strict=True)  # --strict-schema: stop where local-dev stops
+
+    def test_passes_and_records_every_changeset(self):
+        self.changelog(["fine", "ALREADY", "fine too"])
+        s = self.run_step()
+        self.assertTrue(s["ok"])
+        self.assertEqual((s["applied"], s["already_in_schema"], s["recorded"], s["not_recorded"]),
+                         (["1", "3"], ["2"], ["1", "2", "3"], []))
+        m: dict = {}
+        ls.schema_verdict(m, s, strict=True)
+        self.assertNotIn("local_dev_deviations", m)
+
+    def test_a_failure_that_does_not_end_local_devs_up_is_only_a_warning(self):
+        self.changelog(["FAILME"])
+        s = dict(self.run_step(), local_dev_stops_up_on_failure=False)
+        m: dict = {}
+        ls.schema_verdict(m, s, strict=True)
+        self.assertNotIn("local_dev_deviations", m)
+        self.assertEqual(len(m["warnings"]), 1)
+
+
+class LeftoverProcessTest(unittest.TestCase):
+    """`down` finds what an earlier `up` left without a pid file."""
+
+    def test_kinds(self):
+        src = "/w/src"
+        kind = ls.stack_process_kind
+        self.assertEqual(kind("ng serve (gui)", f"{src}/frontend", src), "frontend")  # the CLI's own title
+        self.assertEqual(kind("/n/node --max-old-space-size=8192 ./node_modules/@angular/cli/bin/ng serve",
+                              f"{src}/frontend", src), "frontend")
+        self.assertEqual(kind("/w/src/frontend/node_modules/@esbuild/darwin-arm64/bin/esbuild --service=0.25.4",
+                              f"{src}/frontend", src), "frontend")
+        self.assertIsNone(kind("ng serve (gui)", "/elsewhere/frontend", src))  # another checkout's dev server
+        self.assertIsNone(kind("-zsh", f"{src}/frontend", src))  # a shell in the directory
+        self.assertEqual(kind("/py/bin/python -u src/main/python/texera_run_python_worker.py 41 x",
+                              f"{src}/amber", src), "python worker")
+        self.assertEqual(kind(f"/jdk/bin/java -cp {ls.DIST_DIR}/amber-1/lib/a.jar Main", "/", None), "service")
+
+    def test_finds_and_stops_a_dev_server_under_the_clis_title(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp).resolve()
+            (src / "frontend").mkdir()
+            (src / "other").mkdir()
+            title = "ng serve (gui)"
+            ours = subprocess.Popen(["bash", "-c", f'exec -a "{title}" sleep 60'], cwd=src / "frontend",
+                                    start_new_session=True)
+            theirs = subprocess.Popen(["bash", "-c", f'exec -a "{title}" sleep 60'], cwd=src / "other",
+                                      start_new_session=True)
+            try:
+                for _ in range(50):  # until exec has renamed it
+                    found = {pid for pid, _g, _c in ls.orphan_processes(str(src))}
+                    if ours.pid in found:
+                        break
+                    import time
+                    time.sleep(0.1)
+                self.assertIn(ours.pid, found)
+                self.assertNotIn(theirs.pid, found)
+                done = ls.stop_orphans(str(src))
+                self.assertTrue(any(f"pid {ours.pid}" in line and "stopped" in line for line in done), done)
+                self.assertIsNotNone(ours.wait(10))
+                self.assertIsNone(theirs.poll())
+                self.assertEqual(ls.orphan_processes(str(src)), [])
+            finally:
+                for p in (ours, theirs):
+                    if p.poll() is None:
+                        p.kill()
+                        p.wait()
+
+
+class PortsAndOrderTest(unittest.TestCase):
+    def test_preflight_covers_the_units_pekko_port(self):
+        m = {"ports": {"postgres": 15432}, "services": [{"name": "computing-unit-master", "local_dev_port": 8085},
+                                                        {"name": "texera-web", "local_dev_port": 8080}]}
+        ports = set(ls.all_ports(m).values())
+        self.assertTrue({8085, 2552, 8080, 8081, 15432, 4200} <= ports, ports)
+        self.assertEqual(ls.expected_ports(m)["computing-unit-master"], {8085, 2552})
+
+    def test_stop_order_is_reverse_start_order(self):
+        recs = [{"name": n, "started_at": "2026-11-16T12:00:00+00:00", "started_ns": ns}
+                for n, ns in (("config-service", 1), ("texera-web", 3), ("access-control-service", 2),
+                              ("frontend", 9))]
+        self.assertEqual([r["name"] for r in ls.stop_order(recs)],
+                         ["frontend", "texera-web", "access-control-service", "config-service"])
+
+
+class ProvenanceTest(unittest.TestCase):
+    """What a dist zip was built from, and when `up` refuses it."""
+
+    def setUp(self):
+        import subprocess
+        self.sp = subprocess
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name).resolve() / "repo"
+        (self.repo / "svc" / "src" / "main" / "scala").mkdir(parents=True)
+        (self.repo / "frontend" / "src").mkdir(parents=True)
+        (self.repo / "amber" / "src" / "main" / "python").mkdir(parents=True)
+        self.scala = self.repo / "svc" / "src" / "main" / "scala" / "A.scala"
+        self.scala.write_text("object A\n")
+        (self.repo / "build.sbt").write_text("// build\n")
+        (self.repo / "frontend" / "src" / "x.ts").write_text("x\n")
+        (self.repo / "amber" / "src" / "main" / "python" / "p.py").write_text("p\n")
+        (self.repo / "README.md").write_text("r\n")
+        (self.repo / ".gitignore").write_text("target/\n")
+        self.git("init", "-q")
+        self.commit("first")
+        self.zip = self.repo / "svc" / "target" / "universal" / "svc.zip"
+        self.zip.parent.mkdir(parents=True)
+        self.zip.write_bytes(b"zip")
+        self.set_time(self.zip, 2000)
+        for f in (self.scala, self.repo / "build.sbt"):
+            self.set_time(f, 1000)
+        self.patch = mock.patch.object(ls, "PROVENANCE", Path(self.tmp.name) / "provenance.json")
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def git(self, *args):
+        return self.sp.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                           check=True, stdout=self.sp.PIPE, text=True).stdout.strip()
+
+    def commit(self, msg):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", msg)
+
+    @staticmethod
+    def set_time(path, t):
+        os.utime(path, (1_700_000_000 + t, 1_700_000_000 + t))
+
+    def test_build_inputs(self):
+        self.assertEqual(sorted(ls.build_inputs(self.repo)), ["build.sbt", "svc/src/main/scala/A.scala"])
+
+    def test_recorded_build_of_head_is_current(self):
+        state = ls.source_state(self.repo)
+        rec = ls.record_provenance(self.repo, [self.zip], state, t_start=1_700_000_000 + 1500)
+        self.assertEqual(rec[str(self.zip)]["head"], state["head"])
+        info, stale, caveats = ls.dist_provenance(self.repo, [self.zip], state)
+        self.assertEqual((stale, caveats), ([], []))
+        self.assertEqual(info[str(self.zip)]["built_from"], state["head"])
+
+    def test_a_build_input_modified_after_the_build_is_stale(self):
+        state = ls.source_state(self.repo)
+        ls.record_provenance(self.repo, [self.zip], state, t_start=1_700_000_000 + 1500)
+        self.scala.write_text("object A { val changed = 1 }\n")
+        self.set_time(self.scala, 3000)
+        info, stale, caveats = ls.dist_provenance(self.repo, [self.zip], ls.source_state(self.repo))
+        self.assertEqual(len(stale), 1)
+        self.assertIn("modified after it was built", stale[0])
+        self.assertTrue(any("uncommitted changes" in c for c in caveats))
+
+    def test_a_record_of_another_commit(self):
+        state = ls.source_state(self.repo)
+        ls.record_provenance(self.repo, [self.zip], state, t_start=1_700_000_000 + 1500)
+        (self.repo / "README.md").write_text("docs only\n")
+        self.set_time(self.repo / "README.md", 3000)
+        self.commit("docs")
+        _info, stale, _c = ls.dist_provenance(self.repo, [self.zip], ls.source_state(self.repo))
+        self.assertEqual(stale, [])  # HEAD moved, no build input changed
+        self.scala.write_text("object A { val v2 = 2 }\n")
+        self.set_time(self.scala, 1500)  # even with an mtime older than the zip
+        self.commit("code")
+        _info, stale, _c = ls.dist_provenance(self.repo, [self.zip], ls.source_state(self.repo))
+        self.assertEqual(len(stale), 1)
+        self.assertIn("1 build input(s) differ at HEAD", stale[0])
+
+    def test_no_record(self):
+        _info, stale, caveats = ls.dist_provenance(self.repo, [self.zip], ls.source_state(self.repo))
+        self.assertEqual(stale, [])
+        self.assertEqual(len(caveats), 1)
+        self.assertIn("no build record for svc.zip", caveats[0])
+        self.set_time(self.zip, 500)  # older than the sources: stale even without a record
+        _info, stale, _c = ls.dist_provenance(self.repo, [self.zip], ls.source_state(self.repo))
+        self.assertEqual(len(stale), 1)
+
+
+class PostRunTest(unittest.TestCase):
+    def test_deviations_and_warnings_reach_the_report_summary(self):
+        dev = {"step": "schema", "error": "ERROR: x", "local_dev": "stops", "harness": "went on"}
+        m = {"local_dev_deviations": [dev], "warnings": ["w1"], "services": []}
+        rows = [{"name": "texera-web", "alive": True, "health": "ok", "pid": 1, "port": 8080, "log": None}]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "r.json"
+            report.write_text(json.dumps({"summary": {"result": "PASS"}}))
+            with mock.patch.object(ls, "load_manifest", return_value=m), \
+                    mock.patch.object(ls, "service_states", return_value=rows), \
+                    mock.patch.object(ls, "pid_records", return_value=[]):
+                ls.cmd_post_run(argparse.Namespace(report=str(report), out=None))
+            summ = json.loads(report.read_text())["summary"]
+        self.assertEqual(summ["result"], "PASS")
+        self.assertEqual(summ["local_dev_deviations"], ["schema: ERROR: x"])
+        self.assertEqual(summ["warnings"], ["w1"])
+
+
+FAKE_STACK = r"""#!/usr/bin/env bash
+echo "$*" >> "$(dirname "$0")/../calls.log"
+exit 0
+"""
+FAKE_DRIVER = r"""#!/usr/bin/env bash
+sleep "${FAKE_DRIVER_SLEEP:-0}"
+exit 0
+"""
+
+
+class RunLocaldevLockTest(unittest.TestCase):
+    """run-localdev.sh with a stand-in stack and driver: the lock stays with a kept stack."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        (self.home / "stack").mkdir()
+        (self.home / "driver").mkdir()
+        (self.home / "run-localdev.sh").write_text((HARNESS / "run-localdev.sh").read_text())
+        for rel, text in (("stack/localdev-stack.sh", FAKE_STACK), ("driver/run.sh", FAKE_DRIVER)):
+            (self.home / rel).write_text(text)
+        for rel in ("run-localdev.sh", "stack/localdev-stack.sh", "driver/run.sh"):
+            (self.home / rel).chmod(0o755)
+        self.lock = self.home / "lock"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_it(self, *args, sleep=0, usr1_after=None):
+        import signal
+        import subprocess
+        import time
+        p = subprocess.Popen([str(self.home / "run-localdev.sh"), "--lock", str(self.lock), *args],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                             env=dict(os.environ, FAKE_DRIVER_SLEEP=str(sleep)))
+        if usr1_after is not None:
+            time.sleep(usr1_after)
+            p.send_signal(signal.SIGUSR1)  # what the watchdog sends at the time limit
+        out, _ = p.communicate(timeout=60)
+        calls = (self.home / "calls.log").read_text().splitlines()
+        return p.returncode, out, calls
+
+    def test_without_keep_the_stack_goes_down_and_the_lock_is_released(self):
+        rc, out, calls = self.run_it()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls[-1], "down --no-collect")
+        self.assertFalse(self.lock.exists())
+
+    def test_keep_keeps_the_lock_with_the_stack(self):
+        rc, out, calls = self.run_it("--keep")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("down --no-collect", calls[1:])  # only the clean start's `down`
+        self.assertTrue(self.lock.exists())
+        self.assertIn("--keep", (self.lock / "owner").read_text())
+        self.assertIn("stack/localdev-stack.sh down && rm -rf", out)
+
+    def test_the_time_limit_overrides_keep(self):
+        rc, out, calls = self.run_it("--keep", sleep=20, usr1_after=3)
+        self.assertEqual(rc, 5, out)
+        self.assertEqual(calls[-1], "down --no-collect")
+        self.assertFalse(self.lock.exists())
+
+    def test_flags_reach_up(self):
+        rc, out, calls = self.run_it("--strict-schema", "--allow-stale-dists")
+        self.assertEqual(rc, 0, out)
+        up = next(c for c in calls if c.startswith("up "))
+        self.assertIn("--strict-schema", up)
+        self.assertIn("--allow-stale-dists", up)
+
+
 if __name__ == "__main__":
     unittest.main()

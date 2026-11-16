@@ -5,12 +5,14 @@
 # infrastructure ports, logs under reports/.
 #
 #   stack/localdev-stack.sh [--source <worktree>] up [--python PY] [--heap NAME=SIZE ...] [--logs DIR]
+#                                                   [--strict-schema] [--allow-stale-dists]
 #   stack/localdev-stack.sh down                 stop the processes, remove containers and network; keep volumes
 #   stack/localdev-stack.sh reset                down, then remove the e2e-localdev_* volumes
 #   stack/localdev-stack.sh status [--json]
 #   stack/localdev-stack.sh logs <service|alias> [--tail N] [-f]   aliases: unit, dashboard, cu-manager, compiler,
 #                                                                  files, config, acs, ng, pg
 #   stack/localdev-stack.sh [--source <worktree>] build [--force]  sbt dist when a dist zip is missing
+#                                                (records what each zip was built from)
 #   stack/localdev-stack.sh venv                 build .state/localdev/py311 (Python 3.11 + amber's requirements)
 #   stack/localdev-stack.sh post-run <report>    after a driver run: every service alive and healthy
 #   stack/localdev-stack.sh generate             write stack/localdev/generated/ only

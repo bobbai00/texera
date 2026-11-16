@@ -19,11 +19,17 @@ with what the harness needs on a shared machine:
     remapped and STORAGE_S3_ENDPOINT on the host's LAN IP (as local-dev detects it), plus
     UDF_PYTHON_PATH and a JAVA_OPTS heap cap per service. Nothing else from the caller's
     environment reaches them;
+  * right after the infrastructure, local-dev's schema step (infra_ensure_db_schema, its
+    functions taken from main.sh and run by bash unchanged but for the container name)
+    reconciles sql/changelog.xml with this stack's Postgres. When it fails, `bin/local-dev.sh
+    up` stops; this stack stops too with --strict-schema, and otherwise goes on and records
+    the deviation (MANIFEST.json `local_dev_deviations`, folded into the report);
   * the services, their order, launchers and working directories come from main.sh's
     service catalog (notebook-migration-service and agent-service are left out). They
-    run from the source's dist zips (built with `sbt dist` only when a zip is missing),
-    unzipped under .state/localdev/dist, as host processes in their own process groups,
-    with pid files under .state/localdev/pids and logs in a reports/ directory;
+    run from the source's dist zips (built with `sbt dist` only when a zip is missing; each
+    build records what it was built from, and `up` refuses a zip that does not match the
+    source), unzipped under .state/localdev/dist, as host processes in their own process
+    groups, with pid files under .state/localdev/pids and logs in a reports/ directory;
   * the frontend is `ng serve` from the source's frontend/ with node 24 (the ng half of
     `yarn start`; its y-websocket half is only for shared editing), so every request of
     the driver goes through the dev server's proxy, as a developer's browser's does.
@@ -42,6 +48,7 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -62,6 +69,8 @@ MANIFEST = GEN_DIR / "MANIFEST.json"
 STATE_DIR = HARNESS / ".state" / "localdev"
 DIST_DIR = STATE_DIR / "dist"
 PID_DIR = STATE_DIR / "pids"
+# what each dist zip was built from (written by this harness's builds; see build_dists)
+PROVENANCE = STATE_DIR / "dist-provenance.json"
 REPORTS = HARNESS / "reports"
 
 DEFAULT_SOURCE = Path(os.environ.get("SCE_LOCALDEV_SOURCE")
@@ -90,9 +99,12 @@ DROPPED_SERVICES = {
 # this machine by containers the harness must not touch, so all four move by 10000.
 INFRA_PORTS = {"postgres": (5432, 15432), "lakefs": (8000, 18000),
                "lakekeeper": (8181, 18181), "rustfs": (9000, 19000)}
-# Ports the services bind besides local-dev's SVC_PORT: Dropwizard admin connectors and
-# the managing service's application port (SVC_PORT is its admin port, 8082).
-EXTRA_PORTS = {"texera-web": (8081,), "computing-unit-managing-service": (8888,)}
+# Ports the services bind besides local-dev's SVC_PORT: Dropwizard admin connectors, the
+# managing service's application port (SVC_PORT is its admin port, 8082), and the unit's
+# Pekko port (AmberRuntime.startActorMaster binds 2552). `up` compares what each service
+# really listens on with this list and warns about anything else.
+EXTRA_PORTS = {"texera-web": (8081,), "computing-unit-managing-service": (8888,),
+               "computing-unit-master": (2552,)}
 # The health URL path the harness waits for where local-dev's SVC_HEALTH is empty
 # (the managing service on its application port; the unit: the single-node stack's check).
 HARNESS_HEALTH = {
@@ -149,6 +161,13 @@ def log(msg: str) -> None:
 def die(msg: str, code: int = 1) -> None:
     print(f"[localdev] ERROR: {msg}", file=sys.stderr, flush=True)
     sys.exit(code)
+
+
+def warn(m: dict, msg: str) -> None:
+    """A caveat of this run: logged, and kept in the manifest (`warnings`), which the driver's
+    report embeds and post-run folds into the report's summary."""
+    log(f"WARNING: {msg}")
+    m.setdefault("warnings", []).append(msg)
 
 
 def run(cmd: list[str], check: bool = True, capture: bool = False, timeout: float | None = None,
@@ -745,6 +764,195 @@ def wait_infra(services: list[str], timeout: int, only: list[str] | None = None)
     return 0.0
 
 
+# ------------------------------------------------------------ local-dev's schema step
+
+#: bin/local-dev/main.sh's schema step. `bin/local-dev.sh up` runs infra_ensure_db_schema right
+#: after infra_up, before any build: Postgres has run sql/ itself on a fresh volume, and the
+#: step replays every changeSet of sql/changelog.xml that public.databasechangelog does not
+#: list, accepting a failed one only when every error says "already exists". The functions are
+#: taken from the source's main.sh and run by bash unchanged, but for the container's name.
+SCHEMA_FUNCTIONS = ("infra_ensure_db_schema", "infra_apply_sql_updates", "parse_changelog_changesets",
+                    "_sql_errors_all_already_exist")
+SCHEMA_PG_LINE = 'local pg="texera-postgres"'
+#: local-dev's output helpers, printing tab-separated lines the harness reads back (local-dev
+#: prints the same messages with colors and symbols)
+SCHEMA_TUI = "\n".join(f"{n}() {{ printf '%s\\t%s\\n' {n} \"$*\"; }}"
+                       for n in ("tui_ok", "tui_err", "tui_warn", "tui_step", "tui_skip", "tui_info"))
+
+
+def bash_function(text: str, name: str, where: str) -> str:
+    """Bash function `name` as `text` defines it: from `name() {` at the start of a line to
+    the first line that is only `}`."""
+    m = re.search(rf"^{re.escape(name)}\(\)\s*\{{[ \t]*\n.*?^\}}[ \t]*$", text, re.M | re.S)
+    if not m:
+        die(f"{where} has no function {name}(): local-dev's schema step changed shape, and the "
+            "harness needs updating (localdev_stack.py, SCHEMA_FUNCTIONS)")
+    return m.group(0)
+
+
+def bash_path() -> str:
+    """The bash main.sh's `#!/usr/bin/env bash` finds on this PATH."""
+    return shutil.which("bash") or "/bin/bash"
+
+
+def schema_step_spec(source: Path) -> dict:
+    """What local-dev's `up` runs for the schema: the functions, and whether their failure
+    ends `up` (cmd_up calls the step as a plain statement, main.sh runs under `set -e`, and
+    `up` is dispatched as a plain call)."""
+    main_sh = source / "bin" / "local-dev" / "main.sh"
+    text = main_sh.read_text()
+    funcs = {n: bash_function(text, n, str(main_sh)) for n in SCHEMA_FUNCTIONS}
+    found = sum(f.count(SCHEMA_PG_LINE) for f in funcs.values())
+    if found != 2:
+        die(f"{main_sh}: expected `{SCHEMA_PG_LINE}` in infra_ensure_db_schema and infra_apply_sql_updates, "
+            f"found it {found} time(s): local-dev's schema step changed shape")
+    up = bash_function(text, "cmd_up", str(main_sh))
+    calls = [c.strip() for c in re.findall(r"^[ \t]*infra_ensure_db_schema\b([^\n]*)$", up, re.M)]
+    if not calls:
+        die(f"{main_sh}: cmd_up no longer runs infra_ensure_db_schema: local-dev's schema step changed shape")
+    plain_call = all(c == "" or c.startswith("#") for c in calls)
+    set_e = bool(re.search(r"^set -[a-z]*e[a-z]*\b", text, re.M))
+    plain_dispatch = bool(re.search(r'^\s*up\)\s*shift;\s*cmd_up "\$@"\s*;;', text, re.M))
+    return {"main_sh": str(main_sh), "functions": funcs,
+            "stops_up_on_failure": plain_call and set_e and plain_dispatch,
+            "why": {"cmd_up_calls": calls, "set_e": set_e, "plain_dispatch": plain_dispatch}}
+
+
+def changelog_changesets(spec: dict, source: Path) -> list[dict]:
+    """sql/changelog.xml's changeSets as local-dev reads them (its parse_changelog_changesets)."""
+    changelog = source / "sql" / "changelog.xml"
+    if not changelog.exists():
+        return []
+    p = subprocess.run([bash_path(), "-c", spec["functions"]["parse_changelog_changesets"]
+                        + '\nparse_changelog_changesets "$1"', "localdev-schema", str(changelog)],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        die(f"local-dev's parse_changelog_changesets failed on {changelog}: {p.stderr[-300:]}")
+    return [dict(zip(("id", "author", "path"), ln.split("\t"))) for ln in p.stdout.splitlines()
+            if ln.count("\t") == 2]
+
+
+def schema_script(spec: dict, source: Path, container: str, work: Path) -> str:
+    body = "\n\n".join(spec["functions"][n] for n in SCHEMA_FUNCTIONS)
+    body = body.replace(SCHEMA_PG_LINE, f"local pg={shlex.quote(container)}")
+    return ("# GENERATED by sce-e2e/stack/localdev/localdev_stack.py: the schema step of `bin/local-dev.sh up`,\n"
+            f"# its functions copied unchanged from {spec['main_sh']},\n"
+            f"# except for local-dev's container name texera-postgres, which is {container} here.\n"
+            "set -euo pipefail  # as main.sh\n"
+            f"REPO_ROOT={shlex.quote(str(source))}\n"
+            f"LOG_DIR={shlex.quote(str(work))}  # psql's stderr per changeSet (local-dev's: $STATE_DIR/logs)\n"
+            f"{SCHEMA_TUI}\n\n{body}\n\ninfra_ensure_db_schema\n")
+
+
+def parse_schema_output(stdout: str) -> tuple[list[dict], list[str], str | None, list[str]]:
+    """(changeSets it tried, the ones it found already in the schema, the path that failed,
+    local-dev's warnings) from the step's messages."""
+    attempted, already, failed_path, warnings = [], [], None, []
+    for line in stdout.splitlines():
+        kind, _, msg = line.partition("\t")
+        a_ = re.search(r"applying (\S+) \(changeSet ([^)]+)\)", msg)
+        if kind == "tui_step" and a_:
+            attempted.append({"id": a_.group(2), "path": a_.group(1)})
+        k_ = re.search(r"\(recording changeSet ([^)]+)\)", msg)
+        if kind == "tui_skip" and k_:
+            already.append(k_.group(1))
+        f_ = re.search(r"postgres: (\S+) failed", msg)
+        if kind == "tui_err" and f_:
+            failed_path = f_.group(1)
+        if kind == "tui_warn":
+            warnings.append(msg)
+    return attempted, already, failed_path, warnings
+
+
+def run_schema_step(m: dict, source: Path, logs: Path) -> dict:
+    """Run local-dev's schema step against this stack's Postgres: `up` runs it right after
+    the infrastructure, `build` before jOOQ's codegen (local-dev runs it before any build).
+    Returns the outcome; schema_verdict() decides what it means."""
+    spec = schema_step_spec(source)
+    container = m["containers"]["postgres"]
+    work = logs / "local-dev-schema"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    script = work / "schema-step.sh"
+    script.write_text(schema_script(spec, source, container, work))
+    bash = bash_path()
+    log(f"schema: local-dev's step (infra_ensure_db_schema, from {spec['main_sh']}) on {container}")
+    t0 = time.time()
+    p = subprocess.run([bash, str(script)], cwd=source, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       text=True, timeout=900)
+    secs = round(time.time() - t0, 1)
+    (work / "schema-step.log").write_text(p.stdout + (f"--- stderr ---\n{p.stderr}" if p.stderr else ""))
+    if p.returncode in (126, 127) or "command not found" in p.stderr:
+        die(f"local-dev's schema step could not run here (exit {p.returncode}): {p.stderr[-400:]}\n"
+            f"  main.sh's functions may now need helpers the harness does not provide; see {script}")
+    attempted, already, failed_path, warnings = parse_schema_output(p.stdout)
+    failed = None
+    if failed_path:
+        fid = next((c["id"] for c in reversed(attempted) if c["path"] == failed_path), None)
+        err_f = work / f"psql-changeset-{fid}.err"
+        err = err_f.read_text(errors="replace") if fid and err_f.exists() else p.stderr
+        failed = {"id": fid, "path": failed_path, "error": err.strip()[-2000:]}
+    q = run(["docker", "exec", container, "psql", "-U", "texera", "-d", "texera_db", "-tAc",
+             "SELECT id FROM public.databasechangelog ORDER BY orderexecuted"], capture=True, check=False)
+    recorded = (q.stdout or "").split() if q.returncode == 0 else []
+    changesets = changelog_changesets(spec, source)
+    version = subprocess.run([bash, "-c", "echo $BASH_VERSION"], stdout=subprocess.PIPE, text=True).stdout.strip()
+    return {
+        "at": now_iso(), "seconds": secs, "exit_code": p.returncode, "ok": p.returncode == 0,
+        "main_sh": spec["main_sh"], "bash": f"{bash} {version}", "script": str(script),
+        "log": str(work / "schema-step.log"),
+        "local_dev_stops_up_on_failure": spec["stops_up_on_failure"], "why_it_stops": spec["why"],
+        "changesets": len(changesets),
+        "applied": [c["id"] for c in attempted if c["id"] not in already and c["path"] != failed_path],
+        "already_in_schema": already,
+        "failed": failed,
+        "recorded": recorded,
+        "not_recorded": [c["id"] for c in changesets if c["id"] not in recorded],
+        "local_dev_warnings": warnings,
+        "messages": [f"{line.partition(chr(9))[0][4:]}: {line.partition(chr(9))[2]}"
+                     for line in p.stdout.splitlines() if "\t" in line][-80:],
+        "stderr_tail": p.stderr[-1500:],
+    }
+
+
+def schema_verdict(m: dict, s: dict, strict: bool) -> None:
+    """What local-dev's `up` does with the schema step's outcome, and what this stack does:
+    with --strict-schema it stops where local-dev stops; otherwise it goes on and records
+    the deviation (MANIFEST.json `local_dev_deviations`, folded into the report by post-run)."""
+    for w in s.get("local_dev_warnings", []):
+        warn(m, f"local-dev's schema step warned: {w}")
+    if s["ok"]:
+        log(f"schema: local-dev's step passed in {s['seconds']}s ({len(s['applied'])} changeSet(s) applied, "
+            f"{len(s['already_in_schema'])} already in the schema; {len(s['recorded'])} of {s['changesets']} "
+            "recorded)")
+        return
+    f = s.get("failed") or {}
+    text = f.get("error") or s.get("stderr_tail") or ""
+    errors = [ln.strip() for ln in text.splitlines() if "ERROR:" in ln]
+    err = errors[0] if errors else text.strip()[-300:]
+    where = f"changeSet {f['id']} ({f['path']})" if f else f"exit {s['exit_code']}"
+    msg = f"local-dev's schema step failed at {where}: {err}"
+    if not s["local_dev_stops_up_on_failure"]:
+        warn(m, msg + " (local-dev's `up` carries on when this step fails, and so does this stack)")
+        return
+    if strict:
+        die(f"{msg}\n  `bin/local-dev.sh up` stops here too (main.sh runs under `set -e`): no build, no service.\n"
+            f"  --strict-schema stops this stack the same way. Script and log: {s['script']}, {s['log']}")
+    log(f"WARNING: {msg}")
+    log("WARNING: `bin/local-dev.sh up` stops here (main.sh runs under `set -e`), before the build and any "
+        "service. This stack goes on (--strict-schema would stop it as local-dev does) and records the "
+        "deviation in MANIFEST.json (local_dev_deviations).")
+    m.setdefault("local_dev_deviations", []).append({
+        "step": "schema (infra_ensure_db_schema, right after infra_up)",
+        "local_dev": f"`up` exits after `postgres: {f.get('path')} failed`: no build, no service",
+        "harness": ("went on to the build and the services; from the failed changeSet on, none is applied or "
+                    "recorded, as local-dev leaves them"),
+        "failed_changeset": f.get("id"), "path": f.get("path"), "error": err,
+        "not_recorded": s["not_recorded"],
+    })
+
+
 # ---------------------------------------------------------------------- preflight
 
 
@@ -842,6 +1050,150 @@ def run_sbt(source: Path, m: dict, tasks: list[str], out: Path, timeout: int) ->
     return {"command": cmd[1:], "seconds": secs, "log": str(out)}
 
 
+# --- what a dist was built from. local-dev rebuilds a service when a content hash of its
+# sources changed since its last build (and, finding a jar without a hash, assumes the jar
+# matches). The harness builds only a missing dist, so it records what each zip it builds
+# came from, and `up` refuses a zip that does not match the source as it is now.
+
+
+def _git(source: Path, *args: str) -> subprocess.CompletedProcess:
+    # GIT_OPTIONAL_LOCKS=0: never refresh (and lock) the index of the source worktree
+    return subprocess.run(["git", "-C", str(source), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def is_build_input(rel: str) -> bool:
+    """A file `sbt dist` reads: under a JVM project's src/main, or the sbt build definition.
+    Not amber's Python tree (the unit runs it from the worktree, not from the dist) and not
+    the frontend (ng serve compiles it from source)."""
+    if rel.startswith(("frontend/", "amber/src/main/python/")):
+        return False
+    return "/src/main/" in f"/{rel}" or rel.endswith(".sbt") or rel.startswith("project/")
+
+
+def build_inputs(source: Path) -> list[str]:
+    """The build inputs git knows, tracked or untracked; ignored files (jOOQ's generated
+    sources, amber's Python protobufs) are left out."""
+    p = _git(source, "ls-files", "-co", "--exclude-standard", "-z")
+    if p.returncode != 0:
+        die(f"git ls-files failed in {source}: {p.stderr.strip()[:300]}")
+    return [r for r in p.stdout.split("\0") if r and is_build_input(r)]
+
+
+def source_state(source: Path) -> dict:
+    """HEAD, and the build inputs with uncommitted changes (tracked or untracked)."""
+    head = _git(source, "rev-parse", "HEAD").stdout.strip()
+    entries = _git(source, "status", "--porcelain", "-z", "--untracked-files=all").stdout.split("\0")
+    changed, i = [], 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        changed.append(entry[3:])
+        if "R" in entry[:2] or "C" in entry[:2]:  # -z: a rename or copy names its origin next
+            if i < len(entries) and entries[i]:
+                changed.append(entries[i])
+            i += 1
+    inputs = sorted({c for c in changed if is_build_input(c)})
+    return {"head": head, "dirty": bool(inputs), "dirty_inputs": inputs[:50]}
+
+
+def _load_provenance() -> dict:
+    try:
+        return json.loads(PROVENANCE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def zip_record(zip_path: Path) -> dict | None:
+    """This harness's build record of `zip_path`, if the file is still the one it built."""
+    rec = _load_provenance().get(str(zip_path))
+    st = zip_path.stat()
+    if rec and rec.get("size") == st.st_size and rec.get("mtime_ns") == st.st_mtime_ns:
+        return rec
+    return None
+
+
+def record_provenance(source: Path, zips: list[Path], before: dict, t_start: float) -> dict:
+    """After `sbt dist`: what each zip it wrote was built from. HEAD and the uncommitted build
+    inputs are read before sbt starts; HEAD moving or a build input modified while sbt ran
+    leaves the commit unknown."""
+    after = source_state(source)
+    during = sorted(r for r in build_inputs(source) if _mtime(source / r) > t_start)
+    steady = before["head"] == after["head"] and not during
+    data, out = _load_provenance(), {}
+    for z in sorted(set(zips)):
+        st = z.stat()
+        if st.st_mtime < t_start - 1:  # not written by this build: its record (if any) stays
+            continue
+        rec = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "source": str(source),
+               "head": before["head"] if steady else None, "dirty": before["dirty"],
+               "dirty_inputs": before["dirty_inputs"][:20], "built_at": now_iso()}
+        if not steady:
+            rec["note"] = (f"the source changed while sbt ran (HEAD {before['head'][:10]} -> "
+                           f"{after['head'][:10]}; {len(during)} build input(s) modified, e.g. "
+                           f"{(during or ['-'])[0]})")
+        data[str(z)] = out[str(z)] = rec
+    write_json(PROVENANCE, data)
+    return out
+
+
+def dist_provenance(source: Path, zips: list[Path], state: dict) -> tuple[dict, list[str], list[str]]:
+    """Per zip: what it was built from, why it is stale for the source as it is now (its record
+    names another commit whose build inputs differ, or a build input was modified after the
+    zip was written, the check local-dev runs first), and caveats."""
+    mtimes = {r: _mtime(source / r) for r in build_inputs(source)}
+    info: dict = {}
+    stale: list[str] = []
+    caveats: list[str] = []
+    unrecorded: list[str] = []
+    for z in sorted(set(zips)):
+        st = z.stat()
+        rec = zip_record(z)
+        reasons = []
+        if rec and not rec.get("head"):
+            reasons.append(rec.get("note") or "the source changed while it was built")
+        elif rec and rec["head"] != state["head"]:
+            d = _git(source, "diff", "--name-only", rec["head"], state["head"], "--")
+            if d.returncode != 0:
+                reasons.append(f"built from {rec['head'][:10]}, a commit this worktree does not have")
+            else:
+                changed = [r for r in d.stdout.splitlines() if is_build_input(r)]
+                if changed:
+                    reasons.append(f"built from {rec['head'][:10]}; {len(changed)} build input(s) differ at "
+                                   f"HEAD {state['head'][:10]} (e.g. {changed[0]})")
+        newer = sorted(r for r, t in mtimes.items() if t > st.st_mtime)
+        if newer:
+            reasons.append(f"{len(newer)} build input(s) modified after it was built (e.g. {newer[0]})")
+        if rec and rec.get("dirty"):
+            caveats.append(f"{z.name} was built with uncommitted changes to {len(rec['dirty_inputs'])} build "
+                           f"input(s) (e.g. {rec['dirty_inputs'][0]})")
+        if not rec and not reasons:
+            unrecorded.append(z.name)
+        info[str(z)] = {
+            "recorded": bool(rec), "built_from": (rec or {}).get("head"), "built_dirty": (rec or {}).get("dirty"),
+            "built_at": (rec or {}).get("built_at")
+            or dt.datetime.fromtimestamp(st.st_mtime, dt.timezone.utc).isoformat(timespec="seconds"),
+            "inputs_modified_after": len(newer), "stale": reasons}
+        stale += [f"{z.name}: {r}" for r in reasons]
+    if unrecorded:
+        caveats.append(f"no build record for {', '.join(unrecorded)} (built outside this harness, or before it "
+                       "recorded builds), so the commit they hold is not recorded; no build input was modified "
+                       "after they were written (`build --force` rebuilds them with a record)")
+    if state.get("dirty"):
+        caveats.append(f"the source has uncommitted changes to {len(state['dirty_inputs'])} build input(s) "
+                       f"(e.g. {state['dirty_inputs'][0]})")
+    return info, stale, caveats
+
+
 def build_dists(source: Path, m: dict, logs: Path, force: bool, timeout: int) -> dict:
     zips = {s["name"]: newest(source, s["zip_glob"]) for s in m["services"]}
     missing = sorted(n for n, z in zips.items() if z is None)
@@ -852,13 +1204,19 @@ def build_dists(source: Path, m: dict, logs: Path, force: bool, timeout: int) ->
             "`build` (it starts Postgres for the codegen; hold the stack lock)")
     log(f"building the dists ({', '.join(missing) or 'forced'})")
     projects = sorted({s["sbt"] for s in m["services"]})
+    before = source_state(source)
+    t0 = time.time()
     info = run_sbt(source, m, [f"{p}/dist" for p in projects], logs / "sbt-dist.log", timeout)
     zips = {s["name"]: newest(source, s["zip_glob"]) for s in m["services"]}
     still = sorted(n for n, z in zips.items() if z is None)
     if still:
         die(f"sbt dist finished but these dists are still missing: {still}")
+    recorded = record_provenance(source, [z for z in zips.values() if z], before, t0)
+    log(f"recorded what {len(recorded)} dist zip(s) were built from: {before['head'][:10]}"
+        f"{' with uncommitted changes' if before['dirty'] else ''} ({PROVENANCE})")
     return {"ran": True, **info, "projects": projects, "missing_before": missing,
-            "jooq_sources": jooq_sources(source), "zips": {n: str(z) for n, z in zips.items()}}
+            "jooq_sources": jooq_sources(source), "zips": {n: str(z) for n, z in zips.items()},
+            "provenance": recorded}
 
 
 def ensure_protos(source: Path, logs: Path) -> dict:
@@ -964,8 +1322,17 @@ def record_alive(rec: dict) -> bool:
 
 
 def group_members(pgid: int) -> list[int]:
-    p = subprocess.run(["ps", "-axo", "pid=,pgid="], stdout=subprocess.PIPE, text=True)
-    return [int(a) for a, b in (ln.split() for ln in p.stdout.splitlines() if ln.strip()) if int(b) == pgid]
+    """The live members of a process group (a zombie, dead but not yet reaped, is not one)."""
+    p = subprocess.run(["ps", "-axo", "pid=,pgid=,stat="], stdout=subprocess.PIPE, text=True)
+    rows = (ln.split() for ln in p.stdout.splitlines() if ln.strip())
+    return [int(r[0]) for r in rows if len(r) >= 3 and int(r[1]) == pgid and not r[2].startswith("Z")]
+
+
+def pid_running(pid: int) -> bool:
+    """`pid` exists and is not a zombie."""
+    p = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL, text=True)
+    return bool(p.stdout.strip()) and not p.stdout.strip().startswith("Z")
 
 
 def start_process(name: str, cmd: list[str], cwd: Path, env: dict, log_path: Path) -> subprocess.Popen:
@@ -973,9 +1340,10 @@ def start_process(name: str, cmd: list[str], cwd: Path, env: dict, log_path: Pat
     with log_path.open("ab") as f:
         p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=f,
                              stderr=subprocess.STDOUT, start_new_session=True)
+    # started_ns orders the stop (newest first): the JVMs start within the same second
     rec = {"name": name, "pid": p.pid, "pgid": os.getpgid(p.pid), "lstart": ps_lstart(p.pid),
-           "started_at": now_iso(), "cmd": cmd, "cwd": str(cwd), "log": str(log_path),
-           "java_opts": env.get("JAVA_OPTS")}
+           "started_at": now_iso(), "started_ns": time.time_ns(), "cmd": cmd, "cwd": str(cwd),
+           "log": str(log_path), "java_opts": env.get("JAVA_OPTS")}
     write_json(PID_DIR / f"{name}.json", rec)
     return p
 
@@ -1005,7 +1373,7 @@ def stop_group(rec: dict, grace: float = 20) -> str:
         # the leader is gone but its group (e.g. Python workers) is not: still ours
     try:
         os.killpg(pgid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):  # EPERM: only zombies left in the group
         return "not running"
     deadline = time.time() + grace
     while time.time() < deadline and group_members(pgid):
@@ -1013,33 +1381,111 @@ def stop_group(rec: dict, grace: float = 20) -> str:
     if group_members(pgid):
         try:
             os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         time.sleep(1)
         return "killed (SIGKILL after SIGTERM)"
     return "stopped"
 
 
+def process_cwd(pid: int) -> str:
+    out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, text=True).stdout
+    m = re.search(r"^n(.*)$", out, re.M)
+    return m.group(1) if m else ""
+
+
+def listener_pids(port: int) -> list[int]:
+    p = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL, text=True)
+    return sorted({int(x) for x in p.stdout.split() if x.isdigit()})
+
+
+#: the Angular CLI renames its process (bin/ng.js: `process.title = 'ng ' + args`; ps shows
+#: `ng serve (gui)` here), so the dev server's command line no longer names the CLI
+_NG_TITLE = re.compile(r"^ng(\s|$)")
+
+
+def _maybe_stack_process(cmd: str) -> bool:
+    return (str(DIST_DIR) in cmd or bool(_NG_TITLE.match(cmd)) or "@angular/cli/bin/ng" in cmd
+            or "esbuild" in cmd or "texera_run_python_worker" in cmd)
+
+
+def stack_process_kind(cmd: str, cwd: str, source: str | None) -> str | None:
+    """Which process of this stack `cmd` (ps's command column) running in `cwd` is, or None.
+    The JVMs run a dist under .state/localdev/dist; the dev server (under the CLI's title) and
+    its esbuild run in the source's frontend/; the unit's Python workers run
+    texera_run_python_worker in the source's amber/."""
+    if str(DIST_DIR) in cmd:
+        return "service"
+    if not source:
+        return None
+    if cwd == f"{source}/{FRONTEND}" and (_NG_TITLE.match(cmd) or "@angular/cli/bin/ng" in cmd or "esbuild" in cmd):
+        return FRONTEND
+    if cwd == f"{source}/amber" and "texera_run_python_worker" in cmd:
+        return "python worker"
+    return None
+
+
 def orphan_processes(source: str | None) -> list[tuple[int, int, str]]:
-    """Processes of an earlier `up` whose pid files are gone: a JVM running a dist under
-    .state/localdev/dist, or `ng serve` of the source's frontend."""
+    """Processes of an earlier `up` whose pid files are gone (stack_process_kind), and
+    whoever listens on the dev server's port from the source's frontend/. The source
+    worktree is the harness's own, so a dev server there is this stack's."""
     p = subprocess.run(["ps", "-axo", "pid=,pgid=,command="], stdout=subprocess.PIPE, text=True)
-    out = []
+    rows: dict[int, tuple[int, str]] = {}
     for line in p.stdout.splitlines():
         parts = line.strip().split(None, 2)
-        if len(parts) < 3:
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows[int(parts[0])] = (int(parts[1]), parts[2])
+    out = []
+    for pid, (pgid, cmd) in rows.items():
+        if pid == os.getpid() or not _maybe_stack_process(cmd):
             continue
-        pid, pgid, cmd = int(parts[0]), int(parts[1]), parts[2]
-        if pid == os.getpid():
-            continue
-        if str(DIST_DIR) in cmd:
+        cwd = "" if str(DIST_DIR) in cmd else process_cwd(pid)
+        if stack_process_kind(cmd, cwd, source):
             out.append((pid, pgid, cmd))
-        elif source and f"{NG} serve" in cmd:
-            cwd = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], stdout=subprocess.PIPE,
-                                 stderr=subprocess.DEVNULL, text=True).stdout
-            if f"n{source}/{FRONTEND}" in cwd:
-                out.append((pid, pgid, cmd))
+    if source:
+        found = {o[0] for o in out}
+        for pid in listener_pids(FRONTEND_PORT):
+            if pid in rows and pid not in found and process_cwd(pid) == f"{source}/{FRONTEND}":
+                out.append((pid, rows[pid][0], rows[pid][1]))
     return out
+
+
+def stop_pid(pid: int, grace: float = 20) -> str:
+    """SIGTERM one process (then SIGKILL after `grace`)."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return "not running"
+    deadline = time.time() + grace
+    while time.time() < deadline and pid_running(pid):
+        time.sleep(0.5)
+    if pid_running(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        return "killed (SIGKILL after SIGTERM)"
+    return "stopped"
+
+
+def stop_orphans(source: str | None) -> list[str]:
+    """Stop what orphan_processes finds: its whole process group when the group is this
+    stack's (the process leads it, the leader is gone, or the leader is a leftover too);
+    otherwise only the process."""
+    orphans = orphan_processes(source)
+    ours = {pid for pid, _g, _c in orphans}
+    done = []
+    for pid, pgid, cmd in orphans:
+        if not pid_running(pid):
+            continue
+        if pgid == pid or pgid in ours or not pid_exists(pgid):
+            outcome = stop_group({"pid": pid, "pgid": pgid, "lstart": ps_lstart(pid)})
+        else:
+            outcome = stop_pid(pid) + f" (alone: its process group {pgid} is not this stack's)"
+        done.append(f"leftover pid {pid} ({cmd[:80]}): {outcome}")
+    return done
 
 
 # --------------------------------------------------------------------------- up
@@ -1115,6 +1561,33 @@ def infra_up(m: dict, timeout: int, only: list[str] | None = None) -> float:
     return wait_infra(m["infra_services"], timeout, only)
 
 
+def wait_postgres_initialized(m: dict, timeout: int = 120) -> None:
+    """Postgres past its first-start init (sql/ run): only the final server listens on TCP;
+    the entrypoint's temporary one, which the pg_isready healthcheck may already pass, listens
+    on the Unix socket alone."""
+    container = m["containers"]["postgres"]
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        p = run(["docker", "exec", container, "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "texera",
+                 "-d", "texera_db", "-q"], check=False, capture=True)
+        if p.returncode == 0:
+            return
+        time.sleep(1)
+    die(f"Postgres ({container}) does not accept TCP connections after {timeout}s")
+
+
+def schema_step(m: dict, source: Path, logs: Path, strict: bool) -> dict:
+    """local-dev's schema step and its verdict, recorded in the manifest before the verdict
+    can stop anything."""
+    wait_postgres_initialized(m)
+    s = run_schema_step(m, source, logs)
+    m["schema"] = s
+    write_json(MANIFEST, m)
+    schema_verdict(m, s, strict)
+    write_json(MANIFEST, m)
+    return s
+
+
 def lakekeeper_warehouses(port: int) -> list[dict]:
     status, _, body = http_get(f"http://127.0.0.1:{port}/management/v1/warehouse", timeout=10)
     if status != 200:
@@ -1145,6 +1618,9 @@ def cmd_build(a) -> None:
         check_ports_free(m, only={"postgres (infra)": m["ports"]["postgres"]})
         infra_up(m, a.timeout, only=["postgres"])
         try:
+            # local-dev reconciles the schema before any build (ensure_postgres_for_build)
+            out["schema"] = schema_step(m, a.source, logs, a.strict_schema)
+            out["local_dev_deviations"] = m.get("local_dev_deviations", [])
             out["codegen"] = run_sbt(a.source, m, ["DAO/compile"], logs / "sbt-codegen.log", a.build_timeout)
         finally:
             log("removing the Postgres started for the codegen")
@@ -1174,10 +1650,21 @@ def cmd_up(a) -> None:
     m["node"] = node24()
     py = resolve_python(a.python)
     m["python"] = check_python(py, a.source)
+    if m["python"]["requirements_mismatches"]:
+        m.setdefault("warnings", []).append(
+            f"the UDF Python differs from amber/requirements.txt: {'; '.join(m['python']['requirements_mismatches'])}")
     heaps = parse_heaps(a.heap)
     m["heaps"] = heaps
     m["frontend_heap_mb"] = frontend_heap(a.source, a.frontend_heap)
     check_ports_free(m)  # before anything is written or started
+    # dists that do not match the source are refused before anything starts (missing ones are
+    # built below and checked again)
+    m["source_state"] = state = source_state(a.source)
+    present = [z for z in (newest(a.source, s["zip_glob"]) for s in m["services"]) if z]
+    _info, stale, _caveats = dist_provenance(a.source, present, state)
+    if stale and not a.allow_stale_dists:
+        die("dist zips that do not match the source (`stack/localdev-stack.sh build --force` rebuilds them; "
+            "--allow-stale-dists runs them anyway):\n  " + "\n  ".join(stale))
     logs = Path(a.logs or REPORTS / f"localdev-{stamp()}-logs").resolve()
     logs.mkdir(parents=True, exist_ok=True)
     m["logs_dir"] = str(logs)
@@ -1195,31 +1682,39 @@ def cmd_up(a) -> None:
     if s3_status != 200:
         die(f"RustFS does not answer at the LAN endpoint {m['s3_endpoint']}/health: {s3_status or s3_body}")
 
-    # 2. builds, only what is missing (local-dev's build step)
+    # 2. the schema (local-dev's `infra_ensure_db_schema`, right after `infra_up`)
+    t0 = time.time()
+    schema_step(m, a.source, logs, a.strict_schema)
+    timings["schema_s"] = round(time.time() - t0, 1)
+
+    # 3. builds, only what is missing (local-dev rebuilds what changed: see dist_provenance)
     t0 = time.time()
     m["build"] = build_dists(a.source, m, logs, False, a.build_timeout)
     m["protos"] = ensure_protos(a.source, logs)
     m["node_modules"] = ensure_node_modules(a.source, m["node"]["node"], logs)
     timings["build_s"] = round(time.time() - t0, 1)
+    zips = {s["name"]: newest(a.source, s["zip_glob"]) for s in m["services"]}
+    provenance, stale, caveats = dist_provenance(a.source, list(zips.values()), state)
+    if stale:
+        if not a.allow_stale_dists:
+            die("dist zips that do not match the source:\n  " + "\n  ".join(stale))
+        for line in stale:
+            warn(m, f"a stale dist runs on purpose (--allow-stale-dists): {line}")
+    for line in caveats:
+        warn(m, line)
+    m["dist_provenance"] = provenance
 
-    # 3. the JVM services, in local-dev's order, from the unzipped dists
+    # 4. the JVM services, in local-dev's order, from the unzipped dists
     env = service_env(m, py)
     procs: dict[str, subprocess.Popen] = {}
-    head_time = subprocess.run(["git", "-C", str(a.source), "log", "-1", "--format=%ct"], stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, text=True, env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
-    head_ct = int(head_time.stdout.strip() or 0)
     t0 = time.time()
     for svc in m["services"]:
-        zip_path = newest(a.source, svc["zip_glob"])
-        zip_mtime = int(zip_path.stat().st_mtime)
-        if head_ct and zip_mtime < head_ct:  # built before the checked-out commit: stale for sure
-            log(f"WARNING: {zip_path.name} is older than the source's HEAD commit; `build --force` rebuilds it")
+        zip_path = zips[svc["name"]]
         dist = unzip_dist(zip_path)
         launcher = dist / svc["launcher"]
         if not os.access(launcher, os.X_OK):
             die(f"{svc['name']}: no launcher {launcher}")
-        svc.update(zip=str(zip_path), zip_built_at=dt.datetime.fromtimestamp(zip_mtime, dt.timezone.utc)
-                   .isoformat(timespec="seconds"), zip_older_than_head=bool(head_ct and zip_mtime < head_ct),
+        svc.update(zip=str(zip_path), zip_provenance=provenance[str(zip_path)],
                    dist=str(dist), launcher_path=str(launcher),
                    java_opts=f"-Xmx{heaps[svc['name']]} -XX:+ExitOnOutOfMemoryError")
         senv = dict(env, JAVA_OPTS=svc["java_opts"])
@@ -1253,7 +1748,7 @@ def cmd_up(a) -> None:
     timings["services_s"] = round(time.time() - t0, 1)
     m["ready_after_s"] = ready_at
 
-    # 4. the Angular dev server (`yarn start`'s ng serve, proxy.config.json)
+    # 5. the Angular dev server (`yarn start`'s ng serve, proxy.config.json)
     node = m["node"]["node"]
     fenv = dict(env, PATH=f"{Path(node).parent}:{env['PATH']}", NG_CLI_ANALYTICS="false")
     fenv.pop("JAVA_OPTS", None)
@@ -1283,6 +1778,7 @@ def cmd_up(a) -> None:
         if status != 200:
             die(f"through the dev server's proxy, GET {path} -> {status or body[:200]}")
     m["frontend_checks"] = checks
+    m["listening"] = check_listeners(m)
     timings["total_s"] = round(time.time() - t_start, 1)
     m["up"] = {"at": now_iso(), "timings": timings,
                "pids": {r["name"]: r["pid"] for r in pid_records()}}
@@ -1290,6 +1786,41 @@ def cmd_up(a) -> None:
     shutil.copy2(MANIFEST, logs / "MANIFEST.json")
     log(f"local-dev stack is up in {timings['total_s']}s: {FRONTEND_URL} (dev server, proxy.config.json); "
         f"logs {logs}")
+    for d in m.get("local_dev_deviations", []):
+        log(f"DEVIATION from bin/local-dev.sh: {d['step']}: {d['error']} ({d['harness']})")
+
+
+def expected_ports(m: dict) -> dict[str, set[int]]:
+    out = {s["name"]: {s["local_dev_port"], *EXTRA_PORTS.get(s["name"], ())} for s in m["services"]}
+    out[FRONTEND] = {FRONTEND_PORT}
+    return out
+
+
+def listening_ports(pgid: int) -> list[int]:
+    """The TCP ports a process group listens on."""
+    members = group_members(pgid)
+    if not members:
+        return []
+    p = subprocess.run(["lsof", "-nP", "-a", "-p", ",".join(map(str, members)), "-iTCP", "-sTCP:LISTEN", "-Fn"],
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    return sorted({int(x) for x in re.findall(r"^n.*:(\d+)$", p.stdout, re.M)})
+
+
+def check_listeners(m: dict) -> dict[str, list[int]]:
+    """What each process of the stack listens on, against the ports the pre-flight check
+    reserves for it: anything else would be a port `up` cannot see taken beforehand."""
+    expected = expected_ports(m)
+    seen = {}
+    for rec in pid_records():
+        ports = listening_ports(int(rec.get("pgid") or rec["pid"]))
+        seen[rec["name"]] = ports
+        want = expected.get(rec["name"], set())
+        extra, absent = sorted(set(ports) - want), sorted(want - set(ports))
+        if extra:
+            warn(m, f"{rec['name']} also listens on {extra}, which the pre-flight port check does not cover")
+        if absent:
+            warn(m, f"{rec['name']} does not listen on {absent}, which the pre-flight port check reserves for it")
+    return seen
 
 
 # ------------------------------------------------------------------------- down
@@ -1312,28 +1843,30 @@ def collect_infra_logs(dest: Path) -> list[str]:
     return names
 
 
+def stop_order(recs: list[dict]) -> list[dict]:
+    """Newest first: the dev server, then the services in reverse start order (started_ns;
+    pid files of an older harness have only started_at, to the second)."""
+    return sorted(recs, key=lambda r: (r.get("started_ns") or 0, r.get("started_at", "")), reverse=True)
+
+
 def stop_processes(source: str | None) -> list[str]:
-    """Newest first: the dev server, then the services in reverse start order."""
     done = []
-    recs = sorted(pid_records(), key=lambda r: r.get("started_at", ""), reverse=True)
-    for rec in recs:
+    for rec in stop_order(pid_records()):
         outcome = stop_group(rec)
         done.append(f"{rec['name']}: {outcome}")
         (PID_DIR / f"{rec['name']}.json").unlink(missing_ok=True)
-    for pid, pgid, cmd in orphan_processes(source):
-        outcome = stop_group({"pid": pid, "pgid": pgid, "lstart": ps_lstart(pid)})
-        done.append(f"orphan pid {pid} ({cmd[:80]}): {outcome}")
-    return done
+    return done + stop_orphans(source)
 
 
 def cmd_down(a, volumes: bool = False) -> None:
     m = load_manifest(required=False)
+    source = m.get("source") or str(a.source)
     logs = Path(m["logs_dir"]) if m.get("logs_dir") else None
     if logs and logs.exists() and not getattr(a, "no_collect", False):
         collected = collect_infra_logs(logs)
         if collected:
             log(f"infra logs saved to {logs / 'infra'}")
-    for line in stop_processes(m.get("source")):
+    for line in stop_processes(source):
         log(line)
     args = ["down", "--remove-orphans"] + (["--volumes"] if volumes else [])
     compose(*args, check=False)
@@ -1349,8 +1882,10 @@ def cmd_down(a, volumes: bool = False) -> None:
         problems.append("containers of the project remain")
     if run(["docker", "network", "inspect", NETWORK], check=False, capture=True).returncode == 0:
         problems.append(f"network {NETWORK} remains")
-    if orphan_processes(m.get("source")):
-        problems.append("processes of the stack remain")
+    left = orphan_processes(source)
+    if left:
+        problems.append("processes of the stack remain: "
+                        + "; ".join(f"pid {pid} ({cmd[:80]})" for pid, _g, cmd in left))
     if problems:
         die("down left things behind: " + "; ".join(problems))
     if m and m.get("services"):
@@ -1395,6 +1930,15 @@ def cmd_status(a) -> None:
           f"{' dirty' if src.get('dirty') else ''}")
     print(f"infra  : project {PROJECT}, network {NETWORK}; S3 endpoint {m['s3_endpoint']}")
     print(f"logs   : {m.get('logs_dir', '-')}")
+    s = m.get("schema")
+    if s:
+        f = s.get("failed") or {}
+        print(f"schema : local-dev's step {'passed' if s['ok'] else 'FAILED at changeSet ' + str(f.get('id'))}"
+              f" ({len(s['recorded'])} of {s['changesets']} changeSets recorded)")
+    for d in m.get("local_dev_deviations", []):
+        print(f"DEVIATION from bin/local-dev.sh: {d['step']}: {d['error']}")
+    for w in m.get("warnings", []):
+        print(f"warning: {w}")
     print(f"{'INFRA SERVICE':22} {'CONTAINER':40} {'STATE':10} HEALTH")
     for r in sorted(infra, key=lambda r: r.get("Service", "")):
         print(f"{r.get('Service', ''):22} {r.get('Name', ''):40} {r.get('State', ''):10} {r.get('Health') or '-'}")
@@ -1441,21 +1985,33 @@ def cmd_post_run(a) -> None:
         p = subprocess.run(["ps", "-axo", "pid=,pgid=,command="], stdout=subprocess.PIPE, text=True)
         workers = [ln.strip()[:160] for ln in p.stdout.splitlines()
                    if ln.split() and int(ln.split()[1]) == unit["pgid"] and "texera_run_python_worker" in ln]
+    deviations = m.get("local_dev_deviations") or []
+    warnings = m.get("warnings") or []
     post = {"at": now_iso(), "ok": not dead and not unhealthy, "dead": dead, "unhealthy": unhealthy,
-            "services": rows, "python_workers_left": workers}
+            "services": rows, "python_workers_left": workers,
+            "local_dev_deviations": deviations, "warnings": warnings}
     report_path = Path(a.report)
     if report_path.exists():
         report = json.loads(report_path.read_text())
         report["post_run"] = post
+        summ = report.setdefault("summary", {})
         if not post["ok"]:
-            summ = report.setdefault("summary", {})
             summ["result"] = "FAIL"
             summ["post_run_failures"] = dead + unhealthy
+        # what this run did differently from bin/local-dev.sh, next to the result (which they
+        # do not change: the scenarios ran on the stack as described)
+        summ["local_dev_deviations"] = [f"{d['step']}: {d['error']}" for d in deviations]
+        summ["warnings"] = warnings
         write_json(report_path, report)
     if a.out:
         write_json(Path(a.out), post)
     log(f"post-run: {'ok' if post['ok'] else 'FAIL'} (dead: {dead or '-'}; unhealthy: {unhealthy or '-'}; "
         f"Python workers left: {len(workers)})")
+    for d in deviations:
+        log(f"DEVIATION from bin/local-dev.sh: {d['step']}: {d['error']}; local-dev: {d['local_dev']}; "
+            f"this stack: {d['harness']}")
+    for w in warnings:
+        log(f"warning: {w}")
     if not post["ok"]:
         sys.exit(4)
 
@@ -1489,19 +2045,31 @@ def main() -> None:
         p.add_argument("--lan-ip", help="host LAN IP for the RustFS endpoint (default: local-dev's detection, "
                                         "or $HOST_LAN_IP)")
 
+    def schema_args(p):
+        p.add_argument("--strict-schema", action="store_true",
+                       default=os.environ.get("SCE_LOCALDEV_STRICT_SCHEMA", "") not in ("", "0"),
+                       help="stop where `bin/local-dev.sh up` stops when local-dev's schema step fails "
+                            "(default: go on and record the deviation; $SCE_LOCALDEV_STRICT_SCHEMA=1)")
+
     p = sub.add_parser("generate", help="write stack/localdev/generated/ from the source worktree")
     gen_args(p)
     p = sub.add_parser("build", help="sbt dist in the source worktree when a dist zip is missing "
                                      "(starts this stack's Postgres alone for jOOQ's codegen when needed)")
     gen_args(p)
-    p.add_argument("--force", action="store_true", help="regenerate jOOQ and rebuild even when every zip exists")
+    schema_args(p)
+    p.add_argument("--force", action="store_true", help="regenerate jOOQ (Postgres: hold the lock) and rebuild "
+                                                        "even when every zip exists")
     p.add_argument("--codegen-only", action="store_true",
                    help="only the jOOQ codegen (the Docker part); run `build` again without the lock for the dists")
     p.add_argument("--logs", help="directory for sbt-dist.log (default reports/localdev-build-<time>-logs)")
     p.add_argument("--timeout", type=int, default=300, help="seconds to wait for Postgres")
     p.add_argument("--build-timeout", type=int, default=3000, help="seconds sbt may take")
-    p = sub.add_parser("up", help="infra, missing builds, the JVM services and ng serve; wait until ready")
+    p = sub.add_parser("up", help="infra, local-dev's schema step, missing builds, the JVM services and ng "
+                                  "serve; wait until ready")
     gen_args(p)
+    schema_args(p)
+    p.add_argument("--allow-stale-dists", action="store_true",
+                   help="run dist zips that do not match the source (recorded as warnings) instead of refusing")
     p.add_argument("--python", help="interpreter for Python UDF workers (UDF_PYTHON_PATH); default "
                                     "$SCE_LOCALDEV_PYTHON, .state/localdev/py311, or the step-1 py311 venv")
     p.add_argument("--heap", action="append", default=[], metavar="NAME=SIZE",
