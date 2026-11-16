@@ -901,8 +901,9 @@ server (`http://localhost:4200`), whose proxy (`frontend/proxy.config.json`) sen
 each service on its fixed port and `/wsapi` to the computing unit, exactly as a developer's
 browser does. The source is a worktree of its own (default
 `texera-worktrees/sce-localdev-src`, `--source` or `$SCE_LOCALDEV_SOURCE`), because the build
-writes into it (only gitignored output: `target/`, jOOQ's generated sources, amber's Python
-protobufs, `frontend/node_modules`, `amber/logs`).
+and the services write into it. All of that is gitignored output (`git status` stays clean):
+`target/` directories, jOOQ's generated sources, amber's Python protobufs and `__pycache__`,
+`frontend/node_modules` and `.angular/`, and the services' own `log/`, `logs/` and `amber/logs/`.
 
 ```
 LOCK=<scratchpad>/sce/stack.lock
@@ -1095,6 +1096,23 @@ Temurin 17.0.19, node v24.15.0, UDF Python 3.11.14 (the step-1 venv, every
 | Report (`reports/`) | Harness | Result | Notes |
 |---|---|---|---|
 | `localdev-20261116T121303Z` | `471525f` + this mode uncommitted (trial) | a b c d e u PASS, 49/49 checks; post-run ok | `--reset`; `up` 56 s (infra 6 s, services 10 s, dev server 25 s); lock held 2 min |
+| `localdev-20261116T121959Z` | `1d77279`, no uncommitted change | a b c d e u PASS, 49/49 checks; post-run ok | clean start (`--reset`: empty volumes, nothing running); `up` 40 s (infra 6 s, services 5 s, dev server 14 s); driver 22 s; lock held about 1 min |
+| `localdev-20261116T122133Z` | `1d77279`, no uncommitted change | a b c d e u PASS, 49/49 checks; post-run ok | clean start; `up` 47 s (infra 6 s, services 7 s, dev server 19 s); driver 19 s; lock about 1 min |
+| `localdev-20261116T122446Z` | `e184270` (the final code), no uncommitted change | a b c d e u PASS, 49/49 checks; post-run ok | clean start; `up` 41 s (infra 6 s, services 7 s, dev server 14 s); driver 18 s; lock about 1 min |
+
+The build before them (`reports/localdev-build-codegen-logs`, `reports/localdev-build-dist-logs`):
+`build --codegen-only` held the lock 27 s (jOOQ: 224 generated sources from the step-1 DDL in
+this stack's Postgres); `build` then ran `sbt dist` of the six services in 90 s without Docker
+(the codegen's "Connection to localhost:15432 refused" fallback, as intended), and amber's compile
+wrote the Python protobufs. The source's `git status` stayed clean throughout.
+
+Probes of the guard rails, on `1d77279`:
+
+| Probe | Outcome |
+|---|---|
+| A listener on 127.0.0.1:9094, then `up` | refused before writing or starting anything: `9094 (config-service) is in use by Python (pid 53116)`; no container, no pid file |
+| `run-localdev.sh`, then the time-limit signal (USR1) right after `up` started the seven JVMs | exit 5; the step's process tree stopped (the JVMs with it), `down` found nothing left to stop, the project's containers and network removed, no process or pid file left, lock released (`reports/localdev-20261116T122333Z-logs`) |
+| Offline suite | 96/96 (`driver/tests/test_localdev.py`: 16) |
 
 What the runs establish:
 
