@@ -1,0 +1,131 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+#### runtime_statistics, no-tidy
+
+| commits | phase | commit p50 / p95 ms | loadTable ms | catalog-only commit ms | metadata JSON KB (stored gz KB) | data files | manifests | snapshots | read all ms (raw records / 3 columns) | newest row ms (Texera / direct) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 250 | run | 96 / 139 | 4.3 | 17.1 | 215 (29) | 250 | 52 | 250 | 942 (- / -) | 100 / 13 |
+| 500 | run | 125 / 157 | 9.3 | 38.4 | 407 (55) | 500 | 5 | 500 | 1,524 (- / -) | 57 / 15 |
+| 750 | run | 151 / 175 | 13.2 | 48.1 | 599 (82) | 750 | 57 | 750 | 2,244 (- / -) | 115 / 19 |
+| 1000 | run | 161 / 192 | 13.4 | 48.6 | 791 (108) | 1000 | 10 | 1000 | 3,047 (- / -) | 88 / 29 |
+| 1250 | run | 179 / 208 | 20.1 | 67.4 | 984 (134) | 1250 | 62 | 1250 | 6,037 (- / -) | 178 / 37 |
+| 1500 | run | 207 / 321 | 20.0 | 62.0 | 1,177 (160) | 1500 | 15 | 1500 | 5,098 (- / -) | 122 / 39 |
+| 1750 | run | 214 / 315 | 29.4 | 83.7 | 1,370 (187) | 1750 | 67 | 1750 | 10,146 (- / -) | 227 / 38 |
+| 2000 | run | 229 / 248 | 30.9 | 90.5 | 1,563 (214) | 2000 | 20 | 2000 | 8,468 (- / -) | 135 / 38 |
+| 2250 | run | 239 / 258 | 35.2 | 99.1 | 1,756 (240) | 2250 | 72 | 2250 | 10,065 (- / -) | 242 / 47 |
+| 2500 | run | 261 / 403 | 36.9 | 113.9 | 1,950 (267) | 2500 | 25 | 2500 | 13,201 (- / -) | 212 / 49 |
+| 2750 | run | 289 / 453 | 51.5 | 141.0 | 2,143 (293) | 2750 | 77 | 2750 | 16,560 (- / -) | 271 / 56 |
+| 2880 | run | 291 / 426 | 39.1 | 107.7 | 2,243 (307) | 2880 | 9 | 2880 | 14,697 (- / -) | 196 / 52 |
+| 2880 | after-final-tidy | - / - | 10.3 | 20.3 | 24 (3) | 1 | 1 | 1 | 497 (- / -) | 56 / 31 |
+
+#### runtime_statistics, tidy
+
+| commits | phase | commit p50 / p95 ms | loadTable ms | catalog-only commit ms | metadata JSON KB (stored gz KB) | data files | manifests | snapshots | read all ms (raw records / 3 columns) | newest row ms (Texera / direct) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 250 | run | 119 / 154 | 4.6 | 17.5 | 65 (9) | 51 | 51 | 55 | 294 (- / -) | 100 / 15 |
+| 500 | run | 114 / 143 | 5.4 | 21.1 | 104 (14) | 101 | 2 | 105 | 384 (- / -) | 56 / 20 |
+| 750 | run | 138 / 250 | 7.3 | 27.5 | 142 (19) | 151 | 52 | 155 | 637 (- / -) | 125 / 23 |
+| 1000 | run | 124 / 184 | 8.4 | 29.6 | 180 (24) | 201 | 3 | 205 | 835 (- / -) | 59 / 21 |
+| 1250 | run | 118 / 134 | 4.4 | 17.6 | 65 (9) | 51 | 51 | 55 | 423 (- / -) | 103 / 18 |
+| 1500 | run | 117 / 138 | 5.3 | 20.8 | 104 (14) | 101 | 2 | 105 | 559 (- / -) | 49 / 20 |
+| 1750 | run | 124 / 201 | 9.4 | 35.0 | 142 (19) | 151 | 52 | 155 | 1,032 (- / -) | 130 / 38 |
+| 2000 | run | 139 / 224 | 7.9 | 29.0 | 181 (24) | 201 | 3 | 205 | 1,175 (- / -) | 66 / 15 |
+| 2250 | run | 124 / 146 | 4.4 | 17.0 | 65 (9) | 51 | 51 | 55 | 657 (- / -) | 112 / 30 |
+| 2500 | run | 125 / 164 | 6.1 | 22.7 | 104 (14) | 101 | 2 | 105 | 1,271 (- / -) | 82 / 30 |
+| 2750 | run | 125 / 159 | 6.5 | 26.2 | 142 (19) | 151 | 52 | 155 | 1,666 (- / -) | 137 / 25 |
+| 2880 | run | 119 / 199 | 5.2 | 20.8 | 88 (12) | 81 | 81 | 85 | 852 (- / -) | 155 / 14 |
+| 2880 | after-final-tidy | - / - | 3.5 | 18.0 | 24 (3) | 1 | 1 | 1 | 486 (- / -) | 38 / 29 |
+
+#### log (one row per state change)
+
+| scenario | state changes | phase | commit p50 / p95 ms | loadTable ms | metadata JSON KB | data files | read all ms | newest row ms (Texera / direct) |
+|---|---|---|---|---|---|---|---|---|
+| no-tidy | 6 | run | 72 / 116 | 2.1 | 7 | 6 | 39 | 43 / 13 |
+| no-tidy | 10 | run | 85 / 128 | 0.9 | 11 | 10 | 50 | 50 / 16 |
+| no-tidy | 14 | run | 81 / 97 | 1.3 | 15 | 14 | 56 | 40 / 9 |
+| no-tidy | 18 | run | 97 / 151 | 3.7 | 19 | 18 | 74 | 49 / 13 |
+| no-tidy | 22 | run | 90 / 106 | 1.6 | 22 | 22 | 101 | 80 / 17 |
+| no-tidy | 26 | run | 114 / 158 | 4.5 | 26 | 26 | 142 | 87 / 20 |
+| no-tidy | 30 | run | 108 / 195 | 4.9 | 30 | 30 | 121 | 72 / 15 |
+| no-tidy | 34 | run | 96 / 104 | 3.1 | 34 | 34 | 154 | 89 / 17 |
+| no-tidy | 38 | run | 93 / 104 | 3.5 | 38 | 38 | 176 | 84 / 22 |
+| no-tidy | 42 | run | 112 / 192 | 8.7 | 42 | 42 | 166 | 111 / 22 |
+| no-tidy | 46 | run | 89 / 144 | 4.0 | 46 | 46 | 214 | 98 / 17 |
+| no-tidy | 49 | run | 98 / 107 | 4.8 | 49 | 49 | 240 | 96 / 11 |
+| no-tidy | 49 | after-final-tidy | - / - | 4.0 | 13 | 1 | 29 | 36 / 34 |
+| tidy | 6 | run | 95 / 127 | 4.0 | 7 | 6 | 52 | 55 / 12 |
+| tidy | 10 | run | 93 / 114 | 3.2 | 11 | 10 | 67 | 59 / 18 |
+| tidy | 14 | run | 110 / 266 | 4.2 | 15 | 14 | 88 | 54 / 18 |
+| tidy | 18 | run | 110 / 116 | 3.2 | 19 | 18 | 84 | 61 / 13 |
+| tidy | 22 | run | 102 / 111 | 3.8 | 22 | 22 | 128 | 92 / 22 |
+| tidy | 26 | run | 95 / 133 | 4.1 | 26 | 26 | 143 | 82 / 21 |
+| tidy | 30 | run | 106 / 113 | 8.2 | 30 | 30 | 154 | 84 / 14 |
+| tidy | 34 | run | 123 / 207 | 4.5 | 34 | 34 | 174 | 91 / 20 |
+| tidy | 38 | run | 112 / 116 | 6.9 | 38 | 38 | 248 | 96 / 12 |
+| tidy | 42 | run | 110 / 117 | 5.7 | 42 | 42 | 196 | 105 / 14 |
+| tidy | 46 | run | 114 / 120 | 4.5 | 46 | 46 | 269 | 99 / 11 |
+| tidy | 49 | run | 118 / 125 | 5.2 | 49 | 49 | 272 | 133 / 30 |
+| tidy | 49 | after-final-tidy | - / - | 3.4 | 13 | 1 | 15 | 21 / 12 |
+
+#### tidies
+
+| scenario | table | at commit | files / manifests / snapshots before | read all before ms | compact ms | rewrite manifests ms | expire ms | total ms | after | read all after ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| no-tidy | runtime_statistics | 2880 | 2880 / 9 / 2880 | 15,173 | 17,363 | 210 | 10,584 | 28,157 | 1 / 1 / 1 | 547 |
+| no-tidy | log | 2880 | 49 / 49 / 49 | 380 | 560 | 138 | 557 | 1,256 | 1 / 1 / 1 | 38 |
+| tidy | runtime_statistics | 200 | 200 / 2 / 200 | 760 | 842 | 89 | 719 | 1,649 | 1 / 1 / 5 | 82 |
+| tidy | runtime_statistics | 400 | 201 / 3 / 205 | 875 | 846 | 69 | 935 | 1,850 | 1 / 1 / 5 | 86 |
+| tidy | runtime_statistics | 600 | 201 / 3 / 205 | 695 | 832 | 78 | 1,160 | 2,070 | 1 / 1 / 5 | 131 |
+| tidy | runtime_statistics | 800 | 201 / 3 / 205 | 804 | 908 | 76 | 693 | 1,676 | 1 / 1 / 5 | 161 |
+| tidy | runtime_statistics | 1000 | 201 / 3 / 205 | 842 | 894 | 76 | 799 | 1,769 | 1 / 1 / 5 | 187 |
+| tidy | runtime_statistics | 1200 | 201 / 3 / 205 | 810 | 1,025 | 73 | 871 | 1,970 | 1 / 1 / 5 | 223 |
+| tidy | runtime_statistics | 1400 | 201 / 3 / 205 | 934 | 1,001 | 86 | 789 | 1,876 | 1 / 1 / 5 | 255 |
+| tidy | runtime_statistics | 1600 | 201 / 3 / 205 | 1,044 | 676 | 65 | 630 | 1,371 | 1 / 1 / 5 | 285 |
+| tidy | runtime_statistics | 1800 | 201 / 3 / 205 | 4,860 | 2,273 | 103 | 1,785 | 4,161 | 1 / 1 / 5 | 497 |
+| tidy | runtime_statistics | 2000 | 201 / 3 / 205 | 1,651 | 1,744 | 83 | 1,244 | 3,070 | 1 / 1 / 5 | 464 |
+| tidy | runtime_statistics | 2200 | 201 / 3 / 205 | 1,090 | 975 | 96 | 877 | 1,947 | 1 / 1 / 5 | 387 |
+| tidy | runtime_statistics | 2400 | 201 / 3 / 205 | 1,314 | 896 | 80 | 820 | 1,796 | 1 / 1 / 5 | 457 |
+| tidy | runtime_statistics | 2600 | 201 / 3 / 205 | 1,390 | 982 | 96 | 705 | 1,782 | 1 / 1 / 5 | 447 |
+| tidy | runtime_statistics | 2800 | 201 / 3 / 205 | 1,574 | 912 | 93 | 737 | 1,742 | 1 / 1 / 5 | 522 |
+| tidy | runtime_statistics | 2880 | 81 / 81 / 85 | 1,182 | 605 | 102 | 508 | 1,214 | 1 / 1 / 1 | 607 |
+| tidy | log | 2880 | 49 / 49 / 49 | 219 | 426 | 90 | 313 | 830 | 1 / 1 / 1 | 40 |
+
+#### where a commit's time goes (scratch table)
+
+| step | p50 ms | p95 ms |
+|---|---|---|
+| texera_flush: loadTable + write file + newAppend commit (what each tick does) | 98.5 | 150.2 |
+| loadTable | 1.4 | 2.0 |
+| loadTable + first S3 request on its new FileIO | 3.8 | 4.9 |
+| S3 HEAD on a held table's FileIO | 0.8 | 1.2 |
+| held table: write one 10-row data file (Parquet + signed PUT) | 9.5 | 18.4 |
+| held table: newAppend commit (manifest + list + REST commit) | 81.4 | 102.1 |
+| held table: write file + newAppend commit | 91.2 | 112.6 |
+| held table: newFastAppend commit | 43.6 | 59.1 |
+| held table: newAppend commit with commit.manifest-merge.enabled=false | 72.0 | 92.2 |
+| held table: catalog-only commit (property change) | 12.9 | 18.8 |
+
+#### what each table left in the store at the end
+
+| scenario | table | objects | MB | data files | manifests | manifest lists | metadata files (MB) |
+|---|---|---|---|---|---|---|---|
+| no-tidy | runtime_statistics | 104 | 30.1 | 1 | 1 | 1 | 101 (29.5) |
+| no-tidy | log | 56 | 0.2 | 1 | 1 | 1 | 53 (0.2) |
+| tidy | runtime_statistics | 104 | 1.5 | 1 | 1 | 1 | 101 (0.9) |
+| tidy | log | 56 | 0.2 | 1 | 1 | 1 | 53 (0.2) |

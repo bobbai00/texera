@@ -1,0 +1,5 @@
+# local Python env (recreated by run.sh with uv)
+.venv/
+__pycache__/
+# per-run secrets; run.sh deletes this directory at teardown
+state/

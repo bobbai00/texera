@@ -1,0 +1,1394 @@
+{
+ "meta": {
+  "started": "2026-11-16T01:27:52+00:00",
+  "sts_validity_requested": 900,
+  "openfga_datastore": "postgres",
+  "openfga_check_cache": "false",
+  "openfga_cache_controller": "false",
+  "long_mode": true,
+  "lakekeeper": {
+   "version": "0.11.0",
+   "authz-backend": "openfga",
+   "bootstrapped": false
+  },
+  "sts_session_policy": {
+   "Version": "2012-10-17",
+   "Statement": [
+    {
+     "Sid": "TableAccess",
+     "Effect": "Allow",
+     "Action": [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject"
+     ],
+     "Resource": [
+      "arn:aws:s3:::sce0tok-lake/wh/01a1e1f7-c2a8-7991-9b60-265852b725b7/01a1e1f7-c30c-76b3-b197-9ef38d5aa4de/",
+      "arn:aws:s3:::sce0tok-lake/wh/01a1e1f7-c2a8-7991-9b60-265852b725b7/01a1e1f7-c30c-76b3-b197-9ef38d5aa4de/*"
+     ]
+    },
+    {
+     "Sid": "ListBucketForFolder",
+     "Effect": "Allow",
+     "Action": [
+      "s3:ListBucket"
+     ],
+     "Resource": [
+      "arn:aws:s3:::sce0tok-lake"
+     ],
+     "Condition": {
+      "StringLike": {
+       "s3:prefix": "wh/01a1e1f7-c2a8-7991-9b60-265852b725b7/01a1e1f7-c30c-76b3-b197-9ef38d5aa4de/*"
+      }
+     }
+    }
+   ]
+  },
+  "pre_revocation_creds_exp": 1794793373,
+  "revoke_grant_window": {
+   "samples": 180,
+   "ok_before_call": 125,
+   "during_call": [
+    200,
+    404
+   ],
+   "ok_started_after_call": 0,
+   "refused_started_after_call": 53,
+   "last_ok_start_rel_call_end_ms": -5.1,
+   "first_refused_end_rel_call_end_ms": 16.8,
+   "delay_to_refusal_s": 0.017
+  },
+  "delete_user_delay_to_refusal_s": 0.011,
+  "sts_lifetimes": {
+   "None": [
+    "201",
+    3599,
+    3599
+   ],
+   "60": [
+    "201",
+    899,
+    899
+   ],
+   "900": [
+    "201",
+    899,
+    899
+   ],
+   "43200": [
+    "201",
+    43199,
+    43199
+   ],
+   "86400": [
+    "201",
+    43199,
+    43199
+   ]
+  }
+ },
+ "setup": [
+  {
+   "name": "issuer discovery reachable",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Lakekeeper accepts the Dashboard's token",
+   "ok": true,
+   "detail": "Lakekeeper 0.11.0, authz openfga"
+  },
+  {
+   "name": "bootstrap: the Dashboard identity becomes the server operator",
+   "ok": true,
+   "detail": "204"
+  },
+  {
+   "name": "warehouse 'lake' on RustFS with STS vending (validity 900s)",
+   "ok": true,
+   "detail": "201"
+  },
+  {
+   "name": "namespaces e_42 and e_43, each with a 2-row table t",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "grant oidc~run-42 'create' + 'modify' on namespace e_42 only",
+   "ok": true,
+   "detail": "204"
+  },
+  {
+   "name": "provision user oidc~run-42 in Lakekeeper",
+   "ok": true,
+   "detail": "201"
+  },
+  {
+   "name": "Dashboard turns on managed access for the warehouse",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "Dashboard removes run-42's grant on e_42",
+   "ok": true,
+   "detail": "204 in 4.2 ms"
+  },
+  {
+   "name": "Dashboard deletes user oidc~run-42",
+   "ok": true,
+   "detail": "204 in 5.2 ms"
+  },
+  {
+   "name": "grant oidc~run-44 on e_44 without provisioning the user",
+   "ok": true,
+   "detail": "204"
+  },
+  {
+   "name": "grant oidc~run-48 'create' + 'select' on e_42 (the narrower alternative)",
+   "ok": true,
+   "detail": "204"
+  }
+ ],
+ "checks": [
+  {
+   "id": "B1",
+   "name": "run token gets the catalog config for the warehouse",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "id": "B2",
+   "name": "run token lists the tables of e_42",
+   "ok": true,
+   "detail": "200 ['t']"
+  },
+  {
+   "id": "B3",
+   "name": "run token loads e_42.t and reads its data through vended credentials",
+   "ok": true,
+   "detail": "rows=2"
+  },
+  {
+   "id": "B4",
+   "name": "run token appends to e_42.t (data files + commit)",
+   "ok": true,
+   "detail": "rows=3"
+  },
+  {
+   "id": "B5",
+   "name": "run token creates e_42.run_out, writes it and reads it back",
+   "ok": true,
+   "detail": "rows=2"
+  },
+  {
+   "id": "C1",
+   "name": "run token cannot load e_43.t",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "C1b",
+   "name": "PyIceberg load of e_43.t fails for the run",
+   "ok": true,
+   "detail": "NoSuchTableError"
+  },
+  {
+   "id": "C2",
+   "name": "run token cannot list the tables of e_43",
+   "ok": true,
+   "detail": "404 NoSuchNamespaceException"
+  },
+  {
+   "id": "C3",
+   "name": "run token cannot create a table in e_43",
+   "ok": true,
+   "detail": "404 NoSuchNamespaceException"
+  },
+  {
+   "id": "C4",
+   "name": "run token cannot commit to e_43.t",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "C5",
+   "name": "run token cannot get storage credentials for e_43.t",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "C6",
+   "name": "run token cannot rename e_43.t into e_42",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "C7",
+   "name": "listing namespaces with the run token shows e_42 and not e_43",
+   "ok": true,
+   "detail": "200 [['e_42']]"
+  },
+  {
+   "id": "C8",
+   "name": "e_43 looks exactly like a namespace that does not exist",
+   "ok": true,
+   "detail": "GET e_43 404 NoSuchNamespaceException, GET e_99 404 NoSuchNamespaceException, HEAD e_43 404"
+  },
+  {
+   "id": "C9",
+   "name": "run token cannot create a namespace outside e_42",
+   "ok": true,
+   "detail": "403 WarehouseActionForbidden"
+  },
+  {
+   "id": "C10a",
+   "name": "run cannot create an e_42 table located at e_43.t's folder",
+   "ok": true,
+   "detail": "409 LocationAlreadyTaken"
+  },
+  {
+   "id": "C10b",
+   "name": "run cannot create an e_42 table located at e_43's namespace folder (it holds e_43.t)",
+   "ok": true,
+   "detail": "409 LocationAlreadyTaken"
+  },
+  {
+   "id": "C10c",
+   "name": "run cannot create an e_42 table located at the warehouse root",
+   "ok": true,
+   "detail": "400 InvalidLocation"
+  },
+  {
+   "id": "C11",
+   "name": "run cannot register e_43.t's metadata file as a table in e_42",
+   "ok": true,
+   "detail": "409 AlreadyExistsException"
+  },
+  {
+   "id": "C12",
+   "name": "run token cannot grant itself access to e_43 or read e_43's grants",
+   "ok": true,
+   "detail": "grant 401 Unauthorized, read grants 403 ActionForbidden"
+  },
+  {
+   "id": "C13",
+   "name": "run token cannot drop e_43.t",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "D1",
+   "name": "e_42.t credentials write, read and list e_42.t's folder",
+   "ok": true,
+   "detail": "put ALLOWED, get ALLOWED, list-own-prefix ALLOWED"
+  },
+  {
+   "id": "D2",
+   "name": "e_42.t credentials are refused on e_43.t's folder",
+   "ok": true,
+   "detail": "get metadata DENIED(AccessDenied), put DENIED(AccessDenied)"
+  },
+  {
+   "id": "D3",
+   "name": "e_42.t credentials are refused on e_43's namespace folder",
+   "ok": true,
+   "detail": "DENIED(AccessDenied)"
+  },
+  {
+   "id": "D4",
+   "name": "e_42.t credentials cannot list the bucket, the warehouse prefix, e_43's folder or the buckets",
+   "ok": true,
+   "detail": "bucket DENIED(AccessDenied), wh/ DENIED(AccessDenied), e_43.t/ DENIED(AccessDenied), ListBuckets DENIED(AccessDenied)"
+  },
+  {
+   "id": "D5",
+   "name": "e_42.t credentials are refused on a sibling table (e_42.run_out): scope is one table",
+   "ok": true,
+   "detail": "DENIED(AccessDenied)"
+  },
+  {
+   "id": "D6",
+   "name": "the STS session policy Lakekeeper requested names only e_42.t's prefix",
+   "ok": true,
+   "detail": "parent=lakekeeper resources=['arn:aws:s3:::sce0tok-lake/{e_42.t}/', 'arn:aws:s3:::sce0tok-lake/{e_42.t}/*', 'arn:aws:s3:::sce0tok-lake']"
+  },
+  {
+   "id": "L1",
+   "name": "limit: without managed access, the run can share a table it created with another run",
+   "ok": true,
+   "detail": "run-42 grants select on e_42.run_out to run-43: 204; run-43 loads it: 200"
+  },
+  {
+   "id": "G1",
+   "name": "with managed access on, the run cannot share its tables",
+   "ok": true,
+   "detail": "grant: 401 Unauthorized; run-43 load: 404 NoSuchTableException"
+  },
+  {
+   "id": "A0",
+   "name": "control: a fresh run token reaches the catalog",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "id": "A1",
+   "name": "an expired run token (exp 120 s ago) is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A2",
+   "name": "a token signed by a different key under the published kid is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A3",
+   "name": "a token signed by a different key under an unknown kid is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A4",
+   "name": "an unsigned token (alg none) is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A5",
+   "name": "an HS256 token keyed with the public key (algorithm confusion) is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A6",
+   "name": "a token for another audience is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A7",
+   "name": "a token from another issuer is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A8",
+   "name": "a token without exp is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "A9",
+   "name": "a token without a kid header is refused",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "id": "L2",
+   "name": "limit: Lakekeeper still accepts a token up to about 60 s after its exp (clock leeway)",
+   "ok": true,
+   "detail": "exp 10s ago -> 200, exp 50s ago -> 200, exp 70s ago -> 401, exp 90s ago -> 401"
+  },
+  {
+   "id": "L3",
+   "name": "limit: a token with no aud or no iss claim is accepted, and nbf is not checked",
+   "ok": true,
+   "detail": "no aud claim -> 200, no iss claim -> 200, nbf 10 min ahead -> 200, no iat -> 200"
+  },
+  {
+   "id": "S1",
+   "name": "remote signing: Lakekeeper signs a read of e_42.t's metadata and RustFS serves it",
+   "ok": true,
+   "detail": "sign 200, GET 200"
+  },
+  {
+   "id": "S2",
+   "name": "remote signing: Lakekeeper will not sign a read of e_43.t's files for the run",
+   "ok": true,
+   "detail": "via e_42.t's signer endpoint 404 NoSuchTableException, via the warehouse signer endpoint 404 NoSuchTableException"
+  },
+  {
+   "id": "E1",
+   "name": "right after the grant is removed, the same unexpired run token is refused on e_42.t",
+   "ok": true,
+   "detail": "revoke call 4.2 ms; next request refused on the first request (404 NoSuchTableException, 16.6 ms); concurrent poller: 125 ok before the call, statuses during it [200, 404], 53 refused and 0 ok among requests started after it"
+  },
+  {
+   "id": "E2",
+   "name": "after the grant is removed, the run cannot create tables in e_42",
+   "ok": true,
+   "detail": "403 NamespaceActionForbidden"
+  },
+  {
+   "id": "E3",
+   "name": "after the grant is removed, the run cannot fetch fresh credentials for e_42.t",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "E4",
+   "name": "after the grant is removed, Lakekeeper stops signing requests for e_42.t",
+   "ok": true,
+   "detail": "404 NoSuchTableException"
+  },
+  {
+   "id": "L4",
+   "name": "limit: after the grant is removed, the run still loads and commits the table it created (it owns it)",
+   "ok": true,
+   "detail": "load run_out 200, commit run_out 200, list e_42 200 ['run_out']"
+  },
+  {
+   "id": "L5",
+   "name": "limit: storage credentials vended before the revocation keep working after it (until they expire)",
+   "ok": true,
+   "detail": "get ALLOWED, put ALLOWED; they expire in 897s"
+  },
+  {
+   "id": "E5",
+   "name": "right after the user is deleted, the same token is refused on everything in e_42, its own tables included",
+   "ok": true,
+   "detail": "load run_out: refused on the first request (404 NoSuchTableException, 11.3 ms); then commit 404 NoSuchTableException, list e_42 404 NoSuchNamespaceException, list namespaces 404 WarehouseNotFound, sign 404 WarehouseNotFound"
+  },
+  {
+   "id": "E6",
+   "name": "deleting the user removed its ownership of e_42.run_out",
+   "ok": true,
+   "detail": "200 []"
+  },
+  {
+   "id": "B6",
+   "name": "a run granted before Lakekeeper ever saw it reads its namespace (no provisioning needed)",
+   "ok": true,
+   "detail": "rows=2"
+  },
+  {
+   "id": "E7",
+   "name": "deleting the user alone also removes its namespace grant; the same token is refused at once",
+   "ok": true,
+   "detail": "delete 204 in 5.0 ms; load e_44.t: refused on the first request (404 NoSuchTableException, 13.3 ms); create 404 NoSuchNamespaceException; grants left []"
+  },
+  {
+   "id": "L6",
+   "name": "limit: deleting a user Lakekeeper never saw does not remove its grants (revoke must delete them explicitly)",
+   "ok": true,
+   "detail": "grant 204; delete user 404 UserNotFound; grants left [{'type': 'select', 'user': 'oidc~run-46'}]"
+  },
+  {
+   "id": "P1",
+   "name": "with 'create' + 'select', a run reads the namespace and writes the tables it creates",
+   "ok": true,
+   "detail": "rows e_42.t=3, e_42.r48=1"
+  },
+  {
+   "id": "P2",
+   "name": "with 'create' + 'select', the run cannot change or drop a table it did not create",
+   "ok": true,
+   "detail": "commit e_42.t 403 TableActionForbidden, drop e_42.t 403 TableActionForbidden"
+  },
+  {
+   "id": "P3",
+   "name": "for a table the run may only read, Lakekeeper vends read-only storage credentials",
+   "ok": true,
+   "detail": "get ALLOWED, put DENIED(AccessDenied), policy actions ['s3:GetObject', 's3:ListBucket']"
+  },
+  {
+   "id": "L7",
+   "name": "limit: a run that knows an empty namespace's location can claim it with a custom table location; that namespace then cannot create tables",
+   "ok": true,
+   "detail": "run creates e_42.squat at e_45's folder: 200; Dashboard creates e_45.t: 409 LocationAlreadyTaken"
+  },
+  {
+   "id": "L8",
+   "name": "limit: vended credentials cannot be shorter than 900 s on RustFS (asking for 60 s gives 900 s)",
+   "ok": true,
+   "detail": "asked 60 s, got 899s"
+  },
+  {
+   "id": "I1",
+   "name": "a Lakekeeper whose issuer's discovery document holds only issuer + jwks_uri accepts that issuer's tokens, and refuses tokens naming the other issuer",
+   "ok": true,
+   "detail": "iss=/minimal -> 200, iss=root issuer -> 401"
+  },
+  {
+   "id": "L10",
+   "name": "limit: Lakekeeper does not start when the issuer's discovery URL cannot be reached",
+   "ok": true,
+   "detail": "exit code 1 after 0.6s: Error: Failed to fetch openid configuration from http://sce0tok-no-such-issuer:8080/.well-known/openid-configuration: error sending request for url (http://sce0"
+  },
+  {
+   "id": "K1",
+   "name": "after the issuer adds a new key, tokens signed with it are accepted at once and old ones still work",
+   "ok": true,
+   "detail": "new kid -> 200, old kid -> 200"
+  },
+  {
+   "id": "L9",
+   "name": "limit: a key the issuer stopped publishing is still trusted until Lakekeeper refetches the JWKS",
+   "ok": true,
+   "detail": "old-kid token right after retirement -> 200"
+  },
+  {
+   "id": "K2",
+   "name": "once Lakekeeper refetches the JWKS (any unknown kid triggers it), the retired key is refused",
+   "ok": true,
+   "detail": "unknown-kid token 401, then old-kid token 401, current-kid token 200"
+  },
+  {
+   "id": "X1",
+   "name": "the credentials vended before the revocation stop working when they expire",
+   "ok": true,
+   "detail": "DENIED(InvalidRequest) at exp+0s"
+  },
+  {
+   "id": "X2",
+   "name": "limit: with no unknown kid to trigger a refetch, Lakekeeper kept trusting a retired key for the whole wait",
+   "ok": true,
+   "detail": "retired-key token still accepted 872s after retirement"
+  },
+  {
+   "id": "I2",
+   "name": "with the issuer stopped, a running Lakekeeper still accepts tokens signed with a cached key",
+   "ok": true,
+   "detail": "cached kid -> 200, unknown kid -> 401"
+  }
+ ],
+ "notes": [
+  {
+   "name": "vended credential lifetime",
+   "detail": "session token exp in 898s, Lakekeeper's s3.session-token-expires-at-ms in 898s (warehouse sts-token-validity-seconds=900)"
+  },
+  {
+   "name": "credentials vended for e_42.run_out before the user deletion",
+   "detail": "put after deletion: ALLOWED"
+  },
+  {
+   "name": "explicit grant removal for the never-seen user",
+   "detail": "204"
+  },
+  {
+   "name": "STS lifetime for sts-token-validity-seconds=unset",
+   "detail": "warehouse create 201, credentials really expire in 3599s, Lakekeeper tells the client 3599s"
+  },
+  {
+   "name": "STS lifetime for sts-token-validity-seconds=60",
+   "detail": "warehouse create 201, credentials really expire in 899s, Lakekeeper tells the client 899s"
+  },
+  {
+   "name": "STS lifetime for sts-token-validity-seconds=900",
+   "detail": "warehouse create 201, credentials really expire in 899s, Lakekeeper tells the client 899s"
+  },
+  {
+   "name": "STS lifetime for sts-token-validity-seconds=43200",
+   "detail": "warehouse create 201, credentials really expire in 43199s, Lakekeeper tells the client 43199s"
+  },
+  {
+   "name": "STS lifetime for sts-token-validity-seconds=86400",
+   "detail": "warehouse create 201, credentials really expire in 43199s, Lakekeeper tells the client 43199s"
+  },
+  {
+   "name": "waiting for the pre-revocation credentials to expire",
+   "detail": "in 895s"
+  }
+ ],
+ "calls": [
+  {
+   "actor": "dashboard",
+   "method": "GET",
+   "path": "/management/v1/info",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/bootstrap",
+   "body": "keys=accept-terms-of-use,is-operator,user-name,user-type",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/warehouse",
+   "body": "keys=storage-credential,storage-profile,warehouse-name",
+   "status": 201
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/config",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=name,partition-spec,properties,schema,stage-create,write-order",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "keys=identifier,requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables",
+   "body": "keys=name,partition-spec,properties,schema,stage-create,write-order",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t",
+   "body": "keys=identifier,requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_42_id}/assignments",
+   "body": "writes=[create:oidc~run-42, modify:oidc~run-42]",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/user",
+   "body": "keys=id,name,update-if-exists,user-type",
+   "status": 201
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/config",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "keys=identifier,requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=name,partition-spec,properties,schema,stage-create,write-order",
+   "status": 200
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "keys=identifier,requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables",
+   "body": "keys=name,schema",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t",
+   "body": "keys=requirements,updates",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t/credentials",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/tables/rename",
+   "body": "keys=destination,source",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_99_never_created",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "HEAD",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "keys=namespace",
+   "status": 403
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=location,name,schema",
+   "status": 409
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=location,name,schema",
+   "status": 409
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=location,name,schema",
+   "status": 400
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/register",
+   "body": "keys=metadata-location,name",
+   "status": 409
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_43_id}/assignments",
+   "body": "writes=[modify:oidc~run-42]",
+   "status": 401
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/management/v1/permissions/namespace/{e_43_id}/assignments",
+   "body": "",
+   "status": 403
+  },
+  {
+   "actor": "run-42",
+   "method": "DELETE",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_43/tables/t",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/management/v1/permissions/warehouse/{warehouse_id}/table/{e_42.run_out_id}/assignments",
+   "body": "writes=[select:oidc~run-43]",
+   "status": 204
+  },
+  {
+   "actor": "run-43",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/warehouse/{warehouse_id}/table/{e_42.run_out_id}/assignments",
+   "body": "deletes=[select:oidc~run-43]",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/warehouse/{warehouse_id}/managed-access",
+   "body": "managed-access=True",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/management/v1/permissions/warehouse/{warehouse_id}/table/{e_42.run_out_id}/assignments",
+   "body": "writes=[select:oidc~run-43]",
+   "status": 401
+  },
+  {
+   "actor": "run-43",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/signer/{warehouse_id}/tabular-id/{e_42.t_id}/v1/aws/s3/sign",
+   "body": "keys=headers,method,region,uri",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/signer/{warehouse_id}/tabular-id/{e_42.t_id}/v1/aws/s3/sign",
+   "body": "keys=headers,method,region,uri",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/v1/aws/s3/sign",
+   "body": "keys=headers,method,region,uri",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_42_id}/assignments",
+   "body": "deletes=[create:oidc~run-42, modify:oidc~run-42]",
+   "status": 204
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=name,schema",
+   "status": 403
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t/credentials",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/signer/{warehouse_id}/tabular-id/{e_42.t_id}/v1/aws/s3/sign",
+   "body": "keys=headers,method,region,uri",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "keys=requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "DELETE",
+   "path": "/management/v1/user/oidc~run-42",
+   "body": "",
+   "status": 204
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/run_out",
+   "body": "keys=requirements,updates",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-42",
+   "method": "POST",
+   "path": "/catalog/v1/signer/{warehouse_id}/tabular-id/{e_42.run_out_id}/v1/aws/s3/sign",
+   "body": "keys=headers,method,region,uri",
+   "status": 404
+  },
+  {
+   "actor": "dashboard",
+   "method": "GET",
+   "path": "/management/v1/permissions/warehouse/{warehouse_id}/table/{e_42.run_out_id}/assignments",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_44/tables",
+   "body": "keys=name,partition-spec,properties,schema,stage-create,write-order",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_44/tables/t",
+   "body": "keys=identifier,requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "dashboard-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_44/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_44_id}/assignments",
+   "body": "writes=[create:oidc~run-44, modify:oidc~run-44]",
+   "status": 204
+  },
+  {
+   "actor": "run-44-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/config",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-44-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_44/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "DELETE",
+   "path": "/management/v1/user/oidc~run-44",
+   "body": "",
+   "status": 204
+  },
+  {
+   "actor": "run-44",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_44/tables/t",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "run-44",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_44/tables",
+   "body": "keys=name,schema",
+   "status": 404
+  },
+  {
+   "actor": "dashboard",
+   "method": "GET",
+   "path": "/management/v1/permissions/namespace/{e_44_id}/assignments",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_44_id}/assignments",
+   "body": "writes=[select:oidc~run-46]",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "DELETE",
+   "path": "/management/v1/user/oidc~run-46",
+   "body": "",
+   "status": 404
+  },
+  {
+   "actor": "dashboard",
+   "method": "GET",
+   "path": "/management/v1/permissions/namespace/{e_44_id}/assignments",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_44_id}/assignments",
+   "body": "deletes=[select:oidc~run-46]",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_42_id}/assignments",
+   "body": "writes=[create:oidc~run-48, select:oidc~run-48]",
+   "status": 204
+  },
+  {
+   "actor": "run-48-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/config",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-48-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-48-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=name,partition-spec,properties,schema,stage-create,write-order",
+   "status": 200
+  },
+  {
+   "actor": "run-48-iceberg",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/r48",
+   "body": "keys=identifier,requirements,updates",
+   "status": 200
+  },
+  {
+   "actor": "run-48-iceberg",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/r48",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "run-48",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "keys=requirements,updates",
+   "status": 403
+  },
+  {
+   "actor": "run-48",
+   "method": "DELETE",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 403
+  },
+  {
+   "actor": "run-48",
+   "method": "GET",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables/t",
+   "body": "",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_42_id}/assignments",
+   "body": "deletes=[create:oidc~run-48, select:oidc~run-48]",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "DELETE",
+   "path": "/management/v1/user/oidc~run-48",
+   "body": "",
+   "status": 204
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/permissions/namespace/{e_42_id}/assignments",
+   "body": "writes=[create:oidc~run-47]",
+   "status": 204
+  },
+  {
+   "actor": "run-47",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_42/tables",
+   "body": "keys=location,name,schema",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{warehouse_id}/namespaces/e_45/tables",
+   "body": "keys=name,schema",
+   "status": 409
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/warehouse",
+   "body": "keys=storage-credential,storage-profile,warehouse-name",
+   "status": 201
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces/n/tables",
+   "body": "keys=name,schema",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/warehouse",
+   "body": "keys=storage-credential,storage-profile,warehouse-name",
+   "status": 201
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces/n/tables",
+   "body": "keys=name,schema",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/warehouse",
+   "body": "keys=storage-credential,storage-profile,warehouse-name",
+   "status": 201
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces/n/tables",
+   "body": "keys=name,schema",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/warehouse",
+   "body": "keys=storage-credential,storage-profile,warehouse-name",
+   "status": 201
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces/n/tables",
+   "body": "keys=name,schema",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/management/v1/warehouse",
+   "body": "keys=storage-credential,storage-profile,warehouse-name",
+   "status": 201
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces",
+   "body": "keys=namespace",
+   "status": 200
+  },
+  {
+   "actor": "dashboard",
+   "method": "POST",
+   "path": "/catalog/v1/{uuid}/namespaces/n/tables",
+   "body": "keys=name,schema",
+   "status": 200
+  }
+ ]
+}

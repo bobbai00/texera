@@ -1,0 +1,201 @@
+# Step 0 proof "run-token": Lakekeeper + OpenFGA + RustFS (STS) + an OIDC issuer
+# that stands in for the Dashboard service. Started and removed by run.sh.
+#
+# Everything is named sce0tok-*, publishes only on 127.0.0.1:19500-19519, and keeps
+# its data on tmpfs, so `docker compose down` leaves no volume behind.
+# Secrets come from state/secrets.env (generated per run by run.sh, never printed).
+# One Postgres holds two databases: lakekeeper (catalog) and openfga (tuples).
+name: sce0tok
+
+networks:
+  default:
+    name: sce0tok-net
+
+x-lakekeeper-env: &lakekeeper-env
+  LAKEKEEPER__PG_DATABASE_URL_READ: postgres://lakekeeper:${SCE0TOK_PG_PASSWORD:?}@sce0tok-postgres:5432/lakekeeper
+  LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://lakekeeper:${SCE0TOK_PG_PASSWORD:?}@sce0tok-postgres:5432/lakekeeper
+  LAKEKEEPER__PG_ENCRYPTION_KEY: ${SCE0TOK_LK_ENCRYPTION_KEY:?}
+  # Authorization: OpenFGA (gRPC port).
+  LAKEKEEPER__AUTHZ_BACKEND: openfga
+  LAKEKEEPER__OPENFGA__ENDPOINT: http://sce0tok-openfga:8081
+  # Authentication: trust the Dashboard stand-in as the only OpenID issuer.
+  LAKEKEEPER__OPENID_PROVIDER_URI: http://sce0tok-issuer:8080
+  LAKEKEEPER__OPENID_AUDIENCE: texera-lake
+  LAKEKEEPER__OPENID_SUBJECT_CLAIM: sub
+  LAKEKEEPER__ENABLE_KUBERNETES_AUTHENTICATION: "false"
+  RUST_LOG: ${SCE0TOK_LK_LOG:-warn}
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: sce0tok-postgres
+    environment:
+      POSTGRES_USER: lakekeeper
+      POSTGRES_PASSWORD: ${SCE0TOK_PG_PASSWORD:?}
+      POSTGRES_DB: lakekeeper
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./postgres/init-openfga.sql:/docker-entrypoint-initdb.d/10-openfga.sql:ro
+    healthcheck:
+      # Over TCP: during initdb the image runs a temporary server on the unix socket only,
+      # so this passes only once init (incl. the openfga database) has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U lakekeeper -d openfga"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  openfga-migrate:
+    image: openfga/openfga:v1.11.2
+    container_name: sce0tok-openfga-migrate
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://lakekeeper:${SCE0TOK_PG_PASSWORD:?}@sce0tok-postgres:5432/openfga?sslmode=disable
+      OPENFGA_LOG_LEVEL: warn
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  openfga:
+    image: openfga/openfga:v1.11.2
+    container_name: sce0tok-openfga
+    command: run
+    environment:
+      # postgres (default, as a production deployment would run it) or memory
+      OPENFGA_DATASTORE_ENGINE: ${SCE0TOK_FGA_DATASTORE:-postgres}
+      OPENFGA_DATASTORE_URI: postgres://lakekeeper:${SCE0TOK_PG_PASSWORD:?}@sce0tok-postgres:5432/openfga?sslmode=disable
+      OPENFGA_PLAYGROUND_ENABLED: "false"
+      OPENFGA_LOG_LEVEL: warn
+      # Check-result caching stays at OpenFGA's default (off); turning it on delays
+      # every revocation by up to the TTL -- see RESULTS.md. The variants run.sh can
+      # switch on: the check cache, and the cache controller that is meant to
+      # invalidate it after writes.
+      OPENFGA_CHECK_QUERY_CACHE_ENABLED: ${SCE0TOK_FGA_CHECK_CACHE:-false}
+      OPENFGA_CHECK_QUERY_CACHE_TTL: ${SCE0TOK_FGA_CHECK_CACHE_TTL:-10s}
+      OPENFGA_CACHE_CONTROLLER_ENABLED: ${SCE0TOK_FGA_CACHE_CONTROLLER:-false}
+    ports:
+      # HTTP API, published only so the runner can read the model and tuples.
+      - "127.0.0.1:19502:8080"
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/grpc_health_probe", "-addr=sce0tok-openfga:8081"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    container_name: sce0tok-rustfs
+    environment:
+      RUSTFS_ACCESS_KEY: ${SCE0TOK_S3_ROOT_USER:?}
+      RUSTFS_SECRET_KEY: ${SCE0TOK_S3_ROOT_PASSWORD:?}
+      RUSTFS_REGION: us-east-1
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+    tmpfs:
+      - /data:uid=10001,gid=10001
+    ports:
+      - "127.0.0.1:19501:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Bucket for the warehouse, plus a non-root RustFS user for Lakekeeper that may
+  # only touch that bucket. Lakekeeper calls STS AssumeRole as this user.
+  rustfs-init:
+    image: rustfs/rc:v0.1.35
+    container_name: sce0tok-rustfs-init
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      ROOT_USER: ${SCE0TOK_S3_ROOT_USER:?}
+      ROOT_PASSWORD: ${SCE0TOK_S3_ROOT_PASSWORD:?}
+      LK_USER: ${SCE0TOK_S3_LK_USER:?}
+      LK_PASSWORD: ${SCE0TOK_S3_LK_PASSWORD:?}
+    volumes:
+      - ./rustfs/lakekeeper-policy.json:/policy/lakekeeper-policy.json:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        rc alias set lake http://sce0tok-rustfs:9000 "$$ROOT_USER" "$$ROOT_PASSWORD" --bucket-lookup path >/dev/null
+        rc bucket create lake/sce0tok-lake >/dev/null
+        rc admin policy create lake lakekeeper-warehouse /policy/lakekeeper-policy.json >/dev/null
+        rc admin user add lake "$$LK_USER" "$$LK_PASSWORD" >/dev/null
+        rc admin policy attach lake lakekeeper-warehouse --user "$$LK_USER" >/dev/null
+        echo "rustfs-init: bucket sce0tok-lake and user for Lakekeeper ready"
+
+  # Dashboard-service stand-in: OIDC discovery + JWKS + token minting.
+  issuer:
+    build: ./issuer
+    image: sce0tok-issuer:step0
+    container_name: sce0tok-issuer
+    environment:
+      ISSUER_URL: http://sce0tok-issuer:8080
+      DEFAULT_AUDIENCE: texera-lake
+    ports:
+      - "127.0.0.1:19504:8080"
+    healthcheck:
+      test: ["CMD", "python", "-I", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  lakekeeper-migrate:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: sce0tok-lakekeeper-migrate
+    command: ["migrate"]
+    environment: *lakekeeper-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openfga:
+        condition: service_healthy
+      issuer:
+        condition: service_healthy
+
+  lakekeeper:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: sce0tok-lakekeeper
+    command: ["serve"]
+    environment: *lakekeeper-env
+    ports:
+      - "127.0.0.1:19500:8181"
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+      rustfs-init:
+        condition: service_completed_successfully
+      issuer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  # A second Lakekeeper on the same database and OpenFGA store, trusting the
+  # issuer's minimal discovery document (issuer + jwks_uri only). Used by one
+  # check to show what an issuer must serve at the least.
+  lakekeeper-min:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: sce0tok-lakekeeper-min
+    command: ["serve"]
+    environment:
+      <<: *lakekeeper-env
+      LAKEKEEPER__OPENID_PROVIDER_URI: http://sce0tok-issuer:8080/minimal
+    ports:
+      - "127.0.0.1:19505:8181"
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 60

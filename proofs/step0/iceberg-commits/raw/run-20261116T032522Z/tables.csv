@@ -1,0 +1,7 @@
+scenario,table,identifier,location,format_version
+tidy,runtime_statistics,workflow-runtime-statistics.wid_1_eid_7995321_runtimestatistics,s3://texera-iceberg/shared/01a1e263-79ac-7f61-9495-dd88c7a94c65/01a1e263-d89e-7691-aa44-6d113dafe0d3,2
+tidy,log,execution-log.wid_1_eid_7995321_log,s3://texera-iceberg/shared/01a1e263-d8a8-7210-875c-e18d73b84895/01a1e263-d8ab-7441-9dfe-9e9d8e27c4dc,2
+tidy-50,runtime_statistics,workflow-runtime-statistics.wid_1_eid_7995322_runtimestatistics,s3://texera-iceberg/shared/01a1e263-79ac-7f61-9495-dd88c7a94c65/01a1e26b-b9c1-7530-af76-12161118e405,2
+tidy-50,log,execution-log.wid_1_eid_7995322_log,s3://texera-iceberg/shared/01a1e263-d8a8-7210-875c-e18d73b84895/01a1e26b-b9cf-76e1-a94b-f79d394a9859,2
+no-tidy,runtime_statistics,workflow-runtime-statistics.wid_1_eid_7995323_runtimestatistics,s3://texera-iceberg/shared/01a1e263-79ac-7f61-9495-dd88c7a94c65/01a1e274-282e-7c62-971c-a86cbe71b0f5,2
+no-tidy,log,execution-log.wid_1_eid_7995323_log,s3://texera-iceberg/shared/01a1e263-d8a8-7210-875c-e18d73b84895/01a1e274-2843-7381-85b3-e801d51c698a,2

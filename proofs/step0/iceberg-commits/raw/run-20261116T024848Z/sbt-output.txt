@@ -1,0 +1,267 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+[info] welcome to sbt 1.12.9 (Eclipse Adoptium Java 17.0.19)
+[info] loading global plugins from ~/.sbt/1.0/plugins
+[info] loading settings for project sce-step0-proofs-build from plugins.sbt...
+[info] loading project definition from <repo>/project
+[info] loading settings for project TexeraProject from build.sbt...
+[info] loading settings for project Util from build.sbt...
+[info] loading settings for project DAO from build.sbt...
+[info] loading settings for project Config from build.sbt...
+[info] loading settings for project Observability from build.sbt...
+[info] loading settings for project Resource from build.sbt...
+[info] loading settings for project Auth from build.sbt...
+[info] loading settings for project ConfigService from build.sbt...
+[info] loading settings for project AccessControlService from build.sbt...
+[info] loading settings for project PyBuilder from build.sbt...
+[info] loading settings for project WorkflowCore from build.sbt...
+[info] loading settings for project ComputingUnitManagingService from build.sbt...
+[info] loading settings for project FileService from build.sbt...
+[info] loading settings for project WorkflowOperator from build.sbt...
+[info] loading settings for project WorkflowCompiler from build.sbt...
+[info] loading settings for project WorkflowCompilingService from build.sbt...
+[info] loading settings for project WorkflowExecutionService from build.sbt...
+[info] loading settings for project NotebookMigrationService from build.sbt...
+[info] resolving key references (26560 settings) ...
+[info] set current project to texera (in build file:<repo>/)
+[warn] there's a key that's not used by any other settings/tasks:
+[warn]  
+[warn] * WorkflowCompiler / Universal / javaOptions
+[warn]   +- <repo>/build.sbt:51
+[warn]  
+[warn] note: a setting might still be used by a command; to exclude a key from this `lintUnused` check
+[warn] either append it to `Global / excludeLintKeys` or call .withRank(KeyRanks.Invisible) on the key
+[info] Generating JOOQ classes...
+[info] JOOQ code generation completed successfully
+[info] Instrumenting 271 classes to <repo>/common/dao/target/scala-2.13/jacoco/instrumented-classes
+[info] Instrumenting 277 classes to <repo>/common/workflow-core/target/scala-2.13/jacoco/instrumented-classes
+[info] running (fork) org.apache.texera.amber.core.storage.result.iceberg.bench.IcebergCommitBench --out <repo>/proofs/step0/iceberg-commits/raw/run-20261116T024848Z
+[error] SLF4J(W): No SLF4J providers were found.
+[error] SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+[error] SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+[info] Iceberg 1.9.2 | Java 17.0.19 | Scala 2.13.18 | catalog rest http://127.0.0.1:19540/catalog warehouse texera (texera_iceberg)
+[info] config: Config(<repo>/proofs/step0/iceberg-commits/raw/run-20261116T024848Z,2880,10,250,200,5,1,30,50,2026-11-10T00:00:00,List(tidy, tidy-50, no-tidy))
+[info] warm-up: 50 commits, reads and one tidy in 7985.7 ms
+[info] table io: S3FileIO s3.remote-signing-enabled=true s3.endpoint=http://127.0.0.1:19541/ s3.path-style-access=true s3.delete-enabled=<unset> client.region=us-west-2 s3.signer.uri=http://127.0.0.1:19540/catalog/
+[info] table io, other keys: io-impl prefix py-io-impl region rest-page-size s3.region s3.signer s3.signer.endpoint uri warehouse
+[info] table properties: (commit.retry.max-wait-ms,10000) (commit.retry.min-wait-ms,100) (commit.retry.num-retries,10)
+[info] INFO dst: in America/Los_Angeles, 2026-11-01T08:30:00Z and 2026-11-01T09:30:00Z (an hour apart) both store as 2026-11-01T01:30; read back as 2026-11-01T09:30:00Z and 2026-11-01T09:30:00Z
+[info] == where a commit's time goes (p50 / p95, 40 each, scratch table)
+[info]   breakdown:   97.1 /  141.4 ms  texera_flush: loadTable + write file + newAppend commit (what each tick does)
+[info]   breakdown:    1.9 /    2.8 ms  loadTable
+[info]   breakdown:    4.0 /    5.4 ms  loadTable + first S3 request on its new FileIO
+[info]   breakdown:    0.6 /    0.8 ms  S3 HEAD on a held table's FileIO
+[info]   breakdown:   12.2 /   26.3 ms  held table: write one 10-row data file (Parquet + signed PUT)
+[info]   breakdown:   85.4 /  121.8 ms  held table: newAppend commit (manifest + list + REST commit)
+[info]   breakdown:   98.6 /  148.1 ms  held table: write file + newAppend commit
+[info]   breakdown:   46.5 /   61.2 ms  held table: newFastAppend commit
+[info]   breakdown:   78.0 /  109.2 ms  held table: newAppend commit with commit.manifest-merge.enabled=false
+[info]   breakdown:   14.2 /   16.6 ms  held table: catalog-only commit (property change)
+[info] == scenario tidy: 2880 commits of 10 rows, statistics tidied every 200 commits; both tables tidied at the end (keep 5 snapshots, 1 at the end)
+[info]   TABLE tidy runtime_statistics workflow-runtime-statistics.wid_1_eid_7973381_runtimestatistics s3://texera-iceberg/shared/01a1e241-fff9-7821-a21a-42b31e0f7a29/01a1e242-5dfd-7dd2-9ce8-952adffdd568 format-version=2
+[info]   TABLE tidy log execution-log.wid_1_eid_7973381_log s3://texera-iceberg/shared/01a1e242-5e05-7822-98e4-2380a2beea40/01a1e242-5e08-7c92-9f7a-fb98b9c57471 format-version=2
+[info]   [tidy   ] tidy runtime_statistics at commit 200: 200 files/2 manifests/200 snapshots -> 1/1/5; compact 662.3 ms (2000 rows), manifests 61.9 ms, expire 519.1 ms, total 1243.3 ms; readAll 618.6 -> 43.4 ms
+[info]   [tidy   ] runtime_statistics run              commits= 250 commit p50/p95= 114.5/ 145.8 ms loadTable=  2.5 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  228.5 ms (raw records 168.9 ms, 3 columns 205.9 ms) newest texera/direct=93.6/9.5 ms
+[info]   [tidy   ] log                run              commits=   6 commit p50/p95=  78.9/  98.9 ms loadTable=  0.9 ms metadata=    7 KB files=   6 manifests=  6 snapshots=   6 readAll=   36.7 ms newest texera/direct=36.6/9.2 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 400: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 625.6 ms (4000 rows), manifests 63.6 ms, expire 682.2 ms, total 1371.3 ms; readAll 598.4 -> 74.0 ms
+[info]   [tidy   ] runtime_statistics run              commits= 500 commit p50/p95= 117.9/ 144.4 ms loadTable=  2.6 ms metadata=  104 KB files= 101 manifests=  2 snapshots= 105 readAll=  363.0 ms (raw records 266.1 ms, 3 columns 297.2 ms) newest texera/direct=47.3/19.4 ms
+[info]   [tidy   ] log                run              commits=  10 commit p50/p95= 109.7/ 116.9 ms loadTable=  1.8 ms metadata=   11 KB files=  10 manifests= 10 snapshots=  10 readAll=   52.9 ms newest texera/direct=47.5/18.1 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 600: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 705.5 ms (6000 rows), manifests 69.1 ms, expire 710.4 ms, total 1485.1 ms; readAll 625.6 -> 117.5 ms
+[info]   [tidy   ] runtime_statistics run              commits= 750 commit p50/p95= 121.7/ 141.6 ms loadTable=  3.7 ms metadata=  142 KB files= 151 manifests= 52 snapshots= 155 readAll=  523.7 ms (raw records 450.9 ms, 3 columns 475.2 ms) newest texera/direct=105.6/26.5 ms
+[info]   [tidy   ] log                run              commits=  14 commit p50/p95= 112.0/ 117.2 ms loadTable=  2.2 ms metadata=   15 KB files=  14 manifests= 14 snapshots=  14 readAll=  118.9 ms newest texera/direct=57.0/17.7 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 800: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 596.6 ms (8000 rows), manifests 67.1 ms, expire 727.8 ms, total 1391.6 ms; readAll 616.3 -> 145.9 ms
+[info]   [tidy   ] runtime_statistics run              commits=1000 commit p50/p95= 122.7/ 141.3 ms loadTable=  6.6 ms metadata=  180 KB files= 201 manifests=  3 snapshots= 205 readAll=  664.6 ms (raw records 879.4 ms, 3 columns 580.3 ms) newest texera/direct=69.3/22.9 ms
+[info]   [tidy   ] log                run              commits=  18 commit p50/p95= 101.6/ 110.0 ms loadTable=  2.0 ms metadata=   19 KB files=  18 manifests= 18 snapshots=  18 readAll=  118.3 ms newest texera/direct=58.1/19.9 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 1000: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 733.6 ms (10000 rows), manifests 79.9 ms, expire 772.2 ms, total 1585.7 ms; readAll 670.1 -> 171.1 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 1200: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 661.9 ms (12000 rows), manifests 75.8 ms, expire 746.8 ms, total 1484.6 ms; readAll 732.8 -> 214.3 ms
+[info]   [tidy   ] runtime_statistics run              commits=1250 commit p50/p95= 124.0/ 140.8 ms loadTable=  2.1 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  394.9 ms (raw records 193.7 ms, 3 columns 257.5 ms) newest texera/direct=98.8/10.4 ms
+[info]   [tidy   ] log                run              commits=  22 commit p50/p95=  99.3/ 117.3 ms loadTable=  1.5 ms metadata=   22 KB files=  22 manifests= 22 snapshots=  22 readAll=  119.2 ms newest texera/direct=80.2/17.8 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 1400: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 820.7 ms (14000 rows), manifests 80.9 ms, expire 739.8 ms, total 1641.5 ms; readAll 881.9 -> 262.2 ms
+[info]   [tidy   ] runtime_statistics run              commits=1500 commit p50/p95= 122.7/ 146.4 ms loadTable=  2.4 ms metadata=  104 KB files= 101 manifests=  2 snapshots= 105 readAll=  577.7 ms (raw records 300.8 ms, 3 columns 361.1 ms) newest texera/direct=42.7/13.3 ms
+[info]   [tidy   ] log                run              commits=  26 commit p50/p95= 118.7/ 121.5 ms loadTable=  1.5 ms metadata=   26 KB files=  26 manifests= 26 snapshots=  26 readAll=  112.6 ms newest texera/direct=70.9/16.5 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 1600: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 873.0 ms (16000 rows), manifests 71.8 ms, expire 616.8 ms, total 1561.6 ms; readAll 940.1 -> 273.0 ms
+[info]   [tidy   ] runtime_statistics run              commits=1750 commit p50/p95= 124.9/ 145.0 ms loadTable=  4.2 ms metadata=  142 KB files= 151 manifests= 52 snapshots= 155 readAll=  809.8 ms (raw records 459.8 ms, 3 columns 553.8 ms) newest texera/direct=106.2/23.9 ms
+[info]   [tidy   ] log                run              commits=  30 commit p50/p95= 101.5/ 116.7 ms loadTable=  3.0 ms metadata=   30 KB files=  30 manifests= 30 snapshots=  30 readAll=  110.5 ms newest texera/direct=78.7/16.1 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 1800: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 837.3 ms (18000 rows), manifests 74.0 ms, expire 726.8 ms, total 1638.1 ms; readAll 931.5 -> 324.7 ms
+[info]   [tidy   ] runtime_statistics run              commits=2000 commit p50/p95= 124.1/ 142.7 ms loadTable=  3.8 ms metadata=  181 KB files= 201 manifests=  3 snapshots= 205 readAll= 1098.0 ms (raw records 675.2 ms, 3 columns 655.9 ms) newest texera/direct=55.9/21.5 ms
+[info]   [tidy   ] log                run              commits=  34 commit p50/p95= 104.3/ 121.7 ms loadTable=  1.9 ms metadata=   34 KB files=  34 manifests= 34 snapshots=  34 readAll=  154.3 ms newest texera/direct=82.7/17.2 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 2000: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 861.0 ms (20000 rows), manifests 71.9 ms, expire 823.1 ms, total 1756.0 ms; readAll 940.7 -> 336.0 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 2200: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 795.3 ms (22000 rows), manifests 70.4 ms, expire 775.1 ms, total 1640.9 ms; readAll 952.0 -> 361.6 ms
+[info]   [tidy   ] runtime_statistics run              commits=2250 commit p50/p95= 121.9/ 137.7 ms loadTable=  2.0 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  562.2 ms (raw records 202.7 ms, 3 columns 317.5 ms) newest texera/direct=87.2/9.0 ms
+[info]   [tidy   ] log                run              commits=  38 commit p50/p95= 114.7/ 118.6 ms loadTable=  1.3 ms metadata=   38 KB files=  38 manifests= 38 snapshots=  38 readAll=  162.9 ms newest texera/direct=79.5/17.3 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 2400: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 641.8 ms (24000 rows), manifests 71.4 ms, expire 626.1 ms, total 1339.3 ms; readAll 1028.3 -> 403.6 ms
+[info]   [tidy   ] runtime_statistics run              commits=2500 commit p50/p95= 122.2/ 145.9 ms loadTable=  3.0 ms metadata=  104 KB files= 101 manifests=  2 snapshots= 105 readAll=  699.6 ms (raw records 307.3 ms, 3 columns 442.7 ms) newest texera/direct=45.6/14.1 ms
+[info]   [tidy   ] log                run              commits=  42 commit p50/p95= 115.1/ 122.1 ms loadTable=  1.9 ms metadata=   42 KB files=  42 manifests= 42 snapshots=  42 readAll=  180.2 ms newest texera/direct=104.4/19.6 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 2600: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 699.2 ms (26000 rows), manifests 63.2 ms, expire 873.3 ms, total 1635.7 ms; readAll 1116.3 -> 420.0 ms
+[info]   [tidy   ] runtime_statistics run              commits=2750 commit p50/p95= 125.5/ 142.3 ms loadTable=  3.8 ms metadata=  142 KB files= 151 manifests= 52 snapshots= 155 readAll= 1038.1 ms (raw records 523.1 ms, 3 columns 605.8 ms) newest texera/direct=106.4/23.2 ms
+[info]   [tidy   ] log                run              commits=  46 commit p50/p95= 113.8/ 121.9 ms loadTable=  2.9 ms metadata=   46 KB files=  46 manifests= 46 snapshots=  46 readAll=  204.3 ms newest texera/direct=114.9/20.0 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 2800: 201 files/3 manifests/205 snapshots -> 1/1/5; compact 768.2 ms (28000 rows), manifests 71.1 ms, expire 799.0 ms, total 1638.3 ms; readAll 1040.2 -> 451.0 ms
+[info]   [tidy   ] runtime_statistics run              commits=2880 commit p50/p95= 121.7/ 147.1 ms loadTable=  2.3 ms metadata=   88 KB files=  81 manifests= 81 snapshots=  85 readAll=  765.9 ms (raw records 312.0 ms, 3 columns 478.4 ms) newest texera/direct=162.0/25.7 ms
+[info]   [tidy   ] log                run              commits=  49 commit p50/p95= 106.9/ 114.8 ms loadTable=  4.2 ms metadata=   49 KB files=  49 manifests= 49 snapshots=  49 readAll=  317.9 ms newest texera/direct=111.7/18.8 ms
+[info]   [tidy   ] tidy runtime_statistics at commit 2880: 81 files/81 manifests/85 snapshots -> 1/1/1; compact 496.6 ms (28800 rows), manifests 68.5 ms, expire 362.8 ms, total 927.9 ms; readAll 784.0 -> 458.2 ms
+[info]   [tidy   ] tidy log at commit 2880: 49 files/49 manifests/49 snapshots -> 1/1/1; compact 374.7 ms (49 rows), manifests 61.6 ms, expire 171.4 ms, total 607.7 ms; readAll 162.5 -> 18.8 ms
+[info]   [tidy   ] runtime_statistics after-final-tidy commits=2880 commit p50/p95=   NaN/   NaN ms loadTable=  1.1 ms metadata=   24 KB files=   1 manifests=  1 snapshots=   1 readAll=  460.7 ms (raw records 36.0 ms, 3 columns 210.6 ms) newest texera/direct=30.2/26.8 ms
+[info]   [tidy   ] log                after-final-tidy commits=  49 commit p50/p95=   NaN/   NaN ms loadTable=  2.3 ms metadata=   13 KB files=   1 manifests=  1 snapshots=   1 readAll=   10.7 ms newest texera/direct=12.7/7.3 ms
+[info] == scenario tidy took 507 s
+[info] == scenario tidy-50: 2880 commits of 10 rows, statistics tidied every 50 commits; both tables tidied at the end (keep 5 snapshots, 1 at the end)
+[info]   TABLE tidy-50 runtime_statistics workflow-runtime-statistics.wid_1_eid_7973382_runtimestatistics s3://texera-iceberg/shared/01a1e241-fff9-7821-a21a-42b31e0f7a29/01a1e24a-1c34-7ee1-9d69-7f98b9fa8d30 format-version=2
+[info]   TABLE tidy-50 log execution-log.wid_1_eid_7973382_log s3://texera-iceberg/shared/01a1e242-5e05-7822-98e4-2380a2beea40/01a1e24a-1c3f-75f2-9648-557a77f3e3db format-version=2
+[info]   [tidy-50] tidy runtime_statistics at commit 50: 50 files/50 manifests/50 snapshots -> 1/1/5; compact 510.2 ms (500 rows), manifests 84.0 ms, expire 176.6 ms, total 770.8 ms; readAll 376.8 -> 31.9 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 100: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 538.9 ms (1000 rows), manifests 74.2 ms, expire 229.0 ms, total 842.1 ms; readAll 372.8 -> 31.4 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 150: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 433.4 ms (1500 rows), manifests 71.7 ms, expire 248.1 ms, total 753.2 ms; readAll 327.8 -> 42.0 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 200: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 447.1 ms (2000 rows), manifests 72.0 ms, expire 205.3 ms, total 724.4 ms; readAll 286.4 -> 48.7 ms
+[info]   [tidy-50] runtime_statistics run              commits= 250 commit p50/p95= 116.9/ 132.2 ms loadTable=  2.5 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  271.3 ms (raw records 293.7 ms, 3 columns 274.7 ms) newest texera/direct=106.2/20.6 ms
+[info]   [tidy-50] log                run              commits=   6 commit p50/p95= 102.2/ 118.6 ms loadTable=  1.9 ms metadata=    7 KB files=   6 manifests=  6 snapshots=   6 readAll=   70.6 ms newest texera/direct=62.9/36.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 250: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 275.4 ms (2500 rows), manifests 61.7 ms, expire 235.0 ms, total 572.2 ms; readAll 269.5 -> 55.7 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 300: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 306.1 ms (3000 rows), manifests 68.4 ms, expire 223.9 ms, total 598.3 ms; readAll 353.4 -> 59.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 350: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 289.3 ms (3500 rows), manifests 62.7 ms, expire 184.1 ms, total 536.1 ms; readAll 259.1 -> 65.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 400: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 290.9 ms (4000 rows), manifests 79.0 ms, expire 278.7 ms, total 648.7 ms; readAll 238.4 -> 74.9 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 450: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 297.2 ms (4500 rows), manifests 69.0 ms, expire 237.6 ms, total 603.8 ms; readAll 247.5 -> 82.4 ms
+[info]   [tidy-50] runtime_statistics run              commits= 500 commit p50/p95= 119.0/ 132.7 ms loadTable=  2.8 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  249.0 ms (raw records 160.7 ms, 3 columns 212.2 ms) newest texera/direct=101.3/19.8 ms
+[info]   [tidy-50] log                run              commits=  10 commit p50/p95= 108.6/ 117.0 ms loadTable=  1.8 ms metadata=   11 KB files=  10 manifests= 10 snapshots=  10 readAll=   71.3 ms newest texera/direct=47.9/18.3 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 500: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 279.9 ms (5000 rows), manifests 70.0 ms, expire 198.9 ms, total 548.8 ms; readAll 253.2 -> 91.1 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 550: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 305.6 ms (5500 rows), manifests 64.0 ms, expire 197.6 ms, total 567.2 ms; readAll 273.5 -> 97.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 600: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 304.9 ms (6000 rows), manifests 73.9 ms, expire 232.1 ms, total 610.8 ms; readAll 279.5 -> 103.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 650: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 292.6 ms (6500 rows), manifests 68.9 ms, expire 231.2 ms, total 592.8 ms; readAll 318.1 -> 124.9 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 700: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 302.8 ms (7000 rows), manifests 77.2 ms, expire 245.8 ms, total 625.8 ms; readAll 317.6 -> 136.5 ms
+[info]   [tidy-50] runtime_statistics run              commits= 750 commit p50/p95= 118.6/ 131.5 ms loadTable=  2.5 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  328.7 ms (raw records 175.8 ms, 3 columns 220.4 ms) newest texera/direct=99.5/19.5 ms
+[info]   [tidy-50] log                run              commits=  14 commit p50/p95= 108.6/ 114.7 ms loadTable=  1.8 ms metadata=   15 KB files=  14 manifests= 14 snapshots=  14 readAll=   93.3 ms newest texera/direct=51.1/15.3 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 750: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 302.3 ms (7500 rows), manifests 65.6 ms, expire 225.8 ms, total 593.7 ms; readAll 289.9 -> 140.1 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 800: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 310.3 ms (8000 rows), manifests 79.9 ms, expire 233.5 ms, total 623.7 ms; readAll 326.5 -> 151.0 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 850: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 305.1 ms (8500 rows), manifests 72.2 ms, expire 200.8 ms, total 578.1 ms; readAll 340.6 -> 160.8 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 900: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 336.4 ms (9000 rows), manifests 63.2 ms, expire 239.1 ms, total 638.7 ms; readAll 359.6 -> 167.8 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 950: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 318.9 ms (9500 rows), manifests 69.2 ms, expire 180.7 ms, total 568.8 ms; readAll 366.1 -> 173.2 ms
+[info]   [tidy-50] runtime_statistics run              commits=1000 commit p50/p95= 116.9/ 128.5 ms loadTable=  2.2 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  363.9 ms (raw records 189.7 ms, 3 columns 254.5 ms) newest texera/direct=95.0/10.0 ms
+[info]   [tidy-50] log                run              commits=  18 commit p50/p95= 108.6/ 120.4 ms loadTable=  1.3 ms metadata=   19 KB files=  18 manifests= 18 snapshots=  18 readAll=   68.7 ms newest texera/direct=47.7/15.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1000: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 353.5 ms (10000 rows), manifests 70.7 ms, expire 206.3 ms, total 630.5 ms; readAll 377.6 -> 177.8 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1050: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 316.7 ms (10500 rows), manifests 66.3 ms, expire 186.8 ms, total 569.8 ms; readAll 384.3 -> 194.3 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1100: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 321.2 ms (11000 rows), manifests 73.4 ms, expire 246.8 ms, total 641.4 ms; readAll 390.3 -> 196.3 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1150: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 330.0 ms (11500 rows), manifests 68.8 ms, expire 192.8 ms, total 591.6 ms; readAll 406.5 -> 203.1 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1200: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 301.3 ms (12000 rows), manifests 61.8 ms, expire 194.1 ms, total 557.2 ms; readAll 408.4 -> 210.0 ms
+[info]   [tidy-50] runtime_statistics run              commits=1250 commit p50/p95= 117.4/ 129.7 ms loadTable=  2.3 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  404.5 ms (raw records 176.1 ms, 3 columns 275.3 ms) newest texera/direct=96.7/14.1 ms
+[info]   [tidy-50] log                run              commits=  22 commit p50/p95= 108.6/ 116.3 ms loadTable=  1.9 ms metadata=   22 KB files=  22 manifests= 22 snapshots=  22 readAll=  109.5 ms newest texera/direct=69.0/15.0 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1250: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 323.6 ms (12500 rows), manifests 67.6 ms, expire 186.8 ms, total 578.1 ms; readAll 418.2 -> 223.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1300: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 293.7 ms (13000 rows), manifests 60.3 ms, expire 190.1 ms, total 544.1 ms; readAll 424.2 -> 226.4 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1350: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 302.1 ms (13500 rows), manifests 63.2 ms, expire 196.2 ms, total 561.4 ms; readAll 427.1 -> 232.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1400: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 342.3 ms (14000 rows), manifests 67.6 ms, expire 237.4 ms, total 647.3 ms; readAll 409.5 -> 244.5 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1450: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 320.2 ms (14500 rows), manifests 63.3 ms, expire 202.6 ms, total 586.1 ms; readAll 441.4 -> 246.7 ms
+[info]   [tidy-50] runtime_statistics run              commits=1500 commit p50/p95= 119.1/ 131.9 ms loadTable=  2.1 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  433.0 ms (raw records 170.3 ms, 3 columns 266.9 ms) newest texera/direct=96.0/20.1 ms
+[info]   [tidy-50] log                run              commits=  26 commit p50/p95=  99.0/ 106.7 ms loadTable=  2.7 ms metadata=   26 KB files=  26 manifests= 26 snapshots=  26 readAll=  179.0 ms newest texera/direct=76.2/10.7 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1500: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 344.6 ms (15000 rows), manifests 64.1 ms, expire 210.0 ms, total 618.7 ms; readAll 448.9 -> 261.0 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1550: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 337.7 ms (15500 rows), manifests 70.1 ms, expire 232.1 ms, total 639.9 ms; readAll 459.1 -> 263.4 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1600: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 332.9 ms (16000 rows), manifests 67.5 ms, expire 214.6 ms, total 615.1 ms; readAll 463.2 -> 275.0 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1650: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 330.2 ms (16500 rows), manifests 59.9 ms, expire 189.0 ms, total 579.0 ms; readAll 484.3 -> 283.5 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1700: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 343.9 ms (17000 rows), manifests 64.6 ms, expire 212.4 ms, total 620.9 ms; readAll 478.4 -> 284.3 ms
+[info]   [tidy-50] runtime_statistics run              commits=1750 commit p50/p95= 118.8/ 130.3 ms loadTable=  2.3 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  486.8 ms (raw records 183.5 ms, 3 columns 280.3 ms) newest texera/direct=88.2/18.0 ms
+[info]   [tidy-50] log                run              commits=  30 commit p50/p95= 121.2/ 124.0 ms loadTable=  2.4 ms metadata=   30 KB files=  30 manifests= 30 snapshots=  30 readAll=  179.9 ms newest texera/direct=75.1/16.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1750: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 358.5 ms (17500 rows), manifests 70.7 ms, expire 242.9 ms, total 672.0 ms; readAll 518.7 -> 298.8 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1800: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 356.1 ms (18000 rows), manifests 70.1 ms, expire 200.1 ms, total 626.3 ms; readAll 506.6 -> 305.5 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1850: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 338.7 ms (18500 rows), manifests 69.3 ms, expire 188.8 ms, total 596.7 ms; readAll 507.8 -> 311.5 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1900: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 384.6 ms (19000 rows), manifests 58.4 ms, expire 235.1 ms, total 678.1 ms; readAll 519.1 -> 320.3 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 1950: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 351.3 ms (19500 rows), manifests 66.8 ms, expire 251.5 ms, total 669.7 ms; readAll 522.5 -> 327.3 ms
+[info]   [tidy-50] runtime_statistics run              commits=2000 commit p50/p95= 118.8/ 129.1 ms loadTable=  2.2 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  507.7 ms (raw records 171.7 ms, 3 columns 303.4 ms) newest texera/direct=95.9/17.4 ms
+[info]   [tidy-50] log                run              commits=  34 commit p50/p95= 104.8/ 123.7 ms loadTable=  2.6 ms metadata=   34 KB files=  34 manifests= 34 snapshots=  34 readAll=  206.4 ms newest texera/direct=77.2/17.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2000: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 359.6 ms (20000 rows), manifests 93.7 ms, expire 249.7 ms, total 703.0 ms; readAll 526.6 -> 334.7 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2050: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 342.6 ms (20500 rows), manifests 66.4 ms, expire 192.6 ms, total 601.6 ms; readAll 536.9 -> 339.5 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2100: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 314.9 ms (21000 rows), manifests 67.4 ms, expire 179.2 ms, total 561.4 ms; readAll 531.3 -> 342.8 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2150: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 386.0 ms (21500 rows), manifests 67.1 ms, expire 199.9 ms, total 653.0 ms; readAll 568.0 -> 351.1 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2200: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 360.5 ms (22000 rows), manifests 62.5 ms, expire 218.9 ms, total 641.9 ms; readAll 560.1 -> 364.4 ms
+[info]   [tidy-50] runtime_statistics run              commits=2250 commit p50/p95= 117.9/ 132.2 ms loadTable=  2.1 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  553.5 ms (raw records 203.1 ms, 3 columns 315.4 ms) newest texera/direct=97.3/17.7 ms
+[info]   [tidy-50] log                run              commits=  38 commit p50/p95= 117.8/ 132.0 ms loadTable=  2.5 ms metadata=   38 KB files=  38 manifests= 38 snapshots=  38 readAll=  165.2 ms newest texera/direct=80.8/18.4 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2250: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 326.6 ms (22500 rows), manifests 65.3 ms, expire 172.2 ms, total 564.0 ms; readAll 540.7 -> 369.5 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2300: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 344.6 ms (23000 rows), manifests 73.1 ms, expire 203.5 ms, total 621.2 ms; readAll 567.5 -> 374.8 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2350: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 364.6 ms (23500 rows), manifests 63.0 ms, expire 185.2 ms, total 612.8 ms; readAll 589.5 -> 386.1 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2400: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 375.4 ms (24000 rows), manifests 66.5 ms, expire 206.1 ms, total 647.9 ms; readAll 583.6 -> 393.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2450: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 366.6 ms (24500 rows), manifests 61.2 ms, expire 180.7 ms, total 608.5 ms; readAll 595.4 -> 395.3 ms
+[info]   [tidy-50] runtime_statistics run              commits=2500 commit p50/p95= 114.7/ 129.2 ms loadTable=  2.1 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  596.7 ms (raw records 187.0 ms, 3 columns 338.3 ms) newest texera/direct=87.1/18.5 ms
+[info]   [tidy-50] log                run              commits=  42 commit p50/p95= 113.3/ 126.8 ms loadTable=  3.0 ms metadata=   42 KB files=  42 manifests= 42 snapshots=  42 readAll=  194.0 ms newest texera/direct=110.6/19.1 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2500: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 361.3 ms (25000 rows), manifests 66.4 ms, expire 176.5 ms, total 604.2 ms; readAll 598.6 -> 403.7 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2550: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 403.0 ms (25500 rows), manifests 74.7 ms, expire 239.5 ms, total 717.2 ms; readAll 605.0 -> 412.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2600: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 359.4 ms (26000 rows), manifests 69.2 ms, expire 203.9 ms, total 632.5 ms; readAll 632.2 -> 424.0 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2650: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 362.4 ms (26500 rows), manifests 63.0 ms, expire 191.8 ms, total 617.2 ms; readAll 606.6 -> 427.4 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2700: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 379.6 ms (27000 rows), manifests 71.0 ms, expire 189.2 ms, total 639.8 ms; readAll 628.9 -> 437.4 ms
+[info]   [tidy-50] runtime_statistics run              commits=2750 commit p50/p95= 119.3/ 129.6 ms loadTable=  2.1 ms metadata=   65 KB files=  51 manifests= 51 snapshots=  55 readAll=  657.1 ms (raw records 178.3 ms, 3 columns 364.6 ms) newest texera/direct=95.1/16.9 ms
+[info]   [tidy-50] log                run              commits=  46 commit p50/p95= 117.5/ 123.6 ms loadTable=  3.1 ms metadata=   46 KB files=  46 manifests= 46 snapshots=  46 readAll=  203.3 ms newest texera/direct=107.8/20.2 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2750: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 353.8 ms (27500 rows), manifests 68.1 ms, expire 172.2 ms, total 594.2 ms; readAll 641.4 -> 442.6 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2800: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 370.3 ms (28000 rows), manifests 70.0 ms, expire 185.5 ms, total 625.8 ms; readAll 614.5 -> 449.9 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2850: 51 files/51 manifests/55 snapshots -> 1/1/5; compact 413.8 ms (28500 rows), manifests 69.6 ms, expire 199.4 ms, total 682.7 ms; readAll 653.9 -> 456.4 ms
+[info]   [tidy-50] runtime_statistics run              commits=2880 commit p50/p95= 114.9/ 129.8 ms loadTable=  2.1 ms metadata=   50 KB files=  31 manifests= 31 snapshots=  35 readAll=  574.5 ms (raw records 107.1 ms, 3 columns 319.0 ms) newest texera/direct=61.3/11.4 ms
+[info]   [tidy-50] log                run              commits=  49 commit p50/p95= 122.1/ 125.1 ms loadTable=  2.1 ms metadata=   49 KB files=  49 manifests= 49 snapshots=  49 readAll=  173.4 ms newest texera/direct=106.7/36.7 ms
+[info]   [tidy-50] tidy runtime_statistics at commit 2880: 31 files/31 manifests/35 snapshots -> 1/1/1; compact 302.3 ms (28800 rows), manifests 51.3 ms, expire 184.2 ms, total 537.8 ms; readAll 581.3 -> 462.3 ms
+[info]   [tidy-50] tidy log at commit 2880: 49 files/49 manifests/49 snapshots -> 1/1/1; compact 359.0 ms (49 rows), manifests 82.6 ms, expire 239.4 ms, total 681.0 ms; readAll 169.9 -> 17.1 ms
+[info]   [tidy-50] runtime_statistics after-final-tidy commits=2880 commit p50/p95=   NaN/   NaN ms loadTable=  1.1 ms metadata=   24 KB files=   1 manifests=  1 snapshots=   1 readAll=  459.3 ms (raw records 29.6 ms, 3 columns 230.2 ms) newest texera/direct=32.4/25.9 ms
+[info]   [tidy-50] log                after-final-tidy commits=  49 commit p50/p95=   NaN/   NaN ms loadTable=  1.9 ms metadata=   13 KB files=   1 manifests=  1 snapshots=   1 readAll=    9.3 ms newest texera/direct=11.9/7.5 ms
+[info] == scenario tidy-50 took 555 s
+[info] == scenario no-tidy: 2880 commits of 10 rows, never tidied (both tables tidied once after the last commit, to price it)
+[info]   TABLE no-tidy runtime_statistics workflow-runtime-statistics.wid_1_eid_7973383_runtimestatistics s3://texera-iceberg/shared/01a1e241-fff9-7821-a21a-42b31e0f7a29/01a1e252-9304-7f11-840d-0be5ad119d9e format-version=2
+[info]   TABLE no-tidy log execution-log.wid_1_eid_7973383_log s3://texera-iceberg/shared/01a1e242-5e05-7822-98e4-2380a2beea40/01a1e252-9315-7762-921a-5a2bfd64b69b format-version=2
+[info]   [no-tidy] runtime_statistics run              commits= 250 commit p50/p95= 126.1/ 145.0 ms loadTable=  6.0 ms metadata=  215 KB files= 250 manifests= 52 snapshots= 250 readAll= 1622.3 ms (raw records 1488.2 ms, 3 columns 1258.7 ms) newest texera/direct=129.0/28.7 ms
+[info]   [no-tidy] log                run              commits=   6 commit p50/p95= 103.7/ 121.1 ms loadTable=  5.0 ms metadata=    7 KB files=   6 manifests=  6 snapshots=   6 readAll=   50.8 ms newest texera/direct=53.2/23.7 ms
+[info]   [no-tidy] runtime_statistics run              commits= 500 commit p50/p95= 130.1/ 163.3 ms loadTable= 10.9 ms metadata=  407 KB files= 500 manifests=  5 snapshots= 500 readAll= 5025.0 ms (raw records 1994.1 ms, 3 columns 2790.7 ms) newest texera/direct=91.1/37.6 ms
+[info]   [no-tidy] log                run              commits=  10 commit p50/p95=  95.5/ 103.1 ms loadTable=  3.1 ms metadata=   11 KB files=  10 manifests= 10 snapshots=  10 readAll=  125.4 ms newest texera/direct=90.4/35.9 ms
+[info]   [no-tidy] runtime_statistics run              commits= 750 commit p50/p95= 158.5/ 194.2 ms loadTable= 22.8 ms metadata=  599 KB files= 750 manifests= 57 snapshots= 750 readAll= 4894.3 ms (raw records 2358.9 ms, 3 columns 3601.6 ms) newest texera/direct=179.4/36.7 ms
+[info]   [no-tidy] log                run              commits=  14 commit p50/p95=  94.8/ 102.1 ms loadTable=  3.7 ms metadata=   15 KB files=  14 manifests= 14 snapshots=  14 readAll=   75.6 ms newest texera/direct=56.2/17.2 ms
+[info]   [no-tidy] runtime_statistics run              commits=1000 commit p50/p95= 171.2/ 201.0 ms loadTable= 18.4 ms metadata=  791 KB files=1000 manifests= 10 snapshots=1000 readAll= 7144.3 ms (raw records 5033.1 ms, 3 columns 6613.2 ms) newest texera/direct=88.8/25.8 ms
+[info]   [no-tidy] log                run              commits=  18 commit p50/p95= 104.2/ 122.4 ms loadTable=  3.8 ms metadata=   19 KB files=  18 manifests= 18 snapshots=  18 readAll=   71.3 ms newest texera/direct=49.6/10.2 ms
+[info]   [no-tidy] runtime_statistics run              commits=1250 commit p50/p95= 187.3/ 206.4 ms loadTable= 24.9 ms metadata=  984 KB files=1250 manifests= 62 snapshots=1250 readAll= 8541.8 ms (raw records 4272.0 ms, 3 columns 6318.8 ms) newest texera/direct=207.0/31.8 ms
+[info]   [no-tidy] log                run              commits=  22 commit p50/p95= 101.1/ 109.7 ms loadTable=  6.6 ms metadata=   22 KB files=  22 manifests= 22 snapshots=  22 readAll=  316.6 ms newest texera/direct=105.2/11.6 ms
+[info]   [no-tidy] runtime_statistics run              commits=1500 commit p50/p95= 203.0/ 246.1 ms loadTable= 20.4 ms metadata= 1177 KB files=1500 manifests= 15 snapshots=1500 readAll= 8926.9 ms (raw records 5586.0 ms, 3 columns 6593.2 ms) newest texera/direct=106.1/29.8 ms
+[info]   [no-tidy] log                run              commits=  26 commit p50/p95=  91.3/  96.4 ms loadTable=  3.5 ms metadata=   26 KB files=  26 manifests= 26 snapshots=  26 readAll=  246.8 ms newest texera/direct=89.6/20.4 ms
+[info]   [no-tidy] runtime_statistics run              commits=1750 commit p50/p95= 214.1/ 258.5 ms loadTable= 26.1 ms metadata= 1370 KB files=1750 manifests= 67 snapshots=1750 readAll= 7618.0 ms (raw records 6477.1 ms, 3 columns 5891.7 ms) newest texera/direct=196.3/33.7 ms
+[info]   [no-tidy] log                run              commits=  30 commit p50/p95= 104.9/ 108.1 ms loadTable=  3.9 ms metadata=   30 KB files=  30 manifests= 30 snapshots=  30 readAll=  118.9 ms newest texera/direct=69.3/13.1 ms
+[info]   [no-tidy] runtime_statistics run              commits=2000 commit p50/p95= 225.7/ 262.8 ms loadTable= 32.6 ms metadata= 1563 KB files=2000 manifests= 20 snapshots=2000 readAll=13678.2 ms (raw records 7554.4 ms, 3 columns 8285.0 ms) newest texera/direct=132.7/37.2 ms
+[info]   [no-tidy] log                run              commits=  34 commit p50/p95=  91.9/ 114.6 ms loadTable=  3.3 ms metadata=   34 KB files=  34 manifests= 34 snapshots=  34 readAll=  121.7 ms newest texera/direct=78.6/13.9 ms
+[info]   [no-tidy] runtime_statistics run              commits=2250 commit p50/p95= 216.8/ 255.6 ms loadTable= 33.4 ms metadata= 1756 KB files=2250 manifests= 72 snapshots=2250 readAll=10931.0 ms (raw records 7131.7 ms, 3 columns 9288.5 ms) newest texera/direct=235.3/46.9 ms
+[info]   [no-tidy] log                run              commits=  38 commit p50/p95=  95.5/ 107.6 ms loadTable=  3.4 ms metadata=   38 KB files=  38 manifests= 38 snapshots=  38 readAll=  179.2 ms newest texera/direct=76.9/17.6 ms
+[info]   [no-tidy] runtime_statistics run              commits=2500 commit p50/p95= 247.8/ 274.2 ms loadTable= 31.4 ms metadata= 1950 KB files=2500 manifests= 25 snapshots=2500 readAll=12491.4 ms (raw records 8260.9 ms, 3 columns 15047.9 ms) newest texera/direct=197.8/51.9 ms
+[info]   [no-tidy] log                run              commits=  42 commit p50/p95=  85.3/ 116.3 ms loadTable=  3.6 ms metadata=   42 KB files=  42 manifests= 42 snapshots=  42 readAll=  286.1 ms newest texera/direct=119.0/31.7 ms
+[info]   [no-tidy] runtime_statistics run              commits=2750 commit p50/p95= 268.2/ 285.6 ms loadTable= 42.7 ms metadata= 2143 KB files=2750 manifests= 77 snapshots=2750 readAll=19726.4 ms (raw records 9938.4 ms, 3 columns 17212.5 ms) newest texera/direct=265.3/51.9 ms
+[info]   [no-tidy] log                run              commits=  46 commit p50/p95=  84.9/ 107.8 ms loadTable=  3.5 ms metadata=   46 KB files=  46 manifests= 46 snapshots=  46 readAll=  272.4 ms newest texera/direct=119.1/23.8 ms
+[info]   [no-tidy] runtime_statistics run              commits=2880 commit p50/p95= 273.3/ 296.2 ms loadTable= 45.3 ms metadata= 2243 KB files=2880 manifests=  9 snapshots=2880 readAll=19022.5 ms (raw records 9654.7 ms, 3 columns 14955.7 ms) newest texera/direct=175.4/54.8 ms
+[info]   [no-tidy] log                run              commits=  49 commit p50/p95=  99.3/ 106.6 ms loadTable=  3.7 ms metadata=   49 KB files=  49 manifests= 49 snapshots=  49 readAll=  265.3 ms newest texera/direct=115.4/23.6 ms
+[info]   [no-tidy] tidy runtime_statistics at commit 2880: 2880 files/9 manifests/2880 snapshots -> 1/1/1; compact 13028.8 ms (28800 rows), manifests 159.8 ms, expire 8368.0 ms, total 21556.6 ms; readAll 19735.4 -> 493.0 ms
+[info]   [no-tidy] tidy log at commit 2880: 49 files/49 manifests/49 snapshots -> 1/1/1; compact 621.8 ms (49 rows), manifests 90.5 ms, expire 181.7 ms, total 894.0 ms; readAll 180.3 -> 22.2 ms
+[info]   [no-tidy] runtime_statistics after-final-tidy commits=2880 commit p50/p95=   NaN/   NaN ms loadTable=  3.1 ms metadata=   24 KB files=   1 manifests=  1 snapshots=   1 readAll=  480.8 ms (raw records 38.2 ms, 3 columns 239.0 ms) newest texera/direct=41.1/23.7 ms
+[info]   [no-tidy] log                after-final-tidy commits=  49 commit p50/p95=   NaN/   NaN ms loadTable=  3.7 ms metadata=   13 KB files=   1 manifests=  1 snapshots=   1 readAll=   17.7 ms newest texera/direct=20.8/9.3 ms
+[info] == scenario no-tidy took 1010 s
+[info] == results
+[info]   tidy: commit p50 114.5 -> 121.7 ms, p95 145.8 -> 147.1 ms; metadata 65 -> 88 KB JSON; data files 51 -> 81; snapshots 55 -> 85; read all 228.5 -> 765.9 ms; after the final tidy read all 460.7 ms, newest 26.8 ms
+[info]   tidy: 15 statistics tidies, max 1756.0 ms; final runtime_statistics tidy 927.9 ms (compact 496.6, manifests 68.5, expire 362.8); final log tidy 607.7 ms (compact 374.7, manifests 61.6, expire 171.4)
+[info]   tidy-50: commit p50 116.9 -> 114.9 ms, p95 132.2 -> 129.8 ms; metadata 65 -> 50 KB JSON; data files 51 -> 31; snapshots 55 -> 35; read all 271.3 -> 574.5 ms; after the final tidy read all 459.3 ms, newest 25.9 ms
+[info]   tidy-50: 58 statistics tidies, max 842.1 ms; final runtime_statistics tidy 537.8 ms (compact 302.3, manifests 51.3, expire 184.2); final log tidy 681.0 ms (compact 359.0, manifests 82.6, expire 239.4)
+[info]   no-tidy: commit p50 126.1 -> 273.3 ms, p95 145.0 -> 296.2 ms; metadata 215 -> 2243 KB JSON; data files 250 -> 2880; snapshots 250 -> 2880; read all 1622.3 -> 19022.5 ms; after the final tidy read all 480.8 ms, newest 23.7 ms
+[info]   no-tidy: 1 statistics tidies, max 21556.6 ms; final runtime_statistics tidy 21556.6 ms (compact 13028.8, manifests 159.8, expire 8368.0); final log tidy 894.0 ms (compact 621.8, manifests 90.5, expire 181.7)
+[info] CHECK PASS tidy_rows_complete_ordered: 26 checkpoint reads and 16 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+[info] CHECK PASS tidy-50_rows_complete_ordered: 26 checkpoint reads and 59 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+[info] CHECK PASS no-tidy_rows_complete_ordered: 26 checkpoint reads and 2 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+[info] CHECK PASS tidy_read_all_end_under_1s: whole day (28800 rows, 1 file) read through IcebergDocument in 460.7 ms after the final tidy
+[info] CHECK FAIL tidy_read_all_every_checkpoint_under_1s: slowest checkpoint read 1098.0 ms at commit 2000 (201 files)
+[info] CHECK FAIL tidy_read_all_worst_case_under_1s: slowest read right before a tidy 1116.3 ms at commit 2600 (201 files)
+[info] CHECK PASS tidy_commit_latency_flat: commit p50 114.8 ms (commits 11-250) -> 121.7 ms (commits 2751-2880), p95 145.8 -> 147.1 ms (flat = p50 within 1.5x and p95 within 2x)
+[info] CHECK PASS tidy-50_read_all_end_under_1s: whole day (28800 rows, 1 file) read through IcebergDocument in 459.3 ms after the final tidy
+[info] CHECK PASS tidy-50_read_all_every_checkpoint_under_1s: slowest checkpoint read 657.1 ms at commit 2750 (51 files)
+[info] CHECK PASS tidy-50_read_all_worst_case_under_1s: slowest read right before a tidy 653.9 ms at commit 2850 (51 files)
+[info] CHECK PASS tidy-50_commit_latency_flat: commit p50 117.1 ms (commits 11-250) -> 114.9 ms (commits 2751-2880), p95 132.2 -> 129.8 ms (flat = p50 within 1.5x and p95 within 2x)
+[info] CHECK PASS log_newest_row_tiny: newest state row (newest snapshot's file) at most 20.0 ms over the day, 111.7 ms through getCount+getRange; loadTable 4.2 ms; state commits p50/p95 112.1/121.7 ms (tiny = under 50 ms)
+[info] CHECK FAIL log_read_all_tiny_untidied: whole log, 49 rows in 49 files (never tidied during the run), read through IcebergDocument in 317.9 ms (tiny = under 100 ms)
+[info] CHECK PASS log_read_all_tiny_after_final_tidy: whole log after the end-of-run tidy (1 file) read in 10.7 ms (tiny = under 100 ms)
+[info] INFO no-tidy over the day: commit p50 x2.2, read all x11.7, metadata JSON x10.5; one tidy at the end took 21556.6 ms and brought the read to 493.0 ms
+[info] INFO one file of 28800 rows: Texera reader 460.7 ms (16.0 us/row), raw Iceberg records 36.0 ms, three columns through Texera 210.6 ms
+[info] INFO untidied day, 2880 files: Texera reader 19022.5 ms, about 6.4 ms per file on top of the per-row cost; raw records 9654.7 ms
+[info] SUMMARY 11/14 checks passed
+[success] Total time: 2099 s (0:34:59.0), completed Nov 15, 2026, 7:23:55 PM

@@ -1,0 +1,5 @@
+scenario,table,identifier,location,format_version
+no-tidy,runtime_statistics,workflow-runtime-statistics.wid_1_eid_7909851_runtimestatistics,s3://texera-iceberg/shared/01a1e1e1-1137-7b01-b4cc-4cbd90d0d390/01a1e1e1-6eaa-7980-9fbb-47e1b40d0e5f,2
+no-tidy,log,execution-log.wid_1_eid_7909851_log,s3://texera-iceberg/shared/01a1e1e1-6ebd-7b01-b077-4ef32e962590/01a1e1e1-6ec2-7ad2-9bd6-35e967e22152,2
+tidy,runtime_statistics,workflow-runtime-statistics.wid_1_eid_7909852_runtimestatistics,s3://texera-iceberg/shared/01a1e1e1-1137-7b01-b4cc-4cbd90d0d390/01a1e1ed-43b3-7121-81e8-caf49062572d,2
+tidy,log,execution-log.wid_1_eid_7909852_log,s3://texera-iceberg/shared/01a1e1e1-6ebd-7b01-b077-4ef32e962590/01a1e1ed-43d4-7153-8d92-5dc277225a9e,2

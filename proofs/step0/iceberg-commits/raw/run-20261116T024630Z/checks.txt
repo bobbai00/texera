@@ -1,0 +1,34 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+PASS lake_up: Lakekeeper 0.11.0 + Postgres + RustFS, warehouse with remote signing
+PASS benchmark_ran: sbt exit 0 after 125s
+PASS tidy_rows_complete_ordered: 8 checkpoint reads and 4 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+PASS tidy-50_rows_complete_ordered: 8 checkpoint reads and 4 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+PASS no-tidy_rows_complete_ordered: 8 checkpoint reads and 2 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+PASS tidy_read_all_end_under_1s: whole day (1200 rows, 1 file) read through IcebergDocument in 34.5 ms after the final tidy
+PASS tidy_read_all_every_checkpoint_under_1s: slowest checkpoint read 171.2 ms at commit 120 (41 files)
+PASS tidy_read_all_worst_case_under_1s: slowest read right before a tidy 215.6 ms at commit 80 (41 files)
+PASS tidy_commit_latency_flat: commit p50 117.7 ms (commits 11-50) -> 119.7 ms (commits 101-120), p95 139.5 -> 135.3 ms (flat = p50 within 1.5x and p95 within 2x)
+PASS tidy-50_read_all_end_under_1s: whole day (1200 rows, 1 file) read through IcebergDocument in 30.3 ms after the final tidy
+PASS tidy-50_read_all_every_checkpoint_under_1s: slowest checkpoint read 372.1 ms at commit 100 (51 files)
+PASS tidy-50_read_all_worst_case_under_1s: slowest read right before a tidy 298.8 ms at commit 100 (51 files)
+PASS tidy-50_commit_latency_flat: commit p50 124.0 ms (commits 11-50) -> 115.5 ms (commits 101-120), p95 131.3 -> 126.1 ms (flat = p50 within 1.5x and p95 within 2x)
+PASS log_newest_row_tiny: newest state row (newest snapshot's file) at most 10.6 ms over the day, 90.5 ms through getCount+getRange; loadTable 1.4 ms; state commits p50/p95 91.7/135.9 ms (tiny = under 50 ms)
+FAIL log_read_all_tiny_untidied: whole log, 41 rows in 41 files (never tidied during the run), read through IcebergDocument in 144.4 ms (tiny = under 100 ms)
+PASS log_read_all_tiny_after_final_tidy: whole log after the end-of-run tidy (1 file) read in 10.3 ms (tiny = under 100 ms)
+PASS teardown_clean: no sce0ice container, volume or network left

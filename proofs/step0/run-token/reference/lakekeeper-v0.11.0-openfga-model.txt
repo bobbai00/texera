@@ -1,0 +1,187 @@
+# OpenFGA model 01M7GWV7NWW1ND4MAAA89VQHB7 (schema 1.2), as written by Lakekeeper
+type auth_model_id
+type model_version
+  define exists: [auth_model_id:*]
+  define openfga_id: [auth_model_id]
+type user
+type role
+  define assignee: [user, role#assignee] or ownership
+  define can_assume: assignee or ownership
+  define can_change_ownership: can_grant_assignee
+  define can_delete: can_grant_assignee
+  define can_grant_assignee: ownership or security_admin from project
+  define can_read: can_list_roles from project
+  define can_read_assignments: can_list_roles from project
+  define can_update: can_grant_assignee
+  define ownership: [user, role#assignee]
+  define project: [project]
+type server
+  define admin: [user, role#assignee]
+  define can_create_project: admin or operator
+  define can_delete_users: admin or operator
+  define can_grant_admin: admin or operator
+  define can_grant_operator: admin or operator
+  define can_list_all_projects: admin or operator
+  define can_list_users: admin or operator
+  define can_provision_users: admin or operator
+  define can_read_assignments: admin or operator
+  define can_update_users: admin or operator
+  define operator: [user, role#assignee]
+  define project: [project]
+type project
+  define can_control_project_tasks: modify or admin from server
+  define can_create_role: role_creator
+  define can_create_warehouse: create
+  define can_delete: modify
+  define can_get_endpoint_statistics: describe
+  define can_get_metadata: describe or can_get_metadata from warehouse or admin from server
+  define can_get_project_tasks: describe or admin from server
+  define can_get_task_queue_config: can_get_metadata
+  define can_grant_create: security_admin or admin from server
+  define can_grant_data_admin: data_admin or admin from server
+  define can_grant_describe: security_admin or admin from server
+  define can_grant_modify: security_admin or admin from server
+  define can_grant_project_admin: project_admin or admin from server
+  define can_grant_role_creator: security_admin or admin from server
+  define can_grant_security_admin: security_admin or admin from server
+  define can_grant_select: security_admin or admin from server
+  define can_include_in_list: can_get_metadata
+  define can_list_roles: can_get_metadata or admin from server
+  define can_list_warehouses: can_get_metadata
+  define can_modify_task_queue_config: modify
+  define can_read_assignments: security_admin or project_admin or admin from server
+  define can_rename: modify
+  define can_search_roles: can_list_roles or admin from server
+  define create: [user, role#assignee] or data_admin
+  define data_admin: [user, role#assignee] or project_admin
+  define describe: [user, role#assignee] or select or create or data_admin or security_admin
+  define modify: [user, role#assignee] or project_admin
+  define project_admin: [user, role#assignee] or operator from server
+  define role_creator: [user, role#assignee] or security_admin
+  define security_admin: [user, role#assignee] or project_admin
+  define select: [user, role#assignee] or modify
+  define server: [server]
+  define warehouse: [warehouse]
+type warehouse
+  define can_activate: modify
+  define can_change_ownership: manage_grants
+  define can_control_all_tasks: modify
+  define can_create_namespace: create
+  define can_deactivate: modify
+  define can_delete: modify
+  define can_get_all_tasks: describe
+  define can_get_config: can_get_metadata
+  define can_get_endpoint_statistics: describe
+  define can_get_metadata: describe or can_get_metadata from namespace
+  define can_get_task_queue_config: can_get_metadata
+  define can_grant_create: manage_grants or (create and pass_grants)
+  define can_grant_describe: manage_grants or (describe and pass_grants)
+  define can_grant_manage_grants: manage_grants
+  define can_grant_modify: manage_grants or (modify and pass_grants)
+  define can_grant_pass_grants: manage_grants
+  define can_grant_select: manage_grants or (select and pass_grants)
+  define can_include_in_list: can_get_metadata
+  define can_list_deleted_tabulars: can_get_metadata
+  define can_list_everything: describe
+  define can_list_namespaces: can_get_metadata
+  define can_modify_soft_deletion: modify
+  define can_modify_task_queue_config: modify
+  define can_read_assignments: can_grant_create or can_grant_describe or can_grant_modify or can_grant_select or can_grant_pass_grants or can_grant_manage_grants or can_change_ownership
+  define can_rename: modify
+  define can_set_managed_access: manage_grants
+  define can_set_protection: modify
+  define can_update_storage: modify
+  define can_update_storage_credential: modify
+  define can_use: can_get_metadata
+  define create: [user, role#assignee] or ownership or create from project
+  define describe: [user, role#assignee] or ownership or select or create or describe from project
+  define manage_grants: [user, role#assignee] or ownership or security_admin from project
+  define managed_access: [user:*, role:*]
+  define managed_access_inheritance: managed_access
+  define modify: [user, role#assignee] or ownership or modify from project or data_admin from project
+  define namespace: [namespace]
+  define ownership: [user, role#assignee]
+  define pass_grants: [user, role#assignee]
+  define project: [project]
+  define select: [user, role#assignee] or ownership or modify or select from project
+type namespace
+  define can_change_ownership: manage_grants
+  define can_create_namespace: create
+  define can_create_table: create
+  define can_create_view: create
+  define can_delete: modify
+  define can_get_metadata: describe or can_get_metadata from child
+  define can_grant_create: manage_grants or (create and pass_grants)
+  define can_grant_describe: manage_grants or (describe and pass_grants)
+  define can_grant_manage_grants: manage_grants
+  define can_grant_modify: manage_grants or (modify and pass_grants)
+  define can_grant_pass_grants: manage_grants
+  define can_grant_select: manage_grants or (select and pass_grants)
+  define can_include_in_list: can_get_metadata
+  define can_list_everything: describe
+  define can_list_namespaces: can_get_metadata
+  define can_list_tables: can_get_metadata
+  define can_list_views: can_get_metadata
+  define can_read_assignments: can_grant_create or can_grant_describe or can_grant_modify or can_grant_select or can_grant_pass_grants or can_grant_manage_grants or can_change_ownership
+  define can_set_managed_access: manage_grants
+  define can_set_protection: modify
+  define can_update_properties: modify
+  define child: [namespace, lakekeeper_table, lakekeeper_view]
+  define create: [user, role#assignee] or ownership or create from parent
+  define describe: [user, role#assignee] or ownership or select or create or describe from parent
+  define manage_grants: [user, role#assignee] or (ownership but not managed_access_inheritance from parent) or manage_grants from parent
+  define managed_access: [user:*, role:*]
+  define managed_access_inheritance: managed_access or managed_access_inheritance from parent
+  define modify: [user, role#assignee] or ownership or modify from parent
+  define ownership: [user, role#assignee]
+  define parent: [namespace, warehouse]
+  define pass_grants: [user, role#assignee]
+  define select: [user, role#assignee] or ownership or modify or select from parent
+type lakekeeper_table
+  define can_change_ownership: manage_grants
+  define can_commit: modify
+  define can_control_tasks: modify
+  define can_drop: modify
+  define can_get_metadata: describe
+  define can_get_tasks: describe
+  define can_grant_describe: manage_grants or (describe and pass_grants)
+  define can_grant_manage_grants: manage_grants
+  define can_grant_modify: manage_grants or (modify and pass_grants)
+  define can_grant_pass_grants: manage_grants
+  define can_grant_select: manage_grants or (select and pass_grants)
+  define can_include_in_list: can_get_metadata
+  define can_read_assignments: can_grant_pass_grants or can_grant_manage_grants or can_grant_describe or can_grant_select or can_grant_modify or can_change_ownership
+  define can_read_data: select
+  define can_rename: modify
+  define can_set_protection: modify
+  define can_undrop: modify
+  define can_write_data: modify
+  define describe: [user, role#assignee] or ownership or select or describe from parent
+  define manage_grants: [user, role#assignee] or (ownership but not managed_access_inheritance from parent) or manage_grants from parent
+  define modify: [user, role#assignee] or ownership or modify from parent
+  define ownership: [user, role#assignee]
+  define parent: [namespace]
+  define pass_grants: [user, role#assignee]
+  define select: [user, role#assignee] or ownership or modify or select from parent
+type lakekeeper_view
+  define can_change_ownership: manage_grants
+  define can_commit: modify
+  define can_control_tasks: modify
+  define can_drop: modify
+  define can_get_metadata: describe
+  define can_get_tasks: describe
+  define can_grant_describe: manage_grants or (describe and pass_grants)
+  define can_grant_manage_grants: manage_grants
+  define can_grant_modify: manage_grants or (modify and pass_grants)
+  define can_grant_pass_grants: manage_grants
+  define can_include_in_list: can_get_metadata
+  define can_read_assignments: can_grant_pass_grants or can_grant_manage_grants or can_grant_describe or can_grant_modify or can_change_ownership
+  define can_rename: modify
+  define can_set_protection: modify
+  define can_undrop: modify
+  define describe: [user, role#assignee] or ownership or modify or describe from parent
+  define manage_grants: [user, role#assignee] or (ownership but not managed_access_inheritance from parent) or manage_grants from parent
+  define modify: [user, role#assignee] or ownership or modify from parent
+  define ownership: [user, role#assignee]
+  define parent: [namespace]
+  define pass_grants: [user, role#assignee]

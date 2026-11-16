@@ -1,0 +1,205 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+#### runtime_statistics, no-tidy
+
+| commits | phase | commit p50 / p95 ms | loadTable ms | catalog-only commit ms | metadata JSON KB (stored gz KB) | data files | manifests | snapshots | read all ms (raw records / 3 columns) | newest row ms (Texera / direct) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 250 | run | 104 / 144 | 4.8 | 19.3 | 215 (29) | 250 | 52 | 250 | 1,620 (1,901 / 1,776) | 141 / 46 |
+| 500 | run | 135 / 195 | 9.5 | 31.9 | 407 (55) | 500 | 5 | 500 | 2,642 (1,856 / 3,520) | 80 / 18 |
+| 750 | run | 136 / 181 | 14.7 | 39.7 | 599 (82) | 750 | 57 | 750 | 3,436 (2,419 / 2,982) | 148 / 25 |
+| 1000 | run | 177 / 241 | 19.6 | 60.5 | 791 (108) | 1000 | 10 | 1000 | 3,548 (2,980 / 5,245) | 154 / 56 |
+| 1250 | run | 188 / 212 | 22.3 | 73.5 | 984 (134) | 1250 | 62 | 1250 | 5,227 (4,600 / 5,649) | 216 / 35 |
+| 1500 | run | 203 / 222 | 21.2 | 73.5 | 1,177 (160) | 1500 | 15 | 1500 | 6,214 (5,186 / 5,587) | 98 / 36 |
+| 1750 | run | 213 / 229 | 30.2 | 80.1 | 1,370 (187) | 1750 | 67 | 1750 | 9,369 (6,140 / 7,251) | 229 / 40 |
+| 2000 | run | 232 / 316 | 49.0 | 132.6 | 1,563 (214) | 2000 | 20 | 2000 | 12,976 (9,562 / 8,572) | 244 / 42 |
+| 2250 | run | 257 / 412 | 44.4 | 131.7 | 1,757 (241) | 2250 | 72 | 2250 | 10,601 (7,469 / 8,802) | 241 / 38 |
+| 2500 | run | 257 / 276 | 37.1 | 107.7 | 1,950 (267) | 2500 | 25 | 2500 | 11,052 (8,430 / 11,558) | 183 / 54 |
+| 2750 | run | 290 / 439 | 42.1 | 117.5 | 2,143 (294) | 2750 | 77 | 2750 | 11,735 (9,642 / 12,535) | 266 / 57 |
+| 2880 | run | 277 / 292 | 46.5 | 131.4 | 2,243 (308) | 2880 | 9 | 2880 | 13,786 (9,857 / 13,379) | 179 / 56 |
+| 2880 | after-final-tidy | - / - | 3.1 | 13.9 | 24 (3) | 1 | 1 | 1 | 486 (25 / 234) | 32 / 21 |
+
+#### runtime_statistics, tidy
+
+| commits | phase | commit p50 / p95 ms | loadTable ms | catalog-only commit ms | metadata JSON KB (stored gz KB) | data files | manifests | snapshots | read all ms (raw records / 3 columns) | newest row ms (Texera / direct) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 250 | run | 102 / 147 | 4.0 | 16.6 | 65 (9) | 51 | 51 | 55 | 819 (638 / 763) | 102 / 28 |
+| 500 | run | 113 / 184 | 3.2 | 21.6 | 104 (14) | 101 | 2 | 105 | 396 (322 / 312) | 47 / 10 |
+| 750 | run | 114 / 140 | 4.5 | 16.6 | 142 (19) | 151 | 52 | 155 | 1,249 (461 / 528) | 104 / 15 |
+| 1000 | run | 114 / 152 | 3.8 | 15.2 | 180 (24) | 201 | 3 | 205 | 725 (725 / 639) | 68 / 23 |
+| 1250 | run | 113 / 133 | 1.8 | 10.1 | 65 (9) | 51 | 51 | 55 | 389 (171 / 268) | 90 / 9 |
+| 1500 | run | 113 / 132 | 2.8 | 10.3 | 104 (14) | 101 | 2 | 105 | 525 (355 / 392) | 47 / 17 |
+| 1750 | run | 114 / 133 | 3.9 | 19.2 | 142 (19) | 151 | 52 | 155 | 784 (566 / 603) | 105 / 16 |
+| 2000 | run | 116 / 136 | 4.7 | 21.0 | 181 (24) | 201 | 3 | 205 | 915 (633 / 917) | 68 / 23 |
+| 2250 | run | 98 / 116 | 1.9 | 13.0 | 65 (9) | 51 | 51 | 55 | 555 (203 / 359) | 85 / 8 |
+| 2500 | run | 109 / 137 | 3.2 | 16.2 | 104 (14) | 101 | 2 | 105 | 707 (364 / 475) | 44 / 16 |
+| 2750 | run | 107 / 134 | 5.3 | 38.1 | 142 (19) | 151 | 52 | 155 | 921 (574 / 771) | 119 / 18 |
+| 2880 | run | 108 / 130 | 2.2 | 15.6 | 88 (12) | 81 | 81 | 85 | 847 (382 / 492) | 170 / 23 |
+| 2880 | after-final-tidy | - / - | 1.0 | 7.8 | 24 (3) | 1 | 1 | 1 | 491 (24 / 226) | 37 / 26 |
+
+#### log (one row per state change)
+
+| scenario | state changes | phase | commit p50 / p95 ms | loadTable ms | metadata JSON KB | data files | read all ms | newest row ms (Texera / direct) |
+|---|---|---|---|---|---|---|---|---|
+| tidy | 6 | run | 83 / 360 | 3.5 | 7 | 6 | 93 | 57 / 26 |
+| tidy | 10 | run | 98 / 106 | 1.1 | 11 | 10 | 47 | 51 / 16 |
+| tidy | 14 | run | 96 / 107 | 1.0 | 15 | 14 | 55 | 43 / 12 |
+| tidy | 18 | run | 107 / 117 | 2.0 | 19 | 18 | 88 | 48 / 15 |
+| tidy | 22 | run | 97 / 108 | 1.0 | 22 | 22 | 94 | 73 / 9 |
+| tidy | 26 | run | 102 / 119 | 1.6 | 26 | 26 | 110 | 73 / 12 |
+| tidy | 30 | run | 99 / 114 | 2.0 | 30 | 30 | 113 | 84 / 18 |
+| tidy | 34 | run | 100 / 120 | 1.8 | 34 | 34 | 149 | 77 / 14 |
+| tidy | 38 | run | 91 / 106 | 1.4 | 38 | 38 | 139 | 72 / 14 |
+| tidy | 42 | run | 96 / 110 | 2.4 | 42 | 42 | 196 | 99 / 12 |
+| tidy | 46 | run | 103 / 141 | 2.6 | 46 | 46 | 218 | 108 / 13 |
+| tidy | 49 | run | 98 / 104 | 3.6 | 49 | 49 | 299 | 115 / 15 |
+| tidy | 49 | after-final-tidy | - / - | 1.3 | 13 | 1 | 13 | 14 / 8 |
+| tidy-50 | 6 | run | 113 / 135 | 1.5 | 7 | 6 | 56 | 49 / 16 |
+| tidy-50 | 10 | run | 86 / 101 | 1.6 | 11 | 10 | 58 | 49 / 18 |
+| tidy-50 | 14 | run | 80 / 218 | 2.2 | 15 | 14 | 88 | 45 / 15 |
+| tidy-50 | 18 | run | 104 / 112 | 1.6 | 19 | 18 | 94 | 48 / 15 |
+| tidy-50 | 22 | run | 98 / 103 | 1.9 | 22 | 22 | 181 | 80 / 32 |
+| tidy-50 | 26 | run | 101 / 113 | 2.4 | 26 | 26 | 295 | 85 / 15 |
+| tidy-50 | 30 | run | 100 / 112 | 1.5 | 30 | 30 | 125 | 71 / 17 |
+| tidy-50 | 34 | run | 86 / 111 | 1.5 | 34 | 34 | 132 | 75 / 17 |
+| tidy-50 | 38 | run | 113 / 127 | 5.2 | 38 | 38 | 275 | 81 / 25 |
+| tidy-50 | 42 | run | 100 / 124 | 2.0 | 42 | 42 | 215 | 108 / 23 |
+| tidy-50 | 46 | run | 117 / 121 | 2.8 | 46 | 46 | 275 | 119 / 16 |
+| tidy-50 | 49 | run | 101 / 114 | 5.4 | 49 | 49 | 353 | 96 / 15 |
+| tidy-50 | 49 | after-final-tidy | - / - | 1.2 | 13 | 1 | 10 | 12 / 7 |
+| no-tidy | 6 | run | 97 / 111 | 5.6 | 7 | 6 | 48 | 45 / 12 |
+| no-tidy | 10 | run | 94 / 112 | 4.5 | 11 | 10 | 86 | 55 / 16 |
+| no-tidy | 14 | run | 99 / 107 | 3.0 | 15 | 14 | 95 | 54 / 22 |
+| no-tidy | 18 | run | 102 / 124 | 7.9 | 19 | 18 | 215 | 83 / 22 |
+| no-tidy | 22 | run | 105 / 123 | 3.0 | 22 | 22 | 120 | 82 / 18 |
+| no-tidy | 26 | run | 102 / 111 | 3.1 | 26 | 26 | 108 | 85 / 17 |
+| no-tidy | 30 | run | 98 / 110 | 3.2 | 30 | 30 | 144 | 76 / 14 |
+| no-tidy | 34 | run | 96 / 108 | 4.2 | 34 | 34 | 174 | 70 / 14 |
+| no-tidy | 38 | run | 85 / 126 | 4.0 | 38 | 38 | 137 | 80 / 17 |
+| no-tidy | 42 | run | 95 / 109 | 3.9 | 42 | 42 | 257 | 113 / 21 |
+| no-tidy | 46 | run | 88 / 169 | 3.9 | 46 | 46 | 260 | 114 / 23 |
+| no-tidy | 49 | run | 97 / 110 | 3.5 | 49 | 49 | 279 | 116 / 22 |
+| no-tidy | 49 | after-final-tidy | - / - | 2.6 | 13 | 1 | 14 | 17 / 8 |
+
+#### tidies
+
+| scenario | table | at commit | files / manifests / snapshots before | read all before ms | compact ms | rewrite manifests ms | expire ms | total ms | after | read all after ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| tidy | runtime_statistics | 200 | 200 / 2 / 200 | 1,475 | 785 | 78 | 532 | 1,395 | 1 / 1 / 5 | 44 |
+| tidy | runtime_statistics | 400 | 201 / 3 / 205 | 692 | 869 | 76 | 957 | 1,902 | 1 / 1 / 5 | 109 |
+| tidy | runtime_statistics | 600 | 201 / 3 / 205 | 709 | 688 | 67 | 615 | 1,369 | 1 / 1 / 5 | 111 |
+| tidy | runtime_statistics | 800 | 201 / 3 / 205 | 2,271 | 1,237 | 75 | 854 | 2,166 | 1 / 1 / 5 | 150 |
+| tidy | runtime_statistics | 1000 | 201 / 3 / 205 | 713 | 838 | 73 | 765 | 1,677 | 1 / 1 / 5 | 181 |
+| tidy | runtime_statistics | 1200 | 201 / 3 / 205 | 865 | 762 | 74 | 774 | 1,611 | 1 / 1 / 5 | 234 |
+| tidy | runtime_statistics | 1400 | 201 / 3 / 205 | 801 | 754 | 75 | 793 | 1,622 | 1 / 1 / 5 | 267 |
+| tidy | runtime_statistics | 1600 | 201 / 3 / 205 | 899 | 848 | 67 | 603 | 1,517 | 1 / 1 / 5 | 275 |
+| tidy | runtime_statistics | 1800 | 201 / 3 / 205 | 828 | 831 | 73 | 894 | 1,799 | 1 / 1 / 5 | 297 |
+| tidy | runtime_statistics | 2000 | 201 / 3 / 205 | 922 | 849 | 94 | 963 | 1,906 | 1 / 1 / 5 | 343 |
+| tidy | runtime_statistics | 2200 | 201 / 3 / 205 | 901 | 739 | 69 | 693 | 1,501 | 1 / 1 / 5 | 406 |
+| tidy | runtime_statistics | 2400 | 201 / 3 / 205 | 1,674 | 773 | 86 | 852 | 1,711 | 1 / 1 / 5 | 411 |
+| tidy | runtime_statistics | 2600 | 201 / 3 / 205 | 1,055 | 877 | 72 | 728 | 1,677 | 1 / 1 / 5 | 442 |
+| tidy | runtime_statistics | 2800 | 201 / 3 / 205 | 1,101 | 799 | 75 | 814 | 1,687 | 1 / 1 / 5 | 454 |
+| tidy | runtime_statistics | 2880 | 81 / 81 / 85 | 747 | 522 | 68 | 397 | 987 | 1 / 1 / 1 | 469 |
+| tidy | log | 2880 | 49 / 49 / 49 | 183 | 298 | 67 | 196 | 561 | 1 / 1 / 1 | 12 |
+| tidy-50 | runtime_statistics | 50 | 50 / 50 / 50 | 622 | 982 | 122 | 518 | 1,622 | 1 / 1 / 5 | 57 |
+| tidy-50 | runtime_statistics | 100 | 51 / 51 / 55 | 251 | 423 | 73 | 235 | 731 | 1 / 1 / 5 | 32 |
+| tidy-50 | runtime_statistics | 150 | 51 / 51 / 55 | 858 | 577 | 117 | 402 | 1,096 | 1 / 1 / 5 | 54 |
+| tidy-50 | runtime_statistics | 200 | 51 / 51 / 55 | 372 | 463 | 95 | 437 | 995 | 1 / 1 / 5 | 55 |
+| tidy-50 | runtime_statistics | 250 | 51 / 51 / 55 | 245 | 336 | 79 | 321 | 736 | 1 / 1 / 5 | 55 |
+| tidy-50 | runtime_statistics | 300 | 51 / 51 / 55 | 232 | 319 | 80 | 300 | 699 | 1 / 1 / 5 | 87 |
+| tidy-50 | runtime_statistics | 350 | 51 / 51 / 55 | 329 | 515 | 73 | 249 | 837 | 1 / 1 / 5 | 75 |
+| tidy-50 | runtime_statistics | 400 | 51 / 51 / 55 | 231 | 281 | 79 | 246 | 607 | 1 / 1 / 5 | 75 |
+| tidy-50 | runtime_statistics | 450 | 51 / 51 / 55 | 259 | 338 | 84 | 212 | 634 | 1 / 1 / 5 | 86 |
+| tidy-50 | runtime_statistics | 500 | 51 / 51 / 55 | 278 | 407 | 72 | 227 | 706 | 1 / 1 / 5 | 93 |
+| tidy-50 | runtime_statistics | 550 | 51 / 51 / 55 | 757 | 747 | 144 | 575 | 1,466 | 1 / 1 / 5 | 199 |
+| tidy-50 | runtime_statistics | 600 | 51 / 51 / 55 | 330 | 456 | 99 | 340 | 895 | 1 / 1 / 5 | 116 |
+| tidy-50 | runtime_statistics | 650 | 51 / 51 / 55 | 363 | 381 | 99 | 423 | 903 | 1 / 1 / 5 | 125 |
+| tidy-50 | runtime_statistics | 700 | 51 / 51 / 55 | 289 | 417 | 63 | 215 | 695 | 1 / 1 / 5 | 151 |
+| tidy-50 | runtime_statistics | 750 | 51 / 51 / 55 | 315 | 316 | 83 | 294 | 693 | 1 / 1 / 5 | 162 |
+| tidy-50 | runtime_statistics | 800 | 51 / 51 / 55 | 339 | 324 | 75 | 247 | 647 | 1 / 1 / 5 | 162 |
+| tidy-50 | runtime_statistics | 850 | 51 / 51 / 55 | 312 | 309 | 68 | 210 | 588 | 1 / 1 / 5 | 159 |
+| tidy-50 | runtime_statistics | 900 | 51 / 51 / 55 | 330 | 346 | 76 | 247 | 669 | 1 / 1 / 5 | 176 |
+| tidy-50 | runtime_statistics | 950 | 51 / 51 / 55 | 329 | 326 | 64 | 203 | 593 | 1 / 1 / 5 | 163 |
+| tidy-50 | runtime_statistics | 1000 | 51 / 51 / 55 | 407 | 343 | 76 | 233 | 652 | 1 / 1 / 5 | 192 |
+| tidy-50 | runtime_statistics | 1050 | 51 / 51 / 55 | 341 | 307 | 72 | 229 | 608 | 1 / 1 / 5 | 177 |
+| tidy-50 | runtime_statistics | 1100 | 51 / 51 / 55 | 577 | 938 | 129 | 807 | 1,874 | 1 / 1 / 5 | 223 |
+| tidy-50 | runtime_statistics | 1150 | 51 / 51 / 55 | 1,154 | 736 | 144 | 592 | 1,472 | 1 / 1 / 5 | 403 |
+| tidy-50 | runtime_statistics | 1200 | 51 / 51 / 55 | 408 | 351 | 78 | 258 | 688 | 1 / 1 / 5 | 223 |
+| tidy-50 | runtime_statistics | 1250 | 51 / 51 / 55 | 584 | 538 | 76 | 301 | 915 | 1 / 1 / 5 | 222 |
+| tidy-50 | runtime_statistics | 1300 | 51 / 51 / 55 | 393 | 339 | 73 | 255 | 666 | 1 / 1 / 5 | 219 |
+| tidy-50 | runtime_statistics | 1350 | 51 / 51 / 55 | 397 | 318 | 61 | 191 | 570 | 1 / 1 / 5 | 242 |
+| tidy-50 | runtime_statistics | 1400 | 51 / 51 / 55 | 415 | 334 | 74 | 206 | 614 | 1 / 1 / 5 | 252 |
+| tidy-50 | runtime_statistics | 1450 | 51 / 51 / 55 | 443 | 332 | 62 | 189 | 583 | 1 / 1 / 5 | 243 |
+| tidy-50 | runtime_statistics | 1500 | 51 / 51 / 55 | 569 | 360 | 76 | 225 | 661 | 1 / 1 / 5 | 273 |
+| tidy-50 | runtime_statistics | 1550 | 51 / 51 / 55 | 458 | 333 | 69 | 192 | 595 | 1 / 1 / 5 | 275 |
+| tidy-50 | runtime_statistics | 1600 | 51 / 51 / 55 | 802 | 966 | 143 | 728 | 1,838 | 1 / 1 / 5 | 295 |
+| tidy-50 | runtime_statistics | 1650 | 51 / 51 / 55 | 601 | 524 | 95 | 290 | 909 | 1 / 1 / 5 | 297 |
+| tidy-50 | runtime_statistics | 1700 | 51 / 51 / 55 | 574 | 475 | 90 | 503 | 1,068 | 1 / 1 / 5 | 360 |
+| tidy-50 | runtime_statistics | 1750 | 51 / 51 / 55 | 528 | 381 | 62 | 240 | 683 | 1 / 1 / 5 | 306 |
+| tidy-50 | runtime_statistics | 1800 | 51 / 51 / 55 | 492 | 344 | 61 | 222 | 626 | 1 / 1 / 5 | 305 |
+| tidy-50 | runtime_statistics | 1850 | 51 / 51 / 55 | 638 | 667 | 80 | 317 | 1,064 | 1 / 1 / 5 | 420 |
+| tidy-50 | runtime_statistics | 1900 | 51 / 51 / 55 | 828 | 521 | 84 | 325 | 930 | 1 / 1 / 5 | 328 |
+| tidy-50 | runtime_statistics | 1950 | 51 / 51 / 55 | 535 | 360 | 64 | 207 | 631 | 1 / 1 / 5 | 335 |
+| tidy-50 | runtime_statistics | 2000 | 51 / 51 / 55 | 545 | 361 | 62 | 200 | 623 | 1 / 1 / 5 | 347 |
+| tidy-50 | runtime_statistics | 2050 | 51 / 51 / 55 | 541 | 388 | 67 | 183 | 637 | 1 / 1 / 5 | 352 |
+| tidy-50 | runtime_statistics | 2100 | 51 / 51 / 55 | 551 | 386 | 72 | 220 | 678 | 1 / 1 / 5 | 374 |
+| tidy-50 | runtime_statistics | 2150 | 51 / 51 / 55 | 599 | 354 | 66 | 214 | 634 | 1 / 1 / 5 | 367 |
+| tidy-50 | runtime_statistics | 2200 | 51 / 51 / 55 | 1,209 | 891 | 104 | 671 | 1,665 | 1 / 1 / 5 | 503 |
+| tidy-50 | runtime_statistics | 2250 | 51 / 51 / 55 | 702 | 657 | 130 | 397 | 1,184 | 1 / 1 / 5 | 408 |
+| tidy-50 | runtime_statistics | 2300 | 51 / 51 / 55 | 552 | 381 | 78 | 431 | 890 | 1 / 1 / 5 | 410 |
+| tidy-50 | runtime_statistics | 2350 | 51 / 51 / 55 | 582 | 361 | 60 | 215 | 636 | 1 / 1 / 5 | 404 |
+| tidy-50 | runtime_statistics | 2400 | 51 / 51 / 55 | 607 | 354 | 62 | 178 | 595 | 1 / 1 / 5 | 401 |
+| tidy-50 | runtime_statistics | 2450 | 51 / 51 / 55 | 618 | 363 | 68 | 181 | 612 | 1 / 1 / 5 | 419 |
+| tidy-50 | runtime_statistics | 2500 | 51 / 51 / 55 | 619 | 352 | 66 | 191 | 609 | 1 / 1 / 5 | 423 |
+| tidy-50 | runtime_statistics | 2550 | 51 / 51 / 55 | 594 | 376 | 63 | 182 | 620 | 1 / 1 / 5 | 434 |
+| tidy-50 | runtime_statistics | 2600 | 51 / 51 / 55 | 616 | 478 | 70 | 235 | 783 | 1 / 1 / 5 | 437 |
+| tidy-50 | runtime_statistics | 2650 | 51 / 51 / 55 | 634 | 418 | 59 | 191 | 669 | 1 / 1 / 5 | 451 |
+| tidy-50 | runtime_statistics | 2700 | 51 / 51 / 55 | 1,706 | 1,514 | 86 | 468 | 2,069 | 1 / 1 / 5 | 534 |
+| tidy-50 | runtime_statistics | 2750 | 51 / 51 / 55 | 662 | 408 | 78 | 280 | 765 | 1 / 1 / 5 | 452 |
+| tidy-50 | runtime_statistics | 2800 | 51 / 51 / 55 | 643 | 440 | 79 | 232 | 751 | 1 / 1 / 5 | 485 |
+| tidy-50 | runtime_statistics | 2850 | 51 / 51 / 55 | 665 | 385 | 66 | 248 | 699 | 1 / 1 / 5 | 500 |
+| tidy-50 | runtime_statistics | 2880 | 31 / 31 / 35 | 823 | 345 | 77 | 385 | 807 | 1 / 1 / 1 | 491 |
+| tidy-50 | log | 2880 | 49 / 49 / 49 | 242 | 574 | 107 | 425 | 1,105 | 1 / 1 / 1 | 16 |
+| no-tidy | runtime_statistics | 2880 | 2880 / 9 / 2880 | 17,676 | 12,166 | 149 | 9,174 | 21,489 | 1 / 1 / 1 | 484 |
+| no-tidy | log | 2880 | 49 / 49 / 49 | 229 | 392 | 74 | 262 | 728 | 1 / 1 / 1 | 24 |
+
+#### where a commit's time goes (scratch table)
+
+| step | p50 ms | p95 ms |
+|---|---|---|
+| texera_flush: loadTable + write file + newAppend commit (what each tick does) | 94.9 | 144.3 |
+| loadTable | 1.6 | 2.0 |
+| loadTable + first S3 request on its new FileIO | 3.8 | 4.7 |
+| S3 HEAD on a held table's FileIO | 0.7 | 1.0 |
+| held table: write one 10-row data file (Parquet + signed PUT) | 14.5 | 24.6 |
+| held table: newAppend commit (manifest + list + REST commit) | 83.3 | 108.0 |
+| held table: write file + newAppend commit | 99.6 | 125.4 |
+| held table: newFastAppend commit | 49.5 | 105.0 |
+| held table: newAppend commit with commit.manifest-merge.enabled=false | 73.2 | 99.4 |
+| held table: catalog-only commit (property change) | 16.7 | 22.0 |
+
+#### what each table left in the store at the end
+
+| scenario | table | objects | MB | data files | manifests | manifest lists | metadata files (MB) |
+|---|---|---|---|---|---|---|---|
+| tidy | runtime_statistics | 104 | 1.5 | 1 | 1 | 1 | 101 (0.9) |
+| tidy | log | 56 | 0.2 | 1 | 1 | 1 | 53 (0.2) |
+| tidy-50 | runtime_statistics | 104 | 1.2 | 1 | 1 | 1 | 101 (0.6) |
+| tidy-50 | log | 56 | 0.2 | 1 | 1 | 1 | 53 (0.2) |
+| no-tidy | runtime_statistics | 104 | 30.1 | 1 | 1 | 1 | 101 (29.5) |
+| no-tidy | log | 56 | 0.2 | 1 | 1 | 1 | 53 (0.2) |

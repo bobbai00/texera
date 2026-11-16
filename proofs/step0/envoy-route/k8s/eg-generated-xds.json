@@ -1,0 +1,215 @@
+{
+  "_comment": "Captured from the Envoy Gateway v1.6.3 proxy (Envoy 1.36.4) by run.sh (config_dump, trimmed to the pieces this proof relies on). Regenerated on every run into .out/k8s/eg-xds-pieces.json.",
+  "http_connection_manager": {
+    "http_filters": [
+      {
+        "name": "envoy.filters.http.ext_authz/securitypolicy/sce0-envoy/units-ext-auth",
+        "typed_config": {
+          "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+          "http_service": {
+            "server_uri": {
+              "uri": "http://authz-stub.sce0-envoy:9000/authz",
+              "cluster": "securitypolicy/sce0-envoy/units-ext-auth/extauth/0",
+              "timeout": "10s"
+            },
+            "path_prefix": "/authz",
+            "authorization_response": {
+              "allowed_upstream_headers": {
+                "patterns": [
+                  {
+                    "exact": "Host",
+                    "ignore_case": true
+                  },
+                  {
+                    "exact": "X-Texera-Unit-Key",
+                    "ignore_case": true
+                  },
+                  {
+                    "exact": "X-Texera-User",
+                    "ignore_case": true
+                  }
+                ]
+              }
+            }
+          },
+          "transport_api_version": "V3",
+          "allowed_headers": {
+            "patterns": [
+              {
+                "exact": "Cookie",
+                "ignore_case": true
+              }
+            ]
+          }
+        },
+        "disabled": true
+      },
+      {
+        "name": "envoy.filters.http.router",
+        "typed_config": {
+          "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+          "suppress_envoy_headers": true
+        }
+      }
+    ],
+    "normalize_path": true,
+    "merge_slashes": true,
+    "path_with_escaped_slashes_action": "UNESCAPE_AND_REDIRECT",
+    "early_header_mutation_extensions": [
+      {
+        "name": "envoy.http.early_header_mutation.header_mutation",
+        "typed_config": {
+          "@type": "type.googleapis.com/envoy.extensions.http.early_header_mutation.header_mutation.v3.HeaderMutation",
+          "mutations": [
+            {
+              "remove": "X-Texera-Unit-Key"
+            },
+            {
+              "remove": "X-Texera-Unit-Address"
+            },
+            {
+              "remove": "X-Texera-User"
+            }
+          ]
+        }
+      }
+    ],
+    "use_remote_address": true
+  },
+  "routes": [
+    {
+      "match": {
+        "path_separated_prefix": "/wsapi/units"
+      },
+      "route": {
+        "cluster": "httproute/sce0-envoy/units/rule/0",
+        "timeout": "0s",
+        "idle_timeout": "0s",
+        "upgrade_configs": [
+          {
+            "upgrade_type": "websocket"
+          }
+        ]
+      },
+      "request_headers_to_remove": [
+        "Authorization",
+        "Cookie"
+      ],
+      "typed_per_filter_config": {
+        "envoy.filters.http.ext_authz/securitypolicy/sce0-envoy/units-ext-auth": {
+          "@type": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
+          "config": {}
+        }
+      },
+      "name": "httproute/sce0-envoy/units/rule/0/match/1/*"
+    },
+    {
+      "match": {
+        "path_separated_prefix": "/api/units"
+      },
+      "route": {
+        "cluster": "httproute/sce0-envoy/units/rule/0",
+        "timeout": "0s",
+        "idle_timeout": "0s",
+        "upgrade_configs": [
+          {
+            "upgrade_type": "websocket"
+          }
+        ]
+      },
+      "request_headers_to_remove": [
+        "Authorization",
+        "Cookie"
+      ],
+      "typed_per_filter_config": {
+        "envoy.filters.http.ext_authz/securitypolicy/sce0-envoy/units-ext-auth": {
+          "@type": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
+          "config": {}
+        }
+      },
+      "name": "httproute/sce0-envoy/units/rule/0/match/0/*"
+    }
+  ],
+  "clusters": [
+    {
+      "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+      "name": "httproute/sce0-envoy/units/rule/0",
+      "connect_timeout": "10s",
+      "per_connection_buffer_limit_bytes": 32768,
+      "lb_policy": "CLUSTER_PROVIDED",
+      "circuit_breakers": {
+        "thresholds": [
+          {
+            "max_retries": 1024
+          }
+        ]
+      },
+      "dns_lookup_family": "V4_PREFERRED",
+      "common_lb_config": {},
+      "ignore_health_on_host_removal": true,
+      "cluster_type": {
+        "name": "httproute/sce0-envoy/units/rule/0",
+        "typed_config": {
+          "@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
+          "dns_cache_config": {
+            "name": "httproute/sce0-envoy/units/rule/0",
+            "dns_lookup_family": "V4_PREFERRED",
+            "dns_refresh_rate": "30s"
+          }
+        }
+      },
+      "load_balancing_policy": {
+        "policies": [
+          {
+            "typed_extension_config": {
+              "name": "envoy.load_balancing_policies.cluster_provided",
+              "typed_config": {
+                "@type": "type.googleapis.com/envoy.extensions.load_balancing_policies.cluster_provided.v3.ClusterProvided"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+      "name": "securitypolicy/sce0-envoy/units-ext-auth/extauth/0",
+      "type": "EDS",
+      "eds_cluster_config": {
+        "eds_config": {
+          "ads": {},
+          "resource_api_version": "V3"
+        },
+        "service_name": "securitypolicy/sce0-envoy/units-ext-auth/extauth/0"
+      },
+      "connect_timeout": "10s",
+      "per_connection_buffer_limit_bytes": 32768,
+      "lb_policy": "LEAST_REQUEST",
+      "circuit_breakers": {
+        "thresholds": [
+          {
+            "max_retries": 1024
+          }
+        ]
+      },
+      "dns_lookup_family": "V4_PREFERRED",
+      "common_lb_config": {},
+      "ignore_health_on_host_removal": true,
+      "load_balancing_policy": {
+        "policies": [
+          {
+            "typed_extension_config": {
+              "name": "envoy.load_balancing_policies.least_request",
+              "typed_config": {
+                "@type": "type.googleapis.com/envoy.extensions.load_balancing_policies.least_request.v3.LeastRequest",
+                "locality_lb_config": {
+                  "locality_weighted_lb_config": {}
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

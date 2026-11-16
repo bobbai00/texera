@@ -1,0 +1,4 @@
+# Test-runner dependencies (host side). Pinned so a re-run resolves the same versions.
+pyiceberg[pyarrow]==0.10.0
+boto3==1.40.61
+requests==2.32.5

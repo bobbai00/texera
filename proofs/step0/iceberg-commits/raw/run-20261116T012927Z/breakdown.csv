@@ -1,0 +1,11 @@
+step,n,p50_ms,p95_ms
+texera_flush: loadTable + write file + newAppend commit (what each tick does),40,94.93,144.30
+loadTable,40,1.57,2.01
+loadTable + first S3 request on its new FileIO,40,3.83,4.66
+S3 HEAD on a held table's FileIO,40,0.69,0.97
+held table: write one 10-row data file (Parquet + signed PUT),40,14.47,24.59
+held table: newAppend commit (manifest + list + REST commit),40,83.33,108.05
+held table: write file + newAppend commit,40,99.60,125.39
+held table: newFastAppend commit,40,49.53,104.96
+held table: newAppend commit with commit.manifest-merge.enabled=false,40,73.23,99.44
+held table: catalog-only commit (property change),40,16.71,22.00

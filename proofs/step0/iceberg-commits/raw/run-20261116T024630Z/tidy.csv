@@ -1,0 +1,11 @@
+scenario,table,commits,data_files_before,manifests_before,snapshots_before,metadata_json_bytes_before,read_all_before_ms,compact_ms,files_compacted,rows_compacted,rewrite_manifests_ms,expire_ms,snapshots_expired,tidy_total_ms,data_files_after,manifests_after,snapshots_after,metadata_json_bytes_after,read_all_after_ms
+tidy,runtime_statistics,40,40,40,40,41525,195.90,278.61,40,400,60.81,119.03,37,458.44,1,1,5,14943,20.47
+tidy,runtime_statistics,80,41,41,45,56115,215.64,289.25,41,800,64.12,204.99,42,558.36,1,1,5,25483,26.09
+tidy,runtime_statistics,120,41,41,45,58824,173.49,279.24,41,1200,63.11,225.80,46,568.15,1,1,1,24241,30.80
+tidy,log,120,41,41,41,41999,150.46,235.96,41,41,60.39,161.67,42,458.02,1,1,1,11539,14.38
+tidy-50,runtime_statistics,50,50,50,50,52654,174.51,274.14,50,500,64.38,99.40,47,437.92,1,1,5,18251,18.91
+tidy-50,runtime_statistics,100,51,51,55,66609,298.83,509.74,51,1000,121.13,188.68,52,819.56,1,1,5,27466,31.45
+tidy-50,runtime_statistics,120,21,21,25,43153,137.15,191.30,21,1200,62.08,178.27,26,431.66,1,1,1,24241,31.68
+tidy-50,log,120,41,41,41,42003,147.06,326.33,41,41,62.33,193.84,42,582.51,1,1,1,11539,11.23
+no-tidy,runtime_statistics,120,120,21,120,117426,952.82,449.75,120,1200,60.97,331.17,121,841.89,1,1,1,24240,33.02
+no-tidy,log,120,41,41,41,42003,141.15,318.71,41,41,63.99,221.86,42,604.56,1,1,1,11538,16.97

@@ -1,0 +1,29 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+PASS lake_up: Lakekeeper 0.11.0 + Postgres + RustFS, warehouse with remote signing
+PASS benchmark_ran: sbt exit 0 after 1330s
+PASS no-tidy_rows_complete_ordered: 26 checkpoint reads and 2 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+PASS tidy_rows_complete_ordered: 26 checkpoint reads and 16 tidies; every full read returned all rows in commit order and the newest row matched the last commit
+PASS tidy_read_all_end_under_1s: whole day (28800 rows, 1 file) read through IcebergDocument in 485.8 ms after the final tidy
+FAIL tidy_read_all_every_checkpoint_under_1s: slowest checkpoint read 1665.7 ms at commit 2750 (151 files)
+FAIL tidy_read_all_worst_case_under_1s: slowest read right before a tidy 4859.8 ms at commit 1800 (201 files)
+PASS tidy_commit_latency_flat: commit p50 119.5 ms (commits 11-250) -> 118.8 ms (commits 2751-2880), p95 153.9 -> 198.9 ms (flat = p50 within 1.5x and p95 within 2x)
+PASS log_newest_row_tiny: newest state row (newest snapshot's file) at most 29.9 ms over the day, 133.4 ms through getCount+getRange; loadTable 5.2 ms; state commits p50/p95 110.9/206.6 ms (tiny = under 50 ms)
+FAIL log_read_all_tiny_untidied: whole log, 49 rows in 49 files (never tidied during the run), read through IcebergDocument in 272.3 ms (tiny = under 100 ms)
+PASS log_read_all_tiny_after_final_tidy: whole log after the end-of-run tidy (1 file) read in 15.3 ms (tiny = under 100 ms)
+PASS teardown_clean: no sce0ice container, volume or network left

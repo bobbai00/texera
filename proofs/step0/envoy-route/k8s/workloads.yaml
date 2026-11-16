@@ -1,0 +1,151 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Kubernetes mode, workloads: the authorization stub and two fake units in namespace sce0-envoy.
+# The image sce0env-py:step0 is built locally by run.sh; OrbStack's Kubernetes uses the same
+# Docker engine, so pods use it directly (imagePullPolicy: Never). On another cluster, push or
+# load the image first. The Secret unit-keys (keys unit-a, unit-b) is created by run.sh.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sce0-envoy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authz-stub
+  namespace: sce0-envoy
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: authz-stub }
+  template:
+    metadata:
+      labels: { app: authz-stub }
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+      - name: stub
+        image: sce0env-py:step0
+        imagePullPolicy: Never
+        args: ["/app/stub.py"]
+        env:
+        - { name: UNIT_A_NAME, value: unit-a }
+        - { name: UNIT_A_ADDR, value: "unit-a.sce0-envoy.svc.cluster.local:8080" }
+        - name: UNIT_A_KEY
+          valueFrom: { secretKeyRef: { name: unit-keys, key: unit-a } }
+        - { name: UNIT_B_NAME, value: unit-b }
+        - { name: UNIT_B_ADDR, value: "unit-b.sce0-envoy.svc.cluster.local:8080" }
+        - name: UNIT_B_KEY
+          valueFrom: { secretKeyRef: { name: unit-keys, key: unit-b } }
+        ports:
+        - { name: http, containerPort: 9000 }
+        readinessProbe:
+          httpGet: { path: /_stub/health, port: 9000 }
+          periodSeconds: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authz-stub
+  namespace: sce0-envoy
+spec:
+  selector: { app: authz-stub }
+  ports:
+  - { name: http, port: 9000, targetPort: 9000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unit-a
+  namespace: sce0-envoy
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: unit-a }
+  template:
+    metadata:
+      labels: { app: unit-a }
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+      - name: unit
+        image: sce0env-py:step0
+        imagePullPolicy: Never
+        args: ["/app/unit.py"]
+        env:
+        - { name: UNIT_NAME, value: unit-a }
+        - name: UNIT_KEY
+          valueFrom: { secretKeyRef: { name: unit-keys, key: unit-a } }
+        ports:
+        - { name: app, containerPort: 8080 }
+        - { name: admin, containerPort: 8081 }
+        readinessProbe:
+          httpGet: { path: /_admin/health, port: 8081 }
+          periodSeconds: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unit-a
+  namespace: sce0-envoy
+spec:
+  selector: { app: unit-a }
+  ports:
+  - { name: app, port: 8080, targetPort: 8080 }
+  - { name: admin, port: 8081, targetPort: 8081 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unit-b
+  namespace: sce0-envoy
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: unit-b }
+  template:
+    metadata:
+      labels: { app: unit-b }
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+      - name: unit
+        image: sce0env-py:step0
+        imagePullPolicy: Never
+        args: ["/app/unit.py"]
+        env:
+        - { name: UNIT_NAME, value: unit-b }
+        - name: UNIT_KEY
+          valueFrom: { secretKeyRef: { name: unit-keys, key: unit-b } }
+        ports:
+        - { name: app, containerPort: 8080 }
+        - { name: admin, containerPort: 8081 }
+        readinessProbe:
+          httpGet: { path: /_admin/health, port: 8081 }
+          periodSeconds: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unit-b
+  namespace: sce0-envoy
+spec:
+  selector: { app: unit-b }
+  ports:
+  - { name: app, port: 8080, targetPort: 8080 }
+  - { name: admin, port: 8081, targetPort: 8081 }

@@ -1,0 +1,7 @@
+scenario,table,objects,bytes,data_files,data_bytes,manifests,manifest_lists,metadata_files,metadata_bytes
+tidy,runtime_statistics,104,599620,1,25317,1,1,101,561933
+tidy,log,48,156407,1,2140,1,1,45,142447
+tidy-50,runtime_statistics,104,624651,1,25317,1,1,101,586966
+tidy-50,log,48,156680,1,2140,1,1,45,142717
+no-tidy,runtime_statistics,104,1127224,1,25317,1,1,101,1089538
+no-tidy,log,48,156582,1,2140,1,1,45,142619

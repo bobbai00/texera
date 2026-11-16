@@ -1,0 +1,76 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Docker Compose mode: Envoy, the authorization stub and two fake units on one network.
+# Only Envoy's listener and the admin/inspection ports are published, all on 127.0.0.1.
+# The units' app port (8080) is not published: the only way in is through Envoy.
+# Started by run.sh with ENVOY_CONFIG, UNIT_A_KEY and UNIT_B_KEY in the environment.
+name: sce0env
+
+services:
+  envoy:
+    image: envoyproxy/envoy:distroless-v1.36.4
+    container_name: sce0env-envoy
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    volumes:
+      - ${ENVOY_CONFIG:?}:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:19520:10080"   # the gateway clients use
+      - "127.0.0.1:19521:9901"    # Envoy admin (version, config_dump)
+    networks: [net]
+    depends_on: [stub, unit-a, unit-b]
+
+  stub:
+    image: sce0env-py:step0
+    container_name: sce0env-stub
+    command: ["/app/stub.py"]
+    environment:
+      UNIT_A_NAME: unit-a
+      UNIT_A_ADDR: sce0env-unit-a:8080
+      UNIT_A_KEY: ${UNIT_A_KEY:?}
+      UNIT_B_NAME: unit-b
+      UNIT_B_ADDR: sce0env-unit-b:8080
+      UNIT_B_KEY: ${UNIT_B_KEY:?}
+    ports:
+      - "127.0.0.1:19524:9000"    # the stub's call log for the checks
+    networks: [net]
+
+  unit-a:
+    image: sce0env-py:step0
+    container_name: sce0env-unit-a
+    command: ["/app/unit.py"]
+    environment:
+      UNIT_NAME: unit-a
+      UNIT_KEY: ${UNIT_A_KEY:?}
+    ports:
+      - "127.0.0.1:19522:8081"    # admin only
+    networks: [net]
+
+  unit-b:
+    image: sce0env-py:step0
+    container_name: sce0env-unit-b
+    command: ["/app/unit.py"]
+    environment:
+      UNIT_NAME: unit-b
+      UNIT_KEY: ${UNIT_B_KEY:?}
+    ports:
+      - "127.0.0.1:19523:8081"    # admin only
+    networks: [net]
+
+networks:
+  net:
+    name: sce0env-net

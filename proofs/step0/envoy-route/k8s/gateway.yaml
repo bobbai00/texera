@@ -1,0 +1,141 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Kubernetes mode, gateway: Envoy Gateway (Gateway API) in front of the units.
+# Same shape as Texera's chart (bin/k8s/templates/base/gateway): a SecurityPolicy's extAuth
+# asks the Dashboard-like stub, and the route's backend is a DynamicResolver Backend, which
+# sends the request wherever the (rewritten) Host header points.
+#
+# GatewayClass is cluster-scoped and has its own name, so run.sh deletes it explicitly;
+# everything else lives in namespace sce0-envoy and goes with it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: sce0-envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+# Envoy's Service stays ClusterIP: the checks reach it through kubectl port-forward on
+# 127.0.0.1, so nothing is published on the host's other interfaces.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: sce0-proxy
+  namespace: sce0-envoy
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: sce0-gw
+  namespace: sce0-envoy
+spec:
+  gatewayClassName: sce0-envoy
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: sce0-proxy
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 8080
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: units-dynamic
+  namespace: sce0-envoy
+spec:
+  type: DynamicResolver
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: units
+  namespace: sce0-envoy
+spec:
+  parentRefs:
+  - name: sce0-gw
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: /api/units }
+    - path: { type: PathPrefix, value: /wsapi/units }
+    filters:
+    # Applied when the request is forwarded, after extAuth has read the login.
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        remove: [Authorization, Cookie]
+    timeouts:
+      request: "0s"   # a result export may stream for longer than Envoy's 15s default
+    backendRefs:
+    - group: gateway.envoyproxy.io
+      kind: Backend
+      name: units-dynamic
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: units-ext-auth
+  namespace: sce0-envoy
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: units
+  extAuth:
+    failOpen: false
+    # Sent to the check besides the defaults (Host, Method, Path, Content-Length, Authorization):
+    # a browser WebSocket can carry the login only in a cookie.
+    headersToExtAuth:
+    - Cookie
+    http:
+      backendRefs:
+      - name: authz-stub
+        port: 9000
+      path: /authz
+      # Headers of a 200 answer that replace the request's before it goes to the unit.
+      headersToBackend:
+      - Host
+      - X-Texera-Unit-Key
+      - X-Texera-User
+---
+# Drop client-supplied unit headers before anything reads them (HCM early header mutation).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: strip-unit-headers
+  namespace: sce0-envoy
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: sce0-gw
+  headers:
+    earlyRequestHeaders:
+      remove:
+      - X-Texera-Unit-Key
+      - X-Texera-Unit-Address
+      - X-Texera-User
