@@ -60,4 +60,26 @@ class ResultSchemaSpec extends AnyFlatSpec with Matchers {
     schema.getAttributeNames shouldBe List("message")
     schema.getAttribute("message").getType shouldBe AttributeType.STRING
   }
+
+  "ResultSchema.executionPlanSchema" should "declare the plan table's columns in order" in {
+    val schema = ResultSchema.executionPlanSchema
+    schema.getAttributeNames shouldBe List(
+      "entryId",
+      "kind",
+      "formatVersion",
+      "body",
+      "logical",
+      "createdAt",
+      "createdBy",
+      "computingUnitId",
+      "notification"
+    )
+    List("entryId", "kind", "body", "logical", "notification").foreach(name =>
+      schema.getAttribute(name).getType shouldBe AttributeType.STRING
+    )
+    List("formatVersion", "createdBy", "computingUnitId").foreach(name =>
+      schema.getAttribute(name).getType shouldBe AttributeType.INTEGER
+    )
+    schema.getAttribute("createdAt").getType shouldBe AttributeType.TIMESTAMP
+  }
 }

@@ -97,6 +97,60 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     assert(resourceType == VFSResourceType.CONSOLE_MESSAGES)
   }
 
+  "VFSURIFactory.createPlanURI" should "name the execution's plan table without an operator or a port" in {
+    val uri = VFSURIFactory.createPlanURI(WorkflowIdentity(12L), ExecutionIdentity(345L))
+    assert(uri.toString == "vfs:///wid/12/eid/345/plan")
+
+    val components = VFSURIFactory.decodeURI(uri)
+    assert(components.resourceType == VFSResourceType.PLAN)
+    assert(components.workflowId == WorkflowIdentity(12L))
+    assert(components.executionId == ExecutionIdentity(345L))
+    assert(components.globalPortId.isEmpty)
+    assert(components.warehouse.isEmpty)
+  }
+
+  it should "put the warehouse in a leading segment and decode it back" in {
+    val uri =
+      VFSURIFactory.createPlanURI(WorkflowIdentity(12L), ExecutionIdentity(345L), Some("user-1-7"))
+    assert(uri.toString == "vfs:///wh/user-1-7/wid/12/eid/345/plan")
+
+    val components = VFSURIFactory.decodeURI(uri)
+    assert(components.resourceType == VFSResourceType.PLAN)
+    assert(components.workflowId == WorkflowIdentity(12L))
+    assert(components.executionId == ExecutionIdentity(345L))
+    assert(components.warehouse.contains("user-1-7"))
+  }
+
+  it should "reject a warehouse name that is not safe as a URI path segment" in {
+    assertThrows[IllegalArgumentException] {
+      VFSURIFactory.createPlanURI(workflowId, executionId, Some("a/b"))
+    }
+  }
+
+  "A plan URI" should "not be taken for another resource type, nor another type's URI for a plan" in {
+    val planUri = VFSURIFactory.createPlanURI(workflowId, executionId)
+    assert(VFSURIFactory.decodeURI(planUri).resourceType == VFSResourceType.PLAN)
+
+    val baseURI = VFSURIFactory.createPortBaseURI(workflowId, executionId, portId)
+    val otherTypes = Seq(
+      VFSURIFactory.resultURI(baseURI) -> VFSResourceType.RESULT,
+      VFSURIFactory.stateURI(baseURI) -> VFSResourceType.STATE,
+      VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId) ->
+        VFSResourceType.RUNTIME_STATISTICS,
+      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, operatorId) ->
+        VFSResourceType.CONSOLE_MESSAGES,
+      // An operator named "plan" still names a console-messages table.
+      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, OperatorIdentity("plan")) ->
+        VFSResourceType.CONSOLE_MESSAGES
+    )
+    otherTypes.foreach {
+      case (uri, resourceType) =>
+        withClue(s"$uri: ") {
+          assert(VFSURIFactory.decodeURI(uri).resourceType == resourceType)
+        }
+    }
+  }
+
   "VFSURIFactory.decodeURI" should "reject URIs with a non-vfs scheme" in {
     assertThrows[IllegalArgumentException] {
       VFSURIFactory.decodeURI(new URI("http:///wid/1/eid/1/result"))

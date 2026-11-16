@@ -32,7 +32,8 @@ import org.apache.texera.amber.core.tuple.{Schema, Tuple}
 import org.apache.texera.amber.util.IcebergUtil
 import org.apache.iceberg.catalog.TableIdentifier
 import org.apache.iceberg.data.Record
-import org.apache.iceberg.{Schema => IcebergSchema}
+import org.apache.iceberg.exceptions.{NoSuchNamespaceException, NoSuchTableException}
+import org.apache.iceberg.{Table, Schema => IcebergSchema}
 
 import java.net.URI
 
@@ -49,6 +50,7 @@ object DocumentFactory {
       case CONSOLE_MESSAGES   => StorageConfig.icebergTableConsoleMessagesNamespace
       case RUNTIME_STATISTICS => StorageConfig.icebergTableRuntimeStatisticsNamespace
       case STATE              => StorageConfig.icebergTableStateNamespace
+      case PLAN               => StorageConfig.icebergTablePlanNamespace
       case _ =>
         throw new IllegalArgumentException(s"Resource type $resourceType is not supported")
     }
@@ -153,6 +155,53 @@ object DocumentFactory {
         )
     }
   }
+
+  /**
+    * The Iceberg table a VFS URI resolves to, loaded from its warehouse's catalog, or None
+    * when the catalog has no such table, or no such namespace. Any other failure to load it,
+    * such as a catalog that cannot answer, is thrown, so it is never taken for a missing table
+    * (`IcebergUtil.loadTableMetadata` reads every failure as None). For the storage layer's own
+    * use of Iceberg features that a document does not expose, such as the tag that marks an
+    * execution's plan started.
+    *
+    * @throws UnsupportedOperationException if the URI scheme is not `vfs`.
+    */
+  private[storage] def icebergTableOf(uri: URI): Option[Table] =
+    uri.getScheme match {
+      case VFS_FILE_URI_SCHEME =>
+        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
+        val catalog = IcebergCatalogInstance.getInstance(warehouse)
+        try Some(catalog.loadTable(TableIdentifier.of(namespace, storageKey)))
+        catch {
+          case _: NoSuchTableException | _: NoSuchNamespaceException => None
+        }
+      case unsupportedScheme =>
+        throw new UnsupportedOperationException(
+          s"Unsupported URI scheme: $unsupportedScheme for loading the table"
+        )
+    }
+
+  /**
+    * Drops the Iceberg table a VFS URI resolves to, with its rows and its tags.
+    *
+    * @return false when there was no such table, or no such namespace. Any other failure, such
+    *         as a catalog that cannot answer, is thrown, so it is never taken for a missing table.
+    * @throws UnsupportedOperationException if the URI scheme is not `vfs`.
+    */
+  private[storage] def dropTable(uri: URI): Boolean =
+    uri.getScheme match {
+      case VFS_FILE_URI_SCHEME =>
+        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
+        val catalog = IcebergCatalogInstance.getInstance(warehouse)
+        try catalog.dropTable(TableIdentifier.of(namespace, storageKey))
+        catch {
+          case _: NoSuchNamespaceException => false
+        }
+      case unsupportedScheme =>
+        throw new UnsupportedOperationException(
+          s"Unsupported URI scheme: $unsupportedScheme for dropping the table"
+        )
+    }
 
   /**
     * Return the document at `uri`: when `reuseExisting` is set and a document

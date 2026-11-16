@@ -121,6 +121,19 @@ class TestCreateDocumentNamespaceRouting:
             DocumentFactory.create_document(VFS_URI, schema)
 
 
+def test_plan_uri_has_no_namespace_on_the_python_side(schema):
+    # An execution's plan table is the Scala side's alone; the URI decodes here
+    # but no Python entry point reaches a catalog with it.
+    plan_uri = "vfs:///wid/12/eid/345/plan"
+    for operation in (
+        lambda: DocumentFactory.create_document(plan_uri, schema),
+        lambda: DocumentFactory.open_document(plan_uri),
+        lambda: DocumentFactory.document_exists(plan_uri),
+    ):
+        with pytest.raises(ValueError, match="not supported"):
+            operation()
+
+
 def test_create_document_rejects_non_vfs_scheme(schema):
     # Match the per-site suffix, not the shared "Unsupported URI scheme"
     # prefix: all three entry points raise NotImplementedError with that same

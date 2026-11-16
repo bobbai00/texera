@@ -118,11 +118,27 @@ class TestDecodeUriRoundTrip:
         [
             ("runtimestatistics", VFSResourceType.RUNTIME_STATISTICS),
             ("consolemessages", VFSResourceType.CONSOLE_MESSAGES),
+            ("plan", VFSResourceType.PLAN),
         ],
     )
     def test_scala_resource_type_wire_format_decodes(self, suffix, resource_type):
         uri = f"vfs:///wid/11/eid/22/{suffix}"
         assert VFSURIFactory.decode_uri(uri).resource_type == resource_type
+
+    def test_plan_uri_decodes_with_its_ids_and_no_port(self):
+        # The URI VFSURIFactory.createPlanURI (Scala) writes for an execution's plan.
+        components = VFSURIFactory.decode_uri("vfs:///wid/12/eid/345/plan")
+        assert components.resource_type == VFSResourceType.PLAN
+        assert components.workflow_id.id == 12
+        assert components.execution_id.id == 345
+        assert components.global_port_id is None
+        assert components.warehouse is None
+
+    def test_operator_named_plan_does_not_make_a_plan_uri(self):
+        components = VFSURIFactory.decode_uri(
+            "vfs:///wid/12/eid/345/opid/plan/consolemessages"
+        )
+        assert components.resource_type == VFSResourceType.CONSOLE_MESSAGES
 
 
 class TestDecodeUriErrorPaths:
@@ -216,6 +232,13 @@ class TestWarehouseInDecodedUri:
         )
         assert "/wh/" not in uri
         assert VFSURIFactory.decode_uri(VFSURIFactory.result_uri(uri)).warehouse is None
+
+    def test_decodes_a_warehouse_scoped_plan_uri(self):
+        components = VFSURIFactory.decode_uri("vfs:///wh/user-1-7/wid/12/eid/345/plan")
+        assert components.resource_type == VFSResourceType.PLAN
+        assert components.workflow_id.id == 12
+        assert components.execution_id.id == 345
+        assert components.warehouse == "user-1-7"
 
     def test_decode_round_trips_a_warehouse_scoped_uri(self):
         # The leading /wh/<name> segment must not break decode_uri, which finds

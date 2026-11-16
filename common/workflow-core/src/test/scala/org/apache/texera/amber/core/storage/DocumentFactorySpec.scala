@@ -25,6 +25,8 @@ import org.apache.texera.amber.core.storage.model.{
   ReadonlyLocalFileDocument,
   VirtualDocument
 }
+import org.apache.iceberg.catalog.TableIdentifier
+import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.result.iceberg.IcebergDocument
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -34,6 +36,8 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.util.IcebergUtil
+import org.apache.texera.common.config.StorageConfig
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -322,5 +326,70 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       DocumentFactory.openDocument(freshResultURI())
     }
     thrown.getMessage should include("No storage is found")
+  }
+
+  // ---------------------------------------------------------------------------
+  // plan tables
+  // ---------------------------------------------------------------------------
+
+  "createDocument" should "keep an execution's plan in the plan namespace, in a table named after its workflow and execution, with or without a warehouse" in {
+    val planTable =
+      TableIdentifier.of(StorageConfig.icebergTablePlanNamespace, "wid_12_eid_345_plan")
+    Seq(None, Some("wh-test")).foreach { warehouse =>
+      val planUri =
+        VFSURIFactory.createPlanURI(WorkflowIdentity(12), ExecutionIdentity(345), warehouse)
+      val catalog = IcebergCatalogInstance.getInstance(warehouse)
+      if (catalog.tableExists(planTable)) catalog.dropTable(planTable)
+
+      DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)
+
+      withClue(s"$planUri: ") {
+        catalog.tableExists(planTable) shouldBe true
+        DocumentFactory.documentExists(planUri) shouldBe true
+      }
+    }
+  }
+
+  "icebergTableOf" should "load the table a vfs URI names" in {
+    val planUri = VFSURIFactory.createPlanURI(WorkflowIdentity(13), ExecutionIdentity(346))
+    DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)
+
+    val table = DocumentFactory.icebergTableOf(planUri)
+    table shouldBe defined
+    table.get.name() should endWith(
+      s"${StorageConfig.icebergTablePlanNamespace}.wid_13_eid_346_plan"
+    )
+    IcebergUtil.fromIcebergSchema(table.get.schema()) shouldBe ResultSchema.executionPlanSchema
+  }
+
+  it should "find nothing where there is no table" in {
+    DocumentFactory.icebergTableOf(freshResultURI()) shouldBe None
+    DocumentFactory.icebergTableOf(
+      VFSURIFactory.createPlanURI(WorkflowIdentity(14), ExecutionIdentity(347))
+    ) shouldBe None
+  }
+
+  it should "reject an unsupported scheme" in {
+    val thrown = intercept[UnsupportedOperationException] {
+      DocumentFactory.icebergTableOf(new URI("file:///tmp/x"))
+    }
+    thrown.getMessage should include("loading the table")
+  }
+
+  "dropTable" should "drop the table a vfs URI names, and say whether there was one" in {
+    val planUri = VFSURIFactory.createPlanURI(WorkflowIdentity(15), ExecutionIdentity(348))
+    DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)
+
+    DocumentFactory.dropTable(planUri) shouldBe true
+    DocumentFactory.documentExists(planUri) shouldBe false
+    DocumentFactory.icebergTableOf(planUri) shouldBe None
+    DocumentFactory.dropTable(planUri) shouldBe false
+  }
+
+  it should "reject an unsupported scheme" in {
+    val thrown = intercept[UnsupportedOperationException] {
+      DocumentFactory.dropTable(new URI("file:///tmp/x"))
+    }
+    thrown.getMessage should include("dropping the table")
   }
 }

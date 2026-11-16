@@ -39,4 +39,20 @@ object ResultSchema {
   val consoleMessagesSchema: Schema = new Schema(
     new Attribute("message", AttributeType.STRING)
   )
+
+  /**
+    * An execution's plan table (see `ExecutionPlanStore`): one plan row written when the
+    * execution is created, then one row per change to one of its paused operators.
+    */
+  val executionPlanSchema: Schema = new Schema(
+    new Attribute("entryId", AttributeType.STRING),
+    new Attribute("kind", AttributeType.STRING),
+    new Attribute("formatVersion", AttributeType.INTEGER),
+    new Attribute("body", AttributeType.STRING),
+    new Attribute("logical", AttributeType.STRING),
+    new Attribute("createdAt", AttributeType.TIMESTAMP),
+    new Attribute("createdBy", AttributeType.INTEGER),
+    new Attribute("computingUnitId", AttributeType.INTEGER),
+    new Attribute("notification", AttributeType.STRING)
+  )
 }

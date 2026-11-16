@@ -35,6 +35,8 @@ object VFSResourceType extends Enumeration {
   val RUNTIME_STATISTICS: Value = Value("runtimeStatistics")
   val CONSOLE_MESSAGES: Value = Value("consoleMessages")
   val STATE: Value = Value("state")
+  // An execution's stored plan, the updates to its paused operators and its start claim.
+  val PLAN: Value = Value("plan")
 }
 
 /**
@@ -190,6 +192,18 @@ object VFSURIFactory {
       warehouse = warehouse
     )
   }
+
+  /**
+    * Create a URI pointing to an execution's plan table:
+    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/plan`. One table per execution, so the URI
+    * names no operator.
+    */
+  def createPlanURI(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      warehouse: Option[String] = None
+  ): URI =
+    createNonResultVFSURI(VFSResourceType.PLAN, workflowId, executionId, warehouse = warehouse)
 
   /**
     * Create a URI pointing to console messages

@@ -36,6 +36,9 @@ class VFSResourceType(str, Enum):
     RUNTIME_STATISTICS = "runtimestatistics"
     CONSOLE_MESSAGES = "consolemessages"
     STATE = "state"
+    # An execution's plan table. Written and read on the Scala side only; listed so
+    # both languages decode the same URIs.
+    PLAN = "plan"
 
 
 # See VFSURIFactory._is_valid_warehouse_name.
