@@ -19,16 +19,24 @@
 
 package org.apache.texera.amber.engine.architecture.scheduling
 
+import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.amber.core.workflow.{
+  CostHints,
   ExecutionMode,
   PhysicalPlan,
   PortIdentity,
   WorkflowContext,
   WorkflowSettings
 }
+import org.apache.texera.amber.engine.architecture.coordinator.Workflow
+import org.apache.texera.amber.engine.architecture.scheduling.DefaultCostEstimator.DEFAULT_OPERATOR_COST
 import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
 import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.aggregate.AggregationFunction
+import org.apache.texera.amber.operator.hashJoin.HashJoinOpDesc
+import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
+import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.flatspec.AnyFlatSpec
@@ -36,6 +44,58 @@ import org.scalatest.flatspec.AnyFlatSpec
 import scala.jdk.CollectionConverters._
 
 class CostBasedScheduleGeneratorSpec extends AnyFlatSpec with MockFactory {
+
+  /** A run's context with `hints`, as a run's web layer would set it up. */
+  private def contextWith(
+      hints: Option[CostHints],
+      settings: WorkflowSettings = WorkflowSettings()
+  ): WorkflowContext = {
+    val context = new WorkflowContext(workflowSettings = settings)
+    context.costHints = hints
+    context
+  }
+
+  /** The csv->->filter->join->filter2 workflow of these operators, made to run under `context`. */
+  private def csvFilterJoinFilter(
+      csv: CSVScanSourceOpDesc,
+      keyword: KeywordSearchOpDesc,
+      join: HashJoinOpDesc[String],
+      keyword2: KeywordSearchOpDesc,
+      context: WorkflowContext
+  ): Workflow =
+    buildWorkflow(
+      List(csv, keyword, join, keyword2),
+      List(
+        LogicalLink(
+          csv.operatorIdentifier,
+          PortIdentity(),
+          join.operatorIdentifier,
+          PortIdentity()
+        ),
+        LogicalLink(
+          csv.operatorIdentifier,
+          PortIdentity(),
+          keyword.operatorIdentifier,
+          PortIdentity()
+        ),
+        LogicalLink(
+          keyword.operatorIdentifier,
+          PortIdentity(),
+          join.operatorIdentifier,
+          PortIdentity(1)
+        ),
+        LogicalLink(
+          join.operatorIdentifier,
+          PortIdentity(),
+          keyword2.operatorIdentifier,
+          PortIdentity()
+        )
+      ),
+      context
+    )
+
+  private def generatorFor(workflow: Workflow): CostBasedScheduleGenerator =
+    new CostBasedScheduleGenerator(workflow.context, workflow.physicalPlan, COORDINATOR)
 
   "CostBasedRegionPlanGenerator" should "finish bottom-up search using different pruning techniques with correct number of states explored in csv->->filter->join->filter2 workflow" in {
     val headerlessCsvOpDesc1 = TestOperators.headerlessSmallCsvScanOpDesc()
@@ -675,6 +735,132 @@ class CostBasedScheduleGeneratorSpec extends AnyFlatSpec with MockFactory {
 
     // The chosen state is a set of materialized non-blocking edges, all of which must be links of the physical plan.
     assert(greedyResult.state.subsetOf(scheduleGenerator.physicalPlan.links))
+  }
+
+  // The run's cost hints reach the cost model through the run's context, as the plan saved them.
+
+  "CostBasedScheduleGenerator" should "explore the states it explores without cost hints when its run has them" in {
+    // A global search visits every state its pruning leaves, whatever a state costs: the hints
+    // change what the plans it finds cost, not which states it explores.
+    val csv = TestOperators.headerlessSmallCsvScanOpDesc()
+    val keyword = TestOperators.keywordSearchOpDesc("column-1", "Asia")
+    val join = TestOperators.joinOpDesc("column-1", "column-1")
+    val keyword2 = TestOperators.keywordSearchOpDesc("column-1", "Asia")
+    val hints = CostHints(
+      ExecutionIdentity(7),
+      Map(
+        csv.operatorIdentifier.id -> 100.25,
+        keyword.operatorIdentifier.id -> 10.5,
+        join.operatorIdentifier.id -> 1000.75,
+        keyword2.operatorIdentifier.id -> 0.125
+      )
+    )
+    val withoutHints = csvFilterJoinFilter(csv, keyword, join, keyword2, contextWith(None))
+    val withHints = csvFilterJoinFilter(csv, keyword, join, keyword2, contextWith(Some(hints)))
+    assert(withHints.context.costHints.contains(hints))
+
+    def statesExplored(workflow: Workflow): Seq[Int] =
+      Seq(
+        generatorFor(workflow).bottomUpSearch(
+          globalSearch = true,
+          oChains = false,
+          oCleanEdges = false,
+          oEarlyStop = false
+        ),
+        generatorFor(workflow)
+          .bottomUpSearch(globalSearch = true, oCleanEdges = false, oEarlyStop = false),
+        generatorFor(workflow)
+          .bottomUpSearch(globalSearch = true, oChains = false, oEarlyStop = false),
+        generatorFor(workflow)
+          .bottomUpSearch(globalSearch = true, oChains = false, oCleanEdges = false),
+        generatorFor(workflow).bottomUpSearch(globalSearch = true),
+        generatorFor(workflow)
+          .topDownSearch(globalSearch = true, oChains = false, oCleanEdges = false),
+        generatorFor(workflow).topDownSearch(globalSearch = true, oCleanEdges = false),
+        generatorFor(workflow).topDownSearch(globalSearch = true, oChains = false),
+        generatorFor(workflow).topDownSearch(globalSearch = true)
+      ).map(_.numStatesExplored)
+
+    // the counts the bottom-up and top-down cases above pin
+    val expected = Seq(16, 6, 8, 6, 3, 16, 8, 8, 4)
+    assert(statesExplored(withoutHints) == expected)
+    assert(statesExplored(withHints) == expected)
+  }
+
+  it should "cost the plan a search finds by the cost hints of its run" in {
+    val csv = TestOperators.headerlessSmallCsvScanOpDesc()
+    val keyword = TestOperators.keywordSearchOpDesc("column-1", "Asia")
+    val join = TestOperators.joinOpDesc("column-1", "column-1")
+    val keyword2 = TestOperators.keywordSearchOpDesc("column-1", "Asia")
+    // Eighths, so a sum is the same in any order.
+    val seconds = Map(
+      csv.operatorIdentifier.id -> 100.25,
+      keyword.operatorIdentifier.id -> 10.5,
+      join.operatorIdentifier.id -> 1000.75,
+      keyword2.operatorIdentifier.id -> 0.125
+    )
+    val withHints = csvFilterJoinFilter(
+      csv,
+      keyword,
+      join,
+      keyword2,
+      contextWith(Some(CostHints(ExecutionIdentity(7), seconds)))
+    )
+
+    val result = generatorFor(withHints).bottomUpSearch(globalSearch = true)
+
+    // Each region costs its longest-running operator, and the plan the sum of its regions.
+    val regions = result.regionDAG.vertexSet().asScala.toSeq
+    assert(regions.nonEmpty)
+    val longest = regions.map(region =>
+      region.getOperators.toSeq
+        .map(op => seconds.getOrElse(op.id.logicalOpId.id, DEFAULT_OPERATOR_COST))
+        .max
+    )
+    assert(result.cost == longest.sum)
+    // ...and not the number of stored ports it costs without hints
+    val withoutHints = csvFilterJoinFilter(csv, keyword, join, keyword2, contextWith(None))
+    assert(result.cost != generatorFor(withoutHints).bottomUpSearch(globalSearch = true).cost)
+  }
+
+  it should "cost a fully materialized plan by the hinted seconds of each of its operators" in {
+    val csv = TestOperators.smallCsvScanOpDesc()
+    val keyword = TestOperators.keywordSearchOpDesc("Region", "Asia")
+    val count =
+      TestOperators.aggregateAndGroupByDesc("Region", AggregationFunction.COUNT, List[String]())
+    val seconds = Map(
+      csv.operatorIdentifier.id -> 0.5,
+      keyword.operatorIdentifier.id -> 0.25,
+      count.operatorIdentifier.id -> 4.0
+    )
+    val workflow = buildWorkflow(
+      List(csv, keyword, count),
+      List(
+        LogicalLink(
+          csv.operatorIdentifier,
+          PortIdentity(),
+          keyword.operatorIdentifier,
+          PortIdentity()
+        ),
+        LogicalLink(
+          keyword.operatorIdentifier,
+          PortIdentity(),
+          count.operatorIdentifier,
+          PortIdentity()
+        )
+      ),
+      contextWith(
+        Some(CostHints(ExecutionIdentity(7), seconds)),
+        WorkflowSettings(dataTransferBatchSize = 400, executionMode = ExecutionMode.MATERIALIZED)
+      )
+    )
+
+    val result = generatorFor(workflow).getFullyMaterializedSearchState
+
+    // One region per physical operator; both of the count's (local and global) cost what it took.
+    assert(workflow.physicalPlan.operators.size == 4)
+    assert(result.regionDAG.vertexSet().size() == 4)
+    assert(result.cost == 0.5 + 0.25 + 4.0 + 4.0)
   }
 
 }

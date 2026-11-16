@@ -65,8 +65,8 @@ import scala.concurrent.duration._
   *     fatal error is reported to the client.
   *
   * A real `Coordinator` is constructible here: `WorkflowScheduler.updateSchedule`
-  * needs no database (`DefaultCostEstimator` swallows an uninitialised
-  * `SqlServer`), and `SessionState.getAllSessionStates` is empty in a unit JVM so
+  * needs no database (`DefaultCostEstimator` takes past statistics from the
+  * run's context), and `SessionState.getAllSessionStates` is empty in a unit JVM so
   * the region fan-out is a no-op. Replay/checkpoint storage is the in-memory
   * `ram://` VFS also used by `LoggingSpec`, with a distinct folder per case
   * because the VFS manager is a JVM-wide singleton.

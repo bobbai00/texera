@@ -19,20 +19,12 @@
 
 package org.apache.texera.amber.engine.architecture.scheduling
 
-import org.apache.texera.amber.core.storage.DocumentFactory
-import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.WorkflowContext
+import org.apache.texera.amber.core.workflow.{CostHints, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.scheduling.DefaultCostEstimator.DEFAULT_OPERATOR_COST
 import org.apache.texera.amber.engine.architecture.scheduling.config.ResourceConfig
 import org.apache.texera.amber.engine.architecture.scheduling.resourcePolicies.ResourceAllocator
 import org.apache.texera.amber.engine.common.AmberLogging
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.SqlServer.withTransaction
-import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
-
-import java.net.URI
-import scala.util.{Failure, Success, Try}
 
 /**
   * A cost estimator should estimate a cost of running a region under the given resource constraints as units.
@@ -54,9 +46,11 @@ object DefaultCostEstimator {
 }
 
 /**
-  * A default cost estimator using past statistics. If past statistics of a workflow are available, the cost of a region
-  * is the execution time of its longest-running operator. Otherwise the cost is the number of materialized ports in the
-  * region.
+  * A default cost estimator using past statistics: the run's cost hints ([[WorkflowContext.costHints]]), how long
+  * each logical operator took in an earlier execution of the workflow, which the plan to run was saved with. With
+  * them, the cost of a region is the execution time of its longest-running operator, an operator they do not name
+  * costing [[DefaultCostEstimator.DEFAULT_OPERATOR_COST]]. Without them, the cost is the number of materialized ports
+  * in the region. The estimator reads no statistics itself.
   */
 class DefaultCostEstimator(
     workflowContext: WorkflowContext,
@@ -65,23 +59,24 @@ class DefaultCostEstimator(
 ) extends CostEstimator
     with AmberLogging {
 
-  // Requires mysql database to retrieve execution statistics, otherwise use number of materialized ports as a default.
-  private val operatorEstimatedTimeOption = Try(
-    this.getOperatorExecutionTimeInSeconds(
-      this.workflowContext.workflowId.id
-    )
-  ) match {
-    case Failure(_)      => None
-    case Success(result) => result
-  }
+  // The run's past statistics; hints that name no operator are none.
+  private val pastStatistics: Option[CostHints] =
+    workflowContext.costHints.filter(_.secondsByLogicalOperator.nonEmpty)
 
-  operatorEstimatedTimeOption match {
+  private val operatorEstimatedTimeOption: Option[Map[String, Double]] =
+    pastStatistics.map(_.secondsByLogicalOperator)
+
+  pastStatistics match {
     case None =>
       logger.info(
         s"WID: ${workflowContext.workflowId.id}, EID: ${workflowContext.executionId.id}, " +
           s"no past execution statistics available. Using number of materialized output ports as the cost. "
       )
-    case Some(_) =>
+    case Some(hints) =>
+      logger.info(
+        s"WID: ${workflowContext.workflowId.id}, EID: ${workflowContext.executionId.id}, " +
+          s"using the statistics of execution ${hints.sourceExecutionId.id} for the cost."
+      )
   }
 
   override def allocateResourcesAndEstimateCost(
@@ -110,56 +105,5 @@ class DefaultCostEstimator(
         resourceConfig.portConfigs.size
     }
     (resourceConfig, cost)
-  }
-
-  /**
-    * Retrieve the latest successful execution to get statistics to calculate costs in DefaultCostEstimator.
-    * Using the total control processing time plus data processing time of an operator as its cost.
-    * If no past statistics are available (e.g., first execution), return None.
-    */
-  private def getOperatorExecutionTimeInSeconds(
-      wid: Long
-  ): Option[Map[String, Double]] = {
-
-    val uriString: String = withTransaction(
-      SqlServer
-        .getInstance()
-        .createDSLContext()
-    ) { context =>
-      context
-        .select(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-        .from(WORKFLOW_EXECUTIONS)
-        .join(WORKFLOW_VERSION)
-        .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
-        .where(
-          WORKFLOW_VERSION.WID
-            .eq(wid.toInt)
-            .and(WORKFLOW_EXECUTIONS.STATUS.eq(3.toByte))
-        )
-        .orderBy(WORKFLOW_EXECUTIONS.STARTING_TIME.desc())
-        .limit(1)
-        .fetchOneInto(classOf[String])
-    }
-
-    if (uriString == null || uriString.isEmpty) {
-      None
-    } else {
-      val uri: URI = new URI(uriString)
-      val document = DocumentFactory.openDocument(uri)
-
-      val maxStats = document._1
-        .get()
-        .foldLeft(Map.empty[String, Double]) { (acc, tuple) =>
-          val record = tuple.asInstanceOf[Tuple]
-          val operatorId = record.getField(0).asInstanceOf[String]
-          val dataProcessingTime = record.getField(6).asInstanceOf[Long]
-          val controlProcessingTime = record.getField(7).asInstanceOf[Long]
-          val currentMaxTime = acc.getOrElse(operatorId, 0.0)
-          val newTime = (dataProcessingTime + controlProcessingTime) / 1e9
-          acc + (operatorId -> Math.max(currentMaxTime, newTime))
-        }
-
-      if (maxStats.isEmpty) None else Some(maxStats)
-    }
   }
 }

@@ -62,6 +62,7 @@ import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
+import org.apache.texera.web.service.execution.CostHintsLoader
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
@@ -230,6 +231,9 @@ class WorkflowService(
     new WorkflowContext(workflowId = workflowId, cuid = Some(computingUnitId))
   }
 
+  // Finds a run's cost hints. A seam, so a test can see which hints a new run is given.
+  protected def costHintsLoader: CostHintsLoader = CostHintsLoader
+
   def initExecutionService(
       req: WorkflowExecuteRequest,
       userOpt: Option[User],
@@ -260,6 +264,9 @@ class WorkflowService(
 
       val workflowContext: WorkflowContext = createWorkflowContext()
       workflowContext.warehouse = warehouseName
+      // How long each operator took in the user's newest completed run of the workflow, for the
+      // scheduler's cost model: saved with the plan, which the engine takes them from.
+      workflowContext.costHints = costHintsLoader.load(workflowId.id, uid)
       var coordinatorConf = CoordinatorConfig.default
 
       // clean up results from previous run

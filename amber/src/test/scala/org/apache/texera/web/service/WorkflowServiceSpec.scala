@@ -21,8 +21,12 @@ package org.apache.texera.web.service
 
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.texera.amber.core.storage.result.{OperatorResultMetadata, WorkflowResultStore}
-import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{CostHints, WorkflowContext, WorkflowSettings}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
   COMPLETED,
@@ -31,6 +35,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
@@ -62,6 +67,7 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowStateEvent
 }
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
+import org.apache.texera.web.service.execution.CostHintsLoader
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
@@ -89,6 +95,13 @@ import scala.collection.mutable.ArrayBuffer
   *   - `resultService`, so that the third line of `unsubscribeAll` is pinned. A real
   *     `ExecutionResultService` holds no subscriptions until `attachToExecution` gives it a live
   *     Amber client, so "unsubscribed" would be indistinguishable from "never called".
+  *
+  * The cost-hints cases also stub `costHintsLoader`, to see which hints a new run's context is
+  * given: the real loader reads statistics from the lake, and `CostHintsLoaderSpec` covers it.
+  * Every other case keeps the real one, which finds no completed run with statistics here. Two of
+  * the cost-hints cases run `initExecutionService` end to end, stopped as the clean-up cases below
+  * are. The cost-hints cases run only while per-user warehouses are off, as they are in CI: their
+  * requests pick no warehouse, and the refusal they expect of a pick is the one of that setting.
   *
   * Executions are real `WorkflowExecutionService` instances with `coordinatorConfig`/`resultService`
   * passed as `null` (the pattern `WorkflowExecutionServiceSpec` establishes: construction does no
@@ -209,12 +222,28 @@ class WorkflowServiceSpec
     }
   }
 
-  private final class TestWorkflowService(id: Long, cuid: Int = 1)
-      extends WorkflowService(WorkflowIdentity(id), computingUnitId = cuid, cleanUpTimeoutSecs) {
+  /** Gives every run `hints`, and records the workflow and user each run asks them for. */
+  private final class RecordingCostHintsLoader(hints: Option[CostHints])
+      extends CostHintsLoader(cacheCapacity = 1) {
+    val asked: ArrayBuffer[(Long, Int)] = ArrayBuffer.empty
+
+    override def load(wid: Long, uid: Int): Option[CostHints] = {
+      asked += ((wid, uid))
+      hints
+    }
+  }
+
+  private final class TestWorkflowService(
+      id: Long,
+      cuid: Int = 1,
+      hintsLoader: Option[CostHintsLoader] = None
+  ) extends WorkflowService(WorkflowIdentity(id), computingUnitId = cuid, cleanUpTimeoutSecs) {
     val lifecycle = new RecordingLifecycleManager
     override val lifeCycleManager: WorkflowLifecycleManager = lifecycle
     val results = new RecordingResultService(workflowId, computingUnitId, stateStore)
     override val resultService: ExecutionResultService = results
+    override protected def costHintsLoader: CostHintsLoader =
+      hintsLoader.getOrElse(super.costHintsLoader)
   }
 
   // ---------------------------------------------------------------------------
@@ -241,6 +270,9 @@ class WorkflowServiceSpec
 
   /** The unit the read-before-delete case runs on, kept apart from every other case's rows. */
   private val probeCuid = 9416
+
+  /** The unit the cost-hints cases run on: no fixture execution ran on it. */
+  private val hintsCuid = 9417
 
   // Executions carry explicit eids rather than the SERIAL's: see the header on
   // LargeBinaryManager. The relative order is load-bearing and is stated here rather than
@@ -309,7 +341,8 @@ class WorkflowServiceSpec
     List(
       testCuid -> "workflow_service_spec_unit",
       otherCuid -> "workflow_service_spec_other_unit",
-      probeCuid -> "workflow_service_spec_probe_unit"
+      probeCuid -> "workflow_service_spec_probe_unit",
+      hintsCuid -> "workflow_service_spec_hints_unit"
     ).foreach {
       case (cuid, name) =>
         val unit = new WorkflowComputingUnit
@@ -778,6 +811,89 @@ class WorkflowServiceSpec
     // delete rather than merely somewhere in the same method.
     portRowCount(probeEid) shouldBe 0
     operatorRowCount(probeEid) shouldBe 0
+  }
+
+  // The cost-hints cases are declared after the clean-up case on purpose: the first two insert
+  // executions of their own, and that case counts the executions outside the fixture.
+  it should "give a new run's context the cost hints of its user's runs of the workflow" in {
+    assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
+    // The plan is saved with the context's hints, and the engine takes them from the plan.
+    val hints = Some(CostHints(ExecutionIdentity(previousEid.toLong), Map("scan-op" -> 2.5)))
+    val loader = new RecordingCostHintsLoader(hints)
+    val service = new TestWorkflowService(testWid.toLong, hintsCuid, Some(loader))
+    val scan = new CSVScanSourceOpDesc()
+    scan.setOperatorId("scan-op")
+    val request = WorkflowExecuteRequest(
+      executionName = "hints-spec-run",
+      engineVersion = "test",
+      // As in the clean-up case, the run stops at the compile, after its context is set up.
+      logicalPlan = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty),
+      replayFromExecution = None,
+      workflowSettings = WorkflowSettings(),
+      emailNotificationEnabled = false,
+      computingUnitId = hintsCuid,
+      warehouseId = None
+    )
+
+    service.initExecutionService(request, Some(executingUser), new URI("vfs:///session"))
+
+    loader.asked shouldBe Seq((testWid.toLong, testUid))
+    val execution = service.executionService.getValue
+    execution.workflowContext.costHints shouldBe hints
+    val fatalErrors = execution.executionStateStore.metadataStore.getState.fatalErrors
+    fatalErrors should have size 1
+    fatalErrors.head.message should include("No file selected")
+  }
+
+  it should "give a new run no cost hints when its user has none for the workflow" in {
+    assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
+    val loader = new RecordingCostHintsLoader(None)
+    val service = new TestWorkflowService(otherWid.toLong, hintsCuid, Some(loader))
+    val request = WorkflowExecuteRequest(
+      executionName = "no-hints-spec-run",
+      engineVersion = "test",
+      logicalPlan =
+        LogicalPlanPojo(List(new CSVScanSourceOpDesc()), List.empty, List.empty, List.empty),
+      replayFromExecution = None,
+      workflowSettings = WorkflowSettings(),
+      emailNotificationEnabled = false,
+      computingUnitId = hintsCuid,
+      warehouseId = None
+    )
+
+    service.initExecutionService(request, Some(executingUser), new URI("vfs:///session"))
+
+    loader.asked shouldBe Seq((otherWid.toLong, testUid))
+    val execution = service.executionService.getValue
+    execution.workflowContext.costHints shouldBe None
+    val fatalErrors = execution.executionStateStore.metadataStore.getState.fatalErrors
+    fatalErrors should have size 1
+    fatalErrors.head.message should include("No file selected")
+  }
+
+  it should "ask for no cost hints for a run it refuses" in {
+    assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
+    val loader = new RecordingCostHintsLoader(None)
+    val service = new TestWorkflowService(testWid.toLong, hintsCuid, Some(loader))
+    val request = WorkflowExecuteRequest(
+      executionName = "refused-spec-run",
+      engineVersion = "test",
+      logicalPlan = LogicalPlanPojo(List.empty, List.empty, List.empty, List.empty),
+      replayFromExecution = None,
+      workflowSettings = WorkflowSettings(),
+      emailNotificationEnabled = false,
+      computingUnitId = hintsCuid,
+      warehouseId = Some(1)
+    )
+
+    // a warehouse picked while per-user warehouses are off, then no user
+    the[IllegalArgumentException] thrownBy
+      service.initExecutionService(request, Some(executingUser), new URI("vfs:///session")) should
+      have message "per-user warehouses are disabled in this deployment"
+    val noUser = the[IllegalArgumentException] thrownBy
+      service.initExecutionService(request.copy(warehouseId = None), None, new URI("vfs:///s"))
+    noUser.getMessage should include("user id")
+    loader.asked shouldBe empty
   }
 
   it should "record the engine version as a JSON object" in {

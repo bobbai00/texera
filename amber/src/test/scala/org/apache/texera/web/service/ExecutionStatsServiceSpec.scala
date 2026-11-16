@@ -97,7 +97,7 @@ import scala.reflect.ClassTag
   * Two things about the ids below are deliberate. They must not collide with the
   * runtime-statistics URI of any other suite, because the constructor's `createDocument`
   * truncates whatever table is already there and sbt runs amber suites in parallel in one JVM
-  * (DefaultCostEstimatorSpec owns wid 1 / eid 1). They must also differ from each other, so a
+  * (CostHintsLoaderSpec owns wids 9521 to 9536). They must also differ from each other, so a
   * URI built from the wrong identity is a visibly different URI.
   *
   * Not covered on purpose: the catch arm around `runtimeStatsWriter.close()` (iceberg's close is
