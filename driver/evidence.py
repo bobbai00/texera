@@ -191,7 +191,9 @@ _EID_COLUMNS = ("eid", "workflow_execution_id", "execution_id")
 
 
 def _col_values(text: str, column: str) -> list[str]:
-    return re.findall(r"(?:^|[\s,(.])" + re.escape(column) + r"\s*=\s*" + _VALUE, text)
+    """The values `column = <v>` assigns or compares in `text`; jOOQ may wrap a bind
+    in a cast (`"starting_time" = cast($6 as timestamp(0))`), which is unwrapped."""
+    return re.findall(r"(?:^|[\s,(.])" + re.escape(column) + r"\s*=\s*(?:cast\(\s*)?" + _VALUE, text)
 
 
 def _split_top_level(text: str) -> list[str]:

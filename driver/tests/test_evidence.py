@@ -152,6 +152,15 @@ class ParsingTest(unittest.TestCase):
         self.assertFalse(ins.refers_to_eid(346))
         self.assertTrue(upd.refers_to_eid(345))
 
+    def test_casts_around_binds(self):
+        st = ev.Stmt(0, "", 1, ev.UNIT_APP, "texera_db", "h", "execute",
+                     'update "texera_db"."workflow_executions" set "status" = cast($1 as smallint), '
+                     '"last_update_time" = cast($2 as timestamp(0)) where '
+                     '"texera_db"."workflow_executions"."eid" = cast($3 as integer)',
+                     params_text="$1 = '1', $2 = 'now', $3 = '42'")
+        self.assertEqual((1, 42), st.status_update())
+        self.assertTrue(st.refers_to_eid(42))
+
     def test_tables_and_verbs(self):
         st = ev.Stmt(0, "", 1, "a", "texera_db", "h", "execute",
                      'select "texera_db"."dataset"."did" from "texera_db"."dataset" join '
