@@ -23,14 +23,23 @@ or when it comes from one of the unit container's addresses. The checks:
   B  the start mark up to the unit's terminal status UPDATE of the eid: unit
      statements touch no other table
   C  every INSERT INTO workflow_executions of the scenario comes from
-     app=texera-dashboard
+     app=texera-dashboard, and not from one of the unit's addresses
   D  (needs --isolate-unit) the unit resolves neither file-service nor
-     texera-lakefs, and its log since the start names none of them
+     texera-lakefs, its log since the start names none of them, and the gateway
+     (nginx, whose access log --isolate-unit turns on) served it no request
   E  the execution's plan table (Lakekeeper, namespace execution-plan) has a
      ref named `started`
   F  every statement from the unit's addresses carries app=texera-computing-unit
 
-With --negative-control (published images, the old unit) A, D and F must fail.
+A run counts as started when a state arrived on its socket after its start was
+sent (the transport keeps what the unit replays at connection apart). A refused
+start must leave the unit silent: no unit statement at all from its start mark to
+a mark taken after the refusal and a settle (`expect_silent_since_start`).
+
+With --negative-control (published images, the old unit) A, D and F must fail, each
+for its own reason (A on a unit SELECT/WITH, D on the unit's log naming
+file-service or texera-lakefs while neither resolves, F on unnamed statements from
+the unit's address); another failure is reported as "control inconclusive".
 """
 
 from __future__ import annotations
@@ -69,15 +78,24 @@ CONTROL_REASONS = {
     "D": "the old unit names file-service",
     "F": "the old unit's connections carry no name; its statements are found by its address",
 }
+#: the names whose appearance in the unit's log makes the D control fail for its reason
+D_CONTROL_NAMES = ("file-service", "texera-lakefs")
 DEFAULT_CONTAINERS = {
     "postgres": "sce-texera-postgres",
     "workflow-runtime-coordinator-service": "sce-workflow-runtime-coordinator-service",
     "dashboard-service": "sce-dashboard-service",
+    "nginx": "sce-texera-nginx",
 }
 CLEANUP_ENV = "WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS"
+DEFAULT_CLEANUP_S = 30  # the unit's default without the env (application.conf)
 PLAN_NAMESPACE_ENV = "STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE"
 DEFAULT_PLAN_NAMESPACE = "execution-plan"
 CLEANUP_WAIT_S = 15.0
+#: the unit counts as settled after this long without a statement of its own
+QUIET_S = 1.0
+#: the gateway's access log line (stack/sce_stack.py writes it with --isolate-unit);
+#: $uri carries no query string, so no token reaches the log
+GATEWAY_ACCESS = re.compile(r'sce-access (?P<addr>\S+) "(?P<method>[A-Z]+) (?P<uri>[^"]*)" (?P<status>\d{3})')
 
 
 class EvidenceUnavailable(RuntimeError):
@@ -449,25 +467,31 @@ class RunRecord:
     create_mark: str | None = None
     start_mark: str | None = None
     unit_log_cursor: int | None = None
+    gateway_log_cursor: int | None = None
     handle: Any = None
+    #: len(handle.state_log) when the start was about to be sent
+    state_index: int | None = None
     started: bool | None = None  # set explicitly by callers without a handle (REST runs)
 
     def has_started(self) -> bool:
-        """The unit accepted the start: some state other than the handshake's arrived."""
+        """The unit accepted this start: a state other than the handshake's arrived on
+        its socket after the start was sent. What the unit replays of the workflow's
+        earlier run arrives before (the transport ends the open sequence first), and
+        a refused start gets only an error event."""
         if self.started is not None:
             return self.started
         if self.handle is None or self.start_mark is None:
             return False
         try:
-            states = list(self.handle.states)
+            log = list(self.handle.state_log)
         except Exception:  # noqa: BLE001
             return False
-        return any(s != "Uninitialized" for s in states)
+        return any(s != "Uninitialized" for _, s in log[self.state_index or 0:])
 
     def to_json(self) -> dict:
         return {"wid": self.wid, "cuid": self.cuid, "eid": self.eid, "plan_uri": self.plan_uri,
                 "create_mark": self.create_mark, "start_mark": self.start_mark,
-                "started": self.has_started()}
+                "state_index": self.state_index, "started": self.has_started()}
 
 
 @dataclass
@@ -487,7 +511,7 @@ class Evidence:
     def __init__(self, *, run_id: str, required: Iterable[str] = CHECKS, negative_control: bool = False,
                  containers: dict[str, str] | None = None, env: dict[str, str] | None = None,
                  log: Callable[[str], None] = print, runner: Runner = docker_runner,
-                 cleanup_wait_s: float = CLEANUP_WAIT_S):
+                 cleanup_wait_s: float = CLEANUP_WAIT_S, quiet_s: float = QUIET_S):
         self.run_id = run_id
         self.required = [c for c in CHECKS if c in set(required)]
         self.negative_control = negative_control
@@ -496,6 +520,7 @@ class Evidence:
         self.pg_container = c["postgres"]
         self.unit_container = c["workflow-runtime-coordinator-service"]
         self.dashboard_container = c["dashboard-service"]
+        self.gateway_container = c["nginx"]
         self.env = env or {}
         self.catalog_uri = self.env.get("STORAGE_ICEBERG_CATALOG_REST_URI",
                                         "http://texera-lakekeeper:8181/catalog").rstrip("/")
@@ -503,9 +528,11 @@ class Evidence:
         self._log = log
         self._run = runner
         self.cleanup_wait_s = cleanup_wait_s
+        self.quiet_s = quiet_s
         self.pg = PgLog()
         self.pg_log = ContainerLog(self.pg_container, runner)
         self.unit_log = ContainerLog(self.unit_container, runner)
+        self.gateway_log = ContainerLog(self.gateway_container, runner)
         self.unit_hosts: set[str] = set()
         self.isolated = False
         self.unit_env: dict[str, str] = {}
@@ -515,7 +542,10 @@ class Evidence:
         self.runs: list[RunRecord] = []
         self._begin_mark: str | None = None
         self._previous_started: dict[int, int] = {}  # wid -> last started eid, for the cleanup wait
-        self._expect_no_unit: list[tuple[int, str]] = []
+        self._previous_touched = False  # the previous scenario sent a start to the unit
+        self._previous_ended_at: float | None = None  # monotonic time of its end mark
+        self._expect_no_unit: list[tuple[int, str, bool]] = []
+        self._expect_silent: list[tuple[int, str, str, str]] = []
         self.allowed_status_zero: dict[int, str] = {}
         self.warehouse_name: str | None = None
         self.info: dict[str, Any] = {}
@@ -581,6 +611,7 @@ class Evidence:
         self.info = {
             "postgres_container": self.pg_container,
             "unit_container": self.unit_container,
+            "gateway_container": self.gateway_container,
             "unit_networks": sorted(nets),
             "unit_hosts": sorted(self.unit_hosts),
             "unit_isolated": self.isolated,
@@ -601,42 +632,94 @@ class Evidence:
 
     # ------------------------------------------------------- scenario plumbing
 
+    @property
+    def cleanup_seconds(self) -> int:
+        """The unit's idle cleanup delay (its env, else the unit's default)."""
+        v = self.unit_env.get(CLEANUP_ENV, "")
+        return int(v) if v.isdigit() else DEFAULT_CLEANUP_S
+
     def begin_scenario(self, key: str) -> dict:
-        """Wait for the previous scenario's idle cleanup (see CLEANUP_WAIT_S), then mark."""
+        """Wait for the previous scenario's idle cleanup (see _wait_for_cleanup), then mark."""
         waited = self._wait_for_cleanup()
         self.scenario = key
         self.runs = []
         self._expect_no_unit = []
+        self._expect_silent = []
         self._begin_mark = self.mark(key, "begin")
         return waited
 
     def _wait_for_cleanup(self) -> dict:
-        pending = dict(self._previous_started)
-        self._previous_started = {}
-        if not pending:
+        """After a scenario that sent a start to the unit: its sockets closed just before
+        its end mark, and the unit cleans the workflow `cleanup_seconds` later (a SELECT or
+        two, the DELETEs of operator_port_executions and operator_executions, then a
+        SELECT of runtime_stats_uri). Wait until the cleanup DELETE of every started eid
+        appeared, the cleanup delay (+0.5 s) has passed since the end mark, and the unit
+        has been quiet for `quiet_s`; at most `cleanup_wait_s`. Then the cleanup lands in no
+        window of the next scenario."""
+        pending = sorted(set(self._previous_started.values()))
+        touched, ended_at = self._previous_touched, self._previous_ended_at
+        self._previous_started, self._previous_touched = {}, False
+        if not pending and not touched:
             return {}
         after = self.pg.find_mark(self._begin_mark) if self._begin_mark else None
-        after_seq = after.seq if after else -1
-        deadline = time.monotonic() + self.cleanup_wait_s
-        t0 = time.monotonic()
-        seen: dict[int, float] = {}
-        while True:
-            self.refresh_log()
-            for st in self.pg.stmts[after_seq + 1:]:
-                if not self.is_unit(st):
-                    continue
-                for eid in pending.values():
-                    if eid not in seen and st.is_cleanup_delete(eid):
-                        seen[eid] = round(time.monotonic() - t0, 1)
-            if len(seen) == len(pending) or time.monotonic() > deadline:
-                break
-            time.sleep(0.5)
-        out = {str(eid): (seen.get(eid, "not seen within %.0f s" % self.cleanup_wait_s))
-               for eid in pending.values()}
-        missing = [e for e in pending.values() if e not in seen]
+        not_before = (ended_at + self.cleanup_seconds + 0.5) if ended_at is not None else None
+        out = self._wait_unit(after_seq=after.seq if after else -1, deletes=pending,
+                              not_before=not_before, timeout=self.cleanup_wait_s)
+        missing = [e for e in pending if not isinstance(out["cleanup_deletes"].get(str(e)), float)]
         if missing:
             self._log(f"evidence: the unit's idle cleanup of execution(s) {missing} did not appear "
                       f"within {self.cleanup_wait_s:.0f} s")
+        if not out["quiet"]:
+            self._log(f"evidence: the unit was not quiet for {self.quiet_s:g} s within "
+                      f"{self.cleanup_wait_s:.0f} s; its statements may reach the next windows")
+        return out
+
+    def _wait_unit(self, *, after_seq: int, deletes: Sequence[int] = (), not_before: float | None = None,
+                   quiet_s: float | None = None, timeout: float = CLEANUP_WAIT_S) -> dict:
+        """Poll the log until the cleanup DELETE of each eid in `deletes` appeared after
+        statement `after_seq`, the clock passed `not_before`, and no new unit statement
+        appeared for `quiet_s`; at most `timeout` seconds."""
+        want = set(deletes)
+        quiet_s = self.quiet_s if quiet_s is None else quiet_s
+        t0 = time.monotonic()
+        deadline = t0 + timeout
+        seen: dict[int, float] = {}
+        last_unit = t0
+        self.refresh_log()
+        polled = len(self.pg.stmts)
+        while True:
+            now = time.monotonic()
+            if want - set(seen):
+                for st in self.pg.stmts[after_seq + 1:]:
+                    if self.is_unit(st):
+                        for eid in want - set(seen):
+                            if st.is_cleanup_delete(eid):
+                                seen[eid] = round(now - t0, 1)
+            quiet = now - last_unit >= quiet_s
+            done = set(seen) == want and (not_before is None or now >= not_before) and quiet
+            if done or now >= deadline:
+                break
+            time.sleep(0.25)
+            self.refresh_log()
+            if any(s.relevant and self.is_unit(s) for s in self.pg.stmts[polled:]):
+                last_unit = time.monotonic()
+            polled = len(self.pg.stmts)
+        return {"waited_s": round(time.monotonic() - t0, 1), "quiet": quiet, "timed_out": not done,
+                "cleanup_deletes": {str(e): seen.get(e, f"not seen within {timeout:.0f} s")
+                                    for e in sorted(want)}}
+
+    def settle_unit(self, *, min_wait_s: float = 0.0, quiet_s: float | None = None,
+                    timeout: float = CLEANUP_WAIT_S) -> dict:
+        """Wait until at least `min_wait_s` passed and the unit has run no statement for
+        `quiet_s`: the trailing statements of a finished run (result sizes, statistics,
+        console URIs) or its idle cleanup then cannot fall into the window that follows."""
+        quiet_s = self.quiet_s if quiet_s is None else quiet_s
+        self.refresh_log()
+        out = self._wait_unit(after_seq=len(self.pg.stmts) - 1, not_before=time.monotonic() + min_wait_s,
+                              quiet_s=quiet_s, timeout=max(timeout, min_wait_s + quiet_s + 1))
+        out.pop("cleanup_deletes", None)
+        if not out["quiet"]:
+            self._log(f"evidence: the unit was still running statements after {out['waited_s']} s")
         return out
 
     def on_phase(self, phase: str, info: dict) -> RunRecord | None:
@@ -663,11 +746,21 @@ class Evidence:
             run.eid = info.get("eid", run.eid)
             run.plan_uri = info.get("plan_uri", run.plan_uri)
             run.handle = info.get("handle", run.handle)
+            if run.handle is not None:
+                try:
+                    run.state_index = len(run.handle.state_log)
+                except Exception:  # noqa: BLE001
+                    run.state_index = None
             run.start_mark = self.mark(self.scenario, "start", run.eid)
             try:
                 run.unit_log_cursor = self.unit_log.cursor()
             except EvidenceUnavailable as e:
                 self._log(f"evidence: {e}")
+            if self.isolated:
+                try:
+                    run.gateway_log_cursor = self.gateway_log.cursor()
+                except EvidenceUnavailable as e:
+                    self._log(f"evidence: {e}")
             return run
         if phase == "created":
             # the create answered: remember the eid on the run the create mark opened
@@ -683,6 +776,21 @@ class Evidence:
         """At the scenario's end: no unit statement refers to `eid`, in the whole
         scenario or only after the last start of `eid`."""
         self._expect_no_unit.append((eid, why, since_last_start))
+
+    def expect_silent_since_start(self, eid: int, why: str) -> str | None:
+        """A refused start (D33: it writes no state and leaves every store alone): from
+        the last start mark of `eid` to a mark taken now, after the refusal arrived and
+        the caller's settle, the unit runs no statement at all, whatever it names.
+        Callers make sure nothing else runs on the unit then (the previous cleanup was
+        waited out, the sockets are open, a finished run's trailing statements were
+        settled before the start). Returns the closing mark's id."""
+        run = next((r for r in reversed(self.runs) if r.eid == eid and r.start_mark), None)
+        if run is None:
+            self._log(f"evidence: no start of execution {eid} in this scenario to check silence after")
+            return None
+        until = self.mark(self.scenario or "?", "settled", eid)
+        self._expect_silent.append((eid, run.start_mark, until, why))
+        return until
 
     def allow_status_zero(self, eid: int, why: str) -> None:
         self.allowed_status_zero[eid] = why
@@ -714,6 +822,8 @@ class Evidence:
         Returns {"checks": {key: CheckResult}, "report": {...}}."""
         key = self.scenario or "?"
         end_id = self.mark(key, "end")
+        self._previous_ended_at = time.monotonic()
+        self._previous_touched = any(r.start_mark for r in self.runs)
         end = self._mark_stmt(end_id)
         begin = self._mark_stmt(self._begin_mark)
         for run in self.runs:
@@ -776,14 +886,17 @@ class Evidence:
             results["A"] = CheckResult("A", not a_bad and not window_notes,
                                        summarize(a_bad, a_all) + (f"; {'; '.join(window_notes)}"
                                                                   if window_notes else ""),
-                                       {"offending": [s.to_json(400) for s in a_bad[:50]]})
+                                       {"offending": [s.to_json(400) for s in a_bad[:50]],
+                                        "select_offenders": sum(s.verb in ("select", "with") for s in a_bad),
+                                        "window_notes": window_notes})
             results["B"] = CheckResult("B", not b_bad, summarize(b_bad, b_all) + "; tables: "
                                        + ", ".join(sorted({t for s in b_bad for t in s.tables})[:12]),
                                        {"offending": [s.to_json(400) for s in b_bad[:50]]})
 
         inserts = [s for s in scen if s.norm.startswith("insert into workflow_executions")]
         created = [r for r in self.runs if r.create_mark]
-        not_dash = [s for s in inserts if s.app != DASHBOARD_APP]
+        # the name alone is not enough: a unit connection named after the Dashboard is still the unit
+        not_dash = [s for s in inserts if s.app != DASHBOARD_APP or s.host in self.unit_hosts]
         if not inserts:
             results["C"] = CheckResult("C", not created or all(r.eid is None for r in created),
                                        "no INSERT INTO workflow_executions in the scenario"
@@ -793,7 +906,9 @@ class Evidence:
         else:
             results["C"] = CheckResult("C", not not_dash,
                                        f"{len(inserts)} INSERT INTO workflow_executions, from "
-                                       + ", ".join(sorted({s.app or '-' for s in inserts})),
+                                       + ", ".join(sorted({f"{s.app or '-'}@{s.host or '-'}" for s in inserts}))
+                                       + (f"; {len(not_dash)} not the Dashboard's (another app, or a unit "
+                                          f"address {sorted(self.unit_hosts)})" if not_dash else ""),
                                        {"inserts": [s.to_json(300) for s in inserts]})
 
         results["D"] = self._check_d(started)
@@ -801,8 +916,16 @@ class Evidence:
 
         from_unit_addr = [s for s in scen if s.host in self.unit_hosts]
         unnamed = [s for s in from_unit_addr if s.app != UNIT_APP]
+        named_elsewhere = [s for s in scen if s.app == UNIT_APP and s.host not in self.unit_hosts]
         if not self.unit_hosts:
             results["F"] = CheckResult("F", None, "the unit's addresses are unknown")
+        elif not from_unit_addr and named_elsewhere:
+            results["F"] = CheckResult(
+                "F", None, f"not evaluable: {len(named_elsewhere)} statements carry app={UNIT_APP} from "
+                           f"{sorted({s.host for s in named_elsewhere})}, none from the unit's addresses "
+                           f"{sorted(self.unit_hosts)} (stale or wrong addresses: was the unit recreated "
+                           f"after the preflight?)",
+                {"named_elsewhere": [s.to_json(300) for s in named_elsewhere[:10]]})
         elif not from_unit_addr:
             results["F"] = CheckResult("F", True, "no statement from the unit's addresses in the scenario",
                                        {"vacuous": True})
@@ -825,6 +948,18 @@ class Evidence:
                                  "since": "the last start" if since_last_start else "the scenario's begin",
                                  "statements": [s.to_json(300) for s in hits[:10]]})
         report["no_unit_statement_for"] = expectations
+        # refused starts: the unit silent from the start mark to the settled mark
+        silent = []
+        for eid, start_id, until_id, why in self._expect_silent:
+            a, b = self._mark_stmt(start_id), self._mark_stmt(until_id)
+            if a is None or b is None:
+                silent.append({"eid": eid, "why": why, "ok": False, "statements": [],
+                               "detail": "the start or settled mark is not in the log"})
+                continue
+            hits = [s for s in self._window(a, b) if self.is_unit(s)]
+            silent.append({"eid": eid, "why": why, "ok": not hits, "statements": [s.to_json(300) for s in hits[:10]],
+                           "detail": f"{len(hits)} unit statement(s) between the start and the settled mark"})
+        report["unit_silent_after_refused_start"] = silent
         report["unit_statements_in_scenario"] = len([s for s in scen if self.is_unit(s)])
 
         for run in started:
@@ -848,12 +983,32 @@ class Evidence:
             return CheckResult("D", None, "the unit's log position at the start is unknown")
         lines = self.unit_log.since(cursor)
         named = [ln for ln in lines if any(p in ln for p in D_PATTERNS)]
-        ok = not resolved and not named
-        detail = (f"getent resolves {resolved or 'neither'}; {len(named)} of {len(lines)} unit log lines "
-                  f"since the start name {', '.join(D_PATTERNS)}")
+        # The gateway: an isolated unit still reaches nginx, which proxies file-service
+        # (/api/dataset, ...) and the Dashboard (/api/). Every request it served to one
+        # of the unit's addresses since the start counts against D.
+        gw_cursor = min((r.gateway_log_cursor for r in started if r.gateway_log_cursor is not None),
+                        default=None)
+        access = ([m for m in (GATEWAY_ACCESS.search(ln) for ln in self.gateway_log.since(gw_cursor)) if m]
+                  if gw_cursor is not None else [])
+        via_gateway = [f"{m['method']} {m['uri']} -> {m['status']}" for m in access
+                       if m["addr"] in self.unit_hosts]
+        gateway = (f"the gateway served {len(via_gateway)} of {len(access)} requests since the start to "
+                   f"the unit" if access else
+                   "the gateway's access log is not readable (unknown start position, or no request "
+                   "logged: its access log is on only in stacks generated with --isolate-unit)")
+        if resolved or named or via_gateway:
+            ok: bool | None = False
+        else:
+            ok = True if access else None  # nothing seen, but the gateway part is unknown
+        detail = (("not evaluable: " if ok is None else "")
+                  + f"getent resolves {resolved or 'neither'}; {len(named)} of {len(lines)} unit log lines "
+                    f"since the start name {', '.join(D_PATTERNS)}; {gateway}")
         if named:
             detail += ": " + " | ".join(ln[:200] for ln in named[:3])
-        return CheckResult("D", ok, detail, {"resolved": resolved, "log_lines": [ln[:500] for ln in named[:20]]})
+        if via_gateway:
+            detail += "; via the gateway: " + " | ".join(via_gateway[:5])
+        return CheckResult("D", ok, detail, {"resolved": resolved, "log_lines": [ln[:500] for ln in named[:20]],
+                                             "via_gateway": via_gateway[:20], "gateway_lines": len(access)})
 
     def warehouse_of(self, run: RunRecord) -> str:
         if run.plan_uri:
@@ -924,12 +1079,31 @@ class Evidence:
                            f"{[r['eid'] for r in bad]}" if left else "no row left at status 0")}
 
 
+def control_failed_for_its_reason(key: str, r: CheckResult) -> tuple[bool, str]:
+    """Whether a failed negative control failed for the reason the control is about
+    (design H5), not for another one (broken attribution, a name that resolves)."""
+    d = r.data or {}
+    if key == "A":
+        return (d.get("select_offenders", 0) > 0,
+                "A failed, but on no unit SELECT or WITH in the start window")
+    if key == "D":
+        on_names = any(n in ln for ln in d.get("log_lines") or [] for n in D_CONTROL_NAMES)
+        if d.get("resolved"):
+            return False, f"D failed, but getent resolves {d.get('resolved')} (the unit is not isolated)"
+        return on_names, f"D failed, but on no unit log line naming {' or '.join(D_CONTROL_NAMES)}"
+    if key == "F":
+        return bool(d.get("unnamed")), "F failed, but on no unnamed statement from the unit's address"
+    return True, ""
+
+
 def evaluate(results: dict[str, CheckResult], required: Sequence[str],
              negative_control: bool) -> tuple[list[tuple[str, bool, str]], dict]:
     """Turn check results into (name, ok, detail) gate checks plus an info dict.
 
     Normal mode: each required check gates (not evaluable counts as failed); the
-    others are information. Negative control: A, D and F must have failed."""
+    others are information. Negative control: A, D and F must have failed, each for
+    its own reason (control_failed_for_its_reason); any other failure is reported as
+    "control inconclusive" and fails the gate."""
     gates: list[tuple[str, bool, str]] = []
     info: dict[str, Any] = {}
     for key in CHECKS:
@@ -938,11 +1112,14 @@ def evaluate(results: dict[str, CheckResult], required: Sequence[str],
             continue
         entry = {"ok": r.ok, "detail": r.detail}
         if negative_control and key in NEGATIVE_CONTROLS:
-            ok = r.ok is False
-            gates.append((f"control {key} fails as expected ({CONTROL_REASONS[key]})", ok,
-                          ("failed as expected: " if ok else
-                           ("NOT EVALUABLE: " if r.ok is None else "PASSED, so the control proves nothing: "))
-                          + r.detail))
+            if r.ok is False:
+                reason_ok, why = control_failed_for_its_reason(key, r)
+                ok = reason_ok
+                prefix = "failed as expected: " if ok else f"control inconclusive ({why}): "
+            else:
+                ok = False
+                prefix = "NOT EVALUABLE: " if r.ok is None else "PASSED, so the control proves nothing: "
+            gates.append((f"control {key} fails as expected ({CONTROL_REASONS[key]})", ok, prefix + r.detail))
         elif not negative_control and key in required:
             gates.append((f"evidence {key}: {CHECK_TITLES[key]}", r.ok is True,
                           ("not evaluable: " if r.ok is None else "") + r.detail))

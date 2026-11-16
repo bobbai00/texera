@@ -25,7 +25,9 @@ default, all recorded in MANIFEST.json):
     cleanup drops to 2 s unless --unit-env sets it);
   * --isolate-unit      the unit sits alone on a second network, sce-unit-net,
     with only Postgres, Lakekeeper, RustFS and nginx (and agent-service when
-    kept) beside it, so it cannot reach file-service or LakeFS;
+    kept) beside it, so it cannot reach file-service or LakeFS; nginx's access
+    log goes on (client address, method, path without query, status), so a
+    request the unit sends through the gateway shows up too;
   * --with-replay-log   the Dashboard and the unit write replay logs under the
     shared result volume;
   * --unit-env KEY=VAL  extra environment for the unit (repeatable).
@@ -103,6 +105,14 @@ CLEANUP_SECONDS_WITH_STATEMENT_LOG = "2"
 UNIT_NETWORK_KEY = "unit"
 UNIT_NETWORK = "sce-unit-net"
 UNIT_NETWORK_PEERS = ("postgres", "lakekeeper", "rustfs", NGINX_SERVICE, "agent-service")
+# --isolate-unit also turns nginx's access log on (upstream: `access_log off;`): the
+# isolated unit still reaches nginx, which proxies file-service and the Dashboard, so
+# Check D reads which requests came from the unit's address. $uri has no query
+# string, so a websocket's access-token never reaches the log.
+GATEWAY_LOG_FORMAT = "sce_e2e"
+GATEWAY_ACCESS_LOG = (f"log_format {GATEWAY_LOG_FORMAT} "
+                      "'sce-access $remote_addr \"$request_method $uri\" $status';\n"
+                      f"    access_log /dev/stdout {GATEWAY_LOG_FORMAT};")
 
 # --with-replay-log: both services mount workflow_result_data at /amber/user-resources.
 REPLAY_LOG_ENV = "FAULT_TOLERANCE_LOG_STORAGE_URI"
@@ -221,6 +231,23 @@ def _rewrite_nginx(conf: str, dropped: set[str]) -> tuple[str, list[str]]:
     return "".join(pieces), disabled_routes
 
 
+def _enable_gateway_access_log(conf: str) -> str:
+    """Replace the http block's one `access_log off;` with GATEWAY_ACCESS_LOG; refuse a
+    source whose nginx.conf does not have exactly one (the edit must be exactly this)."""
+    found = re.findall(r"^([ \t]*)access_log\s+off;[ \t]*$", conf, re.M)
+    if len(found) != 1:
+        die(f"--isolate-unit turns nginx's access log on by replacing its one `access_log off;`; "
+            f"the source nginx.conf has {len(found)}")
+    new = re.sub(r"^([ \t]*)access_log\s+off;[ \t]*$",
+                 lambda m: m.group(1) + GATEWAY_ACCESS_LOG.replace("\n    ", "\n" + m.group(1)),
+                 conf, count=1, flags=re.M)
+    # round trip: removing the added lines and putting `access_log off;` back gives the source
+    back = new.replace(GATEWAY_ACCESS_LOG.replace("\n    ", "\n" + found[0]), "access_log off;")
+    if back != conf:
+        die("the nginx access-log edit failed its round-trip check")
+    return new
+
+
 def _rewrite_ports(ports: list, bind: str) -> list:
     out = []
     for p in ports:
@@ -280,6 +307,7 @@ class StackOptions:
             "pg_log_line_prefix": PG_LOG_LINE_PREFIX if self.pg_statement_log else None,
             "isolate_unit": self.isolate_unit,
             "unit_network": UNIT_NETWORK if self.isolate_unit else None,
+            "gateway_access_log": GATEWAY_LOG_FORMAT if self.isolate_unit else None,
             "with_replay_log": self.with_replay_log,
             "unit_env": {k: shown(k, v) for k, v in self.unit_environment().items()},
             "dashboard_env": ({REPLAY_LOG_ENV: REPLAY_LOG_URI} if self.with_replay_log else {}),
@@ -520,6 +548,8 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
     (gen_dir / ".env").write_text(_rewrite_env((sn / ".env").read_text(), env_overrides))
 
     nginx_conf, disabled_routes = _rewrite_nginx((sn / "nginx.conf").read_text(), dropped)
+    if options.isolate_unit:
+        nginx_conf = _enable_gateway_access_log(nginx_conf)
     (gen_dir / "nginx.conf").write_text(nginx_conf)
 
     written = yaml.safe_load((gen_dir / "docker-compose.yml").read_text())["services"]

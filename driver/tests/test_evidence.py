@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -29,11 +31,14 @@ class FakeDocker:
         self.t = 1_700_000_000_000_000_000  # ns
         self.pg: list[tuple[int, str]] = []
         self.unit: list[tuple[int, str]] = []
+        self.gateway: list[tuple[int, str]] = []
         self.isolated = isolated
         self.cleanup = cleanup
         self.tables: dict[str, dict] = {}  # "wid_1_eid_2_plan" -> refs
         self.getent = ""
         self.pid = 500
+        # the fake stack's threads log while the driver reads: append and stamp in order
+        self.lock = threading.RLock()
 
     def _ts(self) -> tuple[int, str]:
         self.t += 1_000_000  # 1 ms
@@ -44,26 +49,38 @@ class FakeDocker:
         return self.t, f"{base}.{frac}Z"
 
     def pg_line(self, pid: int, app: str, host: str, level: str, msg: str, db: str = "texera_db") -> None:
-        t, _ = self._ts()
-        self.pg.append((t, f"2026-11-16 10:00:00.000 UTC [{pid}] app={app} db={db} host={host} {level}:  {msg}"))
+        with self.lock:
+            t, _ = self._ts()
+            self.pg.append((t, f"2026-11-16 10:00:00.000 UTC [{pid}] app={app} db={db} host={host} {level}:  {msg}"))
 
     def pg_raw(self, line: str) -> None:
-        t, _ = self._ts()
-        self.pg.append((t, line))
+        with self.lock:
+            t, _ = self._ts()
+            self.pg.append((t, line))
 
     def unit_line(self, text: str) -> None:
-        t, _ = self._ts()
-        self.unit.append((t, text))
+        with self.lock:
+            t, _ = self._ts()
+            self.unit.append((t, text))
 
     # statements as pgjdbc sends them
     def execute(self, app: str, host: str, sql: str, params: str | None = None, pid: int | None = None) -> None:
         pid = pid or 100
-        self.pg_line(pid, app, host, "LOG", f"execute <unnamed>: {sql}")
-        if params is not None:
-            self.pg_line(pid, app, host, "DETAIL", f"parameters: {params}")
+        with self.lock:
+            self.pg_line(pid, app, host, "LOG", f"execute <unnamed>: {sql}")
+            if params is not None:
+                self.pg_line(pid, app, host, "DETAIL", f"parameters: {params}")
+
+    def gateway_line(self, addr: str, method: str, uri: str, status: int = 200) -> None:
+        with self.lock:
+            t, _ = self._ts()
+            self.gateway.append((t, f'sce-access {addr} "{method} {uri}" {status}'))
 
     def __call__(self, args, timeout=60):
-        args = list(args)
+        with self.lock:
+            return self._call(list(args))
+
+    def _call(self, args):
         out, rc = "", 0
         if args[0] == "exec" and "psql" in args:
             sql = args[-1]
@@ -74,7 +91,7 @@ class FakeDocker:
                 out = ""
         elif args[0] == "logs":
             container = args[-1]
-            lines = self.pg if container == "sce-texera-postgres" else self.unit
+            lines = {"sce-texera-postgres": self.pg, "sce-texera-nginx": self.gateway}.get(container, self.unit)
             since = None
             if "--since" in args:
                 since = ev.docker_ts_ns(args[args.index("--since") + 1])
@@ -111,14 +128,52 @@ class FakeDocker:
 
 
 class Handle:
-    def __init__(self, states):
-        self.states = states
+    """A run handle as evidence sees it. `before`: states it held when the start was
+    about to be sent (what on_phase("start") reads first); `states`: what arrived
+    after the start (seen from the second read on)."""
+
+    def __init__(self, states, before=()):
+        self.log = [(0.1 * i, s) for i, s in enumerate(list(before) + list(states))]
+        self.n_before = len(before)
+        self.reads = 0
+
+    @property
+    def state_log(self):
+        self.reads += 1
+        return self.log[:self.n_before] if self.reads == 1 else list(self.log)
+
+    @property
+    def states(self):
+        return [s for _, s in self.log]
 
 
 def make(fake: FakeDocker, **kw) -> ev.Evidence:
-    e = ev.Evidence(run_id="t", runner=fake, log=lambda m: None, cleanup_wait_s=0.5, **kw)
+    kw.setdefault("cleanup_wait_s", 0.5)
+    kw.setdefault("quiet_s", 0.3)
+    e = ev.Evidence(run_id="t", runner=fake, log=lambda m: None, **kw)
     e.preflight()
     return e
+
+
+HOST_GATEWAY = "172.30.0.1"  # the driver's requests reach nginx from the Docker gateway
+
+
+def new_path_run(fake: FakeDocker, e: ev.Evidence, wid: int, eid: int, *, insert_app=ev.DASHBOARD_APP,
+                 insert_host=DASH_IP, gateway: bool = True) -> None:
+    """What the design's services log for one created and started execution."""
+    e.on_phase("create", {"wid": wid, "cuid": 1})
+    fake.execute(insert_app, insert_host, "insert into workflow_executions (vid, uid, status) values ($1, $2, $3)",
+                 "$1 = '1', $2 = '1', $3 = '0'")
+    e.on_phase("created", {"eid": eid, "plan_uri": f"vfs:///wh/user-1-7/wid/{wid}/eid/{eid}/plan", "wid": wid})
+    e.on_phase("start", {"wid": wid, "cuid": 1, "eid": eid,
+                         "plan_uri": f"vfs:///wh/user-1-7/wid/{wid}/eid/{eid}/plan",
+                         "handle": Handle(["Initializing", "Running", "Completed"])})
+    for status in ("0", "1", "3"):
+        fake.execute(ev.UNIT_APP, UNIT_IP, "update workflow_executions set status = $1, last_update_time = $2 "
+                                           "where workflow_executions.eid = $3", f"$1 = '{status}', $2 = 'now', "
+                                                                                 f"$3 = '{eid}'")
+    if gateway:
+        fake.gateway_line(HOST_GATEWAY, "GET", f"/api/executions/{wid}")
 
 
 class ParsingTest(unittest.TestCase):
@@ -282,6 +337,8 @@ class ChecksTest(unittest.TestCase):
                      "$1 = '90'")
         fake.execute(ev.UNIT_APP, UNIT_IP, 'update workflow_executions set status = $1, last_update_time = $2 '
                                            'where workflow_executions.eid = $3', "$1 = '3', $2 = 'now', $3 = '90'")
+        fake.gateway_line(HOST_GATEWAY, "GET", "/api/executions/5")
+        fake.gateway_line(HOST_GATEWAY, "GET", "/wsapi/workflow-websocket", 101)
         out = e.end_scenario()
         r = out["checks"]
         for key in ev.CHECKS:
@@ -324,7 +381,151 @@ class ChecksTest(unittest.TestCase):
         fake.execute(ev.UNIT_APP, UNIT_IP, "delete from operator_executions where workflow_execution_id = $1",
                      "$1 = '93'")
         waited = e.begin_scenario("b")
-        self.assertIsInstance(waited["93"], float)
+        self.assertIsInstance(waited["cleanup_deletes"]["93"], float)
+
+    def test_cleanup_wait_outlasts_the_trailing_statements(self):
+        """The review's probe: the cleanup's SELECT of runtime_stats_uri comes 20-40 ms
+        after its DELETE (and Iceberg work follows). The next begin mark must come after
+        every statement of the cleanup, not right after the DELETE."""
+        fake = FakeDocker(isolated=True, cleanup="0")
+        e = make(fake, cleanup_wait_s=5.0, quiet_s=0.4)
+        e.begin_scenario("a")
+        new_path_run(fake, e, 5, 94)
+        e.end_scenario()
+
+        def cleanup():
+            time.sleep(0.2)
+            fake.execute(ev.UNIT_APP, UNIT_IP, "delete from operator_executions where "
+                                               "operator_executions.workflow_execution_id = $1", "$1 = '94'")
+            time.sleep(0.3)
+            fake.execute(ev.UNIT_APP, UNIT_IP, "select workflow_executions.runtime_stats_uri from "
+                                               "workflow_executions where workflow_executions.eid = $1", "$1 = '94'")
+        t = threading.Thread(target=cleanup)
+        t.start()
+        waited = e.begin_scenario("b")
+        t.join()
+        self.assertTrue(waited["quiet"], waited)
+        e.refresh_log()
+        trailing = next(s for s in e.pg.stmts if "runtime_stats_uri" in s.norm)
+        begin_b = e.pg.find_mark(e._begin_mark)
+        self.assertLess(trailing.seq, begin_b.seq)
+
+    def test_a_scenario_that_only_opened_sockets_still_waits_out_the_cleanup_delay(self):
+        fake = FakeDocker(isolated=True, cleanup="1")
+        e = make(fake, cleanup_wait_s=5.0, quiet_s=0.2)
+        e.begin_scenario("l5")
+        e.on_phase("start", {"wid": 6, "cuid": 1, "eid": 91, "handle": Handle([])})  # refused
+        e.end_scenario()
+        t0 = time.monotonic()
+        waited = e.begin_scenario("l6")
+        self.assertGreaterEqual(time.monotonic() - t0, 1.3)  # cleanup delay 1 s + 0.5 s after the end mark
+        self.assertEqual({}, waited["cleanup_deletes"])
+
+    def test_has_started_counts_only_states_after_the_start(self):
+        """l8 on the real unit: a second socket on a completed run. Whatever state the
+        handle held before the start (here a leftover "Completed") is not this start's."""
+        fake = FakeDocker(isolated=True)
+        e = make(fake)
+        e.begin_scenario("l8")
+        h = Handle([], before=["Completed"])
+        run = e.on_phase("start", {"wid": 6, "cuid": 1, "eid": 95, "handle": h})
+        self.assertEqual(1, run.state_index)
+        self.assertFalse(run.has_started())
+        h.log.append((1.0, "Initializing"))
+        self.assertTrue(run.has_started())
+
+    def test_refused_start_silence(self):
+        fake = FakeDocker(isolated=True)
+        e = make(fake)
+        e.begin_scenario("l5")
+        e.on_phase("start", {"wid": 6, "cuid": 1, "eid": 96, "handle": Handle([])})
+        e.expect_silent_since_start(96, "quiet refusal")
+        e.on_phase("start", {"wid": 7, "cuid": 1, "eid": 97, "handle": Handle([])})
+        # a read that names no eid at all (the old reviewer gap: refers_to_eid missed it)
+        fake.execute(ev.UNIT_APP, UNIT_IP, "select user_warehouse.whid from user_warehouse where "
+                                           "user_warehouse.uid = $1", "$1 = '2'")
+        e.expect_silent_since_start(97, "a refusal that reads")
+        out = e.end_scenario()
+        silent = {x["eid"]: x for x in out["report"]["unit_silent_after_refused_start"]}
+        self.assertTrue(silent[96]["ok"], silent[96])
+        self.assertFalse(silent[97]["ok"])
+        self.assertIn("user_warehouse", silent[97]["statements"][0]["sql"])
+
+    def test_settle_unit_waits_for_a_quiet_unit(self):
+        fake = FakeDocker(isolated=True)
+        e = make(fake, quiet_s=0.4)
+        e.begin_scenario("l8")
+        stop = time.monotonic() + 0.8
+
+        def chatter():
+            while time.monotonic() < stop:
+                fake.execute(ev.UNIT_APP, UNIT_IP, "update operator_port_executions set result_size = $1 "
+                                                   "where workflow_execution_id = $2", "$1 = '1', $2 = '9'")
+                time.sleep(0.1)
+        t = threading.Thread(target=chatter)
+        t.start()
+        t0 = time.monotonic()
+        out = e.settle_unit()
+        t.join()
+        self.assertTrue(out["quiet"])
+        self.assertGreaterEqual(time.monotonic() - t0, 1.1)  # the chatter, then the quiet period
+
+    def test_c_refuses_a_dashboard_named_insert_from_a_unit_address(self):
+        fake = FakeDocker(isolated=True)
+        e = make(fake)
+        e.begin_scenario("a")
+        new_path_run(fake, e, 5, 98, insert_app=ev.DASHBOARD_APP, insert_host=UNIT_IP)
+        r = e.end_scenario()["checks"]
+        self.assertFalse(r["C"].ok, r["C"].detail)
+        self.assertIn(UNIT_IP, r["C"].detail)
+
+    def test_f_is_not_evaluable_with_stale_unit_addresses(self):
+        fake = FakeDocker(isolated=True)
+        e = make(fake)
+        e.begin_scenario("a")
+        e.on_phase("start", {"wid": 5, "cuid": 1, "eid": 99, "handle": Handle(["Running", "Completed"])})
+        fake.execute(ev.UNIT_APP, "172.30.0.66", "update workflow_executions set status = $1 where "
+                                                 "workflow_executions.eid = $2", "$1 = '1', $2 = '99'")
+        r = e.end_scenario()["checks"]
+        self.assertIsNone(r["F"].ok, r["F"].detail)
+        self.assertIn("172.30.0.66", r["F"].detail)
+
+    def test_d_sees_a_request_the_unit_sent_through_the_gateway(self):
+        fake = FakeDocker(isolated=True)
+        e = make(fake)
+        e.begin_scenario("a")
+        new_path_run(fake, e, 5, 100)
+        fake.gateway_line(UNIT_IP, "GET", "/api/dataset/presign-download")
+        r = e.end_scenario()["checks"]
+        self.assertFalse(r["D"].ok, r["D"].detail)
+        self.assertEqual(["GET /api/dataset/presign-download -> 200"], r["D"].data["via_gateway"])
+
+    def test_d_is_not_evaluable_without_the_gateway_log(self):
+        fake = FakeDocker(isolated=True)
+        e = make(fake)
+        e.begin_scenario("a")
+        new_path_run(fake, e, 5, 101, gateway=False)
+        r = e.end_scenario()["checks"]
+        self.assertIsNone(r["D"].ok, r["D"].detail)
+
+    def test_negative_control_wants_each_failure_for_its_reason(self):
+        a_by_note = ev.CheckResult("A", False, "no unit status UPDATE", {"select_offenders": 0,
+                                                                        "window_notes": ["eid 1: ..."]})
+        d_resolves = ev.CheckResult("D", False, "getent resolves", {"resolved": ["10.0.0.2 file-service"],
+                                                                    "log_lines": ["... file-service ..."]})
+        d_gateway_only = ev.CheckResult("D", False, "via gateway", {"resolved": [], "log_lines": [],
+                                                                    "via_gateway": ["GET /api/x -> 200"]})
+        f_ok = ev.CheckResult("F", False, "unnamed", {"unnamed": [{"sql": "select 1"}]})
+        gates, _ = ev.evaluate({"A": a_by_note, "D": d_resolves, "F": f_ok}, [], negative_control=True)
+        by = {name.split()[1]: (ok, detail) for name, ok, detail in gates}
+        self.assertFalse(by["A"][0])
+        self.assertIn("control inconclusive", by["A"][1])
+        self.assertFalse(by["D"][0])
+        self.assertIn("not isolated", by["D"][1])
+        self.assertTrue(by["F"][0])
+        gates, _ = ev.evaluate({"D": d_gateway_only}, [], negative_control=True)
+        self.assertFalse(gates[0][1])
+        self.assertIn("control inconclusive", gates[0][2])
 
     def test_unavailable_without_statement_log(self):
         class NoLog(FakeDocker):
