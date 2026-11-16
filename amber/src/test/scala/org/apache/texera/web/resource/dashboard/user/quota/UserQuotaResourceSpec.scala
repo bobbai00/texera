@@ -19,6 +19,9 @@
 
 package org.apache.texera.web.resource.dashboard.user.quota
 
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -356,6 +359,37 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     UserQuotaResource.deleteExecutionCollection(execution.getEid)
 
     assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
+  }
+
+  it should "drop the execution's plan table" in {
+    resetFixtures()
+    val execution = insertExecution()
+    val planUri = ExecutionPlanStore.planUri(
+      WorkflowIdentity(testWid.toLong),
+      ExecutionIdentity(execution.getEid.longValue()),
+      None
+    )
+    ExecutionPlanStore.writePlan(
+      planUri,
+      PlanRecord(
+        entryId = ExecutionPlanStore.PlanEntryId,
+        kind = ExecutionPlanStore.PlanKind,
+        formatVersion = PhysicalPlanCodec.FormatVersion,
+        body = "{}",
+        logical = "{}",
+        createdAt = new Timestamp(System.currentTimeMillis()),
+        createdBy = testUid,
+        computingUnitId = 1,
+        notification = None
+      )
+    )
+    ExecutionPlanStore.claimStart(planUri)
+
+    try {
+      UserQuotaResource.deleteExecutionCollection(execution.getEid)
+
+      intercept[NoStoredPlanException](ExecutionPlanStore.readPlan(planUri))
+    } finally ExecutionPlanStore.drop(planUri)
   }
 
   "deleteCollection (endpoint)" should "delete the execution row for a caller with access" in {

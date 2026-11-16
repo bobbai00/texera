@@ -19,21 +19,28 @@
 
 package org.apache.texera.web.service
 
-import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalPlanCodec, WorkflowContext}
+import org.apache.texera.amber.core.workflow.{
+  ExecutionPlan,
+  PhysicalPlanCodec,
+  ReplaySource,
+  WorkflowContext
+}
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+
+import java.net.URI
 
 /**
   * The plan of a run as the engine is handed it: saved, as text.
   *
   * Starting a run has two halves. [[PlanToRun.make]] compiles the run's workflow and saves the
   * physical plan, with the settings it runs under, as the JSON [[PhysicalPlanCodec]] writes. The
-  * engine starts from that text and the logical plan ([[WorkflowExecutionService.workflowToRun]]):
-  * it runs the physical plan read back from the text, under the settings read back with it, and
-  * never sees the plan the compile made. Both halves run on the computing unit for now; making the
-  * plan is meant to move to the Dashboard service, which will store the text with the execution
-  * for the unit to read by execution id.
+  * text is written to the execution's plan table, and the engine starts from the text read back
+  * from there ([[WorkflowExecutionService.readPlanToRun]]): it runs the physical plan read back,
+  * under the settings, replay and replay log read back with it, and never sees the plan the
+  * compile made. Both halves run on the computing unit for now; making the plan is meant to move
+  * to the Dashboard service, and the unit then only reads the plan table.
   *
   * @param savedPlan   the physical plan to run, its settings and what else the run needs (an
   *                    [[org.apache.texera.amber.core.workflow.ExecutionPlan]]), as JSON text. It
@@ -42,8 +49,7 @@ import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowComp
   *                    they may be kept.
   * @param logicalPlan the logical plan the physical plan was compiled from. It is not part of the
   *                    saved plan: the engine still reads it to check and compile an operator
-  *                    changed while the run is paused, and to remember the last plan that
-  *                    completed.
+  *                    changed while the run is paused.
   */
 final case class PlanToRun(savedPlan: String, logicalPlan: LogicalPlan)
 
@@ -57,19 +63,29 @@ object PlanToRun {
     * here, with each operator's first error, and nothing is saved. It pins the datasets and
     * models the operators name, and finds the output ports whose results are stored, which are
     * saved with the settings. The run's context is left as it is; the engine takes the settings
-    * and cost hints from the saved plan. The plan saved replays nothing, writes no replay log and
-    * reads no input.
+    * and cost hints from the saved plan. The plan saved replays `replay`, writes its replay log
+    * to `replayLog`, and reads no input.
     *
-    * @param compiler the run's compiler: it resolves files, datasets and models as the run's user
-    *                 may, and writes code against the mount root of the unit the run is on
+    * @param compiler  the run's compiler: it resolves files, datasets and models as the run's user
+    *                  may, and writes code against the mount root of the unit the run is on
+    * @param replay    the replay log the run replays, up to one interaction; None for none
+    * @param replayLog where the run writes its replay log; None for nowhere
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors
     * @throws IllegalArgumentException if the run's settings send batches of fewer than one tuple,
-    *                                  or its cost hints are not ones a plan is saved with: from
-    *                                  an execution whose id is below 1, for an operator with no
-    *                                  id, or with a cost that is not a finite number of seconds,
-    *                                  at least 0
+    *                                  its cost hints are not ones a plan is saved with (from an
+    *                                  execution whose id is below 1, for an operator with no id,
+    *                                  or with a cost that is not a finite number of seconds, at
+    *                                  least 0), or it replays or writes a replay log at a location
+    *                                  that is not an absolute URI, replays the log of an
+    *                                  execution whose id is below 1, or replays up to a blank
+    *                                  interaction
     */
-  def make(compiler: WorkflowCompiler, logicalPlan: LogicalPlanPojo): PlanToRun = {
+  def make(
+      compiler: WorkflowCompiler,
+      logicalPlan: LogicalPlanPojo,
+      replay: Option[ReplaySource] = None,
+      replayLog: Option[URI] = None
+  ): PlanToRun = {
     val run = compiler.context
     val batchSize = run.workflowSettings.dataTransferBatchSize
     // Checked first, in the words of the editor's setting; the codec refuses such a plan too.
@@ -95,7 +111,9 @@ object PlanToRun {
     )
     PlanToRun(
       PhysicalPlanCodec.toJson(
-        PhysicalPlanCodec.encode(ExecutionPlan(compiled.context, compiled.physicalPlan))
+        PhysicalPlanCodec.encode(
+          ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog)
+        )
       ),
       compiled.logicalPlan
     )

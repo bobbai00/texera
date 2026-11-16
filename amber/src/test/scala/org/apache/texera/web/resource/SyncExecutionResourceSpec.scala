@@ -50,6 +50,7 @@ import org.apache.texera.amber.engine.architecture.worker.statistics.{
   PortTupleMetricsMapping,
   TupleMetrics
 }
+import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionConsoleStore,
   OperatorConsole,
@@ -63,7 +64,11 @@ import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{OPERATOR_EXECUTIONS, OPERATOR_PORT_EXECUTIONS}
+import org.apache.texera.dao.jooq.generated.Tables.{
+  OPERATOR_EXECUTIONS,
+  OPERATOR_PORT_EXECUTIONS,
+  WORKFLOW_EXECUTIONS
+}
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   UserDao,
@@ -78,7 +83,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowVersion
 }
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.service.WorkflowExecutionService
+import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -112,11 +117,10 @@ import scala.jdk.CollectionConverters._
   * per-row size (`rowChars`) rather than round numbers, which land in a neighbouring branch.
   *
   * Deliberately NOT covered, and why:
-  *   - `shutdownPreviousExecution` (350-361) and `killExecution`'s `client.shutdown()` line (368).
-  *     Both need an `AmberClient` test double; amber's test scope has no mocking library, and
-  *     `AmberClient`'s constructor needs a started `AmberRuntime`. `shutdownPreviousExecution` is
-  *     additionally unpinnable in principle: its whole body sits inside `catch (Exception) => warn`,
-  *     so removing either null guard turns a no-op into a *swallowed* NPE — no observable change.
+  *   - `killExecution`'s `client.shutdown()` line, and the engine shutdown of the run a sync run
+  *     supersedes. Both need an `AmberClient` test double; amber's test scope has no mocking
+  *     library, and `AmberClient`'s constructor needs a started `AmberRuntime`. What superseding
+  *     records, a live run KILLED, is pinned below on a run that never built its engine.
   *   - the document-reading half of `collectConsoleLogs`. Reachable by the same fixture technique
   *     (a console-messages document whose single column holds ASCII-serialized `ConsoleMessage`
   *     protos), just not done here; its database half, `getConsoleMessageUri`, is pinned below.
@@ -341,10 +345,19 @@ class SyncExecutionResourceSpec
     * `WorkflowExecutionServiceSpec` and `WorkflowServiceSpec` establish: construction does no
     * external work, and `client` stays null until `executeWorkflow()` builds one.
     */
-  private def newExecution(stateStore: ExecutionStateStore): WorkflowExecutionService =
+  private def newExecution(
+      stateStore: ExecutionStateStore,
+      eid: Option[Int] = None
+  ): WorkflowExecutionService = {
+    // Of execution `eid` when given, which its context and its metadata store then name, as
+    // initExecutionService sets them.
+    val context = new WorkflowContext()
+    eid.foreach { eid =>
+      context.executionId = ExecutionIdentity(eid.toLong)
+      stateStore.metadataStore.updateState(_.withExecutionId(ExecutionIdentity(eid.toLong)))
+    }
     new WorkflowExecutionService(
-      null,
-      new WorkflowContext(),
+      context,
       null,
       WorkflowExecuteRequest(
         executionName = "test",
@@ -360,8 +373,11 @@ class SyncExecutionResourceSpec
       (_: Throwable) => (),
       Integer.valueOf(1), // uid; these tests never resolve a file
       None,
-      new URI("vfs:///sync-execution-spec")
+      new URI("vfs:///sync-execution-spec"),
+      replay = None,
+      replayLog = None
     )
+  }
 
   private def metrics(
       state: WorkflowAggregatedState,
@@ -1217,5 +1233,46 @@ class SyncExecutionResourceSpec
     result.operators.keySet shouldBe Set("scan-op")
     result.operators("scan-op").state shouldBe "Unknown"
     result.operators("scan-op").error shouldBe None
+  }
+
+  it should "record the run it supersedes, still running, as killed" in {
+    // A run of the workflow still going in the workflow's service, as a browser's would be, of an
+    // execution with a row.
+    val previousEid = insertExecution("superseded-by-sync")
+    val previous = newExecution(new ExecutionStateStore(), eid = Some(previousEid))
+    previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
+    WorkflowService
+      .getOrCreate(WorkflowIdentity(testWid.toLong), testCuid)
+      .executionService
+      .onNext(previous)
+    val scan = new CSVScanSourceOpDesc()
+    scan.setOperatorId("scan-op")
+    val user = new User
+    user.setUid(testUid)
+    user.setEmail("sync-exec@example.com")
+
+    resource.executeWorkflowSync(
+      testWid.toLong,
+      testCuid,
+      SyncExecutionRequest(
+        executionName = "sync-supersede-run",
+        logicalPlan = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty),
+        workflowSettings = None,
+        targetOperatorIds = List("scan-op"),
+        timeoutSeconds = 5,
+        maxOperatorResultCharLimit = 100000,
+        maxOperatorResultCellCharLimit = 20000
+      ),
+      new SessionUser(user)
+    )
+
+    previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
+    previous.executionStateStore.statsStore.getState.endTimeStamp should be > 0L
+    getDSLContext
+      .select(WORKFLOW_EXECUTIONS.STATUS)
+      .from(WORKFLOW_EXECUTIONS)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(previousEid))
+      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
+      .intValue() shouldBe Utils.maptoStatusCode(KILLED).toInt
   }
 }

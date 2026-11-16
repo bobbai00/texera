@@ -159,15 +159,6 @@ class SyncExecutionResource extends LazyLogging {
         computingUnitId
       )
 
-      // Same rule as initExecutionService: check the pick before anything
-      // destructive, or an agent request that is going to be refused takes the
-      // execution in flight down with it. Resolved again inside the init call —
-      // one indexed single-row read, against a request that already writes
-      // several rows.
-      WorkflowService.resolveLakekeeperWarehouseName(request.warehouseId, user.getUser.getUid)
-
-      shutdownPreviousExecution(workflowService)
-
       // "Execute To" semantics: when a single target is given, run only its upstream sub-DAG.
       val effectiveLogicalPlan =
         computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
@@ -358,19 +349,6 @@ class SyncExecutionResource extends LazyLogging {
       case e: Exception =>
         logger.error(s"Sync execution error: ${e.getMessage}", e)
         handleExecutionError(e)
-    }
-  }
-
-  private def shutdownPreviousExecution(workflowService: WorkflowService): Unit = {
-    try {
-      val previousEs = workflowService.executionService.getValue
-      if (previousEs != null && previousEs.client != null) {
-        logger.info(s"Shutting down previous execution client")
-        previousEs.client.shutdown()
-      }
-    } catch {
-      case e: Exception =>
-        logger.warn(s"Error shutting down previous execution client: ${e.getMessage}")
     }
   }
 

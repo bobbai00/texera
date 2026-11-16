@@ -269,6 +269,10 @@ class ExecutionResultService(
   private val resultPullingFrequency = ApplicationConfig.executionResultPollingInSecs
   private var resultUpdateCancellable: Cancellable = _
 
+  // The execution whose results this service shows: the one it last attached to. Read by the
+  // websocket's pagination requests, on another thread than the run's start.
+  @volatile private var attachedExecutionId: Option[ExecutionIdentity] = None
+
   def attachToExecution(
       executionId: ExecutionIdentity,
       stateStore: ExecutionStateStore,
@@ -280,6 +284,7 @@ class ExecutionResultService(
     }
 
     unsubscribeAll()
+    attachedExecutionId = Some(executionId)
 
     addSubscription(stateStore.metadataStore.getStateObservable.subscribe {
       newState: ExecutionMetadataStore =>
@@ -401,15 +406,20 @@ class ExecutionResultService(
 
   }
 
+  /**
+    * A page of a result of the execution this service last attached to. Before it attaches to
+    * any, as on a unit that restarted since the workflow last ran, a page of the newest execution
+    * of the workflow on this unit.
+    */
   def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
     // calculate from index (pageIndex starts from 1 instead of 0)
     val from = request.pageSize * (request.pageIndex - 1)
-    val latestExecutionId = getLatestExecutionId(workflowIdentity, computingUnitId).getOrElse(
-      throw new IllegalStateException("No execution is recorded")
-    )
+    val executionId = attachedExecutionId
+      .orElse(getLatestExecutionId(workflowIdentity, computingUnitId))
+      .getOrElse(throw new IllegalStateException("No execution is recorded"))
 
     val storageUriOption = ExecutionResultUris.getResultUriByLogicalPortId(
-      latestExecutionId,
+      executionId,
       OperatorIdentity(request.operatorID),
       PortIdentity(request.portIndex)
     )

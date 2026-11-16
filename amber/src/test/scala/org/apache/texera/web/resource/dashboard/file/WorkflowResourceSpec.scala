@@ -19,6 +19,9 @@
 
 package org.apache.texera.web.resource.dashboard.file
 
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -48,6 +51,7 @@ import org.scalamock.scalatest.MockFactory
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
+import java.net.URI
 import java.sql.Timestamp
 import java.text.{ParseException, SimpleDateFormat}
 import java.time.{Duration, OffsetDateTime, ZoneOffset}
@@ -1281,6 +1285,73 @@ class WorkflowResourceSpec
     workflowResource.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)
 
     assert(workflowNamesOf(sessionUser1).isEmpty)
+  }
+
+  /**
+    * An execution of workflow `wid` with a plan table, where its row says the plan is; its id is
+    * given, so the table's name is this suite's own.
+    */
+  private def executionWithPlan(wid: Integer, eid: Int): URI = {
+    getDSLContext
+      .insertInto(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.EID, Integer.valueOf(eid))
+      .set(WORKFLOW_EXECUTIONS.VID, WorkflowVersionResource.getLatestVersion(wid))
+      .set(WORKFLOW_EXECUTIONS.UID, testUser.getUid)
+      .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test-env")
+      .execute()
+    val uri = ExecutionPlanStore.planUri(
+      WorkflowIdentity(wid.longValue()),
+      ExecutionIdentity(eid.toLong),
+      None
+    )
+    ExecutionPlanStore.writePlan(
+      uri,
+      PlanRecord(
+        entryId = ExecutionPlanStore.PlanEntryId,
+        kind = ExecutionPlanStore.PlanKind,
+        formatVersion = PhysicalPlanCodec.FormatVersion,
+        body = "{}",
+        logical = "{}",
+        createdAt = new Timestamp(System.currentTimeMillis()),
+        createdBy = testUser.getUid,
+        computingUnitId = 1,
+        notification = None
+      )
+    )
+    uri
+  }
+
+  private def hasPlanTable(uri: URI): Boolean =
+    try {
+      ExecutionPlanStore.readPlan(uri)
+      true
+    } catch {
+      case _: NoStoredPlanException => false
+    }
+
+  it should "drop the plan tables of the deleted workflow's executions, and no other's" in {
+    val wid = seedWorkflow(sessionUser1, "plan-tables-wf").workflow.getWid
+    val otherWid = seedWorkflow(sessionUser1, "plan-tables-other-wf").workflow.getWid
+    val deleted = Seq(951001, 951002).map(executionWithPlan(wid, _))
+    val kept = executionWithPlan(otherWid, 951003)
+    try {
+      workflowResource.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)
+
+      deleted.foreach(uri => assert(!hasPlanTable(uri), s"$uri was not dropped"))
+      assert(hasPlanTable(kept))
+    } finally ExecutionPlanStore.drop(kept)
+  }
+
+  it should "keep the plan tables of a workflow it refuses to delete" in {
+    // testUser2's workflow, which testUser may not delete.
+    val wid = seedWorkflow(sessionUser2, "plan-tables-not-yours-wf").workflow.getWid
+    val plan = executionWithPlan(wid, 951004)
+    try {
+      workflowResource.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)
+
+      assert(workflowNamesOf(sessionUser2).contains("plan-tables-not-yours-wf"))
+      assert(hasPlanTable(plan))
+    } finally ExecutionPlanStore.drop(plan)
   }
 
   // ---------------------------------------------------------------------------

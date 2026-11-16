@@ -45,6 +45,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, Us
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
 import org.apache.texera.web.service.ResultExportService
+import org.apache.texera.web.service.execution.ExecutionResources
 import org.jooq.DSLContext
 import play.api.libs.json.Json
 
@@ -364,7 +365,8 @@ object WorkflowExecutionsResource {
 
   /**
     * Removes all resources related to the specified execution IDs,
-    * including runtime statistics, console messages, result documents, and database records.
+    * including runtime statistics, console messages, result documents, plan tables, and database
+    * records.
     *
     * @param eids Array of execution IDs to be cleaned up.
     */
@@ -381,6 +383,8 @@ object WorkflowExecutionsResource {
         WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(execId) ++
         ExecutionResultUris.getResultUrisByExecutionId(execId)
     }
+    // Each execution's plan table, which only its row locates, so found before the rows go.
+    val planUris = ExecutionResources.planUrisOf(eIdsLong.map(ExecutionIdentity(_))).values
 
     // Delete execution-related URIs from database tables
     context
@@ -398,6 +402,7 @@ object WorkflowExecutionsResource {
         // Document already deleted – safe to ignore
       }
     }
+    ExecutionResources.dropPlanTables(planUris)
   }
 
   /**

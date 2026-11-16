@@ -21,120 +21,109 @@ package org.apache.texera.web.service
 
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW
-import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowDao
-import org.apache.texera.dao.jooq.generated.tables.pojos.Workflow
 import org.apache.texera.web.resource.EmailMessage
+import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
+import org.scalatest.PrivateMethodTester
 import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
 
 import java.net.URI
-import java.sql.Timestamp
 import java.time.Instant
 import java.util.{Locale, TimeZone, UUID}
-import javax.ws.rs.NotFoundException
 
 /**
   * Covers the parts of [[WorkflowEmailNotifier]] that decide *whether* to notify and *what* the
-  * notification says. Concretely, these tests fail if:
-  *   - the constructor stops resolving the workflow name from the `workflow` table (the name is
-  *     seeded here with a random suffix, so a hard-coded or echoed value cannot satisfy the
-  *     subject/content assertions), or stops surfacing a missing workflow as `NotFoundException`;
-  *   - `createDashboardUrl` starts emitting `:80`/`:443`/no-port links, or drops the workflow id
-  *     from the deep link, so the mail points somewhere the user cannot open;
+  * notification says, and the notification a plan row keeps. Concretely, these tests fail if:
+  *   - the subject or content stop naming the workflow by the name in the notification the
+  *     notifier is given, or stop linking to the page in it (the name carries a random suffix, so
+  *     a hard-coded value cannot satisfy the subject/content assertions);
+  *   - `workflowUrl` starts emitting `:80`/`:443`/no-port links, or drops the workflow id from the
+  *     deep link, so the mail points somewhere the user cannot open;
   *   - `formatTimestamp` stops pinning UTC or changes the human-readable pattern (the JVM default
   *     zone is deliberately set to non-UTC around the assertion; the locale is pinned to US so the
   *     expected month/day text is stable across environments);
   *   - the terminal-state set stops covering a state that ends or suspends an execution, which
-  *     would silently drop the only email a user gets for that run.
+  *     would silently drop the only email a user gets for that run;
+  *   - a notification no longer reads back as it was written, or a malformed one is read.
   *
-  * SMTP is never exercised: only the pure message-building helpers and the state predicate are
-  * invoked, so no test here reaches `GmailResource.sendEmail`.
+  * The notifier reads nothing to build an email, so this suite needs no database. SMTP is never
+  * exercised: only the pure message-building helpers and the state predicate are invoked, so no
+  * test here reaches `GmailResource.sendEmail`.
   */
-class WorkflowEmailNotifierSpec
-    extends AnyFlatSpec
-    with BeforeAndAfterAll
-    with MockTexeraDB
-    with PrivateMethodTester {
+class WorkflowEmailNotifierSpec extends AnyFlatSpec with PrivateMethodTester {
 
   private val testWid: Int = 7000 + scala.util.Random.nextInt(1000)
-  private val unseededWid: Int = testWid + 1
-  // Random suffix: the subject/content assertions can only pass if the notifier really read this
-  // value back out of the database.
+  // Random suffix: the subject/content assertions can only pass if the notifier really used the
+  // name it was given.
   private val testWorkflowName: String = "notifier_wf_" + UUID.randomUUID().toString.substring(0, 8)
   private val userEmail = "recipient@example.com"
 
   private val createEmailMessage = PrivateMethod[EmailMessage](Symbol("createEmailMessage"))
-  private val createDashboardUrl = PrivateMethod[String](Symbol("createDashboardUrl"))
   private val createEmailSubject = PrivateMethod[String](Symbol("createEmailSubject"))
   private val createEmailContent = PrivateMethod[String](Symbol("createEmailContent"))
   private val formatTimestamp = PrivateMethod[String](Symbol("formatTimestamp"))
   private val isValidEmail = PrivateMethod[Boolean](Symbol("isValidEmail"))
 
-  override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
-    deleteFixtureRows()
+  /** Builds a notifier for the test workflow, linking to its page on the host of `requestUri`. */
+  private def notifierFor(
+      requestUri: String,
+      email: String = userEmail
+  ): WorkflowEmailNotifier =
+    new WorkflowEmailNotifier(
+      testWid.toLong,
+      Notification(
+        email,
+        testWorkflowName,
+        WorkflowEmailNotifier.workflowUrl(new URI(requestUri), testWid.toLong)
+      )
+    )
 
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName(testWorkflowName)
-    workflow.setContent("{}")
-    workflow.setDescription("seeded by WorkflowEmailNotifierSpec")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-  }
+  // ─── workflowUrl ───────────────────────────────────────────────────────────
 
-  override protected def afterAll(): Unit = {
-    deleteFixtureRows()
-    shutdownDB()
-  }
-
-  private def deleteFixtureRows(): Unit =
-    getDSLContext.deleteFrom(WORKFLOW).where(WORKFLOW.WID.in(testWid, unseededWid)).execute()
-
-  /** Builds a notifier for the seeded workflow; the constructor hits the database every time. */
-  private def notifierFor(sessionUri: String): WorkflowEmailNotifier =
-    new WorkflowEmailNotifier(testWid.toLong, userEmail, new URI(sessionUri))
-
-  // ─── createDashboardUrl ────────────────────────────────────────────────────
-
-  "createDashboardUrl" should "omit the port when the session URI carries none" in {
-    val url = notifierFor("http://texera.example.com/dashboard/user/workspace/9") invokePrivate
-      createDashboardUrl()
+  "workflowUrl" should "omit the port when the request URI carries none" in {
+    val url = WorkflowEmailNotifier.workflowUrl(
+      new URI("http://texera.example.com/dashboard/user/workspace/9"),
+      testWid.toLong
+    )
     assert(url == s"http://texera.example.com/user/workspace/$testWid")
   }
 
   it should "omit an explicit port 80" in {
-    val url = notifierFor("http://texera.example.com:80/dashboard") invokePrivate
-      createDashboardUrl()
+    val url =
+      WorkflowEmailNotifier.workflowUrl(new URI("http://texera.example.com:80/dashboard"), testWid)
     assert(url == s"http://texera.example.com/user/workspace/$testWid")
   }
 
-  // Note the assertion keeps `http://` even for the https-conventional :443. createDashboardUrl
-  // hardcodes the scheme and never reads sessionUri.getScheme; that is today's behaviour, not an
-  // endorsement of it. A fix that preserved the scheme would surface here.
+  // Note the assertion keeps `http://` even for the https-conventional :443. workflowUrl hardcodes
+  // the scheme and never reads the request URI's; that is today's behaviour, not an endorsement of
+  // it. A fix that preserved the scheme would surface here.
   it should "omit an explicit port 443" in {
-    val url = notifierFor("http://texera.example.com:443/dashboard") invokePrivate
-      createDashboardUrl()
+    val url =
+      WorkflowEmailNotifier.workflowUrl(new URI("http://texera.example.com:443/dashboard"), testWid)
     assert(url == s"http://texera.example.com/user/workspace/$testWid")
   }
 
   it should "keep a non-default port" in {
-    val url = notifierFor("http://localhost:8080/dashboard") invokePrivate createDashboardUrl()
+    val url = WorkflowEmailNotifier.workflowUrl(new URI("http://localhost:8080/dashboard"), testWid)
     assert(url == s"http://localhost:8080/user/workspace/$testWid")
+  }
+
+  it should "link to the host of the websocket session a run was started over" in {
+    val url = WorkflowEmailNotifier.workflowUrl(
+      new URI("ws://texera.example.com:8080/wsapi/workflow-websocket?wid=1&cuid=2"),
+      testWid
+    )
+    assert(url == s"http://texera.example.com:8080/user/workspace/$testWid")
   }
 
   // ─── createEmailSubject / createEmailContent ───────────────────────────────
 
-  "createEmailSubject" should "carry the workflow name read from the database" in {
+  "createEmailSubject" should "carry the workflow name it is given" in {
     val subject = notifierFor("http://texera.example.com") invokePrivate
       createEmailSubject(COMPLETED)
     assert(subject == s"[Texera] Workflow $testWorkflowName ($testWid) Status: ${COMPLETED.name}")
   }
 
-  "createEmailContent" should "list the database-resolved name, the id, the state and the link" in {
+  "createEmailContent" should "list the name it is given, the id, the state and the link" in {
     val content = notifierFor("http://texera.example.com:8080/dashboard") invokePrivate
       createEmailContent(FAILED)
 
@@ -206,19 +195,6 @@ class WorkflowEmailNotifierSpec
     }
   }
 
-  // ─── constructor ───────────────────────────────────────────────────────────
-
-  "the constructor" should "propagate NotFoundException when the workflow row is missing" in {
-    val ex = intercept[NotFoundException] {
-      new WorkflowEmailNotifier(
-        unseededWid.toLong,
-        userEmail,
-        new URI("http://texera.example.com")
-      )
-    }
-    assert(ex.getMessage.contains(unseededWid.toString))
-  }
-
   // ─── createEmailMessage ────────────────────────────────────────────────────
 
   "createEmailMessage" should "address the recipient and carry the subject and content for the state" in {
@@ -239,14 +215,56 @@ class WorkflowEmailNotifierSpec
   // GmailResource.sendEmail, so no SMTP call is made. The valid-address arm would dispatch
   // for real, so it belongs to the integration tier.
   "sendStatusEmail" should "return without dispatching when the recipient address is invalid" in {
-    val notifier =
-      new WorkflowEmailNotifier(
-        testWid.toLong,
-        "not-an-email",
-        new URI("http://texera.example.com")
-      )
+    val notifier = notifierFor("http://texera.example.com", email = "not-an-email")
 
     notifier.sendStatusEmail(COMPLETED) // must not throw and must not reach Gmail
     assert(!(notifier invokePrivate isValidEmail("not-an-email")))
+  }
+
+  // ─── Notification ──────────────────────────────────────────────────────────
+
+  "Notification" should "write the three fields a plan row keeps, and read them back" in {
+    val url = s"http://texera.example.com:8080/user/workspace/$testWid"
+    val notification = Notification(userEmail, "Sales \"Q3\" — ünïcode", url)
+
+    val json = Notification.toJson(notification)
+
+    assert(
+      json == s"""{"email":"$userEmail","workflowName":"Sales \\"Q3\\" — ünïcode",""" +
+        s""""workflowUrl":"$url"}"""
+    )
+    assert(Notification.fromJson(json) == notification)
+    // The fields may come in any order and with any spacing.
+    assert(
+      Notification.fromJson(
+        s"""{ "workflowUrl": "$url", "email": "$userEmail", "workflowName": "n" }"""
+      ) ==
+        Notification(userEmail, "n", url)
+    )
+  }
+
+  it should "refuse a notification that is not exactly the three fields, each a string" in {
+    val complete = s""""email":"$userEmail","workflowName":"n","workflowUrl":"u""""
+    Seq(
+      "" -> "it is not JSON",
+      "{\"email\":" -> "it is not JSON",
+      "[]" -> "it is not an object",
+      "\"just text\"" -> "it is not an object",
+      "{}" -> "email, workflowName, workflowUrl missing or not a string",
+      s"""{"email":"$userEmail","workflowName":"n"}""" -> "workflowUrl missing or not a string",
+      s"""{"email":null,"workflowName":"n","workflowUrl":"u"}""" ->
+        "email missing or not a string",
+      s"""{"email":7,"workflowName":"n","workflowUrl":"u"}""" ->
+        "email missing or not a string",
+      s"""{$complete,"cc":"x","bcc":"y"}""" -> "it has bcc, cc"
+    ).foreach {
+      case (json, why) =>
+        val failure = intercept[IllegalArgumentException](Notification.fromJson(json))
+        assert(
+          failure.getMessage ==
+            s"The execution's notification is not {email, workflowName, workflowUrl}: $why.",
+          s"for $json"
+        )
+    }
   }
 }

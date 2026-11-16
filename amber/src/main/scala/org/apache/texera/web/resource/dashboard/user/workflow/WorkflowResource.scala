@@ -46,6 +46,7 @@ import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.resource.dashboard.hub.EntityType
 import org.apache.texera.web.resource.dashboard.hub.HubResource.recordCloneAction
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource._
+import org.apache.texera.web.service.execution.ExecutionResources
 import org.jooq.impl.DSL
 import org.jooq.impl.DSL.max
 import org.jooq.{DSLContext, Record10, Result, SelectOnConditionStep, TableField}
@@ -655,6 +656,9 @@ class WorkflowResource extends LazyLogging {
 
         resultUris ++ consoleMessagesUris ++ runtimeStatsUris
       }
+      // The executions' plan tables, which only their rows locate.
+      val planUris =
+        ExecutionResources.planUrisOf(eids.map(eid => ExecutionIdentity(eid.longValue()))).values
 
       // Delete workflows in a transaction
       context.transaction { _ =>
@@ -670,6 +674,7 @@ class WorkflowResource extends LazyLogging {
       // Delete large binaries for each execution belonging to the workflows being
       // removed. Done after the transaction (like the document cleanup below).
       eids.foreach(eid => LargeBinaryManager.deleteByExecution(eid.longValue()))
+      ExecutionResources.dropPlanTables(planUris)
 
       // Clean up document storage. While per-user warehouses are disabled, cleanup must
       // not reach into them (#6930) — those URIs are skipped.

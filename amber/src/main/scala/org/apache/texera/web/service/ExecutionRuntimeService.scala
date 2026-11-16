@@ -30,13 +30,17 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultToleranceConfig
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.web.model.websocket.request._
+import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 
-import java.net.URI
 import java.util.UUID
 
+/**
+  * @param notification where the run's status emails go and what they name, as its execution's
+  *                     plan row keeps them; None when the run sends none
+  */
 class ExecutionRuntimeService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
@@ -44,21 +48,12 @@ class ExecutionRuntimeService(
     reconfigurationService: ExecutionReconfigurationService,
     logConf: Option[FaultToleranceConfig],
     workflowId: Long,
-    emailNotificationEnabled: Boolean,
-    userEmailOpt: Option[String],
-    sessionUri: URI
+    private[service] val notification: Option[Notification]
 ) extends SubscriptionManager
     with LazyLogging {
 
-  private val emailNotificationService = for {
-    email <- userEmailOpt
-    if emailNotificationEnabled
-  } yield new EmailNotificationService(
-    new WorkflowEmailNotifier(
-      workflowId,
-      email,
-      sessionUri
-    )
+  private val emailNotificationService = notification.map(notification =>
+    new EmailNotificationService(new WorkflowEmailNotifier(workflowId, notification))
   )
 
   //Receive skip tuple

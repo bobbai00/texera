@@ -227,6 +227,22 @@ class WorkflowLifecycleManagerSpec extends AnyFlatSpec with BeforeAndAfterAll {
     assertCleanUpWithin(cleaned, seconds = 5)
   }
 
+  it should "stop following a run's state once the subscription it returns is disposed" in {
+    val (manager, cleaned) = managerWithCallback()
+    val stateStore = new ExecutionStateStore
+
+    val following = manager.registerCleanUpOnStateChange(stateStore)
+    stateStore.metadataStore.updateState(_.withState(RUNNING))
+    following.dispose()
+    // Had it still followed the run, this would arm the clean-up, due a second later.
+    stateStore.metadataStore.updateState(_.withState(COMPLETED))
+
+    assert(
+      !cleaned.await(2500, TimeUnit.MILLISECONDS),
+      "a state reported after the dispose armed the clean-up"
+    )
+  }
+
   it should "refresh the deadline when a later terminal state arrives" in {
     val id = "refresh-deadline"
     val (manager, cleaned) = managerWithCallback(cleanUpTimeout = 4, id = id)

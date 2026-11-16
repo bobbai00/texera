@@ -518,6 +518,33 @@ class ExecutionResultServiceSpec
     thrown.getMessage shouldBe "No execution is recorded"
   }
 
+  it should "read the execution it attached to, though a newer one of the workflow is on its unit" in {
+    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
+    def rows(ids: Range): Seq[Tuple] =
+      ids.map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
+    val attached = newExecution()
+    storeResult(attached, "erss-attached", schema, rows(0 until 3))
+    // A newer execution of the workflow on the same unit, with a result of the same operator, as
+    // an execution made and not yet started, or another session's, would be.
+    val newer = newExecution()
+    storeResult(newer, "erss-attached", schema, rows(100 until 102))
+    val request = paginationRequest.copy(operatorID = "erss-attached", pageSize = 10)
+
+    withAttached(
+      planOf(physicalOp(attached, "erss-attached", PortIdentity() -> OutputMode.SET_SNAPSHOT)),
+      attached
+    ) { fixture =>
+      fixture.service.handleResultPagination(request) match {
+        case event: PaginatedResultEvent =>
+          event.table.map(_.get("id").asInt()) shouldBe List(0, 1, 2)
+          event.totalTuples shouldBe 3
+        case other => fail(s"expected a PaginatedResultEvent, got $other")
+      }
+    }
+    // A service attached to no execution, as on a unit restarted since the run, reads the newest.
+    paginate(request).table.map(_.get("id").asInt()) shouldBe List(100, 101)
+  }
+
   it should "refuse to read a result whose warehouse the URI cannot resolve" in {
     val executionId = newExecution()
     // Only the URI row is needed: the guard has to reject before the document is

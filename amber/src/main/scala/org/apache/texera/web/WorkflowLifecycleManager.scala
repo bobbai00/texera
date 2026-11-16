@@ -21,6 +21,7 @@ package org.apache.texera.web
 
 import org.apache.pekko.actor.Cancellable
 import com.typesafe.scalalogging.LazyLogging
+import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.RUNNING
 import org.apache.texera.amber.engine.common.AmberRuntime
@@ -91,7 +92,13 @@ class WorkflowLifecycleManager(id: String, cleanUpTimeout: Int, cleanUpCallback:
     }
   }
 
-  def registerCleanUpOnStateChange(stateStore: ExecutionStateStore): Unit = {
+  /**
+    * Arms or postpones the clean-up whenever the state of a run in `stateStore` changes, starting
+    * with its current state.
+    *
+    * @return the subscription; once it is disposed, the run's state no longer reaches the clean-up
+    */
+  def registerCleanUpOnStateChange(stateStore: ExecutionStateStore): Disposable = {
     cleanUpExecution.cancel()
     stateStore.metadataStore.getStateObservable.subscribe { newState: ExecutionMetadataStore =>
       setCleanUpDeadline(newState.state)

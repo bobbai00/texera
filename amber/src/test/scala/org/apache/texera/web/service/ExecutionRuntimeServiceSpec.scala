@@ -19,6 +19,9 @@
 
 package org.apache.texera.web.service
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
+import ch.qos.logback.core.read.ListAppender
 import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
@@ -45,14 +48,19 @@ import org.apache.texera.web.model.websocket.request.{
   WorkflowPauseRequest,
   WorkflowResumeRequest
 }
+import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.BeforeAndAfterAll
+import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.time.{Seconds, Span}
+import org.slf4j.LoggerFactory
 
 import java.net.URI
 import scala.collection.mutable.ListBuffer
+import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
 
 class ExecutionRuntimeServiceSpec
@@ -60,6 +68,7 @@ class ExecutionRuntimeServiceSpec
     with AnyFlatSpecLike
     with Matchers
     with MockFactory
+    with Eventually
     with BeforeAndAfterAll {
 
   override def afterAll(): Unit = {
@@ -132,7 +141,8 @@ class ExecutionRuntimeServiceSpec
   private def fixture(
       logConf: Option[FaultToleranceConfig] = Some(
         FaultToleranceConfig(new URI("file:///runtime-checkpoints/"))
-      )
+      ),
+      notification: Option[Notification] = None
   ): Fixture = {
     val coordinator = mock[CoordinatorServiceFs2Grpc[Future, Unit]]
     val client = new TestAmberClient(coordinator)
@@ -148,9 +158,7 @@ class ExecutionRuntimeServiceSpec
       reconfigurationService,
       logConf,
       workflowId = 7L,
-      emailNotificationEnabled = false,
-      userEmailOpt = None,
-      sessionUri = new URI("https://texera.example/session")
+      notification = notification
     )
     new Fixture(
       client,
@@ -258,5 +266,38 @@ class ExecutionRuntimeServiceSpec
       f.stateStore.statsStore.getState.endTimeStamp should be > 0L
       f.errors shouldBe empty
     } finally f.close()
+  }
+
+  it should "send a run's status emails as the notification it is given says" in {
+    // An address the notifier refuses, so no email leaves: it logs the address instead, which
+    // shows the notifier was built from this notification. The notifier takes the notification
+    // whole, so the name and page go with the address.
+    val notification =
+      Notification("not-an-email", "workflow-seven", "http://texera.example/user/workspace/7")
+    val logger = LoggerFactory
+      .getLogger(classOf[WorkflowEmailNotifier])
+      .asInstanceOf[LogbackLogger]
+    val previousLevel = logger.getLevel
+    val appender = new ListAppender[ILoggingEvent]
+    appender.start()
+    logger.addAppender(appender)
+    logger.setLevel(Level.WARN)
+    val f = fixture(notification = Some(notification))
+    try {
+      f.runtime.notification shouldBe Some(notification)
+      f.client.stateCallback(ExecutionStateUpdate(COMPLETED))
+
+      // The email is sent on the notification service's own thread.
+      eventually(timeout(Span(10, Seconds))) {
+        appender.list.asScala.map(_.getFormattedMessage).toList should contain(
+          "Invalid email address: not-an-email"
+        )
+      }
+    } finally {
+      f.close()
+      logger.setLevel(previousLevel)
+      logger.detachAppender(appender)
+      appender.stop()
+    }
   }
 }

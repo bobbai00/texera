@@ -323,11 +323,10 @@ class WorkflowWebsocketResourceSpec
 
   /**
     * A real execution, built the way `WorkflowExecutionServiceSpec`/`WorkflowServiceSpec` do:
-    * construction does no external work, so the coordinator config and result service can be null.
+    * construction does no external work, so the result service can be null.
     */
   private def newExecution(): WorkflowExecutionService =
     new WorkflowExecutionService(
-      null,
       new WorkflowContext(),
       null,
       executeRequest,
@@ -335,7 +334,9 @@ class WorkflowWebsocketResourceSpec
       (_: Throwable) => (),
       Integer.valueOf(1), // uid; these tests never resolve a file
       None,
-      new URI("vfs:///test")
+      new URI("vfs:///test"),
+      replay = None,
+      replayLog = None
     )
 
   /** A session state holding `workflow`, with `execution` published into it when given. */

@@ -35,22 +35,16 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.USER_WAREHOUSE
 import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.storage.result.iceberg.OnIceberg
-import org.apache.texera.amber.core.virtualidentity.{
-  EmbeddedControlMessageIdentity,
-  ExecutionIdentity,
-  WorkflowIdentity
-}
-import org.apache.texera.amber.core.workflow.WorkflowContext
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
-import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
   COMPLETED,
-  FAILED
-}
-import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
-  FaultToleranceConfig,
-  StateRestoreConfig
+  FAILED,
+  KILLED,
+  TERMINATED
 }
 import org.apache.texera.amber.error.ErrorUtils.{
   getOperatorFromActorIdOpt,
@@ -67,12 +61,12 @@ import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
 import org.apache.texera.common.compiler.WorkflowCompilationFailed
-import org.apache.texera.common.compiler.model.LogicalPlan
 import play.api.libs.json.Json
 
 import java.net.URI
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import scala.jdk.CollectionConverters.IterableHasAsScala
 
 object WorkflowService {
@@ -150,6 +144,10 @@ object WorkflowService {
 
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
+  /** The states a run ends in: a run in any other may still be running. */
+  private[service] val FinishedStates: Set[WorkflowAggregatedState] =
+    Set(COMPLETED, FAILED, KILLED, TERMINATED)
+
   def getAllWorkflowServices: Iterable[WorkflowService] = workflowServiceMapping.values().asScala
 
   def mkWorkflowStateId(workflowId: WorkflowIdentity): String = {
@@ -185,41 +183,72 @@ class WorkflowService(
   val stateStore = new WorkflowStateStore()
   var executionService: BehaviorSubject[WorkflowExecutionService] = BehaviorSubject.create()
 
+  // Held while a request sets up a new run, from before it supersedes the run in flight until the
+  // new run is started or has failed, and while a run is superseded. So two requests never set up
+  // runs at once, and a run is never superseded halfway through its setup, which would leave an
+  // engine that no service holds.
+  private val runLock = new ReentrantLock()
+
   val resultService: ExecutionResultService =
     new ExecutionResultService(workflowId, computingUnitId, stateStore)
   val lifeCycleManager: WorkflowLifecycleManager = new WorkflowLifecycleManager(
     s"workflowId=$workflowId",
     cleanUpTimeout,
-    () => {
-      // clear the storage resources associated with the latest execution
-      WorkflowExecutionService
-        .getLatestExecutionId(workflowId, computingUnitId)
-        .foreach(eid => {
-          clearExecutionResources(eid)
-        })
-      WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
-      if (executionService.getValue != null) {
-        // shutdown client
-        executionService.getValue.client.shutdown()
-      }
-      unsubscribeAll()
-    }
+    () => cleanUpAfterIdle()
   )
 
-  var lastCompletedLogicalPlan: Option[LogicalPlan] = Option.empty
+  /**
+    * What becomes of this service once nobody has used the workflow for the clean-up timeout: the
+    * storage of the run it holds is cleared, and the service leaves the registry and lets go of
+    * every subscription, shutting that run's engine down. A service that holds no run clears
+    * nothing. The run is the one this service holds, not the newest of the workflow on its unit,
+    * which another service, or an execution made and not yet started, may own.
+    */
+  private[service] def cleanUpAfterIdle(): Unit = {
+    Option(executionService.getValue).foreach(run =>
+      clearExecutionResources(run.workflowContext.executionId)
+    )
+    WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
+    unsubscribeAll()
+  }
 
-  executionService.subscribe { executionService: WorkflowExecutionService =>
-    {
-      executionService.executionStateStore.metadataStore.registerDiffHandler {
-        (oldState, newState) =>
-          {
-            if (oldState.state != COMPLETED && newState.state == COMPLETED) {
-              lastCompletedLogicalPlan = Option.apply(executionService.workflow.logicalPlan)
-            }
-            Iterable.empty
+  /**
+    * Lets go of the run this service holds, as a new run is about to take its place. A run that
+    * has not finished is killed: its engine is shut down, and the state KILLED and its end time
+    * are recorded, which writes its execution's row once. A finished run is only let go of, and so
+    * is a run that finishes while it is let go of: it keeps the state it finished in.
+    *
+    * The run is let go of before KILLED is recorded, so neither the sessions on the workflow nor
+    * its idle clean-up hear of the kill: sessions see the new run take its place, as they did
+    * before a superseded run was recorded, and the kill does not arm the clean-up. A run still
+    * being set up is let go of only once its setup is over (see `runLock`).
+    */
+  def supersedeCurrentRun(): Unit = {
+    runLock.lock()
+    try {
+      Option(executionService.getValue).foreach { run =>
+        // Shuts its engine down too, when it has one.
+        run.unsubscribeAll()
+        val endTime = System.currentTimeMillis()
+        var killed = false
+        // Decided under the store's lock, against a state the engine may report at this moment.
+        run.executionStateStore.metadataStore.updateState { metadataStore =>
+          if (WorkflowService.FinishedStates.contains(metadataStore.state)) {
+            metadataStore
+          } else {
+            killed = true
+            updateWorkflowState(KILLED, metadataStore)
           }
+        }
+        if (killed) {
+          logger.info(
+            s"Execution ${run.workflowContext.executionId.id} of workflow ${workflowId.id} is " +
+              "killed, as a new run takes its place."
+          )
+          run.executionStateStore.statsStore.updateState(_.withEndTimeStamp(endTime))
+        }
       }
-    }
+    } finally runLock.unlock()
   }
 
   def connect(onNext: TexeraWebSocketEvent => Unit): Disposable = {
@@ -272,30 +301,30 @@ class WorkflowService(
       .setAttribute(SpanAttrs.WorkflowId, Long.box(workflowId.id))
       .startSpan()
     val scope = span.makeCurrent()
+    // Until the new run is started or has failed: no other request supersedes it meanwhile.
+    runLock.lock()
     try {
-
-      val (uidOpt, userEmailOpt) = userOpt.map(user => (user.getUid, user.getEmail)).unzip
 
       // Validate before touching the execution already in flight: a request that is
       // going to be refused must not take the running one's subscriptions with it.
       // uid is NOT NULL in the DB; fail early here rather than letting the insert fail downstream.
-      val uid = uidOpt.getOrElse(
-        throw new IllegalArgumentException(
-          "Cannot start execution: a user id (uid) is required but none was provided."
+      val uid = userOpt
+        .map(_.getUid)
+        .getOrElse(
+          throw new IllegalArgumentException(
+            "Cannot start execution: a user id (uid) is required but none was provided."
+          )
         )
-      )
+      val userEmail = userOpt.flatMap(user => Option(user.getEmail))
       val warehouseName = WorkflowService.resolveLakekeeperWarehouseName(req.warehouseId, uid)
 
-      if (executionService.hasValue) {
-        executionService.getValue.unsubscribeAll()
-      }
+      supersedeCurrentRun()
 
       val workflowContext: WorkflowContext = createWorkflowContext()
       workflowContext.warehouse = warehouseName
       // How long each operator took in the user's newest completed run of the workflow, for the
       // scheduler's cost model: saved with the plan, which the engine takes them from.
       workflowContext.costHints = costHintsLoader.load(workflowId.id, uid)
-      var coordinatorConf = CoordinatorConfig.default
 
       // clean up results from previous run
       val previousExecutionId =
@@ -317,33 +346,24 @@ class WorkflowService(
       org.apache.texera.web.observability.WorkflowMetricsRecorder
         .onStart(workflowContext.executionId)
 
-      if (ApplicationConfig.faultToleranceLogRootFolder.isDefined) {
-        val writeLocation = ApplicationConfig.faultToleranceLogRootFolder.get.resolve(
-          s"${workflowContext.workflowId}/${workflowContext.executionId}/"
-        )
+      // Where the run writes its replay log, and the replay log it replays: saved with its plan,
+      // whose coordinator is configured from the plan read back.
+      val replayLog = ApplicationConfig.faultToleranceLogRootFolder.map { root =>
+        val writeLocation =
+          root.resolve(s"${workflowContext.workflowId}/${workflowContext.executionId}/")
         ExecutionsMetadataPersistService.updateLogLocation(
           workflowContext.executionId,
           writeLocation.toString
         )
-        coordinatorConf = coordinatorConf.copy(faultToleranceConfOpt =
-          Some(FaultToleranceConfig(writeTo = writeLocation))
-        )
+        writeLocation
       }
-      if (req.replayFromExecution.isDefined) {
-        val replayInfo = req.replayFromExecution.get
+      val replay = req.replayFromExecution.flatMap { replayInfo =>
+        val source = ExecutionIdentity(replayInfo.eid)
         ExecutionsMetadataPersistService
-          .tryGetExistingExecution(ExecutionIdentity(replayInfo.eid))
-          .foreach { execution =>
-            val readLocation = new URI(execution.getLogLocation)
-            coordinatorConf = coordinatorConf.copy(stateRestoreConfOpt =
-              Some(
-                StateRestoreConfig(
-                  readFrom = readLocation,
-                  replayDestination = EmbeddedControlMessageIdentity(replayInfo.interaction)
-                )
-              )
-            )
-          }
+          .tryGetExistingExecution(source)
+          .map(execution =>
+            ReplaySource(source, new URI(execution.getLogLocation), replayInfo.interaction)
+          )
       }
 
       val executionStateStore = new ExecutionStateStore()
@@ -383,17 +403,21 @@ class WorkflowService(
       // WorkflowErrorEvent that `connectToExecution` forwards.
       try {
         val execution = new WorkflowExecutionService(
-          coordinatorConf,
           workflowContext,
           resultService,
           req,
           executionStateStore,
           errorHandler,
           uid,
-          userEmailOpt,
-          sessionUri
+          userEmail,
+          sessionUri,
+          replay,
+          replayLog
         )
-        lifeCycleManager.registerCleanUpOnStateChange(executionStateStore)
+        // Kept with the run, so the clean-up stops following it once the run is let go of.
+        execution.addSubscription(
+          lifeCycleManager.registerCleanUpOnStateChange(executionStateStore)
+        )
         executionService.onNext(execution)
         // A synchronous setup failure (e.g. compilation) is surfaced to the UI by
         // the run's errorHandler and signalled back here; record it on the still-open
@@ -420,6 +444,7 @@ class WorkflowService(
         span.setStatus(StatusCode.ERROR)
         throw t
     } finally {
+      runLock.unlock()
       scope.close()
       span.end()
     }

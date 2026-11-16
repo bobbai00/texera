@@ -25,6 +25,7 @@ import org.apache.texera.amber.core.workflow.{
   ExecutionMode,
   PhysicalPlanCodec,
   PortIdentity,
+  ReplaySource,
   WorkflowContext,
   WorkflowSettings
 }
@@ -40,6 +41,8 @@ import org.apache.texera.common.compiler.{
 }
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+
+import java.net.URI
 
 class PlanToRunSpec extends AnyFlatSpec with Matchers {
 
@@ -116,7 +119,8 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     // A plan does not choose the computing unit it runs on.
     planContext.cuid shouldBe None
     TestUtils.assertReadBackFrom(compiled.physicalPlan, executionPlan.plan)
-    // Nothing makes a run replay, write a replay log or read inputs through links yet.
+    // Given no replay or replay log, the plan replays nothing and writes no replay log; and no
+    // operator reads inputs through links yet.
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None
     executionPlan.inputs shouldBe empty
@@ -177,6 +181,56 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
 
     failure.operatorErrors.keySet shouldBe Set(scan.operatorIdentifier)
     failure.operatorErrors(scan.operatorIdentifier).message should include("No file selected")
+  }
+
+  it should "save the replay and the replay log it is given with the plan" in {
+    val operators = searches(1)
+    val replay = ReplaySource(
+      ExecutionIdentity(30),
+      new URI("file:///var/texera/logs/31/30/"),
+      "interaction-1"
+    )
+    val replayLog = new URI("file:///var/texera/logs/31/32/")
+
+    val planToRun = PlanToRun.make(
+      newCompiler(newContext()),
+      pojo(operators, chain(operators: _*)),
+      Some(replay),
+      Some(replayLog)
+    )
+
+    val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+    executionPlan.replay shouldBe Some(replay)
+    executionPlan.replayLog shouldBe Some(replayLog)
+    executionPlan.inputs shouldBe empty
+  }
+
+  it should "refuse to save a replay or a replay log the engine could not find" in {
+    val operators = searches(1)
+    def make(replay: Option[ReplaySource], replayLog: Option[URI]): PlanToRun =
+      PlanToRun.make(
+        newCompiler(newContext()),
+        pojo(operators, chain(operators: _*)),
+        replay,
+        replayLog
+      )
+    val log = new URI("file:///var/texera/logs/31/30/")
+    Seq(
+      (None, Some(new URI("logs/31/32/"))) ->
+        "The plan writes its replay log to 'logs/31/32/', which is not an absolute URI.",
+      (Some(ReplaySource(ExecutionIdentity(30), new URI("logs/31/30/"), "i")), None) ->
+        "The plan replays the log of execution 30 at 'logs/31/30/', which is not an absolute URI.",
+      (Some(ReplaySource(ExecutionIdentity(30), log, " ")), None) ->
+        "The plan replays the log of execution 30 up to an interaction it does not name.",
+      (Some(ReplaySource(ExecutionIdentity(0), log, "i")), None) ->
+        "The plan replays the log of execution 0, but an execution's id is at least 1."
+    ).foreach {
+      case ((replay, replayLog), message) =>
+        withClue(s"$message: ") {
+          the[IllegalArgumentException] thrownBy make(replay, replayLog) should have message
+            message
+        }
+    }
   }
 
   it should "refuse a run whose batches hold no tuple, in the words of the editor's setting" in {

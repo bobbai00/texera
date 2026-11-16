@@ -22,7 +22,13 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.serialization.SerializationExtension
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.storage.{VFSURIFactory, WarehouseUnavailableException}
+import org.apache.texera.amber.core.storage.{
+  ExecutionPlanStore,
+  NoStoredPlanException,
+  PlanRecord,
+  VFSURIFactory,
+  WarehouseUnavailableException
+}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -30,9 +36,10 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, SessionUser}
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
@@ -650,6 +657,75 @@ class WorkflowExecutionsResourceSpec
     assert(!survivorEids.contains(a.getEid))
     assert(!survivorEids.contains(b.getEid))
     assert(survivorEids.contains(survivor.getEid))
+  }
+
+  /** Writes a plan table for `execution`, where its row says the plan is, and returns its URI. */
+  private def storePlanOf(execution: WorkflowExecutions, warehouse: Option[String] = None): URI = {
+    val uri = ExecutionPlanStore.planUri(
+      WorkflowIdentity(testWorkflowWid.toLong),
+      ExecutionIdentity(execution.getEid.longValue()),
+      warehouse
+    )
+    ExecutionPlanStore.writePlan(
+      uri,
+      PlanRecord(
+        entryId = ExecutionPlanStore.PlanEntryId,
+        kind = ExecutionPlanStore.PlanKind,
+        formatVersion = PhysicalPlanCodec.FormatVersion,
+        body = "{}",
+        logical = "{}",
+        createdAt = new Timestamp(System.currentTimeMillis()),
+        createdBy = testUser.getUid,
+        computingUnitId = 1,
+        notification = None
+      )
+    )
+    uri
+  }
+
+  private def hasPlanTable(uri: URI): Boolean =
+    try {
+      ExecutionPlanStore.readPlan(uri)
+      true
+    } catch {
+      case _: NoStoredPlanException => false
+    }
+
+  it should "drop the plan tables of the executions it removes, and no other's" in {
+    val removed = insertExecution()
+    val claimed = insertExecution()
+    val kept = insertExecution()
+    val removedPlan = storePlanOf(removed)
+    val claimedPlan = storePlanOf(claimed)
+    ExecutionPlanStore.claimStart(claimedPlan)
+    val keptPlan = storePlanOf(kept)
+    try {
+      WorkflowExecutionsResource.removeAllExecutionFiles(Array(removed.getEid, claimed.getEid))
+
+      assert(!hasPlanTable(removedPlan))
+      assert(!hasPlanTable(claimedPlan))
+      assert(hasPlanTable(keptPlan))
+    } finally ExecutionPlanStore.drop(keptPlan)
+  }
+
+  it should "leave the plan table of an execution in a per-user warehouse alone while those are disabled" in {
+    assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(testUser.getUid)
+    warehouse.setName("plan-drop-warehouse")
+    warehouse.setLakekeeperWarehouseName(s"user-${testUser.getUid}-plan-drop-warehouse")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    val execution = insertExecution(whid = warehouse.getWhid)
+    // Under any catalog but the REST one, a warehouse's URI names the same table as the default's.
+    val planUri = storePlanOf(execution, Some(warehouse.getLakekeeperWarehouseName))
+    try {
+      WorkflowExecutionsResource.removeAllExecutionFiles(Array(execution.getEid))
+
+      assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
+      assert(hasPlanTable(planUri))
+    } finally ExecutionPlanStore.drop(planUri)
   }
 
   private def grantAccess(uid: Integer, privilege: PrivilegeEnum): Unit = {
