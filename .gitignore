@@ -1,0 +1,9 @@
+# local state and outputs of the harness
+.venv/
+.venv-proto/
+build/
+reports/
+stack/generated/
+__pycache__/
+*.pyc
+.state/

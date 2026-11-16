@@ -1,0 +1,11 @@
+id,name,dept,age,salary
+1,Alice,eng,34,120000.5
+2,Bob,eng,45,95000.0
+3,Carol,sales,29,70000.25
+4,Dan,sales,52,88000.0
+5,Eve,hr,41,65000.75
+6,Frank,eng,23,80000.0
+7,Grace,hr,38,72000.0
+8,Heidi,sales,47,91000.5
+9,Ivan,eng,31,105000.0
+10,Judy,ops,60,99000.0
