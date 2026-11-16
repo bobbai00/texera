@@ -38,24 +38,39 @@ export interface UserPveRecord {
   packages: Record<string, string>;
 }
 
+/**
+ * The rule for an environment's name, the Dashboard's own (PythonRequirements.validateName in
+ * common/workflow-core): a letter or digit, then up to 127 letters, digits, '.', '_' or '-'. The
+ * Environments page checks it before saving a name, and the computing unit panel before building
+ * one, so every name the Dashboard keeps can be built on a unit.
+ */
+export const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** What a user is told about a name outside ENVIRONMENT_NAME_PATTERN. */
+export const ENVIRONMENT_NAME_RULE =
+  "Environment name must start with a letter or digit and contain only letters, digits, '.', '_' and '-', at most 128 characters.";
+
 @Injectable({ providedIn: "root" })
 export class WorkflowPveService {
   constructor(private http: HttpClient) {}
 
-  savePve(name: string, packages: Record<string, string>): Observable<{ veid: number }> {
-    return this.http.post<{ veid: number }>(`${AppSettings.getApiEndpoint()}/pve/db`, { name, packages });
+  // The environments a user keeps belong to the user, not to a computing unit, so the Dashboard
+  // stores and checks them at /environments. The /pve calls further down act on one unit's own
+  // disk and go to that unit.
+  savePve(name: string, packages: Record<string, string>): Observable<UserPveRecord> {
+    return this.http.post<UserPveRecord>(`${AppSettings.getApiEndpoint()}/environments`, { name, packages });
   }
 
-  updateUserPve(veid: number, name: string, packages: Record<string, string>): Observable<{ veid: number }> {
-    return this.http.put<{ veid: number }>(`${AppSettings.getApiEndpoint()}/pve/db/${veid}`, { name, packages });
+  updateUserPve(veid: number, name: string, packages: Record<string, string>): Observable<UserPveRecord> {
+    return this.http.put<UserPveRecord>(`${AppSettings.getApiEndpoint()}/environments/${veid}`, { name, packages });
   }
 
   listUserPves(): Observable<UserPveRecord[]> {
-    return this.http.get<UserPveRecord[]>(`${AppSettings.getApiEndpoint()}/pve/db`);
+    return this.http.get<UserPveRecord[]>(`${AppSettings.getApiEndpoint()}/environments`);
   }
 
   deleteUserPve(veid: number): Observable<void> {
-    return this.http.delete<void>(`${AppSettings.getApiEndpoint()}/pve/db/${veid}`);
+    return this.http.delete<void>(`${AppSettings.getApiEndpoint()}/environments/${veid}`);
   }
 
   getAccessToken(): string | null {

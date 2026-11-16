@@ -56,6 +56,8 @@ import {
   getComputingUnitCpuLimitUnit,
 } from "../../../common/util/computing-unit.util";
 import {
+  ENVIRONMENT_NAME_PATTERN,
+  ENVIRONMENT_NAME_RULE,
   PvePackageResponse,
   UserPveRecord,
   WorkflowPveService,
@@ -1271,8 +1273,9 @@ export class ComputingUnitSelectionComponent implements OnInit {
     const env = this.pves[index];
     const trimmedName = env.name.trim();
 
-    if (!/^[a-zA-Z0-9]+$/.test(trimmedName)) {
-      this.notificationService.error("Environment name must contain only letters and numbers.");
+    // The Dashboard's rule, so every environment the Environments page saves can be built here.
+    if (!ENVIRONMENT_NAME_PATTERN.test(trimmedName)) {
+      this.notificationService.error(ENVIRONMENT_NAME_RULE);
       return;
     }
 

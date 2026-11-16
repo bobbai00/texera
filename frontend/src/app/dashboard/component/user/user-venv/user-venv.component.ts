@@ -20,6 +20,7 @@
 import { Component, OnInit } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { NgFor, NgIf } from "@angular/common";
+import { HttpErrorResponse } from "@angular/common/http";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 
 import { NzButtonComponent } from "ng-zorro-antd/button";
@@ -33,6 +34,8 @@ import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import {
+  ENVIRONMENT_NAME_PATTERN,
+  ENVIRONMENT_NAME_RULE,
   UserPveRecord,
   WorkflowPveService,
 } from "../../../../workspace/service/virtual-environment/virtual-environment.service";
@@ -48,6 +51,18 @@ type PveDraft = {
   name: string;
   newPackages: PveUserPackageRow[];
 };
+
+/**
+ * The message the Dashboard gave for refusing a save, if it gave one: 400 for a name or package it
+ * cannot install, 404 for an environment that is not the caller's, 409 for a name already in use.
+ */
+function refusalMessage(err: unknown): string | undefined {
+  if (!(err instanceof HttpErrorResponse) || ![400, 404, 409].includes(err.status)) {
+    return undefined;
+  }
+  const message: unknown = err.error?.message;
+  return typeof message === "string" && message.trim() !== "" ? message : undefined;
+}
 
 @UntilDestroy()
 @Component({
@@ -176,8 +191,9 @@ export class UserVenvComponent implements OnInit {
       return;
     }
 
-    if (!/^[a-zA-Z0-9]+$/.test(trimmedName)) {
-      this.notificationService.error("Environment name must contain only letters and numbers.");
+    // The Dashboard checks the name again; checking it here first answers without a round trip.
+    if (!ENVIRONMENT_NAME_PATTERN.test(trimmedName)) {
+      this.notificationService.error(ENVIRONMENT_NAME_RULE);
       return;
     }
 
@@ -215,7 +231,7 @@ export class UserVenvComponent implements OnInit {
       error: (err: unknown) => {
         this.saving = false;
         console.error("Failed to save PVE", err);
-        this.notificationService.error("Failed to save Python environment.");
+        this.notificationService.error(refusalMessage(err) ?? "Failed to save Python environment.");
       },
     });
   }

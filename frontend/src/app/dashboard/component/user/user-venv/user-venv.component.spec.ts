@@ -18,6 +18,7 @@
  */
 
 import { ApplicationRef } from "@angular/core";
+import { HttpErrorResponse } from "@angular/common/http";
 import { ComponentFixture, TestBed } from "@angular/core/testing";
 import { By } from "@angular/platform-browser";
 import { NoopAnimationsModule } from "@angular/platform-browser/animations";
@@ -54,11 +55,18 @@ describe("UserVenvComponent", () => {
   let capturedConfirmConfig: ModalOptions | undefined;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
+  /** A row as the Dashboard answers a save with it: the environment as stored. */
+  const storedRow = (veid: number, name: string, packages: Record<string, string> = {}): UserPveRecord => ({
+    veid,
+    name,
+    packages,
+  });
+
   beforeEach(async () => {
     pveServiceSpy = {
       listUserPves: vi.fn().mockReturnValue(of([])),
-      savePve: vi.fn().mockReturnValue(of({ veid: 1 })),
-      updateUserPve: vi.fn().mockReturnValue(of({ veid: 1 })),
+      savePve: vi.fn().mockReturnValue(of(storedRow(1, "env"))),
+      updateUserPve: vi.fn().mockReturnValue(of(storedRow(1, "env"))),
       deleteUserPve: vi.fn().mockReturnValue(of(undefined)),
     };
     notificationSpy = {
@@ -249,11 +257,29 @@ describe("UserVenvComponent", () => {
       expect(component.saving).toBe(false);
     });
 
-    it("rejects a non-alphanumeric name", () => {
-      component.currentDraft = { name: "env 1", newPackages: [] };
-      component.saveEnvironment();
-      expect(notificationSpy.error).toHaveBeenCalledWith("Environment name must contain only letters and numbers.");
+    it("rejects a name outside the Dashboard's name rule without calling the service", () => {
+      const names = ["env 1", "env/1", "env@1", "env:1", "ënv", "a".repeat(129), ".", "..", ".x", "-x", "_x"];
+      for (const name of names) {
+        notificationSpy.error.mockClear();
+        component.currentDraft = { name, newPackages: [] };
+        component.saveEnvironment();
+        expect(notificationSpy.error).toHaveBeenCalledWith(
+          "Environment name must start with a letter or digit and contain only letters, digits, '.', '_' and '-', at most 128 characters."
+        );
+      }
       expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
+      expect(component.saving).toBe(false);
+    });
+
+    it("accepts every name the Dashboard accepts: a letter or digit, then letters, digits, '.', '_' and '-', up to 128", () => {
+      const names = ["ml-env_1.0", "ML", "0.x", "a".repeat(128)];
+      for (const name of names) {
+        component.currentDraft = { name, newPackages: [] };
+        component.saveEnvironment();
+        expect(pveServiceSpy.savePve).toHaveBeenLastCalledWith(name, {});
+      }
+      expect(pveServiceSpy.savePve).toHaveBeenCalledTimes(names.length);
+      expect(notificationSpy.error).not.toHaveBeenCalled();
     });
 
     it("rejects a name that duplicates a different environment", () => {
@@ -288,7 +314,7 @@ describe("UserVenvComponent", () => {
         ],
       };
       component.pveModalVisible = true;
-      pveServiceSpy.savePve.mockReturnValue(of({ veid: 5 }));
+      pveServiceSpy.savePve.mockReturnValue(of(storedRow(5, "envNew", { a: ">=1.0", b: "", c: "" })));
       pveServiceSpy.listUserPves.mockReturnValue(of([]));
 
       component.saveEnvironment();
@@ -309,7 +335,7 @@ describe("UserVenvComponent", () => {
         name: "envNull",
         newPackages: [{ name: "a", versionOp: ">=", version: null as unknown as string }],
       };
-      pveServiceSpy.savePve.mockReturnValue(of({ veid: 6 }));
+      pveServiceSpy.savePve.mockReturnValue(of(storedRow(6, "envNull", { a: "" })));
       pveServiceSpy.listUserPves.mockReturnValue(of([]));
 
       component.saveEnvironment();
@@ -324,7 +350,7 @@ describe("UserVenvComponent", () => {
         name: "envU",
         newPackages: [{ name: "numpy", versionOp: "==", version: "1.2" }],
       };
-      pveServiceSpy.updateUserPve.mockReturnValue(of({ veid: 7 }));
+      pveServiceSpy.updateUserPve.mockReturnValue(of(storedRow(7, "envU", { numpy: "==1.2" })));
       pveServiceSpy.listUserPves.mockReturnValue(of([]));
 
       component.saveEnvironment();
@@ -356,6 +382,64 @@ describe("UserVenvComponent", () => {
       expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
       expect(pveServiceSpy.updateUserPve).not.toHaveBeenCalled();
       expect(component.saving).toBe(false);
+    });
+
+    /** A refusal as the Dashboard sends it: Dropwizard's `{code, message}` body. */
+    const refusal = (status: number, message: string) =>
+      new HttpErrorResponse({ status, error: { code: status, message }, url: "/api/environments" });
+
+    it("shows the Dashboard's message when it refuses a package (400), keeping the modal open", () => {
+      const message = "Package \"pkg[extra]\" is not valid: it contains '['.";
+      component.currentDraft = {
+        name: "envBad",
+        newPackages: [{ name: "pkg[extra]", versionOp: "==", version: "" }],
+      };
+      component.pveModalVisible = true;
+      pveServiceSpy.savePve.mockReturnValue(throwError(() => refusal(400, message)));
+
+      component.saveEnvironment();
+
+      expect(notificationSpy.error).toHaveBeenCalledWith(message);
+      expect(notificationSpy.error).toHaveBeenCalledTimes(1);
+      expect(notificationSpy.success).not.toHaveBeenCalled();
+      expect(component.saving).toBe(false);
+      expect(component.currentDraft).not.toBeNull();
+      expect(component.pveModalVisible).toBe(true);
+    });
+
+    it("shows the Dashboard's message for a name already in use (409) or an environment gone (404)", () => {
+      component.pves = [{ veid: 7, name: "envU", newPackages: [] }];
+      for (const [status, message] of [
+        [409, 'An environment named "envU" already exists.'],
+        [404, "This environment does not exist or is not yours."],
+      ] as const) {
+        notificationSpy.error.mockClear();
+        component.currentDraft = { veid: 7, name: "envU", newPackages: [] };
+        pveServiceSpy.updateUserPve.mockReturnValue(throwError(() => refusal(status, message)));
+
+        component.saveEnvironment();
+
+        expect(notificationSpy.error).toHaveBeenCalledWith(message);
+      }
+    });
+
+    it("falls back to the generic message when the failure carries no message of the Dashboard's", () => {
+      const failures = [
+        refusal(500, "java.lang.NullPointerException"),
+        refusal(403, "User not authorized."),
+        new HttpErrorResponse({ status: 400, error: "<!doctype html><html></html>" }),
+        new HttpErrorResponse({ status: 409, error: { code: 409, message: "   " } }),
+        new HttpErrorResponse({ status: 0, error: new ProgressEvent("error") }),
+      ];
+      for (const failure of failures) {
+        notificationSpy.error.mockClear();
+        component.currentDraft = { name: "envErr", newPackages: [] };
+        pveServiceSpy.savePve.mockReturnValue(throwError(() => failure));
+
+        component.saveEnvironment();
+
+        expect(notificationSpy.error).toHaveBeenCalledWith("Failed to save Python environment.");
+      }
     });
   });
 

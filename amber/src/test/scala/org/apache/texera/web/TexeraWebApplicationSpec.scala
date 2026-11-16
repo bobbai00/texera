@@ -37,6 +37,7 @@ import org.apache.texera.web.resource.dashboard.admin.execution.AdminExecutionRe
 import org.apache.texera.web.resource.dashboard.admin.user.AdminUserResource
 import org.apache.texera.web.resource.dashboard.hub.HubResource
 import org.apache.texera.web.resource.dashboard.user.UserResource
+import org.apache.texera.web.resource.dashboard.user.environment.EnvironmentResource
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource
 import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource
 import org.apache.texera.web.resource.dashboard.user.workflow.{
@@ -306,7 +307,8 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
       classOf[UserQuotaResource],
       classOf[AIAssistantResource],
       classOf[HuggingFaceModelResource],
-      classOf[WarehouseResource]
+      classOf[WarehouseResource],
+      classOf[EnvironmentResource]
     )
   }
 

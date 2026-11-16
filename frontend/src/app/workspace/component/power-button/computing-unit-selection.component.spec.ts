@@ -963,6 +963,41 @@ describe("PowerButtonComponent", () => {
       expect(component.pves[2].isInstalling).toBeFalsy();
     });
 
+    describe("installing a saved environment", () => {
+      // installFromSavedPve hands the build to createVirtualEnvironment on a timer, so these run
+      // the timer and let the real create path decide.
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      /** Installs the one saved environment named `name` into a unit with no environment yet. */
+      function installSaved(name: string): void {
+        component.pves = [];
+        component.availableDbPves = [{ veid: 42, name, packages: { pandas: "==2.0.0" } }];
+        component.installFromSavedPve(42);
+        vi.runOnlyPendingTimers();
+      }
+
+      it("builds one whose name has '.', '_' and '-', as the Environments page saves it", () => {
+        installSaved("ml-env_1.0");
+
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(sockets).toHaveLength(1);
+        expect(sockets[0].url).toContain("pveName=ml-env_1.0&action=create");
+        expect(component.pves[0].isInstalling).toBe(true);
+      });
+
+      it("refuses one named '..' before any socket opens, so no venv lands outside the unit's directory", () => {
+        // The Dashboard no longer saves such a name, but a row saved before it checked names can.
+        installSaved("..");
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Environment name must start with a letter or digit and contain only letters, digits, '.', '_' and '-', at most 128 characters."
+        );
+        expect(sockets).toHaveLength(0);
+        expect(component.pves[0].isInstalling).toBe(false);
+      });
+    });
+
     it("starts the log from empty when the card has produced no output yet", () => {
       setPve();
       component.createVirtualEnvironment(0);
@@ -1105,7 +1140,9 @@ describe("PowerButtonComponent", () => {
   });
 
   describe("createVirtualEnvironment name validation", () => {
-    const VALIDATION_MSG = "Environment name must contain only letters and numbers.";
+    // The Environments page's rule and message: a name the Dashboard saves can be built here.
+    const VALIDATION_MSG =
+      "Environment name must start with a letter or digit and contain only letters, digits, '.', '_' and '-', at most 128 characters.";
 
     let errorSpy: ReturnType<typeof vi.spyOn>;
     let runWsSpy: ReturnType<typeof vi.spyOn>;
@@ -1132,12 +1169,16 @@ describe("PowerButtonComponent", () => {
     }
 
     const invalidCases: ReadonlyArray<readonly [string, string]> = [
-      ["underscore", "my_env"],
-      ["dash", "my-env"],
       ["internal whitespace", "my env"],
-      ["dot", "my.env"],
       ["exclamation mark", "env!"],
       ["slash", "env/1"],
+      ["colon", "env:1"],
+      ["non-ASCII letter", "ënv"],
+      ["one dot", "."],
+      ["two dots", ".."],
+      ["leading dot", ".env"],
+      ["leading dash", "-env"],
+      ["leading underscore", "_env"],
       ["only whitespace (empty after trim)", "   "],
       ["empty string", ""],
     ];
@@ -1153,17 +1194,38 @@ describe("PowerButtonComponent", () => {
       });
     });
 
-    const validCases: ReadonlyArray<string> = ["env", "env1", "123", "ScanPyEnv", "abcXYZ0"];
+    const validCases: ReadonlyArray<readonly [string, string]> = [
+      ["letters", "env"],
+      ["letters and digits", "env1"],
+      ["digits", "123"],
+      ["mixed case", "ScanPyEnv"],
+      ["underscore", "my_env"],
+      ["dash", "my-env"],
+      ["dot", "my.env"],
+      ["every separator", "ml-env_1.0"],
+    ];
 
-    validCases.forEach(name => {
-      it(`accepts ${JSON.stringify(name)} (alphanumeric only) and proceeds to create`, () => {
+    validCases.forEach(([label, name]) => {
+      it(`accepts ${label} and proceeds to create`, () => {
         setSinglePve(name);
 
         component.createVirtualEnvironment(0);
 
-        expect(errorSpy).not.toHaveBeenCalledWith(VALIDATION_MSG);
-        expect(runWsSpy).toHaveBeenCalled();
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(runWsSpy).toHaveBeenCalledWith(0, "create", expect.any(String), [], expect.any(Function));
       });
+    });
+
+    it("accepts a name of 128 characters and rejects one of 129", () => {
+      setSinglePve("a".repeat(128));
+      component.createVirtualEnvironment(0);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(runWsSpy).toHaveBeenCalledTimes(1);
+
+      setSinglePve("a".repeat(129));
+      component.createVirtualEnvironment(0);
+      expect(errorSpy).toHaveBeenCalledWith(VALIDATION_MSG);
+      expect(runWsSpy).toHaveBeenCalledTimes(1);
     });
 
     it("trims surrounding whitespace before validating (valid name with padding passes)", () => {
@@ -1186,7 +1248,7 @@ describe("PowerButtonComponent", () => {
 
     it("rejects an invalid name on a locked card too (validation runs before the locked branch)", () => {
       const deleteSpy = vi.spyOn(component as any, "deleteUserPackages").mockImplementation(() => {});
-      setSinglePve("my_env", true);
+      setSinglePve("my env", true);
 
       component.createVirtualEnvironment(0);
 

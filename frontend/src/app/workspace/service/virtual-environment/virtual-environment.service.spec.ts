@@ -41,47 +41,57 @@ describe("WorkflowPveService", () => {
     expect(service).toBeTruthy();
   });
 
-  it("savePve() POSTs to /pve/db with name + packages and returns the new veid", () => {
+  it("savePve() POSTs name + packages to the Dashboard's /environments and returns the stored row", () => {
     const packages = { numpy: "==1.26.0" };
+    const stored: UserPveRecord = { veid: 42, name: "env-a", packages };
+    let received: UserPveRecord | undefined;
     service.savePve("env-a", packages).subscribe(resp => {
-      expect(resp.veid).toBe(42);
+      received = resp;
     });
 
-    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/pve/db`);
+    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/environments`);
     expect(req.request.method).toBe("POST");
     expect(req.request.body).toEqual({ name: "env-a", packages });
-    req.flush({ veid: 42 });
+    req.flush(stored, { status: 201, statusText: "Created" });
+    expect(received).toEqual(stored);
   });
 
-  it("updateUserPve() PUTs to /pve/db/{veid} with name + packages", () => {
+  it("updateUserPve() PUTs name + packages to /environments/{veid} and returns the stored row", () => {
     const packages = { pandas: "" };
+    const stored: UserPveRecord = { veid: 7, name: "env-b", packages };
+    let received: UserPveRecord | undefined;
     service.updateUserPve(7, "env-b", packages).subscribe(resp => {
-      expect(resp.veid).toBe(7);
+      received = resp;
     });
 
-    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/pve/db/7`);
+    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/environments/7`);
     expect(req.request.method).toBe("PUT");
     expect(req.request.body).toEqual({ name: "env-b", packages });
-    req.flush({ veid: 7 });
+    req.flush(stored);
+    expect(received).toEqual(stored);
   });
 
-  it("listUserPves() GETs /pve/db and returns the array of records", () => {
+  it("listUserPves() GETs /environments and returns the array of records", () => {
     const records: UserPveRecord[] = [{ veid: 1, name: "env-a", packages: { numpy: "==1.26.0" } }];
+    let received: UserPveRecord[] | undefined;
     service.listUserPves().subscribe(resp => {
-      expect(resp).toEqual(records);
+      received = resp;
     });
 
-    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/pve/db`);
+    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/environments`);
     expect(req.request.method).toBe("GET");
     req.flush(records);
+    expect(received).toEqual(records);
   });
 
-  it("deleteUserPve() DELETEs /pve/db/{veid}", () => {
-    service.deleteUserPve(9).subscribe();
+  it("deleteUserPve() DELETEs /environments/{veid}", () => {
+    let completed = false;
+    service.deleteUserPve(9).subscribe({ complete: () => (completed = true) });
 
-    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/pve/db/9`);
+    const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/environments/9`);
     expect(req.request.method).toBe("DELETE");
-    req.flush(null);
+    req.flush(null, { status: 204, statusText: "No Content" });
+    expect(completed).toBe(true);
   });
 
   describe("token-parameterized endpoints", () => {
