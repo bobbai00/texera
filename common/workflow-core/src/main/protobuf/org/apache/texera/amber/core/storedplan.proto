@@ -1,0 +1,192 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// A physical plan saved to be run later: what the engine needs to run it, and nothing that only
+// compiling it needs (an operator's schema propagation function, or a resource binding).
+// PhysicalPlanCodec writes it and reads it back, as JSON with these field names.
+//
+// - Lists keep the order the plan iterates its links, ports and operators in, since scheduling
+//   can depend on it; only a plan of more than four operators lists them by id instead.
+// - Every field is written, defaults included, except one whose comment says what its absence
+//   means. A reader refuses text in any other form: a field missing or given twice, a value
+//   written another way (an enum as a number, say), or anything after the plan. Only the order
+//   of an object's fields, and the spacing, are free.
+// - Every enum defined here starts with an UNSPECIFIED value that no plan holds, and a oneof is
+//   always set: a reader refuses either, so a plan cut short or edited by hand fails instead of
+//   defaulting.
+// - The format takes in the messages it reuses from workflow.proto, executor.proto and
+//   virtualidentity.proto. A change to a message here, or to one it reuses, comes with a new
+//   formatVersion and new golden files (PhysicalPlanCodecSpec).
+
+syntax = "proto3";
+
+package org.apache.texera.amber.core;
+
+import "google/protobuf/empty.proto";
+import "org/apache/texera/amber/core/executor.proto";
+import "org/apache/texera/amber/core/virtualidentity.proto";
+import "org/apache/texera/amber/core/workflow.proto";
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  scope: FILE,
+  preserve_unknown_fields: false,
+  no_default_values_in_constructor: false
+};
+
+message StoredPhysicalPlan {
+  // The version of this format the plan is written in; a reader refuses one it does not read.
+  int32 formatVersion = 1;
+  WorkflowIdentity workflowId = 2;
+  ExecutionIdentity executionId = 3;
+  StoredWorkflowSettings settings = 4;
+  // The warehouse the execution writes its results into. Absent: the shared default one.
+  optional string warehouse = 5;
+  // Every operator once: in the order the plan iterates them, or, if there are more than four,
+  // in the order of their ids. Each carries no workflow or execution id: a reader gives it the
+  // plan's.
+  repeated StoredPhysicalOp operators = 6;
+  // Every link once. Each is also listed on the two ports it joins, in that port's own order.
+  repeated PhysicalLink links = 7;
+}
+
+message StoredWorkflowSettings {
+  enum ExecutionMode {
+    EXECUTION_MODE_UNSPECIFIED = 0;
+    PIPELINED = 1;
+    MATERIALIZED = 2;
+  }
+  // How many tuples go out in one batch; at least 1.
+  int32 dataTransferBatchSize = 1;
+  ExecutionMode executionMode = 2;
+  // The output ports whose results are stored, each once.
+  repeated GlobalPortIdentity outputPortsNeedingStorage = 3;
+}
+
+message StoredPhysicalOp {
+  // Where the operator's workers prefer to run.
+  enum LocationPreference {
+    LOCATION_PREFERENCE_UNSPECIFIED = 0;
+    NO_PREFERENCE = 1;
+    PREFER_COORDINATOR = 2;
+    ROUND_ROBIN = 3;
+  }
+  PhysicalOpIdentity id = 1;
+  OpExecInitInfo opExecInitInfo = 2;
+  bool parallelizable = 3;
+  LocationPreference locationPreference = 4;
+  // Entry i is the requirement on input port number i, internal or not; a port past the end of
+  // the list has none. A source operator's first entry is how its output is partitioned.
+  repeated StoredPartitionRequirement partitionRequirement = 5;
+  StoredPartitionRule outputPartitionRule = 6;
+  // Each port once, in the order the operator iterates them.
+  repeated StoredInputPort inputPorts = 7;
+  repeated StoredOutputPort outputPorts = 8;
+  bool isOneToManyOp = 9;
+  bool requiresMaterializedExecution = 10;
+  bool isLoopStart = 11;
+  // How many workers to run. Absent: the engine's default.
+  optional int32 suggestedWorkerNum = 12;
+  string pveName = 13;
+  // The datasets and models the operator's code reads. Absent: none.
+  StoredRepositoryMounts repositoryMounts = 14;
+}
+
+message StoredPartitionRequirement {
+  oneof requirement {
+    // The operator needs the input on the port partitioned this way.
+    StoredPartitionInfo partition = 1;
+    // The operator needs nothing of how the input on the port is partitioned.
+    google.protobuf.Empty noRequirement = 2;
+  }
+}
+
+message StoredPartitionInfo {
+  oneof kind {
+    StoredHashPartition hash = 1;
+    StoredRangePartition range = 2;
+    google.protobuf.Empty single = 3;
+    google.protobuf.Empty oneToOne = 4;
+    google.protobuf.Empty broadcast = 5;
+    google.protobuf.Empty unknown = 6;
+  }
+}
+
+message StoredHashPartition {
+  repeated string attributeNames = 1;
+}
+
+message StoredRangePartition {
+  repeated string attributeNames = 1;
+  int64 rangeMin = 2;
+  int64 rangeMax = 3;
+}
+
+// How the operator's output is partitioned, given how its inputs are (PartitionRule).
+message StoredPartitionRule {
+  oneof rule {
+    google.protobuf.Empty firstInput = 1;
+    google.protobuf.Empty keepKeyedInput = 2;
+    StoredPartitionInfo fixed = 3;
+  }
+}
+
+message StoredInputPort {
+  // Its dependencies name input ports of the same operator.
+  InputPort port = 1;
+  // The links into the port, in the order the operator lists them: exactly the plan's links into
+  // the port, each once. They are written here as well as in the plan's links because that order
+  // is the operator's own and the plan read back keeps it; it need not be the order of the plan's
+  // links, which a plan of more than four iterates by hash.
+  repeated PhysicalLink links = 2;
+  StoredSchema schema = 3;
+}
+
+message StoredOutputPort {
+  OutputPort port = 1;
+  // The links out of the port, in the order the operator lists them (see StoredInputPort.links).
+  repeated PhysicalLink links = 2;
+  StoredSchema schema = 3;
+}
+
+message StoredSchema {
+  repeated StoredAttribute attributes = 1;
+}
+
+message StoredAttribute {
+  enum AttributeType {
+    ATTRIBUTE_TYPE_UNSPECIFIED = 0;
+    STRING = 1;
+    INTEGER = 2;
+    LONG = 3;
+    DOUBLE = 4;
+    BOOLEAN = 5;
+    TIMESTAMP = 6;
+    BINARY = 7;
+    LARGE_BINARY = 8;
+    ANY = 9;
+  }
+  string attributeName = 1;
+  AttributeType attributeType = 2;
+}
+
+message StoredRepositoryMounts {
+  // The directory the operator's code reads the repositories under.
+  string root = 1;
+  // Each repository once, as "<repositoryName>:<commitHash>".
+  repeated string locators = 2;
+}

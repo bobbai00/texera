@@ -325,13 +325,25 @@ class WorkflowCompiler(
     logicalPlan.getTopologicalOpIds.asScala.foreach(logicalOpId =>
       Try {
         val logicalOp = logicalPlan.getOperator(logicalOpId)
-        val upstreamLinks = logicalPlan.getUpstreamLinks(logicalOp.operatorIdentifier)
+        val givenLinks = logicalPlan.getUpstreamLinks(logicalOp.operatorIdentifier)
+        val upstreamLinks = givenLinks.distinct
 
         def report(error: Throwable): Unit =
           errorList match {
             case Some(list) => list.append((logicalOpId, error))
             case None       => throw error
           }
+        // A link given twice is still one link; expanded twice, each port it joins would list it
+        // twice, and a plan to run lists each link once.
+        givenLinks.diff(upstreamLinks).headOption.foreach { link =>
+          report(
+            new IllegalArgumentException(
+              s"The link from output port ${link.fromPortId.id} of operator ${link.fromOpId.id} " +
+                s"to input port ${link.toPortId.id} of operator ${link.toOpId.id} is given more " +
+                "than once"
+            )
+          )
+        }
         // Before the physical plan: the descriptor serializes its sidecar into its descString.
         normalizeStateReferences(logicalOp, logicalPlan).foreach(report)
         val subPlan = logicalOp.getPhysicalPlan(context.workflowId, context.executionId)
@@ -343,6 +355,21 @@ class WorkflowCompiler(
           .map(subPlan.getOperator)
           .foreach({ physicalOp =>
             {
+              // An input port can wait only for input ports of its own operator: the engine would
+              // wait forever for one the operator does not have. A UDF's ports are the user's to
+              // set.
+              for {
+                (port, _, _) <- physicalOp.inputPorts.values
+                dependee <- port.dependencies.find(!physicalOp.inputPorts.contains(_))
+              } {
+                report(
+                  new IllegalArgumentException(
+                    s"Input port ${port.id.id} of ${logicalOp.operatorInfo.userFriendlyName} " +
+                      s"depends on input port ${dependee.id}, which the operator does not have"
+                  )
+                )
+              }
+
               val externalLinks = upstreamLinks
                 .filter(link => physicalOp.inputPorts.contains(link.toPortId))
                 .flatMap { link =>

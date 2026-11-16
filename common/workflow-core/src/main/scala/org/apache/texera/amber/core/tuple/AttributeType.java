@@ -58,6 +58,11 @@ public enum AttributeType implements Serializable {
      * 7. ArrowUtils (Python)
      * <code>src/main/python/core/util/arrow_utils.py</code>
      * Provide python-side conversion between ArrowType and AttributeType.
+     * <p>
+     * 8. The stored physical plan
+     * <code>common/workflow-core/src/main/protobuf/org/apache/texera/amber/core/storedplan.proto</code>
+     * Add the type to StoredAttribute.AttributeType and to PhysicalPlanCodec.attributeTypes, with a
+     * new format version, so a saved plan can hold a column of it.
      */
 
 

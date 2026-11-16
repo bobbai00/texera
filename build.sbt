@@ -248,6 +248,7 @@ lazy val WorkflowCompiler = (project in file("common/workflow-compiler"))
   .settings(commonModuleSettings)
   .configs(Test)
   .dependsOn(WorkflowOperator)
+  .dependsOn(WorkflowCore % "test->test") // PhysicalPlanRoundTrip, to save each compiled plan
 lazy val WorkflowCompilingService = (project in file("workflow-compiling-service"))
   .dependsOn(WorkflowCompiler, Auth, Config, Resource, Observability)
   .configs(Test)

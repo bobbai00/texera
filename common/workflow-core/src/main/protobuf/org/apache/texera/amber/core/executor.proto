@@ -28,16 +28,19 @@ option (scalapb.options) = {
 };
 
 
+// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message OpExecWithCode {
   string code = 1;
   string language = 2;
 }
 
+// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message OpExecWithClassName {
   string className = 1;
   string descString = 2;
 }
 
+// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message OpExecInitInfo {
   oneof sealed_value {
     OpExecWithClassName opExecWithClassName = 1;

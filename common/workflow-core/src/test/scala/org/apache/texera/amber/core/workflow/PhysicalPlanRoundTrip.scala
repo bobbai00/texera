@@ -1,0 +1,117 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.texera.amber.core.workflow
+
+import org.scalatest.Assertions
+
+/**
+  * Saves a plan with [[PhysicalPlanCodec]], reads it back, and fails unless what comes back is
+  * the plan that was saved. For the codec's spec, and for the specs of what makes plans to run.
+  */
+object PhysicalPlanRoundTrip extends Assertions {
+
+  // Stands in for every operator's schema propagation function: the one field of a plan that is
+  // not saved.
+  private val propagation = SchemaPropagationFunc(schemas => schemas)
+
+  // A Scala set of up to this many operators iterates in the order they were added in; a larger
+  // one, in the order of their hash codes.
+  private val smallSetSize = 4
+
+  /**
+    * Saves `plan`, made to run under `context`, and reads it back from the message and from its
+    * JSON text. Fails unless both reads give `context` (with no computing unit) and `plan` (see
+    * [[assertSamePlan]]), and saving what was read gives the same message again.
+    *
+    * @return the JSON text
+    */
+  def assertRoundTrips(context: WorkflowContext, plan: PhysicalPlan): String = {
+    val stored = PhysicalPlanCodec.encode(context, plan)
+    val json = PhysicalPlanCodec.toJson(stored)
+    val parsed = PhysicalPlanCodec.fromJson(json)
+    assert(parsed == stored, s"the JSON reads back to another message:\n$json")
+    Seq("the message" -> stored, "its JSON" -> parsed).foreach {
+      case (source, message) =>
+        withClue(s"read from $source: ") {
+          val (readContext, readPlan) = PhysicalPlanCodec.decode(message)
+          assertSameContext(context, readContext)
+          assertSamePlan(plan, readPlan)
+          val savedAgain = PhysicalPlanCodec.encode(readContext, readPlan)
+          assert(savedAgain == stored, "saving the plan read back gives another message")
+        }
+    }
+    json
+  }
+
+  /** Fails unless `read` has the ids, settings and warehouse of `original`, and no unit. */
+  def assertSameContext(original: WorkflowContext, read: WorkflowContext): Unit = {
+    assert(read.workflowId == original.workflowId)
+    assert(read.executionId == original.executionId)
+    assert(read.workflowSettings == original.workflowSettings)
+    assert(
+      read.workflowSettings.outputPortsNeedingStorage.toList ==
+        original.workflowSettings.outputPortsNeedingStorage.toList,
+      "the stored ports are iterated in another order"
+    )
+    assert(read.warehouse == original.warehouse)
+    assert(read.cuid.isEmpty, "a saved plan does not choose the computing unit it runs on")
+  }
+
+  /**
+    * Fails unless `read` is `original` but for each operator's schema propagation function, and
+    * the engine finds its parts in the same order: links, each operator's ports, each port's
+    * links (compared with the operators), and the operators in the topological order the
+    * scheduler walks.
+    *
+    * The operators' own iteration order is compared for a plan of up to four of them, whose set
+    * iterates in the order they were added in. A larger set iterates in the order of their hash
+    * codes, which take in identity hashes (of a schema propagation function, say): two compiles of
+    * one workflow differ there too, and no saved plan could keep it.
+    */
+  def assertSamePlan(original: PhysicalPlan, read: PhysicalPlan): Unit = {
+    assert(withoutPropagation(read) == withoutPropagation(original), "the plans differ")
+    assert(read.links.toList == original.links.toList, "the links are in another order")
+    if (original.operators.size <= smallSetSize) {
+      assert(
+        read.operators.toList.map(_.id) == original.operators.toList.map(_.id),
+        "the operators are in another order"
+      )
+    }
+    assert(read.topologicalIterator().toList == original.topologicalIterator().toList)
+    original.operators.foreach { op =>
+      val readOp = read.getOperator(op.id)
+      withClue(s"operator ${op.id.logicalOpId.id}-${op.id.layerName}: ") {
+        assert(readOp.inputPorts.keys.toList == op.inputPorts.keys.toList)
+        assert(readOp.outputPorts.keys.toList == op.outputPorts.keys.toList)
+        // An Attribute equals one whose name differs only in case; a saved name does not.
+        assert(exactSchemas(readOp) == exactSchemas(op))
+      }
+    }
+  }
+
+  private def withoutPropagation(plan: PhysicalPlan): PhysicalPlan =
+    PhysicalPlan(plan.operators.map(_.copy(propagateSchema = propagation)), plan.links)
+
+  private def exactSchemas(op: PhysicalOp): List[Any] =
+    (op.inputPorts.toList ++ op.outputPorts.toList).map {
+      case (id, (port, _, schema)) =>
+        (port, id, schema.toOption.map(_.attributes.map(a => (a.getName, a.getType))))
+    }
+}

@@ -29,12 +29,14 @@ import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
 import org.apache.texera.amber.core.workflow.{
   OutputPort,
   PhysicalOp,
+  PhysicalPlanRoundTrip,
   PortIdentity,
   RepositoryMounts,
   SchemaNotAvailableException,
   WorkflowContext
 }
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILATION_ERROR
+import org.apache.texera.amber.operator.aggregate.AggregationFunction
 import org.apache.texera.amber.operator.filter.{
   ComparisonType,
   FilterPredicate,
@@ -50,7 +52,12 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
-import org.apache.texera.amber.operator.{LogicalOp, PythonOperatorDescriptor, TestOperators}
+import org.apache.texera.amber.operator.{
+  LogicalOp,
+  PortDescription,
+  PythonOperatorDescriptor,
+  TestOperators
+}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.scalatest.flatspec.AnyFlatSpec
@@ -87,6 +94,21 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       TestOperators.fixtureRepositoryResolver,
       Some(TestOperators.fixtureMountRoot)
     )
+
+  /**
+    * Saves the plan a Strict compile made to run, with the context it runs under (the context the
+    * compile was given, storing the results the compile asks to store), and fails unless it reads
+    * back as the same plan. Every plan this spec makes to run goes through it.
+    *
+    * @return the plan's saved JSON text
+    */
+  private def assertSavable(result: WorkflowCompilationResult): String = {
+    val context = newContext()
+    context.workflowSettings = context.workflowSettings.copy(
+      outputPortsNeedingStorage = result.outputPortsNeedingStorage
+    )
+    PhysicalPlanRoundTrip.assertRoundTrips(context, result.physicalPlan.get)
+  }
 
   private def csvOp(fileName: String): CSVScanSourceOpDesc = {
     val op = new CSVScanSourceOpDesc()
@@ -837,6 +859,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(result.physicalPlan.isDefined, "strict success must yield a physical plan")
     assert(result.operatorIdToError.isEmpty)
     assert(result.outputPortsNeedingStorage.nonEmpty, "terminal ports still collected in strict")
+    assertSavable(result)
   }
 
   it should "throw on schema-propagation errors" in {
@@ -922,6 +945,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
     assert(result.physicalPlan.isDefined)
     assert(result.operatorIdToError.isEmpty)
+    assertSavable(result)
   }
 
   // -------------------- datasets and models a UDF names --------------------
@@ -1078,6 +1102,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       result.operatorIdToOutputSchemas(downstream.operatorIdentifier).values.toList ==
         List(Some(Schema().add(new Attribute("a", AttributeType.INTEGER))))
     )
+    assertSavable(result)
   }
 
   it should "leave an operator that names no dataset or model as it compiled" in {
@@ -1091,6 +1116,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(op.repositoryMounts.isEmpty && op.resourceBinding.isEmpty)
     assert(op.opExecInitInfo.isInstanceOf[OpExecWithClassName])
     assert(resolver.asked.isEmpty)
+    assertSavable(result)
   }
 
   it should "pin nothing for a plan that fails otherwise, binding only once the rest is valid" in {
@@ -1196,10 +1222,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     val compiler = bindingCompiler(new RecordingResolver)
     val source = resourceSourceUdf()
     val unbound = physicalOpOf(compiler.compile(pojo(List(source), List.empty)), source)
-    val inPlan = physicalOpOf(
-      compiler.compile(pojo(List(source), List.empty), CompilationErrorHandling.Strict),
-      source
-    )
+    val strict = compiler.compile(pojo(List(source), List.empty), CompilationErrorHandling.Strict)
+    assertSavable(strict)
+    val inPlan = physicalOpOf(strict, source)
 
     val bound = compiler.bindResources(unbound)
 
@@ -1209,6 +1234,168 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(bound.repositoryMounts == inPlan.repositoryMounts)
     // An operator with nothing to bind comes back as it is.
     assert(compiler.bindResources(bound) eq bound)
+  }
+
+  // -------------------- a plan made to run, saved and read back --------------------
+
+  // Each Strict compile above saves its plan too (assertSavable); these cover more operators.
+
+  "A plan made to run" should "save and read back for each operator TestOperators builds" in {
+    def csv() = TestOperators.smallCsvScanOpDesc()
+    def alone(op: LogicalOp) = pojo(List(op), List.empty)
+    def after(upstream: LogicalOp, op: LogicalOp) =
+      pojo(List(upstream, op), List(linked(upstream, op)))
+    val (build, probe, join) = (csv(), csv(), TestOperators.joinOpDesc("Region", "Region"))
+    // AsterixDB's source is left out: compiling it reads its schema from a live AsterixDB server.
+    val workflows = List(
+      "CSV scan" -> alone(csv()),
+      "headerless CSV scan" -> alone(TestOperators.headerlessSmallCsvScanOpDesc()),
+      "multi-line CSV scan" -> alone(TestOperators.headerlessSmallMultiLineDataCsvScanOpDesc()),
+      "medium CSV scan" -> alone(TestOperators.mediumCsvScanOpDesc()),
+      "JSONL scan" -> alone(TestOperators.smallJSONLScanOpDesc()),
+      "flattened JSONL scan" -> alone(TestOperators.mediumFlattenJSONLScanOpDesc()),
+      "Python source UDF" -> alone(TestOperators.pythonSourceOpDesc(3)),
+      "slow Python source UDF" -> alone(TestOperators.slowRegionSourceOpDesc(3, 0.5)),
+      "keyword search" -> after(csv(), TestOperators.keywordSearchOpDesc("Region", "Asia")),
+      "aggregate" -> after(
+        csv(),
+        TestOperators.aggregateAndGroupByDesc("Units Sold", AggregationFunction.SUM, List("Region"))
+      ),
+      "Python UDF" -> after(csv(), TestOperators.pythonOpDesc()),
+      "hash join" -> pojo(
+        List(build, probe, join),
+        List(linked(build, join), linked(probe, join, toPort = 1))
+      )
+    )
+    workflows.foreach {
+      case (name, workflow) =>
+        withClue(s"$name: ") {
+          assertSavable(newCompiler().compile(workflow, CompilationErrorHandling.Strict))
+        }
+    }
+  }
+
+  it should "save and read back for a loop, and for more operators than a small set holds" in {
+    val (src, start, project, end) =
+      (textInputOp("0\n1"), loopStartOp(), projectOp(List("line")), loopEndOp())
+    val loop = newCompiler().compile(
+      pojo(List(src, start, project, end), chain(src, start, project, end)),
+      CompilationErrorHandling.Strict
+    )
+    assert(loop.physicalPlan.get.operators.exists(_.isLoopStart))
+    assert(loop.physicalPlan.get.operators.exists(_.requiresMaterializedExecution))
+    assertSavable(loop)
+
+    val ops = List(
+      csvOp(TestOperators.CountrySalesSmallCsvPath),
+      projectOp(List("Region", "Total Profit")),
+      limitOp(10),
+      filterOp(new FilterPredicate("Total Profit", ComparisonType.GREATER_THAN, "10000")),
+      filterOp(new FilterPredicate("Region", ComparisonType.NOT_EQUAL_TO, "JPN")),
+      limitOp(5)
+    )
+    val longChain =
+      newCompiler().compile(pojo(ops, chain(ops: _*)), CompilationErrorHandling.Strict)
+    assert(longChain.physicalPlan.get.operators.size > 4)
+    assertSavable(longChain)
+  }
+
+  it should "save as the same text each time a workflow of more operators than a small set holds compiles" in {
+    val ops = List(
+      csvOp(TestOperators.CountrySalesSmallCsvPath),
+      projectOp(List("Region", "Total Profit")),
+      limitOp(10),
+      filterOp(new FilterPredicate("Total Profit", ComparisonType.GREATER_THAN, "10000")),
+      filterOp(new FilterPredicate("Region", ComparisonType.NOT_EQUAL_TO, "JPN")),
+      limitOp(5)
+    )
+    // Each compile gives each operator a schema propagation function of its own, so the two
+    // plans' sets hash their operators apart.
+    val saves = (1 to 3).map { _ =>
+      val result = newCompiler().compile(pojo(ops, chain(ops: _*)), CompilationErrorHandling.Strict)
+      assert(result.physicalPlan.get.operators.size > 4)
+      assertSavable(result)
+    }
+    assert(saves.distinct.size == 1, "two compiles of one workflow save as different text")
+  }
+
+  it should "save and read back an input port that depends on another, as the user declared it" in {
+    val (left, right) =
+      (csvOp(TestOperators.CountrySalesSmallCsvPath), csvOp(TestOperators.CountrySalesSmallCsvPath))
+    val udf = TestOperators.pythonOpDesc()
+    udf.inputPorts = List(
+      PortDescription("left", "left", disallowMultiInputs = false, isDynamicPort = false, null),
+      PortDescription(
+        "right",
+        "right",
+        disallowMultiInputs = false,
+        isDynamicPort = false,
+        null,
+        dependencies = List(0)
+      )
+    )
+    val result = newCompiler().compile(
+      pojo(List(left, right, udf), List(linked(left, udf), linked(right, udf, toPort = 1))),
+      CompilationErrorHandling.Strict
+    )
+    val inputs = physicalOpOf(result, udf).inputPorts
+    assert(inputs(PortIdentity(1))._1.dependencies == List(PortIdentity(0)))
+    assertSavable(result)
+  }
+
+  // -------------------- links and ports a plan to run cannot hold --------------------
+
+  "WorkflowCompiler" should "refuse a link given twice, as an error of the operator it goes into" in {
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val limit = limitOp(5)
+    val twice = pojo(List(csv, limit), List(linked(csv, limit), linked(csv, limit)))
+    val expected =
+      s"The link from output port 0 of operator ${csv.operatorIdentifier.id} to input port 0 " +
+        s"of operator ${limit.operatorIdentifier.id} is given more than once"
+
+    val lenient = newCompiler().compile(twice)
+    assert(lenient.physicalPlan.isEmpty)
+    assert(onlyErrorOf(lenient, limit).contains(expected))
+    // the rest of the plan still compiles: the operator has its schema
+    assert(lenient.operatorIdToOutputSchemas(limit.operatorIdentifier).values.forall(_.isDefined))
+
+    val strict = intercept[IllegalArgumentException](
+      newCompiler().compile(twice, CompilationErrorHandling.Strict)
+    )
+    assert(strict.getMessage == expected)
+
+    // given once, it compiles to a plan that can be saved
+    assertSavable(
+      newCompiler().compile(
+        pojo(List(csv, limit), List(linked(csv, limit))),
+        CompilationErrorHandling.Strict
+      )
+    )
+  }
+
+  it should "refuse an input port that depends on a port its operator does not have" in {
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val udf = TestOperators.pythonOpDesc()
+    // the property panel takes any number as a port to wait for
+    udf.inputPorts = List(
+      PortDescription(
+        "in",
+        "in",
+        disallowMultiInputs = false,
+        isDynamicPort = false,
+        null,
+        dependencies = List(3)
+      )
+    )
+    val workflow = pojo(List(csv, udf), List(linked(csv, udf)))
+    val expected =
+      "Input port 0 of Python UDF depends on input port 3, which the operator does not have"
+
+    assert(onlyErrorOf(newCompiler().compile(workflow), udf).contains(expected))
+    val strict = intercept[IllegalArgumentException](
+      newCompiler().compile(workflow, CompilationErrorHandling.Strict)
+    )
+    assert(strict.getMessage == expected)
   }
 
   // -------------------- loop-variable references --------------------

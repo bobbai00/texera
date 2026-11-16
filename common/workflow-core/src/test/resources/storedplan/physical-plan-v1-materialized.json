@@ -1,0 +1,79 @@
+{
+  "formatVersion": 1,
+  "workflowId": {
+    "id": "7"
+  },
+  "executionId": {
+    "id": "42"
+  },
+  "settings": {
+    "dataTransferBatchSize": 1,
+    "executionMode": "MATERIALIZED",
+    "outputPortsNeedingStorage": [
+      {
+        "opId": {
+          "logicalOpId": {
+            "id": "source"
+          },
+          "layerName": "main"
+        },
+        "portId": {
+          "id": 0,
+          "internal": false
+        },
+        "input": false
+      }
+    ]
+  },
+  "operators": [
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "source"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithCode": {
+          "code": "yield {'id': 1}",
+          "language": "python"
+        }
+      },
+      "parallelizable": true,
+      "locationPreference": "NO_PREFERENCE",
+      "partitionRequirement": [],
+      "outputPartitionRule": {
+        "firstInput": {}
+      },
+      "inputPorts": [],
+      "outputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": "SET_SNAPSHOT",
+            "reuseStorage": false
+          },
+          "links": [],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          }
+        }
+      ],
+      "isOneToManyOp": false,
+      "requiresMaterializedExecution": false,
+      "isLoopStart": false,
+      "pveName": ""
+    }
+  ],
+  "links": []
+}

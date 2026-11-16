@@ -1,0 +1,658 @@
+{
+  "formatVersion": 1,
+  "workflowId": {
+    "id": "7"
+  },
+  "executionId": {
+    "id": "42"
+  },
+  "settings": {
+    "dataTransferBatchSize": 400,
+    "executionMode": "PIPELINED",
+    "outputPortsNeedingStorage": [
+      {
+        "opId": {
+          "logicalOpId": {
+            "id": "join"
+          },
+          "layerName": "main"
+        },
+        "portId": {
+          "id": 0,
+          "internal": false
+        },
+        "input": false
+      },
+      {
+        "opId": {
+          "logicalOpId": {
+            "id": "udf"
+          },
+          "layerName": "main"
+        },
+        "portId": {
+          "id": 0,
+          "internal": false
+        },
+        "input": false
+      }
+    ]
+  },
+  "warehouse": "wh-1",
+  "operators": [
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "scan"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithClassName": {
+          "className": "org.example.ScanOpExec",
+          "descString": "{\"file\":\"a.csv\"}"
+        }
+      },
+      "parallelizable": false,
+      "locationPreference": "PREFER_COORDINATOR",
+      "partitionRequirement": [],
+      "outputPartitionRule": {
+        "firstInput": {}
+      },
+      "inputPorts": [],
+      "outputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "out",
+            "blocking": false,
+            "mode": "SET_SNAPSHOT",
+            "reuseStorage": false
+          },
+          "links": [
+            {
+              "fromOpId": {
+                "logicalOpId": {
+                  "id": "scan"
+                },
+                "layerName": "main"
+              },
+              "fromPortId": {
+                "id": 0,
+                "internal": false
+              },
+              "toOpId": {
+                "logicalOpId": {
+                  "id": "udf"
+                },
+                "layerName": "main"
+              },
+              "toPortId": {
+                "id": 0,
+                "internal": false
+              }
+            },
+            {
+              "fromOpId": {
+                "logicalOpId": {
+                  "id": "scan"
+                },
+                "layerName": "main"
+              },
+              "fromPortId": {
+                "id": 0,
+                "internal": false
+              },
+              "toOpId": {
+                "logicalOpId": {
+                  "id": "join"
+                },
+                "layerName": "main"
+              },
+              "toPortId": {
+                "id": 1,
+                "internal": false
+              }
+            }
+          ],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        }
+      ],
+      "isOneToManyOp": false,
+      "requiresMaterializedExecution": false,
+      "isLoopStart": false,
+      "pveName": ""
+    },
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "udf"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithCode": {
+          "code": "yield tuple_",
+          "language": "python"
+        }
+      },
+      "parallelizable": true,
+      "locationPreference": "ROUND_ROBIN",
+      "partitionRequirement": [
+        {
+          "partition": {
+            "hash": {
+              "attributeNames": [
+                "id"
+              ]
+            }
+          }
+        },
+        {
+          "noRequirement": {}
+        }
+      ],
+      "outputPartitionRule": {
+        "fixed": {
+          "unknown": {}
+        }
+      },
+      "inputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "in",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          },
+          "links": [
+            {
+              "fromOpId": {
+                "logicalOpId": {
+                  "id": "scan"
+                },
+                "layerName": "main"
+              },
+              "fromPortId": {
+                "id": 0,
+                "internal": false
+              },
+              "toOpId": {
+                "logicalOpId": {
+                  "id": "udf"
+                },
+                "layerName": "main"
+              },
+              "toPortId": {
+                "id": 0,
+                "internal": false
+              }
+            }
+          ],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        },
+        {
+          "port": {
+            "id": {
+              "id": 1,
+              "internal": true
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": [
+              {
+                "id": 0,
+                "internal": false
+              }
+            ]
+          },
+          "links": [],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        }
+      ],
+      "outputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": "SET_DELTA",
+            "reuseStorage": false
+          },
+          "links": [
+            {
+              "fromOpId": {
+                "logicalOpId": {
+                  "id": "udf"
+                },
+                "layerName": "main"
+              },
+              "fromPortId": {
+                "id": 0,
+                "internal": false
+              },
+              "toOpId": {
+                "logicalOpId": {
+                  "id": "join"
+                },
+                "layerName": "main"
+              },
+              "toPortId": {
+                "id": 0,
+                "internal": false
+              }
+            }
+          ],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          }
+        }
+      ],
+      "isOneToManyOp": false,
+      "requiresMaterializedExecution": false,
+      "isLoopStart": false,
+      "suggestedWorkerNum": 2,
+      "pveName": "py311",
+      "repositoryMounts": {
+        "root": "/mnt/texera-mounts",
+        "locators": [
+          "dataset-1:d4t4",
+          "model-2:m0d3l"
+        ]
+      }
+    },
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "join"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithClassName": {
+          "className": "org.example.JoinOpExec",
+          "descString": "{}"
+        }
+      },
+      "parallelizable": true,
+      "locationPreference": "NO_PREFERENCE",
+      "partitionRequirement": [
+        {
+          "partition": {
+            "range": {
+              "attributeNames": [
+                "id"
+              ],
+              "rangeMin": "-10",
+              "rangeMax": "99"
+            }
+          }
+        },
+        {
+          "partition": {
+            "single": {}
+          }
+        },
+        {
+          "partition": {
+            "oneToOne": {}
+          }
+        },
+        {
+          "partition": {
+            "broadcast": {}
+          }
+        }
+      ],
+      "outputPartitionRule": {
+        "keepKeyedInput": {}
+      },
+      "inputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "build",
+            "disallowMultiLinks": true,
+            "dependencies": []
+          },
+          "links": [
+            {
+              "fromOpId": {
+                "logicalOpId": {
+                  "id": "udf"
+                },
+                "layerName": "main"
+              },
+              "fromPortId": {
+                "id": 0,
+                "internal": false
+              },
+              "toOpId": {
+                "logicalOpId": {
+                  "id": "join"
+                },
+                "layerName": "main"
+              },
+              "toPortId": {
+                "id": 0,
+                "internal": false
+              }
+            }
+          ],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          }
+        },
+        {
+          "port": {
+            "id": {
+              "id": 1,
+              "internal": false
+            },
+            "displayName": "probe",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          },
+          "links": [
+            {
+              "fromOpId": {
+                "logicalOpId": {
+                  "id": "scan"
+                },
+                "layerName": "main"
+              },
+              "fromPortId": {
+                "id": 0,
+                "internal": false
+              },
+              "toOpId": {
+                "logicalOpId": {
+                  "id": "join"
+                },
+                "layerName": "main"
+              },
+              "toPortId": {
+                "id": 1,
+                "internal": false
+              }
+            }
+          ],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        }
+      ],
+      "outputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "result",
+            "blocking": true,
+            "mode": "SINGLE_SNAPSHOT",
+            "reuseStorage": true
+          },
+          "links": [],
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          }
+        }
+      ],
+      "isOneToManyOp": true,
+      "requiresMaterializedExecution": true,
+      "isLoopStart": true,
+      "pveName": ""
+    }
+  ],
+  "links": [
+    {
+      "fromOpId": {
+        "logicalOpId": {
+          "id": "scan"
+        },
+        "layerName": "main"
+      },
+      "fromPortId": {
+        "id": 0,
+        "internal": false
+      },
+      "toOpId": {
+        "logicalOpId": {
+          "id": "udf"
+        },
+        "layerName": "main"
+      },
+      "toPortId": {
+        "id": 0,
+        "internal": false
+      }
+    },
+    {
+      "fromOpId": {
+        "logicalOpId": {
+          "id": "udf"
+        },
+        "layerName": "main"
+      },
+      "fromPortId": {
+        "id": 0,
+        "internal": false
+      },
+      "toOpId": {
+        "logicalOpId": {
+          "id": "join"
+        },
+        "layerName": "main"
+      },
+      "toPortId": {
+        "id": 0,
+        "internal": false
+      }
+    },
+    {
+      "fromOpId": {
+        "logicalOpId": {
+          "id": "scan"
+        },
+        "layerName": "main"
+      },
+      "fromPortId": {
+        "id": 0,
+        "internal": false
+      },
+      "toOpId": {
+        "logicalOpId": {
+          "id": "join"
+        },
+        "layerName": "main"
+      },
+      "toPortId": {
+        "id": 1,
+        "internal": false
+      }
+    }
+  ]
+}
