@@ -35,7 +35,7 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `images/build.sh` | Builds branch images from a worktree (`sbt dist`, optional frontend), as thin layers on the published images |
 | `build/<tag>/` | Scratch build contexts and `BUILD-MANIFEST.json` (outside any repo) |
 | `driver/` | The e2e driver: `e2e.py` (CLI), `transport.py` (start, watch and control a run), `texera_api.py` (REST setup), `workflow.py` (plan builders), `scenarios.py`, `evidence.py` (the step-2 Checks A-F), `data/*.csv` |
-| `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log) |
+| `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
 | `reports/` | JSON reports, one per driver run |
@@ -68,8 +68,8 @@ secrets are masked):
 
 | Option | Effect |
 |---|---|
-| `--pg-statement-log` | Postgres runs with `log_statement=all` and `log_line_prefix=%m [%p] app=%a db=%d host=%h ` (the compose service has no command upstream; the generator refuses a source whose service has one). Extended-protocol statements log their values on the following `DETAIL:  parameters: $1 = '...'` line of the same pid. It also sets the unit's `WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS=2` (unless `--unit-env` sets it), so an idle workflow's cleanup never lands in the next scenario's windows |
-| `--isolate-unit` | A second network, `sce-unit-net` (not `internal`: pip needs the package index). The unit is attached only to it; Postgres, Lakekeeper, RustFS and nginx (and agent-service when kept) are on both networks with all their aliases. The unit cannot resolve `file-service`, `texera-lakefs`, `dashboard-service` or `access-control-service`. A network check after generation proves the attachments |
+| `--pg-statement-log` | Postgres runs with `log_statement=all` and `log_line_prefix=%m [%p] app=%a db=%d host=%h ` (the compose service has no command upstream; the generator refuses a source whose service has one). Extended-protocol statements log their values on the following `DETAIL:  parameters: $1 = '...'` line of the same pid. It also sets the unit's `WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS=2` (unless `--unit-env` sets it), so the driver's wait for an idle workflow's cleanup (see Evidence) stays short |
+| `--isolate-unit` | A second network, `sce-unit-net` (not `internal`: pip needs the package index). The unit is attached only to it; Postgres, Lakekeeper, RustFS and nginx (and agent-service when kept) are on both networks with all their aliases. The unit cannot resolve `file-service`, `texera-lakefs`, `dashboard-service` or `access-control-service`. A network check after generation proves the attachments. It also turns nginx's access log on (`options.gateway_access_log`): the source's one `access_log off;` becomes `sce-access $remote_addr "$request_method $uri" $status` on stdout (`$uri` has no query string, so no websocket token is logged), because the isolated unit still reaches nginx, which proxies file-service and the Dashboard. The generator refuses a source without exactly one `access_log off;` |
 | `--with-replay-log` | `FAULT_TOLERANCE_LOG_STORAGE_URI=file:///amber/user-resources/recovery-logs/` for dashboard-service and the unit (both mount `workflow_result_data` there); after the stack is healthy `up` creates that directory owned by uid 1001, since Docker creates the volume as root's |
 | `--unit-env KEY=VAL` | Extra unit environment, repeatable (for example `USER_JWT_TOKEN=...` for the negative control) |
 
@@ -197,9 +197,12 @@ Setup runs once, over REST through the gateway:
 Each scenario then creates its own workflow (stored in UI format, so it can be
 opened in the browser), runs it through the transport, and checks the outcome.
 The driver prints PASS or FAIL per scenario and writes a JSON report. The report
-holds every check with its detail, the state timeline, commands sent, operator
-statistics, a console sample, the persisted execution row, notes, and with
-evidence every unit statement of each window. Exit codes:
+holds the harness's own commit and uncommitted changes (`harness_git`; the results
+banner prints it too; a `git archive` copy may name its commit in `.harness-commit`),
+every check with its detail, the state timeline, what the unit sent while the
+socket opened (`run.opened`), commands sent, operator statistics, a console sample,
+the persisted execution row, notes, and with evidence every unit statement of each
+window. Exit codes:
 
 | Code | Meaning |
 |---|---|
@@ -243,8 +246,12 @@ Column types are checked separately.
 
 Step 2 (design section 7 H3). All but g0 and j need `create-ws`; j also runs on
 `ws` (its change goes through the old `ModifyLogicRequest`, and the Dashboard's
-refusals are skipped with a note). "No unit statement for its eid" is checked by
-the evidence at the scenario's end; without `--evidence` it is only noted.
+refusals are skipped with a note). "No unit statement for its eid" and "the unit
+silent after a refused start" are checked by the evidence at the scenario's end;
+without `--evidence` they are only noted. A refused start (l5, l6, l8, l9, l10, o's
+repeat) waits for the refusal, then 3 s (`REFUSAL_SETTLE_S`), then the evidence
+marks "settled": from the start's mark to that mark the unit may run no statement
+at all, whatever it names (design D33).
 
 | Key | Name | From PR | What it does | Checks |
 |---|---|---|---|---|
@@ -252,14 +259,14 @@ the evidence at the scenario's end; without `--evidence` it is only noted.
 | j | `modify-while-paused` | B | `numbers.csv` → UDF tagging `v1`, 0.05 s per tuple; pause; change the code to tag `v2`; resume | update 200 with `{updateId, operatorId}` and `ModifyLogicResponse.isValid`; the other user's update 403; `ModifyLogicCompletedEvent` names the UDF; Completed with 300 rows, some `v1`, some `v2`, every `v1` before every `v2` in `n` order; an update after Completed 409; status 3 |
 | k | `compile-error-from-create` | B | Projection of a missing column | create 400, `operatorErrors` has the Projection and names the column; the 400's eid row is 4; no unit statement for it |
 | l1-l4, l7 | `refuse-*` | B | unknown unit; other user + texera's workflow; other user + texera's unit; terminated unit; another user's warehouse | 403, 403, 403, 409, 400; no new row |
-| l5, l6, l9, l10 | `refuse-*` | B | other user starts texera's execution; a start naming another execution's `planUri`; a socket for texera's second unit; a `planUri` in another user's warehouse | a `WorkflowErrorEvent` on the starting socket with the design's message (l5: "only the user who created" or, with warehouses on, "another user's warehouse"; l6: "the plan is execution"; l9: "computing unit"; l10: "another user's warehouse"); none on a texera socket watching the workflow; never Running; the row stays 0 (allowed in the final check); no unit statement for the eid |
-| l8 | `refuse-second-start` | B | start a completed execution again (the first socket stays open, so no idle cleanup runs) | "already started" on the new socket; the first socket gets no error and no state; never Running; the row stays 3; no unit statement for the eid after the second start |
+| l5, l6, l9, l10 | `refuse-*` | B | other user starts texera's execution; a start naming another execution's `planUri`; a socket for texera's second unit; a `planUri` in another user's warehouse | a `WorkflowErrorEvent` on the starting socket with the design's message (l5: "only the user who created" or, with warehouses on, "another user's warehouse"; l6: "the plan is execution"; l9: "computing unit"; l10: "another user's warehouse"); none on a texera socket watching the workflow; never Running; the row stays 0 (allowed in the final check); no unit statement for the eid; the unit silent from the start until settled |
+| l8 | `refuse-second-start` | B | start a completed execution again (the first socket stays open, so no idle cleanup runs; with evidence the unit first settles, 1 s without a statement, so the first run's trailing writes stay out). The new socket gets the held run replayed while it opens (state Completed, its console); that is kept apart from the start's answer | "already started" on the new socket; the first socket gets no error and no state; never Running after the start; the row stays 3; no unit statement for the eid after the second start; the unit silent from the second start until settled |
 | m | `replay` | B | refusals always: a source without a log (with `--with-replay-log` every run has one, so a missing execution instead) and a source of another workflow; with `--with-replay-log`: a slow run with a `WorkflowCheckpointRequest` (the only thing that records an interaction), its interactions, a replay from the last one, started | refusals 400 and no row; the source run completes; it lists ≥ 1 interaction; replay create 201; the replay reaches Running, Paused or Completed |
-| o | `agent-sync-run` | B | create with `targetOperatorIds` [Filter]; `docker exec <unit> curl -X POST http://localhost:8085/api/execution/<eid>/run` with texera's token and `{planUri, computingUnitId, targetOperatorIds, timeoutSeconds, maxOperatorResultCharLimit, maxOperatorResultCellCharLimit}` | `success`, state Completed, the Filter's rows exact, the Projection downstream not in the result; a repeat: `success: false`, "already started"; status 3 |
+| o | `agent-sync-run` | B | create with `targetOperatorIds` [Filter]; `docker exec <unit> curl -X POST http://localhost:8085/api/execution/<eid>/run` with texera's token and `{planUri, computingUnitId, targetOperatorIds, timeoutSeconds, maxOperatorResultCharLimit, maxOperatorResultCellCharLimit}`; with evidence, before the repeat the unit settles (its cleanup delay + 1 s, then 1 s without a statement: no socket holds the workflow, so the unit cleans the run up) and the repeat gets a start mark | `success`, state Completed, the Filter's rows exact, the Projection downstream not in the result; a repeat: `success: false`, "already started"; the unit silent from the repeat until settled; status 3 |
 | f | `file-lister-scan` | C | File Lister (the e2e dataset's v1) → File Scan From Input (single string, with the file name) | Completed; 3 rows; the file names are the three logical paths; no value contains `http`; each content equals the uploaded bytes |
 | f2 | `file-scan-needs-lister` | C | Text Input of a dataset path → File Scan From Input | create 400; `operatorErrors` names the File Scan |
-| g | `environment-install` | D | precondition as g0; environment `sce-env-<hex>` = `{tabulate: ==0.9.0}` through `/api/environments`; the UDF outputs `tabulate.__version__`; run twice | run 1: console "Installing Python environment" then "is ready" with `tabulate==0.9.0`, Running only after "ready", row 0.9.0, status 3; run 2: "reused", no "Installing", start-to-Running shorter; one `texera-environment.json` with these requirements under `/tmp/texera-python-environments` |
-| h | `environment-broken` | D | environment `{sce-e2e-nonexistent-<hex>: ==1.0.0}` | Failed (waited with fail-fast off); the fatal error has "could not be installed" and "No matching distribution found"; the UDF emitted 0 rows; status 4; no `texera-requirements.txt` naming the package is left |
+| g | `environment-install` | D | precondition as g0; the install root is the unit's `UDF_PYTHON_ENVIRONMENTS_ROOT` (else `/tmp/texera-python-environments`); an earlier install whose marker lists `tabulate==0.9.0` (a `--keep` stack, a rerun) is removed first, since reuse is decided by the marker; environment `sce-env-<hex>` = `{tabulate: ==0.9.0}` through `/api/environments`; the UDF outputs `tabulate.__version__`; run twice, each on its own workflow (installs are keyed by requirements and engine, not by workflow, and run 2 then gets no replay of run 1's console) | run 1: console "Installing Python environment" then "is ready" with `tabulate==0.9.0`, Running only after "ready", row 0.9.0, status 3; run 2: "reused", no "Installing", start-to-Running shorter; exactly one directory under the root whose `texera-environment.json` (read whole by the unit's python3) lists these requirements |
+| h | `environment-broken` | D | environment `{sce-e2e-nonexistent-<hex>: ==1.0.0}`; the root's entries (without `*.lock`) listed before and after | Failed (waited with fail-fast off); never Running; the fatal error has "could not be installed" and "No matching distribution found"; the UDF emitted 0 rows; status 4; no new entry under the root |
 | i | `environment-missing` | D | the UDF names `sce-missing-<hex>` | create 400; the UDF's error names the environment; that row is 4; no unit statement for it |
 
 ### The transport seam (`driver/transport.py`)
@@ -272,14 +279,33 @@ only these `RunHandle` members:
 |---|---|
 | Wait | `wait_for_state`, `wait_until` |
 | Control | `pause`, `resume`, `kill`, `ensure_stopped`, `modify_operator`, `send_raw` |
-| Observe | `eid`, `plan_uri`, `states`, `state_log`, `command_log`, `stats` / `output_rows`, `console`, `fatal_errors`, `error_event_count`, `modify_responses`, `modify_completed`, `results` |
+| Observe | `eid`, `plan_uri`, `states`, `state_log`, `command_log`, `stats` / `output_rows`, `console`, `fatal_errors`, `error_event_count`, `modify_responses`, `modify_completed`, `results`, `replayed` |
 | Report and clean up | `summary`, `close` |
 
-`Transport` also has `create_only(**kw)` (the raw create response) and
+`Transport` also has `open_socket(wid, cuid, token=None)` (a session on the
+workflow, nothing sent), `create_only(**kw)` (the raw create response) and
 `start_existing(wid, cuid, eid, plan_uri, token=None)` (a socket as the token's user
 that sends only the start), and calls `phase_hook(phase, info)` when the driver
 sets one: `create` before an execution is created, `created` with its eid,
 `start` before the start is sent (the evidence marks).
+
+**The open sequence.** The unit answers a new socket (`WorkflowWebsocketResource.myOnOpen`)
+with `WorkflowStateEvent` "Uninitialized", then replays the execution the workflow holds
+on that unit, if any (its statistics, worker assignment, duration, console, state and
+errors: a second socket on a completed run gets "Completed" and the old run's console),
+and sends `ClusterStatusUpdateEvent` last. `open_socket` returns only after that event,
+so everything replayed precedes the first command. The handle keeps the open sequence
+in `replayed` (the report's `run.opened`: what closed it, its states, console and error
+counts, event types); its views (`states`, `state_log`, `console`, `fatal_errors`,
+`error_event_count`, `stats`, `modify_*`) hold only what arrived after it, so a
+replayed "Completed" is not this run's, a replayed error does not fail a wait, and a
+replayed console is not this run's console. Without `ClusterStatusUpdateEvent` the
+sequence ends 5 s after the handshake plus 1 s without a message. Seen on the real
+unit (step1, 2026-11-16): a second socket on a completed run opened in 0.08 s, closed
+by `ClusterStatusUpdateEvent`, with `["Uninitialized", "Completed"]`, the 3 console
+messages and both operators' statistics in `replayed`, and an empty view at return and
+2 s later. Limit: events of a run that is still live on the workflow keep arriving
+after the open; the scenarios start a run on a workflow only when nothing runs there.
 
 Waits fail fast, raising `RunFailed` with the cause instead of running out the
 timeout, when any of these happens:
@@ -295,8 +321,10 @@ timeout, when any of these happens:
 
 After each scenario, the runner kills any run that is still alive
 (`ensure_stopped`), so the next scenario starts on an idle unit. A socket on
-which nothing started (a watcher, or a refused start) is left alone. These paths
-were checked against the published images:
+which nothing arrived after its open sequence (a watcher, or a refused start) is
+left alone: a kill there would reach whatever run the workflow holds. When a start
+went out and nothing came back yet, `ensure_stopped` first waits up to 5 s for a
+state or the refusal. These paths were checked against the published images:
 
 | Probe | Outcome |
 |---|---|
@@ -323,7 +351,7 @@ The eid is not known at start; the driver reads it back (`latest_execution`).
    replayFromExecution?, targetOperatorIds?}` (120 s timeout). 201 gives
    `{eid, wid, computingUnitId, planUri}`; anything else raises
    `CreateRefused(status, body)`.
-2. Open the websocket as above and wait for the handshake's state event.
+2. Open the websocket as above and wait for the end of the open sequence.
 3. Send `{"type": "WorkflowStartRequest", "executionId": eid, "planUri": planUri}`
    as the first marked command.
 4. Pause, resume, kill, pagination and heartbeat as on `ws`. `modify_operator`:
@@ -352,25 +380,40 @@ evaluated and reported as `info`.
   when its `host` is one of the unit container's addresses (`docker inspect`), on
   any network, so this works without `--isolate-unit` too.
 - **Windows** (per started run; a run counts as started when a state other than
-  the handshake's arrived): the start window runs from the start mark to the unit's
-  first `UPDATE workflow_executions SET ... status ... WHERE ... eid` whose
-  parameters put the status at 1, 4 or 5 and the eid at the run's, inclusive; the
-  terminal window to its first status 3, 4 or 5.
+  "Uninitialized" arrived on its socket after its start was sent: the handle's
+  `state_log` index is taken at the start mark, and what the unit replays while a
+  socket opens is not in that log): the start window runs from the start mark to
+  the unit's first `UPDATE workflow_executions SET ... status ... WHERE ... eid`
+  whose parameters put the status at 1, 4 or 5 and the eid at the run's, inclusive;
+  the terminal window to its first status 3, 4 or 5.
+- **Refused starts** (`expect_silent_since_start`): after the refusal and the
+  scenario's settle, a `settled` mark; between the start mark and it, no unit
+  statement at all, whatever it names (a read that names no eid, or names it
+  through `IN`/`ANY`, would pass "no unit statement for the eid"). Nothing else runs
+  on the unit then: the previous cleanup was waited out, the sockets stay open, and
+  l8 and o settle the unit before their second start.
 
 | Check | Holds when |
 |---|---|
 | A | start window: no unit statement starts with `SELECT` or `WITH`, and each is an INSERT or UPDATE on `workflow_executions`, `operator_port_executions` or `operator_executions` (a missing window end fails it) |
 | B | terminal window: unit statements touch no other table |
-| C | every `INSERT INTO workflow_executions` of the scenario has `app=texera-dashboard` (none at all passes only when no create succeeded) |
-| D | needs `--isolate-unit` (else not evaluable, which fails a gating D): `getent hosts file-service texera-lakefs` in the unit finds neither, and the unit's log since the start mark names none of `file-service`, `texera-lakefs`, `:9092`, `:8000/api/v1` |
+| C | every `INSERT INTO workflow_executions` of the scenario has `app=texera-dashboard` and comes from none of the unit's addresses (none at all passes only when no create succeeded) |
+| D | needs `--isolate-unit` (else not evaluable, which fails a gating D): `getent hosts file-service texera-lakefs` in the unit finds neither; the unit's log since the start mark names none of `file-service`, `texera-lakefs`, `:9092`, `:8000/api/v1`; and the gateway's access log since the start shows no request from one of the unit's addresses (nginx proxies file-service and the Dashboard, and the isolated unit still reaches nginx). A name that resolves, or the log naming one, fails D outright; when only the gateway log is unreadable (no `sce-access` line since the start), D is not evaluable |
 | E | Lakekeeper's REST API, from the dashboard container (`GET /catalog/v1/config?warehouse=<w>` for the prefix, then the table `wid_<wid>_eid_<eid>_plan` in namespace `execution-plan` or `STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE`) has a ref named `started`. The warehouse comes from the `planUri`, else texera's (`lakekeeperWarehouseName`, or `user-<uid>-<whid>` on Dashboards that do not report it), else the default |
-| F | every statement from the unit's addresses in the scenario has `app=texera-computing-unit` (none at all passes) |
+| F | every statement from the unit's addresses in the scenario has `app=texera-computing-unit` (none at all passes; app-named unit statements from none of the known addresses make F not evaluable: the addresses are stale) |
 
-Before each scenario the driver waits up to 15 s for the unit's
-`DELETE FROM operator_executions WHERE workflow_execution_id = $1` of the previous
-scenario's last started eid (its idle cleanup, 2 s after the sockets close); the
-report records the wait. After all scenarios, the final check: no execution of this
-run's workflows is left at status 0, except the refused starts (l5, l6, l9, l10).
+Before each scenario that follows one which sent a start to the unit, the driver
+waits (at most 15 s, recorded as `cleanup_wait`) until: the unit's cleanup
+`DELETE FROM operator_executions WHERE workflow_execution_id = $1` of every eid the
+previous scenario started has appeared; the unit's cleanup delay
+(`WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS`) plus 0.5 s has passed since the
+previous end mark (sockets close just before it); and the unit has run no statement
+for 1 s. The idle cleanup keeps going after its DELETE (a SELECT of
+`runtime_stats_uri` 20-40 ms later, then Iceberg work), so waiting for the DELETE alone
+did not keep it out of the next windows. `settle_unit()` is the same quiet wait for
+scenarios (l8 before its second start, o before its repeat). After all scenarios,
+the final check: no execution of this run's workflows is left at status 0, except
+the refused starts (l5, l6, l9, l10).
 
 ### Negative control (`./run-negative-control.sh`, `--negative-control`)
 
@@ -379,30 +422,54 @@ The script brings the stack up on the published images with `--pg-statement-log
 again with `--unit-env USER_JWT_TOKEN=<token>` (the unit is recreated and reads
 datasets through file-service, the K8s path, which it cannot reach), runs scenario a
 over `ws` with `--negative-control`, then takes the stack down. With
-`--negative-control`, A, D and F must fail; the scenario's own checks and the other
-evidence are reported only. A control that passes fails the run; a passing run
-records "controls failed as expected".
+`--negative-control`, A, D and F must fail, each for its own reason: A on at least
+one unit `SELECT`/`WITH` in the start window, D on unit log lines naming
+`file-service` or `texera-lakefs` while `getent` resolves neither, F on statements
+from the unit's address that carry another application name. A control that fails
+for another reason (A only because no status UPDATE came, D because a name resolves
+or only through the gateway) reports "control inconclusive" and fails the run, as
+does a control that passes; a passing run records "controls failed as expected".
+The scenario's own checks and the other evidence are reported only. Take the
+source from a clean worktree (for example `--source <step-1 worktree>`): its
+deployment files and DDL are the ones the stack uses.
 
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 35 tests, about 50 s
+.venv/bin/python -m unittest discover -s driver/tests -v     # 80 tests (55 single-node, 25 Kubernetes mode), about 55 s
 ```
 
-- `test_evidence.py`: the log parser (parameters, continuation lines, interleaved
-  pids, failed statements), the incremental reader, and Checks A-F, the cleanup
-  wait and the expectations against a fake `docker` serving a synthetic log of the
-  old unit (A, B, C, D, F fail; the negative control passes) and of the new path
-  (every check passes; the controls then fail).
-- `test_transport.py`: both transports against `fake_texera.py`: the create body
-  of 3.4, the start by id as the first command, `CreateRefused`, the update then
+- `test_evidence.py` (21): the log parser (parameters, continuation lines,
+  interleaved pids, failed statements), the incremental reader, and Checks A-F
+  against a fake `docker` serving a synthetic log of the old unit (A, B, C, D, F
+  fail; the negative control passes) and of the new path (every check passes; the
+  controls then fail). Also: a start counts only states after it; the silence of a
+  refused start (a read that names no eid fails it); the cleanup wait outlasting the
+  trailing SELECT; a scenario that only opened sockets still waits out the cleanup
+  delay; `settle_unit`; C refusing a Dashboard-named insert from a unit address; F
+  not evaluable with stale addresses; D failing on a gateway request from the unit
+  and not evaluable without the gateway log; each negative control "inconclusive"
+  when it fails for another reason.
+- `test_transport.py` (15): both transports against `fake_texera.py`: the create
+  body of 3.4, the start by id as the first command, `CreateRefused`, the update then
   `OperatorUpdateRequest`, `UpdateRefused` (409 after the end), a refused second
   start that is not killed, a start as another user, the unchanged
   `WorkflowExecuteRequest`, `ModifyLogicRequest` on `ws`, environments (new and
-  legacy), `/wsapi/pve`, users and unit termination.
-- `test_scenarios.py`: g0, j, k, l1-l10, m (with and without a replay log), o, f,
-  f2, g, h, i through the real driver code against the fake (and a fake
-  `docker exec` for o and the environment scenarios); j on `ws`.
+  legacy), `/wsapi/pve`, users and unit termination; the open sequence (the fake
+  replays the held run 0.1 s after the handshake, as the real unit does: the replay
+  stays in `replayed`, the views stay empty; the quiet-period fallback without
+  `ClusterStatusUpdateEvent`; a replayed fatal error does not fail a wait).
+- `test_scenarios.py` (14): g0, j, k, l1-l10, m (with and without a replay log), o,
+  f, f2, g, h, i through the real driver code against the fake (and a fake
+  `docker exec` for o and the environment scenarios); j on `ws`; g removing an
+  earlier install, and failing when run 1 says "reused".
+- `test_scenario_evidence.py` (5): scenarios and evidence together, as e2e.py runs
+  them, on a fake stack (the fake reports the statements the design's services run,
+  the requests a gateway logs and its plan tables): l8 passes all six checks and its
+  silence check although the second socket gets the held run replayed; l5, l6, l9,
+  l10 and the final check; the cleanup between scenarios lands before the next begin
+  mark; o's repeat is silent; a refusal path that reads Postgres fails the silence
+  check; and the start rule before this fix fails l8's Check A (the review's case).
 
 `fake_texera.py` models the design, not Texera: a scenario that passes against it
 drives the design's protocol and judges its answers as the design says; it proves
@@ -412,22 +479,28 @@ nothing about a branch.
 
 Step 2 lands in parts; until PR B there is no `POST /api/executions`, no
 `WorkflowStartRequest`, no update endpoint and no `/api/execution/{eid}/run` to test
-against. As of 2026-11-16:
+against. As of 2026-11-16, after the review of the step-2 harness (every report
+records the harness commit in `harness_git`):
 
 Verified against a real stack (reports under `reports/`):
 
 | Part | Images | Result |
 |---|---|---|
+| `ws` baseline a-e, u after the review fixes | `sce/texera-*:step1` (source `sce-imgbuild` `5e85a37de`) | a, b, c, d, e, u all PASS with the same checks as before (8, 7, 7, 14, 6, 7), no stack options, `ws`, default selection; harness `38fac82`, no uncommitted change. `reports/baseline-20261116T111713Z.json` |
+| The open sequence (`open_socket`, `replayed`, the views) | step1 | a probe on that stack: a second socket on a workflow whose run completed opened in 0.08 s, closed by `ClusterStatusUpdateEvent`; `replayed` held `["Uninitialized", "Completed"]`, the 3 console messages and both operators' statistics; the handle's states, console, errors and statistics were empty at return and 2 s later |
+| Negative control (H5), `run-negative-control.sh --source <sce-imgbuild>` | published `ghcr.io/apache/latest` | controls failed as expected, each for its own reason: A (6 of 8 start-window statements offend, SELECTs of `user_warehouse`, the latest `workflow_executions`, `workflow_version`, `dataset`, ...), D (`getent` resolves neither; the unit's log has `UnknownHostException: file-service`; the gateway served 0 of 3 requests since the start to the unit), F (8 statements from the unit's address, all `app=PostgreSQL JDBC Driver`). B, C (the unit inserts the row) and E (no plan table) fail too; scenario a itself fails (the compile cannot read the CSV header through file-service). Harness `38fac82` (uncommitted changes only in `README.md` and `run-k8s.sh`, Kubernetes mode's). `reports/negative-control-20261116T111839Z.json` |
+| `--isolate-unit`'s gateway access log (Check D) | published, step2wip | nginx writes `sce-access <addr> "<method> <uri>" <status>`; in each isolated run D read the 3 requests logged since the start, none from the unit |
+| Evidence on step2wip, unit isolated, scenario a, all six checks gating | `sce/texera-*:step2wip` (sce-integrate `e31d185fa`: step 1 + sub-parts 1, 2, 3, 4, 5, 7, 19) | F passes; A (8 of 10: the unit still compiles and reads at start), B, C (`texera-computing-unit` inserts the row), D (`UnknownHostException: texera-lakefs` in the unit's log; `getent` resolves neither; no gateway request from the unit), E fail, as expected before PR B and C. Scenario a fails: the isolated unit cannot read the CSV (expected until PR C's links). Overall FAIL, as expected. `reports/baseline-20261116T112009Z.json` |
+| Evidence on step2wip, not isolated: a, c, e, u, F gating; the cleanup wait | step2wip | all PASS with F gating and passing; A, B, C, E fail on each as expected, D not evaluable without isolation. Each wait saw the previous run's cleanup DELETE 1.9-2.1 s after its end mark and returned after 3.0-3.1 s (then 1 s quiet), never timing out. In the Postgres log of the kept rerun, all 6 unit statements of each cleanup (3 SELECTs, the 2 DELETEs, then the SELECT of `runtime_stats_uri`) precede the next begin mark, by about 1.4 s, and no unit statement falls between a begin mark and its start mark. `reports/baseline-20261116T112110Z.json`, `reports/baseline-20261116T112249Z.json` |
+| Evidence on step2wip, not isolated: a, b, c, d, e, u, j (`ws`), g0, F gating (before the review fixes) | step2wip | all 8 PASS with F gating and passing on each; j over `ws`: ModifyLogicResponse valid, ModifyLogicCompletedEvent, 300 rows, every v1 before every v2; g0: the legacy environment built in 37 s, the UDF's row says tabulate 0.9.0. `reports/baseline-20261116T100824Z.json` |
+| REST helpers for the second user and environments | step2wip | the review's probe on that stack: `ensure_user` (register, the admin sets REGULAR through `set_role`, log in), the second user's local unit and warehouse, `terminate_unit` (HTTP 200; `ensure_local_unit` then skips it), `ensure_environment` on `/api/environments` (201 create, 409 then the list, PUT on a change) and `list_environments` |
+| g's and h's listing of the install root | the step2wip unit image | `LIST_ENVIRONMENTS_PY` under the image's own python3 (a throwaway container, no stack): a pretty-printed marker parses, a directory without a marker is listed with `marker: null`, `*.lock` is skipped |
 | `--pg-statement-log` | published, step2wip | the log carries `app= db= host=` and DETAIL parameters as designed; an unnamed connection shows `app=[unknown]` (LakeFS) or `app=PostgreSQL JDBC Driver` (the published services) |
 | `--isolate-unit` | published, step2wip | the unit is on `sce-unit-net` only, the stack comes up healthy, runs start through nginx, and `getent` in the unit resolves neither `file-service` nor `texera-lakefs` |
 | `--unit-env` | published | `USER_JWT_TOKEN` recreates only the unit (and reruns lakekeeper-init); the unit then calls file-service |
-| Negative control (H5), `run-negative-control.sh` | published `ghcr.io/apache/latest` | controls failed as expected: A (6 of 8 start-window statements offend: SELECTs of `user_warehouse`, `workflow_version`, the latest `workflow_executions`, `dataset`, `dataset_version`, and the SELECT before each state UPDATE), D (`UnknownHostException: file-service` in the unit's log), F (8 statements from the unit's address, all `app=PostgreSQL JDBC Driver`). Also B, C (the unit inserts the row) and E (no plan table) fail. Scenario a itself fails: the compile cannot read the CSV header through file-service. `reports/negative-control-20261116T100558Z.json` |
-| Evidence on step2wip, unit isolated, scenario a, F gating | `sce/texera-*:step2wip` (sce-integrate `e31d185fa`: step 1 + sub-parts 1, 2, 3, 4, 5, 7, 19) | F passes (every unit statement `app=texera-computing-unit`); A fails (8 of 10: the unit still compiles and reads at start); B, C, D (`texera-lakefs` in the unit's log), E fail as expected. Scenario a fails: the isolated unit cannot reach LakeFS to read the CSV (expected until PR C's links). `reports/baseline-20261116T100721Z.json` |
-| Evidence on step2wip, not isolated: a, b, c, d, e, u, j (`ws`), g0, F gating | step2wip | all 8 PASS with F gating and passing on each; A, B, C, E fail on each as expected (the unit still compiles, reads and inserts; no plan table yet), D not evaluable without isolation. j over `ws`: ModifyLogicResponse valid, ModifyLogicCompletedEvent, 300 rows, every v1 before every v2. g0: the legacy environment built in 37 s, the UDF's row says tabulate 0.9.0. The cleanup wait saw the unit's DELETE of each previous execution 1.8-2.1 s after the sockets closed. `reports/baseline-20261116T100824Z.json` |
-| `--with-replay-log` | step2wip | the shared volume is root's and the services run as uid 1001, so `up` now creates `recovery-logs` and gives it to 1001 (without that the coordinator cannot create its log and the run hangs in Initializing). Then d passes, the row's `logLocation` is set and the Dashboard reads the log. Pause and resume record no interaction, and a `WorkflowCheckpointRequest` (the only thing that records one) fails the run: `portId has not been set for channel ... call setPortId before getPortId`, an upstream engine bug. So m's replay run fails on today's engine; its refusals do not need the option |
+| `--with-replay-log` | step2wip | the shared volume is root's and the services run as uid 1001, so `up` creates `recovery-logs` and gives it to 1001 (without that the coordinator cannot create its log and the run hangs in Initializing). Then d passes, the row's `logLocation` is set and the Dashboard reads the log. Pause and resume record no interaction, and a `WorkflowCheckpointRequest` (the only thing that records one) fails the run: `portId has not been set for channel ... call setPortId before getPortId`, an upstream engine bug. So m's replay run fails on today's engine; its refusals do not need the option |
 | The Lakekeeper lookup of Check E | published, step2wip | config → prefix → table works against Lakekeeper; a missing plan table reports the warehouse's namespaces |
 | Final status-0 check | published, step2wip | runs; no row left at 0 |
-| `ws` baseline a-e, u after all changes | `sce/texera-*:step1` | a, b, c, d, e, u all PASS with the same checks as before (8, 7, 7, 14, 6, 7), no stack options, `ws`, default selection. `reports/baseline-20261116T101451Z.json` |
 
 Written and tested offline only (`driver/tests/`), to be validated when the PRs land:
 
@@ -435,12 +508,12 @@ Written and tested offline only (`driver/tests/`), to be validated when the PRs 
 |---|---|---|
 | `create-ws` transport: create (3.4), start by id (3.6), `create_only`, `start_existing` | PR B (sub-parts 9, 11) | `test_transport.py` |
 | `modify_operator` through `POST /api/executions/{eid}/updates` + `OperatorUpdateRequest` (3.5) | PR B (10, 11) | `test_transport.py`, `test_scenarios.py` j |
-| Scenarios j (its create-ws refusals), k, l1-l10, m, o | PR B | `test_scenarios.py` |
+| Scenarios j (its create-ws refusals), k, l1-l10, m, o | PR B | `test_scenarios.py`; l5, l6, l8, l9, l10 and o with evidence in `test_scenario_evidence.py` |
+| A start counted from its own command when the socket got a run replayed (l8), the silence of refused starts, `settle_unit` before l8's and o's second start | PR B | `test_evidence.py`, `test_scenario_evidence.py` (the open sequence itself and the quiet wait are verified above) |
 | Scenarios f, f2 | PR C (16, 17) | `test_scenarios.py` |
-| Scenarios g, h, i and `ensure_environment` on `/api/environments` for runs | PR D (20) | `test_scenarios.py` (`/api/environments` itself exists in step2wip but no scenario using it ran there) |
-| Checks A-E passing (C's insert by `app=texera-dashboard`, E's `started` tag), refused starts' "no unit statement", `--gate` | PR A-D | `test_evidence.py` |
+| Scenarios g, h, i: environments used by runs, the install root from the unit's env, removing an earlier install, h's listing before and after | PR D (20) | `test_scenarios.py` (the `/api/environments` CRUD and the listing script are verified above) |
+| Checks A-E passing (C's insert by `app=texera-dashboard` from a non-unit address, E's `started` tag), D failing on a gateway request from the unit, F not evaluable with stale addresses, a negative control reported "inconclusive", `--gate` | PR A-D | `test_evidence.py`, `test_scenario_evidence.py` |
 | m's replay run | PR B, and an engine whose global checkpoint works | `test_scenarios.py` (`ReplayScenario`) |
-| `register_user`/`set_role`/`ensure_user`, `terminate_unit` | PR B (l-scenarios) | `test_transport.py` against the fake |
 
 ## `run-baseline.sh`
 
@@ -492,6 +565,10 @@ starts from empty volumes.
 - **Kubernetes mode.** `stack/k8s-stack.sh` and `driver/k8s_unit.py` (`--target k8s`)
   are a separate mode with their own README notes; the single-node path above does
   not use them.
+- **One working tree, several agents.** Agents commit in this checkout at the same
+  time, and the git index is shared: a plain `git commit` takes whatever another
+  agent has staged. Commit with `git commit --only -- <your paths>` (a new file
+  needs `git add -N` first), and leave files you did not write alone.
 - **Python exceptions do not end a run.** A Python UDF exception leaves the
   workflow `Running`, with its worker paused, until someone kills it. This is
   upstream behavior in the published images, not something the harness
@@ -770,3 +847,37 @@ both image sets.
 
 `driver/tests/test_k8s_unit.py` and `driver/tests/test_k8s_stack.py` add offline tests of
 the Kubernetes path to the offline suite.
+
+**After the review fixes.** These guard rails were added after the review: the lock, the
+time limit, the CRD comparison, the crash-loop rule, the ext-authz refusal checks, the
+forward without a fallback, the driver's refusals and `post-run`. They were then verified
+on the final code: harness `90597f6`, run from a `git archive` copy by
+`./run-k8s.sh --lock ... --images sce/step1`, chart `5e85a37de`, from no namespace,
+ending with `down`. The offline suite passed 80 of 80 on the same code (`38fac82`; only
+`run-k8s.sh` and the README changed after it).
+
+| Report (`reports/`) | Images | Result | Notes |
+|---|---|---|---|
+| `k8s-20261116T112432Z` | `sce/texera-*:step1` | a b c d e u PASS, 49/49 checks; `post-run` ok | `up` 135 s; unit Running 3.3 s after create, answering at 7.8 s; `down` 19 s; the lock was held 3 minutes |
+
+What the run adds:
+
+- **CRDs.** All 20 of the chart's CRDs were in the cluster exactly as the chart has
+  them (Gateway API bundle v1.4.1), so `up` went ahead.
+- **Crash loops.** Postgres was Ready by the time `helm install` returned: Helm waits
+  for the chart's hook Jobs, which need the database. The six services that use
+  Postgres had restarted twice each before that, and none restarted after.
+- **Refusals at `up`.** No token, a bogus token, and texera's token for cuid 999999 each
+  got 403. Envoy's entry for each says `ext_authz_denied`, with response flag `UAEX`.
+- **Refusals by the driver.** On the live unit's socket, no token and a bogus token each
+  got 403, and so did texera's token for cuid 100001. `post-run` found each in Envoy's
+  log as `ext_authz_denied`. Envoy logged 15 requests on `texera-dynamic-routes`: 9
+  routed (3 readiness attempts, 6 scenarios, each with a `Routing CU 1` line from
+  access-control-service) and 6 denied.
+- **Image.** The unit pod ran `sce/texera-workflow-execution-coordinator:step1`, image ID
+  `sha256:bf87e878...`, the one `build/step1/BUILD-MANIFEST.json` records.
+- **Cleanup.** `post-run` found no unit pod left, and the forward was the relay
+  (`summary.reliable: true`). After `down` the cluster had only its own namespaces. No
+  Helm release, GatewayClass, metrics APIService, hook object or PersistentVolume was
+  left, no relay or follower process ran, and port 30080 was free. The CRDs stay, as
+  described above.
