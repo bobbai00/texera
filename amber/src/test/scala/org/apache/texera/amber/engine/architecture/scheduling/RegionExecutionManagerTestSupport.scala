@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.architecture.scheduling
 import com.twitter.util.{Await, Duration, Future}
 import org.apache.pekko.actor.{Actor, ActorRef, Props}
 import org.apache.pekko.testkit.{TestActorRef, TestKit}
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithClassName}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ChannelIdentity,
@@ -44,7 +44,10 @@ import org.apache.texera.amber.engine.architecture.messaginglayer.{
   NetworkInputGateway,
   NetworkOutputGateway
 }
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ControlInvocation
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
+  ControlInvocation,
+  InitializeExecutorRequest
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns._
 import org.apache.texera.amber.engine.architecture.scheduling.config.{
   OperatorConfig,
@@ -97,6 +100,8 @@ object RegionExecutionManagerTestSupport {
       initializeExecutorResponse: WorkerRpcCall => ControlReturn = _ => EmptyReturn()
   ) {
     val calls: mutable.ArrayBuffer[WorkerRpcCall] = mutable.ArrayBuffer()
+    // The executor each initializeExecutor call carried, in call order.
+    private val executors: mutable.ArrayBuffer[OpExecInitInfo] = mutable.ArrayBuffer()
     val inputGateway = new NetworkInputGateway(COORDINATOR)
     val outputGateway = new NetworkOutputGateway(COORDINATOR, handleOutput)
     val asyncRPCClient = new AsyncRPCClient(inputGateway, outputGateway, COORDINATOR)
@@ -105,6 +110,8 @@ object RegionExecutionManagerTestSupport {
 
     def initializedWorkers: Seq[ActorVirtualIdentity] =
       calls.filter(_.methodName == InitializeExecutor).map(_.receiver).toSeq
+
+    def initializedExecutors: Seq[OpExecInitInfo] = executors.toSeq
 
     def startedWorkers: Seq[ActorVirtualIdentity] =
       calls.filter(_.methodName == StartWorker).map(_.receiver).toSeq
@@ -136,6 +143,10 @@ object RegionExecutionManagerTestSupport {
         receiver = invocation.context.receiver,
         commandId = invocation.commandId
       )
+      invocation.command match {
+        case request: InitializeExecutorRequest => executors += request.opExecInitInfo
+        case _                                  =>
+      }
       calls += call
       immediateReturn(call).foreach(fulfill(call, _))
     }

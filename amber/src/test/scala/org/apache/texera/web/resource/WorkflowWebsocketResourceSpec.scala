@@ -298,7 +298,12 @@ class WorkflowWebsocketResourceSpec
     * live `AmberClient` (see `ExecutionReconfigurationServiceSpec`).
     */
   private class CapturingReconfigurationService(stateStore: ExecutionStateStore)
-      extends ExecutionReconfigurationService(client = null, stateStore, workflow = null) {
+      extends ExecutionReconfigurationService(
+        client = null,
+        stateStore,
+        workflow = null,
+        bindResources = identity
+      ) {
     var captured: Option[ModifyLogicRequest] = None
 
     override protected def registerWorkerCompletionCallback(): Unit = ()

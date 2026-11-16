@@ -97,7 +97,12 @@ class ExecutionRuntimeServiceSpec
 
   /** Records resume wiring while skipping constructor-time client and workflow subscriptions. */
   private final class RecordingReconfigurationService
-      extends ExecutionReconfigurationService(client = null, stateStore = null, workflow = null) {
+      extends ExecutionReconfigurationService(
+        client = null,
+        stateStore = null,
+        workflow = null,
+        bindResources = identity
+      ) {
     var resumeCallCount = 0
 
     override def performReconfigurationOnResume(): Unit = {

@@ -85,7 +85,7 @@ class RUDFSourceOpDesc extends SourceOperatorDescriptor with RUdfUiParameterSupp
         SchemaPropagationFunc(_ => Map(operatorInfo.outputPorts.head.id -> sourceSchema()))
       )
       .withLocationPreference(None)
-      .withExecutionTimeBinding(executionBinding(code))
+      .withResourceBinding(resourceBinding(code))
 
     if (workers > 1) {
       physicalOp

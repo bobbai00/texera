@@ -87,19 +87,21 @@ class PythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptorSpecSupport {
     expectInjectedPython(d)
   }
 
-  it should "defer nothing when no parameter names a resource" in {
+  it should "leave nothing to bind when no parameter names a resource" in {
     val d = new PythonUDFOpDescV2
     d.code = tupleUdfCode
     d.uiParameters = List(uiParameter("count", "7"))
-    buildPhysicalOp(d).executionTimeBinding shouldBe None
+    val physical = buildPhysicalOp(d)
+    physical.resourceBinding shouldBe None
+    physical.repositoryMounts shouldBe None
   }
 
-  it should "leave a resource parameter to the execution, compiling without resolving it" in {
+  it should "leave a resource parameter to the plan made to run, compiling without resolving it" in {
     val d = new PythonUDFOpDescV2
     d.code = tupleUdfCode
     d.uiParameters = List(datasetParameter("DS", "/dataset/owner@x.com/ds/v1"))
     // Resolving needs a database, which this suite has none of, so compiling must not try.
-    buildPhysicalOp(d).executionTimeBinding should not be empty
+    expectResourceLeftToPlan(d, tupleUdfCode, "python", PythonUdfUiParameterInjector.inject)
   }
 
   it should "refuse a resource parameter whose version was never chosen" in {

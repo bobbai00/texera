@@ -20,6 +20,7 @@
 package org.apache.texera.amber.core.workflow
 
 import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithCode}
+import org.apache.texera.amber.core.storage.RepositoryVersionResolver
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -29,6 +30,9 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
+
+import java.nio.file.Path
+import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 class PhysicalOpSpec extends AnyFlatSpec {
 
@@ -172,24 +176,48 @@ class PhysicalOpSpec extends AnyFlatSpec {
     assert(newOp("a").withPveName("my-pve").pveName == "my-pve")
   }
 
-  "PhysicalOp.executableOpExecInitInfo" should
-    "be the compile-time info when the operator deferred nothing" in {
-    val op = newOp("a")
-    assert(op.executionTimeBinding.isEmpty)
-    assert(op.executableOpExecInitInfo == op.opExecInitInfo)
-    assert(op.mountLocators.isEmpty)
+  // ----- datasets and models -----
+
+  /** A binding that counts how often it is forced. */
+  private class CountingBinding extends ResourceBinding {
+    var forced = 0
+    override def bind(resolver: RepositoryVersionResolver, mountRoot: Path): BoundResources = {
+      forced += 1
+      BoundResources(OpExecWithCode("bound", "python"), Set("dataset-1:abc123"))
+    }
   }
 
-  it should "come from the execution-time binding when there is one" in {
-    val bound = OpExecWithCode("bound", "python")
-    val binding = new ExecutionTimeBinding {
-      override def opExecInitInfo: OpExecInitInfo = bound
-      override def mountLocators: Set[String] = Set("dataset-1:abc123")
-    }
-    val op = newOp("a").withExecutionTimeBinding(Some(binding))
+  private val mounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
+
+  "PhysicalOp" should "name nothing to mount and hold no binding by default" in {
+    val op = newOp("a")
+    assert(op.repositoryMounts.isEmpty)
+    assert(op.resourceBinding.isEmpty)
+    op.requireResourcesBound()
+  }
+
+  "PhysicalOp.withResourceBinding" should "hold the binding without forcing it" in {
+    val binding = new CountingBinding
+    val op = newOp("a").withResourceBinding(Some(binding))
+    assert(op.resourceBinding.contains(binding))
+    assert(binding.forced == 0)
+    // The compile-time view stays as the operator built it until a plan to run binds it.
     assert(op.opExecInitInfo == OpExecInitInfo.Empty)
-    assert(op.executableOpExecInitInfo == bound)
-    assert(op.mountLocators == Set("dataset-1:abc123"))
+    assert(op.repositoryMounts.isEmpty)
+    assert(op.withResourceBinding(None).resourceBinding.isEmpty)
+  }
+
+  "PhysicalOp.requireResourcesBound" should
+    "refuse an operator that still holds a binding, without forcing it" in {
+    val binding = new CountingBinding
+    val op = newOp("unbound-udf").withResourceBinding(Some(binding))
+    val failure = intercept[IllegalStateException](op.requireResourcesBound())
+    assert(failure.getMessage.contains("unbound-udf"), failure.getMessage)
+    assert(binding.forced == 0)
+  }
+
+  it should "accept a bound operator, whatever it mounts" in {
+    newOp("a").copy(repositoryMounts = Some(mounts)).requireResourcesBound()
   }
 
   // ----- propagateSchema -----
@@ -270,5 +298,22 @@ class PhysicalOpSpec extends AnyFlatSpec {
       assert(json.has("parallelizable"))
       assert(!json.has("outputPartitionRule"), s"$rule is in $json")
     }
+  }
+
+  it should "carry what the operator mounts, and leave a binding out without forcing it" in {
+    val binding = new CountingBinding
+    val op = newOp("a")
+      .copy(repositoryMounts = Some(mounts))
+      .withResourceBinding(Some(binding))
+    val json = objectMapper.readTree(objectMapper.writeValueAsString(op))
+    val written = json.get("repositoryMounts")
+    assert(written.get("root").asText() == "/mnt/texera-mounts", s"no root in $json")
+    assert(
+      written.get("locators").elements().asScala.map(_.asText()).toList == List(
+        "dataset-1:abc123"
+      )
+    )
+    assert(!json.has("resourceBinding"), s"the binding is in $json")
+    assert(binding.forced == 0)
   }
 }

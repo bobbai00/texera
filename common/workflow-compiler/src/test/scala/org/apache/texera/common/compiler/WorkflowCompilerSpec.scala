@@ -19,13 +19,21 @@
 
 package org.apache.texera.common.compiler
 
+import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName}
+import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName, OpExecWithCode}
 import org.apache.texera.amber.core.state.State
-import org.apache.texera.amber.core.storage.ScanFileResolver
+import org.apache.texera.amber.core.storage.{RepositoryVersionResolver, ScanFileResolver}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
-import org.apache.texera.amber.core.workflow.{OutputPort, PortIdentity, WorkflowContext}
+import org.apache.texera.amber.core.workflow.{
+  OutputPort,
+  PhysicalOp,
+  PortIdentity,
+  RepositoryMounts,
+  SchemaNotAvailableException,
+  WorkflowContext
+}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILATION_ERROR
 import org.apache.texera.amber.operator.filter.{
   ComparisonType,
@@ -39,9 +47,16 @@ import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpD
 import org.apache.texera.amber.operator.sort.{SortCriteriaUnit, SortOpDesc, SortPreference}
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
+import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
+import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
 import org.apache.texera.amber.operator.{LogicalOp, PythonOperatorDescriptor, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.common.config.EnvironmentalVariable
 import org.scalatest.flatspec.AnyFlatSpec
+
+import java.nio.file.{Path, Paths}
+import scala.collection.mutable
 
 /**
   * Direct unit coverage for the unified [[WorkflowCompiler]].
@@ -66,7 +81,12 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   private def newCompiler(
       fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver
   ): WorkflowCompiler =
-    new WorkflowCompiler(newContext(), fileResolver)
+    new WorkflowCompiler(
+      newContext(),
+      fileResolver,
+      TestOperators.fixtureRepositoryResolver,
+      Some(TestOperators.fixtureMountRoot)
+    )
 
   private def csvOp(fileName: String): CSVScanSourceOpDesc = {
     val op = new CSVScanSourceOpDesc()
@@ -902,6 +922,293 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
     assert(result.physicalPlan.isDefined)
     assert(result.operatorIdToError.isEmpty)
+  }
+
+  // -------------------- datasets and models a UDF names --------------------
+
+  // A plan made to run (Strict) pins every dataset and model version a UDF names and keeps only
+  // the result on the operator; the editing path (Lenient) leaves the binding alone. These tests
+  // stand in for the database with the fixture resolver, which knows two versions.
+
+  private val datasetVersionPath = "/dataset/owner@x.com/sales/v1"
+  private val modelVersionPath = "/model/owner@x.com/iris/v2"
+  private val planMountRoot = TestOperators.fixtureMountRoot
+
+  /**
+    * The fixture resolver, recording every path it is asked for; it also refuses `refused`, as
+    * for versions the plan's user may not read.
+    */
+  private class RecordingResolver(refused: Set[String] = Set.empty)
+      extends RepositoryVersionResolver {
+    val asked: mutable.ArrayBuffer[String] = mutable.ArrayBuffer.empty
+    override def resolve(versionPath: String): (String, String) = {
+      asked += versionPath
+      if (refused.contains(versionPath)) throw new FileNotFoundException(versionPath)
+      TestOperators.fixtureRepositoryResolver.resolve(versionPath)
+    }
+  }
+
+  private def bindingCompiler(
+      resolver: RepositoryVersionResolver,
+      mountRoot: Option[Path] = Some(planMountRoot)
+  ): WorkflowCompiler =
+    new WorkflowCompiler(newContext(), TestOperators.fixtureFileResolver, resolver, mountRoot)
+
+  private def uiParameter(
+      name: String,
+      inputType: String,
+      value: String,
+      attributeType: AttributeType = AttributeType.STRING
+  ): UiUDFParameter = {
+    val parameter = new UiUDFParameter
+    parameter.attribute = new Attribute(name, attributeType)
+    parameter.inputType = inputType
+    parameter.value = value
+    parameter
+  }
+
+  private val sourceUdfCode =
+    """from pytexera import *
+      |
+      |class GenerateOperator(UDFSourceOperator):
+      |    def produce(self):
+      |        yield {'a': 1}
+      |""".stripMargin
+
+  private val tupleUdfCode =
+    """from pytexera import *
+      |
+      |class ProcessTupleOperator(UDFOperatorV2):
+      |    def process_tuple(self, tuple_, port):
+      |        yield tuple_
+      |""".stripMargin
+
+  /** A source UDF that names a dataset and a model version, and takes a plain count. */
+  private def resourceSourceUdf(): PythonUDFSourceOpDescV2 = {
+    val udf = new PythonUDFSourceOpDescV2
+    udf.code = sourceUdfCode
+    udf.columns = List(new Attribute("a", AttributeType.INTEGER))
+    udf.uiParameters = List(
+      uiParameter("DATA", "dataset", datasetVersionPath),
+      uiParameter("MODEL", "model", modelVersionPath),
+      uiParameter("count", "", "7", AttributeType.INTEGER)
+    )
+    udf
+  }
+
+  /** A UDF downstream of `resourceSourceUdf` that names the same dataset version. */
+  private def resourceTupleUdf(): PythonUDFOpDescV2 = {
+    val udf = new PythonUDFOpDescV2
+    udf.code = tupleUdfCode
+    udf.retainInputColumns = true
+    udf.uiParameters = List(uiParameter("DATA", "dataset", datasetVersionPath))
+    udf
+  }
+
+  private def resourcePlan(source: LogicalOp, downstream: LogicalOp): LogicalPlanPojo =
+    pojo(
+      List(source, downstream),
+      List(
+        LogicalLink(
+          source.operatorIdentifier,
+          PortIdentity(0),
+          downstream.operatorIdentifier,
+          PortIdentity(0)
+        )
+      )
+    )
+
+  private def physicalOpOf(result: WorkflowCompilationResult, op: LogicalOp): PhysicalOp =
+    result.physicalPlan.get.getPhysicalOpsOfLogicalOp(op.operatorIdentifier).head
+
+  private def mountedAt(name: String, inputType: String, directory: String): UiUDFParameter =
+    uiParameter(name, inputType, Paths.get(directory).toString)
+
+  "WorkflowCompiler in strict mode" should
+    "pin what each UDF names and keep only the result on the operator" in {
+    val resolver = new RecordingResolver
+    val source = resourceSourceUdf()
+    val downstream = resourceTupleUdf()
+
+    val result = bindingCompiler(resolver)
+      .compile(resourcePlan(source, downstream), CompilationErrorHandling.Strict)
+
+    // No operator of a plan made to run holds a binding for the engine to force.
+    assert(result.physicalPlan.get.operators.forall(_.resourceBinding.isEmpty))
+    val sourceOp = physicalOpOf(result, source)
+    assert(
+      sourceOp.repositoryMounts.contains(
+        RepositoryMounts(planMountRoot.toString, Set("dataset-1:d4t4", "model-1:m0d3l"))
+      )
+    )
+    assert(
+      sourceOp.opExecInitInfo == OpExecWithCode(
+        PythonUdfUiParameterInjector.inject(
+          sourceUdfCode,
+          List(
+            mountedAt("DATA", "dataset", "/mnt/texera-mounts/dataset-1/d4t4"),
+            mountedAt("MODEL", "model", "/mnt/texera-mounts/model-1/m0d3l"),
+            uiParameter("count", "", "7", AttributeType.INTEGER)
+          )
+        ),
+        "python"
+      )
+    )
+    val downstreamOp = physicalOpOf(result, downstream)
+    assert(
+      downstreamOp.repositoryMounts.contains(
+        RepositoryMounts(planMountRoot.toString, Set("dataset-1:d4t4"))
+      )
+    )
+    assert(
+      downstreamOp.opExecInitInfo == OpExecWithCode(
+        PythonUdfUiParameterInjector.inject(
+          tupleUdfCode,
+          List(mountedAt("DATA", "dataset", "/mnt/texera-mounts/dataset-1/d4t4"))
+        ),
+        "python"
+      )
+    )
+    assert(
+      resolver.asked.sorted == List(datasetVersionPath, datasetVersionPath, modelVersionPath)
+    )
+    // Binding changes only the code and what to mount: the schemas are those of the compile.
+    assert(result.operatorIdToError.isEmpty)
+    assert(
+      result.operatorIdToOutputSchemas(downstream.operatorIdentifier).values.toList ==
+        List(Some(Schema().add(new Attribute("a", AttributeType.INTEGER))))
+    )
+  }
+
+  it should "leave an operator that names no dataset or model as it compiled" in {
+    val resolver = new RecordingResolver
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+
+    val result = bindingCompiler(resolver)
+      .compile(pojo(List(csv), List.empty), CompilationErrorHandling.Strict)
+
+    val op = physicalOpOf(result, csv)
+    assert(op.repositoryMounts.isEmpty && op.resourceBinding.isEmpty)
+    assert(op.opExecInitInfo.isInstanceOf[OpExecWithClassName])
+    assert(resolver.asked.isEmpty)
+  }
+
+  it should "pin nothing for a plan that fails otherwise, binding only once the rest is valid" in {
+    // Pinning is a database lookup per version, so a plan that could not run costs none: here
+    // the UDF sits downstream of a Projection on a column its input does not have.
+    val resolver = new RecordingResolver
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val badProjection = projectOp(List("DoesNotExist"))
+    val downstream = resourceTupleUdf()
+
+    val ex = intercept[Throwable] {
+      bindingCompiler(resolver).compile(
+        pojo(
+          List(csv, badProjection, downstream),
+          List(
+            LogicalLink(
+              csv.operatorIdentifier,
+              PortIdentity(0),
+              badProjection.operatorIdentifier,
+              PortIdentity(0)
+            ),
+            LogicalLink(
+              badProjection.operatorIdentifier,
+              PortIdentity(0),
+              downstream.operatorIdentifier,
+              PortIdentity(0)
+            )
+          )
+        ),
+        CompilationErrorHandling.Strict
+      )
+    }
+    // Either schema error may be the one thrown, as the compiler meets the operators in no set
+    // order: the Projection's own, or the UDF's, whose input schema is then not available.
+    assert(
+      ex.isInstanceOf[SchemaNotAvailableException] ||
+        (ex.getMessage != null && ex.getMessage.contains("DoesNotExist")),
+      s"a schema error should be what fails the compile, got: $ex"
+    )
+    assert(resolver.asked.isEmpty)
+  }
+
+  it should "refuse a version the plan's user cannot read" in {
+    val resolver = new RecordingResolver(refused = Set(modelVersionPath))
+
+    val ex = intercept[FileNotFoundException] {
+      bindingCompiler(resolver).compile(
+        resourcePlan(resourceSourceUdf(), resourceTupleUdf()),
+        CompilationErrorHandling.Strict
+      )
+    }
+    assert(ex.getMessage.contains(modelVersionPath), ex.getMessage)
+  }
+
+  it should "fail, before resolving anything, when there is no mount root to write the code against" in {
+    val resolver = new RecordingResolver
+    val source = resourceSourceUdf()
+
+    val ex = intercept[IllegalStateException] {
+      bindingCompiler(resolver, mountRoot = None)
+        .compile(pojo(List(source), List.empty), CompilationErrorHandling.Strict)
+    }
+    assert(ex.getMessage.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), ex.getMessage)
+    assert(ex.getMessage.contains(source.operatorIdentifier.id), ex.getMessage)
+    assert(resolver.asked.isEmpty)
+  }
+
+  it should "pin nothing unchecked when it is given the resolver for compiles that make no plan" in {
+    val ex = intercept[IllegalStateException] {
+      bindingCompiler(RepositoryVersionResolver.Unavailable)
+        .compile(pojo(List(resourceSourceUdf()), List.empty), CompilationErrorHandling.Strict)
+    }
+    assert(ex.getMessage.contains(datasetVersionPath), ex.getMessage)
+  }
+
+  "WorkflowCompiler" should
+    "leave a UDF's datasets and models to the plan made to run, asking its resolver nothing" in {
+    // The editing path compiles on every edit; even a version that does not exist is no error.
+    val resolver =
+      new RecordingResolver(refused = Set(datasetVersionPath, modelVersionPath))
+    val source = resourceSourceUdf()
+    val downstream = resourceTupleUdf()
+
+    val result = bindingCompiler(resolver).compile(resourcePlan(source, downstream))
+
+    assert(resolver.asked.isEmpty)
+    assert(result.operatorIdToError.isEmpty, s"unexpected errors: ${result.operatorIdToError}")
+    val sourceOp = physicalOpOf(result, source)
+    assert(sourceOp.resourceBinding.isDefined)
+    assert(sourceOp.repositoryMounts.isEmpty)
+    assert(
+      sourceOp.opExecInitInfo == OpExecWithCode(
+        PythonUdfUiParameterInjector.inject(sourceUdfCode, source.uiParameters),
+        "python"
+      )
+    )
+    assert(physicalOpOf(result, downstream).resourceBinding.isDefined)
+  }
+
+  "WorkflowCompiler.bindResources" should
+    "bind one operator exactly as a strict compile binds it in its plan" in {
+    // A change to an operator while its workflow is paused is bound this way, by itself.
+    val compiler = bindingCompiler(new RecordingResolver)
+    val source = resourceSourceUdf()
+    val unbound = physicalOpOf(compiler.compile(pojo(List(source), List.empty)), source)
+    val inPlan = physicalOpOf(
+      compiler.compile(pojo(List(source), List.empty), CompilationErrorHandling.Strict),
+      source
+    )
+
+    val bound = compiler.bindResources(unbound)
+
+    assert(bound.resourceBinding.isEmpty)
+    assert(bound.opExecInitInfo == inPlan.opExecInitInfo)
+    assert(bound.repositoryMounts.nonEmpty)
+    assert(bound.repositoryMounts == inPlan.repositoryMounts)
+    // An operator with nothing to bind comes back as it is.
+    assert(compiler.bindResources(bound) eq bound)
   }
 
   // -------------------- loop-variable references --------------------

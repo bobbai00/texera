@@ -20,9 +20,9 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.FileResolver
+import org.apache.texera.amber.core.storage.{FileResolver, RepositoryMountManager}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.WorkflowContext
+import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
@@ -42,6 +42,7 @@ import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, Websocke
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
 
 import java.net.URI
+import java.nio.file.Path
 import scala.collection.mutable
 
 object WorkflowExecutionService {
@@ -53,6 +54,21 @@ object WorkflowExecutionService {
       .getLatestExecutionID(workflowId.id.toInt, computingUnitId)
       .map(eid => new ExecutionIdentity(eid.longValue()))
   }
+
+  /**
+    * Fails unless the engine can run `plan` on a computing unit that mounts datasets and models
+    * under `unitMountRoot`: no operator is left to bind, and every operator reads what it mounts
+    * under that root. Checked once, when the plan is handed to the engine, so a plan the engine
+    * cannot run fails before any region runs rather than partway through; each region checks
+    * again before it mounts.
+    *
+    * @throws IllegalStateException if the engine cannot run the plan here
+    */
+  def requireRunnableUnder(plan: PhysicalPlan, unitMountRoot: Option[Path]): Unit =
+    plan.operators.foreach { op =>
+      op.requireResourcesBound()
+      op.repositoryMounts.foreach(RepositoryMountManager.requireMountableUnder(_, unitMountRoot))
+    }
 }
 
 class WorkflowExecutionService(
@@ -64,7 +80,11 @@ class WorkflowExecutionService(
     errorHandler: Throwable => Unit,
     uid: Integer,
     userEmailOpt: Option[String],
-    sessionUri: URI
+    sessionUri: URI,
+    // The directory this computing unit mounts datasets and models under: the plan's code reads
+    // them from below it, and the plan is checked against it before it runs. Production reads
+    // the unit's environment; a parameter so a test can name one.
+    mountRoot: Option[Path] = RepositoryMountManager.mountRoot
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -116,10 +136,20 @@ class WorkflowExecutionService(
   // runtime failures arrive asynchronously through errorHandler and belong to later
   // execution work rather than this setup.
   def executeWorkflow(): Option[Throwable] = {
+    // Makes the plan to run, for this run's user: it reads only the files, datasets and models
+    // they may read, and its code reads each dataset and model where this unit mounts it. An
+    // operator changed while the run is paused is bound by it too.
+    val compiler = new WorkflowCompiler(
+      workflowContext,
+      FileResolver.forUser(uid),
+      FileResolver.repositoryVersionResolverForUser(uid),
+      mountRoot
+    )
     try {
-      val compilationResult = new WorkflowCompiler(workflowContext, FileResolver.forUser(uid))
-        .compile(request.logicalPlan, CompilationErrorHandling.Strict)
-      workflow = Workflow.fromCompilationResult(workflowContext, compilationResult)
+      val compilationResult = compiler.compile(request.logicalPlan, CompilationErrorHandling.Strict)
+      val compiled = Workflow.fromCompilationResult(workflowContext, compilationResult)
+      WorkflowExecutionService.requireRunnableUnder(compiled.physicalPlan, mountRoot)
+      workflow = compiled
     } catch {
       case err: Throwable =>
         // stop here: `workflow` is still null, so falling through would NPE
@@ -128,14 +158,13 @@ class WorkflowExecutionService(
         return Some(err)
     }
 
-    client = ComputingUnitMaster.createAmberRuntime(
-      workflow.context,
-      workflow.physicalPlan,
-      coordinatorConfig,
-      errorHandler
+    client = createAmberRuntime(workflow)
+    executionReconfigurationService = new ExecutionReconfigurationService(
+      client,
+      executionStateStore,
+      workflow,
+      compiler.bindResources
     )
-    executionReconfigurationService =
-      new ExecutionReconfigurationService(client, executionStateStore, workflow)
     executionStatsService = new ExecutionStatsService(client, executionStateStore, workflow.context)
     executionRuntimeService = new ExecutionRuntimeService(
       client,
@@ -181,6 +210,16 @@ class WorkflowExecutionService(
       )
     None
   }
+
+  // Hands the plan to the engine. A seam, so a test can set a run up in full, every service
+  // built around its plan, without an engine to start it.
+  protected def createAmberRuntime(workflow: Workflow): AmberClient =
+    ComputingUnitMaster.createAmberRuntime(
+      workflow.context,
+      workflow.physicalPlan,
+      coordinatorConfig,
+      errorHandler
+    )
 
   override def unsubscribeAll(): Unit = {
     super.unsubscribeAll()

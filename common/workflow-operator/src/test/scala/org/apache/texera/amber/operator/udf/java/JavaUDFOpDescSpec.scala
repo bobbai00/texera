@@ -65,6 +65,22 @@ class JavaUDFOpDescSpec extends AnyFlatSpec with UdfDescriptorSpecSupport {
     }
   }
 
+  it should "leave a resource parameter to the plan made to run, with one worker or several" in {
+    for (workers <- List(1, 2)) {
+      val d = new JavaUDFOpDesc
+      d.code = """import org.apache.texera.amber.operator.udf.java.UiParameter;
+        |public class JavaUDFOpExec {
+        |  @UiParameter(value="DS", resource="dataset") public String data;
+        |}
+        |""".stripMargin
+      d.workers = workers
+      d.uiParameters = List(datasetParameter("DS", "/dataset/owner@x.com/ds/v1"))
+      withClue(s"workers = $workers: ") {
+        expectResourceLeftToPlan(d, d.code, "java", JavaUdfUiParameterInjector.inject)
+      }
+    }
+  }
+
   "JavaUDFOpDesc schema propagation" should
     "emit only the output columns when input columns are not retained (default)" in {
     val d = new JavaUDFOpDesc

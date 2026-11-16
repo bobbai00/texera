@@ -28,6 +28,7 @@ import org.apache.texera.amber.operator.metadata.OperatorInfo
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.matchers.should.Matchers
 
+import _root_.java.nio.file.Paths
 import scala.reflect.ClassTag
 
 private[udf] trait UdfDescriptorSpecSupport extends Matchers {
@@ -132,4 +133,49 @@ private[udf] trait UdfDescriptorSpecSupport extends Matchers {
         code should include("self.decode_python_template")
       case other => fail(s"expected Python OpExecWithCode, got $other")
     }
+
+  /**
+    * What compiling leaves when a parameter names a dataset or model: the compile-time view, whose
+    * code holds each version path, nothing to mount, and a binding for the plan made to run.
+    * Forcing that binding, as the plan does, gives `code` in `language` with each version's mount
+    * directory in its path's place, and the repositories to mount.
+    *
+    * @param inject the injector of the descriptor's language
+    */
+  protected final def expectResourceLeftToPlan(
+      desc: LogicalOp with UdfUiParameterSupport,
+      code: String,
+      language: String,
+      inject: (String, List[UiUDFParameter]) => String
+  ): Unit = {
+    val physical = buildPhysicalOp(desc)
+    physical.opExecInitInfo shouldBe OpExecWithCode(inject(code, desc.uiParameters), language)
+    physical.repositoryMounts shouldBe None
+    val binding = physical.resourceBinding.getOrElse(
+      fail("an operator that names a dataset or model must leave a binding to the plan")
+    )
+
+    // Each version pinned to a repository and commit of its own, under a root no pod uses.
+    val resources = desc.uiParameters.filter(p => Set("dataset", "model").contains(p.inputType))
+    val pinned = resources.zipWithIndex.map {
+      case (parameter, i) => parameter.value -> ((s"repository-$i", s"commit-$i"))
+    }.toMap
+    val root = Paths.get("/plan/root")
+
+    val bound = binding.bind(versionPath => pinned(versionPath), root)
+
+    bound.mountLocators shouldBe pinned.values.map { case (r, c) => s"$r:$c" }.toSet
+    val mounted = desc.uiParameters.map { parameter =>
+      if (!resources.contains(parameter)) parameter
+      else {
+        val (repository, commit) = pinned(parameter.value)
+        val atMount = new UiUDFParameter
+        atMount.attribute = parameter.attribute
+        atMount.inputType = parameter.inputType
+        atMount.value = root.resolve(repository).resolve(commit).toString
+        atMount
+      }
+    }
+    bound.opExecInitInfo shouldBe OpExecWithCode(inject(code, mounted), language)
+  }
 }

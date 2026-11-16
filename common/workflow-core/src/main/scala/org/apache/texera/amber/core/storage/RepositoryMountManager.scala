@@ -21,6 +21,7 @@ package org.apache.texera.amber.core.storage
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.texera.amber.core.workflow.RepositoryMounts
 import org.apache.texera.common.config.EnvironmentalVariable
 
 import java.net.{HttpURLConnection, URI}
@@ -48,52 +49,50 @@ class RepositoryMountManager(
 
   private val mapper = new ObjectMapper()
 
+  /**
+    * The directory this computing unit mounts repositories under, or None when it can mount
+    * none. A plan made here writes its code against it.
+    */
+  def mountRoot: Option[Path] =
+    env(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(Paths.get(_))
+
   private def inPodMountRoot: Path =
-    Paths.get(
-      env(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
-        .map(_.trim)
-        .filter(_.nonEmpty)
-        .getOrElse(
-          throw new IllegalStateException(
-            s"${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is not set in this computing unit."
-          )
-        )
+    mountRoot.getOrElse(
+      throw new IllegalStateException(
+        s"${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is not set in this computing unit."
+      )
     )
 
-  private def parseLocator(locator: String): (String, String) =
-    Option(locator).getOrElse("").split(":", 2) match {
-      case Array(repository, commit) if repository.nonEmpty && commit.nonEmpty =>
-        (repository, commit)
-      case _ =>
-        throw new IllegalArgumentException(
-          s"Invalid mount locator '$locator'; expected <repositoryName>:<commitHash>."
-        )
-    }
+  /** Where `locator` is, or will be, readable in this pod. */
+  private def mountPointOf(locator: String): Path =
+    RepositoryMountManager.mountPoint(inPodMountRoot, locator)
 
   /**
-    * Where `locator` is, or will be, readable in this pod. Pure — it neither mounts nor checks
-    * anything, because an operator is given this path while its execution is being set up,
-    * before the region is launched and the mount actually happens.
-    */
-  def mountPointOf(locator: String): Path = {
-    val (repository, commit) = parseLocator(locator)
-    inPodMountRoot.resolve(repository).resolve(commit)
-  }
-
-  /**
-    * Mount every locator, deduplicated, in one place rather than once per worker.
+    * Mount every repository an operator's code reads, deduplicated, in one place rather than
+    * once per worker — after checking that the code expects the mounts where this pod puts them
+    * (see [[RepositoryMountManager.requireMountableUnder]]).
     *
     * Warning: a FUSE mount is visible only in the mount namespace of the process that receives
     * it, which is fine while a region's controller and workers share one pod. Were workers ever
     * to become separate pods, this step — and only this step — would have to be dispatched to
     * each of them.
+    *
+    * @param mounts the repositories to mount, and the root the operators' code reads them under
+    * @throws IllegalStateException if this pod mounts no repository, or mounts them under another
+    *                               root than the code reads them under
     */
-  def ensureAllMounted(locators: Set[String]): Unit = locators.foreach(ensureMounted)
+  def ensureAllMounted(mounts: RepositoryMounts): Unit = {
+    RepositoryMountManager.requireMountableUnder(mounts, mountRoot)
+    mounts.locators.foreach(ensureMounted)
+  }
 
   /** Mount `locator` if it is not already mounted, and return its in-pod path. */
   def ensureMounted(locator: String): Path =
     synchronized {
-      val (repository, commit) = parseLocator(locator)
+      val (repository, commit) = RepositoryMounts.parseLocator(locator)
       val mountPoint = mountPointOf(locator)
 
       if (isMounted(mountPoint)) {
@@ -139,7 +138,46 @@ object RepositoryMountManager
       InPodMount.postJson,
       InPodMount.isFuseMounted,
       35000
-    )
+    ) {
+
+  /**
+    * Where `locator` is, or will be, readable on a computing unit that mounts repositories under
+    * `root`. Pure: it neither mounts nor checks anything, because a plan writes this path into an
+    * operator's code long before the mount happens.
+    *
+    * @throws IllegalArgumentException if `locator` is not "<repositoryName>:<commitHash>"
+    */
+  def mountPoint(root: Path, locator: String): Path = {
+    val (repository, commit) = RepositoryMounts.parseLocator(locator)
+    root.resolve(repository).resolve(commit)
+  }
+
+  /**
+    * Fails unless code that reads `mounts` under their root finds them on a computing unit that
+    * mounts repositories under `unitRoot`. The code was written when its plan was made, so a unit
+    * with another root would hand the operator directories that never appear. Two spellings of
+    * one directory are the same root.
+    *
+    * @throws IllegalStateException if the unit mounts no repository, or mounts them elsewhere
+    */
+  def requireMountableUnder(mounts: RepositoryMounts, unitRoot: Option[Path]): Unit = {
+    val expected = Paths.get(mounts.root).normalize()
+    val root = unitRoot
+      .map(_.normalize())
+      .getOrElse(
+        throw new IllegalStateException(
+          s"${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is not set in this computing unit, " +
+            s"so it cannot mount ${mounts.locators.toSeq.sorted.mkString(", ")}."
+        )
+      )
+    if (root != expected) {
+      throw new IllegalStateException(
+        s"The plan's code reads its datasets and models under $expected, but this computing " +
+          s"unit mounts them under $root (${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT})."
+      )
+    }
+  }
+}
 
 private object InPodMount {
 

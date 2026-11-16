@@ -25,7 +25,12 @@ import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.storage.{DocumentFactory, RepositoryMountManager, VFSURIFactory}
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
+import org.apache.texera.amber.core.workflow.{
+  GlobalPortIdentity,
+  PhysicalLink,
+  PhysicalOp,
+  RepositoryMounts
+}
 import org.apache.texera.amber.engine.architecture.common.{
   PekkoActorRefMappingService,
   PekkoActorService,
@@ -118,8 +123,9 @@ class RegionExecutionManager(
     // port's BASE materialization URI), shipped to every worker in
     // InitializeExecutorRequest. See WorkflowExecutionManager.loopStartPortUris.
     loopStartPortUris: Map[String, String] = Map.empty,
-    // Mounts the repositories a region's operators name; a parameter so a test can observe it.
-    ensureMounted: Set[String] => Unit = RepositoryMountManager.ensureAllMounted
+    // Mounts repositories a region's operators read, under the root their code reads them
+    // under; a parameter so a test can observe it.
+    ensureMounted: RepositoryMounts => Unit = RepositoryMountManager.ensureAllMounted
 ) extends AmberLogging {
 
   initRegionExecution()
@@ -362,14 +368,18 @@ class RegionExecutionManager(
     * Mount every repository this region's operators name before any of them receives its code,
     * which already refers to the mount paths. It happens here rather than in a worker because
     * workers are created before either phase launches. Operators carry no mount code: they only
-    * name what they need, through `PhysicalOp.mountLocators`.
+    * name what they need, and the root their code reads it under, through
+    * `PhysicalOp.repositoryMounts`, fixed when the plan was made. Each root is mounted once, with
+    * every repository the region's operators read under it. An operator that still holds a
+    * binding fails the region here: the engine runs a plan, it never binds one.
     */
   private def mountRegionRepositories(): Future[Unit] = {
     val mount = Promise[Unit]()
     if (mountFutureRef.compareAndSet(null, mount)) {
       mount.become(Future {
-        val locators = region.getOperators.flatMap(_.mountLocators)
-        if (locators.nonEmpty) ensureMounted(locators)
+        val operators = region.getOperators
+        operators.foreach(_.requireResourcesBound())
+        RepositoryMounts.byRoot(operators.flatMap(_.repositoryMounts)).foreach(ensureMounted)
       })
     }
     mountFutureRef.get
@@ -481,13 +491,12 @@ class RegionExecutionManager(
         operators
           .flatMap(physicalOp => {
             val workerConfigs = resourceConfig.operatorConfigs(physicalOp.id).workerConfigs
-            val opExecInitInfo = physicalOp.executableOpExecInitInfo
             workerConfigs.map(_.workerId).map { workerId =>
               attributeFailureTo(workerId)(
                 asyncRPCClient.workerInterface.initializeExecutor(
                   InitializeExecutorRequest(
                     workerConfigs.length,
-                    opExecInitInfo,
+                    physicalOp.opExecInitInfo,
                     physicalOp.isSourceOperator,
                     loopStartPortUris
                   ),

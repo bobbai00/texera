@@ -532,53 +532,165 @@ class FileResolverSpec
     assert(FileResolver.parseDatasetOwnerAndName(null).isEmpty)
   }
 
+  // ---------------------------------------------------------------------------
+  // resolveRepositoryVersion
+  // ---------------------------------------------------------------------------
+
+  private val privateDatasetVersionPath = "/dataset/test_user@test.com/private_dataset/v1"
+  private val privateModelVersionPath = "/model/test_user@test.com/private_model/v1"
+  private val privateDatasetRepository =
+    (privateDataset.getRepositoryName, privateDatasetVersion.getVersionHash)
+  private val privateModelRepository =
+    (privateModel.getRepositoryName, privateModelVersion.getVersionHash)
+
   "resolveRepositoryVersion" should "resolve a dataset version path to its repository and commit" in {
     assert(
-      FileResolver.resolveRepositoryVersion("/dataset/test_user@test.com/test_dataset/v2")
-        == ((testDataset.getRepositoryName, testDatasetVersion2.getVersionHash))
+      FileResolver.resolveRepositoryVersion(
+        "/dataset/test_user@test.com/test_dataset/v2",
+        testUser.getUid
+      ) == ((testDataset.getRepositoryName, testDatasetVersion2.getVersionHash))
     )
   }
 
   it should "resolve a model version path to its repository and commit" in {
     assert(
-      FileResolver.resolveRepositoryVersion("/model/test_user@test.com/test_model/v1")
-        == ((testModel.getRepositoryName, testModelVersion1.getVersionHash))
+      FileResolver.resolveRepositoryVersion(
+        "/model/test_user@test.com/test_model/v1",
+        testUser.getUid
+      ) == ((testModel.getRepositoryName, testModelVersion1.getVersionHash))
     )
   }
 
   it should "resolve a legacy unprefixed dataset version path" in {
     assert(
-      FileResolver.resolveRepositoryVersion("/test_user@test.com/test_dataset/v1")
-        == ((testDataset.getRepositoryName, testDatasetVersion1.getVersionHash))
+      FileResolver.resolveRepositoryVersion(
+        "/test_user@test.com/test_dataset/v1",
+        testUser.getUid
+      ) == ((testDataset.getRepositoryName, testDatasetVersion1.getVersionHash))
     )
+  }
+
+  it should "resolve a private version for its owner and for a user granted read access" in {
+    for (reader <- Seq(testUser, grantedUser)) {
+      assert(
+        FileResolver.resolveRepositoryVersion(privateDatasetVersionPath, reader.getUid)
+          == privateDatasetRepository
+      )
+      assert(
+        FileResolver.resolveRepositoryVersion(privateModelVersionPath, reader.getUid)
+          == privateModelRepository
+      )
+    }
+  }
+
+  it should "refuse a private version to any other user, as if it did not exist" in {
+    for (versionPath <- Seq(privateDatasetVersionPath, privateModelVersionPath)) {
+      val unreadable = intercept[FileNotFoundException] {
+        FileResolver.resolveRepositoryVersion(versionPath, otherUser.getUid)
+      }
+      assert(unreadable.getMessage.contains(versionPath), unreadable.getMessage)
+    }
+    // The refusal reads like a missing version, so it does not tell the user the version exists.
+    val unreadable = intercept[FileNotFoundException] {
+      FileResolver.resolveRepositoryVersion(privateDatasetVersionPath, otherUser.getUid)
+    }
+    val missingPath = "/dataset/test_user@test.com/no_such_dataset/v1"
+    val missing = intercept[FileNotFoundException] {
+      FileResolver.resolveRepositoryVersion(missingPath, otherUser.getUid)
+    }
+    assert(
+      unreadable.getMessage.replace(privateDatasetVersionPath, "<path>")
+        == missing.getMessage.replace(missingPath, "<path>")
+    )
+  }
+
+  it should "apply the same rule to a legacy unprefixed dataset version path" in {
+    val unprefixed = "/test_user@test.com/private_dataset/v1"
+    assert(
+      FileResolver.resolveRepositoryVersion(unprefixed, grantedUser.getUid)
+        == privateDatasetRepository
+    )
+    assertThrows[FileNotFoundException] {
+      FileResolver.resolveRepositoryVersion(unprefixed, otherUser.getUid)
+    }
+  }
+
+  it should "resolve a public version for a user with no grant on it" in {
+    assert(
+      FileResolver.resolveRepositoryVersion(
+        "/dataset/test_user@test.com/test_dataset/v1",
+        otherUser.getUid
+      ) == ((testDataset.getRepositoryName, testDatasetVersion1.getVersionHash))
+    )
+    assert(
+      FileResolver.resolveRepositoryVersion(
+        "/model/test_user@test.com/test_model/v2",
+        otherUser.getUid
+      ) == ((testModel.getRepositoryName, testModelVersion2.getVersionHash))
+    )
+  }
+
+  it should "refuse a reader who is not a user" in {
+    assertThrows[FileNotFoundException] {
+      FileResolver.resolveRepositoryVersion(privateDatasetVersionPath, null)
+    }
+    assertThrows[FileNotFoundException] {
+      FileResolver.resolveRepositoryVersion(privateDatasetVersionPath, Integer.valueOf(999))
+    }
   }
 
   it should "reject a path that names a file rather than a version" in {
     assertThrows[FileNotFoundException] {
-      FileResolver.resolveRepositoryVersion(dataset1TxtFilePath)
+      FileResolver.resolveRepositoryVersion(dataset1TxtFilePath, testUser.getUid)
     }
   }
 
   it should "reject a path that stops short of a version" in {
     assertThrows[FileNotFoundException] {
-      FileResolver.resolveRepositoryVersion("/dataset/test_user@test.com/test_dataset")
+      FileResolver.resolveRepositoryVersion(
+        "/dataset/test_user@test.com/test_dataset",
+        testUser.getUid
+      )
     }
   }
 
   it should "reject an empty or null path" in {
-    assertThrows[FileNotFoundException](FileResolver.resolveRepositoryVersion(""))
-    assertThrows[FileNotFoundException](FileResolver.resolveRepositoryVersion(null))
+    assertThrows[FileNotFoundException](
+      FileResolver.resolveRepositoryVersion("", testUser.getUid)
+    )
+    assertThrows[FileNotFoundException](
+      FileResolver.resolveRepositoryVersion(null, testUser.getUid)
+    )
   }
 
   it should "reject a version that does not exist" in {
     assertThrows[FileNotFoundException] {
-      FileResolver.resolveRepositoryVersion("/dataset/test_user@test.com/test_dataset/v99")
+      FileResolver.resolveRepositoryVersion(
+        "/dataset/test_user@test.com/test_dataset/v99",
+        testUser.getUid
+      )
     }
   }
 
   it should "not resolve a model under the dataset prefix" in {
     assertThrows[FileNotFoundException] {
-      FileResolver.resolveRepositoryVersion("/dataset/test_user@test.com/test_model/v1")
+      FileResolver.resolveRepositoryVersion(
+        "/dataset/test_user@test.com/test_model/v1",
+        testUser.getUid
+      )
+    }
+  }
+
+  "repositoryVersionResolverForUser" should "pin versions on behalf of the user it was built for" in {
+    assert(
+      FileResolver
+        .repositoryVersionResolverForUser(grantedUser.getUid)
+        .resolve(privateModelVersionPath) == privateModelRepository
+    )
+    assertThrows[FileNotFoundException] {
+      FileResolver
+        .repositoryVersionResolverForUser(otherUser.getUid)
+        .resolve(privateModelVersionPath)
     }
   }
 

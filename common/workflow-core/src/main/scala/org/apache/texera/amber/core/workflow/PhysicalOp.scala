@@ -169,7 +169,7 @@ object PhysicalOp {
     "propagateSchema", // function type, so ignore it
     "locationPreference", // ignore it for the deserialization
     "partitionRequirement", // ignore it for deserialization
-    "executionTimeBinding" // deferred work rather than state; see ExecutionTimeBinding
+    "resourceBinding" // function type, so ignore it; see ResourceBinding
   )
 )
 case class PhysicalOp(
@@ -218,8 +218,12 @@ case class PhysicalOp(
     suggestedWorkerNum: Option[Int] = None,
     // name of the PVE to execute within
     pveName: String = "",
-    // setup postponed until the execution starts; None when there is nothing to defer
-    executionTimeBinding: Option[ExecutionTimeBinding] = None
+    // the repositories opExecInitInfo's code reads, and the directory it reads them under:
+    // fixed when the plan was made, and mounted by the engine before the operator runs
+    repositoryMounts: Option[RepositoryMounts] = None,
+    // datasets and models the operator names that no plan has pinned yet: a compile-time
+    // callback, forced and cleared by the compile that makes a plan to run (see ResourceBinding)
+    resourceBinding: Option[ResourceBinding] = None
 ) extends LazyLogging {
 
   // all the "dependee" links are also blocking
@@ -232,19 +236,16 @@ case class PhysicalOp(
       .distinct
 
   /**
-    * The executor info to actually run with. It differs from `opExecInitInfo` only for an
-    * operator that deferred part of its setup: that one is the compile-time view, enough to
-    * propagate schemas, and this one is complete. Forcing it can do real work, so ask for it
-    * when the execution starts — never on the editing path.
+    * Fails if this operator still holds a binding. The engine checks this before it runs an
+    * operator: it runs only what a plan made to run holds, and never binds an operator itself.
     */
-  @JsonIgnore
-  def executableOpExecInitInfo: OpExecInitInfo =
-    executionTimeBinding.map(_.opExecInitInfo).getOrElse(opExecInitInfo)
-
-  /** Repositories to mount before this operator runs. Forces the binding, like the above. */
-  @JsonIgnore
-  def mountLocators: Set[String] =
-    executionTimeBinding.map(_.mountLocators).getOrElse(Set.empty)
+  def requireResourcesBound(): Unit =
+    if (resourceBinding.isDefined) {
+      throw new IllegalStateException(
+        s"Operator ${id.logicalOpId.id} names datasets or models that were never resolved: " +
+          "only a plan made to run can run it."
+      )
+    }
 
   /**
     * Helper functions related to compile-time operations
@@ -413,8 +414,8 @@ case class PhysicalOp(
     this.copy(pveName = name)
   }
 
-  def withExecutionTimeBinding(binding: Option[ExecutionTimeBinding]): PhysicalOp = {
-    this.copy(executionTimeBinding = binding)
+  def withResourceBinding(binding: Option[ResourceBinding]): PhysicalOp = {
+    this.copy(resourceBinding = binding)
   }
 
   /**

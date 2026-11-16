@@ -66,6 +66,16 @@ class RUDFSourceOpDescSpec extends AnyFlatSpec with UdfDescriptorSpecSupport {
     physical.isOneToManyOp shouldBe true
   }
 
+  it should "leave a resource parameter to the plan made to run, with one worker or several" in {
+    for (workers <- Seq(1, 2)) {
+      val d = new RUDFSourceOpDesc
+      d.code = "function() data.frame(a=1)"
+      d.workers = workers
+      d.uiParameters = List(datasetParameter("DS", "/dataset/owner@x.com/ds/v1"))
+      expectResourceLeftToPlan(d, d.code, "r-table", RUdfUiParameterInjector.inject)
+    }
+  }
+
   it should "advertise its own source schema through the propagation function" in {
     // The propagation function is a closure: asserting the wiring above never
     // evaluates it, so the physical op could hand an empty schema downstream for a

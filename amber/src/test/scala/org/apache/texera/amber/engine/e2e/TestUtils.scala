@@ -93,8 +93,14 @@ object TestUtils {
       links: List[LogicalLink],
       context: WorkflowContext
   ): Workflow = {
-    // the scan sources in these tests read fixture files on the local disk
-    val workflowCompiler = new WorkflowCompiler(context, TestOperators.fixtureFileResolver)
+    // the scan sources in these tests read fixture files on the local disk, and a UDF's datasets
+    // and models are the fixture versions, read under the fixture mount root
+    val workflowCompiler = new WorkflowCompiler(
+      context,
+      TestOperators.fixtureFileResolver,
+      TestOperators.fixtureRepositoryResolver,
+      Some(TestOperators.fixtureMountRoot)
+    )
     // Execution path: strict, fail-fast on compilation errors. Strict guarantees
     // a defined physicalPlan (errors throw rather than clearing it).
     val compilationResult = workflowCompiler.compile(

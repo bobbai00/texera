@@ -20,24 +20,52 @@
 package org.apache.texera.web.service
 
 import com.google.protobuf.timestamp.Timestamp
+import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
+import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  PhysicalOpIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{
+  BoundResources,
+  PhysicalOp,
+  PhysicalPlan,
+  PortIdentity,
+  RepositoryMounts,
+  ResourceBinding,
+  WorkflowContext,
+  WorkflowSettings
+}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
-import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
+import org.apache.texera.amber.engine.architecture.coordinator.{
+  CoordinatorConfig,
+  Workflow => EngineWorkflow
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
   COMPLETED,
   FAILED,
   RUNNING
 }
+import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
+import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
 import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
+import org.apache.texera.dao.jooq.generated.enums.{PrivilegeEnum, WorkflowComputingUnitTypeEnum}
 import org.apache.texera.dao.jooq.generated.tables.daos.{
+  DatasetDao,
+  DatasetUserAccessDao,
+  DatasetVersionDao,
   UserDao,
   WorkflowComputingUnitDao,
   WorkflowDao,
@@ -45,6 +73,9 @@ import org.apache.texera.dao.jooq.generated.tables.daos.{
   WorkflowVersionDao
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.{
+  Dataset,
+  DatasetUserAccess,
+  DatasetVersion,
   User,
   Workflow,
   WorkflowComputingUnit,
@@ -57,15 +88,19 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
-import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.storage.ExecutionStateStore
+import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.common.config.EnvironmentalVariable
+import org.apache.texera.web.model.websocket.request.{ModifyLogicRequest, WorkflowExecuteRequest}
+import org.apache.texera.web.model.websocket.response.ModifyLogicResponse
+import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 
+import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
+import java.nio.file.Paths
 import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import scala.collection.mutable
@@ -105,8 +140,14 @@ import scala.reflect.ClassTag
   *     the services out would leave the four teardown calls unobserved, which is the
   *     entire content of the method.
   *
-  * The runtime half of `executeWorkflow` (everything from `createAmberRuntime` on) is
-  * out of reach here for the reason above and is exercised by the integration suites.
+  * The runtime half of `executeWorkflow` (everything from `createAmberRuntime` on) is out of
+  * reach of those tests for the reason above and is exercised by the integration suites. The
+  * tests of the plan a run makes reach it only through the service's `createAmberRuntime` seam,
+  * which hands back a client on this suite's actor system that answers nothing: every service is
+  * built around the plan, and nothing starts. They run as `testUid`, against two private datasets
+  * of another user, one of them shared with `testUid`, on a unit that mounts under
+  * `unitMountRoot` — so they pin what the run's compiler is given (its user, the unit's root)
+  * and that a paused edit is bound by that same compiler.
   *
   * Known, pre-existing: `ExecutionStatsService` never shuts down its private
   * `metricsPersistThread` (it does not override `unsubscribeAll`), so the teardown
@@ -156,6 +197,19 @@ class WorkflowExecutionServiceSpec
 
   /** A computing unit with no executions, so the cuid leg of the predicate is not vacuous. */
   private val otherCuid: Integer = 9210
+
+  /**
+    * Owner of two private datasets: the one at `readableVersionPath` is shared with `testUid` for
+    * reading, the one at `unreadableVersionPath` with no one.
+    */
+  private val datasetOwnerUid: Integer = 9211
+  private val datasetOwnerEmail = s"u$datasetOwnerUid@example.com"
+  private val readableVersionPath = s"/dataset/$datasetOwnerEmail/shared_sales/v1"
+  private val unreadableVersionPath = s"/dataset/$datasetOwnerEmail/private_sales/v1"
+  private val readableLocator = "dataset-9221:5ha7ed01"
+
+  /** The directory the computing unit of the runs below mounts datasets and models under. */
+  private val unitMountRoot = Paths.get("/mnt/texera-mounts")
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
@@ -214,6 +268,38 @@ class WorkflowExecutionServiceSpec
     execution.setName("workflow-execution-test-execution")
     execution.setEnvironmentVersion("test-env")
     new WorkflowExecutionsDao(getDSLContext.configuration()).insert(execution)
+
+    val datasetOwner = new User
+    datasetOwner.setUid(datasetOwnerUid)
+    datasetOwner.setName("workflow-execution-dataset-owner")
+    datasetOwner.setEmail(datasetOwnerEmail)
+    new UserDao(getDSLContext.configuration()).insert(datasetOwner)
+    Seq(
+      (9221, "shared_sales", "dataset-9221", "5ha7ed01"),
+      (9222, "private_sales", "dataset-9222", "9r1va7e2")
+    ).foreach {
+      case (did, name, repositoryName, versionHash) =>
+        val dataset = new Dataset
+        dataset.setDid(did)
+        dataset.setName(name)
+        dataset.setRepositoryName(repositoryName)
+        dataset.setDescription("")
+        dataset.setIsPublic(false)
+        dataset.setOwnerUid(datasetOwnerUid)
+        new DatasetDao(getDSLContext.configuration()).insert(dataset)
+        val version = new DatasetVersion
+        version.setDvid(did)
+        version.setDid(did)
+        version.setName("v1")
+        version.setCreatorUid(datasetOwnerUid)
+        version.setVersionHash(versionHash)
+        new DatasetVersionDao(getDSLContext.configuration()).insert(version)
+    }
+    val grant = new DatasetUserAccess
+    grant.setDid(9221)
+    grant.setUid(testUid)
+    grant.setPrivilege(PrivilegeEnum.READ)
+    new DatasetUserAccessDao(getDSLContext.configuration()).insert(grant)
   }
 
   override protected def afterAll(): Unit = {
@@ -294,7 +380,123 @@ class WorkflowExecutionServiceSpec
 
     override def registerCallback[T](callback: T => Unit)(implicit ct: ClassTag[T]): Disposable =
       Disposable.empty()
+
+    // Nothing asked of the engine is ever answered, so a run set up on this client never starts.
+    override val coordinatorInterface: CoordinatorServiceFs2Grpc[Future, Unit] =
+      Proxy
+        .newProxyInstance(
+          classOf[CoordinatorServiceFs2Grpc[Future, Unit]].getClassLoader,
+          Array(classOf[CoordinatorServiceFs2Grpc[Future, Unit]]),
+          new InvocationHandler {
+            override def invoke(proxy: Any, method: Method, args: Array[AnyRef]): AnyRef =
+              method.getName match {
+                case "hashCode" => Integer.valueOf(System.identityHashCode(proxy))
+                case "equals"   => java.lang.Boolean.valueOf(proxy.asInstanceOf[AnyRef] eq args(0))
+                case "toString" => "UnansweredCoordinatorInterface"
+                case _          => Promise[Any]()
+              }
+          }
+        )
+        .asInstanceOf[CoordinatorServiceFs2Grpc[Future, Unit]]
   }
+
+  /**
+    * A run of `logicalPlan` by `testUid`, on a unit that mounts under `unitMountRoot`, that goes
+    * through `executeWorkflow` as production does: the plan is made and every service is built
+    * around it. Only the engine is a `TestAmberClient`, so nothing starts.
+    */
+  private final class StubbedRun(logicalPlan: LogicalPlanPojo) {
+    val errors: ListBuffer[Throwable] = ListBuffer.empty
+    val resultService =
+      new ExecutionResultService(
+        WorkflowIdentity(testWid.longValue()),
+        testCuid,
+        new WorkflowStateStore()
+      )
+    val service: WorkflowExecutionService = new WorkflowExecutionService(
+      CoordinatorConfig(None, None, None, None),
+      new WorkflowContext(
+        workflowId = WorkflowIdentity(testWid.longValue()),
+        executionId = ExecutionIdentity(testEid.longValue())
+      ),
+      resultService,
+      WorkflowExecuteRequest(
+        executionName = "test",
+        engineVersion = "test",
+        logicalPlan = logicalPlan,
+        replayFromExecution = None,
+        workflowSettings = WorkflowSettings(),
+        emailNotificationEnabled = false,
+        computingUnitId = testCuid,
+        warehouseId = None
+      ),
+      new ExecutionStateStore(),
+      errors += _,
+      testUid,
+      None,
+      new URI("vfs:///test"),
+      mountRoot = Some(unitMountRoot)
+    ) {
+      override protected def createAmberRuntime(workflow: EngineWorkflow): AmberClient =
+        new TestAmberClient
+    }
+
+    def close(): Unit = {
+      service.unsubscribeAll()
+      resultService.unsubscribeAll()
+    }
+  }
+
+  private val udfId = "dataset-udf"
+
+  private val udfCode =
+    """from pytexera import *
+      |
+      |class ProcessTupleOperator(UDFOperatorV2):
+      |    def process_tuple(self, tuple_, port):
+      |        yield tuple_
+      |""".stripMargin
+
+  private def datasetParameter(value: String): UiUDFParameter = {
+    val parameter = new UiUDFParameter
+    parameter.attribute = new Attribute("DATA", AttributeType.STRING)
+    parameter.inputType = "dataset"
+    parameter.value = value
+    parameter
+  }
+
+  /** A Python UDF that reads the dataset version at `versionPath`. */
+  private def datasetUdf(versionPath: String): PythonUDFOpDescV2 = {
+    val udf = new PythonUDFOpDescV2
+    udf.setOperatorId(udfId)
+    udf.code = udfCode
+    udf.retainInputColumns = true
+    udf.uiParameters = List(datasetParameter(versionPath))
+    udf
+  }
+
+  /** Lines of text into a Python UDF that reads the dataset version at `versionPath`. */
+  private def datasetUdfPlan(versionPath: String): LogicalPlanPojo = {
+    val text = new TextInputSourceOpDesc
+    text.textInput = "a\nb"
+    val udf = datasetUdf(versionPath)
+    LogicalPlanPojo(
+      List(text, udf),
+      List(
+        LogicalLink(text.operatorIdentifier, PortIdentity(), udf.operatorIdentifier, PortIdentity())
+      ),
+      List.empty,
+      List.empty
+    )
+  }
+
+  private def sourceOp(name: String): PhysicalOp =
+    PhysicalOp.sourcePhysicalOp(
+      PhysicalOpIdentity(OperatorIdentity(name), "main"),
+      WorkflowIdentity(testWid.longValue()),
+      ExecutionIdentity(testEid.longValue()),
+      OpExecWithClassName("unused")
+    )
 
   "WorkflowExecutionService" should
     "surface a recorded fatal error as a WorkflowErrorEvent via the metadata-store handler" in {
@@ -465,7 +667,8 @@ class WorkflowExecutionServiceSpec
     val wsInput = new WebsocketInput(_ => ())
     // `workflow` is only dereferenced by the reconfiguration diff handler when a
     // reconfiguration actually completes, which is not what this test drives.
-    val reconfigurationService = new ExecutionReconfigurationService(client, store, workflow = null)
+    val reconfigurationService =
+      new ExecutionReconfigurationService(client, store, workflow = null, bindResources = identity)
     val statsService = new ExecutionStatsService(
       client,
       store,
@@ -546,6 +749,124 @@ class WorkflowExecutionServiceSpec
     events.clear()
     store.metadataStore.updateState(_.withState(RUNNING))
     events shouldBe empty
+  }
+
+  it should "make the run's plan as its user, refusing a dataset they cannot read before it starts" in {
+    val run = new StubbedRun(datasetUdfPlan(unreadableVersionPath))
+    try {
+      val setupFailure = run.service.executeWorkflow()
+
+      // The read check's refusal, which reads as if the version did not exist; reported like any
+      // other compile failure, with no engine built.
+      setupFailure.getOrElse(fail("the run was set up")) shouldBe a[FileNotFoundException]
+      setupFailure.get.getMessage should include(unreadableVersionPath)
+      run.errors shouldBe Seq(setupFailure.get)
+      run.service.workflow shouldBe null
+      run.service.client shouldBe null
+    } finally run.close()
+  }
+
+  it should "make the run's plan as its user and for this unit, and bind a paused edit the same way" in {
+    val run = new StubbedRun(datasetUdfPlan(readableVersionPath))
+    try {
+      run.service.executeWorkflow() shouldBe None
+      run.errors shouldBe empty
+
+      // The engine was handed only data: the final code, reading the version where this unit
+      // mounts it, and the repository to mount there.
+      val udf = run.service.workflow.physicalPlan
+        .getPhysicalOpsOfLogicalOp(OperatorIdentity(udfId))
+        .head
+      udf.resourceBinding shouldBe None
+      udf.repositoryMounts shouldBe Some(
+        RepositoryMounts(unitMountRoot.toString, Set(readableLocator))
+      )
+      udf.opExecInitInfo shouldBe OpExecWithCode(
+        PythonUdfUiParameterInjector.inject(
+          udfCode,
+          List(datasetParameter(unitMountRoot.resolve("dataset-9221").resolve("5ha7ed01").toString))
+        ),
+        "python"
+      )
+
+      // An edit made while the run is paused is bound by the same compiler: for the same user,
+      // so a version they cannot read refuses it, and under the same root.
+      val reconfiguration = run.service.executionReconfigurationService
+      reconfiguration.modifyOperatorLogic(
+        ModifyLogicRequest(datasetUdf(unreadableVersionPath))
+      ) match {
+        case refused: ModifyLogicResponse =>
+          refused.isValid shouldBe false
+          refused.errorMessage should include(unreadableVersionPath)
+        case other => fail(s"expected a ModifyLogicResponse, got $other")
+      }
+      reconfiguration.modifyOperatorLogic(
+        ModifyLogicRequest(datasetUdf(readableVersionPath))
+      ) shouldBe ModifyLogicResponse(udfId, isValid = true, "")
+      val queued =
+        run.service.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations
+          .map(_._1)
+      queued.map(op => (op.opExecInitInfo, op.repositoryMounts, op.resourceBinding)) shouldBe
+        List((udf.opExecInitInfo, udf.repositoryMounts, None))
+    } finally run.close()
+  }
+
+  "WorkflowExecutionService.requireRunnableUnder" should
+    "accept a plan whose operators hold only data, reading under this unit's root" in {
+    val plan = PhysicalPlan(
+      Set(
+        sourceOp("reads-nothing"),
+        sourceOp("reads-a-dataset").copy(
+          repositoryMounts = Some(RepositoryMounts("/mnt/texera-mounts/", Set(readableLocator)))
+        )
+      ),
+      Set.empty
+    )
+    noException should be thrownBy
+      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
+  }
+
+  it should "accept a plan that mounts nothing on a unit that mounts nothing" in {
+    noException should be thrownBy WorkflowExecutionService.requireRunnableUnder(
+      PhysicalPlan(Set(sourceOp("reads-nothing")), Set.empty),
+      None
+    )
+  }
+
+  it should "refuse a plan whose code reads its datasets under another root" in {
+    val plan = PhysicalPlan(
+      Set(
+        sourceOp("reads-a-dataset").copy(
+          repositoryMounts = Some(RepositoryMounts("/plan/root", Set(readableLocator)))
+        )
+      ),
+      Set.empty
+    )
+    val failure = the[IllegalStateException] thrownBy
+      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
+    failure.getMessage should include("/plan/root")
+    failure.getMessage should include(unitMountRoot.toString)
+    // Nor can a unit that mounts nothing run it.
+    val nowhere = the[IllegalStateException] thrownBy
+      WorkflowExecutionService.requireRunnableUnder(plan, None)
+    nowhere.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
+    nowhere.getMessage should include(readableLocator)
+  }
+
+  it should "refuse a plan with an operator left to bind, without binding it" in {
+    var forced = 0
+    val binding: ResourceBinding = (_, _) => {
+      forced += 1
+      BoundResources(OpExecWithClassName("bound"), Set(readableLocator))
+    }
+    val plan = PhysicalPlan(
+      Set(sourceOp("unbound-udf").withResourceBinding(Some(binding))),
+      Set.empty
+    )
+    val failure = the[IllegalStateException] thrownBy
+      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
+    failure.getMessage should include("unbound-udf")
+    forced shouldBe 0
   }
 
   // The companion's one expression, exercised directly rather than only through the two result

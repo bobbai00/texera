@@ -210,9 +210,10 @@ class JavaUdfUiParameterInjectorSpec extends AnyFlatSpec with Matchers {
       d.code = code
       d.workers = if (value == 42) 1 else 2
       d.uiParameters = List(parameter("count", AttributeType.INTEGER, value.toString))
-      val OpExecWithCode(compiled, language) = d
-        .getPhysicalOp(WorkflowIdentity(1), ExecutionIdentity(1))
-        .executableOpExecInitInfo: @unchecked
+      val physical = d.getPhysicalOp(WorkflowIdentity(1), ExecutionIdentity(1))
+      // No parameter names a resource, so the op runs exactly what compiling gave it.
+      physical.resourceBinding shouldBe None
+      val OpExecWithCode(compiled, language) = physical.opExecInitInfo: @unchecked
       language shouldBe "java"
       ExecFactory.newExecFromJavaCode(compiled)
     }

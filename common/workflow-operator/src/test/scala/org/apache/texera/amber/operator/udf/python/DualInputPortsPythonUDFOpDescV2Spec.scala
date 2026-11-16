@@ -90,12 +90,12 @@ class DualInputPortsPythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptor
     expectInjectedPython(d)
   }
 
-  it should "leave a resource parameter to the execution" in {
+  it should "leave a resource parameter to the plan made to run" in {
     val d = new DualInputPortsPythonUDFOpDescV2
     d.code = tupleUdfCode
     d.uiParameters = List(datasetParameter("DS", "/dataset/owner@x.com/ds/v1"))
 
-    buildPhysicalOp(d).executionTimeBinding should not be empty
+    expectResourceLeftToPlan(d, tupleUdfCode, "python", PythonUdfUiParameterInjector.inject)
   }
 
   it should "reject a blank virtual-environment name when the default env is disabled" in {

@@ -36,13 +36,21 @@ import org.scalatest.flatspec.AnyFlatSpec
   */
 class WorkflowSpec extends AnyFlatSpec {
 
+  private def newCompiler(context: WorkflowContext): WorkflowCompiler =
+    new WorkflowCompiler(
+      context,
+      TestOperators.fixtureFileResolver,
+      TestOperators.fixtureRepositoryResolver,
+      Some(TestOperators.fixtureMountRoot)
+    )
+
   "Workflow.fromCompilationResult" should
     "write outputPortsNeedingStorage onto the context and unwrap the physical plan" in {
     val csv = TestOperators.smallCsvScanOpDesc()
     val keyword = TestOperators.keywordSearchOpDesc("Region", "Asia")
     val context = new WorkflowContext()
 
-    val result = new WorkflowCompiler(context, TestOperators.fixtureFileResolver).compile(
+    val result = newCompiler(context).compile(
       LogicalPlanPojo(
         List(csv, keyword),
         List(
@@ -70,7 +78,7 @@ class WorkflowSpec extends AnyFlatSpec {
   it should "reject a result without a physical plan with a clear error" in {
     val context = new WorkflowContext()
     // Lenient default: the unset fileName becomes a per-operator error and physicalPlan = None.
-    val failed = new WorkflowCompiler(context, TestOperators.fixtureFileResolver).compile(
+    val failed = newCompiler(context).compile(
       LogicalPlanPojo(List(new CSVScanSourceOpDesc()), List(), List(), List())
     )
     assert(failed.physicalPlan.isEmpty)

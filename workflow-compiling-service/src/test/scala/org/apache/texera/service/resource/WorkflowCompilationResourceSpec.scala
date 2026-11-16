@@ -24,12 +24,15 @@ import io.dropwizard.testing.junit5.ResourceExtension
 import jakarta.ws.rs.client.Entity
 import jakarta.ws.rs.core.{MediaType, Response}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.FileScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
+import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.assertj.core.api.Assertions.assertThat
@@ -256,5 +259,34 @@ class WorkflowCompilationResourceSpec
       errorMessageOf(unreadable).replace(privateDatasetFilePath, "<path>")
         == errorMessageOf(missing).replace(missingPath, "<path>")
     )
+  }
+
+  it should "leave a dataset a UDF names to the run, resolving nothing while editing" in {
+    // Only a plan made to run pins a version, refusing one its user cannot read. Were the
+    // edit to resolve it, the user who cannot read it would see an error here.
+    val parameter = new UiUDFParameter
+    parameter.attribute = new Attribute("DATA", AttributeType.STRING)
+    parameter.inputType = "dataset"
+    parameter.value = "/dataset/owner@test.com/private_dataset/v1"
+    val udf = new PythonUDFSourceOpDescV2
+    udf.code = """from pytexera import *
+        |
+        |class GenerateOperator(UDFSourceOperator):
+        |    def produce(self):
+        |        yield
+        |""".stripMargin
+    udf.uiParameters = List(parameter)
+
+    val response = postCompile(planOf(udf), as = otherUser)
+
+    assertThat(response.getStatus).isEqualTo(200)
+    val body = response.readEntity(classOf[String])
+    val rootNode = objectMapper.readTree(body)
+    assert(rootNode.get("type").asText() == "success", s"expected success, got $body")
+    val ops = rootNode.get("physicalPlan").get("operators")
+    assert(ops.size() == 1, s"expected one operator in $body")
+    assert(Option(ops.get(0).get("repositoryMounts")).forall(_.isNull), s"mounts in $body")
+    assert(!body.contains(privateDatasetRepositoryName))
+    assert(!body.contains(privateDatasetVersionHash))
   }
 }

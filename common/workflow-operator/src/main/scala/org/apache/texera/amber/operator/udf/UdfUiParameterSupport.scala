@@ -22,10 +22,12 @@ package org.apache.texera.amber.operator.udf
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.executor.OpExecWithCode
-import org.apache.texera.amber.core.storage.{FileResolver, RepositoryMountManager}
-import org.apache.texera.amber.core.workflow.ExecutionTimeBinding
+import org.apache.texera.amber.core.storage.{RepositoryMountManager, RepositoryVersionResolver}
+import org.apache.texera.amber.core.workflow.{BoundResources, RepositoryMounts, ResourceBinding}
 
-/** Shared serialized UI-parameter property and execution-time resource binding. */
+import _root_.java.nio.file.Path
+
+/** Shared serialized UI-parameter property, and the datasets and models its values name. */
 trait UdfUiParameterSupport {
   @JsonProperty
   @JsonSchemaTitle("Parameters")
@@ -36,41 +38,49 @@ trait UdfUiParameterSupport {
 
   protected def injectParameterValues(code: String, parameters: List[UiUDFParameter]): String
   protected def uiParameterLanguage: String
-  protected def mounts: RepositoryMountManager = RepositoryMountManager
 
+  /**
+    * The code as every compile sees it: each value in place, a dataset or model as the version
+    * path that was picked. Refuses a resource parameter with no version picked.
+    */
   protected final def injectUiParameters(code: String): String = {
     resourceParameters(uiParameters).foreach(selectedVersionPath)
     injectParameterValues(code, uiParameters)
   }
 
-  protected final def executionBinding(code: String): Option[ExecutionTimeBinding] =
+  /**
+    * What the plan made to run pins for this UDF, None when no parameter names a dataset or
+    * model: each version path resolved to its repository commit, and the code rebuilt with the
+    * directory that commit is mounted at in the path's place.
+    */
+  protected final def resourceBinding(code: String): Option[ResourceBinding] =
     Option.when(resourceParameters(uiParameters).nonEmpty) {
-      // Snapshot the compiled descriptor; resolving versions stays lazy until execution.
+      // Snapshot the compiled descriptor, so a later edit cannot change what this op binds.
       val parameters = uiParameters
       val language = uiParameterLanguage
-      val mountManager = mounts
-      new ExecutionTimeBinding {
-        private lazy val resolved = {
+      new ResourceBinding {
+        override def bind(
+            resolver: RepositoryVersionResolver,
+            mountRoot: Path
+        ): BoundResources = {
           val bound = parameters.map { parameter =>
             if (!isResource(parameter)) (parameter, None)
             else {
               val (repositoryName, commitHash) =
-                FileResolver.resolveRepositoryVersion(selectedVersionPath(parameter))
-              val locator = s"$repositoryName:$commitHash"
+                resolver.resolve(selectedVersionPath(parameter))
+              val locator = RepositoryMounts.locator(repositoryName, commitHash)
               val mounted = new UiUDFParameter
               mounted.attribute = parameter.attribute
               mounted.inputType = parameter.inputType
-              mounted.value = mountManager.mountPointOf(locator).toString
+              mounted.value = RepositoryMountManager.mountPoint(mountRoot, locator).toString
               (mounted, Some(locator))
             }
           }
-          (bound.map(_._1), bound.flatMap(_._2).toSet)
+          BoundResources(
+            OpExecWithCode(injectParameterValues(code, bound.map(_._1)), language),
+            bound.flatMap(_._2).toSet
+          )
         }
-
-        override lazy val opExecInitInfo: OpExecWithCode =
-          OpExecWithCode(injectParameterValues(code, resolved._1), language)
-
-        override def mountLocators: Set[String] = resolved._2
       }
     }
 

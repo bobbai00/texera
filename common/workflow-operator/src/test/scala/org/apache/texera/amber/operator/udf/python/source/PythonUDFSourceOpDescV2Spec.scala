@@ -23,7 +23,10 @@ import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.udf.UdfDescriptorSpecSupport
-import org.apache.texera.amber.operator.udf.python.PythonUdfTemplateTestUtils
+import org.apache.texera.amber.operator.udf.python.{
+  PythonUdfTemplateTestUtils,
+  PythonUdfUiParameterInjector
+}
 import org.scalatest.flatspec.AnyFlatSpec
 
 class PythonUDFSourceOpDescV2Spec extends AnyFlatSpec with UdfDescriptorSpecSupport {
@@ -74,12 +77,12 @@ class PythonUDFSourceOpDescV2Spec extends AnyFlatSpec with UdfDescriptorSpecSupp
     expectInjectedPython(d)
   }
 
-  it should "leave a resource parameter to the execution" in {
+  it should "leave a resource parameter to the plan made to run" in {
     val d = new PythonUDFSourceOpDescV2
     d.code = sourceUdfCode
     d.uiParameters = List(datasetParameter("DS", "/dataset/owner@x.com/ds/v1"))
 
-    buildPhysicalOp(d).executionTimeBinding should not be empty
+    expectResourceLeftToPlan(d, sourceUdfCode, "python", PythonUdfUiParameterInjector.inject)
   }
 
   it should "reject a blank virtual-environment name when the default env is disabled" in {

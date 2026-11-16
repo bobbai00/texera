@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.state.StateReferencing.literalReferences
 import org.apache.texera.amber.core.storage.RepositoryMountManager
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
+import org.apache.texera.amber.core.workflow.{PhysicalOp, RepositoryMounts}
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   UpdateExecutorRequest,
@@ -46,7 +47,10 @@ import scala.util.{Failure, Success}
 class ExecutionReconfigurationService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
-    workflow: Workflow
+    workflow: Workflow,
+    // Pins the datasets and models an edited operator names, the way the compiler that made the
+    // workflow's plan pinned every operator: production passes that compiler's bindResources.
+    bindResources: PhysicalOp => PhysicalOp
 ) extends SubscriptionManager {
 
   // monitors notification from the engine that a reconfiguration on a worker is completed
@@ -73,12 +77,16 @@ class ExecutionReconfigurationService(
       )
     } else {
       val reconfiguredPhysicalOp =
-        currentOp.runtimeReconfiguration(
-          workflow.context.workflowId,
-          workflow.context.executionId,
-          currentOp,
-          newOp
-        )
+        currentOp
+          .runtimeReconfiguration(
+            workflow.context.workflowId,
+            workflow.context.executionId,
+            currentOp,
+            newOp
+          )
+          // The edited operator joins a plan made to run, so what it names is pinned now, for
+          // the plan's user: a version they cannot read refuses the edit.
+          .map { case (op, stateTransfer) => (bindResources(op), stateTransfer) }
       reconfiguredPhysicalOp match {
         case Failure(exception) =>
           ModifyLogicResponse(opId.id, isValid = false, exception.getMessage)
@@ -116,12 +124,15 @@ class ExecutionReconfigurationService(
       return
     }
 
+    // Each queued operator was bound when its edit was accepted; none is bound here.
+    reconfigurations.foreach { case (op, _) => op.requireResourcesBound() }
+
     val reconfigurationId = UUID.randomUUID().toString
     val updateExecutorRequests = reconfigurations.map {
       case (op, _) =>
         // An edited UDF may now name a repository, and its code already refers to the mount.
-        ensureMounted(op.mountLocators)
-        UpdateExecutorRequest(op.id, op.executableOpExecInitInfo)
+        op.repositoryMounts.foreach(ensureMounted)
+        UpdateExecutorRequest(op.id, op.opExecInitInfo)
     }
     dispatch(
       WorkflowReconfigureRequest(
@@ -137,8 +148,8 @@ class ExecutionReconfigurationService(
   }
 
   // Seam for unit testing without a computing unit to mount into.
-  protected def ensureMounted(locators: Set[String]): Unit =
-    RepositoryMountManager.ensureAllMounted(locators)
+  protected def ensureMounted(mounts: RepositoryMounts): Unit =
+    RepositoryMountManager.ensureAllMounted(mounts)
 
   // Seam for unit testing the dispatch path without spinning up an AmberClient.
   protected def dispatch(request: WorkflowReconfigureRequest): Unit = {

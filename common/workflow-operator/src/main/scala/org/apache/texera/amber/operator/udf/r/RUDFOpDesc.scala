@@ -132,7 +132,7 @@ class RUDFOpDesc extends LogicalOp with RUdfUiParameterSupport {
       .withPartitionRequirement(partitionRequirement)
       .withIsOneToManyOp(true)
       .withPropagateSchema(SchemaPropagationFunc(propagateSchema))
-      .withExecutionTimeBinding(executionBinding(code))
+      .withResourceBinding(resourceBinding(code))
 
   }
 

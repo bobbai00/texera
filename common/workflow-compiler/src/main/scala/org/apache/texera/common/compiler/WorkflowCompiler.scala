@@ -34,14 +34,20 @@ import org.apache.texera.amber.core.state.StateReferencing.{
   literalReferences,
   noLoopVariableReferences
 }
-import org.apache.texera.amber.core.storage.ScanFileResolver
+import org.apache.texera.amber.core.storage.{
+  RepositoryMountManager,
+  RepositoryVersionResolver,
+  ScanFileResolver
+}
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{
   GlobalPortIdentity,
   PhysicalLink,
+  PhysicalOp,
   PhysicalPlan,
   PortIdentity,
+  RepositoryMounts,
   WorkflowContext
 }
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILATION_ERROR
@@ -49,7 +55,9 @@ import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.StackTraceUtils.getStackTraceWithAllCauses
+import org.apache.texera.common.config.EnvironmentalVariable
 
+import java.nio.file.Path
 import java.time.Instant
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -241,12 +249,63 @@ case class WorkflowCompilationResult(
   * [[WorkflowCompilationResult]]. `outputPortsNeedingStorage` is always computed — the
   * editing-path caller simply ignores it — keeping both paths on one code path.
   *
-  * @param fileResolver resolves scan source file names to URIs.
+  * Only a Strict compile makes a plan to run, so only it pins the datasets and models operators
+  * name (see [[bindResources]]): that is a database lookup per version, and the editing path
+  * compiles on every edit.
+  *
+  * @param fileResolver       resolves scan source file names to URIs.
+  * @param repositoryResolver pins the dataset and model versions operators name, for the user
+  *                           the plan is made for. Only a Strict compile asks it, so a compile
+  *                           that makes no plan to run passes
+  *                           [[RepositoryVersionResolver.Unavailable]].
+  * @param mountRoot          the directory computing units mount repositories under. The plan's
+  *                           code reads each version from below it, and the plan records it, as
+  *                           text, beside what to mount ([[RepositoryMounts.root]]): the engine
+  *                           checks its own root against that before mounting.
   */
 class WorkflowCompiler(
     context: WorkflowContext,
-    fileResolver: ScanFileResolver
+    fileResolver: ScanFileResolver,
+    repositoryResolver: RepositoryVersionResolver,
+    mountRoot: Option[Path] = RepositoryMountManager.mountRoot
 ) extends LazyLogging {
+
+  /**
+    * Pins the datasets and models `op` names, as a Strict compile does for every operator: its
+    * executor becomes the final one, with each version's mount directory in place; it names the
+    * repositories to mount and the root its code reads them under; and it no longer holds a
+    * binding. An operator that names none is returned as it is.
+    *
+    * This is the only place a binding is forced. A paused execution's edited operator goes
+    * through it too, so it is bound the way the rest of its plan was.
+    *
+    * @throws org.apache.commons.vfs2.FileNotFoundException if a version does not exist, or the
+    *                                                       plan's user cannot read it
+    * @throws IllegalStateException if there is no mount root to write the code against
+    */
+  def bindResources(op: PhysicalOp): PhysicalOp =
+    op.resourceBinding.fold(op) { binding =>
+      val root = mountRoot.getOrElse(
+        throw new IllegalStateException(
+          s"Operator ${op.id.logicalOpId.id} reads a dataset or model, but there is no " +
+            s"directory to mount it under: ${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is " +
+            "not set."
+        )
+      )
+      val bound = binding.bind(repositoryResolver, root)
+      op.copy(
+        opExecInitInfo = bound.opExecInitInfo,
+        repositoryMounts = Option.when(bound.mountLocators.nonEmpty)(
+          RepositoryMounts(root.toString, bound.mountLocators)
+        ),
+        resourceBinding = None
+      )
+    }
+
+  private def bindPlanResources(plan: PhysicalPlan): PhysicalPlan =
+    plan.operators
+      .filter(_.resourceBinding.isDefined)
+      .foldLeft(plan)((boundPlan, op) => boundPlan.setOperator(bindResources(op)))
 
   /**
     * Expands the logical plan to a physical plan.
@@ -380,7 +439,7 @@ class WorkflowCompiler(
     logicalPlan.resolveScanSourceOpFileName(fileResolver, errorList)
 
     // 3. expand the logical plan to the physical plan, and get the output ports that need storage
-    val (physicalPlan, outputPortsNeedingStorage) =
+    val (expandedPlan, outputPortsNeedingStorage) =
       expandLogicalPlan(logicalPlan, logicalPlanPojo.opsToViewResult, errorList)
 
     // 4. collect the output schema for each logical op
@@ -390,9 +449,17 @@ class WorkflowCompiler(
     // the shared buffer alongside the other errors; in Strict mode they must fail fast too (e.g. a
     // Projection on a missing column would otherwise be launched and only fail at runtime).
     val schemaErrorList = errorList.getOrElse(new ArrayBuffer[(OperatorIdentity, Throwable)]())
-    val opIdToOutputSchema = collectOutputSchemaFromPhysicalPlan(physicalPlan, schemaErrorList)
+    val opIdToOutputSchema = collectOutputSchemaFromPhysicalPlan(expandedPlan, schemaErrorList)
     if (errorHandling == CompilationErrorHandling.Strict && schemaErrorList.nonEmpty) {
       throw schemaErrorList.head._2
+    }
+
+    // 5. a plan made to run pins the datasets and models its operators name, last, once the
+    // plan is otherwise valid: the engine is handed the final code and the repositories to
+    // mount, never a binding. The editing path leaves the bindings alone.
+    val physicalPlan = errorHandling match {
+      case CompilationErrorHandling.Strict  => bindPlanResources(expandedPlan)
+      case CompilationErrorHandling.Lenient => expandedPlan
     }
 
     val hasErrors = errorList.exists(_.nonEmpty)

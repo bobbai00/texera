@@ -168,7 +168,7 @@ class DualInputPortsPythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParamete
         })
       )
       .withPveName(pveName)
-      .withExecutionTimeBinding(executionBinding(code))
+      .withResourceBinding(resourceBinding(code))
   }
 
   override def operatorInfo: OperatorInfo =

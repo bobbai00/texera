@@ -20,7 +20,11 @@
 package org.apache.texera.amber.operator
 
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.amber.core.storage.{FileResolver, ScanFileResolver}
+import org.apache.texera.amber.core.storage.{
+  FileResolver,
+  RepositoryVersionResolver,
+  ScanFileResolver
+}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.operator.aggregate.{
   AggregateOpDesc,
@@ -60,6 +64,26 @@ object TestOperators {
     */
   val fixtureFileResolver: ScanFileResolver = fileName =>
     if (FileResolver.isFileResolved(fileName)) new URI(fileName) else localFileUri(fileName)
+
+  /** The dataset and model versions `fixtureRepositoryResolver` pins, to repository and commit. */
+  val fixtureRepositoryVersions: Map[String, (String, String)] = Map(
+    "/dataset/owner@x.com/sales/v1" -> ("dataset-1", "d4t4"),
+    "/model/owner@x.com/iris/v2" -> ("model-1", "m0d3l")
+  )
+
+  /**
+    * Pins the versions above, as a user's resolver pins the versions that user may read; tests
+    * hand it to the compiler in place of one, which needs a database. Any other version is
+    * refused, as one that does not exist or that the user may not read is.
+    */
+  val fixtureRepositoryResolver: RepositoryVersionResolver = versionPath =>
+    fixtureRepositoryVersions.getOrElse(
+      versionPath,
+      throw new FileNotFoundException(s"Version $versionPath not found.")
+    )
+
+  /** The directory a plan compiled in tests reads its datasets and models under. */
+  val fixtureMountRoot: Path = Paths.get("/mnt/texera-mounts")
 
   val parentDir = Path
     .of(sys.env.getOrElse("TEXERA_HOME", "."))

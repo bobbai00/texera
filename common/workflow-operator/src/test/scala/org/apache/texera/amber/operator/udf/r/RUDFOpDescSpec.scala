@@ -67,6 +67,28 @@ class RUDFOpDescSpec extends AnyFlatSpec with UdfDescriptorSpecSupport {
     rule.outputPartition(List(HashPartition(List("k")))) shouldBe UnknownPartition()
   }
 
+  it should "leave a resource parameter to the plan made to run, for either API" in {
+    for (tuple <- Seq(false, true)) {
+      val d = new RUDFOpDesc
+      d.code = "function(t) t"
+      d.useTupleAPI = tuple
+      d.uiParameters = List(datasetParameter("DS", "/dataset/owner@x.com/ds/v1"))
+      expectResourceLeftToPlan(
+        d,
+        d.code,
+        if (tuple) "r-tuple" else "r-table",
+        RUdfUiParameterInjector.inject
+      )
+    }
+  }
+
+  it should "leave nothing to bind when no parameter names a resource" in {
+    val d = new RUDFOpDesc
+    d.code = "function(t) t"
+    d.uiParameters = List(uiParameter("count", "7"))
+    buildPhysicalOp(d).resourceBinding shouldBe None
+  }
+
   "RUDFOpDesc schema propagation" should
     "emit only the output columns when input columns are not retained (default)" in {
     val d = new RUDFOpDesc

@@ -56,6 +56,12 @@ object FileResolver {
   def forUser(uid: Integer): ScanFileResolver = fileName => resolveForUser(fileName, uid)
 
   /**
+    * Builds a [[RepositoryVersionResolver]] scoped to `uid`: it pins only versions `uid` may read.
+    */
+  def repositoryVersionResolverForUser(uid: Integer): RepositoryVersionResolver =
+    versionPath => resolveRepositoryVersion(versionPath, uid)
+
+  /**
     * Resolves a versioned-resource logical path on behalf of `uid`.
     *
     * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve for `uid`
@@ -297,11 +303,16 @@ object FileResolver {
 
   /**
     * Resolves a version path to the repository and commit backing it — the pair that addresses
-    * a mount, a mount being a whole repository pinned to one commit.
+    * a mount, a mount being a whole repository pinned to one commit — on behalf of `reader`.
     *
-    * Resolves only; the mount authority checks read access before mounting.
+    * This is the only check made for `reader`. The mount authority checks read access too, but
+    * for the user whose token the computing unit presents — the one who created the unit — not
+    * for `reader`; so when the two differ, a run needs both to be able to read the version.
+    *
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the path names no version, or one
+    *                                                       `reader` cannot read
     */
-  def resolveRepositoryVersion(versionPath: String): (String, String) = {
+  def resolveRepositoryVersion(versionPath: String, reader: Integer): (String, String) = {
     // Nothing may follow the version: a longer path names a file, a different request.
     val (resourceType, ownerEmail, resourceName, versionName) =
       parsePrefixedPath(versionPath) match {
@@ -317,9 +328,9 @@ object FileResolver {
     try {
       resourceType match {
         case ResourceType.Dataset =>
-          lookupDataset(ownerEmail, resourceName, versionName, versionPath, reader = None)
+          lookupDataset(ownerEmail, resourceName, versionName, versionPath, Some(reader))
         case ResourceType.Model =>
-          lookupModel(ownerEmail, resourceName, versionName, versionPath, reader = None)
+          lookupModel(ownerEmail, resourceName, versionName, versionPath, Some(reader))
         case other =>
           throw new FileNotFoundException(
             s"Unsupported resource type $other for version path $versionPath."

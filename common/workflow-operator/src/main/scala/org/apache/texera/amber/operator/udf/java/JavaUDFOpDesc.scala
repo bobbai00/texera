@@ -116,7 +116,7 @@ class JavaUDFOpDesc extends LogicalOp with UdfUiParameterSupport {
     }
 
     val opExec = OpExecWithCode(injectUiParameters(code), "java")
-    val binding = executionBinding(code)
+    val binding = resourceBinding(code)
     if (workers > 1)
       PhysicalOp
         .oneToOnePhysicalOp(
@@ -133,7 +133,7 @@ class JavaUDFOpDesc extends LogicalOp with UdfUiParameterSupport {
         .withParallelizable(true)
         .withSuggestedWorkerNum(workers)
         .withPropagateSchema(SchemaPropagationFunc(propagateSchema))
-        .withExecutionTimeBinding(binding)
+        .withResourceBinding(binding)
     else
       PhysicalOp
         .manyToOnePhysicalOp(
@@ -149,7 +149,7 @@ class JavaUDFOpDesc extends LogicalOp with UdfUiParameterSupport {
         .withIsOneToManyOp(true)
         .withParallelizable(false)
         .withPropagateSchema(SchemaPropagationFunc(propagateSchema))
-        .withExecutionTimeBinding(binding)
+        .withResourceBinding(binding)
   }
 
   override def operatorInfo: OperatorInfo = {

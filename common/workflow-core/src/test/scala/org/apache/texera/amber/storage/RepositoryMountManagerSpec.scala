@@ -19,7 +19,9 @@
 
 package org.apache.texera.amber.storage
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.texera.amber.core.storage.RepositoryMountManager
+import org.apache.texera.amber.core.workflow.RepositoryMounts
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -46,28 +48,122 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
       timeoutMs: Long = 400
   ) {
     val requests: mutable.Buffer[(String, String, String)] = mutable.Buffer()
-    private var mounted = alreadyMounted
+    // The mount points a request has made appear in the pod, each under the pod's root.
+    private val mounted = mutable.Set[Path]()
 
     val manager: RepositoryMountManager = new RepositoryMountManager(
       env.get,
       (url, body, jwt) => {
         requests += ((url, body, jwt))
-        if (mountedAfterRequest) mounted = true
+        if (mountedAfterRequest) {
+          val request = new ObjectMapper().readTree(body)
+          mounted += Paths
+            .get(env(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT).trim)
+            .resolve(request.get("repositoryName").asText())
+            .resolve(request.get("commitHash").asText())
+        }
       },
-      (_: Path) => mounted,
+      (mountPoint: Path) => alreadyMounted || mounted.contains(mountPoint),
       timeoutMs
     )
   }
 
-  "mountPointOf" should "place a locator under the pod's mount root" in {
-    new Fixture().manager.mountPointOf(locator) shouldBe inPodPath
+  private val badLocators = Seq("dataset-1", "", ":abc", "dataset-1:", null)
+
+  private def mountsUnder(root: String, locators: String*): RepositoryMounts =
+    RepositoryMounts(root, locators.toSet)
+
+  "mountRoot" should "be the pod's mount root, trimmed" in {
+    new Fixture().manager.mountRoot shouldBe Some(Paths.get("/mnt/texera-mounts"))
+    val padded = podEnv + (EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT -> "  /mnt/texera-mounts ")
+    new Fixture(env = padded).manager.mountRoot shouldBe Some(Paths.get("/mnt/texera-mounts"))
+  }
+
+  it should "be None in a pod that can mount nothing" in {
+    new Fixture(
+      env = podEnv - EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT
+    ).manager.mountRoot shouldBe None
+    new Fixture(
+      env = podEnv + (EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT -> "  ")
+    ).manager.mountRoot shouldBe None
+  }
+
+  "RepositoryMountManager.mountPoint" should "place a locator under whatever root it is given" in {
+    // A plan writes this path into an operator's code, against the plan's root, not a pod's.
+    RepositoryMountManager.mountPoint(Paths.get("/plan/root"), locator) shouldBe
+      Paths.get("/plan/root/dataset-1/abc123")
   }
 
   it should "reject a locator that is not <repositoryName>:<commitHash>" in {
-    val manager = new Fixture().manager
-    Seq("dataset-1", "", ":abc", "dataset-1:", null).foreach { bad =>
-      an[IllegalArgumentException] should be thrownBy manager.mountPointOf(bad)
+    badLocators.foreach { bad =>
+      an[IllegalArgumentException] should be thrownBy
+        RepositoryMountManager.mountPoint(Paths.get("/plan/root"), bad)
     }
+  }
+
+  "RepositoryMountManager.requireMountableUnder" should
+    "accept code that reads its mounts under the unit's root, however either spells it" in {
+    for (
+      planRoot <- Seq("/mnt/texera-mounts", "/mnt/texera-mounts/", "/mnt/./texera-mounts");
+      unitRoot <- Seq("/mnt/texera-mounts", "/mnt/texera-mounts/")
+    ) {
+      noException should be thrownBy RepositoryMountManager.requireMountableUnder(
+        mountsUnder(planRoot, locator),
+        Some(Paths.get(unitRoot))
+      )
+    }
+  }
+
+  it should "refuse code that reads its mounts under another root, naming both" in {
+    val failure = the[IllegalStateException] thrownBy RepositoryMountManager
+      .requireMountableUnder(
+        mountsUnder("/plan/root", locator),
+        Some(Paths.get("/mnt/texera-mounts"))
+      )
+    failure.getMessage should include("/plan/root")
+    failure.getMessage should include("/mnt/texera-mounts")
+  }
+
+  it should "refuse every mount on a unit that mounts nothing, naming what was asked for" in {
+    val failure = the[IllegalStateException] thrownBy RepositoryMountManager
+      .requireMountableUnder(mountsUnder("/mnt/texera-mounts", locator), None)
+    failure.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
+    failure.getMessage should include(locator)
+  }
+
+  "ensureAllMounted" should "mount what the plan names when its root is this pod's" in {
+    val fixture = new Fixture()
+    // The same directory, however the plan spelled it.
+    for (root <- Seq("/mnt/texera-mounts", "/mnt/texera-mounts/", "/mnt/./texera-mounts")) {
+      fixture.manager.ensureAllMounted(mountsUnder(root, locator))
+    }
+    fixture.requests should have size 1
+  }
+
+  it should "ask for every repository the plan names under its root" in {
+    val fixture = new Fixture()
+    fixture.manager.ensureAllMounted(mountsUnder("/mnt/texera-mounts", locator, "model-1:def456"))
+    fixture.requests.map(_._2) should contain theSameElementsAs Seq(
+      """{"repositoryName":"dataset-1","commitHash":"abc123"}""",
+      """{"repositoryName":"model-1","commitHash":"def456"}"""
+    )
+  }
+
+  it should "refuse, before asking for any mount, a plan whose code reads another root" in {
+    val fixture = new Fixture()
+    val failure = the[IllegalStateException] thrownBy
+      fixture.manager.ensureAllMounted(mountsUnder("/plan/root", locator))
+    failure.getMessage should include("/plan/root")
+    failure.getMessage should include("/mnt/texera-mounts")
+    fixture.requests shouldBe empty
+  }
+
+  it should "say the pod has no mount root when the plan needs mounts" in {
+    val fixture = new Fixture(env = podEnv - EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
+    val failure = the[IllegalStateException] thrownBy
+      fixture.manager.ensureAllMounted(mountsUnder("/mnt/texera-mounts", locator))
+    failure.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
+    fixture.requests shouldBe empty
   }
 
   "ensureMounted" should "ask the authority and return the in-pod path" in {
@@ -90,10 +186,12 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
     fixture.requests shouldBe empty
   }
 
-  it should "ask once per distinct locator" in {
+  it should "reject a locator that is not <repositoryName>:<commitHash>, asking nothing" in {
     val fixture = new Fixture()
-    fixture.manager.ensureAllMounted(Set(locator, locator))
-    fixture.requests should have size 1
+    badLocators.foreach { bad =>
+      an[IllegalArgumentException] should be thrownBy fixture.manager.ensureMounted(bad)
+    }
+    fixture.requests shouldBe empty
   }
 
   it should "give up if the mount never propagates into the pod" in {

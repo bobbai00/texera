@@ -23,7 +23,8 @@ import com.twitter.util.Future
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithClassName}
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ExecutionIdentity,
@@ -32,12 +33,14 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{
-  ExecutionTimeBinding,
+  BoundResources,
   InputPort,
   OutputPort,
   PhysicalOp,
   PhysicalPlan,
   PortIdentity,
+  RepositoryMounts,
+  ResourceBinding,
   WorkflowContext
 }
 import org.apache.texera.amber.engine.architecture.coordinator.{
@@ -57,8 +60,11 @@ import org.apache.texera.amber.operator.filter.{
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
-import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc}
+import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
+import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.common.compiler.WorkflowCompiler
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan}
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.request.ModifyLogicRequest
@@ -229,17 +235,28 @@ class ExecutionReconfigurationServiceSpec
       PhysicalPlan(physicalOps, Set.empty)
     )
 
+  /** For a service none of whose edits names a dataset or model: there is nothing to bind. */
+  private val nothingToBind: PhysicalOp => PhysicalOp = op => {
+    assert(op.resourceBinding.isEmpty, s"${op.id} names a dataset or model; bind it for real")
+    op
+  }
+
   /** Service variant that records dispatched requests and skips the AmberClient
     * registration / workflow-dependent diff handler so it can be constructed
     * without a live engine.
     */
   private class RecordingService(stateStore: ExecutionStateStore)
-      extends ExecutionReconfigurationService(client = null, stateStore, workflow = null) {
+      extends ExecutionReconfigurationService(
+        client = null,
+        stateStore,
+        workflow = null,
+        nothingToBind
+      ) {
     val captured: mutable.ArrayBuffer[WorkflowReconfigureRequest] = mutable.ArrayBuffer.empty
-    val mounted: mutable.ArrayBuffer[Set[String]] = mutable.ArrayBuffer.empty
+    val mounted: mutable.ArrayBuffer[RepositoryMounts] = mutable.ArrayBuffer.empty
     override protected def dispatch(request: WorkflowReconfigureRequest): Unit =
       captured += request
-    override protected def ensureMounted(locators: Set[String]): Unit = mounted += locators
+    override protected def ensureMounted(mounts: RepositoryMounts): Unit = mounted += mounts
     override protected def registerWorkerCompletionCallback(): Unit = ()
     override protected def registerCompletionDiffHandler(): Unit = ()
   }
@@ -247,8 +264,11 @@ class ExecutionReconfigurationServiceSpec
   /** Service over a real workflow, with only the client-dependent seam disabled: the diff
     * handler stays live because it needs the workflow, not the client.
     */
-  private class WorkflowOnlyService(stateStore: ExecutionStateStore, workflow: Workflow)
-      extends ExecutionReconfigurationService(client = null, stateStore, workflow) {
+  private class WorkflowOnlyService(
+      stateStore: ExecutionStateStore,
+      workflow: Workflow,
+      bindResources: PhysicalOp => PhysicalOp = nothingToBind
+  ) extends ExecutionReconfigurationService(client = null, stateStore, workflow, bindResources) {
     override protected def registerWorkerCompletionCallback(): Unit = ()
   }
 
@@ -352,7 +372,8 @@ class ExecutionReconfigurationServiceSpec
     val service = new ExecutionReconfigurationService(
       sharedClient,
       stateStore,
-      mkWorkflow(logicalOps, physicalOps)
+      mkWorkflow(logicalOps, physicalOps),
+      nothingToBind
     )
     try body(new LiveFixture(sharedClient, stateStore, service))
     finally service.unsubscribeAll()
@@ -478,6 +499,100 @@ class ExecutionReconfigurationServiceSpec
   }
 
   // ---------------------------------------------------------------------------
+  // An edited operator that names a dataset or model
+  // ---------------------------------------------------------------------------
+
+  // One of the fixture resolver's versions, and one it refuses, as for a version the plan's user
+  // may not read.
+  private val datasetVersionPath = "/dataset/owner@x.com/sales/v1"
+  private val unreadableVersionPath = "/dataset/owner@x.com/secret/v1"
+
+  private val udfCode =
+    """from pytexera import *
+      |
+      |class ProcessTupleOperator(UDFOperatorV2):
+      |    def process_tuple(self, tuple_, port):
+      |        yield tuple_
+      |""".stripMargin
+
+  private def datasetParameter(value: String): UiUDFParameter = {
+    val parameter = new UiUDFParameter
+    parameter.attribute = new Attribute("DATA", AttributeType.STRING)
+    parameter.inputType = "dataset"
+    parameter.value = value
+    parameter
+  }
+
+  private def udfOp(opId: String, uiParameters: List[UiUDFParameter]): PythonUDFOpDescV2 = {
+    val op = new PythonUDFOpDescV2
+    op.setOperatorId(opId)
+    op.code = udfCode
+    op.uiParameters = uiParameters
+    op
+  }
+
+  /** The compiler of a plan made to run: the fixture resolver stands in for its user's. */
+  private val planCompiler: WorkflowCompiler =
+    new WorkflowCompiler(
+      new WorkflowContext(workflowId = testWorkflowId, executionId = testExecutionId),
+      TestOperators.fixtureFileResolver,
+      TestOperators.fixtureRepositoryResolver,
+      Some(TestOperators.fixtureMountRoot)
+    )
+
+  "modifyOperatorLogic" should "bind an edited UDF the way its plan was made, queueing only data" in {
+    val stateStore = new ExecutionStateStore
+    val service = new WorkflowOnlyService(
+      stateStore,
+      mkWorkflow(List(udfOp("udf-a", Nil))),
+      planCompiler.bindResources
+    )
+
+    service.modifyOperatorLogic(
+      ModifyLogicRequest(udfOp("udf-a", List(datasetParameter(datasetVersionPath))))
+    ) shouldBe ModifyLogicResponse("udf-a", isValid = true, "")
+
+    val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations.map(_._1)
+    queued should have size 1
+    // What resuming sends and mounts, with nothing left for it to bind.
+    queued.head.resourceBinding shouldBe None
+    queued.head.repositoryMounts shouldBe Some(
+      RepositoryMounts(TestOperators.fixtureMountRoot.toString, Set("dataset-1:d4t4"))
+    )
+    queued.head.opExecInitInfo shouldBe OpExecWithCode(
+      PythonUdfUiParameterInjector.inject(
+        udfCode,
+        List(
+          datasetParameter(
+            TestOperators.fixtureMountRoot.resolve("dataset-1").resolve("d4t4").toString
+          )
+        )
+      ),
+      "python"
+    )
+  }
+
+  it should "refuse an edit that names a version the plan's user cannot read" in {
+    val stateStore = new ExecutionStateStore
+    val service = new WorkflowOnlyService(
+      stateStore,
+      mkWorkflow(List(udfOp("udf-a", Nil))),
+      planCompiler.bindResources
+    )
+
+    val response = service.modifyOperatorLogic(
+      ModifyLogicRequest(udfOp("udf-a", List(datasetParameter(unreadableVersionPath))))
+    )
+
+    response shouldBe a[ModifyLogicResponse]
+    val refused = response.asInstanceOf[ModifyLogicResponse]
+    refused.opId shouldBe "udf-a"
+    refused.isValid shouldBe false
+    refused.errorMessage should include(unreadableVersionPath)
+    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
+  }
+
+  // ---------------------------------------------------------------------------
   // An operator that refers to loop variables
   // ---------------------------------------------------------------------------
 
@@ -584,22 +699,49 @@ class ExecutionReconfigurationServiceSpec
     state.completedReconfigurations shouldBe empty
   }
 
-  it should "mount what an edited operator names and send its bound code" in {
+  it should "mount what an edited operator names, under its plan's root, and send its bound code" in {
     val stateStore = new ExecutionStateStore()
     val service = new RecordingService(stateStore)
     val bound = OpExecWithClassName("bound.Class", "")
-    val op = mkPhysicalOp("op-1").withExecutionTimeBinding(Some(new ExecutionTimeBinding {
-      override def opExecInitInfo: OpExecInitInfo = bound
-      override def mountLocators: Set[String] = Set("dataset-1:abc123")
-    }))
+    val mounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
+    // As an accepted edit queues it: bound already, holding only data.
+    val op = mkPhysicalOp("op-1").copy(opExecInitInfo = bound, repositoryMounts = Some(mounts))
     stateStore.reconfigurationStore.updateState(_ =>
       ExecutionReconfigurationStore(unscheduledReconfigurations = List((op, None)))
     )
 
     service.performReconfigurationOnResume()
 
-    service.mounted shouldBe Seq(Set("dataset-1:abc123"))
+    service.mounted shouldBe Seq(mounts)
     service.captured.head.reconfiguration.map(_.newExecInitInfo) shouldBe Seq(bound)
+  }
+
+  it should "refuse a queued operator that still holds a binding, without forcing it" in {
+    // An accepted edit is always bound; resuming never binds one itself, so one that is not
+    // bound stops the resume before anything is mounted or sent.
+    val stateStore = new ExecutionStateStore()
+    val service = new RecordingService(stateStore)
+    var forced = 0
+    val binding: ResourceBinding = (_, _) => {
+      forced += 1
+      BoundResources(OpExecWithClassName("bound.Class", ""), Set("dataset-1:abc123"))
+    }
+    val boundEdit = mkPhysicalOp("op-1").copy(
+      repositoryMounts = Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-2:def456")))
+    )
+    val unbound = mkPhysicalOp("op-2").withResourceBinding(Some(binding))
+    val pending = List((boundEdit, None), (unbound, None))
+    stateStore.reconfigurationStore.updateState(_ =>
+      ExecutionReconfigurationStore(unscheduledReconfigurations = pending)
+    )
+
+    val failure = the[IllegalStateException] thrownBy service.performReconfigurationOnResume()
+
+    failure.getMessage should include("op-2")
+    forced shouldBe 0
+    service.mounted shouldBe empty
+    service.captured shouldBe empty
+    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe pending
   }
 
   it should "dispatch one request carrying every pending reconfiguration and reset the store" in {
@@ -631,6 +773,8 @@ class ExecutionReconfigurationServiceSpec
       op1.opExecInitInfo,
       op2.opExecInitInfo
     )
+    // Neither names a repository, so nothing is mounted.
+    service.mounted shouldBe empty
 
     val state = stateStore.reconfigurationStore.getState
     state.unscheduledReconfigurations shouldBe empty
