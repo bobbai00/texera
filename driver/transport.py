@@ -39,6 +39,19 @@ Two transports:
 A transport calls `phase_hook(phase, info)` when it has one (the evidence
 marks): "create" before an execution is created, "created" with its eid once
 the Dashboard answered, "start" before the start is sent.
+
+The open sequence. The unit answers a new connection (WorkflowWebsocketResource.
+myOnOpen) with WorkflowStateEvent "Uninitialized", then replays the execution the
+workflow holds, if any (its statistics, console, state and errors: a second socket
+on a completed run gets "Completed" and the old console), and sends
+ClusterStatusUpdateEvent last. `open_socket` returns only after that event, so
+every replayed event precedes the first command. The handle keeps the open
+sequence apart (`replayed`, and "opened" in the summary); its views (states,
+state_log, console, fatal_errors, error_event_count, stats, modify_*) hold only
+what arrived after it. A deployment that does not send ClusterStatusUpdateEvent
+ends the sequence after OPEN_CLUSTER_WAIT_S and then OPEN_QUIET_S without a
+message. Events of a run that is still live on the workflow keep arriving after
+the open; the scenarios start a run on a workflow only when nothing runs there.
 """
 
 from __future__ import annotations
@@ -56,6 +69,11 @@ import websocket  # websocket-client
 
 TERMINAL_STATES = frozenset({"Completed", "Failed", "Killed", "Terminated"})
 DEFAULT_SETTINGS = {"dataTransferBatchSize": 400, "executionMode": "PIPELINED"}
+#: the unit's open sequence ends with this event (see the module doc)
+OPEN_SEQUENCE_END = "ClusterStatusUpdateEvent"
+#: without that event: wait this long after the handshake state, then for a quiet period
+OPEN_CLUSTER_WAIT_S = 5.0
+OPEN_QUIET_S = 1.0
 
 
 class RunFailed(RuntimeError):
@@ -142,7 +160,8 @@ class RunHandle(ABC):
     @property
     @abstractmethod
     def states(self) -> list[str]:
-        """Workflow states in arrival order, consecutive duplicates collapsed."""
+        """Workflow states in arrival order after the open sequence, consecutive
+        duplicates collapsed (the handshake and any replayed state are in `replayed`)."""
 
     @property
     @abstractmethod
@@ -151,7 +170,14 @@ class RunHandle(ABC):
     @property
     @abstractmethod
     def state_log(self) -> list[tuple[float, str]]:
-        """Every state report as (seconds since start_run on the client clock, state)."""
+        """Every state report after the open sequence as (seconds since the socket
+        opened on the client clock, state)."""
+
+    @property
+    def replayed(self) -> dict:
+        """What the unit sent while the socket opened: the handshake state and its
+        replay of the execution the workflow held."""
+        return {}
 
     @property
     @abstractmethod
@@ -267,6 +293,12 @@ class WebSocketRunHandle(RunHandle):
         self._modify_completed: list[dict] = []
         self._error_events = 0
         self._sent_other: list[tuple[float, str]] = []
+        # The open sequence (module doc): until it ends, what arrives is the unit's
+        # answer to the connection, not this run's.
+        self._opening = True
+        self._handshake_at: float | None = None  # monotonic time of the first state
+        self._last_message_at = _now()
+        self._replay: dict[str, Any] = {}
         self.eid: int | None = None
         self.plan_uri: str | None = None
         #: create-ws: posts an operator change to the Dashboard -> requests.Response
@@ -320,11 +352,17 @@ class WebSocketRunHandle(RunHandle):
     def _on_message(self, msg: dict) -> None:
         typ = msg.get("type", "?")
         with self._cv:
+            self._last_message_at = _now()
             self._type_counts[typ] = self._type_counts.get(typ, 0) + 1
-            if typ == "WorkflowStateEvent":
+            if typ == OPEN_SEQUENCE_END and self._opening and self._handshake_at is not None:
+                self._close_open_sequence(OPEN_SEQUENCE_END)
+            elif typ == "WorkflowStateEvent":
                 state = msg.get("state")
+                if self._opening and self._handshake_at is None:
+                    self._handshake_at = _now()
                 self._state_log.append((self._elapsed(), state))
-                self._log(f"state {state} (+{self._elapsed()}s)")
+                self._log(f"state {state} (+{self._elapsed()}s)"
+                          + (" [open sequence]" if self._opening else ""))
             elif typ == "WorkflowErrorEvent":
                 self._error_events += 1
                 for err in msg.get("fatalErrors") or []:
@@ -360,12 +398,79 @@ class WebSocketRunHandle(RunHandle):
     def _send(self, msg: dict) -> None:
         self._ws.send(json.dumps(msg))
 
+    # ------------------------------------------------------------ open sequence
+
+    def _close_open_sequence(self, how: str) -> None:
+        """(Lock held.) Everything received so far is the unit's answer to the
+        connection: keep it in `_replay` and start the views empty."""
+        if not self._opening:
+            return
+        self._opening = False
+        self._replay = {
+            "closed_by": how, "t": self._elapsed(), "state_log": self._state_log,
+            "errors": self._errors, "error_events": self._error_events, "console": self._console,
+            "stats": self._stats, "stats_events": self._stats_events,
+            "result_updates": self._result_updates, "modify_responses": self._modify_responses,
+            "modify_completed": self._modify_completed, "event_counts": dict(self._type_counts),
+        }
+        self._state_log, self._errors, self._console = [], [], []
+        self._error_events, self._stats, self._stats_events = 0, {}, 0
+        self._result_updates, self._modify_responses, self._modify_completed = {}, [], []
+        self._cv.notify_all()
+
+    def wait_open(self, timeout: float = 30.0, cluster_wait: float = OPEN_CLUSTER_WAIT_S,
+                  quiet: float = OPEN_QUIET_S) -> None:
+        """Block until the unit's open sequence is over: ClusterStatusUpdateEvent after
+        the handshake state or, on a deployment that does not send it, `cluster_wait`
+        seconds after the handshake and then `quiet` seconds without a message."""
+        deadline = _now() + timeout
+        with self._cv:
+            while self._opening:
+                if self._reader_error:
+                    raise RunFailed(f"connection lost while the websocket session opened: "
+                                    f"{self._reader_error}")
+                now = _now()
+                if (self._handshake_at is not None and now - self._handshake_at >= cluster_wait
+                        and now - self._last_message_at >= quiet):
+                    self._close_open_sequence(f"no {OPEN_SEQUENCE_END} within {cluster_wait:g} s of the "
+                                              f"handshake; {quiet:g} s without a message")
+                    break
+                if now >= deadline:
+                    raise RunTimeout(f"timed out after {timeout}s waiting for the websocket session to "
+                                     f"open; states so far: {[s for _, s in self._state_log]}")
+                self._cv.wait(0.05)
+
+    @property
+    def replayed(self) -> dict:
+        with self._cv:
+            r = self._replay
+            if not r:
+                return {"closed_by": None, "states": [s for _, s in self._state_log]}
+            states: list[str] = []
+            for _, s in r["state_log"]:
+                if not states or states[-1] != s:
+                    states.append(s)
+            return {
+                "closed_by": r["closed_by"], "t": r["t"], "states": states,
+                "error_events": r["error_events"],
+                "fatal_errors": [str(e.get("message"))[:300] for e in r["errors"][:5]],
+                "console_messages": len(r["console"]),
+                "console_sample": [f"{(m.get('title') or '')[:120]}" for m in r["console"][:3]],
+                "stats_operators": sorted(r["stats"]), "modify_completed": len(r["modify_completed"]),
+                "event_counts": r["event_counts"],
+            }
+
+    # ------------------------------------------------------------------- sends
+
     def send_command(self, msg: dict, label: str, mark: bool = True) -> None:
         """Send a request. `mark` records it as a command, which moves the cursor
         wait_for_state(since_last_command=True) starts from."""
-        if mark:
-            with self._cv:
+        with self._cv:
+            if self._opening:  # a command ends the open sequence, whatever the unit sent
+                self._close_open_sequence(f"{label} sent before {OPEN_SEQUENCE_END}")
+            if mark:
                 self._command_marks.append((self._elapsed(), label, len(self._state_log)))
+        if mark:
             self._log(f"send {label} (+{self._elapsed()}s)")
         self._send(msg)
 
@@ -405,10 +510,22 @@ class WebSocketRunHandle(RunHandle):
                 self._cv.wait(min(left, 1.0))
 
     def ensure_stopped(self, timeout: float = 30) -> str | None:
+        """Kill the run this socket started unless it ended. A socket on which nothing
+        started (a watcher, a refused start) is left alone: a kill there would reach
+        whatever run the workflow holds."""
         if self.last_state in TERMINAL_STATES or self._reader_error or self._closed:
             return self.last_state
-        if all(s == "Uninitialized" for s in self.states):
-            # Nothing was started on this socket (a watcher, or a refused start).
+        with self._cv:
+            sent_commands = bool(self._command_marks)
+        if sent_commands and not self.states:
+            # A start went out and nothing came back yet: give the unit a moment to
+            # answer with a state (then it runs) or with its refusal.
+            try:
+                self.wait_until(lambda: bool(self._state_log) or self._error_events > 0, 5,
+                                "an answer to the start", fail_fast=False)
+            except (RunTimeout, RunFailed):
+                pass
+        if self.last_state in TERMINAL_STATES or all(s == "Uninitialized" for s in self.states):
             return self.last_state
         try:
             self.kill()
@@ -460,6 +577,8 @@ class WebSocketRunHandle(RunHandle):
 
     def send_raw(self, msg: dict, label: str | None = None) -> None:
         with self._cv:
+            if self._opening:
+                self._close_open_sequence(f"{label or msg.get('type')} sent before {OPEN_SEQUENCE_END}")
             self._sent_other.append((self._elapsed(), label or str(msg.get("type"))))
         self._log(f"send {label or msg.get('type')} (+{self._elapsed()}s)")
         self._send(msg)
@@ -571,8 +690,10 @@ class WebSocketRunHandle(RunHandle):
         return {"columns": columns, "rows": rows, "pages": page, "reported_total": reported_total}
 
     def summary(self) -> dict:
+        opened = self.replayed
         with self._cv:
             return {
+                "opened": opened,
                 "states": self.states,
                 "state_log": [{"t": t, "state": s} for t, s in self._state_log],
                 "commands": [{"t": t, "command": c} for t, c, _ in self._command_marks],
@@ -627,9 +748,16 @@ class WebSocketTransport(Transport):
     def describe(self) -> dict:
         return {"name": self.name, "endpoint": f"{self.ws_base}/wsapi/workflow-websocket"}
 
+    #: how long the open sequence may take, and its fallback without ClusterStatusUpdateEvent
+    open_timeout_s = 30.0
+    open_cluster_wait_s = OPEN_CLUSTER_WAIT_S
+    open_quiet_s = OPEN_QUIET_S
+
     def open_socket(self, wid: int, cuid: int, *, token: str | None = None,
                     uid: int | None = None) -> WebSocketRunHandle:
-        """A session on the workflow, subscribed (its handshake state arrived)."""
+        """A session on the workflow, subscribed, its open sequence over: the handshake
+        state, the replay of the workflow's held execution and ClusterStatusUpdateEvent
+        have arrived, so nothing of an earlier run can arrive after the first command."""
         token = token or self._token()
         if uid is None:
             uid = int(jwt_claims(token)["userId"]) if token != self._token() else self._uid()
@@ -637,9 +765,7 @@ class WebSocketTransport(Transport):
         handle = WebSocketRunHandle(f"{self.ws_base}/wsapi/workflow-websocket?{query}", wid, cuid,
                                     heartbeat_s=self.heartbeat_s, log=self._log)
         try:
-            # The unit answers the handshake with a WorkflowStateEvent("Uninitialized");
-            # waiting for it means the session is subscribed before we start anything.
-            handle.wait_until(lambda: bool(handle._state_log), 30, "websocket session to open")
+            handle.wait_open(self.open_timeout_s, self.open_cluster_wait_s, self.open_quiet_s)
         except Exception:
             handle.close()
             raise

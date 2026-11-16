@@ -11,6 +11,15 @@ UDFs, File Lister -> File Scan From Input). Everything it receives is recorded,
 so tests assert the wire shapes. It is a model of the design, not of Texera: a
 check that passes here proves the driver follows the design, not that a branch
 does.
+
+What it copies from the real unit (WorkflowWebsocketResource.myOnOpen, seen on
+step2wip 2026-11-16): a socket opens with WorkflowStateEvent "Uninitialized"; then,
+REPLAY_DELAY_S later, the replay of the run the (workflow, unit) holds (statistics,
+console, state, errors); then ClusterStatusUpdateEvent, last. A run is held until
+the last socket of its (workflow, unit) closes; `cleanup_s` later the unit cleans
+it up. With a `statement_sink` it reports the Postgres statements the design's
+services would run (Dashboard: the INSERT at create; unit: the run-state writes and
+the idle cleanup; a refused start: nothing), for evidence tests.
 """
 
 from __future__ import annotations
@@ -32,6 +41,10 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 TUPLE_DELAY_S = 0.004
+#: the real unit replayed a held run about 95 ms after the handshake state
+REPLAY_DELAY_S = 0.1
+STATUS_CODES = {"Uninitialized": 0, "Initializing": 0, "Running": 1, "Paused": 2, "Completed": 3,
+                "Failed": 4, "Killed": 5}
 
 
 def make_token(uid: int, role: str, email: str) -> str:
@@ -132,16 +145,47 @@ class Run:
         self.ops = {o["operatorID"]: dict(o) for o in plan["operators"]}
         self.rows_out: list[dict] = []
         self.thread: threading.Thread | None = None
+        # kept for the replay a new socket gets
+        self.last_stats: dict | None = None
+        self.console_log: list[dict] = []
+        self.errors: list[dict] = []
 
     def emit(self, msg) -> None:
+        if msg.get("type") == "OperatorStatisticsUpdateEvent":
+            self.last_stats = msg
+        elif msg.get("type") == "ConsoleUpdateEvent":
+            self.console_log.append(msg)
+        elif msg.get("type") == "WorkflowErrorEvent":
+            self.errors.extend(msg.get("fatalErrors") or [])
         for s in list(self.sessions):
             s.send(msg)
 
+    def replay(self) -> list[dict]:
+        """What a socket that opens on the workflow while this run is held receives."""
+        out = [self.last_stats] if self.last_stats else []
+        out += self.console_log
+        out.append({"type": "WorkflowStateEvent", "state": self.state})
+        if self.errors:
+            out.append({"type": "WorkflowErrorEvent", "fatalErrors": list(self.errors)})
+        return out
+
     def set_state(self, state: str) -> None:
         self.state = state
-        code = {"Running": 1, "Completed": 3, "Failed": 4, "Killed": 5, "Paused": 2}.get(state)
-        if code is not None:
-            self.fake.executions[self.eid]["status"] = code
+        code = STATUS_CODES.get(state)
+        if code is not None and state != "Uninitialized":
+            if state != "Initializing":
+                self.fake.executions[self.eid]["status"] = code
+            # design D26: one write-only UPDATE by eid per state change (READY at Initializing)
+            self.fake.sql("unit", "update workflow_executions set status = $1, last_update_time = $2 "
+                                  "where workflow_executions.eid = $3",
+                          f"$1 = '{code}', $2 = '2026-11-16 10:00:00', $3 = '{self.eid}'")
+            if state == "Initializing":
+                for op in self.ops:
+                    self.fake.sql("unit", "insert into operator_port_executions (workflow_execution_id, "
+                                          "global_port_id, result_uri) values ($1, $2, $3)",
+                                  f"$1 = '{self.eid}', $2 = '{op}-out-0', $3 = 'vfs:///result/{op}'")
+            if state in ("Completed", "Failed", "Killed"):
+                self.fake.on_terminal(self)
         self.emit({"type": "WorkflowStateEvent", "state": state})
 
     def sink(self) -> str:
@@ -324,8 +368,44 @@ class FakeTexera:
         self.rest_log: list[dict] = []
         self.ws_log: list[dict] = []
         self.runs: dict[int, Run] = {}
-        self.sessions_by_wid: dict[int, list[WsConn]] = {}
+        #: a WorkflowService per (wid, cuid): its sockets and the run it holds
+        self.sessions_by_key: dict[tuple[int, int], list[WsConn]] = {}
+        self.held: dict[tuple[int, int], Run] = {}
+        self.send_cluster_status = True
+        self.replay_delay_s = REPLAY_DELAY_S
+        self.cleanup_s = 0.3
+        #: statement_sink(who, sql, params): who is "unit" or "dashboard"
+        self.statement_sink = None
+        #: access_sink(method, path, status): a request this fake served (the gateway's view)
+        self.access_sink = None
         self.server: ThreadingHTTPServer | None = None
+
+    # -------------------------------------------------------- statements
+
+    def sql(self, who: str, sql: str, params: str | None = None) -> None:
+        if self.statement_sink is not None:
+            self.statement_sink(who, sql, params)
+
+    def on_terminal(self, run: "Run") -> None:
+        """A run ended: with nobody watching (the agent's REST path) the unit cleans it
+        `cleanup_s` later, as WorkflowLifecycleManager does."""
+        key = next((k for k, r in self.held.items() if r is run), None)
+        if key is None or not self.sessions_by_key.get(key):
+            self._schedule_cleanup(run.eid, key)
+
+    def _schedule_cleanup(self, eid: int, key) -> None:
+        def clean():
+            if key is not None and self.sessions_by_key.get(key):
+                return  # somebody opened the workflow again
+            if key is not None:
+                self.held.pop(key, None)
+            for table in ("operator_port_executions", "operator_executions"):
+                self.sql("unit", f"delete from {table} where {table}.workflow_execution_id = $1", f"$1 = '{eid}'")
+            self.sql("unit", "select workflow_executions.runtime_stats_uri from workflow_executions "
+                             "where workflow_executions.eid = $1", f"$1 = '{eid}'")
+        t = threading.Timer(self.cleanup_s, clean)
+        t.daemon = True
+        t.start()
 
     # -------------------------------------------------------------- serving
 
@@ -361,6 +441,8 @@ class FakeTexera:
                 fake.rest_log.append({"method": method, "path": parts.path, "body": body, "token": token})
                 status, out = fake.route(method, parts.path, urllib.parse.parse_qs(parts.query), body, token)
                 self._reply(status, out)
+                if fake.access_sink is not None:
+                    fake.access_sink(method, parts.path, status)
 
             def do_GET(self):
                 if (self.headers.get("Upgrade") or "").lower() == "websocket":
@@ -553,9 +635,14 @@ class FakeTexera:
                                 "started": False, "log": (f"file:///logs/{wid}/{eid}/" if self.replay_log else None),
                                 "targets": body.get("targetOperatorIds") or [], "updates": {},
                                 "plan_uri": self.plan_uri(uid, whid, wid, eid)}
+        self.sql("dashboard", "insert into workflow_executions (vid, uid, cuid, whid, status) values "
+                              "($1, $2, $3, $4, $5) returning eid",
+                 f"$1 = '1', $2 = '{uid}', $3 = '{cuid}', $4 = '{whid}', $5 = '0'")
         errors = self.compile_errors(uid, body["logicalPlan"])
         if errors:
             self.executions[eid]["status"] = 4
+            self.sql("dashboard", "update workflow_executions set status = $1 where workflow_executions.eid = $2",
+                     f"$1 = '4', $2 = '{eid}'")
             return 400, {"eid": eid, "operatorErrors": errors, "errors": []}
         return 201, {"eid": eid, "wid": wid, "computingUnitId": cuid, "planUri": self.executions[eid]["plan_uri"]}
 
@@ -637,6 +724,7 @@ class FakeTexera:
         if target:
             run.plan = dict(e["plan"], opsToViewResult=[target])
             run.ops = {o["operatorID"]: dict(o) for o in e["plan"]["operators"]}
+        run.set_state("Initializing")  # READY, then the run
         run.run()
         rows, _ = run.results(run.sink())
         return 200, {"success": run.state == "Completed", "state": run.state,
@@ -657,10 +745,21 @@ class FakeTexera:
             return
         wid, cuid = int(query["wid"][0]), int(query["cuid"][0])
         user = self.user_of(query.get("access-token", [""])[0])
-        sessions = self.sessions_by_wid.setdefault(wid, [])
-        sessions.append(conn)
+        key = (wid, cuid)
+        with self.lock:
+            sessions = self.sessions_by_key.setdefault(key, [])
+        # the open sequence of the real unit: the handshake hack, the replay of the
+        # held run (a little later), then ClusterStatusUpdateEvent
         conn.send({"type": "WorkflowStateEvent", "state": "Uninitialized"})
-        current: Run | None = None
+        held = self.held.get(key)
+        if held is not None:
+            time.sleep(self.replay_delay_s)
+            for msg in held.replay():
+                conn.send(msg)
+        with self.lock:
+            sessions.append(conn)
+        if self.send_cluster_status:
+            conn.send({"type": "ClusterStatusUpdateEvent", "numWorkerNodesInCluster": 1})
         try:
             while True:
                 raw = conn.recv()
@@ -670,11 +769,12 @@ class FakeTexera:
                 self.ws_log.append({"wid": wid, "cuid": cuid, "uid": user and user["uid"], "msg": msg})
                 typ = msg.get("type")
                 with self.lock:
+                    current = self.held.get(key)
                     if typ == "HeartBeatRequest":
                         conn.send({"type": "HeartBeatResponse"})
                     elif typ == "WorkflowStartRequest":
                         refused = self.start_checks(user, msg["executionId"], msg["planUri"], wid, cuid)
-                        if refused:
+                        if refused:  # D33: that session only, no state, no statement
                             conn.send({"type": "WorkflowErrorEvent", "fatalErrors": [
                                 {"type": {"name": "EXECUTION_FAILURE"}, "message": refused, "details": "",
                                  "operatorId": "", "workerId": ""}]})
@@ -683,6 +783,7 @@ class FakeTexera:
                         e["started"] = True
                         current = Run(self, msg["executionId"], e["plan"], sessions)
                         self.runs[current.eid] = current
+                        self.held[key] = current
                         current.start()
                     elif typ == "WorkflowExecuteRequest":  # the old path: the unit creates
                         eid = self.next["eid"]
@@ -690,8 +791,16 @@ class FakeTexera:
                         self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": user["uid"], "status": 0,
                                                 "plan": msg["logicalPlan"], "started": True, "log": None,
                                                 "updates": {}, "plan_uri": None}
+                        # the old unit reads before it inserts the row itself
+                        self.sql("unit", "select user_warehouse.whid from user_warehouse where "
+                                         "user_warehouse.uid = $1", f"$1 = '{user['uid']}'")
+                        self.sql("unit", "insert into workflow_executions (vid, uid, cuid, status) values "
+                                         "($1, $2, $3, $4)", f"$1 = '1', $2 = '{user['uid']}', $3 = '{cuid}', "
+                                                             f"$4 = '0'")
+                        conn.send({"type": "WorkflowStateEvent", "state": "Initializing"})
                         current = Run(self, eid, msg["logicalPlan"], sessions)
                         self.runs[eid] = current
+                        self.held[key] = current
                         current.start()
                     elif typ == "OperatorUpdateRequest":
                         run = self.runs.get(msg["executionId"])
@@ -703,7 +812,7 @@ class FakeTexera:
                             run.pending_updates.append(upd)
                             conn.send({"type": "ModifyLogicResponse", "opId": upd["operatorID"], "isValid": True,
                                        "errorMessage": ""})
-                    elif typ == "ModifyLogicRequest":
+                    elif typ == "ModifyLogicRequest" and current:
                         op = msg["operator"]
                         current.pending_updates.append(op)
                         conn.send({"type": "ModifyLogicResponse", "opId": op["operatorID"], "isValid": True,
@@ -730,4 +839,9 @@ class FakeTexera:
                                    "table": rows[(page - 1) * size: page * size], "schema": schema,
                                    "totalTuples": len(rows)})
         finally:
-            sessions.remove(conn)
+            with self.lock:
+                sessions.remove(conn)
+                last = not sessions
+                held = self.held.get(key)
+            if last and held is not None and held.state in ("Completed", "Failed", "Killed"):
+                self._schedule_cleanup(held.eid, key)

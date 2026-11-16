@@ -144,8 +144,68 @@ class CreateWsTest(FakeCase):
         self.handles.append(again)
         again.wait_until(lambda: again.error_event_count > 0, 10, "refusal", fail_fast=False)
         self.assertIn("already started", again.fatal_errors[0]["message"])
-        self.assertEqual(again.ensure_stopped(timeout=1), "Uninitialized")
+        # the unit replayed the held run while the socket opened; none of it is this start's
+        self.assertEqual(["Uninitialized", "Completed"], again.replayed["states"])
+        self.assertEqual([], again.states)
+        self.assertIsNone(again.ensure_stopped(timeout=1))
         self.assertFalse(any(w["msg"]["type"] == "WorkflowKillRequest" for w in self.fake.ws_log))
+
+    def test_open_waits_for_the_replay_and_keeps_it_apart(self):
+        """The reviewer's probe: a second socket on a workflow whose run completed gets
+        "Uninitialized", ~0.1 s later the held run's statistics, console and state, then
+        ClusterStatusUpdateEvent. open_socket returns after all of it."""
+        self.api.ensure_environment("env-r", {"tabulate": "==0.9.0"})
+        wf = Workflow("w")
+        src = wf.add("one", "TextInput", text_input(["x"]), n_in=0)
+        udf = wf.add("tab", "PythonUDFV2", python_udf("import tabulate\ntabulate.__version__",
+                                                      out_columns=[("tabulate_version", "string")],
+                                                      env_name="env-r"))
+        wf.link(src, udf)
+        h = self.start(wf, udf)
+        h.wait_for_state("Completed", timeout=30)
+        self.assertEqual(2, len(h.console(udf)))  # Installing, then ready
+        self.assertEqual(["Initializing", "Running", "Completed"], h.states)
+        self.assertEqual(["Uninitialized"], h.replayed["states"])
+        second = self.t.open_socket(self.wid, self.cuid)
+        self.handles.append(second)
+        r = second.replayed
+        self.assertEqual("ClusterStatusUpdateEvent", r["closed_by"])
+        self.assertEqual(["Uninitialized", "Completed"], r["states"])
+        self.assertEqual(2, r["console_messages"])
+        self.assertEqual([], second.states)
+        self.assertEqual([], second.console(udf))
+        self.assertEqual({}, second.stats(udf))
+        self.assertEqual(0, second.error_event_count)
+        self.assertIn("opened", second.summary())
+
+    def test_open_without_cluster_status_ends_after_a_quiet_period(self):
+        self.fake.send_cluster_status = False
+        self.t.open_cluster_wait_s, self.t.open_quiet_s = 0.3, 0.2
+        wf, udf = self.plan()
+        h = self.start(wf, udf)
+        h.wait_for_state("Completed", timeout=30)
+        second = self.t.open_socket(self.wid, self.cuid)
+        self.handles.append(second)
+        self.assertTrue(second.replayed["closed_by"].startswith("no ClusterStatusUpdateEvent"),
+                        second.replayed)
+        self.assertEqual(["Uninitialized", "Completed"], second.replayed["states"])
+        self.assertEqual([], second.states)
+
+    def test_a_refused_start_after_a_failed_run_does_not_fail_fast_on_the_replay(self):
+        """A replayed fatal error belongs to the held run: waits on the new socket do not
+        fail on it, and its error count starts at zero."""
+        wf = Workflow("w")
+        src = wf.add("missing", "CSVFileScan", csv_scan("/dataset/x/ds/v1/no-such.csv"), n_in=0)
+        h = self.start(wf, src)
+        with self.assertRaises(Exception):
+            h.wait_for_state("Completed", timeout=30)
+        self.assertTrue(h.fatal_errors)
+        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
+        self.handles.append(again)
+        self.assertEqual(1, again.replayed["error_events"])
+        again.wait_until(lambda: again.error_event_count > 0, 10, "the refusal")  # fail_fast on
+        self.assertIn("already started", again.fatal_errors[0]["message"])
+        self.assertEqual(1, again.error_event_count)
 
     def test_start_existing_as_another_user(self):
         other_token = self.api.register_user("other", "other@example.com", "pw")
