@@ -775,6 +775,17 @@ def cmd_generate(a) -> None:
     log(f"options: {describe_options(m.get('options') or {})}")
 
 
+def prepare_replay_log_dir(manifest: dict) -> None:
+    """The shared result volume is root's (Docker creates it), and the services run as
+    texera (1001): without this the coordinator cannot create its replay log and the
+    run hangs in Initializing ("Could not create directory .../recovery-logs")."""
+    unit = manifest["containers"][UNIT_SERVICE]
+    path = REPLAY_LOG_URI.removeprefix("file://").rstrip("/")
+    run(["docker", "exec", "-u", "0", unit, "sh", "-c", f"mkdir -p {path} && chown 1001:1001 {path}"],
+        capture=True)
+    log(f"replay logs: {path} (shared result volume) made writable for uid 1001")
+
+
 def remove_unit_network_if_unused() -> None:
     """compose leaves a network that the regenerated file no longer names; drop ours
     when nothing is attached to it (it carries our project label)."""
@@ -806,6 +817,8 @@ def cmd_up(a) -> None:
     if not (manifest.get("options") or {}).get("isolate_unit"):
         remove_unit_network_if_unused()
     wait_healthy(a.timeout, manifest)
+    if (manifest.get("options") or {}).get("with_replay_log"):
+        prepare_replay_log_dir(manifest)
     # nginx resolves its upstreams once at start; a service recreated by this
     # `up` would otherwise keep receiving traffic at its old address.
     compose("restart", NGINX_SERVICE, capture=True)
