@@ -20,12 +20,18 @@
 package org.apache.texera.common.compiler
 
 /**
-  * Controls how the compiler reacts to a per-operator compilation error.
+  * Controls what the compiler does with the errors of a workflow's operators. Either way it goes
+  * on past an operator's error — in file resolution, logical-to-physical expansion and schema
+  * propagation — so that it finds every operator's errors.
   *
-  *   - [[CompilationErrorHandling.Lenient]] collects every error and returns them in the result,
-  *     with `physicalPlan = None` when any error occurred. Used for editing-time validation.
-  *   - [[CompilationErrorHandling.Strict]] throws on the first error — during file resolution,
-  *     logical-to-physical expansion, and schema propagation. Used before execution.
+  *   - [[CompilationErrorHandling.Lenient]] returns them in the result, with
+  *     `physicalPlan = None` when any error occurred. Used for editing-time validation.
+  *   - [[CompilationErrorHandling.Strict]] throws them together, as a [[WorkflowCompilationFailed]]
+  *     that holds each operator's first error. Only a plan with no error goes on to pin the
+  *     datasets and models its operators name; every operator is bound, and the binding errors
+  *     are thrown the same way. A failure there that is no operator's error, such as the
+  *     database not answering, is thrown as it is. Used before execution, so a plan made to run
+  *     has no error.
   */
 sealed trait CompilationErrorHandling
 

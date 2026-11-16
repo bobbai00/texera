@@ -70,8 +70,8 @@ import scala.collection.mutable
   *
   * Owns *compiler-behavior* tests across both paths: lenient (editing-time —
   * accumulate per-operator errors, schema propagation) and strict
-  * (pre-execution — fail-fast), plus physical-plan shape and the set of
-  * output ports needing storage. `WorkflowCompilationResourceSpec` owns
+  * (pre-execution — the same errors, thrown together), plus physical-plan
+  * shape and the set of output ports needing storage. `WorkflowCompilationResourceSpec` owns
   * *resource-layer* tests — HTTP status, response type discriminator, JSON
   * envelope. Drawing the line here keeps each spec focused.
   *
@@ -108,6 +108,40 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       outputPortsNeedingStorage = result.outputPortsNeedingStorage
     )
     PhysicalPlanRoundTrip.assertRoundTrips(context, result.physicalPlan.get)
+  }
+
+  /** What a Strict compile of `workflow` fails with; the test fails if it compiles. */
+  private def strictFailure(
+      workflow: LogicalPlanPojo,
+      compiler: WorkflowCompiler = newCompiler()
+  ): WorkflowCompilationFailed =
+    intercept[WorkflowCompilationFailed](
+      compiler.compile(workflow, CompilationErrorHandling.Strict)
+    )
+
+  /** The message of the only error `failure` holds, which must be `op`'s. */
+  private def onlyErrorOf(failure: WorkflowCompilationFailed, op: LogicalOp): String = {
+    assert(failure.operatorErrors.keySet == Set(op.operatorIdentifier))
+    failure.operatorErrors(op.operatorIdentifier).message
+  }
+
+  /**
+    * The message a failure with the errors of `listed`, in that order, has: what the failure holds
+    * for each, after a line that counts `count` operators with errors.
+    */
+  private def messageListing(
+      failure: WorkflowCompilationFailed,
+      count: Int,
+      listed: Seq[LogicalOp]
+  ): String = {
+    val lines = listed.map { op =>
+      s"${op.operatorIdentifier.id}: ${failure.operatorErrors(op.operatorIdentifier).message}"
+    }
+    val header = "The workflow does not compile: " +
+      (if (count == 1) "1 operator has an error." else s"$count operators have errors.")
+    val more = count - listed.size
+    val rest = if (more == 0) Nil else List(s"and $more more operator${if (more == 1) "" else "s"}")
+    ((header +: lines) ++ rest).mkString("\n")
   }
 
   private def csvOp(fileName: String): CSVScanSourceOpDesc = {
@@ -821,18 +855,37 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   // -------------------- strict-mode error semantics --------------------
 
   // Re-anchor the subject after the sub-section.
-  "WorkflowCompiler in strict mode" should "throw when a scan source has no fileName set" in {
-    // Strict passes no error buffer, so `resolveScanSourceOpFileName` rethrows
-    // the first failure instead of accumulating it (the execution path's
-    // fail-fast contract). The lenient counterpart above accumulates the same
-    // failure without throwing.
+  "WorkflowCompiler in strict mode" should
+    "fail with the scan's error when a scan source has no fileName set" in {
+    // As in the lenient counterpart above, `resolveScanSourceOpFileName` keeps the failure as the
+    // operator's error and goes on; Strict then throws it, with any others, instead of returning
+    // it (the execution path's contract: a plan made to run has no errors).
     val orphanCsv = new CSVScanSourceOpDesc()
 
-    val ex = intercept[RuntimeException] {
-      newCompiler()
-        .compile(pojo(List(orphanCsv), List.empty), CompilationErrorHandling.Strict)
-    }
-    assert(ex.getMessage.contains("No file selected"))
+    val failure = strictFailure(pojo(List(orphanCsv), List.empty))
+
+    val error = failure.operatorErrors(orphanCsv.operatorIdentifier)
+    assert(
+      onlyErrorOf(failure, orphanCsv) == "java.lang.RuntimeException: No file selected. " +
+        "Please select a file from the 'File' dropdown in the right panel."
+    )
+    // A WorkflowFatalError of the operator, as the editing compile reports it.
+    assert(error.`type` == COMPILATION_ERROR)
+    assert(error.operatorId == orphanCsv.operatorIdentifier.id)
+    assert(error.details.nonEmpty, "stack-trace details should be populated for UI display")
+    assert(
+      failure.getMessage == "The workflow does not compile: 1 operator has an error.\n" +
+        s"${orphanCsv.operatorIdentifier.id}: ${error.message}"
+    )
+    // Its cause is that error itself, thrown where file resolution found it, so a log of the
+    // failure shows where it came from: not the schema error the scan also has, found later.
+    val cause = failure.getCause
+    assert(cause != null, "the failure should have the operator's error as its cause")
+    assert(cause.toString == error.message)
+    assert(
+      cause.getStackTrace.exists(_.getMethodName.contains("resolveScanSourceOpFileName")),
+      cause.getStackTrace.take(8).mkString("\n")
+    )
   }
 
   it should "return a defined physicalPlan for a well-formed plan" in {
@@ -862,65 +915,59 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assertSavable(result)
   }
 
-  it should "throw on schema-propagation errors" in {
+  it should "fail on schema-propagation errors, as the operator's error" in {
     // A projection on a missing column fails schema *propagation*, not plan
     // expansion: `propagateSchema` stores a Left on the output port instead of
     // throwing, so this error only becomes visible when output schemas are
-    // collected. Strict must fail fast on it too — otherwise the plan would be
-    // launched and only fail at runtime. The lenient counterpart above turns
-    // the same failure into a per-operator error instead.
+    // collected. Strict must fail on it too — otherwise the plan would be
+    // launched and only fail at runtime. The lenient counterpart above returns
+    // the same per-operator error instead of throwing it.
     val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
     val badProjection = projectOp(List("DoesNotExist"))
 
-    val ex = intercept[Throwable] {
-      newCompiler().compile(
-        pojo(
-          List(csv, badProjection),
-          List(
-            LogicalLink(
-              csv.operatorIdentifier,
-              PortIdentity(0),
-              badProjection.operatorIdentifier,
-              PortIdentity(0)
-            )
+    val failure = strictFailure(
+      pojo(
+        List(csv, badProjection),
+        List(
+          LogicalLink(
+            csv.operatorIdentifier,
+            PortIdentity(0),
+            badProjection.operatorIdentifier,
+            PortIdentity(0)
           )
-        ),
-        CompilationErrorHandling.Strict
+        )
       )
-    }
+    )
+    val message = onlyErrorOf(failure, badProjection)
     assert(
-      ex.getMessage != null && ex.getMessage.contains("DoesNotExist"),
-      s"the thrown schema error should name the missing attribute, got: $ex"
+      message.contains("DoesNotExist"),
+      s"the schema error should name the missing attribute, got: $message"
     )
   }
 
-  it should "throw immediately when a Python operator's code generation failed" in {
-    // The execution path passes no error buffer, so the marker found in the
-    // generated code must abort the compile instead of being collected. The
-    // lenient counterpart above turns the same marker into a per-operator error.
+  it should "fail with the Python operator's error when its code generation failed" in {
+    // The marker found in the generated code is the operator's error, as in the
+    // lenient counterpart above, which Strict throws instead of returning.
     val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
     val unconfiguredSort = sortOp()
 
-    val ex = intercept[RuntimeException] {
-      newCompiler().compile(
-        pojo(
-          List(csv, unconfiguredSort),
-          List(
-            LogicalLink(
-              csv.operatorIdentifier,
-              PortIdentity(0),
-              unconfiguredSort.operatorIdentifier,
-              PortIdentity(0)
-            )
+    val failure = strictFailure(
+      pojo(
+        List(csv, unconfiguredSort),
+        List(
+          LogicalLink(
+            csv.operatorIdentifier,
+            PortIdentity(0),
+            unconfiguredSort.operatorIdentifier,
+            PortIdentity(0)
           )
-        ),
-        CompilationErrorHandling.Strict
+        )
       )
-    }
+    )
     assert(
-      ex.getMessage == "Operator is not configured properly: " +
-        "requirement failed: Sort operator requires at least one sort key.",
-      s"unexpected message: ${ex.getMessage}"
+      onlyErrorOf(failure, unconfiguredSort) ==
+        "java.lang.RuntimeException: Operator is not configured properly: " +
+          "requirement failed: Sort operator requires at least one sort key."
     )
   }
 
@@ -946,6 +993,116 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(result.physicalPlan.isDefined)
     assert(result.operatorIdToError.isEmpty)
     assertSavable(result)
+  }
+
+  it should "fail with every operator's error at once, as the editing compile reports them" in {
+    // One error from each step that finds them: a scan with no file (file resolution), a Sort
+    // that generates no code (expansion), and a Projection on a column its input lacks (schema
+    // propagation). Strict goes on past each, as Lenient does, and throws them together.
+    val orphan = csvOpNoFile()
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val unconfiguredSort = sortOp()
+    val badProjection = projectOp(List("DoesNotExist"))
+    val workflow = pojo(
+      List(orphan, csv, unconfiguredSort, badProjection),
+      List(linked(csv, unconfiguredSort), linked(csv, badProjection))
+    )
+    val failing = List(orphan, unconfiguredSort, badProjection)
+
+    val failure = strictFailure(workflow)
+
+    // Each operator's own error, in the workflow's order; the csv compiled.
+    assert(failure.operatorErrors.keys.toList == failing.map(_.operatorIdentifier))
+    failure.operatorErrors.foreach {
+      case (op, error) =>
+        assert(error.`type` == COMPILATION_ERROR)
+        assert(error.operatorId == op.id)
+        assert(error.details.nonEmpty)
+    }
+    def messageOf(op: LogicalOp): String = failure.operatorErrors(op.operatorIdentifier).message
+    assert(messageOf(orphan).contains("No file selected"), messageOf(orphan))
+    assert(
+      messageOf(unconfiguredSort) == "java.lang.RuntimeException: Operator is not configured " +
+        "properly: requirement failed: Sort operator requires at least one sort key."
+    )
+    assert(messageOf(badProjection).contains("DoesNotExist"), messageOf(badProjection))
+    assert(failure.getMessage == messageListing(failure, 3, failing))
+    // The cause is the error of the operator listed first.
+    assert(failure.getCause.toString == messageOf(orphan), failure.getCause)
+    // The editing compile of the workflow shows its user the same errors.
+    val lenient = newCompiler().compile(workflow)
+    assert(
+      lenient.operatorIdToError.view.mapValues(_.message).toMap ==
+        failure.operatorErrors.view.mapValues(_.message).toMap
+    )
+  }
+
+  it should "make the error of the operator listed first the cause, whichever step found it" in {
+    // File resolution runs before expansion, so the scan's error is found before the Sort's; but
+    // the workflow has the Sort first, and so does the failure.
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val unconfiguredSort = sortOp()
+    val orphan = csvOpNoFile()
+
+    val failure = strictFailure(
+      pojo(List(csv, unconfiguredSort, orphan), List(linked(csv, unconfiguredSort)))
+    )
+
+    assert(
+      failure.operatorErrors.keys.toList ==
+        List(unconfiguredSort, orphan).map(_.operatorIdentifier)
+    )
+    assert(
+      failure.getCause.toString ==
+        failure.operatorErrors(unconfiguredSort.operatorIdentifier).message,
+      failure.getCause
+    )
+  }
+
+  it should "list the operators upstream first and name five, so a chain's cause comes first" in {
+    // A scan of a file that does not exist, and six Limits below it, which then get no schema:
+    // seven operators with errors, the cause of them all the most upstream. They are given to
+    // the compiler the other way round, so the order is the workflow's, not the order given.
+    val scan = csvOp("/does/not/exist/missing.csv")
+    val limits = List.fill(6)(limitOp(10))
+    val chained = scan :: limits
+
+    val failure = strictFailure(pojo(chained.reverse, chain(chained: _*)))
+
+    assert(failure.operatorErrors.keys.toList == chained.map(_.operatorIdentifier))
+    val scanError = failure.operatorErrors(scan.operatorIdentifier).message
+    assert(scanError.contains("missing.csv"), scanError)
+    limits.foreach { limit =>
+      assert(
+        failure.operatorErrors(limit.operatorIdentifier).message ==
+          s"${classOf[SchemaNotAvailableException].getName}: schema is not available"
+      )
+    }
+    assert(failure.getMessage == messageListing(failure, 7, chained.take(5)))
+    // The chain's cause is the failure's cause too.
+    assert(failure.getCause.toString == scanError, failure.getCause)
+  }
+
+  it should "make from a valid workflow the plan the editing compile makes" in {
+    // With nothing to pin, the two compiles differ only in what they do with errors, and here
+    // there are none: the plan to run is the plan compiled, whatever Strict does with errors.
+    val ops = List(
+      csvOp(TestOperators.CountrySalesSmallCsvPath),
+      projectOp(List("Region", "Total Profit")),
+      limitOp(10),
+      filterOp(new FilterPredicate("Total Profit", ComparisonType.GREATER_THAN, "10000")),
+      sortOp("Region" -> SortPreference.ASC)
+    )
+    val workflow = pojo(ops, chain(ops: _*))
+
+    val strict = newCompiler().compile(workflow, CompilationErrorHandling.Strict)
+    val lenient = newCompiler().compile(workflow)
+
+    assert(strict.operatorIdToError.isEmpty, s"unexpected errors: ${strict.operatorIdToError}")
+    assert(lenient.operatorIdToError.isEmpty, s"unexpected errors: ${lenient.operatorIdToError}")
+    assert(strict.operatorIdToOutputSchemas == lenient.operatorIdToOutputSchemas)
+    assert(strict.outputPortsNeedingStorage == lenient.outputPortsNeedingStorage)
+    assert(assertSavable(strict) == assertSavable(lenient))
   }
 
   // -------------------- datasets and models a UDF names --------------------
@@ -1127,69 +1284,119 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     val badProjection = projectOp(List("DoesNotExist"))
     val downstream = resourceTupleUdf()
 
-    val ex = intercept[Throwable] {
-      bindingCompiler(resolver).compile(
-        pojo(
-          List(csv, badProjection, downstream),
-          List(
-            LogicalLink(
-              csv.operatorIdentifier,
-              PortIdentity(0),
-              badProjection.operatorIdentifier,
-              PortIdentity(0)
-            ),
-            LogicalLink(
-              badProjection.operatorIdentifier,
-              PortIdentity(0),
-              downstream.operatorIdentifier,
-              PortIdentity(0)
-            )
+    val failure = strictFailure(
+      pojo(
+        List(csv, badProjection, downstream),
+        List(
+          LogicalLink(
+            csv.operatorIdentifier,
+            PortIdentity(0),
+            badProjection.operatorIdentifier,
+            PortIdentity(0)
+          ),
+          LogicalLink(
+            badProjection.operatorIdentifier,
+            PortIdentity(0),
+            downstream.operatorIdentifier,
+            PortIdentity(0)
           )
-        ),
-        CompilationErrorHandling.Strict
-      )
-    }
-    // Either schema error may be the one thrown, as the compiler meets the operators in no set
-    // order: the Projection's own, or the UDF's, whose input schema is then not available.
+        )
+      ),
+      bindingCompiler(resolver)
+    )
+    // Both schema errors, the Projection's own first: then the UDF's, whose input schema is not
+    // available.
     assert(
-      ex.isInstanceOf[SchemaNotAvailableException] ||
-        (ex.getMessage != null && ex.getMessage.contains("DoesNotExist")),
-      s"a schema error should be what fails the compile, got: $ex"
+      failure.operatorErrors.keys.toList ==
+        List(badProjection.operatorIdentifier, downstream.operatorIdentifier)
+    )
+    val projectionError = failure.operatorErrors(badProjection.operatorIdentifier).message
+    assert(projectionError.contains("DoesNotExist"), projectionError)
+    assert(
+      failure.operatorErrors(downstream.operatorIdentifier).message ==
+        s"${classOf[SchemaNotAvailableException].getName}: schema is not available"
     )
     assert(resolver.asked.isEmpty)
   }
 
-  it should "refuse a version the plan's user cannot read" in {
+  it should "refuse a version the plan's user cannot read, as the error of the UDF naming it" in {
     val resolver = new RecordingResolver(refused = Set(modelVersionPath))
+    val source = resourceSourceUdf()
 
-    val ex = intercept[FileNotFoundException] {
-      bindingCompiler(resolver).compile(
-        resourcePlan(resourceSourceUdf(), resourceTupleUdf()),
-        CompilationErrorHandling.Strict
-      )
+    val failure =
+      strictFailure(resourcePlan(source, resourceTupleUdf()), bindingCompiler(resolver))
+
+    // Only the source names the model.
+    val message = onlyErrorOf(failure, source)
+    assert(message.startsWith(classOf[FileNotFoundException].getName), message)
+    assert(message.contains(modelVersionPath), message)
+    assert(failure.getMessage == messageListing(failure, 1, List(source)))
+    assert(failure.getCause.isInstanceOf[FileNotFoundException], failure.getCause)
+    assert(failure.getCause.toString == message)
+  }
+
+  it should "throw, as it is, a failure of the lookup that is no error of the UDF's" in {
+    // A version that does not exist, or that the plan's user may not read, is the error of the
+    // UDF naming it. A database that does not answer is not: the compile fails with that failure
+    // itself, which names no operator, so it is not taken for the user's mistake.
+    val fault = new RuntimeException("the database did not answer")
+    val resolver: RepositoryVersionResolver = _ => throw fault
+
+    val thrown = intercept[RuntimeException] {
+      bindingCompiler(resolver)
+        .compile(pojo(List(resourceSourceUdf()), List.empty), CompilationErrorHandling.Strict)
     }
-    assert(ex.getMessage.contains(modelVersionPath), ex.getMessage)
+
+    assert(thrown eq fault, s"expected the resolver's own failure, got: $thrown")
+  }
+
+  it should "bind every operator, failing with each refused version as its operator's error" in {
+    // One refused version hides no other: each operator is bound by itself.
+    val resolver = new RecordingResolver(refused = Set(datasetVersionPath))
+    val source = resourceSourceUdf()
+    val downstream = resourceTupleUdf()
+
+    val failure = strictFailure(resourcePlan(source, downstream), bindingCompiler(resolver))
+
+    assert(failure.operatorErrors.keys.toList == List(source, downstream).map(_.operatorIdentifier))
+    failure.operatorErrors.foreach {
+      case (op, error) =>
+        assert(error.`type` == COMPILATION_ERROR)
+        assert(error.operatorId == op.id)
+        assert(error.message.startsWith(classOf[FileNotFoundException].getName), error.message)
+        assert(error.message.contains(datasetVersionPath), error.message)
+    }
+    // Each of the two asked for the version it names.
+    assert(resolver.asked.count(_ == datasetVersionPath) == 2, resolver.asked)
+    assert(failure.getMessage == messageListing(failure, 2, List(source, downstream)))
   }
 
   it should "fail, before resolving anything, when there is no mount root to write the code against" in {
     val resolver = new RecordingResolver
     val source = resourceSourceUdf()
 
-    val ex = intercept[IllegalStateException] {
-      bindingCompiler(resolver, mountRoot = None)
-        .compile(pojo(List(source), List.empty), CompilationErrorHandling.Strict)
-    }
-    assert(ex.getMessage.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), ex.getMessage)
-    assert(ex.getMessage.contains(source.operatorIdentifier.id), ex.getMessage)
+    val message = onlyErrorOf(
+      strictFailure(pojo(List(source), List.empty), bindingCompiler(resolver, mountRoot = None)),
+      source
+    )
+    assert(message.startsWith(classOf[IllegalStateException].getName), message)
+    assert(message.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), message)
+    assert(message.contains(source.operatorIdentifier.id), message)
     assert(resolver.asked.isEmpty)
   }
 
   it should "pin nothing unchecked when it is given the resolver for compiles that make no plan" in {
-    val ex = intercept[IllegalStateException] {
-      bindingCompiler(RepositoryVersionResolver.Unavailable)
-        .compile(pojo(List(resourceSourceUdf()), List.empty), CompilationErrorHandling.Strict)
-    }
-    assert(ex.getMessage.contains(datasetVersionPath), ex.getMessage)
+    val source = resourceSourceUdf()
+
+    val message = onlyErrorOf(
+      strictFailure(
+        pojo(List(source), List.empty),
+        bindingCompiler(RepositoryVersionResolver.Unavailable)
+      ),
+      source
+    )
+    assert(message.startsWith(classOf[IllegalStateException].getName), message)
+    assert(message.contains(datasetVersionPath), message)
   }
 
   "WorkflowCompiler" should
@@ -1359,10 +1566,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     // the rest of the plan still compiles: the operator has its schema
     assert(lenient.operatorIdToOutputSchemas(limit.operatorIdentifier).values.forall(_.isDefined))
 
-    val strict = intercept[IllegalArgumentException](
-      newCompiler().compile(twice, CompilationErrorHandling.Strict)
+    assert(
+      onlyErrorOf(strictFailure(twice), limit) == s"java.lang.IllegalArgumentException: $expected"
     )
-    assert(strict.getMessage == expected)
 
     // given once, it compiles to a plan that can be saved
     assertSavable(
@@ -1392,10 +1598,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       "Input port 0 of Python UDF depends on input port 3, which the operator does not have"
 
     assert(onlyErrorOf(newCompiler().compile(workflow), udf).contains(expected))
-    val strict = intercept[IllegalArgumentException](
-      newCompiler().compile(workflow, CompilationErrorHandling.Strict)
+    assert(
+      onlyErrorOf(strictFailure(workflow), udf) == s"java.lang.IllegalArgumentException: $expected"
     )
-    assert(strict.getMessage == expected)
   }
 
   // -------------------- loop-variable references --------------------
@@ -1487,10 +1692,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
     assert(result.physicalPlan.isEmpty)
     assert(onlyErrorOf(result, limit).contains(message))
-    val ex = intercept[IllegalArgumentException] {
-      newCompiler().compile(plan, CompilationErrorHandling.Strict)
-    }
-    assert(ex.getMessage == message)
+    assert(
+      onlyErrorOf(strictFailure(plan), limit) == s"java.lang.IllegalArgumentException: $message"
+    )
   }
 
   it should "find a '$i' literal on a descriptor built in Scala inside a loop block" in {
@@ -1668,11 +1872,17 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
           result.operatorIdToError.get(op.operatorIdentifier).exists(_.message.contains(message)),
           s"$name: ${result.operatorIdToError}"
         )
-        val ex = intercept[IllegalArgumentException] {
-          newCompiler()
-            .compile(insideLoopBlock(parsed(json)), CompilationErrorHandling.Strict)
-        }
-        assert(ex.getMessage == message, name)
+        val strictOp = parsed(json)
+        val strict = strictFailure(insideLoopBlock(strictOp)).operatorErrors
+        assert(
+          strict
+            .get(strictOp.operatorIdentifier)
+            .map(_.message)
+            .contains(
+              s"java.lang.IllegalArgumentException: $message"
+            ),
+          s"$name: $strict"
+        )
     }
   }
 

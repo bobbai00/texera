@@ -22,6 +22,7 @@ package org.apache.texera.common.compiler
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.{LazyLogging, Logger}
+import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.common.compiler.WorkflowCompiler.{
   collectOutputSchemaFromPhysicalPlan,
   convertErrorListToWorkflowFatalErrorMap,
@@ -59,6 +60,7 @@ import org.apache.texera.common.config.EnvironmentalVariable
 
 import java.nio.file.Path
 import java.time.Instant
+import scala.collection.immutable.VectorMap
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters.IteratorHasAsScala
@@ -242,7 +244,8 @@ case class WorkflowCompilationResult(
   * The single workflow compiler shared in-process by both compilation call sites:
   * workflow-compiling-service (editing path, [[CompilationErrorHandling.Lenient]] — accumulate
   * per-operator errors so the UI can render them, `physicalPlan = None` when any exist) and
-  * amber (execution path, [[CompilationErrorHandling.Strict]] — fail fast before a run).
+  * amber (execution path, [[CompilationErrorHandling.Strict]] — fail before a run, with every
+  * operator's error, as a [[WorkflowCompilationFailed]]).
   *
   * This module depends only on WorkflowOperator, so neither service leaks its HTTP stack into
   * the other; the engine `Workflow` wrapper stays in amber as a thin adapter over
@@ -305,19 +308,60 @@ class WorkflowCompiler(
       )
     }
 
-  private def bindPlanResources(plan: PhysicalPlan): PhysicalPlan =
+  /**
+    * Pins what the operators of `plan` name, as [[bindResources]] does, each operator by itself,
+    * so that every operator's binding error is found. An operator's own error -- a version that
+    * does not exist or that the plan's user may not read, or no mount root to write the code
+    * against -- leaves it as it was, and is appended to `errors`. Any other failure, such as the
+    * database not answering, is no error of the operator's, and is thrown as it is.
+    */
+  private def bindPlanResources(
+      plan: PhysicalPlan,
+      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
+  ): PhysicalPlan =
     plan.operators
       .filter(_.resourceBinding.isDefined)
-      .foldLeft(plan)((boundPlan, op) => boundPlan.setOperator(bindResources(op)))
+      .foldLeft(plan) { (boundPlan, op) =>
+        Try(bindResources(op)) match {
+          case Success(bound) => boundPlan.setOperator(bound)
+          // what bindResources throws for the operator itself
+          case Failure(error @ (_: FileNotFoundException | _: IllegalStateException)) =>
+            errors.append((op.id.logicalOpId, error))
+            boundPlan
+          case Failure(other) => throw other
+        }
+      }
 
   /**
-    * Expands the logical plan to a physical plan.
+    * Fails a Strict compile with `errors`: each operator's first, listed in the order of
+    * `logicalPlan`, an operator before those downstream of it, so that the cause of a chain of
+    * errors comes first. The error of the operator listed first is the failure's cause, so that
+    * a log of the failure shows where that error was thrown.
+    */
+  private def failWith(
+      logicalPlan: LogicalPlan,
+      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
+  ): Nothing = {
+    val position = logicalPlan.getTopologicalOpIds.asScala.zipWithIndex.toMap
+    val operatorErrors = convertErrorListToWorkflowFatalErrorMap(logger, errors.toList).toSeq
+      .sortBy { case (operator, _) => (position.getOrElse(operator, Int.MaxValue), operator.id) }
+    val failure = new WorkflowCompilationFailed(VectorMap.from(operatorErrors))
+    val (firstListed, _) = operatorErrors.head
+    errors
+      .collectFirst { case (operator, error) if operator == firstListed => error }
+      .foreach(cause => failure.initCause(cause))
+    throw failure
+  }
+
+  /**
+    * Expands the logical plan to a physical plan. An operator's error is appended to `errors`,
+    * and the expansion goes on with the operators after it.
     * @return the expanded physical plan and a set of output ports that need storage
     */
   private def expandLogicalPlan(
       logicalPlan: LogicalPlan,
       logicalOpsToViewResult: List[String],
-      errorList: Option[ArrayBuffer[(OperatorIdentity, Throwable)]]
+      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
   ): (PhysicalPlan, Set[GlobalPortIdentity]) = {
     val terminalLogicalOps = logicalPlan.getTerminalOperatorIds
     val logicalOpsNeedingStorage =
@@ -325,17 +369,13 @@ class WorkflowCompiler(
     var physicalPlan = PhysicalPlan(operators = Set.empty, links = Set.empty)
     val outputPortsNeedingStorage: mutable.HashSet[GlobalPortIdentity] = mutable.HashSet()
 
-    logicalPlan.getTopologicalOpIds.asScala.foreach(logicalOpId =>
+    logicalPlan.getTopologicalOpIds.asScala.foreach { logicalOpId =>
+      def report(error: Throwable): Unit = errors.append((logicalOpId, error))
       Try {
         val logicalOp = logicalPlan.getOperator(logicalOpId)
         val givenLinks = logicalPlan.getUpstreamLinks(logicalOp.operatorIdentifier)
         val upstreamLinks = givenLinks.distinct
 
-        def report(error: Throwable): Unit =
-          errorList match {
-            case Some(list) => list.append((logicalOpId, error))
-            case None       => throw error
-          }
         // A link given twice is still one link; expanded twice, each port it joins would list it
         // twice, and a plan to run lists each link once.
         givenLinks.diff(upstreamLinks).headOption.foreach { link =>
@@ -400,13 +440,10 @@ class WorkflowCompiler(
 
                 exceptionPattern.findFirstMatchIn(code).foreach { matchResult =>
                   val errorMessage = matchResult.group(1).trim
-                  val error =
+                  // Store the error and continue
+                  report(
                     new RuntimeException(s"Operator is not configured properly: $errorMessage")
-
-                  errorList match {
-                    case Some(list) => list.append((logicalOpId, error)) // Store error and continue
-                    case None       => throw error // Throw immediately if no error list is provided
-                  }
+                  )
                 }
               }
             }
@@ -428,16 +465,8 @@ class WorkflowCompiler(
                   )
               }
           }
-      } match {
-        case Success(_) =>
-
-        case Failure(err) =>
-          errorList match {
-            case Some(list) => list.append((logicalOpId, err))
-            case None       => throw err
-          }
-      }
-    )
+      }.failed.foreach(report)
+    }
     (physicalPlan, outputPortsNeedingStorage.toSet)
   }
 
@@ -446,62 +475,61 @@ class WorkflowCompiler(
     * errors (if any).
     *
     * @param logicalPlanPojo the POJO parsed from the workflow string provided by the user
-    * @param errorHandling   Lenient (editing-time, collect all errors) or Strict (pre-execution, throw)
+    * @param errorHandling   Lenient (editing-time: return every operator's errors) or Strict
+    *                        (pre-execution: throw them)
     * @return WorkflowCompilationResult, containing the logical plan, physical plan, output schemas per
     *         op, errors per op, and the output ports that need storage
+    * @throws WorkflowCompilationFailed if the compile is Strict and an operator has an error: with
+    *                                   each such operator's first error, upstream operators first.
+    *                                   A failure that is no operator's error, such as the database
+    *                                   not answering while a version is pinned, is thrown as it
+    *                                   is.
     */
   def compile(
       logicalPlanPojo: LogicalPlanPojo,
       errorHandling: CompilationErrorHandling = CompilationErrorHandling.Lenient
   ): WorkflowCompilationResult = {
-    // Lenient collects into a buffer; Strict passes None so the first error is thrown.
-    val errorList: Option[ArrayBuffer[(OperatorIdentity, Throwable)]] =
-      errorHandling match {
-        case CompilationErrorHandling.Lenient =>
-          Some(new ArrayBuffer[(OperatorIdentity, Throwable)]())
-        case CompilationErrorHandling.Strict => None
-      }
+    // Every step below appends an operator's error here and goes on with the other operators, so
+    // that a compile finds them all: Lenient returns them, Strict throws them together.
+    val errors = new ArrayBuffer[(OperatorIdentity, Throwable)]()
 
     // 1. convert the pojo to logical plan
     val logicalPlan: LogicalPlan = LogicalPlan(logicalPlanPojo)
 
     // 2. resolve the file name in each scan source operator
-    logicalPlan.resolveScanSourceOpFileName(fileResolver, errorList)
+    logicalPlan.resolveScanSourceOpFileName(fileResolver, Some(errors))
 
     // 3. expand the logical plan to the physical plan, and get the output ports that need storage
     val (expandedPlan, outputPortsNeedingStorage) =
-      expandLogicalPlan(logicalPlan, logicalPlanPojo.opsToViewResult, errorList)
+      expandLogicalPlan(logicalPlan, logicalPlanPojo.opsToViewResult, errors)
 
     // 4. collect the output schema for each logical op
     // even if an error is encountered during logical => physical expansion, we still want to
-    // collect the output schemas of the remaining no-error operators. In Lenient mode
-    // schema-propagation failures land in
-    // the shared buffer alongside the other errors; in Strict mode they must fail fast too (e.g. a
-    // Projection on a missing column would otherwise be launched and only fail at runtime).
-    val schemaErrorList = errorList.getOrElse(new ArrayBuffer[(OperatorIdentity, Throwable)]())
-    val opIdToOutputSchema = collectOutputSchemaFromPhysicalPlan(expandedPlan, schemaErrorList)
-    if (errorHandling == CompilationErrorHandling.Strict && schemaErrorList.nonEmpty) {
-      throw schemaErrorList.head._2
-    }
+    // collect the output schemas of the remaining no-error operators. Schema-propagation failures
+    // are errors of their operators too (e.g. a Projection on a missing column, which would
+    // otherwise be launched and only fail at runtime).
+    val opIdToOutputSchema = collectOutputSchemaFromPhysicalPlan(expandedPlan, errors)
 
-    // 5. a plan made to run pins the datasets and models its operators name, last, once the
-    // plan is otherwise valid: the engine is handed the final code and the repositories to
-    // mount, never a binding. The editing path leaves the bindings alone.
     val physicalPlan = errorHandling match {
-      case CompilationErrorHandling.Strict  => bindPlanResources(expandedPlan)
-      case CompilationErrorHandling.Lenient => expandedPlan
+      case CompilationErrorHandling.Lenient =>
+        // The editing path leaves the bindings alone.
+        expandedPlan
+      case CompilationErrorHandling.Strict =>
+        if (errors.nonEmpty) failWith(logicalPlan, errors)
+        // 5. a plan made to run pins the datasets and models its operators name, last, once the
+        // plan is otherwise valid: the engine is handed the final code and the repositories to
+        // mount, never a binding.
+        val boundPlan = bindPlanResources(expandedPlan, errors)
+        if (errors.nonEmpty) failWith(logicalPlan, errors)
+        boundPlan
     }
 
-    val hasErrors = errorList.exists(_.nonEmpty)
     WorkflowCompilationResult(
       logicalPlan = logicalPlan,
-      physicalPlan = if (hasErrors) None else Some(physicalPlan),
+      physicalPlan = if (errors.nonEmpty) None else Some(physicalPlan),
       operatorIdToOutputSchemas = opIdToOutputSchema,
       // map each error from OpId to WorkflowFatalError, and report them via logger
-      operatorIdToError = convertErrorListToWorkflowFatalErrorMap(
-        logger,
-        errorList.map(_.toList).getOrElse(List.empty)
-      ),
+      operatorIdToError = convertErrorListToWorkflowFatalErrorMap(logger, errors.toList),
       outputPortsNeedingStorage = outputPortsNeedingStorage
     )
   }

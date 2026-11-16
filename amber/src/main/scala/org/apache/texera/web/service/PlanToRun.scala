@@ -53,14 +53,16 @@ object PlanToRun {
     * Makes, from `logicalPlan`, the plan to run for the run `compiler` was made for, and saves it.
     *
     * The run is the compiler's context: its ids stamp every operator, and the plan is saved with
-    * its settings, warehouse and cost hints. The compile is Strict: a workflow with an error
-    * fails here, and nothing is saved. It pins the datasets and models the operators name, and
-    * finds the output ports whose results are stored, which are saved with the settings. The
-    * run's context is left as it is; the engine takes the settings and cost hints from the saved
-    * plan. The plan saved replays nothing, writes no replay log and reads no input.
+    * its settings, warehouse and cost hints. The compile is Strict: a workflow with errors fails
+    * here, with each operator's first error, and nothing is saved. It pins the datasets and
+    * models the operators name, and finds the output ports whose results are stored, which are
+    * saved with the settings. The run's context is left as it is; the engine takes the settings
+    * and cost hints from the saved plan. The plan saved replays nothing, writes no replay log and
+    * reads no input.
     *
     * @param compiler the run's compiler: it resolves files, datasets and models as the run's user
     *                 may, and writes code against the mount root of the unit the run is on
+    * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors
     * @throws IllegalArgumentException if the run's settings send batches of fewer than one tuple,
     *                                  or its cost hints are not ones a plan is saved with: from
     *                                  an execution whose id is below 1, for an operator with no

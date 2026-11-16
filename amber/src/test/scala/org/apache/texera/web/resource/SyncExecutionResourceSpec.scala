@@ -1207,9 +1207,10 @@ class SyncExecutionResourceSpec
       result.errors.getOrElse(fail("expected the fatal compilation error to be reported"))
     errors should have size 1
     // The fatal error is rendered as "<type>: <message>"; dropping the type loses the only
-    // machine-readable part of it.
-    errors.head should startWith("EXECUTION_FAILURE: ")
-    errors.head should include("No file selected")
+    // machine-readable part of it. A plan that does not compile is reported as the editing
+    // compile reports it: each operator's own error, a COMPILATION_ERROR.
+    errors.head shouldBe "COMPILATION_ERROR: java.lang.RuntimeException: No file selected. " +
+      "Please select a file from the 'File' dropdown in the right panel."
 
     // The requested target is still reported, with no stats, so the caller learns which operator
     // it asked about rather than getting an empty map.

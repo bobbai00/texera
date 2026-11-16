@@ -56,7 +56,10 @@ import org.apache.texera.amber.core.workflow.{
   WorkflowContext,
   WorkflowSettings
 }
-import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
+  COMPILATION_ERROR,
+  EXECUTION_FAILURE
+}
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{
   CoordinatorConfig,
@@ -102,7 +105,7 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
-import org.apache.texera.common.compiler.WorkflowCompiler
+import org.apache.texera.common.compiler.{WorkflowCompilationFailed, WorkflowCompiler}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.apache.texera.web.model.websocket.request.{ModifyLogicRequest, WorkflowExecuteRequest}
@@ -145,7 +148,8 @@ import scala.util.Try
   *     through `errorHandler`) with a CSV scan that has no file selected -- the
   *     recipe `SyncExecutionResourceSpec` establishes and `WorkflowServiceSpec`
   *     reuses. Compilation rejects it inside `LogicalPlan.resolveScanSourceOpFileName`
-  *     before `FileResolver` is reached, so no storage is involved, and the early
+  *     before `FileResolver` is reached, and again where its schema needs the file it does
+  *     not have, before any file is opened, so no storage is involved, and the early
   *     `return` stops the method before `ComputingUnitMaster.createAmberRuntime`,
   *     which would build an `AmberClient` on `AmberRuntime.actorSystem` -- null
   *     outside a started coordinator, and whatever another suite left behind inside
@@ -232,6 +236,10 @@ class WorkflowExecutionServiceSpec
 
   /** The directory the computing unit of the runs below mounts datasets and models under. */
   private val unitMountRoot = Paths.get("/mnt/texera-mounts")
+
+  /** The error a scan with no file chosen fails to compile with. */
+  private val noFileSelected =
+    "No file selected. Please select a file from the 'File' dropdown in the right panel."
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
@@ -760,17 +768,57 @@ class WorkflowExecutionServiceSpec
     noException should be thrownBy { setupFailure = service.executeWorkflow() }
 
     // The compilation failure is returned (not thrown) so the caller can record it on the
-    // still-open setup span, on top of reaching the UI through errorHandler.
-    setupFailure.map(_.getMessage).getOrElse("") should include("No file selected")
+    // still-open setup span, on top of reaching the UI through errorHandler: one failure, which
+    // names the operator with its error.
+    val failure = setupFailure.getOrElse(fail("the run was set up"))
+    failure shouldBe a[WorkflowCompilationFailed]
+    failure.asInstanceOf[WorkflowCompilationFailed].operatorErrors.keySet shouldBe
+      Set(OperatorIdentity("scan-op"))
+    failure.getMessage shouldBe
+      "The workflow does not compile: 1 operator has an error.\n" +
+        s"scan-op: java.lang.RuntimeException: $noFileSelected"
 
-    errors should have size 1
-    errors.head.getMessage should include("No file selected")
+    errors shouldBe Seq(failure)
     // Documentation, not a pin: both fields are still at their `_` defaults on this path, because
     // the only assignments to them sit after the throw and after the `return`. Neither assertion
-    // can fail while the two above hold -- they record the post-condition the early return leaves
+    // can fail while those above hold -- they record the post-condition the early return leaves
     // behind, and they are the suite's only read of `workflow`.
     service.workflow shouldBe null
     service.client shouldBe null
+  }
+
+  it should "send one error event with every operator's compile error, each on its operator" in {
+    val store = new ExecutionStateStore()
+    // As WorkflowService's errorHandler records a failure no worker raised.
+    val recordError: Throwable => Unit = t =>
+      store.metadataStore.updateState(metadataStore =>
+        updateWorkflowState(FAILED, metadataStore)
+          .addAllFatalErrors(WorkflowService.fatalErrorsOf(t, "unknown operator", ""))
+      )
+    val scans = List("scan-a", "scan-b").map { id =>
+      val scan = new CSVScanSourceOpDesc() // no file chosen
+      scan.setOperatorId(id)
+      scan
+    }
+    val service =
+      buildService(store, recordError, LogicalPlanPojo(scans, List.empty, List.empty, List.empty))
+    val events = collectEvents(store)
+
+    service.executeWorkflow().getOrElse(fail("the run was set up")) shouldBe
+      a[WorkflowCompilationFailed]
+
+    // The errors the editing compile shows, in the workflow's order: each names its operator,
+    // which the UI shows it on, and holds that operator's stack trace.
+    val errorEvents = events.collect { case e: WorkflowErrorEvent => e }
+    errorEvents should have size 1
+    errorEvents.head.fatalErrors.map(error =>
+      (error.`type`, error.operatorId, error.message)
+    ) shouldBe
+      Seq(
+        (COMPILATION_ERROR, "scan-a", s"java.lang.RuntimeException: $noFileSelected"),
+        (COMPILATION_ERROR, "scan-b", s"java.lang.RuntimeException: $noFileSelected")
+      )
+    all(errorEvents.head.fatalErrors.map(_.details)) should include("resolveScanSourceOpFileName")
   }
 
   it should "shut the client down and unsubscribe every runtime service on teardown" in {
@@ -879,11 +927,18 @@ class WorkflowExecutionServiceSpec
     try {
       val setupFailure = run.service.executeWorkflow()
 
-      // The read check's refusal, which reads as if the version did not exist; reported like any
-      // other compile failure, with no engine built.
-      setupFailure.getOrElse(fail("the run was set up")) shouldBe a[FileNotFoundException]
-      setupFailure.get.getMessage should include(unreadableVersionPath)
-      run.errors shouldBe Seq(setupFailure.get)
+      // The read check's refusal, which reads as if the version did not exist: the error of the
+      // UDF that names it, reported like any other compile failure, with no engine built.
+      val failure = setupFailure.getOrElse(fail("the run was set up"))
+      failure shouldBe a[WorkflowCompilationFailed]
+      val operatorErrors = failure.asInstanceOf[WorkflowCompilationFailed].operatorErrors
+      operatorErrors.keySet shouldBe Set(OperatorIdentity(udfId))
+      operatorErrors(OperatorIdentity(udfId)).message should startWith(
+        s"${classOf[FileNotFoundException].getName}: "
+      )
+      operatorErrors(OperatorIdentity(udfId)).message should include(unreadableVersionPath)
+      failure.getMessage should include(s"$udfId: ${classOf[FileNotFoundException].getName}: ")
+      run.errors shouldBe Seq(failure)
       run.service.workflow shouldBe null
       run.service.client shouldBe null
     } finally run.close()

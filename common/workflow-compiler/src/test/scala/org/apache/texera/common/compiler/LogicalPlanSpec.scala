@@ -506,13 +506,14 @@ class LogicalPlanSpec extends AnyFlatSpec {
   //
   // How a name becomes a URI is the resolver's business, passed in by the caller;
   // here it is the fixture resolver, which knows local files. The method has two
-  // failure modes, both used in production:
+  // failure modes:
   //   1. Some(errorList) — every failing operator is appended to errorList by
-  //      opId and resolution CONTINUES (collect-all). Used by the editing-path
-  //      compiler in workflow-compiling-service so the UI can surface every
-  //      bad operator at once.
-  //   2. None — the first failure rethrows (fail-fast). Used by the amber
-  //      WorkflowCompiler on the execution path, right before a run.
+  //      opId and resolution CONTINUES (collect-all). What WorkflowCompiler passes
+  //      in both modes: the editing compile returns every bad operator's error so
+  //      the UI can surface them at once, and the compile before a run throws them
+  //      together.
+  //   2. None — the first failure rethrows (fail-fast). No compile uses it; it is
+  //      left for a direct caller that wants the first failure only.
   // To force a failure deterministically, we point a ScanSource fixture at a
   // non-existent file and assert the error surfaces both ways.
 

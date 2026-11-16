@@ -19,6 +19,7 @@
 
 package org.apache.texera.web.service
 
+import com.google.protobuf.timestamp.{Timestamp => ProtoTimestamp}
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.texera.amber.core.storage.result.{OperatorResultMetadata, WorkflowResultStore}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -27,6 +28,11 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{CostHints, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
+  COMPILATION_ERROR,
+  EXECUTION_FAILURE
+}
+import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
   COMPLETED,
@@ -34,7 +40,9 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   RUNNING
 }
 import org.apache.texera.amber.engine.common.Utils
+import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.common.compiler.WorkflowCompilationFailed
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -75,7 +83,9 @@ import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
+import scala.collection.immutable.VectorMap
 import scala.collection.mutable.ArrayBuffer
 
 /**
@@ -727,6 +737,10 @@ class WorkflowServiceSpec
     val fatalErrors = execution.executionStateStore.metadataStore.getState.fatalErrors
     fatalErrors should have size 1
     fatalErrors.head.message should include("No file selected")
+    // The run's error handler records it as the editing compile reports it: the scan's own error,
+    // on the scan, so the UI shows it there.
+    fatalErrors.head.`type` shouldBe COMPILATION_ERROR
+    fatalErrors.head.operatorId shouldBe "scan-op"
 
     // The clean-up deadline is armed, with this execution's own store. Nothing else in the method
     // touches `lifeCycleManager`, so without this the one statement that wires deferred clean-up
@@ -924,5 +938,40 @@ class WorkflowServiceSpec
     stateId should include("42")
     stateId shouldBe WorkflowService.mkWorkflowStateId(WorkflowIdentity(42L))
     stateId should not be WorkflowService.mkWorkflowStateId(WorkflowIdentity(43L))
+  }
+
+  "WorkflowService.fatalErrorsOf" should
+    "report a workflow that does not compile as each operator's error, in the order it holds them" in {
+    // Not in the order of the operators' ids: a compile lists them upstream first.
+    def compileError(operator: String): (OperatorIdentity, WorkflowFatalError) =
+      OperatorIdentity(operator) -> WorkflowFatalError(
+        COMPILATION_ERROR,
+        ProtoTimestamp(Instant.ofEpochSecond(1)),
+        s"java.lang.RuntimeException: error of $operator",
+        s"stack of $operator",
+        operator
+      )
+    val operatorErrors = VectorMap(compileError("scan-b"), compileError("scan-a"))
+
+    // The operator and worker given are those of a failure no worker raised.
+    WorkflowService.fatalErrorsOf(
+      new WorkflowCompilationFailed(operatorErrors),
+      "unknown operator",
+      ""
+    ) shouldBe operatorErrors.values.toSeq
+  }
+
+  it should "report any other failure as one error, with its text and every cause's trace" in {
+    val failure = new RuntimeException("outer", new IllegalStateException("inner"))
+
+    val reported = WorkflowService.fatalErrorsOf(failure, "op-1", "worker-1")
+
+    reported should have size 1
+    reported.head.`type` shouldBe EXECUTION_FAILURE
+    reported.head.message shouldBe "java.lang.RuntimeException: outer"
+    reported.head.details shouldBe getStackTraceWithAllCauses(failure)
+    reported.head.details should include("java.lang.IllegalStateException: inner")
+    reported.head.operatorId shouldBe "op-1"
+    reported.head.workerId shouldBe "worker-1"
   }
 }

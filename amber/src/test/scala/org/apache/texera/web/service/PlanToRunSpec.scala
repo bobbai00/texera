@@ -33,7 +33,11 @@ import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.apache.texera.common.compiler.{
+  CompilationErrorHandling,
+  WorkflowCompilationFailed,
+  WorkflowCompiler
+}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -164,14 +168,15 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     made.map(_.savedPlan).distinct should have size 1
   }
 
-  it should "fail on a workflow that does not compile, saving nothing" in {
+  it should "fail with each operator's error on a workflow that does not compile" in {
     val scan = new CSVScanSourceOpDesc() // no file chosen
 
-    val failure = intercept[Throwable] {
+    val failure = intercept[WorkflowCompilationFailed] {
       PlanToRun.make(newCompiler(newContext()), pojo(List(scan), List.empty))
     }
 
-    failure.getMessage should include("No file selected")
+    failure.operatorErrors.keySet shouldBe Set(scan.operatorIdentifier)
+    failure.operatorErrors(scan.operatorIdentifier).message should include("No file selected")
   }
 
   it should "refuse a run whose batches hold no tuple, in the words of the editor's setting" in {

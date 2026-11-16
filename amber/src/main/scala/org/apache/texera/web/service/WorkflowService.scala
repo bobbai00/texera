@@ -61,11 +61,12 @@ import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
-import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
+import org.apache.texera.web.service.WorkflowService.{fatalErrorsOf, mkWorkflowStateId}
 import org.apache.texera.web.service.execution.CostHintsLoader
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
+import org.apache.texera.common.compiler.WorkflowCompilationFailed
 import org.apache.texera.common.compiler.model.LogicalPlan
 import play.api.libs.json.Json
 
@@ -120,6 +121,33 @@ object WorkflowService {
       row.getLakekeeperWarehouseName
     })
   }
+
+  /**
+    * What a run that failed with `failure` reports, as its error handler records it. A workflow
+    * that does not compile reports each operator's error as the editing compile reports it, in
+    * the order of the workflow, so the UI shows each error on its operator. Any other failure is
+    * one error, of the operator and worker given when a worker raised it.
+    */
+  private[service] def fatalErrorsOf(
+      failure: Throwable,
+      operatorId: String,
+      workerId: String
+  ): Seq[WorkflowFatalError] =
+    failure match {
+      case compileFailure: WorkflowCompilationFailed => compileFailure.operatorErrors.values.toSeq
+      case other =>
+        Seq(
+          WorkflowFatalError(
+            EXECUTION_FAILURE,
+            Timestamp(Instant.now),
+            other.toString,
+            getStackTraceWithAllCauses(other),
+            operatorId,
+            workerId
+          )
+        )
+    }
+
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
   def getAllWorkflowServices: Iterable[WorkflowService] = workflowServiceMapping.values().asScala
@@ -342,16 +370,8 @@ class WorkflowService(
             stats.withEndTimeStamp(System.currentTimeMillis())
           )
           executionStateStore.metadataStore.updateState { metadataStore =>
-            updateWorkflowState(FAILED, metadataStore).addFatalErrors(
-              WorkflowFatalError(
-                EXECUTION_FAILURE,
-                Timestamp(Instant.now),
-                t.toString,
-                getStackTraceWithAllCauses(t),
-                operatorId,
-                workerId
-              )
-            )
+            updateWorkflowState(FAILED, metadataStore)
+              .addAllFatalErrors(fatalErrorsOf(t, operatorId, workerId))
           }
         }
       }
