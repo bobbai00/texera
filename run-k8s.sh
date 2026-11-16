@@ -86,10 +86,12 @@ echo "[run-k8s] clean start: removing any previous deployment"
 echo "[run-k8s] deploying images $images"
 deployed=true
 mkdir -p "$logs"
-{   # what ran: the harness commit and any uncommitted change in it
-    echo "harness: $(git -C "$SCE_HOME" rev-parse HEAD 2>/dev/null || echo 'not a git checkout')"
-    git -C "$SCE_HOME" status --porcelain 2>/dev/null
-} > "$logs/harness-git.txt"
+# What ran: the harness commit and any uncommitted change in it. A `git archive` copy has
+# no .git; it can name its commit in .harness-commit.
+commit="$(git -C "$SCE_HOME" rev-parse HEAD 2>/dev/null || cat "$SCE_HOME/.harness-commit" 2>/dev/null \
+    || echo 'unknown (not a git checkout)')"
+changes="$(git -C "$SCE_HOME" status --porcelain 2>/dev/null || true)"
+printf 'harness: %s\n%s\n' "$commit" "$changes" > "$logs/harness-git.txt"
 if ! "$K8S" ${source_args[@]+"${source_args[@]}"} up --images "$images" --port "$port" \
         ${up_args[@]+"${up_args[@]}"}; then
     echo "[run-k8s] the deployment did not come up" >&2
