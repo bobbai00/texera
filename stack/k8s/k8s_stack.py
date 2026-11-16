@@ -1129,6 +1129,11 @@ def cmd_follow_units(a) -> None:
             if key in followers or not started:
                 continue
             f = open(out / f"{key}.log", "a")
+            cs = ((pod.get("status") or {}).get("containerStatuses") or [{}])[0]
+            f.write(f"# {uns}/{name} image={pod['spec']['containers'][0].get('image')} "
+                    f"imageID={cs.get('imageID')} node={pod['spec'].get('nodeName')} "
+                    f"labels={pod['metadata'].get('labels')}\n")
+            f.flush()
             followers[key] = subprocess.Popen(
                 ["kubectl", "--context", CONTEXT, "-n", uns, "logs", "-f", name, "-c", UNIT_CONTAINER],
                 stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)

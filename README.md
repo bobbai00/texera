@@ -497,3 +497,172 @@ starts from empty volumes.
   upstream behavior in the published images, not something the harness
   introduces. The harness turns it into a fast FAIL, as described under the
   transport seam above.
+
+## Kubernetes mode: `stack/k8s-stack.sh` and `run-k8s.sh`
+
+The same scenarios against a real Kubernetes deployment: OrbStack's cluster (kube
+context `orbstack`), Texera installed from a worktree's Helm chart (`bin/k8s`) with the
+images under test, the browser's path through Envoy Gateway (ext-authz to
+access-control-service, then dynamic routing to the unit pod), and a computing unit
+that the driver creates through computing-unit-managing-service, as the frontend does.
+
+```
+./run-k8s.sh --images sce/step1 --source <worktree>    # clean namespace, deploy, a-e and u, logs, down
+./run-k8s.sh --source <worktree>                       # the published images, same chart
+stack/k8s-stack.sh --source <worktree> up --images sce/step1   # deploy only: http://127.0.0.1:30080
+driver/run.sh --target k8s [--scenario a,d]            # against it
+stack/k8s-stack.sh down
+```
+
+Never start, stop or reconfigure OrbStack's Kubernetes from a script: toggling it
+restarts Docker and every container on the machine. `up` only checks that the context
+answers.
+
+### What `up` does
+
+1. Copies `<source>/bin/k8s` to `stack/k8s/generated/chart/`, dereferencing symlinks so
+   `files/*.sql` carry the worktree's `sql/` DDL, and resolves the subcharts there with
+   `helm dependency update`. The result is cached in `generated/deps-cache/`, keyed by
+   Chart.yaml's dependency list. The repository's `Chart.lock` still lists minio where
+   `Chart.yaml` has rustfs, so `helm dependency build` (what `bin/k8s/install.sh` runs)
+   fails. The worktree is never written to.
+2. Writes `generated/values-sce.yaml`, layered after the chart's `values-development.yaml`
+   (`--profile default` drops that layer):
+   - `texera.imageRegistry` and `texera.imageTag` from `--images`. They name every Texera
+     service and `KUBERNETES_IMAGE_NAME`, the image the managing service starts units from;
+   - pull policy `Never` for a local registry (`sce`), `IfNotPresent` otherwise, for the
+     services and, through `KUBERNETES_IMAGE_PULL_POLICY`, the unit pods. OrbStack's
+     cluster runs on Docker's image store, so the local tags are already there;
+   - units in `<namespace>-units` (`workflowComputingUnitPool.namespace`);
+   - agent-service, LiteLLM, notebook migration (and its Jupyter pool) and the example
+     data loader turned off;
+   - the workarounds listed below.
+3. Renders the chart into `generated/rendered.yaml`, checks that every Texera image is in
+   the local Docker store and that units would start from `--images`, and writes
+   `generated/MANIFEST.json`: source commit, resolved subcharts, image IDs, values files,
+   workarounds.
+4. Preflight. The context must answer. No other Envoy Gateway controller may run (see
+   below). GatewayClass `eg` must not belong to another release. Neither namespace may
+   exist. The port must be free.
+5. `helm install texera` into the namespace (default `sce-k8s`). Then waits for every
+   Deployment, StatefulSet and DaemonSet and for the lakeFS and Lakekeeper init Jobs,
+   and fails fast on image errors, a failed Job or a crash loop. The y-websocket and
+   Python language servers are not waited for: the chart has no switch for them, and
+   they are not on a run's path.
+6. Exposes the gateway on `127.0.0.1:<port>` (default 30080) and checks that every
+   backend answers through Envoy: `/api/healthcheck` 200 from the webserver, and any
+   status but Envoy's 502/503/504 from config-service, the managing service, file-service
+   and the compiling service.
+
+`down` deletes the Gateway and GatewayClass while the release's Envoy Gateway still
+runs, uninstalls the release, and deletes both namespaces without waiting out pod grace
+periods. That removes any unit pod and the PVCs, and local-path deletes their volumes.
+It also removes the cluster-scoped objects Helm leaves behind: the Envoy Gateway
+subchart's hook ClusterRole, ClusterRoleBinding and topology webhook, all named after
+the namespace. A full `down` takes about 20 s. Other commands: `status`,
+`logs <alias|deploy/name|unit|unit-<cuid>|envoy>`, `port-forward start|stop|status`,
+`collect-logs <dir>` and `follow-units <dir>`.
+
+### The gateway on 127.0.0.1
+
+OrbStack does not publish Services on the Mac (`k8s.expose_services` is off), so the
+gateway is forwarded. The default, `--forward relay`, is `stack/k8s/gateway_relay.py`: a
+TCP relay to the envoy Service's ClusterIP, which OrbStack routes from macOS.
+`kubectl port-forward` (`--forward kubectl`) is the fallback, and `up` switches to it
+when the ClusterIP is unreachable. It is not the default because it exits ("lost
+connection to pod") as soon as Envoy resets any one forwarded connection, and the end
+of every workflow websocket does that. In the first trial, every scenario after the first
+failed with "connection refused".
+
+The relay runs under `/usr/bin/python3`. macOS's Local Network privacy check refuses
+192.168.x.x to the harness venv's ad-hoc-signed Python (`EHOSTUNREACH`, "No route to
+host") but not to Apple-signed binaries such as `/usr/bin/python3` and `curl`. The same
+check is a likely cause of the earlier note that Bun could not reach the LoadBalancer IP.
+
+### The driver in Kubernetes mode
+
+`driver/run.sh --target k8s` (or `--unit-kind kubernetes` with any `--base`; `--base`
+defaults to the manifest's gateway URL). The code is in `driver/k8s_unit.py`; `e2e.py`
+only calls it.
+
+1. Setup is the same as in single-node: log in, upload the dataset, create the warehouse.
+2. Instead of the local unit row, the driver:
+   - checks `GET /api/computing-unit/types` offers `kubernetes` and reads `/limits`;
+   - terminates leftover units named `sce-e2e-k8s-*`;
+   - calls `POST /api/computing-unit/create` with
+     `{unitType: "kubernetes", cpuLimit, memoryLimit, gpuLimit, jvmMemorySize: "1G",
+     shmSize: "64Mi"}`. These are the frontend's defaults: the first CPU and memory option
+     offered, GPU 0. `--k8s-unit-*` overrides them.
+3. Polls `GET /api/computing-unit/{cuid}` until `Running`. `Failed` and `Unknown` fail at
+   once, with the status reason. Then it opens the workflow websocket through the
+   gateway until the unit answers the handshake: the pod reports Running before its JVM
+   listens, so for the first second or two Envoy answers 503.
+4. The scenarios select that unit exactly as single-node selects the local one: the
+   websocket's `cuid=` and `computingUnitId`.
+5. At the end it calls `DELETE /api/computing-unit/{cuid}/terminate`, also from an atexit
+   hook if the driver dies; `--keep-unit` skips this. `run-k8s.sh` then checks that the
+   pod is gone.
+
+The report gains `target` and `setup.kubernetes_unit`: the request, the status history,
+the seconds to Running and to answering, the gateway probe and the termination.
+`run-k8s.sh` writes `reports/k8s-<time>.json` and `reports/k8s-<time>-logs/`. The logs
+directory holds every container's log (previous instances too), descriptions, events,
+the gateway objects, the release's values, `harness-git.txt`, and `units/`, the unit
+pods' logs streamed while they live (a terminated unit's pod is deleted).
+
+### Workarounds and choices (each recorded in MANIFEST.json)
+
+| What | Why | Upstream? |
+|---|---|---|
+| `STORAGE_S3_ENDPOINT=http://texera-rustfs-svc:9000` added through `texeraEnvVars` | The chart's webserver Deployment sets no `STORAGE_S3_*`, so `POST /api/warehouse` builds per-user Lakekeeper warehouses on storage.conf's `http://localhost:9000`. `texeraEnvVars` is the only values hook that reaches the webserver. The chart's other S3 values already equal storage.conf's defaults. Step 2 sub-part 7 fixes this; the step-1 chart does not have the fix. `up` adds the variable only when the webserver template lacks it, and `--no-workarounds` turns it off | chart bug |
+| `helm install --server-side=false` | A consequence of the row above: file-service and the managing service now list `STORAGE_S3_ENDPOINT` twice (same value), and Helm 4's default server-side apply rejects duplicate keys | no |
+| `helm dependency update` in a scratch copy | `Chart.lock` is out of sync with `Chart.yaml` | chart bug |
+| Release name `texera` | `gateway-routes.yaml` points the dynamic route at Backend `texera-dynamic-backend`, whatever the release is called, and the values hard-code `texera-postgresql` and `texera-rustfs-svc` | chart limitation |
+| No other Envoy Gateway in the cluster | The `gateway-helm` dependency has no `condition`, so the chart always installs a controller, and two controllers both reconcile GatewayClass `eg`. The earlier proof's release `eg` (namespace envoy-gateway-system) was uninstalled on 2026-11-16 for this reason. `up` refuses to run beside another controller and never touches it | chart limitation |
+| Gateway and GatewayClass deleted before `helm uninstall` | Envoy Gateway puts a finalizer on GatewayClass `eg`. Once its controller is uninstalled, nothing removes the finalizer and the class hangs in Terminating, which blocks the next install. This happened in the first trial; `up` and `down` now also clear such a finalizer when the class is this release's | ordering of chart parts |
+| Optional services off | Not on a run's path, and memory: the Docker VM's 8 GB is shared with the single-node stack | no |
+
+Like single-node, the unit logs a warning when it reads a dataset: the presigned URL
+from lakeFS points at `localhost:31000` (the chart's `pre_signed_endpoint`), which a pod
+cannot reach, so it falls back to a direct lakeFS fetch.
+
+### Verified
+
+2026-11-16, OrbStack Kubernetes v1.33.9 (one node, 10 CPU, 8 GB shared with Docker),
+Helm v4.2.0. Chart and DDL from `sce-imgbuild` at the Step 1 commit `5e85a37de`. The
+harness ran from a `git archive` copy of `3b28d86`, so the evidence is tied to a commit
+(the driver was being edited at the time). Each run started from no namespace and ended
+with `down`.
+
+| Report (`reports/`) | Images | Result | Notes |
+|---|---|---|---|
+| `k8s-20261116T101706Z` | `sce/texera-*:step1` | a b c d e u PASS, 49/49 checks | `up` 124 s; unit Running 2.6 s after create, answering through the gateway at 5.3 s; `down` 22 s |
+| `k8s-20261116T102034Z` | `sce/texera-*:step1` | a b c d e u PASS, 49/49 checks | `up` 75 s; unit 2.5 s / 5.2 s; `down` 21 s |
+| `k8s-20261116T102304Z` | `ghcr.io/apache/texera-*:latest` (published) | a b c d e u PASS, 49/49 checks | `up` 77 s; unit 2.5 s / 5.1 s; `down` 19 s |
+| `k8s-20261116T102547Z` | `sce/texera-*:step1`, `--no-workarounds` | setup FAIL (control) | `POST /api/warehouse` -> 502: `Lakekeeper create warehouse 'user-1-1' failed (HTTP 400): ... "Failed to decompress file: Failed to finish decompressing file: invalid gzip header", "type": "FileDecompressionError"` |
+| `k8s-20261116T102748Z` | published, `--no-workarounds` | setup FAIL (control) | the same error |
+
+What the runs establish:
+
+- The chart deploys as it is, with Helm 4's server-side apply (the control runs). With the
+  S3 workaround it deploys with client-side apply.
+- Every Texera service and every unit pod ran the requested image. The kubelet events
+  show `Container image "sce/texera-workflow-execution-coordinator:step1" already
+  present` for `computing-unit-1`, and the manager's `KUBERNETES_IMAGE_NAME` names that
+  image. The logs directories hold both.
+- Every workflow websocket went through ext-authz. access-control-service logged
+  `Authorizing request for path: auth/wsapi/workflow-websocket`, then
+  `Routing CU 1 to recorded host:
+  computing-unit-1.texera-workflow-computing-unit-svc.sce-k8s-units.svc.cluster.local:8085`.
+- The unit went Pending -> Running through the managing service and was terminated
+  through it (HTTP 200); its pod was gone after the run.
+- `down` left no namespace, release, GatewayClass, metrics APIService, hook object or
+  PersistentVolume behind.
+
+Branch against upstream: no difference in Kubernetes mode. Both pass all six
+scenarios with the same checks and similar timings. No scenario fails on both. The one
+upstream defect is the chart's: without the S3 workaround, setup fails identically on
+both image sets.
+
+`driver/tests/test_k8s_unit.py` adds offline tests of the Kubernetes path to the
+offline suite.
