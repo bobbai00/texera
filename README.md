@@ -631,13 +631,14 @@ cannot reach, so it falls back to a direct lakeFS fetch.
 2026-11-16, OrbStack Kubernetes v1.33.9 (one node, 10 CPU, 8 GB shared with Docker),
 Helm v4.2.0. Chart and DDL from `sce-imgbuild` at the Step 1 commit `5e85a37de`. The
 harness ran from a `git archive` copy of `3b28d86`, so the evidence is tied to a commit
-(the driver was being edited at the time). Each run started from no namespace and ended
-with `down`.
+(the driver was being edited at the time); the third row reran the final commit,
+`fade0db`. Each run started from no namespace and ended with `down`.
 
 | Report (`reports/`) | Images | Result | Notes |
 |---|---|---|---|
 | `k8s-20261116T101706Z` | `sce/texera-*:step1` | a b c d e u PASS, 49/49 checks | `up` 124 s; unit Running 2.6 s after create, answering through the gateway at 5.3 s; `down` 22 s |
 | `k8s-20261116T102034Z` | `sce/texera-*:step1` | a b c d e u PASS, 49/49 checks | `up` 75 s; unit 2.5 s / 5.2 s; `down` 21 s |
+| `k8s-20261116T103323Z` | `sce/texera-*:step1` | a b c d e u PASS, 49/49 checks | the final commit `fade0db`: `up` 75 s; unit 2.7 s / 5.3 s; `down` 20 s; the unit log's first line names image ID `sha256:bf87e878...`, the one `build/step1/BUILD-MANIFEST.json` records |
 | `k8s-20261116T102304Z` | `ghcr.io/apache/texera-*:latest` (published) | a b c d e u PASS, 49/49 checks | `up` 77 s; unit 2.5 s / 5.1 s; `down` 19 s |
 | `k8s-20261116T102547Z` | `sce/texera-*:step1`, `--no-workarounds` | setup FAIL (control) | `POST /api/warehouse` -> 502: `Lakekeeper create warehouse 'user-1-1' failed (HTTP 400): ... "Failed to decompress file: Failed to finish decompressing file: invalid gzip header", "type": "FileDecompressionError"` |
 | `k8s-20261116T102748Z` | published, `--no-workarounds` | setup FAIL (control) | the same error |
