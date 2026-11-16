@@ -64,7 +64,8 @@ class WorkflowCompilingService extends Application[WorkflowCompilingServiceConfi
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-workflow-compiling-service"
     )
 
     // register the compilation endpoint

@@ -145,7 +145,8 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-computing-unit"
     )
 
     environment.jersey.setUrlPattern("/api/*")

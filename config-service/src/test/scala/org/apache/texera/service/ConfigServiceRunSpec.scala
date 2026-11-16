@@ -217,7 +217,8 @@ class ConfigServiceRunSpec
       outcome: Try[Unit],
       sqlServerBefore: Option[SqlServer],
       sqlServerAfter: Option[SqlServer],
-      pooledJdbcUrl: Try[String]
+      pooledJdbcUrl: Try[String],
+      pooledApplicationName: Try[String]
   )
 
   /**
@@ -264,6 +265,14 @@ class ConfigServiceRunSpec
             .getInstance()
             .createDSLContext()
             .connectionResult(connection => connection.getMetaData.getURL)
+        ),
+        Try(
+          SqlServer
+            .getInstance()
+            .createDSLContext()
+            .select(DSL.field("current_setting('application_name')", classOf[String]))
+            .fetchSingle()
+            .value1()
         )
       )
     } finally {
@@ -327,6 +336,17 @@ class ConfigServiceRunSpec
     // Only the URL is pinned — storage.conf ships username and password as the same string
     // ("postgres"), so nothing here can tell the two credential arguments apart.
     initialized.pooledJdbcUrl.get shouldBe StorageConfig.jdbcUrl
+  }
+
+  it should "name its database connections after the service" in {
+    assume(
+      databaseReachable,
+      "initialize() opens a connection pool against the configured JDBC URL (provided in CI)"
+    )
+    initialized.outcome.get
+    // As the server recorded it: pg_stat_activity and the Postgres log attribute this pool's
+    // statements to this service.
+    initialized.pooledApplicationName.get shouldBe "texera-config-service"
   }
 }
 

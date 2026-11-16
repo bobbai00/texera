@@ -36,6 +36,7 @@ import org.apache.texera.service.resource.{
   HealthCheckResource
 }
 import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature
+import org.jooq.impl.DSL
 import org.mockito.ArgumentMatchers.isA
 import org.mockito.Mockito.{mock, verify, when}
 import org.scalatest.flatspec.AnyFlatSpec
@@ -106,6 +107,37 @@ class ComputingUnitManagingServiceRunSpec extends AnyFlatSpec with Matchers {
       // configured JDBC URL. Close it so the pool's threads/connections don't outlive this suite
       // in the shared forked JVM. Swallowed because run() may have failed before initConnection,
       // and a throw here would mask that failure.
+      try SqlServer.getInstance().close()
+      catch { case _: Throwable => () }
+    }
+  }
+
+  it should "name its database connections after the service" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+
+    val jersey = mock(classOf[JerseyEnvironment])
+    val env = mock(classOf[Environment])
+    when(env.jersey).thenReturn(jersey)
+    when(env.getApplicationContext).thenReturn(mock(classOf[MutableServletContextHandler]))
+    when(jersey.getResourceConfig).thenReturn(DropwizardResourceConfig.forTesting())
+
+    try {
+      new ComputingUnitManagingService()
+        .run(mock(classOf[ComputingUnitManagingServiceConfiguration]), env)
+
+      // As the server recorded it: pg_stat_activity and the Postgres log attribute this pool's
+      // statements to this service.
+      SqlServer
+        .getInstance()
+        .createDSLContext()
+        .select(DSL.field("current_setting('application_name')", classOf[String]))
+        .fetchSingle()
+        .value1() shouldBe "texera-computing-unit-manager"
+    } finally {
+      // The pool run() opened, closed for the same reason as in the test above.
       try SqlServer.getInstance().close()
       catch { case _: Throwable => () }
     }

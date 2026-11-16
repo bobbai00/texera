@@ -231,4 +231,80 @@ class SqlServerSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
     noException should be thrownBy instance.close()
     ds.isClosed shouldBe true
   }
+
+  // -------------------------------------------------------------------------
+  // The name a pool's connections carry
+  //
+  // Postgres records each connection's application_name (pg_stat_activity, the
+  // log prefix), which is how a statement is traced back to the service that
+  // sent it. The name is read back from the server rather than from the
+  // driver's properties, so a name that never reaches Postgres cannot pass.
+  // Each test installs its own singleton, as the close test above does, and
+  // closes it again; the next test's fixture points the singleton's context
+  // back at this suite's database.
+  // -------------------------------------------------------------------------
+
+  private def applicationNameOf(instance: SqlServer): String =
+    instance
+      .createDSLContext()
+      .select(DSL.field("current_setting('application_name')", classOf[String]))
+      .fetchSingle()
+      .value1()
+
+  "SqlServer.initConnection" should "name the pool's connections after the caller" in {
+    val jdbcUrl = getDBInstance.getJdbcUrl("postgres", "postgres")
+    SqlServer.initConnection(jdbcUrl, "postgres", "", "texera-spec")
+    val instance = SqlServer.getInstance()
+    try {
+      applicationNameOf(instance) shouldBe "texera-spec"
+      // The pool is named after the caller too, so Hikari's own log lines say whose pool it is.
+      datasourceOf(instance).getPoolName shouldBe "texera-hikari-texera-spec"
+    } finally instance.close()
+  }
+
+  it should "send the name when it connects, not in a statement after" in {
+    val jdbcUrl = getDBInstance.getJdbcUrl("postgres", "postgres")
+    SqlServer.initConnection(jdbcUrl, "postgres", "", "texera-spec")
+    val instance = SqlServer.getInstance()
+    try {
+      val setting = instance
+        .createDSLContext()
+        .fetchSingle("select source, reset_val from pg_settings where name = 'application_name'")
+      // "client": the name came in the startup packet, so the server attributes every statement
+      // of the connection to it. Sent as a SET after connecting (what pgjdbc does unless it may
+      // assume a 9.0 server), it reads "session" with an empty reset value instead: that SET is
+      // itself logged without a name, and a RESET ALL or DISCARD ALL clears the name for the
+      // rest of the connection.
+      setting.get(0, classOf[String]) shouldBe "client"
+      setting.get(1, classOf[String]) shouldBe "texera-spec"
+    } finally instance.close()
+  }
+
+  it should "name the connections texera when the caller names none" in {
+    val jdbcUrl = getDBInstance.getJdbcUrl("postgres", "postgres")
+    SqlServer.initConnection(jdbcUrl, "postgres", "")
+    val instance = SqlServer.getInstance()
+    try {
+      // Without a name pgjdbc would announce itself ("PostgreSQL JDBC Driver"), which says
+      // nothing about who is connected.
+      applicationNameOf(instance) shouldBe "texera"
+      datasourceOf(instance).getPoolName shouldBe "texera-hikari-texera"
+    } finally instance.close()
+  }
+
+  it should "not carry a replaced pool's name over to the pool that replaces it" in {
+    val jdbcUrl = getDBInstance.getJdbcUrl("postgres", "postgres")
+    SqlServer.initConnection(jdbcUrl, "postgres", "", "texera-spec-first")
+    val first = SqlServer.getInstance()
+    try {
+      applicationNameOf(first) shouldBe "texera-spec-first"
+      SqlServer.initConnection(jdbcUrl, "postgres", "", "texera-spec-second")
+      val second = SqlServer.getInstance()
+      try {
+        applicationNameOf(second) shouldBe "texera-spec-second"
+        // And no connection under the first name stays open: initConnection closed that pool.
+        datasourceOf(first).isClosed shouldBe true
+      } finally second.close()
+    } finally first.close()
+  }
 }

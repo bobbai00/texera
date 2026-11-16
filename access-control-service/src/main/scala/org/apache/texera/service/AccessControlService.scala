@@ -51,7 +51,8 @@ class AccessControlService extends Application[AccessControlServiceConfiguration
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-access-control-service"
     )
   }
 

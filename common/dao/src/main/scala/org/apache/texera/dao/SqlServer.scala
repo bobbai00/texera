@@ -35,11 +35,16 @@ import org.jooq.{DSLContext, SQLDialect}
   * causing "Connection refused" errors when tests run together.
   * Use `def` to ensure the connection is looked up each time.
   *
-  * @param url      The JDBC connection URL.
-  * @param user     The username for authenticating with the database.
-  * @param password The password for authenticating with the database.
+  * Every connection of the pool carries `applicationName` as its Postgres `application_name`, so
+  * `pg_stat_activity` and the server log (`%a` in `log_line_prefix`) show which service sent a
+  * statement.
+  *
+  * @param url             The JDBC connection URL.
+  * @param user            The username for authenticating with the database.
+  * @param password        The password for authenticating with the database.
+  * @param applicationName The name the server records for each connection of the pool.
   */
-class SqlServer private (url: String, user: String, password: String) {
+class SqlServer private (url: String, user: String, password: String, applicationName: String) {
   val SQL_DIALECT: SQLDialect = SQLDialect.POSTGRES
 
   private val hikariConfig: HikariConfig = {
@@ -47,7 +52,13 @@ class SqlServer private (url: String, user: String, password: String) {
     cfg.setJdbcUrl(url)
     cfg.setUsername(user)
     cfg.setPassword(password)
-    cfg.setPoolName("texera-hikari")
+    cfg.setPoolName(s"texera-hikari-$applicationName")
+    // Given a JDBC URL, Hikari hands data-source properties to the driver as connection
+    // properties. pgjdbc puts ApplicationName in the startup packet only when it may assume a
+    // server of 9.0 or later (every supported one is); otherwise it sends a SET after
+    // connecting, which the server logs without a name and RESET ALL or DISCARD ALL undo.
+    cfg.addDataSourceProperty("ApplicationName", applicationName)
+    cfg.addDataSourceProperty("assumeMinServerVersion", "9.0")
     cfg.setMaximumPoolSize(10)
     cfg.setMinimumIdle(2)
     // How long a caller waits for a connection before throwing (ms)
@@ -77,9 +88,21 @@ class SqlServer private (url: String, user: String, password: String) {
 object SqlServer {
   private var instance: Option[SqlServer] = None
 
-  def initConnection(url: String, user: String, password: String): Unit = {
+  /**
+    * Replaces the singleton with a pool against `url`, closing the pool it replaces.
+    *
+    * @param applicationName the name the server records for each connection (`application_name`);
+    *                        each service passes its own, and a caller that names none, such as a
+    *                        test, gets `texera`.
+    */
+  def initConnection(
+      url: String,
+      user: String,
+      password: String,
+      applicationName: String = "texera"
+  ): Unit = {
     instance.foreach(_.close())
-    instance = Some(new SqlServer(url, user, password))
+    instance = Some(new SqlServer(url, user, password, applicationName))
   }
 
   def getInstance(): SqlServer = {

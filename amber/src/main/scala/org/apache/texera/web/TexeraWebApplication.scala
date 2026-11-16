@@ -110,7 +110,8 @@ class TexeraWebApplication
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-dashboard"
     )
 
     // redirect all 404 to index page, according to Angular routing requirements

@@ -63,6 +63,7 @@ import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
 import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature
+import org.jooq.impl.DSL
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpec
@@ -81,6 +82,7 @@ import javax.websocket.{RemoteEndpoint, Session}
 import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 class ComputingUnitMasterSpec
     extends AnyFlatSpec
@@ -144,6 +146,13 @@ class ComputingUnitMasterSpec
   private var sqlServerAfterRun: AnyRef = _
 
   /**
+    * The name the server recorded for the connections of the pool run() opened. Read straight
+    * after run(): from the next test on, MockTexeraDB's fixture points the singleton's context
+    * back at this suite's own database.
+    */
+  private var applicationNameAfterRun: Option[String] = None
+
+  /**
     * run() is driven exactly once against a real Dropwizard Environment (a mock would not
     * do: WebSocketUpgradeFilter.configureContext needs a live MutableServletContextHandler);
     * every assertion below inspects the resulting wiring. Note that run() also repoints the
@@ -162,6 +171,14 @@ class ComputingUnitMasterSpec
     sqlServerBeforeRun = SqlServer.getInstance()
     master.run(new Configuration(), environment)
     sqlServerAfterRun = SqlServer.getInstance()
+    applicationNameAfterRun = Try(
+      SqlServer
+        .getInstance()
+        .createDSLContext()
+        .select(DSL.field("current_setting('application_name')", classOf[String]))
+        .fetchSingle()
+        .value1()
+    ).toOption
     environment
   }
 
@@ -585,6 +602,14 @@ class ComputingUnitMasterSpec
     // between the two reads, so a second instance can only come from run() itself calling
     // SqlServer.initConnection.
     sqlServerAfterRun should not be theSameInstanceAs(sqlServerBeforeRun)
+  }
+
+  it should "name its database connections after the computing unit" in {
+    ranEnvironment
+
+    // As the server recorded it: pg_stat_activity and the Postgres log attribute this pool's
+    // statements to the computing unit, not to the Dashboard or another service.
+    applicationNameAfterRun shouldBe Some("texera-computing-unit")
   }
 
   it should "register the master's Jersey resource classes" in {

@@ -32,6 +32,7 @@ import jakarta.servlet.{DispatcherType, Filter, FilterChain}
 import jakarta.servlet.http.{HttpServletRequest, HttpServletResponse}
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.auth.{RoleAnnotationEnforcer, UnauthorizedExceptionMapper}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.service.WorkflowCompilingServiceRunSpec.SpecPayload
 import org.apache.texera.service.resource.{
   HealthCheckResource,
@@ -40,6 +41,7 @@ import org.apache.texera.service.resource.{
 }
 import org.eclipse.jetty.servlet.{FilterHolder, ServletHandler}
 import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature
+import org.jooq.impl.DSL
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, eq => eqTo, isA}
 import org.mockito.Mockito.{mock, never, verify, when}
@@ -50,9 +52,15 @@ import org.slf4j.LoggerFactory
 import java.io.{ByteArrayInputStream, FileNotFoundException, InputStream}
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.jdk.CollectionConverters._
-import scala.util.Using
+import scala.util.{Try, Using}
 
 class WorkflowCompilingServiceRunSpec extends AnyFlatSpec with Matchers {
+
+  /**
+    * The name the server recorded for the connections of the pool run() opened, read straight
+    * after run(), while that pool is still the one SqlServer hands out.
+    */
+  private var applicationNameAfterRun: Option[String] = None
 
   // Mirrors AccessControlServiceRunSpec: run() is driven against a mocked Dropwizard
   // environment so the wiring it installs can be asserted without starting a server.
@@ -71,6 +79,14 @@ class WorkflowCompilingServiceRunSpec extends AnyFlatSpec with Matchers {
 
     val service = new WorkflowCompilingService
     service.run(mock(classOf[WorkflowCompilingServiceConfiguration]), env)
+    applicationNameAfterRun = Try(
+      SqlServer
+        .getInstance()
+        .createDSLContext()
+        .select(DSL.field("current_setting('application_name')", classOf[String]))
+        .fetchSingle()
+        .value1()
+    ).toOption
 
     (jersey, context)
   }
@@ -85,6 +101,13 @@ class WorkflowCompilingServiceRunSpec extends AnyFlatSpec with Matchers {
     verify(jersey).register(classOf[HealthCheckResource])
     verify(jersey).register(classOf[WorkflowCompilationResource])
     verify(jersey).register(classOf[WorkflowToPythonResource])
+  }
+
+  it should "name its database connections after the service" in {
+    ranService
+    // As the server recorded it: pg_stat_activity and the Postgres log attribute this pool's
+    // statements to this service.
+    applicationNameAfterRun shouldBe Some("texera-workflow-compiling-service")
   }
 
   it should "install the auth stack" in {

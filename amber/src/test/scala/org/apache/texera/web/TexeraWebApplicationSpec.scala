@@ -52,6 +52,7 @@ import org.eclipse.jetty.util.component.{ContainerLifeCycle, LifeCycle}
 import org.eclipse.jetty.websocket.jsr356.server.{ServerContainer => JsrServerContainer}
 import org.eclipse.jetty.websocket.server.{NativeWebSocketConfiguration, WebSocketUpgradeFilter}
 import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature
+import org.jooq.impl.DSL
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.slf4j.LoggerFactory
@@ -117,6 +118,9 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
   /** The JDBC URL the pool `run()` installed was actually dialled, read before it is torn down. */
   private var pooledJdbcUrl: Option[String] = None
 
+  /** The name the server recorded for that pool's connections, read at the same moment. */
+  private var pooledApplicationName: Option[String] = None
+
   /**
     * The environment left behind by a single full `run()`, shared by every assertion below so the
     * admin-user bootstrap and the operator-metadata warmup happen once.
@@ -137,6 +141,14 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
           .getInstance()
           .createDSLContext()
           .connectionResult(connection => connection.getMetaData.getURL)
+      ).toOption
+      pooledApplicationName = Try(
+        SqlServer
+          .getInstance()
+          .createDSLContext()
+          .select(DSL.field("current_setting('application_name')", classOf[String]))
+          .fetchSingle()
+          .value1()
       ).toOption
     } finally {
       Try(SqlServer.getInstance().close())
@@ -256,6 +268,17 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     )
     ranEnvironment
     pooledJdbcUrl shouldBe Some(StorageConfig.jdbcUrl)
+  }
+
+  it should "name its database connections after the Dashboard service" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+    ranEnvironment
+    // As the server recorded it: pg_stat_activity and the Postgres log attribute this pool's
+    // statements to the Dashboard, not to a computing unit or another service.
+    pooledApplicationName shouldBe Some("texera-dashboard")
   }
 
   it should "register every dashboard and system resource on Jersey" in {

@@ -72,7 +72,8 @@ class FileService extends Application[FileServiceConfiguration] with LazyLogging
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-file-service"
     )
 
     // check if the texera dataset bucket exists, if not create it

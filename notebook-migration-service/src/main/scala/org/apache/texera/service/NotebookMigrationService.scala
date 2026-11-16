@@ -54,7 +54,8 @@ class NotebookMigrationService
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-notebook-migration-service"
     )
   }
 

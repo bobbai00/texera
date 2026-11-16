@@ -44,7 +44,8 @@ class ComputingUnitManagingService extends Application[ComputingUnitManagingServ
     SqlServer.initConnection(
       StorageConfig.jdbcUrl,
       StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
+      StorageConfig.jdbcPassword,
+      applicationName = "texera-computing-unit-manager"
     )
 
   /**
