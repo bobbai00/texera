@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import platform
+import subprocess
 import sys
 import time
 import traceback
@@ -149,6 +150,7 @@ def main() -> int:
     report_path = a.report or REPORTS / f"e2e-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     report: dict = {
         "harness": "sce-e2e",
+        "harness_git": harness_git(),
         "label": a.label,
         "run_id": run_id,
         "started_at": started.isoformat(timespec="seconds"),
@@ -293,8 +295,10 @@ def main() -> int:
 
     print()
     print("=" * 78)
+    hg = report.get("harness_git") or {}
     print(f" sce-e2e results  ({a.base}, transport {a.transport}, run {run_id}"
-          + (f", gate {a.gate}" if a.gate else "") + ")")
+          + (f", gate {a.gate}" if a.gate else "")
+          + f", harness {str(hg.get('head') or 'unknown')[:10]}{' +changes' if hg.get('dirty') else ''})")
     print("=" * 78)
     if not setup_ok:
         print(" SETUP FAILED -- no scenario ran; see setup.error in the report")
@@ -315,6 +319,30 @@ def main() -> int:
     if not setup_ok:
         return 2
     return 0 if report["summary"]["result"] == "PASS" else 1
+
+
+def harness_git(root: Path = HERE.parent) -> dict:
+    """The harness's own commit and uncommitted changes, so a report says which code
+    ran. A `git archive` copy has no .git and may name its commit in .harness-commit."""
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+
+    def git(*args: str) -> str | None:
+        try:
+            p = subprocess.run(["git", "-C", str(root), *args], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True, timeout=20, env=env)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return p.stdout if p.returncode == 0 else None
+
+    head = (git("rev-parse", "HEAD") or "").strip()
+    if not head:
+        marker = root / ".harness-commit"
+        named = marker.read_text().strip() if marker.exists() else ""
+        return {"head": named or None, "dirty": None,
+                "note": "not a git checkout" + (" (.harness-commit names the commit)" if named else "")}
+    status = git("status", "--porcelain") or ""
+    changes = [ln for ln in status.splitlines() if ln.strip()]
+    return {"head": head, "dirty": bool(changes), "changes": changes[:30]}
 
 
 def _lakekeeper_name(status: dict | None, whid: int | None, uid: int) -> str | None:
@@ -354,6 +382,12 @@ def _apply_evidence(evidence: Evidence, rec, waited, api: TexeraApi, negative: b
         name = f"no unit statement for execution {exp['eid']} since {exp['since']} ({exp['why']})"
         rec.checks.append(Check(name, exp["ok"], json.dumps(exp["statements"])[:2000] if exp["statements"] else ""))
         log(f"  [{'ok' if exp['ok'] else 'FAIL'}] {name}")
+    for exp in out["report"].get("unit_silent_after_refused_start", []):
+        name = (f"the unit ran no statement from the refused start of execution {exp['eid']} until after "
+                f"its answer ({exp['why']})")
+        detail = exp["detail"] + (": " + json.dumps(exp["statements"]) if exp["statements"] else "")
+        rec.checks.append(Check(name, exp["ok"], detail[:2000]))
+        log(f"  [{'ok' if exp['ok'] else 'FAIL'}] {name}" + ("" if exp["ok"] else f" -- {detail[:300]}"))
     if negative:
         rec.outcome = "PASS" if rec.checks and all(c.ok for c in rec.checks) else "FAIL"
     else:

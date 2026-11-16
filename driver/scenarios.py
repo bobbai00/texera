@@ -27,6 +27,27 @@ from workflow import (Workflow, aggregate, csv_scan, file_lister, file_scan_from
                       hash_join, projection, python_udf, sort_op, text_input)
 
 STATUS_READY, STATUS_COMPLETED, STATUS_FAILED, STATUS_KILLED = 0, 3, 4, 5
+#: udf.python.environments.root's default (design 3.9)
+DEFAULT_ENVIRONMENTS_ROOT = "/tmp/texera-python-environments"
+#: run by the unit's python3 with the root as argv[1]: one JSON line, every entry but *.lock
+LIST_ENVIRONMENTS_PY = r'''
+import json, os, sys
+root = sys.argv[1]
+out = []
+for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+    if name.endswith(".lock"):
+        continue
+    path = os.path.join(root, name)
+    marker = None
+    f = os.path.join(path, "texera-environment.json")
+    if os.path.isfile(f):
+        try:
+            marker = json.load(open(f))
+        except ValueError as e:
+            marker = {"unparsable": str(e)}
+    out.append({"name": name, "path": path, "dir": os.path.isdir(path), "marker": marker})
+print(json.dumps(out))
+'''
 
 
 # ------------------------------------------------------------------- records
@@ -192,11 +213,53 @@ class Ctx:
         if eid is not None and self.evidence is not None:
             self.evidence.allow_status_zero(int(eid), why)
 
+    def expect_unit_silent(self, eid: int | None, why: str) -> None:
+        """A refused start (the refusal has arrived and the caller settled): with
+        --evidence, the unit ran no statement at all from that start's mark to now."""
+        if eid is None:
+            return
+        if self.evidence is None:
+            self.note(f"not checked without --evidence: the unit stays silent after the refused start of "
+                      f"execution {eid} ({why})")
+        else:
+            self.evidence.expect_silent_since_start(int(eid), why)
+
+    def settle_unit(self, why: str, min_wait_s: float = 0.0) -> None:
+        """With --evidence: wait until the unit ran no statement for a second (and at
+        least `min_wait_s` passed), so what a finished run still writes, or its idle
+        cleanup, stays out of the window that follows. Without evidence: nothing."""
+        if self.evidence is None:
+            return
+        out = self.evidence.settle_unit(min_wait_s=min_wait_s)
+        self.log(f"  unit settled ({why}): {out}")
+        self.rec.notes.append(f"unit settled before {why}: {out}")
+
     def unit_exec(self, *cmd: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess:
         """`docker exec <unit> <cmd>` (stdout and stderr merged)."""
         args = ["docker", "exec"] + (["-i"] if stdin is not None else []) + [self.unit_container, *cmd]
         return subprocess.run(args, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, timeout=timeout)
+
+    def environments_root(self) -> str:
+        """Where the unit installs Python environments: UDF_PYTHON_ENVIRONMENTS_ROOT in the
+        unit's environment, else the design's default (3.9)."""
+        if not hasattr(self, "_env_root"):
+            p = self.unit_exec("sh", "-c", 'printf %s "${UDF_PYTHON_ENVIRONMENTS_ROOT:-'
+                                           + DEFAULT_ENVIRONMENTS_ROOT + '}"')
+            root = (p.stdout or "").strip() if p.returncode == 0 else ""
+            self._env_root = root or DEFAULT_ENVIRONMENTS_ROOT
+        return self._env_root
+
+    def environment_dirs(self) -> list[dict]:
+        """Every entry of the environments root except lock files: {name, path, marker}
+        with the whole texera-environment.json parsed (None when there is none), read
+        by the unit's python3 so a pretty-printed marker parses as well as a compact one."""
+        p = self.unit_exec("python3", "-c", LIST_ENVIRONMENTS_PY, self.environments_root())
+        try:
+            return json.loads((p.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            raise RuntimeError(f"could not list {self.environments_root()} on the unit: "
+                               f"exit {p.returncode}: {(p.stdout or '')[-300:]}")
 
 
 # ----------------------------------------------------------------- comparing
@@ -803,12 +866,17 @@ def _created(ctx: Ctx, wf: Workflow, view: list[str], wid: int, **kw) -> dict:
     return body
 
 
+#: after a refusal arrived: anything else the unit sends or runs for that start happens within this
+REFUSAL_SETTLE_S = 3.0
+
+
 def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: int, eid: int,
                    plan_uri: str, socket_cuid: int | None = None, token: str | None = None) -> None:
     """Start `eid` on a socket that must be refused: the error reaches that socket
     only (a session of the creator on the same workflow sees none), nothing runs,
-    the row stays 0, and the unit writes nothing about it. `expect`: the refusal's
-    message contains one of these (the design's StoredExecutionStart messages)."""
+    the row stays 0, and the unit runs no statement at all from the start until
+    after the refusal (D33). `expect`: the refusal's message contains one of these
+    (the design's StoredExecutionStart messages)."""
     expect = (expect,) if isinstance(expect, str) else expect
     watcher = ctx.transport.open_socket(wid, ctx.cuid)
     ctx.handles.append(watcher)
@@ -819,7 +887,8 @@ def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: 
         handle.wait_until(lambda: handle.error_event_count > 0, 30, "the refusal", fail_fast=False)
     except RunTimeout:
         pass
-    time.sleep(3)  # anything else the unit sends for this start has arrived by now
+    time.sleep(REFUSAL_SETTLE_S)  # anything else the unit sends or runs for this start happens by now
+    ctx.expect_unit_silent(eid, f"{label}: a refused start runs nothing on the unit")
     messages = [str(e.get("message")) for e in handle.fatal_errors]
     ctx.check(f"{label}: the starting socket gets a WorkflowErrorEvent ({' or '.join(expect)})",
               handle.error_event_count > 0
@@ -926,9 +995,13 @@ def scenario_l8(ctx: Ctx) -> None:
     first = ctx.start(wf, view=[src])
     first.wait_for_state("Completed", timeout=ctx.timeout)
     ctx.persisted_status(STATUS_COMPLETED, eid=first.eid)
+    # The first socket stays open, so the unit does not clean the workflow up meanwhile;
+    # what the finished run still writes (result sizes, statistics) settles first.
+    ctx.settle_unit("the second start")
     seen_states = len(first.state_log)
     seen_errors = first.error_event_count
-    # The first socket stays open, so the unit does not clean the workflow up meanwhile.
+    # The new socket gets the held run replayed (its state Completed, its console)
+    # while it opens; that is not this start's answer (transport: the open sequence).
     again = ctx.transport.start_existing(wid=ctx.rec.wid, cuid=ctx.cuid, eid=first.eid,
                                          plan_uri=first.plan_uri)
     ctx.handles.append(again)
@@ -936,14 +1009,17 @@ def scenario_l8(ctx: Ctx) -> None:
         again.wait_until(lambda: again.error_event_count > 0, 30, "the refusal", fail_fast=False)
     except RunTimeout:
         pass
-    time.sleep(3)
+    time.sleep(REFUSAL_SETTLE_S)
+    ctx.expect_unit_silent(first.eid, "l8: a second start runs nothing on the unit")
     messages = [str(e.get("message")) for e in again.fatal_errors]
     ctx.check("l8 second start: the socket gets a WorkflowErrorEvent ('already started')",
               any("already started" in m.lower() for m in messages), f"{messages[:3]}")
     ctx.check("l8 second start: the first session gets no error and no new state",
               first.error_event_count == seen_errors and len(first.state_log) == seen_states,
               f"errors {seen_errors} -> {first.error_event_count}; states {first.states}")
-    ctx.check("l8 second start: never Running", "Running" not in again.states, f"{again.states}")
+    ctx.check("l8 second start: never Running", "Running" not in again.states,
+              f"after the start {again.states}; replayed while the socket opened "
+              f"{again.replayed.get('states')}")
     entry = ctx.api.execution_entry(ctx.rec.wid, first.eid)
     ctx.check("l8: the row stays 3", bool(entry) and entry.get("status") == STATUS_COMPLETED, f"{entry}")
     ctx.expect_no_unit_statement(first.eid, "l8: a second start writes nothing", since_last_start=True)
@@ -1108,7 +1184,18 @@ def scenario_o(ctx: Ctx) -> None:
     if isinstance(result, dict):
         ctx.check("only the target's sub-plan ran (the Projection downstream of it is not in the result)",
                   prj not in (result.get("operators") or {}), f"operators {list((result.get('operators') or {}))}")
+    # The repeat is a refused start too: the unit must stay silent from it until after
+    # its answer. No socket holds this workflow, so the unit cleans the finished run
+    # `cleanup_seconds` after it ended; that and the run's trailing writes settle first.
+    if ctx.evidence is not None:
+        ctx.settle_unit("the repeated call", min_wait_s=ctx.evidence.cleanup_seconds + 1.0)
+    repeat = ctx.evidence.on_phase("start", {"wid": wid, "cuid": ctx.cuid, "eid": eid,
+                                             "plan_uri": plan_uri}) if ctx.evidence else None
     code2, again = call()
+    if repeat is not None:
+        repeat.started = False
+    time.sleep(REFUSAL_SETTLE_S)
+    ctx.expect_unit_silent(eid, "o: a repeated run call runs nothing on the unit")
     ctx.check("a repeat of the call is refused: success false, 'already started'",
               isinstance(again, dict) and again.get("success") is False
               and any("already started" in str(e).lower() for e in (again.get("errors") or [])),
@@ -1164,21 +1251,13 @@ def scenario_f2(ctx: Ctx) -> None:
 # ------------------------------------------------- g, h, i: environments
 
 
-def _marker_dirs(ctx: Ctx) -> list[dict]:
-    """The installed environments on the unit: each texera-environment.json marker."""
-    p = ctx.unit_exec("sh", "-c", "for f in /tmp/texera-python-environments/*/texera-environment.json; "
-                                  "do [ -f \"$f\" ] && echo \"== $f\" && cat \"$f\" && echo; done; true")
-    out, cur = [], None
-    for line in p.stdout.splitlines():
-        if line.startswith("== "):
-            cur = {"path": line[3:]}
-            out.append(cur)
-        elif cur is not None and line.strip():
-            try:
-                cur.update(json.loads(line))
-            except ValueError:
-                cur.setdefault("raw", line[:300])
-    return out
+TABULATE_LINES = ["tabulate==0.9.0"]
+
+
+def _installs_of(dirs: list[dict], requirements: list[str]) -> list[dict]:
+    """The install directories whose marker lists exactly these canonical lines."""
+    return [d for d in dirs if isinstance(d.get("marker"), dict)
+            and d["marker"].get("requirements") == requirements]
 
 
 def _console_texts(handle: RunHandle, op: str) -> list[str]:
@@ -1187,18 +1266,26 @@ def _console_texts(handle: RunHandle, op: str) -> list[str]:
 
 def scenario_g(ctx: Ctx) -> None:
     """An environment from /api/environments, installed when the run starts; a
-    second run reuses it."""
+    second run (on a new workflow: installs are keyed by the requirements and the
+    engine, not by the workflow) reuses it."""
     _need_create_ws(ctx)
     _precondition_no_tabulate(ctx)
+    root = ctx.environments_root()
+    # A unit that ran g before holds an install of these requirements (a --keep stack, a
+    # rerun): reuse is decided by its marker (design 4, Environment install, step 3), so
+    # remove it to see a first install again. Nothing else runs on the unit now.
+    stale = _installs_of(ctx.environment_dirs(), TABULATE_LINES)
+    for d in stale:
+        p = ctx.unit_exec("rm", "-rf", d["path"])
+        ctx.note(f"removed an earlier install of {TABULATE_LINES} at {d['path']} (exit {p.returncode}) so "
+                 f"run 1 installs afresh")
     name = f"sce-env-{ctx.hex}"
     ctx.api.ensure_environment(name, {"tabulate": "==0.9.0"})
-    wf, udf = _tabulate_workflow(ctx, "g-environment-install", name)
     timings = []
-    wid = None
     for attempt in (1, 2):
+        wf, udf = _tabulate_workflow(ctx, f"g-environment-install-run{attempt}", name)
         t0 = time.monotonic()
-        handle = ctx.start(wf, view=[udf], wid=wid)
-        wid = ctx.rec.wid
+        handle = ctx.start(wf, view=[udf])
         handle.wait_for_state("Running", "Completed", timeout=max(ctx.timeout, 1800))
         t_running = time.monotonic() - t0
         handle.wait_for_state("Completed", timeout=ctx.timeout)
@@ -1223,9 +1310,9 @@ def scenario_g(ctx: Ctx) -> None:
                       f"{[t[:120] for t in texts[:6]]}")
             ctx.check("run 2: start-to-Running is shorter than run 1's", timings[1] < timings[0],
                       f"{timings[0]:.1f}s then {timings[1]:.1f}s")
-    markers = [m for m in _marker_dirs(ctx) if m.get("requirements") == ["tabulate==0.9.0"]]
-    ctx.check("one install directory with texera-environment.json for this environment", len(markers) == 1,
-              f"{[m.get('path') for m in markers]}")
+    installs = _installs_of(ctx.environment_dirs(), TABULATE_LINES)
+    ctx.check(f"one install directory with texera-environment.json listing {TABULATE_LINES} under {root}",
+              len(installs) == 1, f"{[d.get('path') for d in installs]}")
 
 
 def _running_after_message(handle: RunHandle, op: str, needle: str) -> bool:
@@ -1245,10 +1332,14 @@ def scenario_h(ctx: Ctx) -> None:
     pkg = f"sce-e2e-nonexistent-{ctx.hex}"
     name = f"sce-env-broken-{ctx.hex}"
     ctx.api.ensure_environment(name, {pkg: "==1.0.0"})
+    root = ctx.environments_root()
+    before = {d["name"] for d in ctx.environment_dirs()}
     wf, udf = _tabulate_workflow(ctx, "h-environment-broken", name)
     handle = ctx.start(wf, view=[udf])
     state = handle.wait_for_state("Failed", timeout=max(ctx.timeout, 1800), fail_fast=False)
     ctx.check("the run fails", state == "Failed", f"states {handle.states}")
+    ctx.check("the run fails before it starts (never Running)", "Running" not in handle.states,
+              f"states {handle.states}")
     try:
         handle.wait_until(lambda: bool(handle.fatal_errors), 10, "the fatal error", fail_fast=False)
     except RunTimeout:
@@ -1259,9 +1350,10 @@ def scenario_h(ctx: Ctx) -> None:
               messages[:600])
     ctx.check("the UDF emitted no row", handle.output_rows(udf) == 0, f"{handle.output_rows(udf)}")
     ctx.persisted_status(STATUS_FAILED, eid=handle.eid)
-    p = ctx.unit_exec("sh", "-c", f"grep -l {pkg} /tmp/texera-python-environments/*/texera-requirements.txt "
-                                  f"2>/dev/null; true")
-    ctx.check("no install directory is left for that environment", not p.stdout.strip(), p.stdout[:300])
+    after = ctx.environment_dirs()
+    new = [d["path"] for d in after if d["name"] not in before]
+    ctx.check(f"no install directory is left under {root} (a failed install removes its own)", not new,
+              f"new entries {new}; {len(after)} entries now, {len(before)} before")
 
 
 def scenario_i(ctx: Ctx) -> None:

@@ -12,6 +12,7 @@ way the design says; they do not prove any branch implements it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -24,6 +25,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import scenarios  # noqa: E402
 from fake_texera import FakeTexera  # noqa: E402
 from scenarios import Ctx, OtherUser, run_scenario  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
@@ -36,17 +38,35 @@ VERSION_PATH = "/dataset/texera@texera.io/sce-e2e-x/v1"
 
 
 class FakeUnitExec:
-    """`docker exec <unit> ...` as the scenarios use it."""
+    """`docker exec <unit> ...` as the scenarios use it. The fake's installed
+    environments live under ROOT, one directory per requirement set."""
+
+    ROOT = "/tmp/texera-python-environments"
 
     def __init__(self, fake: FakeTexera, base: str):
         self.fake, self.base = fake, base
         self.calls: list[list[str]] = []
 
+    def path_of(self, key: str) -> str:
+        return f"{self.ROOT}/{hashlib.sha256(key.encode()).hexdigest()[:32]}"
+
     def __call__(self, *cmd: str, timeout: float = 120, stdin: str | None = None):
         cmd = list(cmd)
         self.calls.append(cmd)
+        if cmd[:2] == ["python3", "-c"] and "texera-environment.json" in cmd[2]:
+            assert cmd[3] == self.ROOT, cmd
+            out = [{"name": self.path_of(k).rsplit("/", 1)[1], "path": self.path_of(k), "dir": True,
+                    "marker": {"requirements": m["requirements"], "digest": "x"}}
+                   for k, m in self.fake.installed_envs.items()]
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(out) + "\n")
         if cmd[:2] == ["python3", "-c"]:
             return subprocess.CompletedProcess(cmd, 1, "ModuleNotFoundError: No module named 'tabulate'")
+        if cmd[:2] == ["sh", "-c"] and "UDF_PYTHON_ENVIRONMENTS_ROOT" in cmd[2]:
+            return subprocess.CompletedProcess(cmd, 0, self.ROOT)
+        if cmd[:2] == ["rm", "-rf"]:
+            for k in [k for k in self.fake.installed_envs if self.path_of(k) == cmd[2]]:
+                del self.fake.installed_envs[k]
+            return subprocess.CompletedProcess(cmd, 0, "")
         if cmd[0] == "curl":
             url = next(c for c in cmd if c.startswith("http://localhost:8085"))
             auth = cmd[cmd.index("-H") + 1]
@@ -54,12 +74,6 @@ class FakeUnitExec:
                               headers={"Authorization": auth.split(": ", 1)[1],
                                        "Content-Type": "application/json"}, timeout=60)
             return subprocess.CompletedProcess(cmd, 0, f"{r.text}\n{r.status_code}")
-        if cmd[:2] == ["sh", "-c"] and "texera-environment.json" in cmd[2]:
-            out = "".join(f"== /tmp/texera-python-environments/{i:032x}/texera-environment.json\n"
-                          f"{json.dumps(m)}\n" for i, m in enumerate(self.fake.installed_envs.values()))
-            return subprocess.CompletedProcess(cmd, 0, out)
-        if cmd[:2] == ["sh", "-c"] and "grep -l" in cmd[2]:
-            return subprocess.CompletedProcess(cmd, 0, "")
         raise AssertionError(f"unexpected unit command {cmd}")
 
 
@@ -68,6 +82,9 @@ class ScenarioCase(unittest.TestCase):
     replay_log = False
 
     def setUp(self):
+        self._settle = scenarios.REFUSAL_SETTLE_S
+        scenarios.REFUSAL_SETTLE_S = 0.5  # the fake answers at once
+        self.addCleanup(setattr, scenarios, "REFUSAL_SETTLE_S", self._settle)
         self.fake = FakeTexera(warehouses=True, replay_log=self.replay_log)
         base = self.fake.start()
         api = TexeraApi(base)
@@ -154,10 +171,40 @@ class CreateWsScenarios(ScenarioCase):
 
     def test_g_h_i_environments(self):
         rec = self.run_key("g")
-        self.assertEqual(2, len([w for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"]))
+        starts = [w for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"]
+        self.assertEqual(2, len(starts))
+        # run 2 on a workflow of its own: no replay of run 1's console can reach it
+        self.assertEqual(2, len({w["wid"] for w in starts}))
         self.assertEqual(1, len(self.fake.installed_envs))
-        self.run_key("h")
+        self.assertFalse(any("removed an earlier install" in n for n in rec.notes))
+        rec = self.run_key("h")
+        self.assertIn("the run fails before it starts (never Running)", self.names(rec))
+        self.assertTrue(any(n.startswith("no install directory is left") for n in self.names(rec)))
         self.run_key("i")
+
+    def test_g_removes_an_earlier_install_of_the_same_requirements(self):
+        """A unit that ran g before (a --keep stack, a rerun) holds the install; g removes
+        it so run 1 sees a fresh install, not "reused"."""
+        self.fake.installed_envs["tabulate==0.9.0"] = {"requirements": ["tabulate==0.9.0"], "name": "old"}
+        rec = self.run_key("g")
+        self.assertTrue(any("removed an earlier install" in n for n in rec.notes), rec.notes)
+        self.assertIn(["rm", "-rf", self.unit.path_of("tabulate==0.9.0")], self.unit.calls)
+
+    def test_g_fails_when_run_1_reuses_an_install(self):
+        """The check that matters: if the stale install were still there, run 1 would say
+        'reused' and g must fail (here the removal is skipped)."""
+        self.fake.installed_envs["tabulate==0.9.0"] = {"requirements": ["tabulate==0.9.0"], "name": "old"}
+        real = self.unit
+
+        def no_rm(*cmd, **kw):
+            if list(cmd[:2]) == ["rm", "-rf"]:
+                return subprocess.CompletedProcess(list(cmd), 0, "")
+            return real(*cmd, **kw)
+        self.ctx.unit_exec = no_rm
+        rec = run_scenario(self.ctx, "g")
+        self.assertEqual("FAIL", rec.outcome)
+        failed = [c.name for c in rec.checks if not c.ok]
+        self.assertIn("run 1: the UDF's console says Installing, then ready with tabulate==0.9.0", failed)
 
     def test_g0_legacy(self):
         rec = self.run_key("g0")
