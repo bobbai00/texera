@@ -41,7 +41,7 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
-| `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv` |
+| `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), its schema step, the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv` |
 | `driver/localdev_unit.py` | The driver's local-dev mode (`--target localdev`): the dev server as `--base`, local-dev's local unit |
 | `run-localdev.sh` | Local-dev mode end to end: lock, clean start, `up`, the driver, `post-run`, `down` |
 | `reports/` | JSON reports, one per driver run |
@@ -905,6 +905,11 @@ and the services write into it. All of that is gitignored output (`git status` s
 `target/` directories, jOOQ's generated sources, amber's Python protobufs and `__pycache__`,
 `frontend/node_modules` and `.angular/`, and the services' own `log/`, `logs/` and `amber/logs/`.
 
+On the Step 1 source, `bin/local-dev.sh up` itself stops at its schema step, on any fresh
+volume: `sql/updates/31.sql` fails. That is a bug of the repository's local-dev ("local-dev's
+schema step" below). This mode runs the step as local-dev does, records the failure as a
+deviation and goes on; `--strict-schema` stops it there instead.
+
 ```
 LOCK=<scratchpad>/sce/stack.lock
 stack/localdev-stack.sh build --codegen-only   # under the lock: Postgres alone for jOOQ's codegen (~30 s)
@@ -912,7 +917,7 @@ stack/localdev-stack.sh build                  # no lock needed: sbt dist of the
 ./run-localdev.sh --lock $LOCK --reset         # clean start, up, a-e and u, post-run, down, lock released
 
 # by hand, holding the lock yourself:
-stack/localdev-stack.sh up                     # http://localhost:4200 (dev server)
+stack/localdev-stack.sh up [--strict-schema]   # http://localhost:4200 (dev server)
 driver/run.sh --target localdev [--scenario a,d]
 stack/localdev-stack.sh status | logs <svc> [-f]
 stack/localdev-stack.sh down                   # `reset` also removes the volumes
@@ -922,8 +927,9 @@ stack/localdev-stack.sh down                   # `reset` also removes the volume
 
 local-dev's own configuration, from the source's `bin/local-dev/main.sh`, so the mode follows
 the branch's local-dev: its `DOCKER_INFRA_SERVICES`, its service catalog (`SERVICES` in start
-order, each JVM service's `SVC_LAUNCHER`, `SVC_CWD`, `SVC_ZIP_GLOB`, `SVC_PORT`, `SVC_HEALTH`)
-and its environment (every `export X="${X:-default}"`). The infrastructure is
+order, each JVM service's `SVC_LAUNCHER`, `SVC_CWD`, `SVC_ZIP_GLOB`, `SVC_PORT`, `SVC_HEALTH`),
+its environment (every `export X="${X:-default}"`) and its schema step (the functions `up`
+runs right after the infrastructure, below). The infrastructure is
 `bin/single-node/docker-compose.yml` merged with `bin/local-dev/docker-compose.override.yml`,
 as local-dev's `docker compose -f ... -f ...` merges them. `generate` writes
 `stack/localdev/generated/` (`docker-compose.yml`, `.env`, `sql/`, `service.env.json`,
@@ -934,17 +940,25 @@ the keys rewritten on purpose (names, network, ports, the DDL mount, lakekeeper-
 ### What `up` does
 
 1. Refuses to start when this stack already runs, or when any port it needs is taken by a
-   container or a host process (it names the holder and never stops anything). Checks JDK 17
-   (`$JAVA_HOME`, `java_home -v 17`, SDKMAN), node 24 (nvm) and the UDF Python (below).
+   container or a host process (it names the holder and never stops anything); the unit's
+   Pekko port 2552 is one of them. Refuses a dist zip that does not match the source (see
+   "Builds"). Checks JDK 17 (`$JAVA_HOME`, `java_home -v 17`, SDKMAN), node 24 (nvm) and the
+   UDF Python (below).
 2. Infrastructure: `docker compose up -d` (project `e2e-localdev`), then waits for the
    healthchecks and the three init jobs (exit 0). Checks that Lakekeeper's default warehouse
    stores the LAN endpoint and that RustFS answers there from the host.
-3. Builds only what is missing, as local-dev does: `sbt dist` when a dist zip is missing
-   (against this stack's Postgres, see "Builds"), amber's Python protobufs when
-   `amber/src/main/python/proto` is empty (`bin/python-proto-gen.sh` with the betterproto
-   plugin at amber's pin), `yarn install --immutable` (node 24) when `frontend/node_modules` is
-   missing or older than `yarn.lock`. A zip older than the source's HEAD commit is reported.
-4. Unzips each dist under `.state/localdev/dist/` (again when the zip changes) and starts the
+3. local-dev's schema step, as `bin/local-dev.sh up` runs it right after `infra_up` (next
+   section). On this source it fails, as it does for local-dev; `up` goes on and records the
+   deviation, or stops with `--strict-schema`.
+4. Builds what is missing: `sbt dist` when a dist zip is missing (against this stack's
+   Postgres, see "Builds"), amber's Python protobufs when `amber/src/main/python/proto` is empty
+   (`bin/python-proto-gen.sh` with the betterproto plugin at amber's pin), `yarn install
+   --immutable` (node 24) when `frontend/node_modules` is missing or older than `yarn.lock`.
+   local-dev decides differently: it rebuilds a service whenever a hash of its sources changed
+   since its last build, or a launcher is missing. The harness builds only a missing zip (what
+   this mode was asked to do, to keep sbt off a shared machine) and refuses a stale one instead
+   of rebuilding it.
+5. Unzips each dist under `.state/localdev/dist/` (again when the zip changes) and starts the
    services in local-dev's order, each in its own process group, from local-dev's working
    directory: the worktree root, and `amber/` for the dashboard and the unit (amber finds its
    config and its Python tree from there). Pid files (pid, process group, start time, command)
@@ -952,11 +966,14 @@ the keys rewritten on purpose (names, network, ports, the DDL mount, lakekeeper-
    until each service listens on local-dev's port and answers its health check: local-dev's
    `SVC_HEALTH`, or, where it has none, `/api/healthcheck` on the managing service's
    application port and `/api/execution/health` on the unit.
-5. Starts `ng serve` in the source's `frontend/` (node 24, `--max-old-space-size` taken from
+6. Starts `ng serve` in the source's `frontend/` (node 24, `--max-old-space-size` taken from
    `yarn start`, 8192: with 4096 the dev build runs out of memory in its setup phase; it peaks
    at about 4.4 GB), waits until `http://localhost:4200/` serves the app, then checks through
    the proxy that `/api/healthcheck` (the dashboard) and `/api/config/pre-login` (config-service,
    the first thing a browser loads) answer 200. A normal `up` takes about a minute.
+7. Compares the TCP ports each process group listens on (`lsof`) with the ports step 1
+   reserved for it, and warns about any other: a port the pre-flight check cannot see taken.
+   The manifest records them (`listening`).
 
 | Service (local-dev's name) | Port | Working dir | `JAVA_OPTS` |
 |---|---|---|---|
@@ -964,12 +981,66 @@ the keys rewritten on purpose (names, network, ports, the DDL mount, lakekeeper-
 | access-control-service | 9096 | worktree | `-Xmx512m ...` |
 | file-service | 9092 | worktree | `-Xmx512m ...` |
 | workflow-compiling-service | 9090 | worktree | `-Xmx1g ...` |
-| computing-unit-master (the unit, `ComputingUnitMaster`) | 8085 | `amber/` | `-Xmx1g ...` |
+| computing-unit-master (the unit, `ComputingUnitMaster`) | 8085 (Pekko 2552) | `amber/` | `-Xmx1g ...` |
 | computing-unit-managing-service | 8888 (local-dev watches its admin port 8082) | worktree | `-Xmx512m ...` |
 | texera-web (the Dashboard, `TexeraWebApplication`) | 8080 (admin 8081) | `amber/` | `-Xmx1g ...` |
 | frontend (`ng serve`) | 4200 | `frontend/` | node `--max-old-space-size=8192` |
 
 `--heap NAME=SIZE` (or `all=SIZE`) changes a heap; `--frontend-heap MB` the dev server's.
+
+### local-dev's schema step, and the repository bug it hits
+
+**What local-dev does.** `bin/local-dev.sh up` runs `infra_ensure_db_schema` right after
+`infra_up` and before the build. On a fresh volume Postgres has already run `sql/` itself
+(compose mounts it as `/docker-entrypoint-initdb.d`), so the `feedback` table exists and the
+step replays every changeSet of `sql/changelog.xml` that `public.databasechangelog` does not
+list: all 30 (23 to 52) on a fresh volume, each through `psql -v ON_ERROR_STOP=1`, each recorded
+afterwards. A failed changeSet is accepted only when every psql error says "already exists".
+Any other failure ends `up`: main.sh runs under `set -euo pipefail`, and `cmd_up` calls the step
+as a plain statement.
+
+**How the harness runs it.** The four functions (`infra_ensure_db_schema`,
+`infra_apply_sql_updates`, `parse_changelog_changesets`, `_sql_errors_all_already_exist`) are
+copied from the source's main.sh into `<logs>/local-dev-schema/schema-step.sh` unchanged but for
+the container name (`local pg="texera-postgres"` becomes `e2e-localdev-texera-postgres`), and
+run by the bash main.sh's `#!/usr/bin/env bash` finds (Homebrew bash 5.3 here), with `REPO_ROOT`
+the source and `LOG_DIR` that directory. Stand-ins for local-dev's `tui_*` output helpers print
+local-dev's messages as tab-separated lines the harness reads back. The outcome goes into
+MANIFEST.json `schema` (changeSets applied, already in the schema, recorded and not; the failure
+and psql's error) and so into the report. Whether a failure ends local-dev's `up` is read from
+main.sh too: a plain call in `cmd_up`, `set -e`, a plain dispatch of `up`. If main.sh changes
+shape (a function or the container line gone, or `cmd_up` no longer running the step), `up`
+stops and says so. `build` runs the step too, before jOOQ's codegen, as local-dev reconciles the
+schema before any build.
+
+**When it fails.** With `--strict-schema` (or `$SCE_LOCALDEV_STRICT_SCHEMA=1`; `run-localdev.sh
+--strict-schema`), `up` stops where local-dev's `up` stops: exit 1 before the build and any
+service (run-localdev.sh exits 3). By default it goes on, as a recorded deviation. The changeSets
+from the failed one on stay unapplied and unrecorded, as local-dev leaves them. MANIFEST.json
+`local_dev_deviations`, the end of `up`, `status`, `post-run` and the report's
+`summary.local_dev_deviations` name the deviation; it does not change `summary.result`.
+
+**The bug (a local-dev bug of the repository).** At the Step 1 commit `5e85a37de`, and at
+upstream main `205fe77c4` (the newest fetched here; its `sql/` and `bin/local-dev/` are
+identical to Step 1's), the step fails on every fresh volume:
+
+```
+postgres: sql/updates/31.sql failed
+psql:<stdin>:29: ERROR:  constraint "ck_nulltest" of relation "user" does not exist
+```
+
+It applies 23 to 27, 29 and 30, accepts 28 (`dataset_owner_uid_name_key` already exists) and
+stops at 31. `sql/texera_ddl.sql` no longer defines `ck_nulltest`: 33.sql moved the credentials
+from `user` to `auth_provider` and dropped the constraint (`IF EXISTS`). 31.sql still drops it
+without `IF EXISTS`, and the rule accepts only "already exists" (#7064's fix). So
+`bin/local-dev.sh up` exits before the build, on a fresh volume and on every later `up`, since
+31 is never recorded. The probe below shows it: on the kept volume, with 23 to 30 recorded, 31
+fails first. Step 1 changes neither `sql/` nor `bin/local-dev`.
+
+The schema itself is complete: the DDL already holds every update, and the review's replay of 23
+to 52 changed nothing in a `pg_dump --schema-only`. That is why the services work once the
+harness goes on. The fix belongs upstream: `DROP CONSTRAINT IF EXISTS` in 31.sql, or a rule that
+also accepts a replayed drop of what the DDL no longer has.
 
 ### The services' environment
 
@@ -998,17 +1069,27 @@ for a 3.12; an explicit `UDF_PYTHON_PATH` is its documented override.
   and `e2e-localdev_rustfs_data`. local-dev's own compose would name its containers
   `texera-postgres` and so on and join the network `texera-single-node`, so it cannot run beside
   the user's single-node stack; this copy can.
-- Infrastructure host ports moved by 10000: Postgres 15432, LakeFS 18000, Lakekeeper 18181
-  (127.0.0.1 only), RustFS 19000. Here 5432 belongs to `texera-tripwire-pg` and 8000 to
-  `texera-lakefs`. RustFS is published on all interfaces, as upstream: the LAN endpoint must be
-  reachable from Lakekeeper's container and from the host's JVMs and Python workers.
+- Infrastructure host ports moved by 10000. Postgres 15432, LakeFS 18000 and Lakekeeper 18181
+  are bound to 127.0.0.1 only; RustFS 19000 is published on all interfaces, as upstream, because
+  the LAN endpoint must be reachable from Lakekeeper's container and from the host's JVMs and
+  Python workers. Here 5432 belongs to `texera-tripwire-pg` and 8000 to `texera-lakefs`.
 - The services keep local-dev's ports, which `proxy.config.json` names.
 - `down` stops only the processes it started (each pid file's start time is checked; a pid
-  now owned by another process is left alone). Leftovers without a pid file are found by their
-  dist path under `.state/localdev/dist` or as `ng serve` in the source's `frontend/`. Each
-  process group gets SIGTERM, then SIGKILL after 20 s, so the unit's Python workers go with it.
-  Then `docker compose down` of the project. `down` fails if a container, the network or a
-  process of the stack remains. Volumes stay; `reset` removes them.
+  now owned by another process is left alone), newest first: the dev server, then the services
+  in reverse start order (a nanosecond stamp in each pid file). Leftovers without a pid file
+  are found by what they run:
+  - a JVM by its dist under `.state/localdev/dist`;
+  - the dev server and its esbuild by their working directory, the source's `frontend/` (the
+    Angular CLI retitles its process, so `ps` shows `ng serve (gui)` rather than the node
+    command line), or as whoever listens on 4200 from there;
+  - the unit's Python workers by `texera_run_python_worker` in the source's `amber/`.
+
+  A leftover's whole process group is stopped when the group is the stack's (the leftover leads
+  it, or its leader is gone or a leftover too); otherwise only the process is. Each group gets
+  SIGTERM, then SIGKILL after 20 s (a zombie no longer counts as a member), so the unit's Python
+  workers go with it. Then `docker compose down` of the project. `down` fails, naming them, if a
+  container, the network or a process of the stack remains. Volumes stay; `reset` removes them.
+  The source worktree is the harness's own, so a dev server in its `frontend/` is this stack's.
 
 Left out: LiteLLM and Jupyter (infrastructure), notebook-migration-service and agent-service
 (services), and `yarn start`'s y-websocket process (shared editing, `/rtc`). None of them is on
@@ -1026,9 +1107,31 @@ common/dao's jOOQ codegen reads the schema from Postgres while sbt compiles. Two
    sources stay, as `common/dao/build.sbt` intends. The betterproto plugin is put last on `PATH`,
    so amber's compile regenerates the Python protobufs itself (`genPythonProto`). About 90 s here.
 
-`--codegen-only` stops after phase 1, so phase 2 can run without the lock. sbt runs as local-dev
-runs it (`-no-colors -J-XX:+UseG1GC`), with the heap capped at 3g (`$SCE_LOCALDEV_SBT_HEAP`).
-`up` builds by itself when a zip is missing, with the infrastructure already up.
+`--codegen-only` stops after phase 1, so phase 2 can run without the lock. Phase 1 runs
+local-dev's schema step before the codegen (with `--strict-schema` as for `up`). `--force`
+regenerates jOOQ (Postgres: hold the lock) and rebuilds every dist. sbt runs as local-dev runs it
+(`-no-colors -J-XX:+UseG1GC`), with the heap capped at 3g (`$SCE_LOCALDEV_SBT_HEAP`). `up` builds
+by itself when a zip is missing, with the infrastructure already up.
+
+**What a dist was built from.** Each build records, in `.state/localdev/dist-provenance.json`,
+what every zip it wrote was built from: the source's HEAD and its build inputs with uncommitted
+changes, read before sbt starts. If HEAD moves or a build input is modified while sbt runs, the
+commit is left unknown. Build inputs are the files under a JVM project's `src/main` (amber's
+Python tree aside: the unit runs it from the worktree), `*.sbt` and `project/`, tracked or
+untracked; ignored ones (jOOQ's generated sources) are left out.
+
+`up` refuses a zip, before starting anything, when:
+
+- its record names another commit and a build input differs between the two;
+- its record says the source changed while it was built;
+- a build input was modified after the zip was written. That is local-dev's own first check
+  (`svc_src_changed`'s fast path).
+
+`--allow-stale-dists` runs it anyway, as a warning. A zip without a record (built outside the
+harness, or before it recorded builds, like the zips of the runs below) is only a warning: its
+commit is not recorded, only that no build input changed after it was written. local-dev itself
+assumes such a jar matches the sources (its "lazy seed"). Each service's `zip_provenance` is in
+the manifest.
 
 ### The driver in local-dev mode
 
@@ -1067,7 +1170,8 @@ exist, so nothing the driver runs in this mode can reach a container.
 
 ```
 ./run-localdev.sh --lock <dir> | --no-lock  [--source <worktree>] [--reset] [--keep] [--label text]
-                  [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [-- <driver args>]
+                  [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [--strict-schema]
+                  [--allow-stale-dists] [-- <driver args>]
 ```
 
 1. Takes the lock (waiting while another run holds it). The owner file names the run. Starts
@@ -1078,20 +1182,52 @@ exist, so nothing the driver runs in this mode can reach a container.
    the stack manifest.
 5. `post-run`: every service still alive and healthy, and the unit's leftover Python workers
    counted. The outcome goes into the report as `post_run` (a dead service sets
-   `summary.result` to FAIL) and into `post-run.json`.
-6. Saves the infrastructure containers' logs (`<logs>/infra/`), runs `down` (unless `--keep`)
-   and releases the lock. This also happens when a step fails, the time limit is reached, or
-   the run is interrupted.
+   `summary.result` to FAIL) and into `post-run.json`. It also puts the run's deviations from
+   local-dev and its warnings next to the result (`summary.local_dev_deviations`,
+   `summary.warnings`) and prints them.
+6. Saves the infrastructure containers' logs (`<logs>/infra/`), runs `down` and releases the
+   lock. This also happens when a step fails, the time limit is reached, or the run is
+   interrupted. With `--keep` the stack stays up, and so does the lock: the stack still holds
+   its ports and the Docker VM. The owner file says so, and `stack/localdev-stack.sh down`, then
+   removing the lock, is the caller's job, within the shared rule's 45 minutes. At the time
+   limit `--keep` does not apply.
 
 Exit codes: the driver's (0, 1, 2), 3 if the stack did not come up, 4 if `post-run` failed,
 5 at the time limit, 64 for a usage error.
 
 ### Verified
 
-2026-11-16. Source `sce-localdev-src`, detached at the Step 1 commit `5e85a37de`, clean. Its
-dists were built by this mode (`build --codegen-only` under the lock, then `build`). JDK
-Temurin 17.0.19, node v24.15.0, UDF Python 3.11.14 (the step-1 venv, every
-`amber/requirements.txt` pin matched). OrbStack Docker, LAN IP 192.168.50.162 (en1).
+2026-11-16, after the review's fixes: harness `2832a0a`, no uncommitted change. Source
+`sce-localdev-src`, detached at the Step 1 commit `5e85a37de`, clean throughout. JDK Temurin
+17.0.19, node v24.15.0, UDF Python 3.11.14 (the step-1 venv, every `amber/requirements.txt` pin
+matched). OrbStack Docker, LAN IP 192.168.50.162 (en1). The dists are the ones the build below
+made. They predate build records, so `up` ran them with that warning; no build input changed
+after they were written.
+
+| Report (`reports/`) | Result | Notes |
+|---|---|---|
+| `localdev-20261116T131339Z` | a b c d e u PASS, 49/49 checks; post-run ok, no Python worker left | clean start (`--reset`); `up` 44 s (infra 6 s, schema step 1 s, services 8 s, dev server 14 s); driver 20 s; lock held 05:13:39 to 05:15:08 |
+| `localdev-20261116T131514Z` | a b c d e u PASS, 49/49 checks; post-run ok, no Python worker left | clean start; `up` 48 s (infra 6 s, schema step 1 s, services 7 s, dev server 19 s); driver 20 s; lock held 05:15:14 to 05:16:42 |
+
+In both runs, local-dev's schema step failed at 31 as described above: 23 to 27, 29 and 30
+applied, 28 already in the schema, 31 to 52 not recorded. Each report lists this in
+`summary.local_dev_deviations`; it is the runs' only deviation from local-dev. Every process
+listened on exactly the ports reserved for it (the unit on 8085 and 2552). After each run, the
+stack left no container, network, process, listener or pid file; the other containers' start
+times and the Docker networks were unchanged, and the volumes were kept.
+
+Probes of the fixes, in one lock hold (05:10:29 to 05:13:27):
+
+| Probe | Outcome |
+|---|---|
+| `run-localdev.sh --reset --keep -- --scenario a` | a PASS, 8/8 (`localdev-20261116T131029Z`). The stack and the lock stayed; the owner file gained `--keep: stack left running since ...`, and the script printed the `down` and `rm -rf` to run |
+| Then the dev server's pid file removed, and `down` | `leftover pid 70316 (ng serve (gui)): stopped`; the services stopped texera-web first and config-service last; `down` found nothing left |
+| `up --strict-schema` on the kept volume | stopped at 31 at once (23 to 30 recorded by the run before): `local-dev's schema step failed at changeSet 31 (sql/updates/31.sql): psql:<stdin>:29: ERROR:  constraint "ck_nulltest" of relation "user" does not exist`; exit 1, no service started |
+| `reset`, then `up --strict-schema` on empty volumes | 23 to 27, 29 and 30 applied, 28 accepted, stopped at 31; exit 1, no service started |
+| Offline suite | 114/114. `test_localdev.py` (34 tests) runs local-dev's own schema functions against a fake `docker`, finds a dev server under the CLI's title, checks provenance in a scratch git repository, and runs `run-localdev.sh` with a stand-in stack (`--keep`, the time limit, the flags) |
+
+Earlier runs, before the review's fixes. In these, `up` did not run local-dev's schema step,
+so they say nothing about it:
 
 | Report (`reports/`) | Harness | Result | Notes |
 |---|---|---|---|
@@ -1100,7 +1236,7 @@ Temurin 17.0.19, node v24.15.0, UDF Python 3.11.14 (the step-1 venv, every
 | `localdev-20261116T122133Z` | `1d77279`, no uncommitted change | a b c d e u PASS, 49/49 checks; post-run ok | clean start; `up` 47 s (infra 6 s, services 7 s, dev server 19 s); driver 19 s; lock about 1 min |
 | `localdev-20261116T122446Z` | `e184270` (the final code), no uncommitted change | a b c d e u PASS, 49/49 checks; post-run ok | clean start; `up` 41 s (infra 6 s, services 7 s, dev server 14 s); driver 18 s; lock about 1 min |
 
-The build before them (`reports/localdev-build-codegen-logs`, `reports/localdev-build-dist-logs`):
+The build before all of them (`reports/localdev-build-codegen-logs`, `reports/localdev-build-dist-logs`):
 `build --codegen-only` held the lock 27 s (jOOQ: 224 generated sources from the step-1 DDL in
 this stack's Postgres); `build` then ran `sbt dist` of the six services in 90 s without Docker
 (the codegen's "Connection to localhost:15432 refused" fallback, as intended), and amber's compile
@@ -1112,7 +1248,6 @@ Probes of the guard rails, on `1d77279`:
 |---|---|
 | A listener on 127.0.0.1:9094, then `up` | refused before writing or starting anything: `9094 (config-service) is in use by Python (pid 53116)`; no container, no pid file |
 | `run-localdev.sh`, then the time-limit signal (USR1) right after `up` started the seven JVMs | exit 5; the step's process tree stopped (the JVMs with it), `down` found nothing left to stop, the project's containers and network removed, no process or pid file left, lock released (`reports/localdev-20261116T122333Z-logs`) |
-| Offline suite | 96/96 (`driver/tests/test_localdev.py`: 16) |
 
 What the runs establish:
 
@@ -1128,12 +1263,26 @@ What the runs establish:
   `user-1-1` was created through the Dashboard. A Python operator's worker writes its output
   port's table itself (`assign_port_handler.py`: pyiceberg through Lakekeeper, then the LAN
   endpoint), and the driver read b's, c's (the Sort) and e's results back exactly.
+- **local-dev's schema step, as local-dev runs it.** local-dev's own functions ran against this
+  stack's Postgres right after the infrastructure, and failed on this source exactly where
+  `bin/local-dev.sh up` stops. Past that step (the recorded deviation), the services and every
+  scenario work.
 - **Clean `down`.** No container, network, process or listener of the stack left, volumes kept,
   the other containers on the machine untouched, and `git status` of the source clean.
 
-Observed upstream, not on a run's path and not a failure: the Dashboard and the unit log
-`org.eclipse.jgit.errors.RepositoryNotFoundException: repository not found: <worktree>/amber`
-at startup. `OPVersion` runs `Git.open(".")`; local-dev starts amber's services from `amber/`
-without `TEXERA_HOME`, and `Git.open` does not search parent directories. The compiling
-service, started from the worktree root, logs the same for the worktree itself, because JGit
-cannot open a linked worktree's `.git` file. Operator versions then read `N/A`.
+Observed upstream, besides the schema step's failure above (a local-dev bug of the repository,
+which stops `bin/local-dev.sh up`):
+
+- The Dashboard and the unit log
+  `org.eclipse.jgit.errors.RepositoryNotFoundException: repository not found: <worktree>/amber`
+  at startup. `OPVersion` runs `Git.open(".")`; local-dev starts amber's services from `amber/`
+  without `TEXERA_HOME`, and `Git.open` does not search parent directories. The compiling
+  service, started from the worktree root, logs the same for the worktree itself, because JGit
+  cannot open a linked worktree's `.git` file. Operator versions then read `N/A`. Not on a
+  run's path.
+- The unit logs one `WARN [org.apache.iceberg.util.Tasks] ... Retrying task after failure: ...
+  Commit failed: CatalogCommitConflicts => Requirement failed: Branch or tag `main` already
+  exists` per run, during scenario c, with a `CommitFailedException` stack trace from
+  `IcebergTableWriter.flushBuffer` (`OutputPortStorageWriterThread`). Iceberg retries the
+  commit and the results read back are exact. Kubernetes mode's unit logs show it too, so it
+  comes from the engine's result writer with Lakekeeper, not from local-dev. Not a failure.
