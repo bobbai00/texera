@@ -42,6 +42,15 @@ class Workflow:
     def link(self, src: str, dst: str, src_port: int = 0, dst_port: int = 0) -> None:
         self.links.append((src, src_port, dst, dst_port))
 
+    def op(self, op_id: str) -> Op:
+        return next(o for o in self.ops if o.id == op_id)
+
+    def operator_json(self, op_id: str, **changes) -> dict:
+        """One operator as the logical plan carries it (what ModifyLogicRequest and
+        POST /api/executions/{eid}/updates take), with `changes` applied."""
+        o = self.op(op_id)
+        return {**o.props, **changes, "operatorID": o.id, "operatorType": o.type}
+
     def terminal_ops(self) -> list[str]:
         sources = {s for s, _, _, _ in self.links}
         return [o.id for o in self.ops if o.id not in sources]
@@ -120,15 +129,34 @@ def csv_scan(path: str) -> dict:
 
 
 def python_udf(code: str, *, out_columns: list[tuple[str, str]] | None = None,
-               retain_input: bool = True, workers: int = 1) -> dict:
+               retain_input: bool = True, workers: int = 1, env_name: str | None = None) -> dict:
+    """`env_name` names a Python environment (defaultEnv false); None runs the engine's own."""
     return {
         "code": code,
         "workers": workers,
         "retainInputColumns": retain_input,
-        "defaultEnv": True,
-        "envName": "",
+        "defaultEnv": env_name is None,
+        "envName": env_name or "",
         "outputColumns": [{"attributeName": n, "attributeType": t} for n, t in (out_columns or [])],
     }
+
+
+def text_input(lines: list[str], attribute: str = "line") -> dict:
+    """TextInput: one string tuple per line."""
+    return {"textInput": "\n".join(lines), "attributeType": "string", "attributeName": attribute}
+
+
+def file_lister(version_path: str) -> dict:
+    """FileLister: one `filename` tuple per file of /dataset/<owner email>/<name>/<version>."""
+    return {"datasetVersionPath": version_path}
+
+
+def file_scan_from_input(attribute_type: str = "single string", output_file_name: bool = True,
+                         attribute: str = "line") -> dict:
+    """FileScanOp (File Scan From Input): reads the files named by its input tuples.
+    attribute_type "single string" reads each file whole into one tuple."""
+    return {"fileEncoding": "UTF_8", "extract": False, "outputFileName": output_file_name,
+            "attributeType": attribute_type, "attributeName": attribute}
 
 
 def filter_op(*predicates: tuple[str, str, str]) -> dict:

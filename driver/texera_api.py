@@ -17,6 +17,18 @@ Endpoint shapes were read from upstream main (2026-10/11):
   POST /api/computing-unit/create            cu-managing        -> {computingUnit{cuid,uri}}
   POST /api/workflow/create                  dashboard-service  {name,content} -> {workflow{wid}}
   GET  /api/executions/{wid}/latest          dashboard-service  -> {eId,status,...}
+  GET  /api/executions/{wid}                 dashboard-service  -> [{eId,status,logLocation,...}]
+  GET  /api/executions/{wid}/interactions/{eid}  dashboard-service  -> [interaction id]
+  POST /api/auth/register                    dashboard-service  {username,email,password} -> {accessToken}
+  GET  /api/admin/user/list, PUT /api/admin/user/update   dashboard-service (ADMIN) User POJO
+  DELETE /api/computing-unit/{cuid}/terminate  cu-managing
+  POST /api/pve/db, GET /api/pve/db          the unit (legacy environments, until step 2's sub-part 21)
+  WS   /wsapi/pve?cuid&pveName&action=create|install[&packages=[..]]  the unit; lines until __DONE__
+
+Step 2 (design section 3), not on the published images:
+  POST /api/executions                       dashboard-service  3.4 -> 201 {eid,wid,computingUnitId,planUri}
+  POST /api/executions/{eid}/updates         dashboard-service  3.5 {operator} -> 200 {updateId,operatorId}
+  GET/POST /api/environments, PUT/DELETE /api/environments/{veid}   dashboard-service 3.8
 """
 
 from __future__ import annotations
@@ -25,9 +37,10 @@ import base64
 import json
 import time
 import urllib.parse
-from typing import Any
+from typing import Any, Callable
 
 import requests
+import websocket  # websocket-client
 
 # workflow_executions.status codes (Utils.maptoStatusCode upstream)
 EXECUTION_STATUS = {0: "Uninitialized/Ready", 1: "Running", 2: "Paused", 3: "Completed",
@@ -97,11 +110,74 @@ class TexeraApi:
         token = (body or {}).get("accessToken")
         if not token:
             raise RuntimeError(f"login returned no accessToken: {body}")
+        self.set_token(token)
+        return token
+
+    def set_token(self, token: str) -> None:
         self.token = token
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
         self.claims = json.loads(base64.urlsafe_b64decode(payload))
-        return token
+
+    def with_token(self, token: str) -> "TexeraApi":
+        """Another client of the same deployment, acting as the token's user."""
+        other = TexeraApi(self.base, self.timeout)
+        other.set_token(token)
+        return other
+
+    def token_for(self, username: str, password: str) -> str:
+        """A token of another user (by logging in as them); this client is unchanged."""
+        return TexeraApi(self.base, self.timeout).login(username, password)
+
+    @property
+    def role(self) -> str:
+        return str(self.claims.get("role") or "")
+
+    # --------------------------------------------------------------------- users
+
+    def register_user(self, username: str, email: str, password: str) -> str | None:
+        """POST /api/auth/register; the new (INACTIVE) user's token, or None when the
+        name already exists (log in instead) or the deployment mails a code first."""
+        r = self.request("POST", "/api/auth/register",
+                         json={"username": username, "email": email, "password": password},
+                         auth=False, expect=None)
+        if r.status_code == 200:
+            return (r.json() or {}).get("accessToken")
+        if "exists already" in r.text:
+            return None
+        raise TexeraApiError("POST", r.url, r.status_code, r.text)
+
+    def list_users(self) -> list[dict]:
+        return self.get_json("/api/admin/user/list") or []
+
+    def set_role(self, uid: int, role: str) -> None:
+        """The admin's PUT /api/admin/user/update with the user's row and a new role."""
+        user = next((u for u in self.list_users() if int(u.get("uid", -1)) == int(uid)), None)
+        if user is None:
+            raise RuntimeError(f"no user {uid} in /api/admin/user/list")
+        self.request("PUT", "/api/admin/user/update", json={
+            "uid": uid, "name": user.get("name"), "email": user.get("email"), "role": role,
+            "comment": user.get("comment") or "",
+        }, expect=(200, 204))
+
+    def ensure_user(self, username: str, email: str, password: str, role: str = "REGULAR") -> "TexeraApi":
+        """A client logged in as `username` with `role` (registered and activated by this
+        client, which must be an admin, when needed)."""
+        try:
+            other = TexeraApi(self.base, self.timeout)
+            other.login(username, password)
+        except TexeraApiError:
+            if self.register_user(username, email, password) is None:
+                raise RuntimeError(f"user {username} exists with another password, or registration "
+                                   f"needs an emailed code here")
+            other = TexeraApi(self.base, self.timeout)
+            other.login(username, password)
+        if other.role != role:
+            self.set_role(other.uid, role)
+            other.login(username, password)  # the role travels in the token
+        if other.role != role:
+            raise RuntimeError(f"{username} still has role {other.role}, not {role}")
+        return other
 
     @property
     def uid(self) -> int:
@@ -221,6 +297,13 @@ class TexeraApi:
                     and str(cu.get("type", "")).lower() == "local"
                     and not cu.get("terminateTime")):
                 return cu
+        return self.create_local_unit(name, uri)
+
+    def terminate_unit(self, cuid: int) -> requests.Response:
+        return self.request("DELETE", f"/api/computing-unit/{cuid}/terminate", expect=None,
+                            headers={"Content-Type": "application/json"})
+
+    def create_local_unit(self, name: str, uri: str) -> dict:
         body = self.post_json("/api/computing-unit/create", {
             "name": name,
             "unitType": "local",
@@ -258,3 +341,113 @@ class TexeraApi:
                 return entry
             time.sleep(1)
         return entry
+
+    def list_executions(self, wid: int) -> list[dict]:
+        """Every execution of the workflow ([] when the caller cannot read it)."""
+        return self.get_json(f"/api/executions/{wid}") or []
+
+    def execution_entry(self, wid: int, eid: int) -> dict | None:
+        return next((e for e in self.list_executions(wid) if e.get("eId") == eid), None)
+
+    def wait_entry_status(self, wid: int, eid: int, want: int, timeout: float = 30) -> dict | None:
+        """Poll one execution's row until its status is `want`; the last row seen."""
+        deadline = time.time() + timeout
+        entry = None
+        while True:
+            entry = self.execution_entry(wid, eid)
+            if (entry and entry.get("status") == want) or time.time() > deadline:
+                return entry
+            time.sleep(1)
+
+    def execution_interactions(self, wid: int, eid: int) -> list[str]:
+        return self.get_json(f"/api/executions/{wid}/interactions/{eid}") or []
+
+    # --------------------------------------------- step 2: create and update
+
+    def create_execution(self, body: dict) -> requests.Response:
+        """POST /api/executions (design 3.4); the raw response, any status. The
+        Dashboard compiles here, so allow the 120 s the gateway gives it."""
+        return self.request("POST", "/api/executions", json=body, expect=None,
+                            timeout=max(self.timeout, 130))
+
+    def post_operator_update(self, eid: int, operator: dict) -> requests.Response:
+        """POST /api/executions/{eid}/updates (design 3.5); the raw response."""
+        return self.request("POST", f"/api/executions/{eid}/updates", json={"operator": operator},
+                            expect=None, timeout=max(self.timeout, 130))
+
+    # ------------------------------------------------------------ environments
+
+    def list_environments(self, legacy: bool = False) -> list[dict]:
+        """The caller's environments: /api/environments (step 2's sub-part 19 on) or
+        the unit's legacy /api/pve/db."""
+        return self.get_json("/api/pve/db" if legacy else "/api/environments") or []
+
+    def ensure_environment(self, name: str, packages: dict[str, str], legacy: bool = False) -> dict:
+        """The caller's environment `name` holding `packages`: created (201), or the
+        existing row updated when its packages differ."""
+        path = "/api/pve/db" if legacy else "/api/environments"
+        r = self.request("POST", path, json={"name": name, "packages": packages}, expect=None)
+        if r.status_code == 201:
+            row = r.json() or {}
+            return {"veid": row.get("veid"), "name": name, "packages": row.get("packages", packages),
+                    "created": True}
+        if r.status_code != 409:
+            raise TexeraApiError("POST", r.url, r.status_code, r.text)
+        row = next((e for e in self.list_environments(legacy) if e.get("name") == name), None)
+        if row is None:
+            raise RuntimeError(f"environment {name} exists (409) but is not in the caller's list")
+        if (row.get("packages") or {}) != packages:
+            self.request("PUT", f"{path}/{row['veid']}", json={"name": name, "packages": packages})
+        return {"veid": row.get("veid"), "name": name, "packages": packages, "created": False}
+
+    def build_legacy_environment(self, cuid: int, name: str, packages: list[str], *,
+                                 timeout: float = 1800, log: Callable[[str], None] | None = None) -> dict:
+        """The unit's legacy environment path (/wsapi/pve): create the venv (it installs
+        amber's requirements, which takes minutes), then install `packages` into it.
+        Returns {"create": [lines], "install": [lines]}; raises on a [PVE][ERR]/[ERR]
+        line, a missing __DONE__ or the timeout."""
+        out = {}
+        for action, extra in (("create", {}),
+                              ("install", {"packages": json.dumps(list(packages))})):
+            query = urllib.parse.urlencode({"cuid": cuid, "pveName": name, "action": action,
+                                            "access-token": self.token or "", **extra})
+            lines = self._pve_socket(f"{self.ws_url('/wsapi/pve')}?{query}", timeout, log)
+            errors = [ln for ln in lines if ln.startswith("[PVE][ERR]") or ln.startswith("[ERR]")]
+            if errors or not lines or lines[-1] != "__DONE__":
+                raise RuntimeError(f"/wsapi/pve {action} {name} failed: "
+                                   f"{(errors or lines[-5:] or ['no output'])[:5]}")
+            out[action] = lines
+        return out
+
+    def ws_url(self, path: str) -> str:
+        parts = urllib.parse.urlsplit(self.base)
+        scheme = "wss" if parts.scheme == "https" else "ws"
+        return urllib.parse.urlunsplit((scheme, parts.netloc, parts.path.rstrip("/") + path, "", ""))
+
+    @staticmethod
+    def _pve_socket(url: str, timeout: float, log: Callable[[str], None] | None) -> list[str]:
+        deadline = time.monotonic() + timeout
+        ws = websocket.create_connection(url, timeout=30)
+        lines: list[str] = []
+        try:
+            while time.monotonic() < deadline:
+                ws.settimeout(max(1.0, min(300.0, deadline - time.monotonic())))
+                try:
+                    msg = ws.recv()
+                except websocket.WebSocketConnectionClosedException:
+                    break
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if not msg:
+                    break
+                lines.append(msg)
+                if log and (msg.startswith("[PVE]") or msg.startswith("[ERR]") or len(lines) % 50 == 0):
+                    log(f"    pve: {msg[:200]}")
+                if msg == "__DONE__":
+                    break
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+        return lines

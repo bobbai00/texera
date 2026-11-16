@@ -2,12 +2,21 @@
 
 Scenarios only see `Transport.start_run(...) -> RunHandle` and the RunHandle
 methods (wait_for_state, pause, resume, kill, stats, console, results,
-summary, close). A new way of running (e.g. "the Dashboard creates the
-execution, the gateway routes start/watch/commands to the unit") is a new
-Transport subclass registered in TRANSPORTS; the scenarios stay unchanged.
+modify_operator, summary, close). A new way of running is a new Transport
+subclass registered in TRANSPORTS; the scenarios stay unchanged.
 
-The only transport today, `ws` (WebSocketTransport), is the browser's path on
-upstream main and on the published images:
+Two transports:
+
+  * `ws` (WebSocketTransport): the browser's path on upstream main, the
+    published images and step 2's PR A: the unit creates the execution.
+  * `create-ws` (CreateStartTransport): step 2 from PR B on: the Dashboard
+    creates the execution (POST /api/executions -> {eid, planUri}), then the
+    socket starts it by id (WorkflowStartRequest{executionId, planUri}). A paused
+    operator's change is posted to the Dashboard (POST
+    /api/executions/{eid}/updates -> {updateId}) and named to the unit
+    (OperatorUpdateRequest{executionId, updateId}).
+
+`ws`, on the wire:
 
   * connect  ws(s)://<gateway>/wsapi/workflow-websocket?wid=W&uid=U&cuid=C&access-token=JWT
     (single-node: nginx -> the one unit container; the unit takes the user from the
@@ -23,11 +32,18 @@ upstream main and on the published images:
   * events   WorkflowStateEvent{state}, WorkflowErrorEvent{fatalErrors},
              OperatorStatisticsUpdateEvent{operatorStatistics{op: metrics}},
              WebResultUpdateEvent{updates{op: {totalNumTuples,...}}},
-             ConsoleUpdateEvent{operatorId, messages[{title, message, msgType,...}]}
+             ConsoleUpdateEvent{operatorId, messages[{title, message, msgType,...}]},
+             ModifyLogicResponse{opId, isValid, errorMessage}, ModifyLogicCompletedEvent{opIds}
+  * modify   {"type":"ModifyLogicRequest", operator} (the operator JSON of the logical plan)
+
+A transport calls `phase_hook(phase, info)` when it has one (the evidence
+marks): "create" before an execution is created, "created" with its eid once
+the Dashboard answered, "start" before the start is sent.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import time
@@ -39,6 +55,7 @@ from typing import Any, Callable, Iterable
 import websocket  # websocket-client
 
 TERMINAL_STATES = frozenset({"Completed", "Failed", "Killed", "Terminated"})
+DEFAULT_SETTINGS = {"dataTransferBatchSize": 400, "executionMode": "PIPELINED"}
 
 
 class RunFailed(RuntimeError):
@@ -49,6 +66,41 @@ class RunTimeout(TimeoutError):
     pass
 
 
+class _HttpRefused(RuntimeError):
+    def __init__(self, what: str, status: int, body: Any):
+        self.status = status
+        self.body = body  # parsed JSON when the answer was JSON, else the text
+        message = body.get("message") if isinstance(body, dict) else None
+        super().__init__(f"{what} refused: HTTP {status}: {str(message or body)[:600]}")
+
+
+class CreateRefused(_HttpRefused):
+    """POST /api/executions answered something other than 201."""
+
+    def __init__(self, status: int, body: Any):
+        super().__init__("create", status, body)
+
+
+class UpdateRefused(_HttpRefused):
+    """POST /api/executions/{eid}/updates answered 4xx/5xx."""
+
+    def __init__(self, status: int, body: Any):
+        super().__init__("operator update", status, body)
+
+
+def response_body(resp) -> Any:
+    try:
+        return resp.json()
+    except ValueError:
+        return resp.text
+
+
+def jwt_claims(token: str) -> dict:
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
 # --------------------------------------------------------------------- interface
 
 
@@ -57,6 +109,11 @@ class RunHandle(ABC):
 
     wid: int
     cuid: int
+    #: the execution id: known at start on `create-ws`; None on `ws`, where the
+    #: driver reads it back (TexeraApi.latest_execution)
+    eid: int | None = None
+    #: the plan's location the Dashboard returned (`create-ws` only)
+    plan_uri: str | None = None
 
     @abstractmethod
     def wait_for_state(self, *states: str, timeout: float, since_last_command: bool = True,
@@ -124,6 +181,15 @@ class RunHandle(ABC):
         """All result rows of the operator's first output port:
         {"columns": [(name, type)], "rows": [dict], "pages": n, "reported_total": int|None}."""
 
+    def modify_operator(self, operator_json: dict, timeout: float = 60) -> dict:
+        """Change an operator of the paused run. Returns {"response": ModifyLogicResponse,
+        plus "updateId"/"operatorId" on create-ws}; raises UpdateRefused on a 4xx/5xx."""
+        raise NotImplementedError(f"{type(self).__name__} cannot change operators")
+
+    def send_raw(self, msg: dict, label: str | None = None) -> None:
+        """Send any message on the run's connection (not a state command)."""
+        raise NotImplementedError(f"{type(self).__name__} has no raw channel")
+
     @abstractmethod
     def summary(self) -> dict:
         """Plain-data digest of what the transport observed, for the JSON report."""
@@ -134,13 +200,30 @@ class RunHandle(ABC):
 
 class Transport(ABC):
     name = "abstract"
+    #: phase_hook(phase, info) -> optional record; set by the driver (evidence marks)
+    phase_hook: Callable[[str, dict], Any] | None = None
 
     @abstractmethod
     def start_run(self, *, wid: int, cuid: int, warehouse_id: int | None, logical_plan: dict,
-                  execution_name: str, settings: dict | None = None) -> RunHandle: ...
+                  execution_name: str, settings: dict | None = None,
+                  replay_from: dict | None = None,
+                  target_operator_ids: list[str] | None = None) -> RunHandle: ...
+
+    def create_only(self, **kw) -> Any:
+        """Create an execution without starting it; the raw HTTP response."""
+        raise NotImplementedError(f"transport {self.name} has no separate create")
+
+    def start_existing(self, *, wid: int, cuid: int, eid: int, plan_uri: str,
+                       token: str | None = None, uid: int | None = None) -> RunHandle:
+        """Open a socket (as the token's user) and send only the start of `eid`."""
+        raise NotImplementedError(f"transport {self.name} cannot start an existing execution")
 
     def describe(self) -> dict:
         return {"name": self.name}
+
+    def _phase(self, phase: str, info: dict) -> Any:
+        hook = self.phase_hook
+        return hook(phase, info) if hook else None
 
 
 # --------------------------------------------------------------- websocket impl
@@ -180,6 +263,14 @@ class WebSocketRunHandle(RunHandle):
         self._pages: dict[str, dict] = {}
         self._type_counts: dict[str, int] = {}
         self._other: list[dict] = []
+        self._modify_responses: list[dict] = []
+        self._modify_completed: list[dict] = []
+        self._error_events = 0
+        self._sent_other: list[tuple[float, str]] = []
+        self.eid: int | None = None
+        self.plan_uri: str | None = None
+        #: create-ws: posts an operator change to the Dashboard -> requests.Response
+        self.update_poster: Callable[[int, dict], Any] | None = None
 
         self._ws = websocket.create_connection(url, timeout=connect_timeout,
                                                enable_multithread=True)
@@ -235,9 +326,16 @@ class WebSocketRunHandle(RunHandle):
                 self._state_log.append((self._elapsed(), state))
                 self._log(f"state {state} (+{self._elapsed()}s)")
             elif typ == "WorkflowErrorEvent":
+                self._error_events += 1
                 for err in msg.get("fatalErrors") or []:
                     self._errors.append(err)
                     self._log(f"error event: {str(err.get('message'))[:300]}")
+            elif typ == "ModifyLogicResponse":
+                self._modify_responses.append(msg)
+                self._log(f"modify response: {msg}")
+            elif typ == "ModifyLogicCompletedEvent":
+                self._modify_completed.append(msg)
+                self._log(f"modify completed: {msg.get('opIds')}")
             elif typ == "OperatorStatisticsUpdateEvent":
                 self._stats_events += 1
                 for op, metrics in (msg.get("operatorStatistics") or {}).items():
@@ -245,7 +343,8 @@ class WebSocketRunHandle(RunHandle):
             elif typ == "ConsoleUpdateEvent":
                 op = msg.get("operatorId")
                 for m in msg.get("messages") or []:
-                    self._console.append(dict(m, operatorId=op))
+                    # _t: arrival, seconds since start_run (orders a message against states)
+                    self._console.append(dict(m, operatorId=op, _t=self._elapsed()))
             elif typ == "WebResultUpdateEvent":
                 for op, upd in (msg.get("updates") or {}).items():
                     self._result_updates[op] = upd
@@ -308,6 +407,9 @@ class WebSocketRunHandle(RunHandle):
     def ensure_stopped(self, timeout: float = 30) -> str | None:
         if self.last_state in TERMINAL_STATES or self._reader_error or self._closed:
             return self.last_state
+        if all(s == "Uninitialized" for s in self.states):
+            # Nothing was started on this socket (a watcher, or a refused start).
+            return self.last_state
         try:
             self.kill()
             return self.wait_for_state(*TERMINAL_STATES, timeout=timeout, fail_fast=False)
@@ -355,6 +457,49 @@ class WebSocketRunHandle(RunHandle):
 
     def kill(self) -> None:
         self.send_command({"type": "WorkflowKillRequest"}, "WorkflowKillRequest")
+
+    def send_raw(self, msg: dict, label: str | None = None) -> None:
+        with self._cv:
+            self._sent_other.append((self._elapsed(), label or str(msg.get("type"))))
+        self._log(f"send {label or msg.get('type')} (+{self._elapsed()}s)")
+        self._send(msg)
+
+    def modify_operator(self, operator_json: dict, timeout: float = 60) -> dict:
+        with self._cv:
+            seen = len(self._modify_responses)
+        out: dict[str, Any] = {}
+        if self.update_poster is None:
+            # ws: the old message carries the operator itself
+            self.send_raw({"type": "ModifyLogicRequest", "operator": operator_json}, "ModifyLogicRequest")
+        else:
+            if self.eid is None:
+                raise RuntimeError("create-ws: the run has no execution id")
+            resp = self.update_poster(self.eid, operator_json)
+            if resp.status_code != 200:
+                raise UpdateRefused(resp.status_code, response_body(resp))
+            out = dict(resp.json())
+            self.send_raw({"type": "OperatorUpdateRequest", "executionId": self.eid,
+                           "updateId": out["updateId"]}, "OperatorUpdateRequest")
+        self.wait_until(lambda: len(self._modify_responses) > seen, timeout, "ModifyLogicResponse",
+                        fail_fast=False)
+        with self._cv:
+            out["response"] = dict(self._modify_responses[seen])
+        return out
+
+    @property
+    def modify_responses(self) -> list[dict]:
+        with self._cv:
+            return list(self._modify_responses)
+
+    @property
+    def modify_completed(self) -> list[dict]:
+        with self._cv:
+            return list(self._modify_completed)
+
+    @property
+    def error_event_count(self) -> int:
+        with self._cv:
+            return self._error_events
 
     # ---------------------------------------------------------------- observed
 
@@ -442,6 +587,11 @@ class WebSocketRunHandle(RunHandle):
                 "event_counts": dict(self._type_counts),
                 "other_events": self._other[:10],
                 "connection_error": self._reader_error,
+                "eid": self.eid,
+                "plan_uri": self.plan_uri,
+                "other_sent": [{"t": t, "message": m} for t, m in self._sent_other],
+                "modify_responses": self._modify_responses[:10],
+                "modify_completed": self._modify_completed[:10],
             }
 
     def close(self) -> None:
@@ -463,8 +613,7 @@ class WebSocketTransport(Transport):
     def __init__(self, base: str, token_provider: Callable[[], str], uid_provider: Callable[[], int],
                  *, engine_version: str = "sce-e2e", log: Callable[[str], None] = print,
                  heartbeat_s: float = 10.0, api: Any = None):
-        # `api` (the driver's TexeraApi) is unused here; it is part of the factory
-        # signature so a transport that creates executions over REST can use it.
+        # `api` (the driver's TexeraApi) is unused here; `create-ws` creates over it.
         parts = urllib.parse.urlsplit(base)
         scheme = "wss" if parts.scheme == "https" else "ws"
         self.ws_base = urllib.parse.urlunsplit((scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
@@ -473,33 +622,52 @@ class WebSocketTransport(Transport):
         self.engine_version = engine_version
         self._log = log
         self.heartbeat_s = heartbeat_s
+        self.api = api
 
     def describe(self) -> dict:
         return {"name": self.name, "endpoint": f"{self.ws_base}/wsapi/workflow-websocket"}
 
+    def open_socket(self, wid: int, cuid: int, *, token: str | None = None,
+                    uid: int | None = None) -> WebSocketRunHandle:
+        """A session on the workflow, subscribed (its handshake state arrived)."""
+        token = token or self._token()
+        if uid is None:
+            uid = int(jwt_claims(token)["userId"]) if token != self._token() else self._uid()
+        query = urllib.parse.urlencode({"wid": wid, "uid": uid, "cuid": cuid, "access-token": token})
+        handle = WebSocketRunHandle(f"{self.ws_base}/wsapi/workflow-websocket?{query}", wid, cuid,
+                                    heartbeat_s=self.heartbeat_s, log=self._log)
+        try:
+            # The unit answers the handshake with a WorkflowStateEvent("Uninitialized");
+            # waiting for it means the session is subscribed before we start anything.
+            handle.wait_until(lambda: bool(handle._state_log), 30, "websocket session to open")
+        except Exception:
+            handle.close()
+            raise
+        return handle
+
     def start_run(self, *, wid: int, cuid: int, warehouse_id: int | None, logical_plan: dict,
-                  execution_name: str, settings: dict | None = None) -> RunHandle:
-        query = urllib.parse.urlencode({"wid": wid, "uid": self._uid(), "cuid": cuid,
-                                        "access-token": self._token()})
-        url = f"{self.ws_base}/wsapi/workflow-websocket?{query}"
-        handle = WebSocketRunHandle(url, wid, cuid, heartbeat_s=self.heartbeat_s, log=self._log)
+                  execution_name: str, settings: dict | None = None,
+                  replay_from: dict | None = None,
+                  target_operator_ids: list[str] | None = None) -> RunHandle:
+        if target_operator_ids:
+            raise NotImplementedError("ws: target operators exist only on the REST run path")
         request: dict[str, Any] = {
             "type": "WorkflowExecuteRequest",
             "executionName": execution_name,
             "engineVersion": self.engine_version,
             "logicalPlan": logical_plan,
-            "replayFromExecution": None,
-            "workflowSettings": settings or {"dataTransferBatchSize": 400,
-                                             "executionMode": "PIPELINED"},
+            "replayFromExecution": replay_from,
+            "workflowSettings": settings or dict(DEFAULT_SETTINGS),
             "emailNotificationEnabled": False,
             "computingUnitId": cuid,
         }
         if warehouse_id is not None:
             request["warehouseId"] = warehouse_id
+        handle = self.open_socket(wid, cuid)
         try:
-            # The unit answers the handshake with a WorkflowStateEvent("Uninitialized");
-            # waiting for it means the session is subscribed before we execute.
-            handle.wait_until(lambda: bool(handle._state_log), 30, "websocket session to open")
+            # On this path the unit creates the execution when it starts it.
+            self._phase("create", {"wid": wid, "cuid": cuid})
+            self._phase("start", {"wid": wid, "cuid": cuid, "handle": handle})
             handle.execute(request)
         except Exception:
             handle.close()
@@ -507,7 +675,97 @@ class WebSocketTransport(Transport):
         return handle
 
 
-TRANSPORTS: dict[str, type[Transport]] = {"ws": WebSocketTransport}
+class CreateStartTransport(WebSocketTransport):
+    """Step 2 from PR B on: create at the Dashboard, then start by id on the unit.
+
+      1. POST {base}/api/executions (design 3.4) -> 201 {eid, wid, computingUnitId, planUri};
+         any other answer raises CreateRefused(status, body)
+      2. open /wsapi/workflow-websocket?wid&uid&cuid&access-token; wait for the handshake
+      3. send {"type": "WorkflowStartRequest", "executionId": eid, "planUri": planUri}
+         as the first marked command
+      4. pause, resume, kill, pagination and heartbeat as on `ws`
+    """
+
+    name = "create-ws"
+
+    def __init__(self, base: str, token_provider: Callable[[], str], uid_provider: Callable[[], int],
+                 *, api: Any = None, **kw):
+        if api is None:
+            raise ValueError("create-ws needs the driver's TexeraApi to create executions")
+        super().__init__(base, token_provider, uid_provider, api=api, **kw)
+
+    def describe(self) -> dict:
+        return {"name": self.name, "create": f"{self.api.base}/api/executions",
+                "endpoint": f"{self.ws_base}/wsapi/workflow-websocket"}
+
+    def create_body(self, *, wid: int, cuid: int, warehouse_id: int | None, logical_plan: dict,
+                    execution_name: str = "", settings: dict | None = None,
+                    replay_from: dict | None = None,
+                    target_operator_ids: list[str] | None = None,
+                    engine_version: str | None = None) -> dict:
+        body: dict[str, Any] = {
+            "wid": wid,
+            "executionName": execution_name,
+            "engineVersion": engine_version or self.engine_version,
+            "logicalPlan": logical_plan,
+            "workflowSettings": settings or dict(DEFAULT_SETTINGS),
+            "emailNotificationEnabled": False,
+            "computingUnitId": cuid,
+        }
+        if warehouse_id is not None:
+            body["warehouseId"] = warehouse_id
+        if replay_from is not None:
+            body["replayFromExecution"] = replay_from
+        if target_operator_ids:
+            body["targetOperatorIds"] = list(target_operator_ids)
+        return body
+
+    def create_only(self, *, api: Any = None, body: dict | None = None, **kw) -> Any:
+        """POST /api/executions (as `api`'s user, by default the driver's); the raw
+        response, whatever its status. `body` replaces the built body entirely."""
+        api = api or self.api
+        body = body if body is not None else self.create_body(**kw)
+        self._phase("create", {"wid": body.get("wid"), "cuid": body.get("computingUnitId")})
+        resp = api.create_execution(body)
+        if resp.status_code == 201:
+            created = resp.json()
+            self._phase("created", {"eid": created.get("eid"), "plan_uri": created.get("planUri"),
+                                    "wid": created.get("wid", body.get("wid"))})
+        return resp
+
+    def start_run(self, *, wid: int, cuid: int, warehouse_id: int | None, logical_plan: dict,
+                  execution_name: str, settings: dict | None = None,
+                  replay_from: dict | None = None,
+                  target_operator_ids: list[str] | None = None) -> RunHandle:
+        resp = self.create_only(wid=wid, cuid=cuid, warehouse_id=warehouse_id,
+                                logical_plan=logical_plan, execution_name=execution_name,
+                                settings=settings, replay_from=replay_from,
+                                target_operator_ids=target_operator_ids)
+        if resp.status_code != 201:
+            raise CreateRefused(resp.status_code, response_body(resp))
+        created = resp.json()
+        self._log(f"created execution {created.get('eid')} at {created.get('planUri')}")
+        return self.start_existing(wid=wid, cuid=cuid, eid=int(created["eid"]),
+                                   plan_uri=str(created["planUri"]))
+
+    def start_existing(self, *, wid: int, cuid: int, eid: int, plan_uri: str,
+                       token: str | None = None, uid: int | None = None) -> RunHandle:
+        handle = self.open_socket(wid, cuid, token=token, uid=uid)
+        handle.eid, handle.plan_uri = eid, plan_uri
+        poster_api = self.api if token in (None, self._token()) else self.api.with_token(token)
+        handle.update_poster = poster_api.post_operator_update
+        try:
+            self._phase("start", {"wid": wid, "cuid": cuid, "eid": eid, "plan_uri": plan_uri,
+                                  "handle": handle})
+            handle.send_command({"type": "WorkflowStartRequest", "executionId": eid,
+                                 "planUri": plan_uri}, "WorkflowStartRequest")
+        except Exception:
+            handle.close()
+            raise
+        return handle
+
+
+TRANSPORTS: dict[str, type[Transport]] = {"ws": WebSocketTransport, "create-ws": CreateStartTransport}
 
 
 def make_transport(name: str, **kw) -> Transport:
