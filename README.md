@@ -522,9 +522,10 @@ stack/k8s-stack.sh down
 shared with the single-node stack. `--no-lock` is only for a machine where nothing else
 deploys. The lock is taken with `mkdir` (the run waits while another holds it), its owner
 file names the run, and it is released at the end. The run is bounded: `--time-limit`
-(default 50 minutes from taking the lock, `SCE_K8S_TIME_LIMIT`) stops whatever step is
+(default 40 minutes from taking the lock, `SCE_K8S_TIME_LIMIT`) stops whatever step is
 running, after which the logs are collected, the deployment is taken down and the lock is
-released (exit 5). A normal run holds the lock for about 7 minutes.
+released (exit 5), so the lock is held under 45 minutes even then. A normal run holds it
+for about 7 minutes.
 
 Never start, stop or reconfigure OrbStack's Kubernetes from a script: toggling it
 restarts Docker and every container on the machine. `up` only checks that the context

@@ -15,9 +15,10 @@
 #                 `down`, so without the lock it would tear down another run's deployment, and it
 #                 shares the Docker VM with the single-node stack. --no-lock only on a machine
 #                 where nothing else deploys
-#   --time-limit  minutes from taking the lock to the end of the run (default 50, or
+#   --time-limit  minutes from taking the lock to the end of the run (default 40, or
 #                 $SCE_K8S_TIME_LIMIT). At the limit the running step is stopped; logs are then
-#                 collected and the deployment taken down (a minute or two more), exit 5
+#                 collected and the deployment taken down (a few minutes more at most, so the
+#                 lock is held under 45 minutes), exit 5
 #   --images      default ghcr.io/apache/latest (the published images); a branch build from
 #                 images/build.sh is sce/<tag>
 #   --source      worktree whose bin/k8s chart and sql/ DDL are deployed (default $SCE_SOURCE
@@ -38,7 +39,7 @@ SCE_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S="$SCE_HOME/stack/k8s-stack.sh"
 
 keep=false; images="ghcr.io/apache/latest"; label=""; port="${SCE_K8S_PORT:-30080}"
-lock="${SCE_STACK_LOCK:-}"; no_lock=false; limit_min="${SCE_K8S_TIME_LIMIT:-50}"
+lock="${SCE_STACK_LOCK:-}"; no_lock=false; limit_min="${SCE_K8S_TIME_LIMIT:-40}"
 source_args=(); driver_args=(); up_args=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -72,7 +73,10 @@ keep_unit=false
 for x in ${driver_args[@]+"${driver_args[@]}"}; do [[ "$x" == "--keep-unit" ]] && keep_unit=true; done
 
 # ------------------------------------------------------------------ lock and clock
-have_lock=false; lock_t0=0; deployed=false; follower=""; watchdog=""; cur=""; timed_out=false
+# started: the lock is held (or --no-lock); before that, nothing may be cleaned up, since a
+# deployment in the namespace would be another run's.
+started=false; have_lock=false; lock_t0=0; deployed=false; follower=""; watchdog=""; cur=""
+timed_out=false
 
 kill_tree() {  # stop a step and everything it started (helm, kubectl, the driver)
     local pid=$1 child
@@ -113,6 +117,10 @@ finish() {
     local rc=$?
     set +e
     trap '' INT TERM USR1  # the cleanup below runs to the end; the lock is released last
+    if ! $started; then  # stopped while waiting for the lock: nothing here is ours to clean up
+        echo "[run-k8s] stopped before taking the lock; nothing was deployed or removed"
+        exit "$rc"
+    fi
     if [[ -n "$watchdog" ]]; then kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; fi
     if [[ -n "$follower" ]]; then kill "$follower" 2>/dev/null; wait "$follower" 2>/dev/null; fi
     if $deployed; then
@@ -143,6 +151,7 @@ if [[ -n "$lock" ]]; then
     echo "harness-k8s run-k8s.sh pid $$ $(date)" > "$lock/owner"
     echo "[run-k8s] lock taken"
 fi
+started=true
 lock_t0=$(date +%s)
 main_pid=$$
 ( sleep $((limit_min * 60)) & sp=$!
