@@ -17,6 +17,9 @@ images/build.sh <worktree> step1     # branch images sce/texera-*:step1 (thin la
 ./run-baseline.sh --images sce/<tag> --pg-statement-log --isolate-unit -- --gate C
 ./run-negative-control.sh            # published images: Checks A, D and F must fail
 .venv/bin/python -m unittest discover -s driver/tests   # offline: transports and scenarios vs a fake
+
+# local-dev mode (bin/local-dev.sh's way: infra in Docker, JVMs on the host, ng serve's proxy)
+./run-localdev.sh --lock <scratchpad>/sce/stack.lock --reset   # see "Local-dev mode" below
 ```
 
 Every stack run shares one Docker VM with other agents' work: take the stack lock
@@ -38,6 +41,9 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
+| `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv` |
+| `driver/localdev_unit.py` | The driver's local-dev mode (`--target localdev`): the dev server as `--base`, local-dev's local unit |
+| `run-localdev.sh` | Local-dev mode end to end: lock, clean start, `up`, the driver, `post-run`, `down` |
 | `reports/` | JSON reports, one per driver run |
 
 ## The stack: `stack/sce-stack.sh`
@@ -436,7 +442,7 @@ deployment files and DDL are the ones the stack uses.
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 80 tests (55 single-node, 25 Kubernetes mode), about 55 s
+.venv/bin/python -m unittest discover -s driver/tests -v     # 96 tests (55 single-node, 25 Kubernetes mode, 16 local-dev mode), about 55 s
 ```
 
 - `test_evidence.py` (21): the log parser (parameters, continuation lines,
@@ -565,6 +571,10 @@ starts from empty volumes.
 - **Kubernetes mode.** `stack/k8s-stack.sh` and `driver/k8s_unit.py` (`--target k8s`)
   are a separate mode with their own README notes; the single-node path above does
   not use them.
+- **Local-dev mode.** `stack/localdev-stack.sh`, `driver/localdev_unit.py` (`--target
+  localdev`) and `run-localdev.sh` are another mode (last section). Its JVM services use
+  local-dev's fixed ports, 8080 among them, so it never runs beside the single-node stack;
+  the stack lock serializes them.
 - **One working tree, several agents.** Agents commit in this checkout at the same
   time, and the git index is shared: a plain `git commit` takes whatever another
   agent has staged. Commit with `git commit --only -- <your paths>` (a new file
@@ -881,3 +891,231 @@ What the run adds:
   Helm release, GatewayClass, metrics APIService, hook object or PersistentVolume was
   left, no relay or follower process ran, and port 30080 was free. The CRDs stay, as
   described above.
+
+## Local-dev mode: `stack/localdev-stack.sh` and `run-localdev.sh`
+
+The same scenarios against Texera run the way `bin/local-dev.sh` runs it on a developer's
+machine: the infrastructure in Docker, every JVM service as a host process started from its
+dist launcher, and the frontend on the Angular dev server. The driver talks only to the dev
+server (`http://localhost:4200`), whose proxy (`frontend/proxy.config.json`) sends `/api` to
+each service on its fixed port and `/wsapi` to the computing unit, exactly as a developer's
+browser does. The source is a worktree of its own (default
+`texera-worktrees/sce-localdev-src`, `--source` or `$SCE_LOCALDEV_SOURCE`), because the build
+writes into it (only gitignored output: `target/`, jOOQ's generated sources, amber's Python
+protobufs, `frontend/node_modules`, `amber/logs`).
+
+```
+LOCK=<scratchpad>/sce/stack.lock
+stack/localdev-stack.sh build --codegen-only   # under the lock: Postgres alone for jOOQ's codegen (~30 s)
+stack/localdev-stack.sh build                  # no lock needed: sbt dist of the six services (~90 s here)
+./run-localdev.sh --lock $LOCK --reset         # clean start, up, a-e and u, post-run, down, lock released
+
+# by hand, holding the lock yourself:
+stack/localdev-stack.sh up                     # http://localhost:4200 (dev server)
+driver/run.sh --target localdev [--scenario a,d]
+stack/localdev-stack.sh status | logs <svc> [-f]
+stack/localdev-stack.sh down                   # `reset` also removes the volumes
+```
+
+### What it reads from the source
+
+local-dev's own configuration, from the source's `bin/local-dev/main.sh`, so the mode follows
+the branch's local-dev: its `DOCKER_INFRA_SERVICES`, its service catalog (`SERVICES` in start
+order, each JVM service's `SVC_LAUNCHER`, `SVC_CWD`, `SVC_ZIP_GLOB`, `SVC_PORT`, `SVC_HEALTH`)
+and its environment (every `export X="${X:-default}"`). The infrastructure is
+`bin/single-node/docker-compose.yml` merged with `bin/local-dev/docker-compose.override.yml`,
+as local-dev's `docker compose -f ... -f ...` merges them. `generate` writes
+`stack/localdev/generated/` (`docker-compose.yml`, `.env`, `sql/`, `service.env.json`,
+`MANIFEST.json`); a round-trip check proves every kept service is the source's except for
+the keys rewritten on purpose (names, network, ports, the DDL mount, lakekeeper-init's
+`STORAGE_S3_ENDPOINT`). A changed shape of main.sh stops `generate` with the reason.
+
+### What `up` does
+
+1. Refuses to start when this stack already runs, or when any port it needs is taken by a
+   container or a host process (it names the holder and never stops anything). Checks JDK 17
+   (`$JAVA_HOME`, `java_home -v 17`, SDKMAN), node 24 (nvm) and the UDF Python (below).
+2. Infrastructure: `docker compose up -d` (project `e2e-localdev`), then waits for the
+   healthchecks and the three init jobs (exit 0). Checks that Lakekeeper's default warehouse
+   stores the LAN endpoint and that RustFS answers there from the host.
+3. Builds only what is missing, as local-dev does: `sbt dist` when a dist zip is missing
+   (against this stack's Postgres, see "Builds"), amber's Python protobufs when
+   `amber/src/main/python/proto` is empty (`bin/python-proto-gen.sh` with the betterproto
+   plugin at amber's pin), `yarn install --immutable` (node 24) when `frontend/node_modules` is
+   missing or older than `yarn.lock`. A zip older than the source's HEAD commit is reported.
+4. Unzips each dist under `.state/localdev/dist/` (again when the zip changes) and starts the
+   services in local-dev's order, each in its own process group, from local-dev's working
+   directory: the worktree root, and `amber/` for the dashboard and the unit (amber finds its
+   config and its Python tree from there). Pid files (pid, process group, start time, command)
+   go to `.state/localdev/pids/`, each service's output to `<logs>/<service>.log`. `up` waits
+   until each service listens on local-dev's port and answers its health check: local-dev's
+   `SVC_HEALTH`, or, where it has none, `/api/healthcheck` on the managing service's
+   application port and `/api/execution/health` on the unit.
+5. Starts `ng serve` in the source's `frontend/` (node 24, `--max-old-space-size` taken from
+   `yarn start`, 8192: with 4096 the dev build runs out of memory in its setup phase; it peaks
+   at about 4.4 GB), waits until `http://localhost:4200/` serves the app, then checks through
+   the proxy that `/api/healthcheck` (the dashboard) and `/api/config/pre-login` (config-service,
+   the first thing a browser loads) answer 200. A normal `up` takes about a minute.
+
+| Service (local-dev's name) | Port | Working dir | `JAVA_OPTS` |
+|---|---|---|---|
+| config-service | 9094 | worktree | `-Xmx512m -XX:+ExitOnOutOfMemoryError` |
+| access-control-service | 9096 | worktree | `-Xmx512m ...` |
+| file-service | 9092 | worktree | `-Xmx512m ...` |
+| workflow-compiling-service | 9090 | worktree | `-Xmx1g ...` |
+| computing-unit-master (the unit, `ComputingUnitMaster`) | 8085 | `amber/` | `-Xmx1g ...` |
+| computing-unit-managing-service | 8888 (local-dev watches its admin port 8082) | worktree | `-Xmx512m ...` |
+| texera-web (the Dashboard, `TexeraWebApplication`) | 8080 (admin 8081) | `amber/` | `-Xmx1g ...` |
+| frontend (`ng serve`) | 4200 | `frontend/` | node `--max-old-space-size=8192` |
+
+`--heap NAME=SIZE` (or `all=SIZE`) changes a heap; `--frontend-heap MB` the dev server's.
+
+### The services' environment
+
+local-dev's exports, with the infrastructure ports remapped: `STORAGE_JDBC_URL` and the
+Iceberg Postgres URI on `localhost:15432`, `STORAGE_LAKEFS_ENDPOINT` on 18000,
+`STORAGE_ICEBERG_CATALOG_REST_URI` on 18181, and `STORAGE_S3_ENDPOINT=http://<LAN IP>:19000`
+(the LAN IP detected as local-dev detects it: the default route's interface, else en0-en10;
+`$HOST_LAN_IP` or `--lan-ip` override). `STORAGE_ICEBERG_CATALOG_TYPE=rest`, as local-dev sets
+it. Added: `UDF_PYTHON_PATH`, `JAVA_HOME`, `PATH` (JDK first), `HOST_LAN_IP`, `LANG`, and the
+heap cap. Nothing else from the caller's environment reaches the services (no stray
+`STORAGE_*`, no `AWS_*` for the Python workers' S3 client). `MANIFEST.json` records it, secrets
+masked.
+
+UDF workers run on a Python 3.11 venv with amber's requirements: `--python`,
+`$SCE_LOCALDEV_PYTHON`, `.state/localdev/py311` (`stack/localdev-stack.sh venv` builds it with
+uv) or, by default, the step-1 checks' venv `<scratchpad>/sce/step1cd/py311`, used read-only.
+`up` refuses an interpreter that cannot import pyarrow, pandas and loguru (local-dev's check)
+and reports every pin of `amber/requirements.txt` it does not match. local-dev itself looks
+for a 3.12; an explicit `UDF_PYTHON_PATH` is its documented override.
+
+### How it stays away from other stacks
+
+- Compose project `e2e-localdev`; containers `e2e-localdev-<original container name>` (for
+  example `e2e-localdev-texera-postgres`) with the original service and container names as
+  aliases on the project's own network `e2e-localdev-net`; volumes `e2e-localdev_postgres_data`
+  and `e2e-localdev_rustfs_data`. local-dev's own compose would name its containers
+  `texera-postgres` and so on and join the network `texera-single-node`, so it cannot run beside
+  the user's single-node stack; this copy can.
+- Infrastructure host ports moved by 10000: Postgres 15432, LakeFS 18000, Lakekeeper 18181
+  (127.0.0.1 only), RustFS 19000. Here 5432 belongs to `texera-tripwire-pg` and 8000 to
+  `texera-lakefs`. RustFS is published on all interfaces, as upstream: the LAN endpoint must be
+  reachable from Lakekeeper's container and from the host's JVMs and Python workers.
+- The services keep local-dev's ports, which `proxy.config.json` names.
+- `down` stops only the processes it started (each pid file's start time is checked; a pid
+  now owned by another process is left alone). Leftovers without a pid file are found by their
+  dist path under `.state/localdev/dist` or as `ng serve` in the source's `frontend/`. Each
+  process group gets SIGTERM, then SIGKILL after 20 s, so the unit's Python workers go with it.
+  Then `docker compose down` of the project. `down` fails if a container, the network or a
+  process of the stack remains. Volumes stay; `reset` removes them.
+
+Left out: LiteLLM and Jupyter (infrastructure), notebook-migration-service and agent-service
+(services), and `yarn start`'s y-websocket process (shared editing, `/rtc`). None of them is on
+a workflow run's path.
+
+### Builds (`stack/localdev-stack.sh build`)
+
+common/dao's jOOQ codegen reads the schema from Postgres while sbt compiles. Two phases:
+
+1. When jOOQ's generated sources are missing (or `--force`), this stack's Postgres is started
+   alone (Docker: hold the lock), `sbt DAO/compile` runs against it, and the container is
+   removed. About 30 s.
+2. `sbt <Project>/dist` for the six services (images/build.sh's list). No Docker: with Postgres
+   gone the codegen fails fast ("Connection to localhost:15432 refused") and the generated
+   sources stay, as `common/dao/build.sbt` intends. The betterproto plugin is put last on `PATH`,
+   so amber's compile regenerates the Python protobufs itself (`genPythonProto`). About 90 s here.
+
+`--codegen-only` stops after phase 1, so phase 2 can run without the lock. sbt runs as local-dev
+runs it (`-no-colors -J-XX:+UseG1GC`), with the heap capped at 3g (`$SCE_LOCALDEV_SBT_HEAP`).
+`up` builds by itself when a zip is missing, with the infrastructure already up.
+
+### The driver in local-dev mode
+
+`driver/run.sh --target localdev` (code in `driver/localdev_unit.py`). `--base` defaults to the
+manifest's dev server URL, `http://localhost:4200`. Every REST call and every workflow socket
+goes through the dev server's proxy.
+
+local-dev registers no unit by itself. A developer gets one from the workspace's unit
+selector. The create dialog offers the types of `GET /api/computing-unit/types`, and here that
+is only `local`, since Kubernetes units are off. "Connect to a Local Computing Unit" sends
+`POST /api/computing-unit/create` with `{name, unitType: "local", cpuLimit: "NaN", memoryLimit:
+"NaN", gpuLimit: "NaN", jvmMemorySize: "NaN", shmSize: "NaN", uri}`. The URI is the dialog's
+default, `buildLocalComputingUnitUri(window.location)`, which is the page origin plus `/wsapi`
+(`http://localhost:4200/wsapi`). The workflow socket then opens at
+`/wsapi/workflow-websocket?...&cuid=<that unit>` on the page origin, and the proxy forwards it
+to the unit on 8085. The unit takes the user from the token in the query and uses the cuid
+only as a key.
+
+Setup does the same:
+
+1. It checks that the base serves the Texera app (`<texera-root>`).
+2. It checks that `local` is offered.
+3. It creates the unit with the dialog's body and URI, or reuses its own.
+4. It opens a workflow socket through the proxy until the unit answers.
+
+The scenarios then select that unit by cuid, as in single-node. The report gains `target` and
+`setup.localdev`: the dev server page, the types offered, the request, the unit, and the probe.
+
+Refused up front, as in Kubernetes mode: `--evidence`, `--negative-control`, `--gate` and
+`--legacy-env` (they read the single-node Postgres log and `docker exec` into its containers),
+scenarios g0, g, h and o (`docker exec` into the single-node unit container; the unit is a host
+process here), and `--unit-kind kubernetes`. `DOCKER_HOST` points at a socket that does not
+exist, so nothing the driver runs in this mode can reach a container.
+
+### `run-localdev.sh`
+
+```
+./run-localdev.sh --lock <dir> | --no-lock  [--source <worktree>] [--reset] [--keep] [--label text]
+                  [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [-- <driver args>]
+```
+
+1. Takes the lock (waiting while another run holds it). The owner file names the run. Starts
+   the clock; `--time-limit` defaults to 40 minutes (`$SCE_LOCALDEV_TIME_LIMIT`).
+2. Clean start: `down`, or `reset` with `--reset` (empty volumes).
+3. `up`, logging to `reports/localdev-<time>-logs/`; then `status`.
+4. The driver with `--target localdev`, writing `reports/localdev-<time>.json`, which embeds
+   the stack manifest.
+5. `post-run`: every service still alive and healthy, and the unit's leftover Python workers
+   counted. The outcome goes into the report as `post_run` (a dead service sets
+   `summary.result` to FAIL) and into `post-run.json`.
+6. Saves the infrastructure containers' logs (`<logs>/infra/`), runs `down` (unless `--keep`)
+   and releases the lock. This also happens when a step fails, the time limit is reached, or
+   the run is interrupted.
+
+Exit codes: the driver's (0, 1, 2), 3 if the stack did not come up, 4 if `post-run` failed,
+5 at the time limit, 64 for a usage error.
+
+### Verified
+
+2026-11-16. Source `sce-localdev-src`, detached at the Step 1 commit `5e85a37de`, clean. Its
+dists were built by this mode (`build --codegen-only` under the lock, then `build`). JDK
+Temurin 17.0.19, node v24.15.0, UDF Python 3.11.14 (the step-1 venv, every
+`amber/requirements.txt` pin matched). OrbStack Docker, LAN IP 192.168.50.162 (en1).
+
+| Report (`reports/`) | Harness | Result | Notes |
+|---|---|---|---|
+| `localdev-20261116T121303Z` | `471525f` + this mode uncommitted (trial) | a b c d e u PASS, 49/49 checks; post-run ok | `--reset`; `up` 56 s (infra 6 s, services 10 s, dev server 25 s); lock held 2 min |
+
+What the runs establish:
+
+- **The dev server's proxy carried everything.** Base `http://localhost:4200`; the transport
+  endpoint `ws://localhost:4200/wsapi/workflow-websocket`; the dev server served the app
+  (`<title>Texera</title>`). Login, dataset upload (file-service's multipart path), warehouse,
+  unit and workflow calls and the six runs' sockets all went through it.
+- **local-dev's unit.** The managing service offered `["local"]` only. The unit was created as
+  the dialog creates it, with URI `http://localhost:4200/wsapi`, and answered a socket through
+  the proxy on the first attempt (0.1 s).
+- **Storage as local-dev sets it up.** REST catalog (Lakekeeper) with the LAN endpoint: the
+  default warehouse `texera` stores `http://192.168.50.162:19000/`. The per-user warehouse
+  `user-1-1` was created through the Dashboard. A Python operator's worker writes its output
+  port's table itself (`assign_port_handler.py`: pyiceberg through Lakekeeper, then the LAN
+  endpoint), and the driver read b's, c's (the Sort) and e's results back exactly.
+- **Clean `down`.** No container, network, process or listener of the stack left, volumes kept,
+  the other containers on the machine untouched, and `git status` of the source clean.
+
+Observed upstream, not on a run's path and not a failure: the Dashboard and the unit log
+`org.eclipse.jgit.errors.RepositoryNotFoundException: repository not found: <worktree>/amber`
+at startup. `OPVersion` runs `Git.open(".")`; local-dev starts amber's services from `amber/`
+without `TEXERA_HOME`, and `Git.open` does not search parent directories. The compiling
+service, started from the worktree root, logs the same for the worktree itself, because JGit
+cannot open a linked worktree's `.git` file. Operator versions then read `N/A`.
