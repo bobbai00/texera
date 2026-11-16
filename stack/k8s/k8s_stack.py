@@ -8,13 +8,15 @@ Chart.lock is out of sync with Chart.yaml, so `helm dependency build` -- what
 bin/k8s/install.sh runs -- fails), and writes a values override file that points every
 Texera image, the computing-unit image included, at --images.
 
-`up` installs the chart as Helm release `texera` in a dedicated namespace (default
-`sce-k8s`, units in `sce-k8s-units`), waits until every workload is ready, port-forwards
-the Envoy gateway to 127.0.0.1:<port>, and checks each backend answers through it.
+`up` checks the cluster's CRDs against the chart's, installs the chart as Helm release
+`texera` in a dedicated namespace (default `sce-k8s`, units in `sce-k8s-units`), waits until
+every workload is ready, forwards the Envoy gateway to 127.0.0.1:<port>, checks each backend
+answers through it and that ext-authz refuses unit websockets without valid credentials.
 `down` uninstalls the release and deletes both namespaces (and with them any unit pod)
-plus the cluster-scoped hook objects the chart leaves behind.
+plus the cluster-scoped hook objects the chart leaves behind (not the CRDs). `post-run`
+checks a driver run's leftovers and refusal probes and folds the outcome into its report.
 
-Commands: generate | up | down | status | logs | port-forward | collect-logs | follow-units.
+Commands: generate | up | down | status | logs | port-forward | collect-logs | follow-units | post-run.
 Everything runs against the kube context `orbstack` (SCE_K8S_CONTEXT); nothing outside
 the two namespaces and this release's cluster-scoped objects is ever changed.
 """
@@ -22,8 +24,10 @@ the two namespaces and this release's cluster-scoped objects is ever changed.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -32,8 +36,10 @@ import signal
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -86,6 +92,23 @@ OPTIONAL_WORKLOADS = {f"{RELEASE}-y-websocket-server", f"{RELEASE}-python-langua
 REQUIRED_JOBS = {f"{RELEASE}-lakefs-setup-job", f"{RELEASE}-lakekeeper-init"}
 FATAL_WAITING = {"ErrImageNeverPull", "InvalidImageName", "CreateContainerConfigError"}
 PULL_WAITING = {"ErrImagePull", "ImagePullBackOff"}
+# The chart starts every service at once and none waits for Postgres, so the JVM services
+# and lakeFS crash ("Connection to texera-postgresql:5432 refused") until it is up: 3 or 4
+# restarts each on a normal `up`. A crash loop therefore counts only once Postgres is Ready.
+POSTGRES_STS = f"{RELEASE}-postgresql"
+CRASHES_AFTER_DB_READY = 3   # more restarts of a container after Postgres became Ready
+CRASHES_FATAL_DB = 6         # Postgres itself
+
+# Requests through the gateway that ext-authz must refuse (Envoy's `ext_authz_denied`):
+# (name, credential, cuid). No unit exists yet, so cuid 1 is routable only with a token
+# that has access to it; 999999 is a unit nobody has access to. `valid` is a login token.
+AUTHZ_PROBES = (
+    ("no-token", None, 1),
+    ("bogus-token", "sce-e2e-not-a-token", 1),
+    ("unit-without-access", "valid", 999999),
+)
+REFUSED = (401, 403)
+EXT_AUTHZ_DENIED = "ext_authz_denied"
 
 # Through the gateway: any answer but Envoy's own 502/503/504 proves the route reaches a
 # live backend (401/404/405 come from the service).
@@ -334,6 +357,33 @@ def _containers(doc: dict) -> list[dict]:
     return list(spec.get("initContainers") or []) + list(spec.get("containers") or [])
 
 
+def workload_with_image(docs: list[dict], image: str) -> dict | None:
+    """The rendered Deployment or StatefulSet that runs `image` (found by image, not by
+    template path or name, so a renamed or moved template is still found)."""
+    for d in docs:
+        if d.get("kind") in ("Deployment", "StatefulSet") and any(c.get("image") == image
+                                                                  for c in _containers(d)):
+            return d
+    return None
+
+
+def env_names(workload: dict, docs: list[dict]) -> set[str]:
+    """Every environment variable name the workload's containers get: `env`, and the keys of
+    the rendered ConfigMaps and Secrets they take through `envFrom`."""
+    sources = {(d.get("kind"), (d.get("metadata") or {}).get("name")): d for d in docs
+               if d.get("kind") in ("ConfigMap", "Secret")}
+    names: set[str] = set()
+    for c in _containers(workload):
+        names.update(e.get("name") for e in c.get("env") or [] if e.get("name"))
+        for src in c.get("envFrom") or []:
+            for kind, key in (("ConfigMap", "configMapRef"), ("Secret", "secretRef")):
+                d = sources.get((kind, (src.get(key) or {}).get("name")))
+                if d:
+                    keys = list(d.get("data") or {}) + list(d.get("stringData") or {})
+                    names.update(f"{src.get('prefix', '')}{k}" for k in keys)
+    return names
+
+
 def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile: str,
              workarounds: bool, metrics_server: bool = True) -> dict:
     GEN_DIR.mkdir(parents=True, exist_ok=True)
@@ -364,24 +414,6 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
 
     s3_endpoint = (base_values.get("storage") or {}).get("s3", {}).get("endpoint") \
         or f"http://{RELEASE}-rustfs-svc:9000"
-    webserver_tpl = CHART_DIR / "templates" / "base" / "webserver" / "webserver-deployment.yaml"
-    webserver_has_s3 = webserver_tpl.exists() and "STORAGE_S3_ENDPOINT" in webserver_tpl.read_text()
-    if workarounds and not webserver_has_s3:
-        # The webserver Deployment sets no STORAGE_S3_*, so the dashboard creates per-user
-        # Lakekeeper warehouses (POST /api/warehouse) against storage.conf's default
-        # http://localhost:9000 and Lakekeeper rejects them. The chart's other S3 defaults
-        # (region us-west-2, texera_rustfs/password) already match storage.conf, so the
-        # endpoint is the only value missing. texeraEnvVars is the only values hook that
-        # reaches the webserver; it reaches every service, so file-service and the manager
-        # get the same endpoint a second time (same value).
-        _set_env(env, "STORAGE_S3_ENDPOINT", s3_endpoint)
-        applied.append({
-            "name": "webserver-s3-endpoint",
-            "upstream_bug": True,
-            "detail": "bin/k8s webserver-deployment.yaml sets no STORAGE_S3_*; POST /api/warehouse "
-                      "fails. Added STORAGE_S3_ENDPOINT=" + s3_endpoint + " through texeraEnvVars "
-                      "(Step 2 sub-part 7 fixes it; the step1 chart does not have the fix).",
-        })
 
     overrides = {
         "texera": {"imageRegistry": registry, "imageTag": tag},
@@ -397,13 +429,41 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
     }
     header = (f"# GENERATED by sce-e2e/stack/k8s/k8s_stack.py -- do not edit.\n"
               f"# layered after: {', '.join(str(v.relative_to(CHART_DIR)) for v in values_files) or 'values.yaml'}\n")
-    VALUES_FILE.write_text(header + yaml.safe_dump(overrides, sort_keys=False, width=1000))
-    values_files.append(VALUES_FILE)
 
-    p = run(["helm", "template", RELEASE, str(CHART_DIR), "-n", ns,
-             *sum((["-f", str(v)] for v in values_files), [])], capture=True, timeout=120)
-    RENDERED.write_text(p.stdout)
-    docs = _rendered_docs()
+    def render() -> list[dict]:
+        VALUES_FILE.write_text(header + yaml.safe_dump(overrides, sort_keys=False, width=1000))
+        p = run(["helm", "template", RELEASE, str(CHART_DIR), "-n", ns,
+                 *sum((["-f", str(v)] for v in values_files + [VALUES_FILE]), [])], capture=True, timeout=120)
+        RENDERED.write_text(p.stdout)
+        return _rendered_docs()
+
+    docs = render()
+    # Whether the webserver gets an S3 endpoint is read from the rendered Deployment that runs
+    # the dashboard image (its env and envFrom), not from a template's text.
+    dashboard_image = f"{registry}/texera-dashboard-service:{tag}"
+    webserver = workload_with_image(docs, dashboard_image)
+    webserver_s3 = webserver is not None and "STORAGE_S3_ENDPOINT" in env_names(webserver, docs)
+    if webserver is None:
+        log(f"warning: no rendered Deployment runs {dashboard_image}; the S3 workaround is not applied")
+    elif workarounds and not webserver_s3:
+        # The webserver Deployment sets no STORAGE_S3_*, so the dashboard creates per-user
+        # Lakekeeper warehouses (POST /api/warehouse) against storage.conf's default
+        # http://localhost:9000 and Lakekeeper rejects them. The chart's other S3 defaults
+        # (region us-west-2, texera_rustfs/password) already match storage.conf, so the
+        # endpoint is the only value missing. texeraEnvVars is the only values hook that
+        # reaches the webserver; it reaches every service, so file-service and the manager
+        # get the same endpoint a second time (same value).
+        _set_env(env, "STORAGE_S3_ENDPOINT", s3_endpoint)
+        applied.append({
+            "name": "webserver-s3-endpoint",
+            "upstream_bug": True,
+            "detail": f"the rendered {webserver['metadata']['name']} Deployment sets no STORAGE_S3_ENDPOINT "
+                      "(env or envFrom); POST /api/warehouse fails. Added STORAGE_S3_ENDPOINT="
+                      + s3_endpoint + " through texeraEnvVars (Step 2 sub-part 7 fixes it; the step1 "
+                      "chart does not have the fix).",
+        })
+        docs = render()
+    values_files.append(VALUES_FILE)
 
     # Server-side apply (Helm 4's default) rejects a container listing an env name twice.
     duplicates = {}
@@ -468,6 +528,8 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
         },
         "metrics_server_from_chart": bool(metrics_server),
         "apply": "server-side" if server_side else "client-side",
+        "webserver": {"workload": (webserver or {}).get("metadata", {}).get("name"),
+                      "s3_endpoint_from_chart": webserver_s3},
         "workarounds": applied,
         "harness_choices": [
             f"release name '{RELEASE}': gateway-routes.yaml hard-codes the Backend texera-dynamic-backend",
@@ -476,13 +538,102 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
             f"units in namespace {unit_namespace(ns)} (workflowComputingUnitPool.namespace)",
             "the gateway is forwarded to 127.0.0.1:<port> (OrbStack k8s.expose_services is off): a TCP "
             "relay to the envoy Service's ClusterIP; kubectl port-forward exits whenever Envoy resets "
-            "one forwarded connection (websocket closes do)",
+            "one forwarded connection (websocket closes do), so it is used only when asked for and a "
+            "run through it is marked unreliable",
         ],
         "port": port,
         "gateway_url": f"http://127.0.0.1:{port}",
     }
     write_json(MANIFEST, manifest)
     return manifest
+
+
+# ---------------------------------------------------------------------------- CRDs
+
+BUNDLE_VERSION = "gateway.networking.k8s.io/bundle-version"
+GEN_VERSION = "controller-gen.kubebuilder.io/version"
+
+
+def crd_digest(crd: dict) -> str:
+    """What decides a CRD's behavior: each version's name, served and storage flags, and
+    schema. The API server keeps them as applied, so a cluster CRD installed from the same
+    file has the same digest."""
+    versions = [{"name": v.get("name"), "served": v.get("served"), "storage": v.get("storage"),
+                 "schema": (v.get("schema") or {}).get("openAPIV3Schema")}
+                for v in (crd.get("spec") or {}).get("versions") or []]
+    return hashlib.sha256(json.dumps(versions, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def chart_crds(chart_dir: Path = CHART_DIR) -> list[dict]:
+    """The CRDs Helm installs from the resolved chart: crds/ of the chart and of each subchart
+    archive (only gateway-helm ships any: the Gateway API bundle and Envoy Gateway's own)."""
+    docs: list[dict] = []
+
+    def add(text: str) -> None:
+        docs.extend(d for d in yaml.safe_load_all(text) if d and d.get("kind") == "CustomResourceDefinition")
+
+    if (chart_dir / "crds").is_dir():
+        for f in sorted((chart_dir / "crds").rglob("*.y*ml")):
+            add(f.read_text())
+    for tgz in sorted((chart_dir / "charts").glob("*.tgz")):
+        with tarfile.open(tgz) as t:
+            for m in t.getmembers():
+                if m.isfile() and "/crds/" in m.name and m.name.endswith((".yaml", ".yml")):
+                    add(t.extractfile(m).read().decode())
+    return docs
+
+
+def compare_crds(chart: list[dict], cluster: list[dict]) -> dict:
+    """Each chart CRD against the cluster's: same, absent (Helm installs it), or differs
+    (Helm skips a CRD that exists and never upgrades it, so the cluster's stays in force)."""
+    have = {c["metadata"]["name"]: c for c in cluster}
+    out: dict = {"same": [], "absent": [], "differs": []}
+    for d in chart:
+        name = d["metadata"]["name"]
+        c = have.get(name)
+        if c is None:
+            out["absent"].append(name)
+        elif crd_digest(c) == crd_digest(d):
+            out["same"].append(name)
+        else:
+            ca = c["metadata"].get("annotations") or {}
+            da = d["metadata"].get("annotations") or {}
+            out["differs"].append({
+                "name": name,
+                "cluster": ca.get(BUNDLE_VERSION) or ca.get(GEN_VERSION),
+                "chart": da.get(BUNDLE_VERSION) or da.get(GEN_VERSION),
+                "cluster_created": c["metadata"].get("creationTimestamp"),
+            })
+    return out
+
+
+def check_crds(allow_drift: bool) -> dict:
+    chart = chart_crds()
+    rows = compare_crds(chart, kjson("get", "crd").get("items", []) if chart else [])
+    result = {
+        "chart_crds": len(chart),
+        "same": len(rows["same"]),
+        "absent": rows["absent"],
+        "differs": rows["differs"],
+        "chart_gateway_api_bundle": sorted({(d["metadata"].get("annotations") or {}).get(BUNDLE_VERSION)
+                                            for d in chart} - {None}),
+        "allow_drift": allow_drift,
+    }
+    if rows["differs"]:
+        msg = ("the cluster's " + "; ".join(f"{r['name']} ({r['cluster']}, created {r['cluster_created']})"
+                                            for r in rows["differs"])
+               + f" differ from the chart's ({', '.join(sorted({str(r['chart']) for r in rows['differs']}))}), "
+               "and Helm neither upgrades nor replaces a CRD that exists")
+        if not allow_drift:
+            die(msg + ". The release's Envoy Gateway would run against the cluster's versions. Apply the "
+                "chart's (the crds/ of the gateway-helm archive under stack/k8s/generated/chart/charts/, "
+                "`kubectl apply --server-side`), or pass --allow-crd-drift to deploy anyway (recorded in "
+                "MANIFEST.json)")
+        log("warning (--allow-crd-drift): " + msg)
+    if rows["absent"]:
+        log(f"{len(rows['absent'])} of the chart's CRDs are not in the cluster: helm installs them, and "
+            "they stay after `down` (Helm never deletes CRDs)")
+    return result
 
 
 # ----------------------------------------------------------------------- preflight
@@ -615,10 +766,28 @@ def _workload_status(ns: str) -> tuple[list[str], list[str], dict]:
                 pending.append(f"job/{name}")
     for j in REQUIRED_JOBS - jobs_seen:
         pending.append(f"job/{j}(absent)")
-    return pending, failures, {"envoy_deployments": [d["metadata"]["name"] for d in envoy]}
+    pg = next((d for d in items if d["kind"] == "StatefulSet" and d["metadata"]["name"] == POSTGRES_STS), None)
+    pg_ready = bool(pg) and ((pg.get("status") or {}).get("readyReplicas") or 0) >= \
+        ((pg.get("spec") or {}).get("replicas", 1) or 1)
+    return pending, failures, {"envoy_deployments": [d["metadata"]["name"] for d in envoy],
+                               "postgres_ready": pg_ready}
 
 
-def _pod_problems(ns: str, since: float) -> tuple[list[str], list[str]]:
+def crash_loop_fatal(pod: str, container: str, restarts: int, db: dict) -> bool:
+    """Whether a container in CrashLoopBackOff counts as failed. Postgres itself after
+    CRASHES_FATAL_DB restarts. Anything else only once Postgres is Ready (db["ready_at"]), and
+    then only after CRASHES_AFTER_DB_READY restarts more than it had at that moment
+    (db["baseline"], filled by _pod_problems): the chart has no wait-for-Postgres step, so
+    crashes before it is up say nothing about the service."""
+    if pod.startswith(f"{POSTGRES_STS}-"):
+        return restarts >= CRASHES_FATAL_DB
+    if db.get("ready_at") is None:
+        return False
+    base = db.setdefault("baseline", {}).setdefault(f"{pod}/{container}", restarts)
+    return restarts - base >= CRASHES_AFTER_DB_READY
+
+
+def _pod_problems(ns: str, since: float, db: dict) -> tuple[list[str], list[str]]:
     """(fatal, warnings) from container states of pods that `up` waits for."""
     fatal, warn = [], []
     for pod in kjson("get", "pods", ns=ns).get("items", []):
@@ -628,6 +797,9 @@ def _pod_problems(ns: str, since: float) -> tuple[list[str], list[str]]:
         statuses = (pod.get("status") or {}).get("initContainerStatuses", []) + \
             (pod.get("status") or {}).get("containerStatuses", [])
         for cs in statuses or []:
+            restarts = cs.get("restartCount") or 0
+            if db.get("ready_at") is not None:  # every container's count when Postgres became Ready
+                db.setdefault("baseline", {}).setdefault(f"{name}/{cs['name']}", restarts)
             waiting = (cs.get("state") or {}).get("waiting") or {}
             reason = waiting.get("reason")
             if reason in FATAL_WAITING:
@@ -638,11 +810,13 @@ def _pod_problems(ns: str, since: float) -> tuple[list[str], list[str]]:
                 else:
                     warn.append(f"pod/{name}:{reason}")
             elif reason == "CrashLoopBackOff":
-                if (cs.get("restartCount") or 0) >= 6:
-                    fatal.append(f"pod/{name} container {cs['name']}: CrashLoopBackOff "
-                                 f"({cs.get('restartCount')} restarts)")
+                if crash_loop_fatal(name, cs["name"], restarts, db):
+                    base = (db.get("baseline") or {}).get(f"{name}/{cs['name']}")
+                    fatal.append(f"pod/{name} container {cs['name']}: CrashLoopBackOff ({restarts} restarts"
+                                 + (f", {restarts - base} since Postgres became ready" if base is not None
+                                    and not name.startswith(f"{POSTGRES_STS}-") else "") + ")")
                 else:
-                    warn.append(f"pod/{name}:CrashLoopBackOff({cs.get('restartCount')})")
+                    warn.append(f"pod/{name}:CrashLoopBackOff({restarts})")
     return fatal, warn
 
 
@@ -664,14 +838,21 @@ def wait_ready(ns: str, timeout: int) -> dict:
     deadline = t0 + timeout
     last_report = 0.0
     pending: list[str] = []
+    db: dict = {"ready_at": None, "baseline": {}}
     while time.time() < deadline:
         pending, failures, facts = _workload_status(ns)
-        fatal, warn = _pod_problems(ns, t0)
+        if facts.get("postgres_ready") and db["ready_at"] is None:
+            db["ready_at"] = time.time()
+            log(f"{POSTGRES_STS} ready after {db['ready_at'] - t0:.0f}s; from now a service crashing "
+                f"{CRASHES_AFTER_DB_READY} more times fails `up`")
+        fatal, warn = _pod_problems(ns, t0, db)
         if failures or fatal:
             _dump_failure(ns, failures + fatal)
             die("deployment failed:\n  " + "\n  ".join(failures + fatal))
         if not pending:
             log(f"all workloads ready after {time.time() - t0:.0f}s")
+            facts["postgres_ready_after_s"] = round(db["ready_at"] - t0) if db["ready_at"] else None
+            facts["restarts_before_postgres_ready"] = {k: v for k, v in sorted(db["baseline"].items()) if v}
             return facts
         if time.time() - last_report > 20:
             extra = f"; {', '.join(warn)}" if warn else ""
@@ -746,23 +927,30 @@ def pf_start(ns: str, port: int, mode: str) -> dict:
     """Expose the gateway on 127.0.0.1:<port>, supervised in a background process.
 
     relay (default): gateway_relay.py, a TCP relay to the envoy Service's ClusterIP, which
-      OrbStack routes from macOS. Each connection is independent.
-    kubectl: `kubectl port-forward svc/<envoy>`, restarted whenever it exits. It exits
-      ("lost connection to pod") as soon as the pod side resets any one forwarded
-      connection, which closing a workflow websocket through Envoy does; requests in the
-      second until the restart fail. Used when the ClusterIP is not reachable."""
+      OrbStack routes from macOS. Each connection is independent. When the ClusterIP is not
+      reachable this fails: it never falls back to kubectl on its own.
+    kubectl (only when asked for): `kubectl port-forward svc/<envoy>`, restarted whenever it
+      exits. It exits ("lost connection to pod") as soon as the pod side resets any one
+      forwarded connection, which closing a workflow websocket through Envoy does; requests
+      in the second until the restart fail, so a run's failures may be the forwarder's. The
+      manifest marks it unreliable, and `post-run` marks the run's report so."""
     if pf_running():
-        return {"mode": pf_mode(), "already_running": True}
-    info: dict = {"mode": mode}
+        return {"mode": pf_mode(), "already_running": True, "reliable": pf_mode() == "relay"}
+    info: dict = {"mode": mode, "reliable": mode == "relay"}
     if mode == "relay":
         target = relay_target(ns)
         if not target or not host_reaches(*target):
-            log(f"the envoy Service's ClusterIP ({target}) is not reachable from this host; "
-                "using kubectl port-forward")
-            mode = info["mode"] = "kubectl"
-            info["relay_unreachable"] = f"{target}"
-        else:
-            info["target"] = f"{target[0]}:{target[1]}"
+            die(f"the envoy Service's ClusterIP ({target}) is not reachable from this host with "
+                f"{RELAY_PYTHON}, so the relay cannot expose the gateway. `--forward kubectl` uses kubectl "
+                "port-forward instead, but that drops (and is restarted) whenever a workflow websocket "
+                "closes, so later requests can fail for the forwarder's sake; a run through it is marked "
+                "unreliable")
+        info["target"] = f"{target[0]}:{target[1]}"
+    else:
+        info["warning"] = ("kubectl port-forward drops whenever Envoy resets a forwarded connection (every "
+                           "workflow websocket close) and is restarted 1 s later: failures may be the "
+                           "forwarder's, not Texera's")
+        log(f"warning: {info['warning']}")
     info["service"] = envoy_service(ns)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     logf = open(PF_LOG, "a")
@@ -857,6 +1045,157 @@ def wait_gateway(port: int, timeout: int) -> dict:
     return results
 
 
+# ------------------------------------------------------------- ext-authz refusals
+
+
+def ws_upgrade_status(port: int, path: str, timeout: float = 10) -> tuple[int | None, str]:
+    """The status of a websocket handshake through the gateway, as the browser sends it."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request("GET", path, headers={
+            "Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Key": base64.b64encode(os.urandom(16)).decode()})
+        return conn.getresponse().status, ""
+    except (OSError, http.client.HTTPException) as e:
+        return None, f"{type(e).__name__}: {e}"
+    finally:
+        conn.close()
+
+
+def login_token(port: int) -> str | None:
+    body = json.dumps({"username": os.environ.get("SCE_USER", "texera"),
+                       "password": os.environ.get("SCE_PASSWORD", "texera")}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/auth/login", data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return (json.loads(r.read() or b"{}") or {}).get("accessToken")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def parse_access_log(text: str, markers: set[str]) -> dict[str, dict]:
+    """Envoy's access-log entries (JSON lines) of the requests whose query carries
+    `sce-probe=<marker>`, one of `markers`."""
+    found: dict[str, dict] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{") or "sce-probe=" not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        query = urllib.parse.urlsplit(str(rec.get("x-envoy-origin-path") or "")).query
+        marker = (urllib.parse.parse_qs(query).get("sce-probe") or [None])[0]
+        if marker in markers:
+            found[marker] = {k: rec.get(k) for k in ("response_code", "response_code_details",
+                                                     "response_flags", "route_name", "start_time")}
+    return found
+
+
+def envoy_access_records(ns: str, markers: list[str], wait_s: float = 45) -> dict[str, dict]:
+    """The entries of `markers` in the envoy proxy's access log. Envoy writes the log in
+    batches, so this polls until every marker is there or `wait_s` passes."""
+    want = set(markers)
+    found: dict[str, dict] = {}
+    deadline = time.time() + wait_s
+    while want:
+        pods = kjson("get", "pods", "-l", f"gateway.envoyproxy.io/owning-gateway-name={GATEWAY_NAME}",
+                     ns=ns, check=False).get("items", [])
+        for pod in pods:
+            p = kubectl("logs", pod["metadata"]["name"], "-c", "envoy", ns=ns, check=False, capture=True,
+                        timeout=60)
+            found.update(parse_access_log(p.stdout or "", want))
+        if want <= set(found) or time.time() > deadline:
+            break
+        time.sleep(3)
+    return found
+
+
+def judge_refusal(status: int | None, envoy: dict | None) -> tuple[bool, bool | None, str]:
+    """(refused, by ext-authz (None: Envoy's entry not found), verdict) for one probe."""
+    if status not in REFUSED:
+        return False, None, f"not refused: HTTP {status}"
+    if envoy is None:
+        return True, None, f"refused ({status}); Envoy's access-log entry not found"
+    details = envoy.get("response_code_details")
+    if details != EXT_AUTHZ_DENIED:
+        return False, False, f"refused ({status}), but not by ext-authz: {details}"
+    return True, True, f"refused ({status}) by ext-authz ({EXT_AUTHZ_DENIED})"
+
+
+def gateway_refusals(ns: str, port: int) -> dict:
+    """Websocket handshakes ext-authz must refuse (AUTHZ_PROBES), each judged from its HTTP
+    status and Envoy's own access-log entry for it."""
+    nonce = f"{int(time.time())}-{os.getpid()}"
+    token = None
+    probes: list[dict] = []
+    for name, credential, cuid in AUTHZ_PROBES:
+        params: dict = {"wid": 1, "uid": 1, "cuid": cuid}
+        if credential == "valid":
+            token = token or login_token(port)
+            if not token:
+                probes.append({"probe": name, "cuid": cuid, "skipped": "logging in as texera failed"})
+                continue
+            params["access-token"] = token
+        elif credential:
+            params["access-token"] = credential
+        params["sce-probe"] = f"up-{name}-{nonce}"
+        status, err = ws_upgrade_status(port, "/wsapi/workflow-websocket?" + urllib.parse.urlencode(params))
+        probes.append({"probe": name, "cuid": cuid, "marker": params["sce-probe"], "status": status,
+                       **({"error": err} if err else {})})
+    records = envoy_access_records(ns, [p["marker"] for p in probes if "marker" in p])
+    for p in probes:
+        if "marker" in p:
+            p["envoy"] = records.get(p["marker"])
+            p["refused"], p["by_ext_authz"], p["verdict"] = judge_refusal(p["status"], p["envoy"])
+    ran = [p for p in probes if "marker" in p]
+    return {"ok": bool(ran) and all(p["refused"] for p in ran),
+            "confirmed_by_envoy": bool(ran) and all(p["by_ext_authz"] for p in ran),
+            "probes": probes}
+
+
+# ------------------------------------------------------------------------ post-run
+
+
+def evaluate_post_run(*, pods_left: list[str], unit_kept: bool, forward: dict, driver_probes: list[dict],
+                      envoy: dict[str, dict]) -> dict:
+    """After the driver: its unit's pod must be gone (unless kept), its refusal probes must
+    have been refused by ext-authz (Envoy's entries), and a run through kubectl port-forward
+    is unreliable."""
+    failures: list[str] = []
+    warnings: list[str] = []
+    if pods_left and not unit_kept:
+        failures.append("unit pod(s) still present after the driver terminated its unit: " + ", ".join(pods_left))
+    mode = (forward or {}).get("mode")
+    if mode == "kubectl":
+        warnings.append("the gateway was forwarded by kubectl port-forward, which drops whenever a websocket "
+                        "closes: failures may be the forwarder's, not Texera's")
+    refusals = []
+    for p in driver_probes:
+        rec = envoy.get(p.get("marker"))
+        refused, by_authz, verdict = judge_refusal(p.get("status"), rec)
+        refusals.append({k: p.get(k) for k in ("probe", "cuid", "status", "marker")}
+                        | {"envoy": rec, "by_ext_authz": by_authz, "verdict": verdict})
+        if not refused:
+            failures.append(f"the driver's {p.get('probe')} probe: {verdict}")
+        elif by_authz is None:
+            warnings.append(f"the driver's {p.get('probe')} probe: {verdict}")
+    return {"unit_pods_left": pods_left, "unit_kept": unit_kept, "gateway_forward": mode,
+            "reliable": None if mode is None else mode == "relay", "gateway_refusals": refusals,
+            "failures": failures, "warnings": warnings}
+
+
+def apply_post_run(report: dict, post: dict) -> None:
+    report["post_run"] = post
+    summary = report.setdefault("summary", {})
+    summary["reliable"] = post["reliable"]
+    if post["failures"]:
+        summary["post_run_failures"] = post["failures"]
+        summary["result"] = "FAIL"
+
+
 # ----------------------------------------------------------------------- commands
 
 
@@ -879,6 +1218,11 @@ def cmd_up(a) -> None:
     log(f"chart {m['chart_source']} @ {m['source_git'].get('head', '')[:10]}; images {reg}/texera-*:{tag} "
         f"(pull {m['images']['pull_policy']}); workarounds: "
         f"{', '.join(w['name'] for w in m['workarounds']) or 'none'}")
+    m["crds"] = check_crds(a.allow_crd_drift)
+    log(f"CRDs: {m['crds']['same']} of the chart's {m['crds']['chart_crds']} are in the cluster as the chart "
+        f"has them (Gateway API bundle {', '.join(m['crds']['chart_gateway_api_bundle']) or '-'}), "
+        f"{len(m['crds']['absent'])} absent, {len(m['crds']['differs'])} differ")
+    write_json(MANIFEST, m)
     t0 = time.time()
     args = ["install", RELEASE, str(CHART_DIR), "--create-namespace", "--timeout", f"{a.helm_timeout}s"]
     for v in m["values_files"]:
@@ -897,10 +1241,22 @@ def cmd_up(a) -> None:
     facts.update(wait_ready(ns, a.timeout))
     forward = pf_start(ns, port, a.forward)
     probes = wait_gateway(port, 300)
+    refusals = gateway_refusals(ns, port)
     m.update({"deployed_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
               "up_seconds": round(time.time() - t0), "envoy": facts.get("envoy_deployments"),
-              "envoy_service": envoy_service(ns), "gateway_forward": forward, "gateway_probes": probes})
+              "envoy_service": envoy_service(ns), "gateway_forward": forward, "gateway_probes": probes,
+              "gateway_refusals": refusals,
+              "readiness": {"postgres_ready_after_s": facts.get("postgres_ready_after_s"),
+                            "restarts_before_postgres_ready": facts.get("restarts_before_postgres_ready")}})
     write_json(MANIFEST, m)
+    verdicts = ", ".join(f"{p['probe']}: {p.get('verdict') or p.get('skipped')}" for p in refusals["probes"])
+    if not refusals["ok"]:
+        die(f"the gateway does not refuse the unit websocket without valid credentials ({verdicts}); "
+            "the deployment is left up for inspection (`stack/k8s-stack.sh down` removes it)")
+    log(f"ext-authz refusals: {verdicts}")
+    if not refusals["confirmed_by_envoy"]:
+        log("warning: not every refusal was found in Envoy's access log, so ext-authz is not confirmed as the "
+            "one that refused each")
     log(f"stack is up: http://127.0.0.1:{port} (login texera / texera; units are created on request "
         f"in {unit_namespace(ns)})")
 
@@ -1103,6 +1459,42 @@ def cmd_collect_logs(a) -> None:
     log(f"collected logs into {out}")
 
 
+def cmd_post_run(a) -> None:
+    """After a driver run: wait for the unit's pod to go, read Envoy's entries of the driver's
+    refusal probes, and fold the outcome into the report (`post_run`; a failure turns
+    summary.result to FAIL). Exit 4 on a failure."""
+    ns = a.namespace
+    report = json.loads(a.report.read_text()) if a.report.exists() else None
+    deadline = time.time() + a.wait
+    while True:
+        pods = [p["metadata"]["name"] for p in _unit_pods(ns)]
+        if not pods or a.unit_kept or time.time() >= deadline:
+            break
+        time.sleep(2)
+    m = load_manifest()
+    probes = (((report or {}).get("setup") or {}).get("kubernetes_unit") or {}).get("gateway_refusals") or []
+    markers = [p["marker"] for p in probes if p.get("marker")]
+    envoy = envoy_access_records(ns, markers, wait_s=30) if markers else {}
+    post = evaluate_post_run(pods_left=pods, unit_kept=a.unit_kept, forward=m.get("gateway_forward") or {},
+                             driver_probes=probes, envoy=envoy)
+    post["checked_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    if report is not None:
+        apply_post_run(report, post)
+        write_json(a.report, report)
+    else:
+        post["warnings"].append(f"no report at {a.report}")
+    if a.out:
+        write_json(a.out, post)
+    log(f"unit pods after the run: {', '.join(pods) or 'none'}{' (--keep-unit)' if a.unit_kept else ''}; "
+        f"driver refusal probes: " + (", ".join(f"{r['probe']} {r['verdict']}" for r in post["gateway_refusals"])
+                                       or "none recorded"))
+    for w in post["warnings"]:
+        log(f"post-run warning: {w}")
+    for f in post["failures"]:
+        log(f"post-run FAIL: {f}")
+    sys.exit(4 if post["failures"] else 0)
+
+
 def cmd_follow_units(a) -> None:
     """Stream the log of every unit pod into <dir>/<pod>.log until stopped. Units are
     terminated (their pods deleted) by the driver, so this is the only copy of their logs."""
@@ -1171,9 +1563,14 @@ def main() -> None:
     p.add_argument("--helm-timeout", type=int, default=900, help="helm install --timeout in seconds")
     p.add_argument("--forward", choices=["relay", "kubectl"], default=DEFAULT_FORWARD,
                    help="how 127.0.0.1:<port> reaches the gateway: a TCP relay to the envoy Service's "
-                        "ClusterIP (OrbStack routes it from macOS) or kubectl port-forward (default "
-                        "%(default)s; relay falls back to kubectl when the ClusterIP is unreachable)")
-    sub.add_parser("down", help="uninstall, delete both namespaces and leftover cluster objects")
+                        "ClusterIP (OrbStack routes it from macOS; `up` fails when it cannot reach it) or "
+                        "kubectl port-forward, which drops at every websocket close and marks a run "
+                        "unreliable (default %(default)s)")
+    p.add_argument("--allow-crd-drift", action="store_true",
+                   help="deploy even when the cluster's Gateway API or Envoy Gateway CRDs differ from the "
+                        "chart's (Helm never upgrades existing CRDs); recorded in MANIFEST.json")
+    sub.add_parser("down", help="uninstall, delete both namespaces and leftover cluster objects "
+                                "(not the CRDs: Helm never deletes them)")
     p = sub.add_parser("status", help="release, pods, port-forward, healthcheck")
     p.add_argument("--json", action="store_true")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -1189,6 +1586,12 @@ def main() -> None:
     p.add_argument("dir", type=Path)
     p = sub.add_parser("follow-units", help="stream every unit pod's log into a directory")
     p.add_argument("dir", type=Path)
+    p = sub.add_parser("post-run", help="after a driver run: the unit's pod is gone, the driver's refusal "
+                                        "probes were ext-authz's; folded into the report (exit 4 on a failure)")
+    p.add_argument("report", type=Path)
+    p.add_argument("--wait", type=float, default=90, help="seconds to wait for unit pods to go")
+    p.add_argument("--unit-kept", action="store_true", help="the driver ran with --keep-unit")
+    p.add_argument("--out", type=Path, help="also write the outcome to this JSON file")
     p = sub.add_parser("_pf-supervise", help=argparse.SUPPRESS)
     p.add_argument("--port", type=int, required=True)
 
@@ -1203,6 +1606,7 @@ def main() -> None:
         "port-forward": cmd_port_forward,
         "collect-logs": cmd_collect_logs,
         "follow-units": cmd_follow_units,
+        "post-run": cmd_post_run,
         "_pf-supervise": cmd_pf_supervise,
     }[a.cmd](a)
 
