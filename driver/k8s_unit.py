@@ -80,10 +80,12 @@ _state: dict[str, Any] = {"cuid": None, "done": False}
 
 def add_arguments(ap: argparse.ArgumentParser) -> None:
     g = ap.add_argument_group("Kubernetes mode")
-    g.add_argument("--target", choices=["single-node", "k8s"],
+    g.add_argument("--target", choices=["single-node", "k8s", "localdev"],
                    default=os.environ.get("SCE_TARGET", "single-node"),
                    help="k8s: the stack of stack/k8s-stack.sh; --base defaults to its gateway "
-                        "port-forward and the unit is a Kubernetes one (default %(default)s)")
+                        "port-forward and the unit is a Kubernetes one. localdev: the stack of "
+                        "stack/localdev-stack.sh; --base defaults to the Angular dev server and the "
+                        "unit is local-dev's local one (driver/localdev_unit.py) (default %(default)s)")
     g.add_argument("--unit-kind", choices=["local", "kubernetes"], default=None,
                    help="local: a unit row pointing at --unit-uri (single-node); kubernetes: a pod "
                         "created through computing-unit-managing-service (default: kubernetes with "

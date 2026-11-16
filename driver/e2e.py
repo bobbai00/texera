@@ -42,6 +42,7 @@ from texera_api import TexeraApi  # noqa: E402
 from transport import TRANSPORTS, make_transport  # noqa: E402
 
 import k8s_unit  # noqa: E402  -- Kubernetes mode (--target k8s); see driver/k8s_unit.py
+import localdev_unit  # noqa: E402  -- local-dev mode (--target localdev); see driver/localdev_unit.py
 
 DATA_DIR = HERE / "data"
 DATA_FILES = ["people.csv", "depts.csv", "numbers.csv"]
@@ -120,6 +121,7 @@ def main() -> int:
     k8s_unit.add_arguments(ap)  # Kubernetes mode: --target k8s, --unit-kind, --k8s-unit-*
     a = ap.parse_args()
     k8s_unit.resolve_args(a)  # Kubernetes mode: unit kind and the gateway port-forward as --base
+    localdev_unit.resolve_args(a)  # local-dev mode: the dev server as --base, the frontend's local unit URI
 
     if a.list:
         for k, (name, title, _) in SCENARIOS.items():
@@ -139,6 +141,7 @@ def main() -> int:
     legacy_env = a.legacy_env or bool(gate.get("legacy_env"))
     keys = resolve(a.scenario or ([gate["scenarios"]] if gate else []), transport_name, legacy_env)
     k8s_unit.check_selection(a, keys, transport_name)  # Kubernetes mode: refuse single-node-only scenarios
+    localdev_unit.check_selection(a, keys, transport_name)  # local-dev mode: the same for the unit container
     evidence_spec = a.evidence if a.evidence is not None else gate.get("evidence")
     required = parse_checks(evidence_spec)
     use_evidence = evidence_spec is not None or a.negative_control
@@ -200,6 +203,8 @@ def main() -> int:
         # --- Kubernetes mode: a unit pod created through the managing service (k8s_unit.py)
         if k8s_unit.wanted(a):
             unit = k8s_unit.setup(api, a, run_id=run_id, log=log, report=report)
+        elif localdev_unit.wanted(a):  # local-dev: the frontend's "Connect to a Local Computing Unit"
+            unit = localdev_unit.setup(api, a, run_id=run_id, log=log, report=report)
         else:
             unit = api.ensure_local_unit(a.unit_name, a.unit_uri)
         cuid = int(unit["cuid"])

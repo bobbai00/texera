@@ -1,0 +1,139 @@
+"""Local-dev mode for the e2e driver (`--target localdev`).
+
+bin/local-dev.sh serves the frontend with the Angular dev server on http://localhost:4200,
+whose proxy (frontend/proxy.config.json) sends /api to each JVM service on its fixed port
+and /wsapi to the computing unit on 8085. A developer's browser therefore talks only to
+:4200, and so does the driver here: `--base` defaults to the dev server, so every REST call
+and every workflow websocket goes through that proxy.
+
+local-dev starts no unit row of its own. A developer gets one from the workspace's unit
+selector: the create dialog offers the types of GET /api/computing-unit/types (only `local`
+here: Kubernetes units are off), and "Connect to a Local Computing Unit" sends
+
+  POST /api/computing-unit/create  {name, unitType: "local", cpuLimit: "NaN", memoryLimit: "NaN",
+                                    gpuLimit: "NaN", jvmMemorySize: "NaN", shmSize: "NaN",
+                                    uri: <page origin>/wsapi}
+
+(computing-unit-create-modal: buildLocalComputingUnitUri(window.location)). The workflow
+socket then opens at <page origin>/wsapi/workflow-websocket?...&cuid=<that unit>, which the
+proxy forwards to the unit; the unit takes the user from the token in the query and the
+cuid only as a key. `setup` does the same over the same API: it checks the dev server
+serves the app, that `local` is offered, creates (or reuses) the unit with the dialog's
+body and default URI, and opens a workflow socket through the proxy until the unit
+answers. The scenarios then select that unit by cuid, as in single-node.
+
+What reads or execs into the single-node stack's containers is refused up front (the
+evidence, the gates, g0, g, h and o), and DOCKER_HOST points at a socket that does not
+exist, as in Kubernetes mode, so nothing the driver runs here can reach another stack's
+containers.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import time
+import urllib.parse
+from pathlib import Path
+from typing import Callable
+
+import requests
+
+import k8s_unit
+from workflow import Workflow
+
+TARGET = "localdev"
+MANIFEST = Path(__file__).resolve().parent.parent / "stack" / "localdev" / "generated" / "MANIFEST.json"
+DEV_SERVER = "http://localhost:4200"
+SINGLE_NODE_BASE = k8s_unit.SINGLE_NODE_BASE  # e2e.py's --base default
+SINGLE_NODE_UNIT_URI = "http://workflow-runtime-coordinator-service:8085"  # e2e.py's --unit-uri default
+
+#: scenarios that `docker exec` into the single-node unit container
+UNIT_CONTAINER_SCENARIOS = {k: v for k, v in k8s_unit.SINGLE_NODE_SCENARIOS.items() if k in ("g0", "g", "h", "o")}
+
+
+def wanted(a: argparse.Namespace) -> bool:
+    return getattr(a, "target", None) == TARGET
+
+
+def local_unit_uri(base: str) -> str:
+    """The frontend's buildLocalComputingUnitUri(window.location) for a page served at `base`:
+    `${protocol}//${hostname}${port ? ":" + port : ""}/wsapi`."""
+    parts = urllib.parse.urlsplit(base)
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{parts.hostname}{port}/wsapi"
+
+
+def resolve_args(a: argparse.Namespace) -> None:
+    if not wanted(a):
+        return
+    if getattr(a, "unit_kind", None) == "kubernetes":
+        raise SystemExit("--target localdev runs on local-dev's local computing unit; drop --unit-kind kubernetes")
+    if a.base == SINGLE_NODE_BASE and not os.environ.get("SCE_BASE"):
+        manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+        a.base = manifest.get("frontend_url") or DEV_SERVER
+    if a.unit_uri == SINGLE_NODE_UNIT_URI and not os.environ.get("SCE_UNIT_URI"):
+        a.unit_uri = local_unit_uri(a.base)
+    used = [(flag, why) for attr, (flag, why) in k8s_unit.SINGLE_NODE_OPTIONS.items() if getattr(a, attr, None)]
+    if used:
+        raise SystemExit("local-dev mode does not support " + "; ".join(f"{f} ({w})" for f, w in used)
+                         + ". Use the single-node stack (run-baseline.sh) for them.")
+    if hasattr(a, "stack_manifest") and a.stack_manifest is None:
+        a.stack_manifest = MANIFEST
+    k8s_unit.guard_docker()
+
+
+def check_selection(a: argparse.Namespace, keys: list[str], transport: str) -> None:
+    """Refuse, before any setup, the scenarios that exec into the single-node unit container."""
+    if not wanted(a):
+        return
+    bad = {k: why for k, why in UNIT_CONTAINER_SCENARIOS.items() if k in keys}
+    if bad:
+        raise SystemExit("local-dev mode cannot run " + "; ".join(f"{k} ({w})" for k, w in bad.items())
+                         + ": the unit is a host process here. Run them on the single-node stack (run-baseline.sh).")
+
+
+def dev_server_page(base: str, timeout: float = 30) -> dict:
+    """What a browser gets at the base URL: the Angular dev server's index page."""
+    r = requests.get(base.rstrip("/") + "/", timeout=timeout)
+    title = re.search(r"<title>([^<]*)</title>", r.text)
+    return {"status": r.status_code, "content_type": r.headers.get("Content-Type", ""),
+            "title": title.group(1) if title else None, "serves_app": "<texera-root" in r.text}
+
+
+def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None], report: dict) -> dict:
+    report["target"] = TARGET
+    rec = report["setup"].setdefault("localdev", {})
+    rec["base"] = a.base
+    rec["dev_server"] = page = dev_server_page(a.base)
+    if page["status"] != 200 or not page["serves_app"]:
+        raise RuntimeError(f"{a.base}/ is not the Texera app ({page}); is the dev server up?")
+
+    types = (api.get_json("/api/computing-unit/types") or {}).get("typeOptions") or []
+    rec["unit_types_offered"] = types
+    if "local" not in types:
+        raise RuntimeError(f"the deployment does not offer local computing units (types {types})")
+    # the create dialog preselects kubernetes when offered, else the first type
+    rec["create_dialog_default_type"] = "kubernetes" if "kubernetes" in types else types[0]
+
+    before = {int((u.get("computingUnit") or {}).get("cuid", -1)) for u in api.list_units()}
+    request = {"name": a.unit_name, "unitType": "local", "cpuLimit": "NaN", "memoryLimit": "NaN",
+               "gpuLimit": "NaN", "jvmMemorySize": "NaN", "shmSize": "NaN", "uri": a.unit_uri}
+    cu = api.ensure_local_unit(a.unit_name, a.unit_uri)  # sends `request` when no such unit exists
+    cuid = int(cu["cuid"])
+    rec["unit_request"] = request
+    rec["unit"] = {"cuid": cuid, "name": cu.get("name"), "uri": cu.get("uri"), "type": cu.get("type"),
+                   "created": cuid not in before}
+    log(f"local computing unit {cuid} '{cu.get('name')}' -> {cu.get('uri')} "
+        f"({'created' if cuid not in before else 'reused'}; types offered {types})")
+
+    t0 = time.monotonic()
+    probe_wf = Workflow(f"sce-e2e {run_id} localdev-unit-probe")
+    wid = api.create_workflow(probe_wf.name, probe_wf.ui_content())
+    rec["websocket_probe"] = dict(k8s_unit.wait_reachable(a.base, api.token, api.uid, cuid, wid,
+                                                          max(30.0, a.timeout), log), wid=wid)
+    log(f"the unit answers a workflow socket through the dev server's /wsapi proxy "
+        f"({rec['websocket_probe']['attempts']} attempt(s), {time.monotonic() - t0:.1f}s)")
+    return dict(cu, type="local")
