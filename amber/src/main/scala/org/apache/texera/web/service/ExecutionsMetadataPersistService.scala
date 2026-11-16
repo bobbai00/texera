@@ -23,6 +23,7 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.dao.SqlServer
 import org.jooq.exception.DataAccessException
+import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
@@ -112,4 +113,40 @@ object ExecutionsMetadataPersistService extends LazyLogging {
         logger.info("Unable to update execution. Error = " + t.getMessage)
     }
   }
+
+  /**
+    * Records an execution's status and when it changed, in one UPDATE by eid.
+    *
+    * It reads nothing first, so a run reports its state without reading Postgres, and it writes
+    * no other column of the row. An unknown eid updates nothing. A failure is logged and
+    * swallowed: a run must not fail because its status could not be stored.
+    */
+  def updateStatus(eid: ExecutionIdentity, status: Byte, at: Timestamp): Unit =
+    tryUpdate(eid) {
+      context
+        .update(WORKFLOW_EXECUTIONS)
+        .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(status.toShort))
+        .set(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME, at)
+        .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
+        .execute()
+    }
+
+  /** Records where an execution writes its replay log, the way [[updateStatus]] records status. */
+  def updateLogLocation(eid: ExecutionIdentity, location: String): Unit =
+    tryUpdate(eid) {
+      context
+        .update(WORKFLOW_EXECUTIONS)
+        .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, location)
+        .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
+        .execute()
+    }
+
+  // A failure leaves the row with a stale status or location, which an operator should see, so it
+  // is a warning. It is never routine: an unknown eid matches no row instead of failing.
+  private def tryUpdate(eid: ExecutionIdentity)(update: => Unit): Unit =
+    try update
+    catch {
+      case t: Throwable =>
+        logger.warn(s"Unable to update execution ${eid.id}. Error = ${t.getMessage}")
+    }
 }

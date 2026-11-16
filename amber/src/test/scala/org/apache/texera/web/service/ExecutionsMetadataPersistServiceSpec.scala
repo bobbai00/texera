@@ -19,11 +19,14 @@
 
 package org.apache.texera.web.service
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
+import ch.qos.logback.core.read.ListAppender
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
-import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder}
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
@@ -41,12 +44,17 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowVersion
 }
 import org.apache.texera.web.storage.ExecutionStateStore
+import org.jooq.impl.{DSL, DefaultConfiguration}
+import org.jooq.{ConnectionProvider, SQLDialect}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
+import org.slf4j.LoggerFactory
 
-import java.sql.Timestamp
+import java.sql.{Connection, SQLException, Timestamp}
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
+import scala.jdk.CollectionConverters._
 
 class ExecutionsMetadataPersistServiceSpec
     extends AnyFlatSpec
@@ -67,9 +75,11 @@ class ExecutionsMetadataPersistServiceSpec
   private var computingUnitDao: WorkflowComputingUnitDao = _
   private var seededVid: Integer = _
   private var seededCuid: Integer = _
+  private var recorder: StatementRecorder = _
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
+    recorder = StatementRecorder.installOn(getDSLContext)
   }
 
   override protected def afterAll(): Unit = {
@@ -323,9 +333,231 @@ class ExecutionsMetadataPersistServiceSpec
     after.getStatus shouldBe 1.toByte
   }
 
+  // -- updateStatus / updateLogLocation ---------------------------------------
+  //
+  // The unit records a run's state with these while the run starts and goes on, so each is one
+  // UPDATE by eid that reads nothing first.
+
+  // A whole second, so the time read back compares equal at any precision the column keeps.
+  private val changedAt = Timestamp.valueOf("2026-11-15 10:20:30")
+
+  /**
+    * Runs `body` with the production code pointed at a database it cannot reach, and returns how
+    * often it tried to connect, so a test can tell a swallowed failure from no attempt at all.
+    */
+  private def whileDatabaseUnreachable(body: => Unit): Int = {
+    val attempts = new AtomicInteger()
+    val unreachable = new DefaultConfiguration()
+    unreachable.set(SQLDialect.POSTGRES)
+    unreachable.set(new ConnectionProvider {
+      override def acquire(): Connection = {
+        attempts.incrementAndGet()
+        throw new SQLException("database unavailable")
+      }
+      override def release(connection: Connection): Unit = ()
+    })
+    SqlServer.getInstance().replaceDSLContext(DSL.using(unreachable))
+    try body
+    finally SqlServer.getInstance().replaceDSLContext(getDSLContext)
+    attempts.get()
+  }
+
+  /**
+    * Runs `body` and returns its result with what the service logged meanwhile on this thread, at
+    * INFO and above. The level is set here, whatever the logging configuration says, so a line
+    * logged below WARN is caught too and shows up with its level.
+    */
+  private def loggedByService[T](body: => T): (T, Seq[ILoggingEvent]) = {
+    val logger = LoggerFactory
+      .getLogger(ExecutionsMetadataPersistService.getClass.getName)
+      .asInstanceOf[LogbackLogger]
+    val appender = new ListAppender[ILoggingEvent]
+    val previousLevel = logger.getLevel
+    appender.start()
+    logger.addAppender(appender)
+    logger.setLevel(Level.INFO)
+    try {
+      val result = body
+      (result, appender.list.asScala.toList)
+    } finally {
+      logger.setLevel(previousLevel)
+      logger.detachAppender(appender)
+      appender.stop()
+    }
+  }
+
+  /**
+    * Gives every column of an execution's row that a write could clobber a value of its own, the
+    * way a rename, a bookmark, the statistics writer or a warehouse choice would have, so a write
+    * that touches a column it should leave alone changes it.
+    */
+  private def fillEveryColumn(eid: Integer): Unit = {
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(testUid)
+    warehouse.setName(s"warehouse-of-$eid")
+    warehouse.setLakekeeperWarehouseName(s"user-$testUid-warehouse-of-$eid")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.CUID, seededCuid)
+      .set(WORKFLOW_EXECUTIONS.RESULT, "a result")
+      .set(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME, Timestamp.valueOf("2026-11-14 09:00:00"))
+      .set(WORKFLOW_EXECUTIONS.BOOKMARKED, java.lang.Boolean.TRUE)
+      .set(WORKFLOW_EXECUTIONS.NAME, "renamed by its owner")
+      .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, "file:///logs/earlier/")
+      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, "vfs:///runtime-stats")
+      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_SIZE, java.lang.Long.valueOf(42L))
+      .set(WORKFLOW_EXECUTIONS.WHID, warehouse.getWhid)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(eid))
+      .execute()
+  }
+
+  /** The columns of an execution's row whose values `write` changes. */
+  private def columnsChangedBy(eid: Integer)(write: => Unit): Set[String] = {
+    def row = getDSLContext.fetchOne(WORKFLOW_EXECUTIONS, WORKFLOW_EXECUTIONS.EID.eq(eid))
+    val before = row
+    write
+    val after = row
+    WORKFLOW_EXECUTIONS
+      .fields()
+      .map(_.getName)
+      .filter(column => before.get(column) != after.get(column))
+      .toSet
+  }
+
+  "updateStatus" should "write the status and its time in one UPDATE by eid" in {
+    val eid = seedExecution(status = 0)
+    val statements = recorder.record {
+      ExecutionsMetadataPersistService.updateStatus(
+        ExecutionIdentity(eid.longValue()),
+        3.toByte,
+        changedAt
+      )
+    }
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    statements.head.sql should include("workflow_executions")
+    statements.head.sql.toLowerCase should not include "select"
+    val after = workflowExecutionsDao.fetchOneByEid(eid)
+    after.getStatus shouldBe 3.toByte
+    after.getLastUpdateTime shouldBe changedAt
+  }
+
+  it should "write no other column, so it cannot undo another writer's change to the row" in {
+    // The status used to be written by reading the row and writing all of it back, which undid a
+    // rename, a bookmark or a statistics URI written in between.
+    val eid = seedExecution(status = 0)
+    fillEveryColumn(eid)
+    val changed = columnsChangedBy(eid) {
+      ExecutionsMetadataPersistService.updateStatus(
+        ExecutionIdentity(eid.longValue()),
+        3.toByte,
+        changedAt
+      )
+    }
+    changed shouldBe Set("status", "last_update_time")
+  }
+
+  it should "leave every other execution's row as it was" in {
+    val target = seedExecution(status = 0)
+    val other = seedExecution(status = 1)
+    ExecutionsMetadataPersistService.updateStatus(
+      ExecutionIdentity(target.longValue()),
+      4.toByte,
+      changedAt
+    )
+    val untouched = workflowExecutionsDao.fetchOneByEid(other)
+    untouched.getStatus shouldBe 1.toByte
+    untouched.getLastUpdateTime shouldBe null
+  }
+
+  it should "update nothing and not fail for an unknown eid, without looking it up first" in {
+    val eid = seedExecution(status = 1)
+    val statements = recorder.record {
+      noException should be thrownBy
+        ExecutionsMetadataPersistService.updateStatus(ExecutionIdentity(-1L), 4.toByte, changedAt)
+    }
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe 1.toByte
+  }
+
+  it should "log and swallow a failure, so a run does not fail over its status" in {
+    val eid = seedExecution(status = 1)
+    val (attempts, logged) = loggedByService {
+      whileDatabaseUnreachable {
+        noException should be thrownBy
+          ExecutionsMetadataPersistService.updateStatus(
+            ExecutionIdentity(eid.longValue()),
+            4.toByte,
+            changedAt
+          )
+      }
+    }
+    attempts should be > 0
+    logged.map(_.getLevel) shouldBe Seq(Level.WARN)
+    logged.head.getFormattedMessage should startWith(s"Unable to update execution $eid.")
+    logged.head.getFormattedMessage should include("database unavailable")
+    workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe 1.toByte
+  }
+
+  "updateLogLocation" should "write the location in one UPDATE by eid" in {
+    val eid = seedExecution(status = 1)
+    val other = seedExecution(status = 1)
+    val statements = recorder.record {
+      ExecutionsMetadataPersistService.updateLogLocation(
+        ExecutionIdentity(eid.longValue()),
+        "file:///logs/wid/eid/"
+      )
+    }
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    statements.head.sql.toLowerCase should not include "select"
+    val after = workflowExecutionsDao.fetchOneByEid(eid)
+    after.getLogLocation shouldBe "file:///logs/wid/eid/"
+    after.getStatus shouldBe 1.toByte
+    workflowExecutionsDao.fetchOneByEid(other).getLogLocation shouldBe null
+  }
+
+  it should "write no other column of the row" in {
+    val eid = seedExecution(status = 1)
+    fillEveryColumn(eid)
+    val changed = columnsChangedBy(eid) {
+      ExecutionsMetadataPersistService.updateLogLocation(
+        ExecutionIdentity(eid.longValue()),
+        "file:///logs/wid/eid/"
+      )
+    }
+    changed shouldBe Set("log_location")
+  }
+
+  it should "update nothing and not fail for an unknown eid" in {
+    val eid = seedExecution(status = 1)
+    noException should be thrownBy
+      ExecutionsMetadataPersistService.updateLogLocation(ExecutionIdentity(-1L), "file:///x/")
+    workflowExecutionsDao.fetchOneByEid(eid).getLogLocation shouldBe null
+  }
+
+  it should "log and swallow a failure" in {
+    val eid = seedExecution(status = 1)
+    val (attempts, logged) = loggedByService {
+      whileDatabaseUnreachable {
+        noException should be thrownBy
+          ExecutionsMetadataPersistService.updateLogLocation(
+            ExecutionIdentity(eid.longValue()),
+            "file:///x/"
+          )
+      }
+    }
+    attempts should be > 0
+    logged.map(_.getLevel) shouldBe Seq(Level.WARN)
+    logged.head.getFormattedMessage should startWith(s"Unable to update execution $eid.")
+    logged.head.getFormattedMessage should include("database unavailable")
+    workflowExecutionsDao.fetchOneByEid(eid).getLogLocation shouldBe null
+  }
+
   // -- ExecutionStateStore.updateWorkflowState --------------------------------
   //
-  // updateWorkflowState wraps tryUpdateExistingExecution to also bump the
+  // updateWorkflowState writes the status through updateStatus and bumps the
   // in-memory ExecutionMetadataStore's `state`. Exercising it here keeps the
   // DB-backed setup (workflow/version/execution rows) in one place; the
   // pure-logic ExecutionStateStoreSpec sibling has no DB dependency.
@@ -346,19 +578,38 @@ class ExecutionsMetadataPersistServiceSpec
     after.getStatus shouldBe maptoStatusCode(WorkflowAggregatedState.COMPLETED)
     // lastUpdateTime is set unconditionally to System.currentTimeMillis().
     // Asserting it advanced past the seeded null/older value catches a
-    // regression that drops the setLastUpdateTime call.
+    // regression that stops writing the time.
     Option(beforeTs) match {
       case Some(t) => after.getLastUpdateTime.getTime should be >= t.getTime
       case None    => after.getLastUpdateTime should not be null
     }
   }
 
+  it should "write a state change with one UPDATE and no SELECT" in {
+    // A run reports its state as it starts; doing so must not read Postgres.
+    val eid = seedExecution(status = 0)
+    val store = ExecutionMetadataStore(executionId = ExecutionIdentity(eid.longValue()))
+    val statements = recorder.record {
+      ExecutionStateStore.updateWorkflowState(WorkflowAggregatedState.RUNNING, store)
+    }
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe
+      maptoStatusCode(WorkflowAggregatedState.RUNNING)
+  }
+
+  it should "write -1 for a state that has no code of its own" in {
+    val eid = seedExecution(status = 1)
+    val store = ExecutionMetadataStore(executionId = ExecutionIdentity(eid.longValue()))
+    ExecutionStateStore.updateWorkflowState(WorkflowAggregatedState.PAUSING, store)
+    workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe (-1).toByte
+  }
+
   it should "still return a metadataStore with the new state when the eid is unknown" in {
-    // updateWorkflowState first calls tryUpdateExistingExecution (which
-    // silently swallows the unknown-eid error) and then unconditionally
-    // returns metadataStore.withState(state). Document this so a future
-    // refactor that makes the failure surface (e.g. via Try / Either) has
-    // a spec to migrate.
+    // updateWorkflowState first calls updateStatus (an UPDATE that matches no
+    // row and swallows any failure) and then unconditionally returns
+    // metadataStore.withState(state). Document this so a future refactor
+    // that makes the failure surface (e.g. via Try / Either) has a spec to
+    // migrate.
     val store = ExecutionMetadataStore(
       state = WorkflowAggregatedState.UNINITIALIZED,
       executionId = ExecutionIdentity(-1L)

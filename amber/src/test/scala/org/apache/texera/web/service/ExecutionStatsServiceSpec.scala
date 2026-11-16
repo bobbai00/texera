@@ -144,8 +144,7 @@ class ExecutionStatsServiceSpec
     version.setCreationTime(new Timestamp(System.currentTimeMillis()))
     new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
 
-    // The execution row is what the constructor stamps the statistics URI onto; it has to be
-    // reachable from testWid through workflow_version, which is how the update is scoped.
+    // The execution row is what the constructor stamps the statistics URI onto, by eid.
     val execution = new WorkflowExecutions
     execution.setEid(testEid)
     execution.setVid(version.getVid)

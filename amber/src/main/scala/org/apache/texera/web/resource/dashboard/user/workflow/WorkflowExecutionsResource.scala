@@ -277,22 +277,15 @@ object WorkflowExecutionsResource {
       .execute()
   }
 
-  def updateRuntimeStatsUri(wid: Long, eid: Long, uri: URI): Unit = {
+  /**
+    * Records where an execution's runtime statistics are stored, in one UPDATE by eid that reads
+    * nothing first: the unit calls it as a run starts, for the execution it is running.
+    */
+  def updateRuntimeStatsUri(eid: Long, uri: URI): Unit = {
     context
       .update(WORKFLOW_EXECUTIONS)
       .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, uri.toString)
-      .where(
-        WORKFLOW_EXECUTIONS.EID
-          .eq(eid.toInt)
-          .and(
-            WORKFLOW_EXECUTIONS.VID.in(
-              context
-                .select(WORKFLOW_VERSION.VID)
-                .from(WORKFLOW_VERSION)
-                .where(WORKFLOW_VERSION.WID.eq(wid.toInt))
-            )
-          )
-      )
+      .where(WORKFLOW_EXECUTIONS.EID.eq(eid.toInt))
       .execute()
   }
 

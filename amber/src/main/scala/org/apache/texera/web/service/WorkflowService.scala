@@ -321,9 +321,10 @@ class WorkflowService(
         val writeLocation = ApplicationConfig.faultToleranceLogRootFolder.get.resolve(
           s"${workflowContext.workflowId}/${workflowContext.executionId}/"
         )
-        ExecutionsMetadataPersistService.tryUpdateExistingExecution(workflowContext.executionId) {
-          execution => execution.setLogLocation(writeLocation.toString)
-        }
+        ExecutionsMetadataPersistService.updateLogLocation(
+          workflowContext.executionId,
+          writeLocation.toString
+        )
         coordinatorConf = coordinatorConf.copy(faultToleranceConfOpt =
           Some(FaultToleranceConfig(writeTo = writeLocation))
         )

@@ -85,11 +85,7 @@ class ExecutionStatsService(
       .createDocument(uri, ResultSchema.runtimeStatisticsSchema)
       .writer("runtime_statistics")
       .asInstanceOf[BufferedItemWriter[Tuple]]
-    WorkflowExecutionsResource.updateRuntimeStatsUri(
-      workflowContext.workflowId.id,
-      workflowContext.executionId.id,
-      uri
-    )
+    WorkflowExecutionsResource.updateRuntimeStatsUri(workflowContext.executionId.id, uri)
     writer.open()
     (thread, writer)
   }

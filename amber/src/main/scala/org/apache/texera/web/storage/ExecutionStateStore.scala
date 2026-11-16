@@ -40,11 +40,11 @@ object ExecutionStateStore {
       state: WorkflowAggregatedState,
       metadataStore: ExecutionMetadataStore
   ): ExecutionMetadataStore = {
-    ExecutionsMetadataPersistService.tryUpdateExistingExecution(metadataStore.executionId) {
-      execution =>
-        execution.setStatus(maptoStatusCode(state))
-        execution.setLastUpdateTime(new Timestamp(System.currentTimeMillis()))
-    }
+    ExecutionsMetadataPersistService.updateStatus(
+      metadataStore.executionId,
+      maptoStatusCode(state),
+      new Timestamp(System.currentTimeMillis())
+    )
     // Single chokepoint for every state transition: emit lifecycle metrics
     // once on the first transition into a terminal state.
     WorkflowMetricsRecorder.onStateChange(metadataStore.executionId, metadataStore.state, state)

@@ -33,7 +33,7 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, SessionUser}
-import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -106,9 +106,11 @@ class WorkflowExecutionsResourceSpec
   private var workflowExecutionsDao: WorkflowExecutionsDao = _
   private var datasetDao: DatasetDao = _
   private var computingUnitDao: WorkflowComputingUnitDao = _
+  private var recorder: StatementRecorder = _
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
+    recorder = StatementRecorder.installOn(getDSLContext)
   }
 
   override protected def beforeEach(): Unit = {
@@ -505,33 +507,39 @@ class WorkflowExecutionsResourceSpec
 
   // ─── new: updateRuntimeStatsUri ───────────────────────────────────────────
 
-  "updateRuntimeStatsUri" should "set the runtime_stats_uri on the matching execution" in {
+  "updateRuntimeStatsUri" should "set the runtime_stats_uri on the execution in one UPDATE by eid" in {
     val execution = insertExecution()
     val uri = URI.create("vfs:///runtime-stats")
 
-    WorkflowExecutionsResource.updateRuntimeStatsUri(
-      testWorkflowWid.longValue(),
-      execution.getEid.longValue(),
-      uri
-    )
+    // The unit stamps the URI as a run starts, so it reads nothing, not even in a subselect.
+    val statements = recorder.record {
+      WorkflowExecutionsResource.updateRuntimeStatsUri(execution.getEid.longValue(), uri)
+    }
 
+    assert(statements.map(_.verb) == Seq("UPDATE"))
+    assert(!statements.head.sql.toLowerCase.contains("select"))
     val refreshed = workflowExecutionsDao.fetchOneByEid(execution.getEid)
     assert(refreshed.getRuntimeStatsUri == uri.toString)
   }
 
-  it should "leave executions belonging to other workflows untouched" in {
+  it should "leave every other execution untouched" in {
     val execution = insertExecution()
-    val uri = URI.create("vfs:///runtime-stats")
+    val other = insertExecution()
 
-    // wid that does not match the execution's WORKFLOW_VERSION row → no-op.
     WorkflowExecutionsResource.updateRuntimeStatsUri(
-      (testWorkflowWid + 100000).longValue(),
       execution.getEid.longValue(),
-      uri
+      URI.create("vfs:///runtime-stats")
     )
 
-    val refreshed = workflowExecutionsDao.fetchOneByEid(execution.getEid)
-    assert(refreshed.getRuntimeStatsUri == null)
+    assert(workflowExecutionsDao.fetchOneByEid(other.getEid).getRuntimeStatsUri == null)
+  }
+
+  it should "update nothing for an unknown eid" in {
+    val execution = insertExecution()
+
+    WorkflowExecutionsResource.updateRuntimeStatsUri(-1L, URI.create("vfs:///runtime-stats"))
+
+    assert(workflowExecutionsDao.fetchOneByEid(execution.getEid).getRuntimeStatsUri == null)
   }
 
   // ─── new: URI fetchers ────────────────────────────────────────────────────
@@ -1314,9 +1322,9 @@ class WorkflowExecutionsResourceSpec
     )
   }
 
-  // `updateRuntimeStatsUri` already refuses to write across workflows; the read path
-  // needs the same, or read access on any workflow would expose every other workflow's
-  // operator ids, tuple counts and timings by execution id alone.
+  // The read path must refuse an execution of another workflow, or read access on any
+  // workflow would expose every other workflow's operator ids, tuple counts and timings
+  // by execution id alone.
   it should "refuse an execution id that belongs to a different workflow" in {
     grantReadAccess()
     val foreign = insertForeignExecution(runtimeStatsUri = "mock:///stats")
