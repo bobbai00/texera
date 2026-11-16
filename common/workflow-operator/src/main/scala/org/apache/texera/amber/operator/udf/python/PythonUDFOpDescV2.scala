@@ -168,7 +168,7 @@ class PythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParameterSupport {
       }
 
     physicalOp
-      .withDerivePartition(_ => UnknownPartition())
+      .withOutputPartitionRule(PartitionRule.Fixed(UnknownPartition()))
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPartitionRequirement(partitionRequirement)

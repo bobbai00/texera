@@ -126,7 +126,7 @@ class RUDFOpDesc extends LogicalOp with RUdfUiParameterSupport {
           OpExecWithCode(injectUiParameters(code), uiParameterLanguage)
         )
         .withParallelizable(false)
-    }.withDerivePartition(_ => UnknownPartition())
+    }.withOutputPartitionRule(PartitionRule.Fixed(UnknownPartition()))
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPartitionRequirement(partitionRequirement)

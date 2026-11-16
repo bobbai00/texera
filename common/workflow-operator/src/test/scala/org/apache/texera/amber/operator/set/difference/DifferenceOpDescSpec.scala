@@ -29,6 +29,7 @@ import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   HashPartition,
+  PartitionRule,
   PortIdentity,
   SinglePartition,
   UnknownPartition
@@ -103,10 +104,11 @@ class DifferenceOpDescSpec extends AnyFlatSpec with Matchers {
 
   it should "derive HashPartition for the output regardless of input partition kinds" in {
     val physical = (new DifferenceOpDesc).getPhysicalOp(workflowId, executionId)
-    physical.derivePartition(List(SinglePartition(), UnknownPartition())) shouldBe HashPartition()
-    physical.derivePartition(
-      List(HashPartition(List("a")), HashPartition(List("b")))
-    ) shouldBe HashPartition()
+    val rule = physical.outputPartitionRule
+    rule shouldBe PartitionRule.Fixed(HashPartition())
+    rule.outputPartition(List(SinglePartition(), UnknownPartition())) shouldBe HashPartition()
+    val keyed = List(HashPartition(List("a")), HashPartition(List("b")))
+    rule.outputPartition(keyed) shouldBe HashPartition()
   }
 
   // ---------------------------------------------------------------------------

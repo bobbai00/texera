@@ -128,7 +128,7 @@ class AggregateOpDesc extends LogicalOp with StandaloneCodeGenerator {
         )
       )
       .withPartitionRequirement(List(Option(HashPartition(groupByKeys))))
-      .withDerivePartition(_ => HashPartition(groupByKeys))
+      .withOutputPartitionRule(PartitionRule.Fixed(HashPartition(groupByKeys)))
 
     var plan = PhysicalPlan(
       operators = Set(partialPhysicalOp, finalPhysicalOp),

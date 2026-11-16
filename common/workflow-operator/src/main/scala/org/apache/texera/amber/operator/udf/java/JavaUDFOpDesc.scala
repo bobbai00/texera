@@ -125,7 +125,7 @@ class JavaUDFOpDesc extends LogicalOp with UdfUiParameterSupport {
           operatorIdentifier,
           opExec
         )
-        .withDerivePartition(_ => UnknownPartition())
+        .withOutputPartitionRule(PartitionRule.Fixed(UnknownPartition()))
         .withInputPorts(operatorInfo.inputPorts)
         .withOutputPorts(operatorInfo.outputPorts)
         .withPartitionRequirement(partitionRequirement)
@@ -142,7 +142,7 @@ class JavaUDFOpDesc extends LogicalOp with UdfUiParameterSupport {
           operatorIdentifier,
           opExec
         )
-        .withDerivePartition(_ => UnknownPartition())
+        .withOutputPartitionRule(PartitionRule.Fixed(UnknownPartition()))
         .withInputPorts(operatorInfo.inputPorts)
         .withOutputPorts(operatorInfo.outputPorts)
         .withPartitionRequirement(partitionRequirement)

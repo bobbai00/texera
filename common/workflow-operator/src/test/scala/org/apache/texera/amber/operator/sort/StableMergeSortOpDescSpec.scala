@@ -27,6 +27,7 @@ import org.apache.texera.amber.util.PythonTestSupport.{
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.{PartitionRule, SinglePartition}
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -68,6 +69,9 @@ class StableMergeSortOpDescSpec extends AnyFlatSpec with Matchers {
     }
     physical.inputPorts.keySet shouldBe op.operatorInfo.inputPorts.map(_.id).toSet
     physical.outputPorts.keySet shouldBe op.operatorInfo.outputPorts.map(_.id).toSet
+    // One worker reads everything, so the output is a single partition.
+    physical.partitionRequirement shouldBe List(Some(SinglePartition()))
+    physical.outputPartitionRule shouldBe PartitionRule.Fixed(SinglePartition())
   }
 
   "StableMergeSortOpDesc" should

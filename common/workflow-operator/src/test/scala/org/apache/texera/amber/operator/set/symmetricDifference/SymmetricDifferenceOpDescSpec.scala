@@ -27,7 +27,13 @@ import org.apache.texera.amber.util.PythonTestSupport.{
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{HashPartition, PortIdentity}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PortIdentity,
+  SinglePartition,
+  UnknownPartition
+}
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.testsupport.setop.SetRows
@@ -70,6 +76,15 @@ class SymmetricDifferenceOpDescSpec extends AnyFlatSpec with Matchers {
     physical.inputPorts.keySet shouldBe op.operatorInfo.inputPorts.map(_.id).toSet
     physical.outputPorts.keySet shouldBe op.operatorInfo.outputPorts.map(_.id).toSet
     physical.partitionRequirement shouldBe List(Option(HashPartition()), Option(HashPartition()))
+  }
+
+  it should "derive HashPartition for the output regardless of input partition kinds" in {
+    val physical = (new SymmetricDifferenceOpDesc).getPhysicalOp(workflowId, executionId)
+    val rule = physical.outputPartitionRule
+    rule shouldBe PartitionRule.Fixed(HashPartition())
+    rule.outputPartition(List(SinglePartition(), UnknownPartition())) shouldBe HashPartition()
+    val keyed = List(HashPartition(List("a")), HashPartition(List("b")))
+    rule.outputPartition(keyed) shouldBe HashPartition()
   }
 
   "SymmetricDifferenceOpDesc schema propagation" should

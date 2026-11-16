@@ -130,7 +130,7 @@ object PhysicalOp {
       opExecInitInfo,
       parallelizable = false,
       partitionRequirement = List(Option(SinglePartition())),
-      derivePartition = _ => SinglePartition()
+      outputPartitionRule = PartitionRule.Fixed(SinglePartition())
     )
   }
 
@@ -163,7 +163,7 @@ object PhysicalOp {
 @JsonIgnoreProperties(
   Array(
     "opExecInitInfo", // function type, ignore it
-    "derivePartition", // function type, ignore it
+    "outputPartitionRule", // no Jackson type info; left out as the function it replaced was
     "inputPorts", // may contain very long stacktrace, ignore it
     "outputPorts", // same reason with above
     "propagateSchema", // function type, so ignore it
@@ -187,9 +187,10 @@ case class PhysicalOp(
     locationPreference: Option[LocationPreference] = None,
     // requirement of partition policy (hash/range/single/none) on inputs
     partitionRequirement: List[Option[PartitionInfo]] = List(),
-    // derive the output partition info given the input partitions
-    // if not specified, by default the output partition is the same as input partition
-    derivePartition: List[PartitionInfo] => PartitionInfo = inputParts => inputParts.head,
+    // how the output is partitioned, given the input partitions
+    // if not specified, the output is partitioned like the head of the inputs the scheduler
+    // hands the rule; with several input ports that need not be port 0 (see PartitionRule)
+    outputPartitionRule: PartitionRule = PartitionRule.FirstInput,
     // input/output ports of the physical operator
     // for operators with multiple input/output ports: must set these variables properly
     inputPorts: Map[PortIdentity, (InputPort, List[PhysicalLink], Either[Throwable, Schema])] =
@@ -330,10 +331,10 @@ case class PhysicalOp(
   }
 
   /**
-    * creates a copy with the partition info derive function
+    * creates a copy with the rule that gives the output partition info
     */
-  def withDerivePartition(derivePartition: List[PartitionInfo] => PartitionInfo): PhysicalOp = {
-    this.copy(derivePartition = derivePartition)
+  def withOutputPartitionRule(outputPartitionRule: PartitionRule): PhysicalOp = {
+    this.copy(outputPartitionRule = outputPartitionRule)
   }
 
   /**

@@ -22,8 +22,19 @@ package org.apache.texera.amber.engine.common
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.serialization.{Serialization, SerializationExtension}
 import org.apache.pekko.testkit.TestKit
+import org.apache.texera.amber.core.executor.OpExecInitInfo
 import org.apache.texera.amber.core.tuple.TupleLike
-import org.apache.texera.amber.core.workflow.PortIdentity
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PhysicalOp,
+  PortIdentity
+}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 
@@ -127,6 +138,31 @@ class CheckpointSubsystemSpec extends AnyFlatSpec with BeforeAndAfterAll {
     cp.save("b", "beta")
     assert(cp.load[String]("a") == "alpha")
     assert(cp.load[String]("b") == "beta")
+  }
+
+  it should "round-trip a physical operator with its partition rule, as a plan checkpoint does" in {
+    val rules = List(
+      PartitionRule.FirstInput,
+      PartitionRule.KeepKeyedInput,
+      PartitionRule.Fixed(HashPartition(List("k")))
+    )
+    rules.foreach { rule =>
+      val op = PhysicalOp
+        .oneToOnePhysicalOp(
+          WorkflowIdentity(1L),
+          ExecutionIdentity(1L),
+          OperatorIdentity("op"),
+          OpExecInitInfo.Empty
+        )
+        .withOutputPartitionRule(rule)
+      val cp = new CheckpointState()
+      cp.save("op", op)
+      val restored = cp.load[PhysicalOp]("op").outputPartitionRule
+      // Equal also for the case objects: they come back as the same singletons.
+      assert(restored == rule)
+      val emptyHash = List(HashPartition(List.empty))
+      assert(restored.outputPartition(emptyHash) == rule.outputPartition(emptyHash))
+    }
   }
 
   "CheckpointState.load" should "raise RuntimeException for an unknown key" in {

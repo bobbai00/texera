@@ -141,7 +141,7 @@ class DualInputPortsPythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParamete
         .withParallelizable(false)
     }
     physicalOp
-      .withDerivePartition(_ => UnknownPartition())
+      .withOutputPartitionRule(PartitionRule.Fixed(UnknownPartition()))
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPropagateSchema(

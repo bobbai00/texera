@@ -21,7 +21,13 @@ package org.apache.texera.amber.operator.distinct
 
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{HashPartition, InputPort, OutputPort, PhysicalOp}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  InputPort,
+  OutputPort,
+  PartitionRule,
+  PhysicalOp
+}
 import org.apache.texera.amber.operator.{LogicalOp, StandaloneCodeGenerator, StandaloneHelpers}
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
@@ -41,7 +47,7 @@ class DistinctOpDesc extends LogicalOp with StandaloneCodeGenerator {
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPartitionRequirement(List(Option(HashPartition())))
-      .withDerivePartition(_ => HashPartition())
+      .withOutputPartitionRule(PartitionRule.Fixed(HashPartition()))
 
   }
 

@@ -20,8 +20,11 @@
 package org.apache.texera.amber.operator.projection
 
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   HashPartition,
+  PartitionInfo,
+  PartitionRule,
   PortIdentity,
   RangePartition,
   SinglePartition,
@@ -189,30 +192,44 @@ class ProjectionOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     }
   }
 
+  private def outputPartitionRule: PartitionRule =
+    projectionOpDesc
+      .getPhysicalOp(WorkflowIdentity(1L), ExecutionIdentity(1L))
+      .outputPartitionRule
+
+  // How the physical op partitions its output, given its one input partitioned as `input`.
+  private def outputPartition(input: PartitionInfo): PartitionInfo =
+    outputPartitionRule.outputPartition(List(input))
+
+  it should "give its physical op the KeepKeyedInput partition rule" in {
+    assert(outputPartitionRule == PartitionRule.KeepKeyedInput)
+  }
+
   it should "preserve a HashPartition when its attributes are non-empty" in {
-    val out = projectionOpDesc.derivePartition()(List(HashPartition(List("field1"))))
+    val out = outputPartition(HashPartition(List("field1")))
     assert(out == HashPartition(List("field1")))
   }
 
   it should "downgrade an empty HashPartition to UnknownPartition" in {
-    val out = projectionOpDesc.derivePartition()(List(HashPartition(List.empty)))
+    val out = outputPartition(HashPartition(List.empty))
     assert(out == UnknownPartition())
   }
 
   it should "preserve a RangePartition when its attributes are non-empty" in {
-    val out = projectionOpDesc.derivePartition()(List(RangePartition(List("field2"), 0L, 100L)))
+    val out = outputPartition(RangePartition(List("field2"), 0L, 100L))
     assert(out == RangePartition(List("field2"), 0L, 100L))
   }
 
   it should "downgrade an empty RangePartition to UnknownPartition" in {
     // RangePartition's companion apply already rewrites empty attributes to UnknownPartition,
-    // so an empty range never reaches the range arm; either way the result is UnknownPartition.
-    val out = projectionOpDesc.derivePartition()(List(RangePartition(List.empty, 0L, 100L)))
-    assert(out == UnknownPartition())
+    // so only a range built with `new` reaches the range arm; either way the result is
+    // UnknownPartition.
+    assert(outputPartition(RangePartition(List.empty, 0L, 100L)) == UnknownPartition())
+    assert(outputPartition(new RangePartition(List.empty, 0L, 100L)) == UnknownPartition())
   }
 
   it should "pass through partitions that are neither hash nor range" in {
-    val out = projectionOpDesc.derivePartition()(List(SinglePartition()))
+    val out = outputPartition(SinglePartition())
     assert(out == SinglePartition())
   }
 

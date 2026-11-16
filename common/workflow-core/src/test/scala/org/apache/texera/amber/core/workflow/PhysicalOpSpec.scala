@@ -27,6 +27,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
+import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 
 class PhysicalOpSpec extends AnyFlatSpec {
@@ -93,10 +94,14 @@ class PhysicalOpSpec extends AnyFlatSpec {
     )
     assert(!op.parallelizable)
     assert(op.partitionRequirement == List(Some(SinglePartition())))
-    assert(op.derivePartition(List(HashPartition(List("k")))) == SinglePartition())
+    assert(op.outputPartitionRule == PartitionRule.Fixed(SinglePartition()))
+    assert(
+      op.outputPartitionRule.outputPartition(List(HashPartition(List("k")))) == SinglePartition()
+    )
     val op2 =
       PhysicalOp.manyToOnePhysicalOp(opId("m2"), workflowId, executionId, OpExecInitInfo.Empty)
     assert(op2.partitionRequirement == List(Some(SinglePartition())))
+    assert(op2.outputPartitionRule == PartitionRule.Fixed(SinglePartition()))
   }
 
   it should "build local ops on the coordinator requiring a single partition" in {
@@ -152,11 +157,15 @@ class PhysicalOpSpec extends AnyFlatSpec {
   // ----- with-builders -----
 
   "PhysicalOp with-builders" should
-    "copy the partition requirement, derive function, one-to-many flag, and pve name" in {
+    "copy the partition requirement, output partition rule, one-to-many flag, and pve name" in {
     val required = List(Some(HashPartition(List("k"))), None)
     assert(newOp("a").withPartitionRequirement(required).partitionRequirement == required)
-    val op = newOp("a").withDerivePartition(_ => HashPartition(List("x")))
-    assert(op.derivePartition(List(SinglePartition())) == HashPartition(List("x")))
+    val rule = PartitionRule.Fixed(HashPartition(List("x")))
+    val op = newOp("a").withOutputPartitionRule(rule)
+    assert(op.outputPartitionRule == rule)
+    assert(
+      op.outputPartitionRule.outputPartition(List(SinglePartition())) == HashPartition(List("x"))
+    )
     assert(newOp("a").withIsOneToManyOp(true).isOneToManyOp)
     assert(!newOp("a").isOneToManyOp)
     assert(newOp("a").pveName == "")
@@ -240,12 +249,26 @@ class PhysicalOpSpec extends AnyFlatSpec {
   "PhysicalOp" should "provide sensible defaults from the primary constructor" in {
     val op = PhysicalOp(opId("raw"), workflowId, executionId, OpExecInitInfo.Empty)
     assert(op == op.copy())
-    assert(
-      op.derivePartition(List(HashPartition(List("x")), SinglePartition())) == HashPartition(
-        List("x")
-      )
-    )
+    assert(op.outputPartitionRule == PartitionRule.FirstInput)
+    val inputs = List(HashPartition(List("x")), SinglePartition())
+    assert(op.outputPartitionRule.outputPartition(inputs) == HashPartition(List("x")))
     val schemas = Map(PortIdentity(0) -> intSchema)
     assert(op.propagateSchema.func(schemas) == schemas)
+  }
+
+  // ----- JSON -----
+
+  "PhysicalOp JSON" should "leave the output partition rule out, as it left the function out" in {
+    val rules = List(
+      PartitionRule.FirstInput,
+      PartitionRule.KeepKeyedInput,
+      PartitionRule.Fixed(HashPartition(List("k")))
+    )
+    rules.foreach { rule =>
+      val op = newOp("a").withOutputPartitionRule(rule)
+      val json = objectMapper.readTree(objectMapper.writeValueAsString(op))
+      assert(json.has("parallelizable"))
+      assert(!json.has("outputPartitionRule"), s"$rule is in $json")
+    }
   }
 }

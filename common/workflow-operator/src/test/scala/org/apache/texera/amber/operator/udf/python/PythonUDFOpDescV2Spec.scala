@@ -21,7 +21,12 @@ package org.apache.texera.amber.operator.udf.python
 
 import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
-import org.apache.texera.amber.core.workflow.{PortIdentity, UnknownPartition}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PortIdentity,
+  UnknownPartition
+}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.udf.UdfDescriptorSpecSupport
 import org.scalatest.flatspec.AnyFlatSpec
@@ -60,6 +65,18 @@ class PythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptorSpecSupport {
 
   it should "reject a non-positive worker count" in {
     expectInvalidWorkerCount(new PythonUDFOpDescV2)(_.workers = 0)
+  }
+
+  it should "leave the output partitioning unknown with one worker or several" in {
+    for (workers <- List(1, 2)) {
+      val d = new PythonUDFOpDescV2
+      d.workers = workers
+      withClue(s"workers = $workers: ") {
+        val rule = buildPhysicalOp(d).outputPartitionRule
+        rule shouldBe PartitionRule.Fixed(UnknownPartition())
+        rule.outputPartition(List(HashPartition(List("k")))) shouldBe UnknownPartition()
+      }
+    }
   }
 
   it should "inject configured UI parameters into the generated Python code" in {

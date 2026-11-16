@@ -146,7 +146,7 @@ class HashJoinOpDesc[K] extends LogicalOp with StandaloneCodeGenerator {
             Option(HashPartition(List(probeAttributeName)))
           )
         )
-        .withDerivePartition(_ => HashPartition(List(probeAttributeName)))
+        .withOutputPartitionRule(PartitionRule.Fixed(HashPartition(List(probeAttributeName))))
         .withParallelizable(true)
         .withPropagateSchema(
           SchemaPropagationFunc(inputSchemas => {

@@ -41,7 +41,7 @@ class IntersectOpDesc extends LogicalOp with StandaloneCodeGenerator {
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPartitionRequirement(List(Option(HashPartition()), Option(HashPartition())))
-      .withDerivePartition(_ => HashPartition())
+      .withOutputPartitionRule(PartitionRule.Fixed(HashPartition()))
   }
 
   override def operatorInfo: OperatorInfo =

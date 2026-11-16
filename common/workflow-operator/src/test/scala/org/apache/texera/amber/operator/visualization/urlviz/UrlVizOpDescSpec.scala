@@ -29,6 +29,7 @@ import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaInject
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.{PartitionRule, SinglePartition}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
@@ -71,6 +72,13 @@ class UrlVizOpDescSpec extends AnyFlatSpec with Matchers {
         className shouldBe "org.apache.texera.amber.operator.visualization.urlviz.UrlVizOpExec"
       case other => fail(s"expected OpExecWithClassName, got $other")
     }
+  }
+
+  it should "be a many-to-one op whose output is a single partition" in {
+    val physical = (new UrlVizOpDesc).getPhysicalOp(workflowId, executionId)
+    physical.parallelizable shouldBe false
+    physical.partitionRequirement shouldBe List(Some(SinglePartition()))
+    physical.outputPartitionRule shouldBe PartitionRule.Fixed(SinglePartition())
   }
 
   it should "produce an output schema with a single `html-content` STRING attribute" in {

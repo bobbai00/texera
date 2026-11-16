@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.udf.java
 
 import org.apache.texera.amber.core.executor.OpExecWithCode
-import org.apache.texera.amber.core.workflow.UnknownPartition
+import org.apache.texera.amber.core.workflow.{HashPartition, PartitionRule, UnknownPartition}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.udf.UdfDescriptorSpecSupport
 import org.scalatest.flatspec.AnyFlatSpec
@@ -51,6 +51,18 @@ class JavaUDFOpDescSpec extends AnyFlatSpec with UdfDescriptorSpecSupport {
 
   it should "reject a non-positive worker count" in {
     expectInvalidWorkerCount(new JavaUDFOpDesc)(_.workers = 0)
+  }
+
+  it should "leave the output partitioning unknown with one worker or several" in {
+    for (workers <- List(1, 2)) {
+      val d = new JavaUDFOpDesc
+      d.workers = workers
+      withClue(s"workers = $workers: ") {
+        val rule = buildPhysicalOp(d).outputPartitionRule
+        rule shouldBe PartitionRule.Fixed(UnknownPartition())
+        rule.outputPartition(List(HashPartition(List("k")))) shouldBe UnknownPartition()
+      }
+    }
   }
 
   "JavaUDFOpDesc schema propagation" should

@@ -19,7 +19,23 @@
 
 package org.apache.texera.amber.engine.architecture.scheduling.resourcePolicies
 
-import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
+import org.apache.texera.amber.core.executor.OpExecInitInfo
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  InputPort,
+  OutputPort,
+  PartitionRule,
+  PhysicalLink,
+  PhysicalOp,
+  PhysicalPlan,
+  PortIdentity,
+  WorkflowContext
+}
 import org.apache.texera.amber.engine.architecture.scheduling.{Region, RegionIdentity}
 import org.apache.texera.amber.engine.architecture.sendsemantics.partitionings.{
   BroadcastPartitioning,
@@ -170,5 +186,105 @@ class ResourcePoliciesSpec extends AnyFlatSpec {
     val (allocator, region) = newAllocator()
     val (resourceConfig, _) = allocator.allocate(region)
     assert(resourceConfig.portConfigs.isEmpty)
+  }
+
+  // ---------------------------------------------------------------------------
+  // DefaultResourceAllocator: output partition rules
+  // ---------------------------------------------------------------------------
+
+  // Hand-built plans, so each test controls what partitioning every link starts from. A source
+  // has one worker and no partitioning. Every other op has two workers, so a link between two
+  // of them keeps the upstream op's output partitioning unless the downstream op requires
+  // another.
+
+  private val workflowId = WorkflowIdentity(1L)
+  private val executionId = ExecutionIdentity(1L)
+
+  private def sourceOp(name: String): PhysicalOp =
+    PhysicalOp
+      .sourcePhysicalOp(workflowId, executionId, OperatorIdentity(name), OpExecInitInfo.Empty)
+      .withOutputPorts(List(OutputPort(PortIdentity(0))))
+
+  private def twoWorkerOp(name: String, inputPorts: Int = 1): PhysicalOp =
+    PhysicalOp
+      .oneToOnePhysicalOp(workflowId, executionId, OperatorIdentity(name), OpExecInitInfo.Empty)
+      .withInputPorts((0 until inputPorts).map(id => InputPort(PortIdentity(id))).toList)
+      .withOutputPorts(List(OutputPort(PortIdentity(0))))
+      .withSuggestedWorkerNum(2)
+
+  private def linkOf(from: PhysicalOp, to: PhysicalOp, toPort: Int = 0): PhysicalLink =
+    PhysicalLink(from.id, PortIdentity(0), to.id, PortIdentity(toPort))
+
+  /** Allocates one region that holds the whole plan, and gives each link's partitioning. */
+  private def allocateWhole(
+      ops: Set[PhysicalOp],
+      links: List[PhysicalLink]
+  ): Map[PhysicalLink, Partitioning] = {
+    val plan = links.foldLeft(PhysicalPlan(ops, Set.empty))(_.addLink(_))
+    val allocator = new DefaultResourceAllocator(
+      plan,
+      new ExecutionClusterInfo(),
+      new WorkflowContext().workflowSettings
+    )
+    val (resourceConfig, _) =
+      allocator.allocate(Region(RegionIdentity(0), plan.operators, plan.links))
+    resourceConfig.linkConfigs.map { case (link, config) => link -> config.partitioning }
+  }
+
+  /** The columns a link hashes on, or None when it does not hash. */
+  private def hashKeys(partitioning: Partitioning): Option[List[String]] =
+    partitioning match {
+      case hash: HashBasedShufflePartitioning => Some(hash.hashAttributeNames.toList)
+      case _                                  => None
+    }
+
+  /** Plans src -> a -> b with `a` set up by `setUpA`, and gives the partitioning of a -> b. */
+  private def partitioningAfterA(setUpA: PhysicalOp => PhysicalOp): Partitioning = {
+    val src = sourceOp("src")
+    val a = setUpA(twoWorkerOp("a"))
+    val b = twoWorkerOp("b")
+    val aToB = linkOf(a, b)
+    allocateWhole(Set(src, a, b), List(linkOf(src, a), aToB))(aToB)
+  }
+
+  "DefaultResourceAllocator output partitioning" should
+    "follow the upstream op's Fixed rule, whatever the op's input is" in {
+    val hashOnK = PartitionRule.Fixed(HashPartition(List("k")))
+    assert(hashKeys(partitioningAfterA(_.withOutputPartitionRule(hashOnK))).contains(List("k")))
+    // Without the rule, a's output is as unpartitioned as the source's.
+    assert(partitioningAfterA(identity).isInstanceOf[RoundRobinPartitioning])
+  }
+
+  it should "drop a hash partitioning that names no columns under KeepKeyedInput" in {
+    def hashedInto(keys: List[String], rule: PartitionRule)(op: PhysicalOp): PhysicalOp =
+      op.withPartitionRequirement(List(Some(HashPartition(keys)))).withOutputPartitionRule(rule)
+    val keepKeyed = PartitionRule.KeepKeyedInput
+    assert(partitioningAfterA(hashedInto(Nil, keepKeyed)).isInstanceOf[RoundRobinPartitioning])
+    assert(hashKeys(partitioningAfterA(hashedInto(List("k"), keepKeyed))).contains(List("k")))
+    // The default rule passes the keyless one on.
+    val firstInput = PartitionRule.FirstInput
+    assert(hashKeys(partitioningAfterA(hashedInto(Nil, firstInput))).contains(Nil))
+  }
+
+  // This pins today's order, which is not port order: the allocator groups an op's input
+  // partitionings by port in a hash map, and for ports 0 and 1 port 1 comes first. Changing the
+  // order changes the output partitioning of every op with two input ports on the default rule
+  // (IntervalJoin, CartesianProduct, If, ...), so check each of them when you do.
+  it should "partition a two-input op's output like port 1 under the default rule" in {
+    val src0 = sourceOp("src0")
+    val src1 = sourceOp("src1")
+    val join = twoWorkerOp("join", inputPorts = 2)
+      .withPartitionRequirement(
+        List(Some(HashPartition(List("a"))), Some(HashPartition(List("b"))))
+      )
+    val sink = twoWorkerOp("sink")
+    val toPort0 = linkOf(src0, join, toPort = 0)
+    val toPort1 = linkOf(src1, join, toPort = 1)
+    val out = linkOf(join, sink)
+    val partitionings = allocateWhole(Set(src0, src1, join, sink), List(toPort0, toPort1, out))
+    assert(join.outputPartitionRule == PartitionRule.FirstInput)
+    assert(hashKeys(partitionings(toPort0)).contains(List("a")))
+    assert(hashKeys(partitionings(toPort1)).contains(List("b")))
+    assert(hashKeys(partitionings(out)).contains(List("b")))
   }
 }

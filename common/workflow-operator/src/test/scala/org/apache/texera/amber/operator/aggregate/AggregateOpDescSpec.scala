@@ -21,7 +21,12 @@ package org.apache.texera.amber.operator.aggregate
 
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.PortIdentity
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PortIdentity,
+  SinglePartition
+}
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorMetadataGenerator}
 import com.typesafe.config.ConfigFactory
 import org.apache.texera.amber.operator.tags.IntegrationTest
@@ -75,6 +80,21 @@ class AggregateOpDescSpec extends AnyFlatSpec with Matchers {
       .getPhysicalPlan(workflowId, executionId)
     plan.operators should have size 2
     plan.links should have size 1
+  }
+
+  // The global stage reads its input hashed on the group-by keys and says its output is hashed
+  // on them too, whatever it is given; the local stage passes its input's partitioning on.
+  it should "partition the global stage's output on the group-by keys" in {
+    val plan = descWith(List("city"), aggOp(AggregationFunction.SUM, "sales", "total"))
+      .getPhysicalPlan(workflowId, executionId)
+    def ruleOf(layer: String): PartitionRule =
+      plan.operators.find(_.id.layerName == layer).get.outputPartitionRule
+    val globalRule = ruleOf("globalAgg")
+    globalRule shouldBe PartitionRule.Fixed(HashPartition(List("city")))
+    globalRule.outputPartition(List(SinglePartition())) shouldBe HashPartition(List("city"))
+    val localRule = ruleOf("localAgg")
+    localRule shouldBe PartitionRule.FirstInput
+    localRule.outputPartition(List(SinglePartition())) shouldBe SinglePartition()
   }
 
   // The export compiles a plan and then reads the same operators.

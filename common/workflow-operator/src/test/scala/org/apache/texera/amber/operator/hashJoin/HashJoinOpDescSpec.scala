@@ -31,7 +31,13 @@ import org.apache.texera.amber.core.tuple.{
   SchemaEnforceable,
   Tuple
 }
-import org.apache.texera.amber.core.workflow.PortIdentity
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PortIdentity,
+  SinglePartition
+}
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -63,6 +69,23 @@ class HashJoinOpDescSpec extends AnyFlatSpec with Matchers {
     info.operatorGroupName shouldBe OperatorGroupConstants.JOIN_GROUP
     info.inputPorts.map(_.displayName) shouldBe List("left", "right")
     info.outputPorts should have length 1
+  }
+
+  "HashJoinOpDesc.getPhysicalPlan" should
+    "partition the probe's output on the probe key and pass the build's input partitioning on" in {
+    val d = new HashJoinOpDesc[String]
+    d.buildAttributeName = "a"
+    d.probeAttributeName = "b"
+    val plan = d.getPhysicalPlan(WorkflowIdentity(1L), ExecutionIdentity(1L))
+    def ruleOf(layer: String): PartitionRule =
+      plan.operators.find(_.id.layerName == layer).get.outputPartitionRule
+    val probeRule = ruleOf("probe")
+    probeRule shouldBe PartitionRule.Fixed(HashPartition(List("b")))
+    val probeInputs = List(HashPartition(List("a")), SinglePartition())
+    probeRule.outputPartition(probeInputs) shouldBe HashPartition(List("b"))
+    val buildRule = ruleOf("build")
+    buildRule shouldBe PartitionRule.FirstInput
+    buildRule.outputPartition(List(SinglePartition())) shouldBe SinglePartition()
   }
 
   "HashJoinOpDesc" should "default the join keys to null and the join type to inner" in {

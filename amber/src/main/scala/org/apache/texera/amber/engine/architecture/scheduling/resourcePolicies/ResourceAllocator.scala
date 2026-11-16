@@ -181,6 +181,8 @@ class DefaultResourceAllocator(
                 })
             })
             // group upstream partition infos by input port of this physicalOp
+            // the groups come out in hash-map order, not port order, and the operator's
+            // PartitionRule sees them in that order (PartitionRule.FirstInput takes the head)
             .groupBy(_._1)
             .values
             .toList
@@ -189,7 +191,7 @@ class DefaultResourceAllocator(
 
           if (inputPartitionInfos.length == physicalOp.inputPorts.size) {
             // derive the output partition info with all the input partition infos
-            Some(physicalOp.derivePartition(inputPartitionInfos))
+            Some(physicalOp.outputPartitionRule.outputPartition(inputPartitionInfos))
           } else {
             None
           }

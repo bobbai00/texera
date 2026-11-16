@@ -29,6 +29,7 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Workflow
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.workflow.{
   HashPartition,
+  PartitionRule,
   PortIdentity,
   SinglePartition,
   UnknownPartition
@@ -78,10 +79,11 @@ class IntersectOpDescSpec extends AnyFlatSpec with Matchers {
     // inputs report differing partition kinds.
     val op = new IntersectOpDesc
     val physical = op.getPhysicalOp(workflowId, executionId)
-    physical.derivePartition(List(SinglePartition(), UnknownPartition())) shouldBe HashPartition()
-    physical.derivePartition(
-      List(HashPartition(List("a")), HashPartition(List("b")))
-    ) shouldBe HashPartition()
+    val rule = physical.outputPartitionRule
+    rule shouldBe PartitionRule.Fixed(HashPartition())
+    rule.outputPartition(List(SinglePartition(), UnknownPartition())) shouldBe HashPartition()
+    val keyed = List(HashPartition(List("a")), HashPartition(List("b")))
+    rule.outputPartition(keyed) shouldBe HashPartition()
   }
 
   it should "wire the IntersectOpExec class name into the OpExecInitInfo" in {

@@ -20,7 +20,12 @@
 package org.apache.texera.amber.operator.udf.r
 
 import org.apache.texera.amber.core.executor.OpExecWithCode
-import org.apache.texera.amber.core.workflow.{PortIdentity, UnknownPartition}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PortIdentity,
+  UnknownPartition
+}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.udf.UdfDescriptorSpecSupport
 import org.scalatest.flatspec.AnyFlatSpec
@@ -52,6 +57,14 @@ class RUDFOpDescSpec extends AnyFlatSpec with UdfDescriptorSpecSupport {
 
   it should "reject a non-positive worker count" in {
     expectInvalidWorkerCount(new RUDFOpDesc)(_.workers = 0)
+  }
+
+  it should "leave the output partitioning unknown with one worker" in {
+    val d = new RUDFOpDesc
+    d.workers = 1
+    val rule = buildPhysicalOp(d).outputPartitionRule
+    rule shouldBe PartitionRule.Fixed(UnknownPartition())
+    rule.outputPartition(List(HashPartition(List("k")))) shouldBe UnknownPartition()
   }
 
   "RUDFOpDesc schema propagation" should

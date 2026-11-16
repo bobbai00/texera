@@ -21,7 +21,12 @@ package org.apache.texera.amber.operator.udf.python
 
 import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
-import org.apache.texera.amber.core.workflow.{PortIdentity, UnknownPartition}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  PortIdentity,
+  UnknownPartition
+}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.udf.UdfDescriptorSpecSupport
 import org.scalatest.flatspec.AnyFlatSpec
@@ -62,7 +67,8 @@ class DualInputPortsPythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptor
     physical.pveName shouldBe ""
     physical.inputPorts.keySet shouldBe d.operatorInfo.inputPorts.map(_.id).toSet
     physical.outputPorts.keySet shouldBe d.operatorInfo.outputPorts.map(_.id).toSet
-    physical.derivePartition(List.empty) shouldBe UnknownPartition()
+    physical.outputPartitionRule shouldBe PartitionRule.Fixed(UnknownPartition())
+    physical.outputPartitionRule.outputPartition(List.empty) shouldBe UnknownPartition()
   }
 
   it should "wire a parallelizable op with the suggested worker count when workers > 1" in {
@@ -71,6 +77,9 @@ class DualInputPortsPythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptor
     val physical = buildPhysicalOp(d)
     physical.parallelizable shouldBe true
     physical.suggestedWorkerNum shouldBe Some(2)
+    val rule = physical.outputPartitionRule
+    rule shouldBe PartitionRule.Fixed(UnknownPartition())
+    rule.outputPartition(List(HashPartition(List("k")))) shouldBe UnknownPartition()
   }
 
   it should "inject configured UI parameters into the generated Python code" in {

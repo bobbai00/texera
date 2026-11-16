@@ -27,7 +27,12 @@ import org.apache.texera.amber.util.PythonTestSupport.{
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{HashPartition, SinglePartition, UnknownPartition}
+import org.apache.texera.amber.core.workflow.{
+  HashPartition,
+  PartitionRule,
+  SinglePartition,
+  UnknownPartition
+}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -87,9 +92,11 @@ class DistinctOpDescSpec extends AnyFlatSpec with Matchers {
     // derived output partition stays hash even when upstream inputs
     // report differing partition kinds.
     val physical = (new DistinctOpDesc).getPhysicalOp(workflowId, executionId)
-    physical.derivePartition(List(SinglePartition())) shouldBe HashPartition()
-    physical.derivePartition(List(UnknownPartition())) shouldBe HashPartition()
-    physical.derivePartition(List(HashPartition(List("col-a")))) shouldBe HashPartition()
+    val rule = physical.outputPartitionRule
+    rule shouldBe PartitionRule.Fixed(HashPartition())
+    rule.outputPartition(List(SinglePartition())) shouldBe HashPartition()
+    rule.outputPartition(List(UnknownPartition())) shouldBe HashPartition()
+    rule.outputPartition(List(HashPartition(List("col-a")))) shouldBe HashPartition()
   }
 
   it should "preserve the one input / one blocking output port shape from operatorInfo" in {
