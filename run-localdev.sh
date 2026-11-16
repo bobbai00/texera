@@ -7,7 +7,8 @@
 # --keep; release the lock. The run is bounded in time.
 #
 #   ./run-localdev.sh --lock <dir> [--source <worktree>] [--reset] [--keep] [--label <text>]
-#                     [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [-- <driver args>]
+#                     [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [--strict-schema]
+#                     [--allow-stale-dists] [-- <driver args>]
 #   ./run-localdev.sh --no-lock ...
 #
 #   --lock        the stack lock: a directory taken with mkdir (waiting while another run holds
@@ -16,22 +17,27 @@
 #                 machine where nothing else deploys
 #   --time-limit  minutes from taking the lock to the end of the run (default 40, or
 #                 $SCE_LOCALDEV_TIME_LIMIT). At the limit the running step is stopped and the stack
-#                 taken down (under a minute), exit 5, so the lock is held under 45 minutes
+#                 taken down (under a minute; --keep or not), exit 5, so the lock is held under 45
+#                 minutes
 #   --source      the worktree that is built and run (default $SCE_LOCALDEV_SOURCE or
 #                 texera-worktrees/sce-localdev-src). Its dist zips are built with `sbt dist` only
 #                 when missing; build them beforehand (stack/localdev-stack.sh build) to keep the
 #                 lock short
 #   --reset       start from empty volumes (`reset` instead of `down` first)
-#   --keep        leave the stack running afterwards (default: down, volumes kept); the lock is
-#                 released all the same
-#   --python, --heap   passed to `localdev-stack.sh up` (see its --help)
+#   --keep        leave the stack running afterwards (default: down, volumes kept). The lock stays
+#                 held with it: `stack/localdev-stack.sh down`, then removing the lock, is the
+#                 caller's job (the shared rule: within 45 minutes of taking it)
+#   --python, --heap, --strict-schema, --allow-stale-dists   passed to `localdev-stack.sh up`
+#                 (see its --help). --strict-schema stops the run where `bin/local-dev.sh up` stops
+#                 when local-dev's schema step fails (exit 3); without it the run goes on and the
+#                 report lists the deviation (summary.local_dev_deviations)
 #   anything after `--` goes to driver/e2e.py (e.g. -- --scenario a,d)
 #
 # Writes reports/localdev-<UTC time>.json and reports/localdev-<UTC time>-logs/ (every service's
-# log, the infrastructure's container logs, the stack manifest, harness-git.txt, post-run.json).
-# Exit code: the driver's (0 all pass, 1 a scenario failed, 2 setup failed), 3 if the stack did
-# not come up, 4 if the post-run check failed (a service died or stopped answering during the
-# run), 5 if the time limit was reached, 64 for a usage error.
+# log, the infrastructure's container logs, the stack manifest, local-dev's schema step,
+# harness-git.txt, post-run.json). Exit code: the driver's (0 all pass, 1 a scenario failed, 2
+# setup failed), 3 if the stack did not come up, 4 if the post-run check failed (a service died
+# or stopped answering during the run), 5 if the time limit was reached, 64 for a usage error.
 set -euo pipefail
 SCE_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK="$SCE_HOME/stack/localdev-stack.sh"
@@ -50,8 +56,9 @@ while [[ $# -gt 0 ]]; do
         --time-limit) limit_min="$2"; shift ;;
         --python) up_args+=(--python "$2"); shift ;;
         --heap) up_args+=(--heap "$2"); shift ;;
+        --strict-schema|--allow-stale-dists) up_args+=("$1") ;;
         --) shift; driver_args=("$@"); break ;;
-        -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1 (see --help)" >&2; exit 64 ;;
     esac
     shift
@@ -120,16 +127,29 @@ finish() {
         "$STACK" collect-logs "$logs" >/dev/null 2>&1 &
         wait $!
     fi
-    if ! $keep; then
+    local kept=false
+    if $keep && ! $timed_out; then kept=true; fi
+    if ! $kept; then
+        if $keep; then echo "[run-localdev] time limit reached: --keep does not apply; taking the stack down"; fi
         echo "[run-localdev] taking the stack down (volumes kept); pass --keep to leave it up"
         "$STACK" down --no-collect &
         wait $!
     else
-        echo "[run-localdev] --keep: stack left running at http://localhost:4200 (stack/localdev-stack.sh down to stop)"
+        echo "[run-localdev] --keep: stack left running at http://localhost:4200"
     fi
     if $have_lock; then
-        rm -rf "$lock"
-        echo "[run-localdev] lock released after $(( ($(date +%s) - lock_t0) / 60 )) min"
+        if $kept; then
+            # the stack still holds the ports and the Docker VM: the lock stays with it
+            echo "harness-localdev run-localdev.sh --keep: stack left running since $(date); the holder runs" \
+                 "stack/localdev-stack.sh down, then removes this lock" >> "$lock/owner"
+            echo "[run-localdev] --keep: the lock $lock stays held while the stack runs. When done:"
+            echo "[run-localdev]   stack/localdev-stack.sh down && rm -rf $lock"
+            echo "[run-localdev] (the shared rule: at most 45 minutes from taking it, i.e. by" \
+                 "$(date -r $((lock_t0 + 45 * 60)) +%H:%M:%S))"
+        else
+            rm -rf "$lock"
+            echo "[run-localdev] lock released after $(( ($(date +%s) - lock_t0) / 60 )) min"
+        fi
     fi
     exit "$rc"
 }
