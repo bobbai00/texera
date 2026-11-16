@@ -30,7 +30,8 @@ import org.apache.texera.amber.core.state.StateReferencing.{
   literalReferences,
   noLoopVariableProperties,
   noLoopVariableReferences,
-  referencedVariable
+  referencedVariable,
+  restoreReferences
 }
 import org.apache.texera.amber.core.tuple.AttributeType
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -240,6 +241,84 @@ class StateReferenceModuleSpec extends AnyFlatSpec {
     bean.stateReferences = Map("/name" -> "i", "/nested/0/count" -> "c")
     assert(noLoopVariableReferences(bean).isEmpty)
     assert(noLoopVariableReferences(new PlanBuilding).isEmpty)
+  }
+
+  "StateReferencing.restoreReferences" should "write a parsed descriptor back so that it parses with the same references" in {
+    val sent =
+      """{"name":"$s","int":"$a","double":"$c","bool":"$d","boxed":"$e","opt":"$f",
+        |"nested":[{"label":"x","threshold":1.5},{"label":"$l","threshold":"$t","count":"$n"}]}""".stripMargin
+    val bean = parse(sent)
+    val references = Map(
+      "/int" -> "a",
+      "/double" -> "c",
+      "/bool" -> "d",
+      "/boxed" -> "e",
+      "/opt" -> "f",
+      "/nested/1/threshold" -> "t",
+      "/nested/1/count" -> "n"
+    )
+    assert(bean.stateReferences == references)
+    // Written as it is, the placeholders stand where the references were, and the sidecar the
+    // next parse drops holds them.
+    assert(parse(objectMapper.writeValueAsString(bean)).stateReferences.isEmpty)
+
+    val restored = restoreReferences(objectMapper.valueToTree[ObjectNode](bean))
+
+    assert(!restored.has(StateReferencing.SIDECAR_PROPERTY))
+    references.foreach {
+      case (pointer, name) => assert(restored.at(pointer).asText() == "$" + name, pointer)
+    }
+    // A string reference is a literal already, and a value that is no reference stays.
+    assert(restored.get("name").asText() == "$s")
+    assert(restored.at("/nested/0/threshold").asDouble() == 1.5)
+    assert(restored.at("/nested/1/label").asText() == "$l")
+    val reparsed = parse(objectMapper.writeValueAsString(restored))
+    assert(reparsed.stateReferences == references)
+    assert(objectMapper.writeValueAsString(reparsed) == objectMapper.writeValueAsString(bean))
+  }
+
+  it should "restore the references of a descriptor parsed by its type id" in {
+    val bean = typed("""{"items":["$x"],"limit":"$i","type":"typed","ratio":"$r"}""")
+
+    val restored = restoreReferences(objectMapper.valueToTree[ObjectNode](bean))
+
+    assert(restored.get("limit").asText() == "$i")
+    assert(restored.get("ratio").asText() == "$r")
+    assert(restored.get("type").asText() == "typed")
+    assert(typed(objectMapper.writeValueAsString(restored)).stateReferences == bean.stateReferences)
+  }
+
+  it should "put a reference back into a list, and drop an entry it cannot place" in {
+    val tree = objectMapper
+      .readTree(
+        """{"ints":[1,0,3],"limit":0,"stateReferences":{"/ints/1":"i","/ints/7":"far",
+          |"/missing/0/x":"m","limit":"no-pointer","":"whole","/limit":7}}""".stripMargin
+      )
+      .asInstanceOf[ObjectNode]
+
+    val restored = restoreReferences(tree)
+
+    assert(restored eq tree)
+    assert(
+      restored == objectMapper.readTree("""{"ints":[1,"$i",3],"limit":0}"""),
+      restored.toString
+    )
+  }
+
+  it should "read only the descriptor's own sidecar: an object nested in it keeps its own" in {
+    val outer = objectMapper.readValue("""{"inner":{"int":"$b"},"limit":"$c"}""", classOf[Outer])
+
+    val restored = restoreReferences(objectMapper.valueToTree[ObjectNode](outer))
+
+    assert(restored.get("limit").asText() == "$c")
+    assert(restored.at("/inner/int").asInt() == 0)
+    assert(restored.at("/inner/stateReferences/~1int").asText() == "b")
+  }
+
+  it should "leave a descriptor with no sidecar as it is" in {
+    val tree = objectMapper.readTree("""{"name":"$s","int":3}""").asInstanceOf[ObjectNode]
+
+    assert(restoreReferences(tree.deepCopy()) == tree)
   }
 }
 

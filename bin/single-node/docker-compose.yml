@@ -431,6 +431,14 @@ services:
         condition: service_healthy
       file-service:
         condition: service_healthy
+      # Creating an execution writes its plan to the lake, in a warehouse of Lakekeeper's, and
+      # resolves the files the workflow reads through LakeFS.
+      lakekeeper:
+        condition: service_healthy
+      lakekeeper-init:
+        condition: service_completed_successfully
+      lakefs:
+        condition: service_healthy
     env_file:
       - .env
     volumes:

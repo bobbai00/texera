@@ -30,7 +30,15 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
 
 import java.net.URI
+import java.util.concurrent.{
+  CompletableFuture,
+  ConcurrentHashMap,
+  ExecutionException,
+  TimeUnit,
+  TimeoutException
+}
 import java.util.{Collections, LinkedHashMap => JLinkedHashMap, Map => JMap}
+import scala.concurrent.duration.{Duration, DurationInt, FiniteDuration}
 import scala.util.control.NonFatal
 
 /**
@@ -46,12 +54,21 @@ import scala.util.control.NonFatal
   * A run's statistics no longer change once it has completed, and reading those of a long run
   * can take seconds, so the costs read from a run are kept, by its execution id, for the
   * `cacheCapacity` runs used most recently. A read that fails, or finds no cost, is not kept.
-  * Loads that miss at the same time each read the statistics.
+  * Loads that miss the same run at the same time share one read of its statistics, and its
+  * outcome: a load that comes after the read ended reads again if it kept nothing. A load waits
+  * for another's read for at most `waitLimit`, and gives its run no hints if the read takes longer:
+  * a read that stalls holds up only the load that makes it.
   *
   * @param cacheCapacity how many runs' costs to keep, at least 1
+  * @param waitLimit     how long a load waits for the read another load makes, more than 0
   */
-class CostHintsLoader(cacheCapacity: Int) extends LazyLogging {
+class CostHintsLoader(cacheCapacity: Int, waitLimit: FiniteDuration = 30.seconds)
+    extends LazyLogging {
   require(cacheCapacity >= 1, s"Cost hints are kept for at least 1 run, not $cacheCapacity.")
+  require(
+    waitLimit > Duration.Zero,
+    s"A load waits for another's read for more than no time, not $waitLimit."
+  )
 
   // The columns of the runtime statistics (ResultSchema.runtimeStatisticsSchema) that costs are
   // read from: the logical operator's id, and the nanoseconds it spent processing data and
@@ -59,6 +76,11 @@ class CostHintsLoader(cacheCapacity: Int) extends LazyLogging {
   private val OperatorIdField = "operatorId"
   private val DataProcessingTimeField = "dataProcessingTime"
   private val ControlProcessingTimeField = "controlProcessingTime"
+
+  // The reads of statistics under way, by the execution id of the run read. A load that misses a
+  // run being read waits for that read rather than reading the statistics again.
+  private val reading =
+    new ConcurrentHashMap[java.lang.Long, CompletableFuture[Option[CostHints]]]()
 
   // The costs read from each run, by its execution id, the least recently used first.
   private val kept: JMap[java.lang.Long, CostHints] = Collections.synchronizedMap(
@@ -137,11 +159,44 @@ class CostHintsLoader(cacheCapacity: Int) extends LazyLogging {
       )
       None
     } else
-      Option(kept.get(source.id)).orElse {
-        val read = readCosts(source, uri)
-        read.foreach(kept.put(source.id, _))
-        read
-      }
+      Option(kept.get(source.id)).orElse(readOnce(source, uri))
+  }
+
+  /**
+    * The costs the statistics at `uri` of run `source` record, read once by the loads that miss
+    * them at the same time: the first reads, and keeps what it finds; the others wait for its
+    * outcome, a failure included, for at most `waitLimit`, and find no costs if it takes longer.
+    */
+  private def readOnce(source: ExecutionIdentity, uri: URI): Option[CostHints] = {
+    val mine = new CompletableFuture[Option[CostHints]]()
+    Option(reading.putIfAbsent(source.id, mine)) match {
+      case Some(underWay) =>
+        try underWay.get(waitLimit.toMillis, TimeUnit.MILLISECONDS)
+        catch {
+          case waited: ExecutionException => throw waited.getCause
+          case _: TimeoutException =>
+            logger.warn(
+              s"The statistics of execution ${source.id} are still being read for cost hints " +
+                s"after $waitLimit, so the run is scheduled without them."
+            )
+            None
+        }
+      case None =>
+        try {
+          // A read that ended between this load's miss and its claim kept what it found.
+          val read = Option(kept.get(source.id)).orElse {
+            val found = readCosts(source, uri)
+            found.foreach(kept.put(source.id, _))
+            found
+          }
+          mine.complete(read)
+          read
+        } catch {
+          case failure: Throwable =>
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally reading.remove(source.id, mine)
+    }
   }
 
   /** The costs the statistics at `uri` of run `source` record; None if they name no operator. */
@@ -177,5 +232,9 @@ class CostHintsLoader(cacheCapacity: Int) extends LazyLogging {
     DocumentFactory.openDocument(uri)._1.get().map(_.asInstanceOf[Tuple])
 }
 
-/** The cost hints of the runs this service starts, kept for the 256 runs used most recently. */
-object CostHintsLoader extends CostHintsLoader(cacheCapacity = 256)
+/**
+  * The cost hints of the runs this service makes plans for, kept for the 256 runs used most
+  * recently. A load waits at most 30 seconds for another's read, a quarter of the time a create
+  * is given.
+  */
+object CostHintsLoader extends CostHintsLoader(cacheCapacity = 256, waitLimit = 30.seconds)

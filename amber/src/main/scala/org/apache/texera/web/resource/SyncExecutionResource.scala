@@ -30,7 +30,6 @@ import org.apache.texera.amber.core.storage.{
 }
 import org.apache.texera.amber.core.tuple.{Tuple, TupleUtils}
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -55,7 +54,6 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.web.service.WorkflowService
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
@@ -861,52 +859,20 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
+  // "Execute To": with exactly one target, only the part of the plan up to it runs. A target the
+  // plan does not have leaves the plan whole.
   private def computeSubDAGIfNeeded(
       logicalPlan: LogicalPlanPojo,
       targetOperatorIds: List[String]
-  ): LogicalPlanPojo = {
-    if (targetOperatorIds.length != 1) {
-      return logicalPlan
-    }
-
-    val targetOpId = targetOperatorIds.head
-    val operatorMap: Map[String, LogicalOp] =
-      logicalPlan.operators.map(op => op.operatorIdentifier.id -> op).toMap
-
-    if (!operatorMap.contains(targetOpId)) {
-      logger.warn(s"Target operator $targetOpId not found in logical plan, using full DAG")
-      return logicalPlan
-    }
-
-    val incomingLinks: Map[String, List[LogicalLink]] =
-      logicalPlan.links.groupBy(_.toOpId.id)
-
-    val visited = mutable.Set[String]()
-    val subDagOperators = mutable.ListBuffer[LogicalOp]()
-    val subDagLinks = mutable.ListBuffer[LogicalLink]()
-
-    def dfs(currentOpId: String): Unit = {
-      if (visited.contains(currentOpId)) return
-      visited.add(currentOpId)
-
-      operatorMap.get(currentOpId).foreach { op =>
-        subDagOperators += op
-        incomingLinks.getOrElse(currentOpId, List.empty).foreach { link =>
-          subDagLinks += link
-          dfs(link.fromOpId.id)
+  ): LogicalPlanPojo =
+    targetOperatorIds match {
+      case List(targetOpId) =>
+        if (!logicalPlan.operators.exists(_.operatorIdentifier.id == targetOpId)) {
+          logger.warn(s"Target operator $targetOpId not found in logical plan, using full DAG")
         }
-      }
+        logicalPlan.upstreamOf(targetOpId)
+      case _ => logicalPlan
     }
-
-    dfs(targetOpId)
-
-    LogicalPlanPojo(
-      operators = subDagOperators.toList,
-      links = subDagLinks.toList,
-      opsToViewResult = targetOperatorIds.filter(id => visited.contains(id)),
-      opsToReuseResult = logicalPlan.opsToReuseResult.filter(id => visited.contains(id))
-    )
-  }
 
   @GET
   @Path("/health")

@@ -19,7 +19,6 @@
 
 package org.apache.texera.web
 
-import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.github.dirkraft.dropwizard.fileassets.FileAssetsBundle
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.AuthValueFactoryProvider
@@ -28,7 +27,7 @@ import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.amber.engine.common.Utils
-import org.apache.texera.amber.util.ObjectMapperUtils
+import org.apache.texera.amber.util.{JSONUtils, ObjectMapperUtils}
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
@@ -48,6 +47,7 @@ import org.apache.texera.web.resource.dashboard.user.environment.EnvironmentReso
 import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource
 import org.apache.texera.web.resource.dashboard.user.workflow.{
+  ExecutionResource,
   WorkflowAccessResource,
   WorkflowExecutionsResource,
   WorkflowResource,
@@ -97,8 +97,9 @@ class TexeraWebApplication
     bootstrap.addBundle(new FileAssetsBundle("../../frontend/dist", "/", "index.html"))
     // add websocket bundle
     bootstrap.addBundle(new WebsocketBundle(classOf[CollaborationResource]))
-    // register scala module to dropwizard default object mapper
-    bootstrap.getObjectMapper.registerModule(DefaultScalaModule)
+    // register the Scala module and the loop-variable module on dropwizard's default object
+    // mapper: creating an execution reads a workflow's logical plan, `$K` placeholders included
+    JSONUtils.registerWorkflowModules(bootstrap.getObjectMapper)
   }
 
   override def run(configuration: TexeraWebConfiguration, environment: Environment): Unit = {
@@ -156,6 +157,8 @@ class TexeraWebApplication
     environment.jersey.register(classOf[UserResource])
     environment.jersey.register(classOf[WorkflowVersionResource])
     environment.jersey.register(classOf[WorkflowExecutionsResource])
+    // Shares /executions with WorkflowExecutionsResource; only the Dashboard creates executions.
+    environment.jersey.register(classOf[ExecutionResource])
     environment.jersey.register(classOf[DashboardResource])
     environment.jersey.register(classOf[GmailResource])
     environment.jersey.register(classOf[AdminExecutionResource])

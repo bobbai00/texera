@@ -23,7 +23,8 @@ import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
   PhysicalPlanCodec,
   ReplaySource,
-  WorkflowContext
+  WorkflowContext,
+  WorkflowSettings
 }
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
@@ -39,8 +40,10 @@ import java.net.URI
   * text is written to the execution's plan table, and the engine starts from the text read back
   * from there ([[WorkflowExecutionService.readPlanToRun]]): it runs the physical plan read back,
   * under the settings, replay and replay log read back with it, and never sees the plan the
-  * compile made. Both halves run on the computing unit for now; making the plan is meant to move
-  * to the Dashboard service, and the unit then only reads the plan table.
+  * compile made. The Dashboard service makes the plan of each execution it creates
+  * ([[org.apache.texera.web.service.execution.ExecutionCreator]]). The computing unit still makes
+  * the plans of the runs it is asked to execute itself, until it only starts executions the
+  * Dashboard created; it then only reads the plan table.
   *
   * @param savedPlan   the physical plan to run, its settings and what else the run needs (an
   *                    [[org.apache.texera.amber.core.workflow.ExecutionPlan]]), as JSON text. It
@@ -56,6 +59,17 @@ final case class PlanToRun(savedPlan: String, logicalPlan: LogicalPlan)
 object PlanToRun {
 
   /**
+    * Why no plan can be made to run under `settings`, if none can: batches of fewer than one
+    * tuple. In the words of the editor's setting, for a caller that refuses such settings before
+    * it calls [[make]], which refuses them too.
+    */
+  def settingsProblem(settings: WorkflowSettings): Option[String] =
+    Option.when(settings.dataTransferBatchSize < 1)(
+      s"The workflow's Data Transfer Batch Size is ${settings.dataTransferBatchSize}; set it to " +
+        "1 or more."
+    )
+
+  /**
     * Makes, from `logicalPlan`, the plan to run for the run `compiler` was made for, and saves it.
     *
     * The run is the compiler's context: its ids stamp every operator, and the plan is saved with
@@ -67,18 +81,19 @@ object PlanToRun {
     * to `replayLog`, and reads no input.
     *
     * @param compiler  the run's compiler: it resolves files, datasets and models as the run's user
-    *                  may, and writes code against the mount root of the unit the run is on
+    *                  may, and writes code against the mount root computing units mount datasets
+    *                  and models under (the deployment's, on the Dashboard)
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors
-    * @throws IllegalArgumentException if the run's settings send batches of fewer than one tuple,
-    *                                  its cost hints are not ones a plan is saved with (from an
-    *                                  execution whose id is below 1, for an operator with no id,
-    *                                  or with a cost that is not a finite number of seconds, at
-    *                                  least 0), or it replays or writes a replay log at a location
-    *                                  that is not an absolute URI, replays the log of an
-    *                                  execution whose id is below 1, or replays up to a blank
-    *                                  interaction
+    * @throws IllegalArgumentException if the run's settings are ones it cannot run under
+    *                                  ([[settingsProblem]]), its cost hints are not ones a plan
+    *                                  is saved with (from an execution whose id is below 1, for
+    *                                  an operator with no id, or with a cost that is not a
+    *                                  finite number of seconds, at least 0), or it replays or
+    *                                  writes a replay log at a location that is not an absolute
+    *                                  URI, replays the log of an execution whose id is below 1,
+    *                                  or replays up to a blank interaction
     */
   def make(
       compiler: WorkflowCompiler,
@@ -87,13 +102,10 @@ object PlanToRun {
       replayLog: Option[URI] = None
   ): PlanToRun = {
     val run = compiler.context
-    val batchSize = run.workflowSettings.dataTransferBatchSize
-    // Checked first, in the words of the editor's setting; the codec refuses such a plan too.
-    if (batchSize < 1) {
-      throw new IllegalArgumentException(
-        s"The workflow's Data Transfer Batch Size is $batchSize; set it to 1 or more."
-      )
-    }
+    // Checked first, in the words of the editor's settings; the codec refuses such a plan too.
+    settingsProblem(run.workflowSettings).foreach(problem =>
+      throw new IllegalArgumentException(problem)
+    )
     // The context the plan is saved under: the run's, but for its computing unit, which a plan
     // does not choose. The compile adds the ports whose results are stored to its settings.
     val savedUnder =

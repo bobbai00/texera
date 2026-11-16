@@ -44,13 +44,18 @@ import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{UserDao, WorkflowDao, WorkflowVersionDao}
 import org.apache.texera.dao.jooq.generated.tables.pojos.{User, Workflow, WorkflowVersion}
 import org.scalatest.BeforeAndAfterAll
+import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.time.{Millis, Seconds, Span}
 import org.slf4j.LoggerFactory
 
 import java.net.URI
 import java.sql.Timestamp
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import java.util.concurrent.{CompletableFuture, CountDownLatch, TimeUnit}
 import scala.collection.mutable
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -60,15 +65,20 @@ import scala.util.Try
   *
   * Runs are rows of `MockTexeraDB`; their statistics are tables of the Iceberg catalog the tests
   * run with (`STORAGE_ICEBERG_CATALOG_TYPE=postgres`). Each case has workflows of its own, with
-  * ids from 9521 to 9536 that no other suite uses, and a run's id is its workflow's id times 100
+  * ids from 9521 to 9539 that no other suite uses, and a run's id is its workflow's id times 100
   * plus a number: creating a statistics table replaces the one of the same workflow and run, and
-  * suites share the catalog.
+  * suites share the catalog. The cases of loads at the same time (workflows 9537 to 9539) hold
+  * a read of statistics at a gate until the other loads wait for it.
   */
 class CostHintsLoaderSpec
     extends AnyFlatSpec
     with Matchers
     with BeforeAndAfterAll
+    with Eventually
     with MockTexeraDB {
+
+  implicit override val patienceConfig: PatienceConfig =
+    PatienceConfig(timeout = Span(30, Seconds), interval = Span(20, Millis))
 
   /** The user whose run is given the hints. */
   private val runUser = 9521
@@ -227,6 +237,60 @@ class CostHintsLoaderSpec
     }
   }
 
+  /**
+    * A loader whose reads of statistics, once begun, wait at `gate`, so that other loads can be
+    * made to miss the same run while one reads it. A read fails while `failing` is set.
+    */
+  private final class GatedLoader(waitLimit: FiniteDuration = 30.seconds)
+      extends CostHintsLoader(256, waitLimit) {
+    val opened = new AtomicInteger()
+    val reading = new CountDownLatch(1)
+    val gate = new CountDownLatch(1)
+    @volatile var failing = false
+
+    override protected def openStatistics(uri: URI): Iterator[Tuple] = {
+      opened.incrementAndGet()
+      reading.countDown()
+      gate.await(30, TimeUnit.SECONDS)
+      if (failing) throw new IllegalStateException("the statistics cannot be read")
+      super.openStatistics(uri)
+    }
+  }
+
+  /** A load of workflow `wid`'s hints by the run's user, on a thread of its own. */
+  private final class LoadingThread(loader: CostHintsLoader, wid: Int) extends Thread {
+    val hints = new AtomicReference[Option[CostHints]]()
+    override def run(): Unit = hints.set(loader.load(wid, runUser))
+    start()
+  }
+
+  /**
+    * Whether `thread` is parked on the outcome of a read another load makes. A load that read on
+    * its own would be parked at the gate instead, and one still asking the database is running.
+    */
+  private def waitsForAnotherRead(thread: Thread): Boolean =
+    thread.getState == Thread.State.TIMED_WAITING &&
+      thread.getStackTrace.exists(frame =>
+        frame.getClassName == classOf[CompletableFuture[_]].getName && frame.getMethodName == "get"
+      )
+
+  /**
+    * Starts a load of workflow `wid` that reads its statistics and holds at `loader`'s gate, then
+    * `others` loads that miss the same run, and opens the gate once every other load waits for
+    * that read. Returns every load, the reading one first, all ended.
+    */
+  private def overlappingLoads(loader: GatedLoader, wid: Int, others: Int): Seq[LoadingThread] = {
+    val reader = new LoadingThread(loader, wid)
+    loader.reading.await(30, TimeUnit.SECONDS) shouldBe true
+    val waiters = Seq.fill(others)(new LoadingThread(loader, wid))
+    eventually { waiters.forall(waitsForAnotherRead) shouldBe true }
+    loader.gate.countDown()
+    val loads = reader +: waiters
+    loads.foreach(_.join(30000))
+    loads.map(_.isAlive).distinct shouldBe Seq(false)
+    loads
+  }
+
   /** The events `loader` logs during `body`, at debug level and above. */
   private def loggedBy(loader: CostHintsLoader)(body: => Any): Seq[ILoggingEvent] = {
     // LazyLogging names a loader's logger after the loader's class.
@@ -338,6 +402,11 @@ class CostHintsLoaderSpec
   it should "keep at least one run" in {
     the[IllegalArgumentException] thrownBy new CostHintsLoader(0) should have message
       "requirement failed: Cost hints are kept for at least 1 run, not 0."
+  }
+
+  it should "wait for another load's read for some time" in {
+    the[IllegalArgumentException] thrownBy new CostHintsLoader(1, 0.seconds) should have message
+      "requirement failed: A load waits for another's read for more than no time, not 0 seconds."
   }
 
   it should "give no hints, and read nothing, when the user has completed no run of the workflow that recorded statistics" in {
@@ -470,5 +539,61 @@ class CostHintsLoaderSpec
     val loader = new CountingLoader
     loader.load(Int.MaxValue.toLong + 1, runUser) shouldBe None
     loader.opened shouldBe empty
+  }
+
+  it should "read a run's statistics once for the loads that miss it at the same time" in {
+    val wid = 9537
+    onlyCompletedRun(wid, ("scan", 2_000_000_000L, 0L))
+    val loader = new GatedLoader
+
+    val loads = overlappingLoads(loader, wid, others = 3)
+
+    loads.map(_.hints.get()).distinct shouldBe Seq(hintsOf(953701, "scan" -> 2.0))
+    loader.opened.get() shouldBe 1
+    // And kept: a later load reads nothing.
+    loader.load(wid, runUser) shouldBe hintsOf(953701, "scan" -> 2.0)
+    loader.opened.get() shouldBe 1
+  }
+
+  it should "give the loads that waited for a read that failed no hints, and read again after" in {
+    val wid = 9538
+    onlyCompletedRun(wid, ("scan", 3_000_000_000L, 0L))
+    val loader = new GatedLoader
+    loader.failing = true
+
+    val loads = overlappingLoads(loader, wid, others = 2)
+
+    loads.map(_.hints.get()).distinct shouldBe Seq(None)
+    loader.opened.get() shouldBe 1
+    // A read that failed is not kept, so the next load reads again.
+    loader.failing = false
+    loader.load(wid, runUser) shouldBe hintsOf(953801, "scan" -> 3.0)
+    loader.opened.get() shouldBe 2
+  }
+
+  it should "give a load that waits for another's read longer than its limit no hints, and keep the read's costs" in {
+    val wid = 9539
+    onlyCompletedRun(wid, ("scan", 4_000_000_000L, 0L))
+    val loader = new GatedLoader(waitLimit = 200.millis)
+    val reader = new LoadingThread(loader, wid)
+    loader.reading.await(30, TimeUnit.SECONDS) shouldBe true
+
+    try {
+      // The read is held at the gate: the waiting load gives up after the limit, reading nothing.
+      val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
+
+      logged.filter(_.getLevel == Level.WARN).map(_.getFormattedMessage) shouldBe Seq(
+        "The statistics of execution 953901 are still being read for cost hints after 200 " +
+          "milliseconds, so the run is scheduled without them."
+      )
+      loader.opened.get() shouldBe 1
+      reader.isAlive shouldBe true
+    } finally loader.gate.countDown()
+    reader.join(30000)
+
+    reader.hints.get() shouldBe hintsOf(953901, "scan" -> 4.0)
+    // The read went on, and what it found is kept for the loads after it.
+    loader.load(wid, runUser) shouldBe hintsOf(953901, "scan" -> 4.0)
+    loader.opened.get() shouldBe 1
   }
 }

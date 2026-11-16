@@ -52,7 +52,10 @@ import org.apache.texera.dao.jooq.generated.Tables.{
   WORKFLOW_VERSION
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.resource.dashboard.user.workflow.{
+  ExecutionResource,
+  WorkflowExecutionsResource
+}
 import org.apache.texera.web.resource.pythonvirtualenvironment.{PveResource, PveWebsocketResource}
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
@@ -620,6 +623,16 @@ class ComputingUnitMasterSpec
       classOf[SessionHandler],
       classOf[RolesAllowedDynamicFeature]
     )
+  }
+
+  it should "leave creating executions to the Dashboard" in {
+    ranEnvironment.jersey.getResourceConfig.getClasses.asScala should not contain
+      classOf[ExecutionResource]
+    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+
+    jersey.statusOf("POST", "/executions") should (be(404) or be(405))
+    // The execution routes the unit serves still resolve: answered 401 without a signed-in user.
+    jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
   }
 
   it should "install the JWT auth feature and the session-user value factory" in {

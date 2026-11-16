@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.databind.exc.InvalidTypeIdException
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.web.model.http.request.execution.ReplayExecutionInfo
 import org.apache.texera.web.model.websocket.request.python.{
   DebugCommandRequest,
   PythonExpressionEvaluateRequest

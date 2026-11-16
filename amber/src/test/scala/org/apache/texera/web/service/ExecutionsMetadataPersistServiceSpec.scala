@@ -287,6 +287,140 @@ class ExecutionsMetadataPersistServiceSpec
     stored.getWhid shouldBe null
   }
 
+  // -- environmentVersionOf -----------------------------------------------------
+
+  "environmentVersionOf" should "record the engine version as a JSON object" in {
+    // Persisted as the execution's environment version, so the key is part of the stored format.
+    ExecutionsMetadataPersistService.environmentVersionOf("1.2.3") shouldBe
+      """{"engine_version":"1.2.3"}"""
+    // Quoted and escaped as JSON: a version is text the caller sends.
+    ExecutionsMetadataPersistService.environmentVersionOf("""1.4 "beta" \ é""") shouldBe
+      """{"engine_version":"1.4 \"beta\" \\ é"}"""
+    ExecutionsMetadataPersistService.environmentVersionOf("") shouldBe """{"engine_version":""}"""
+  }
+
+  // -- insertCreatedExecution -------------------------------------------------
+
+  "insertCreatedExecution" should
+    "record an execution at status 0, not the column's default 1, and starting now" in {
+    val before = System.currentTimeMillis()
+    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+      WorkflowIdentity(testWid.toLong),
+      testUid,
+      executionName = "created-execution",
+      environmentVersion = """{"engine_version":"1.4.0"}""",
+      computingUnitId = seededCuid,
+      warehouseId = None
+    )
+    val after = System.currentTimeMillis()
+
+    val stored = workflowExecutionsDao.fetchOneByEid(id.id.toInt)
+    stored.getStatus shouldBe 0.toByte
+    stored.getStartingTime.getTime should (be >= (before - 1000) and be <= (after + 1000))
+    stored.getVid shouldBe seededVid
+    stored.getUid shouldBe testUid
+    stored.getCuid shouldBe seededCuid
+    stored.getName shouldBe "created-execution"
+    stored.getEnvironmentVersion shouldBe """{"engine_version":"1.4.0"}"""
+    stored.getWhid shouldBe null
+    // Nothing has run it: no update, no replay log, no statistics.
+    stored.getLastUpdateTime shouldBe null
+    stored.getLogLocation shouldBe null
+    stored.getRuntimeStatsUri shouldBe null
+  }
+
+  it should "keep the column's default name for an empty name" in {
+    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+      WorkflowIdentity(testWid.toLong),
+      testUid,
+      executionName = "",
+      environmentVersion = "env",
+      computingUnitId = seededCuid,
+      warehouseId = None
+    )
+
+    workflowExecutionsDao.fetchOneByEid(id.id.toInt).getName shouldBe "Untitled Execution"
+  }
+
+  it should "record the warehouse the execution writes into" in {
+    val row = getDSLContext.newRecord(USER_WAREHOUSE)
+    row.setUid(testUid)
+    row.setName("created-warehouse")
+    row.setLakekeeperWarehouseName(s"user-$testUid-created-warehouse")
+    row.setLakekeeperWarehouseId(UUID.randomUUID())
+    row.setFlavor(UserWarehouseFlavorEnum.local)
+    row.store()
+
+    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+      WorkflowIdentity(testWid.toLong),
+      testUid,
+      executionName = "warehouse-run",
+      environmentVersion = "env",
+      computingUnitId = seededCuid,
+      warehouseId = Some(row.getWhid)
+    )
+
+    workflowExecutionsDao.fetchOneByEid(id.id.toInt).getWhid shouldBe row.getWhid
+  }
+
+  it should "tie the execution to the newest version of the workflow, in one INSERT after it" in {
+    val newer = new WorkflowVersion
+    newer.setWid(testWid)
+    newer.setContent("{}")
+    newer.setCreationTime(new Timestamp(System.currentTimeMillis()))
+    workflowVersionDao.insert(newer)
+
+    var id: ExecutionIdentity = null
+    val statements = recorder.record {
+      id = ExecutionsMetadataPersistService.insertCreatedExecution(
+        WorkflowIdentity(testWid.toLong),
+        testUid,
+        executionName = "newest",
+        environmentVersion = "env",
+        computingUnitId = seededCuid,
+        warehouseId = None
+      )
+    }
+
+    workflowExecutionsDao.fetchOneByEid(id.id.toInt).getVid shouldBe newer.getVid
+    // The latest version is looked up, then the row is inserted and its id returned.
+    statements.map(_.verb) shouldBe Seq("SELECT", "INSERT")
+  }
+
+  it should "refuse a computing unit that does not exist, and write nothing" in {
+    val before = workflowExecutionsDao.fetchByVid(seededVid).size()
+
+    a[org.jooq.exception.DataAccessException] should be thrownBy
+      ExecutionsMetadataPersistService.insertCreatedExecution(
+        WorkflowIdentity(testWid.toLong),
+        testUid,
+        executionName = "nowhere",
+        environmentVersion = "env",
+        computingUnitId = Int.MaxValue,
+        warehouseId = None
+      )
+
+    workflowExecutionsDao.fetchByVid(seededVid).size() shouldBe before
+  }
+
+  // -- markFailed ---------------------------------------------------------------
+
+  "markFailed" should "record FAILED and when, in one UPDATE by eid" in {
+    val eid = seedExecution(status = 0)
+    val other = seedExecution(status = 0)
+    val before = System.currentTimeMillis()
+
+    val statements = recorder.record {
+      ExecutionsMetadataPersistService.markFailed(ExecutionIdentity(eid.longValue()))
+    }
+
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    val failed = workflowExecutionsDao.fetchOneByEid(eid)
+    failed.getStatus shouldBe maptoStatusCode(WorkflowAggregatedState.FAILED)
+    failed.getLastUpdateTime.getTime should be >= (before - 1000)
+    workflowExecutionsDao.fetchOneByEid(other).getStatus shouldBe 0.toByte
+  }
+
   // -- tryGetExistingExecution ------------------------------------------------
 
   "tryGetExistingExecution" should "return Some(row) for a known eid" in {

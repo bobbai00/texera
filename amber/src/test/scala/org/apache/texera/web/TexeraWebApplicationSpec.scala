@@ -40,7 +40,9 @@ import org.apache.texera.web.resource.dashboard.user.UserResource
 import org.apache.texera.web.resource.dashboard.user.environment.EnvironmentResource
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource
 import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource
+import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.{
+  ExecutionResource,
   WorkflowAccessResource,
   WorkflowExecutionsResource,
   WorkflowResource,
@@ -190,6 +192,29 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     initializedBootstrap().getObjectMapper.writeValueAsString(Some("x")) shouldBe "\"x\""
   }
 
+  it should "register the loop-variable module on Dropwizard's object mapper, so a create's plan parses" in {
+    // Jersey reads the body of POST /api/executions with this mapper: a workflow in a loop block
+    // sends "$k" where an Int property goes.
+    val request = initializedBootstrap().getObjectMapper.readValue(
+      """{"wid": 12, "engineVersion": "1.4.0", "computingUnitId": 3,
+        | "logicalPlan": {"operators": [{"operatorType": "Limit", "operatorID": "limit-1",
+        |   "limit": "$k"}], "links": [], "opsToViewResult": [], "opsToReuseResult": []}}""".stripMargin,
+      classOf[CreateExecutionRequest]
+    )
+
+    request.logicalPlan.operators.map(_.operatorIdentifier.id) shouldBe List("limit-1")
+    request.logicalPlan.operators.head.stateReferences shouldBe Map("/limit" -> "k")
+    request.wid shouldBe 12L
+    request.computingUnitId shouldBe 3
+    // What a request may leave out.
+    request.executionName shouldBe ""
+    request.workflowSettings shouldBe None
+    request.emailNotificationEnabled shouldBe false
+    request.warehouseId shouldBe None
+    request.replayFromExecution shouldBe None
+    request.targetOperatorIds shouldBe Nil
+  }
+
   it should "serve the built frontend from the filesystem at the context root" in {
     val environment = newEnvironment()
     initializedBootstrap().run(new TexeraWebConfiguration, environment)
@@ -308,8 +333,25 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
       classOf[AIAssistantResource],
       classOf[HuggingFaceModelResource],
       classOf[WarehouseResource],
-      classOf[EnvironmentResource]
+      classOf[EnvironmentResource],
+      classOf[ExecutionResource]
     )
+  }
+
+  it should "route POST /api/executions to the create, beside the execution routes it shares a path with" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+
+    // Each resolves to a method that needs a signed-in user, so it is answered 401 without one.
+    jersey.statusOf("POST", "/executions") shouldBe 401
+    jersey.statusOf("GET", "/executions/12") shouldBe 401
+    jersey.statusOf("GET", "/executions/12/latest") shouldBe 401
+    jersey.statusOf("POST", "/executions/update_execution_name") shouldBe 401
+    // A route neither resource serves is not answered 401: what resolves is told from what does not.
+    jersey.statusOf("DELETE", "/executions") should (be(404) or be(405))
   }
 
   it should "install the JWT auth stack and role enforcement" in {

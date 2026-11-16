@@ -19,15 +19,10 @@
 
 package org.apache.texera.web.model.websocket.request
 
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.texera.amber.core.workflow.WorkflowSettings
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-
-case class ReplayExecutionInfo(
-    @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    eid: Long,
-    interaction: String
-)
+// Lives with the create request, which takes it over once this request is removed.
+import org.apache.texera.web.model.http.request.execution.ReplayExecutionInfo
 
 case class WorkflowExecuteRequest(
     executionName: String,

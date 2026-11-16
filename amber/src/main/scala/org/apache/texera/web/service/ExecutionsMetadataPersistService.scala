@@ -21,12 +21,18 @@ package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  FAILED,
+  READY
+}
+import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.dao.SqlServer
 import org.jooq.exception.DataAccessException
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
+import play.api.libs.json.Json
 
 import java.sql.Timestamp
 
@@ -90,6 +96,57 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     }
     ExecutionIdentity(newExecution.getEid.longValue())
   }
+
+  /**
+    * What an execution's row keeps as its environment version: the version of the engine (the
+    * frontend's, or the agent's) that asked for it, as `{"engine_version": …}`. The key is part of
+    * the stored format.
+    */
+  def environmentVersionOf(engineVersion: String): String =
+    Json.stringify(Json.obj("engine_version" -> engineVersion))
+
+  /**
+    * Records a new execution of the latest version of workflow `workflowId`, created by user `uid`
+    * to run on computing unit `computingUnitId`, and returns its id: the row the Dashboard inserts
+    * when it creates an execution, before the execution's plan is made.
+    *
+    * The row is at status 0 (Initializing), set here rather than left to the column's default,
+    * which is 1 (Running): no unit runs the execution yet. Its starting time is now. An empty
+    * `executionName` keeps the column's default name.
+    *
+    * @param environmentVersion what the row keeps as the version of the engine that asked for it
+    * @param warehouseId        the user_warehouse the execution writes into; None for the shared
+    *                           default warehouse
+    */
+  def insertCreatedExecution(
+      workflowId: WorkflowIdentity,
+      uid: Integer,
+      executionName: String,
+      environmentVersion: String,
+      computingUnitId: Integer,
+      warehouseId: Option[Int]
+  ): ExecutionIdentity = {
+    val vid = getLatestVersion(Math.toIntExact(workflowId.id))
+    val insert = context
+      .insertInto(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.VID, vid)
+      .set(WORKFLOW_EXECUTIONS.UID, uid)
+      .set(WORKFLOW_EXECUTIONS.CUID, computingUnitId)
+      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(maptoStatusCode(READY).toShort))
+      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
+      .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
+      .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)
+    val named =
+      if (executionName.nonEmpty) insert.set(WORKFLOW_EXECUTIONS.NAME, executionName) else insert
+    ExecutionIdentity(named.returning(WORKFLOW_EXECUTIONS.EID).fetchOne().getEid.longValue())
+  }
+
+  /**
+    * Records that execution `eid` failed before any unit ran it (FAILED, with the time of the
+    * failure as its last update), the way [[updateStatus]] records any status.
+    */
+  def markFailed(eid: ExecutionIdentity): Unit =
+    updateStatus(eid, maptoStatusCode(FAILED), new Timestamp(System.currentTimeMillis()))
 
   def tryGetExistingExecution(executionId: ExecutionIdentity): Option[WorkflowExecutions] = {
     try {

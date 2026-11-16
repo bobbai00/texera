@@ -179,7 +179,7 @@ import scala.concurrent.{Await, ExecutionContext, Future}
   *   - the fault-tolerance block of `initExecutionService`, gated on
   *     `ApplicationConfig.faultToleranceLogRootFolder`: a `val` on a Scala `object` with no
   *     override seam, read at class-initialization time in a JVM shared with every other suite.
-  *   - `resolveLakekeeperWarehouseName`, owned by `WorkflowServiceWarehouseSpec`.
+  *   - `resolveLakekeeperWarehouseName`, owned by `ExecutionResourcesSpec`.
   */
 class WorkflowServiceSpec
     extends AnyFlatSpec
@@ -1224,11 +1224,6 @@ class WorkflowServiceSpec
       release.countDown()
       threads.shutdownNow()
     }
-  }
-
-  it should "record the engine version as a JSON object" in {
-    // Persisted as the execution's environment version, so the key is part of the stored format.
-    new TestWorkflowService(7L).convertToJson("1.2.3") shouldBe """{"engine_version":"1.2.3"}"""
   }
 
   "WorkflowService.getOrCreate" should "reuse one service per workflow and publish it in the registry" in {

@@ -50,7 +50,6 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
-import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.WorkflowCompiler
 import org.apache.texera.common.compiler.model.LogicalPlan
 import org.apache.texera.web.model.websocket.event.{
@@ -379,8 +378,9 @@ class WorkflowExecutionService(
     * @return the plan table, and the logical plan the plan was compiled from
     */
   private def storePlan(compiler: WorkflowCompiler): (URI, LogicalPlan) = {
-    // The plan as the request sent it, written before the compile resolves its operators in place.
-    val logical = objectMapper.writeValueAsString(request.logicalPlan)
+    // The plan as the request sent it, loop-variable references included, written before the
+    // compile resolves its operators in place.
+    val logical = request.logicalPlan.toJson
     val planToRun = makePlanToRun(compiler)
     val planTable = ExecutionPlanStore.planUri(
       workflowContext.workflowId,

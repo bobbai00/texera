@@ -22,7 +22,7 @@ package org.apache.texera.amber.core.state
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.core.JsonPointer
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.node.ObjectNode
+import com.fasterxml.jackson.databind.node.{ArrayNode, ObjectNode, TextNode}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import scala.jdk.CollectionConverters.{IteratorHasAsScala, ListHasAsScala}
@@ -110,5 +110,41 @@ object StateReferencing {
       .filter(_.getKey != SIDECAR_PROPERTY)
       .flatMap(entry => scan(entry.getValue, JsonPointer.empty().appendProperty(entry.getKey)))
       .toMap
+  }
+
+  /**
+    * Puts the references of `tree`, a descriptor written as JSON, back the way the editor sends
+    * them: each entry of its sidecar writes the whole-string `$name` at its pointer, and the
+    * sidecar is removed.
+    *
+    * A descriptor written as it is cannot be parsed back with its typed references: writing it
+    * puts the placeholder (`0`, `0.0` or `false`) where a typed reference was, and a parse sets
+    * the sidecar to what it records, never to the one the JSON carries. Restored, the JSON parses
+    * back with the same references, and a string reference, a literal already, stays as it is.
+    * An entry whose place is under no object or list of `tree` is dropped, and so is one that is
+    * not a pointer to a name. Only `tree`'s own sidecar is read: an object nested in it keeps
+    * its own.
+    *
+    * @return `tree`, changed in place
+    */
+  def restoreReferences(tree: ObjectNode): ObjectNode = {
+    Option(tree.remove(SIDECAR_PROPERTY)).filter(_.isObject).foreach { sidecar =>
+      sidecar.fields().asScala.foreach { entry =>
+        for {
+          pointer <- Try(JsonPointer.compile(entry.getKey)).toOption if !pointer.matches()
+          name <- Option(entry.getValue).filter(_.isTextual).map(_.asText())
+        } {
+          val reference = TextNode.valueOf("$" + name)
+          (tree.at(pointer.head()), pointer.last()) match {
+            case (parent: ObjectNode, leaf) => parent.replace(leaf.getMatchingProperty, reference)
+            case (parent: ArrayNode, leaf)
+                if leaf.getMatchingIndex >= 0 && leaf.getMatchingIndex < parent.size() =>
+              parent.set(leaf.getMatchingIndex, reference)
+            case _ => // under nothing `tree` holds
+          }
+        }
+      }
+    }
+    tree
   }
 }

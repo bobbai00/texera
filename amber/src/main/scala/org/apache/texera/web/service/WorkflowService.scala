@@ -24,17 +24,9 @@ import com.typesafe.scalalogging.LazyLogging
 import io.opentelemetry.api.trace.StatusCode
 import io.reactivex.rxjava3.disposables.{CompositeDisposable, Disposable}
 import io.reactivex.rxjava3.subjects.BehaviorSubject
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionResultUris,
-  WarehouseReadGuard
-}
-import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.observability.{SpanAttrs, TexeraTracer}
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.USER_WAREHOUSE
 import org.apache.texera.amber.core.WorkflowRuntimeException
-import org.apache.texera.amber.core.storage.result.iceberg.OnIceberg
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
@@ -51,17 +43,14 @@ import org.apache.texera.amber.error.ErrorUtils.{
   getStackTraceWithAllCauses
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.{fatalErrorsOf, mkWorkflowStateId}
-import org.apache.texera.web.service.execution.CostHintsLoader
+import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionResources}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
 import org.apache.texera.common.compiler.WorkflowCompilationFailed
-import play.api.libs.json.Json
 
 import java.net.URI
 import java.time.Instant
@@ -71,50 +60,6 @@ import scala.jdk.CollectionConverters.IterableHasAsScala
 
 object WorkflowService {
   private val workflowServiceMapping = new ConcurrentHashMap[String, WorkflowService]()
-
-  /**
-    * Maps an execution's chosen warehouse (its user_warehouse row id) to its Lakekeeper
-    * warehouse name, checking that the requesting user owns it.
-    *
-    * With warehouses enabled a pick is **required**, the same way a computing unit is:
-    * falling back to the shared default would make "a run writes into the user's own
-    * warehouse" a UI convention rather than a system property, and would silently route
-    * any caller that forgot to pick into shared storage (#7751).
-    *
-    * With warehouses disabled, an explicit pick is refused loudly rather than silently
-    * routed into the shared warehouse, and no pick keeps the shared default (#6930).
-    */
-  def resolveLakekeeperWarehouseName(
-      warehouseId: Option[Int],
-      uid: Integer,
-      enabled: Boolean = StorageConfig.warehouseEnabled
-  ): Option[String] = {
-    if (!enabled) {
-      warehouseId.foreach(_ =>
-        throw new IllegalArgumentException(
-          "per-user warehouses are disabled in this deployment"
-        )
-      )
-      return None
-    }
-    if (warehouseId.isEmpty) {
-      throw new IllegalArgumentException(
-        "a warehouse must be selected for this execution"
-      )
-    }
-    warehouseId.map(id => {
-      val row = SqlServer
-        .getInstance()
-        .createDSLContext()
-        .selectFrom(USER_WAREHOUSE)
-        .where(USER_WAREHOUSE.WHID.eq(id).and(USER_WAREHOUSE.UID.eq(uid)))
-        .fetchOne()
-      if (row == null) {
-        throw new IllegalArgumentException(s"no warehouse with id $id owned by this user")
-      }
-      row.getLakekeeperWarehouseName
-    })
-  }
 
   /**
     * What a run that failed with `failure` reports, as its error handler records it. A workflow
@@ -206,7 +151,7 @@ class WorkflowService(
     */
   private[service] def cleanUpAfterIdle(): Unit = {
     Option(executionService.getValue).foreach(run =>
-      clearExecutionResources(run.workflowContext.executionId)
+      ExecutionResources.clearExecutionResources(run.workflowContext.executionId)
     )
     WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
     unsubscribeAll()
@@ -316,7 +261,7 @@ class WorkflowService(
           )
         )
       val userEmail = userOpt.flatMap(user => Option(user.getEmail))
-      val warehouseName = WorkflowService.resolveLakekeeperWarehouseName(req.warehouseId, uid)
+      val warehouseName = ExecutionResources.resolveLakekeeperWarehouseName(req.warehouseId, uid)
 
       supersedeCurrentRun()
 
@@ -330,14 +275,14 @@ class WorkflowService(
       val previousExecutionId =
         WorkflowExecutionService.getLatestExecutionId(workflowId, req.computingUnitId)
       previousExecutionId.foreach(eid => {
-        clearExecutionResources(eid)
+        ExecutionResources.clearExecutionResources(eid)
       }) // TODO: change this behavior after enabling cache.
 
       workflowContext.executionId = ExecutionsMetadataPersistService.insertNewExecution(
         workflowContext.workflowId,
         uid,
         req.executionName,
-        convertToJson(req.engineVersion),
+        ExecutionsMetadataPersistService.environmentVersionOf(req.engineVersion),
         req.computingUnitId,
         req.warehouseId
       )
@@ -450,72 +395,9 @@ class WorkflowService(
     }
   }
 
-  def convertToJson(frontendVersion: String): String = {
-    val environmentVersionMap = Map(
-      "engine_version" -> Json.toJson(frontendVersion)
-    )
-    Json.stringify(Json.toJson(environmentVersionMap))
-  }
-
   override def unsubscribeAll(): Unit = {
     super.unsubscribeAll()
     Option(executionService.getValue).foreach(_.unsubscribeAll())
     resultService.unsubscribeAll()
-  }
-
-  /**
-    * Cleans up all resources associated with a workflow execution.
-    *
-    * This method performs resource cleanup in the following sequence:
-    *  1. Retrieves all document URIs associated with the execution
-    *  2. Clears URI references from the execution registry
-    *  3. Safely clears all result and console message documents
-    *  4. Expires Iceberg snapshots for runtime statistics
-    *  5. Deletes this execution's large binaries from the object store
-    *
-    * @param eid The execution identity to clean up resources for
-    */
-  private def clearExecutionResources(eid: ExecutionIdentity): Unit = {
-    // Retrieve URIs for all resources associated with this execution
-    val resultUris = ExecutionResultUris.getResultUrisByExecutionId(eid)
-    val consoleMessagesUris = WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(eid)
-
-    // Remove references from registry first
-    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
-
-    // Clean up all result and console message documents. While per-user warehouses are
-    // disabled, cleanup must not reach into them (#6930) — those URIs are skipped.
-    (resultUris ++ consoleMessagesUris).foreach { uri =>
-      if (WarehouseReadGuard.skipWhileDisabled(uri)) {
-        logger.info(s"skipping cleanup of $uri: per-user warehouses are disabled")
-      } else
-        try DocumentFactory.openDocument(uri)._1.clear()
-        catch {
-          case error: Throwable =>
-            logger.debug(s"Error processing document at $uri: ${error.getMessage}")
-        }
-    }
-
-    // Expire any Iceberg snapshots for runtime statistics
-    WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).foreach { uri =>
-      if (WarehouseReadGuard.skipWhileDisabled(uri)) {
-        logger.info(s"skipping snapshot expiry of $uri: per-user warehouses are disabled")
-      } else
-        try {
-          DocumentFactory.openDocument(uri)._1 match {
-            case iceberg: OnIceberg => iceberg.expireSnapshots()
-            case other =>
-              logger.error(
-                s"Cannot expire snapshots: document from URI [$uri] is of type ${other.getClass.getName}. " +
-                  s"Expected an instance of ${classOf[OnIceberg].getName}."
-              )
-          }
-        } catch {
-          case error: Throwable =>
-            logger.debug(s"Error processing document at $uri: ${error.getMessage}")
-        }
-    }
-    // Delete this execution's large binaries
-    LargeBinaryManager.deleteByExecution(eid.id)
   }
 }

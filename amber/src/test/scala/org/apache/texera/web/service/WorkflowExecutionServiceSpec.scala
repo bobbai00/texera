@@ -22,6 +22,7 @@ package org.apache.texera.web.service
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.core.read.ListAppender
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.google.protobuf.timestamp.Timestamp
 import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
@@ -1258,7 +1259,14 @@ class WorkflowExecutionServiceSpec
     scan.customDelimiter = Some(",")
     scan.hasHeader = true
     val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
+    // As the request sent it, but for each operator's loop-variable sidecar, which the row leaves
+    // out (the references it records are written in place; the scan has none).
     val asSent = objectMapper.readTree(objectMapper.writeValueAsString(sent))
+    asSent
+      .get("operators")
+      .elements()
+      .asScala
+      .foreach(_.asInstanceOf[ObjectNode].remove("stateReferences"))
     val run = new StubbedRun(
       sent,
       // The request's own plan, compiled where the scan's file can be found.

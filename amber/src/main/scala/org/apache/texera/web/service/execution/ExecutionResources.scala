@@ -20,21 +20,95 @@
 package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, WarehouseReadGuard}
+import org.apache.texera.amber.core.storage.result.iceberg.OnIceberg
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionPlanStore,
+  ExecutionResultUris,
+  WarehouseReadGuard
+}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  COMPLETED,
+  FAILED,
+  KILLED
+}
+import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.{
+  OPERATOR_EXECUTIONS,
+  OPERATOR_PORT_EXECUTIONS,
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_VERSION
 }
+import org.apache.texera.service.util.LargeBinaryManager
+import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.jooq.impl.DSL
 
 import java.net.URI
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
 
-/** What an execution keeps outside its row, found from the row. */
+/**
+  * What an execution keeps outside its row: the warehouse it writes into, which is checked when
+  * it is created ([[resolveLakekeeperWarehouseName]]); its plan table, found from its row and
+  * dropped with it; and what it produced, which is cleared when a later execution of its workflow
+  * on its unit replaces it ([[clearFinishedExecutions]]) or its unit is done with it.
+  */
 object ExecutionResources extends LazyLogging {
+
+  /** The states of an execution that has ended, as its row records them. */
+  private val EndedStatuses: Seq[java.lang.Short] =
+    Seq(COMPLETED, FAILED, KILLED).map(state => java.lang.Short.valueOf(maptoStatusCode(state)))
+
+  /**
+    * Maps an execution's chosen warehouse (its user_warehouse row id) to its Lakekeeper
+    * warehouse name, checking that the requesting user owns it.
+    *
+    * With warehouses enabled a pick is **required**, the same way a computing unit is:
+    * falling back to the shared default would make "a run writes into the user's own
+    * warehouse" a UI convention rather than a system property, and would silently route
+    * any caller that forgot to pick into shared storage (#7751).
+    *
+    * With warehouses disabled, an explicit pick is refused loudly rather than silently
+    * routed into the shared warehouse, and no pick keeps the shared default (#6930).
+    *
+    * @throws IllegalArgumentException if the pick breaks one of these rules, in words the user
+    *                                  can act on
+    */
+  def resolveLakekeeperWarehouseName(
+      warehouseId: Option[Int],
+      uid: Integer,
+      enabled: Boolean = StorageConfig.warehouseEnabled
+  ): Option[String] = {
+    if (!enabled) {
+      warehouseId.foreach(_ =>
+        throw new IllegalArgumentException(
+          "per-user warehouses are disabled in this deployment"
+        )
+      )
+      return None
+    }
+    if (warehouseId.isEmpty) {
+      throw new IllegalArgumentException(
+        "a warehouse must be selected for this execution"
+      )
+    }
+    warehouseId.map(id => {
+      val row = SqlServer
+        .getInstance()
+        .createDSLContext()
+        .selectFrom(USER_WAREHOUSE)
+        .where(USER_WAREHOUSE.WHID.eq(id).and(USER_WAREHOUSE.UID.eq(uid)))
+        .fetchOne()
+      if (row == null) {
+        throw new IllegalArgumentException(s"no warehouse with id $id owned by this user")
+      }
+      row.getLakekeeperWarehouseName
+    })
+  }
 
   /**
     * Where execution `eid`'s plan table is: in the warehouse the execution writes into, or the
@@ -100,4 +174,149 @@ object ExecutionResources extends LazyLogging {
         }
       }
     }
+
+  /**
+    * Clears what execution `eid` produced, keeping its row: its results, console messages and
+    * large binaries, and the history of its runtime statistics.
+    *
+    * In this order:
+    *  1. Retrieves all document URIs associated with the execution
+    *  2. Clears URI references from the execution registry
+    *  3. Safely clears all result and console message documents
+    *  4. Expires Iceberg snapshots for runtime statistics
+    *  5. Deletes this execution's large binaries from the object store
+    *
+    * A document that cannot be cleared is logged at debug level and passed over. Its plan table
+    * stays: it is dropped only with the execution ([[dropPlanTables]]).
+    */
+  def clearExecutionResources(eid: ExecutionIdentity): Unit = {
+    // Retrieve URIs for all resources associated with this execution
+    val resultUris = ExecutionResultUris.getResultUrisByExecutionId(eid)
+    val consoleMessagesUris = WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(eid)
+
+    // Remove references from registry first
+    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
+
+    // Clean up all result and console message documents. While per-user warehouses are
+    // disabled, cleanup must not reach into them (#6930) — those URIs are skipped.
+    (resultUris ++ consoleMessagesUris).foreach { uri =>
+      if (WarehouseReadGuard.skipWhileDisabled(uri)) {
+        logger.info(s"skipping cleanup of $uri: per-user warehouses are disabled")
+      } else
+        try DocumentFactory.openDocument(uri)._1.clear()
+        catch {
+          case error: Throwable =>
+            logger.debug(s"Error processing document at $uri: ${error.getMessage}")
+        }
+    }
+
+    // Expire any Iceberg snapshots for runtime statistics
+    WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).foreach { uri =>
+      if (WarehouseReadGuard.skipWhileDisabled(uri)) {
+        logger.info(s"skipping snapshot expiry of $uri: per-user warehouses are disabled")
+      } else
+        try {
+          DocumentFactory.openDocument(uri)._1 match {
+            case iceberg: OnIceberg => iceberg.expireSnapshots()
+            case other =>
+              logger.error(
+                s"Cannot expire snapshots: document from URI [$uri] is of type ${other.getClass.getName}. " +
+                  s"Expected an instance of ${classOf[OnIceberg].getName}."
+              )
+          }
+        } catch {
+          case error: Throwable =>
+            logger.debug(s"Error processing document at $uri: ${error.getMessage}")
+        }
+    }
+    // Delete this execution's large binaries
+    LargeBinaryManager.deleteByExecution(eid.id)
+  }
+
+  /**
+    * Clears the results of the executions of workflow `wid` on computing unit `cuid` created
+    * before `replacedBy` that have ended (completed, failed or killed) and still hold results or
+    * console messages: what the new execution `replacedBy` replaces. An execution that may still
+    * run, whatever its state, is left alone, and so are the workflow's runs on any other unit and
+    * any execution created after `replacedBy`, which a slow create must not clear.
+    *
+    * Each is cleared by [[clearExecutionResources]]. Nothing here is thrown: an execution that
+    * cannot be cleared, or a database that cannot list them, is logged, and keeps its results.
+    */
+  def clearFinishedExecutions(
+      wid: WorkflowIdentity,
+      cuid: Int,
+      replacedBy: ExecutionIdentity
+  ): Unit = {
+    val ended =
+      try finishedExecutionsWithResults(wid, cuid, replacedBy)
+      catch {
+        case NonFatal(failure) =>
+          logger.warn(
+            s"The ended executions of workflow ${wid.id} on computing unit $cuid could not be " +
+              "listed, so their results are kept.",
+            failure
+          )
+          Seq.empty
+      }
+    ended.foreach { eid =>
+      try {
+        clearExecutionResources(eid)
+        logger.info(
+          s"Cleared the results of execution ${eid.id}, as execution ${replacedBy.id} of " +
+            s"workflow ${wid.id} on computing unit $cuid replaces it."
+        )
+      } catch {
+        case NonFatal(failure) =>
+          logger.warn(s"The results of execution ${eid.id} could not be cleared.", failure)
+      }
+    }
+  }
+
+  /**
+    * The executions [[clearFinishedExecutions]] clears, oldest first, in one SELECT: those of
+    * `wid` (through its versions) on `cuid` with an id below `replacedBy`'s that have ended and
+    * have a row in `operator_port_executions` or `operator_executions`.
+    */
+  private def finishedExecutionsWithResults(
+      wid: WorkflowIdentity,
+      cuid: Int,
+      replacedBy: ExecutionIdentity
+  ): Seq[ExecutionIdentity] = {
+    val context = SqlServer.getInstance().createDSLContext()
+    context
+      .select(WORKFLOW_EXECUTIONS.EID)
+      .from(WORKFLOW_EXECUTIONS)
+      .join(WORKFLOW_VERSION)
+      .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
+      .where(
+        WORKFLOW_VERSION.WID
+          .eq(Integer.valueOf(Math.toIntExact(wid.id)))
+          .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
+          .and(WORKFLOW_EXECUTIONS.STATUS.in(EndedStatuses.asJava))
+          .and(WORKFLOW_EXECUTIONS.EID.lt(Integer.valueOf(Math.toIntExact(replacedBy.id))))
+          .and(
+            DSL
+              .exists(
+                DSL
+                  .selectOne()
+                  .from(OPERATOR_PORT_EXECUTIONS)
+                  .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(WORKFLOW_EXECUTIONS.EID))
+              )
+              .or(
+                DSL.exists(
+                  DSL
+                    .selectOne()
+                    .from(OPERATOR_EXECUTIONS)
+                    .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(WORKFLOW_EXECUTIONS.EID))
+                )
+              )
+          )
+      )
+      .orderBy(WORKFLOW_EXECUTIONS.EID)
+      .fetch()
+      .asScala
+      .map(row => ExecutionIdentity(row.value1().longValue()))
+      .toSeq
+  }
 }

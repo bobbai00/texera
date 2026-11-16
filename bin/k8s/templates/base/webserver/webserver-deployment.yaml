@@ -93,6 +93,12 @@ spec:
                 secretKeyRef:
                   name: {{ include "texera.s3.secretName" . }}
                   key: {{ include "texera.s3.secretAccessKeyKey" . }}
+            {{- if .Values.mounter.enabled }}
+            # The Dashboard compiles each execution's plan, whose code reads datasets and models
+            # where computing units mount them.
+            - name: TEXERA_MOUNT_IN_POD_ROOT
+              value: "{{ .Values.mounter.podMountRoot }}"
+            {{- end }}
           {{- range .Values.texeraEnvVars }}
             - name: {{ .name }}
               value: "{{ .value }}"
