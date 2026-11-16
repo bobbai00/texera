@@ -507,12 +507,24 @@ access-control-service, then dynamic routing to the unit pod), and a computing u
 that the driver creates through computing-unit-managing-service, as the frontend does.
 
 ```
-./run-k8s.sh --images sce/step1 --source <worktree>    # clean namespace, deploy, a-e and u, logs, down
-./run-k8s.sh --source <worktree>                       # the published images, same chart
-stack/k8s-stack.sh --source <worktree> up --images sce/step1   # deploy only: http://127.0.0.1:30080
-driver/run.sh --target k8s [--scenario a,d]            # against it
+LOCK=<scratchpad>/sce/stack.lock                                  # the stack lock ("One run at a time")
+./run-k8s.sh --lock $LOCK --images sce/step1 --source <worktree>  # clean namespace, deploy, a-e and u, checks, logs, down
+./run-k8s.sh --lock $LOCK --source <worktree>                     # the published images, same chart
+
+# by hand, holding the lock yourself:
+stack/k8s-stack.sh --source <worktree> up --images sce/step1      # deploy only: http://127.0.0.1:30080
+driver/run.sh --target k8s [--scenario a,d]                       # against it
 stack/k8s-stack.sh down
 ```
+
+`run-k8s.sh` refuses to start without `--lock <dir>` (or `SCE_STACK_LOCK`): it begins with
+`down`, so an unlocked run would tear down another run's deployment, and the Docker VM is
+shared with the single-node stack. `--no-lock` is only for a machine where nothing else
+deploys. The lock is taken with `mkdir` (the run waits while another holds it), its owner
+file names the run, and it is released at the end. The run is bounded: `--time-limit`
+(default 50 minutes from taking the lock, `SCE_K8S_TIME_LIMIT`) stops whatever step is
+running, after which the logs are collected, the deployment is taken down and the lock is
+released (exit 5). A normal run holds the lock for about 7 minutes.
 
 Never start, stop or reconfigure OrbStack's Kubernetes from a script: toggling it
 restarts Docker and every container on the machine. `up` only checks that the context
@@ -544,35 +556,63 @@ answers.
 4. Preflight. The context must answer. No other Envoy Gateway controller may run (see
    below). GatewayClass `eg` must not belong to another release. Neither namespace may
    exist. The port must be free.
-5. `helm install texera` into the namespace (default `sce-k8s`). Then waits for every
+5. Compares the cluster's CRDs with the chart's: the Gateway API bundle and Envoy
+   Gateway's own CRDs, all shipped in the gateway-helm subchart's `crds/`. Helm installs a
+   chart's CRDs only when they are absent, and never upgrades or deletes them, so CRDs
+   left by an earlier install stay in force. Each CRD's versions and schemas are hashed
+   on both sides (the API server keeps them as applied). Absent CRDs are fine (Helm
+   installs them). If any differ, `up` refuses, naming them with their bundle versions
+   and creation times, unless `--allow-crd-drift` is given. The outcome is
+   `MANIFEST.json`'s `crds`.
+6. `helm install texera` into the namespace (default `sce-k8s`). Then waits for every
    Deployment, StatefulSet and DaemonSet and for the lakeFS and Lakekeeper init Jobs,
-   and fails fast on image errors, a failed Job or a crash loop. The y-websocket and
-   Python language servers are not waited for: the chart has no switch for them, and
-   they are not on a run's path.
-6. Exposes the gateway on `127.0.0.1:<port>` (default 30080) and checks that every
+   and fails fast on image errors or a failed Job. The y-websocket and Python language
+   servers are not waited for: the chart has no switch for them, and they are not on a
+   run's path. Crash loops are judged against Postgres. The chart has no
+   wait-for-database step, so every JVM service and lakeFS crashes with `Connection to
+   texera-postgresql:5432 refused` until Postgres is up, 3 or 4 times on a normal `up`.
+   A crash loop therefore fails `up` only once its container has restarted 3 more times
+   after `texera-postgresql` became Ready (Postgres itself: 6 restarts). The restarts
+   before that are recorded under `readiness` in the manifest.
+7. Exposes the gateway on `127.0.0.1:<port>` (default 30080) and checks that every
    backend answers through Envoy: `/api/healthcheck` 200 from the webserver, and any
    status but Envoy's 502/503/504 from config-service, the managing service, file-service
    and the compiling service.
+8. Checks that ext-authz refuses. It sends three workflow-websocket handshakes through
+   the gateway: no token, a bogus token, and texera's own token for cuid 999999, a unit
+   nobody has access to. Each carries a `sce-probe=<marker>` query parameter. Each must
+   get 401 or 403, and Envoy's access-log entry for its marker must say
+   `response_code_details: ext_authz_denied`: Envoy refused because ext-authz said no,
+   not because a backend did. A refusal that is not ext-authz's fails `up`. So does a
+   handshake that is let through. A refusal whose entry has not reached the log after
+   45 s only warns. The outcome is `MANIFEST.json`'s `gateway_refusals`.
 
 `down` deletes the Gateway and GatewayClass while the release's Envoy Gateway still
 runs, uninstalls the release, and deletes both namespaces without waiting out pod grace
 periods. That removes any unit pod and the PVCs, and local-path deletes their volumes.
 It also removes the cluster-scoped objects Helm leaves behind: the Envoy Gateway
 subchart's hook ClusterRole, ClusterRoleBinding and topology webhook, all named after
-the namespace. A full `down` takes about 20 s. Other commands: `status`,
-`logs <alias|deploy/name|unit|unit-<cuid>|envoy>`, `port-forward start|stop|status`,
-`collect-logs <dir>` and `follow-units <dir>`.
+the namespace. It does not remove the CRDs: Helm never deletes them, and other
+installs may use them. They are cluster-wide and outlive every run, which is why
+`up` compares them with the chart's. A full `down` takes about 20 s. Other commands:
+`status`, `logs <alias|deploy/name|unit|unit-<cuid>|envoy>`,
+`port-forward start|stop|status`, `collect-logs <dir>`, `follow-units <dir>` and
+`post-run <report>` (see `run-k8s.sh` below).
 
 ### The gateway on 127.0.0.1
 
 OrbStack does not publish Services on the Mac (`k8s.expose_services` is off), so the
 gateway is forwarded. The default, `--forward relay`, is `stack/k8s/gateway_relay.py`: a
-TCP relay to the envoy Service's ClusterIP, which OrbStack routes from macOS.
-`kubectl port-forward` (`--forward kubectl`) is the fallback, and `up` switches to it
-when the ClusterIP is unreachable. It is not the default because it exits ("lost
-connection to pod") as soon as Envoy resets any one forwarded connection, and the end
-of every workflow websocket does that. In the first trial, every scenario after the first
-failed with "connection refused".
+TCP relay to the envoy Service's ClusterIP, which OrbStack routes from macOS. When the
+relay's interpreter cannot reach the ClusterIP, `up` fails and says so. It never falls
+back to kubectl on its own. `kubectl port-forward` is used only when asked for
+(`--forward kubectl`). It exits ("lost connection to pod") as soon as Envoy resets any
+one forwarded connection, and the end of every workflow websocket does that. The harness
+restarts it a second later, but requests in between fail: in the first trial, every
+scenario after the first failed with "connection refused". So a run through it is marked
+unreliable. The manifest's `gateway_forward` has `reliable: false` and a warning, and
+`post-run` sets `summary.reliable: false` in the report and warns that failures may be
+the forwarder's.
 
 The relay runs under `/usr/bin/python3`. macOS's Local Network privacy check refuses
 192.168.x.x to the harness venv's ad-hoc-signed Python (`EHOSTUNREACH`, "No route to
@@ -584,6 +624,21 @@ check is a likely cause of the earlier note that Bun could not reach the LoadBal
 `driver/run.sh --target k8s` (or `--unit-kind kubernetes` with any `--base`; `--base`
 defaults to the manifest's gateway URL). The code is in `driver/k8s_unit.py`; `e2e.py`
 only calls it.
+
+What needs the single-node stack is refused before any setup, with the reason:
+
+- `--evidence`, `--negative-control`, `--gate` and `--legacy-env`. They read the
+  single-node Postgres log and `docker exec` into its fixed container names, which on
+  this machine belong to another run's stack.
+- Scenarios g0, g, h and o, which `docker exec` into the single-node unit container.
+- l4 and l9, which create local units at `--unit-uri`.
+- On `create-ws`, the scenarios that need the second user (j, l2, l3, l5, l7, l10): the
+  driver gives that user a local unit. j on `ws` runs.
+
+`--stack-manifest` defaults to `stack/k8s/generated/MANIFEST.json`, not the single-node
+one. As a second guard, the driver sets `DOCKER_HOST` to a socket that does not exist.
+Docker's CLI prefers it to any context, so nothing the driver runs in Kubernetes mode can
+reach a container on this machine.
 
 1. Setup is the same as in single-node: log in, upload the dataset, create the warehouse.
 2. Instead of the local unit row, the driver:
@@ -597,30 +652,75 @@ only calls it.
    once, with the status reason. Then it opens the workflow websocket through the
    gateway until the unit answers the handshake: the pod reports Running before its JVM
    listens, so for the first second or two Envoy answers 503.
-4. The scenarios select that unit exactly as single-node selects the local one: the
+4. Opens the same socket without valid credentials: no token, a bogus token (both for
+   the live unit), and its own token for a cuid that does not exist. The gateway must
+   refuse each (401/403), or setup fails and the unit is terminated. Each probe carries
+   a `sce-probe` marker, so `post-run` can check in Envoy's log that ext-authz refused it.
+5. The scenarios select that unit exactly as single-node selects the local one: the
    websocket's `cuid=` and `computingUnitId`.
-5. At the end it calls `DELETE /api/computing-unit/{cuid}/terminate`, also from an atexit
-   hook if the driver dies; `--keep-unit` skips this. `run-k8s.sh` then checks that the
-   pod is gone.
+6. At the end it calls `DELETE /api/computing-unit/{cuid}/terminate`, also from an atexit
+   hook if the driver dies; `--keep-unit` skips this.
 
 The report gains `target` and `setup.kubernetes_unit`: the request, the status history,
-the seconds to Running and to answering, the gateway probe and the termination.
-`run-k8s.sh` writes `reports/k8s-<time>.json` and `reports/k8s-<time>-logs/`. The logs
-directory holds every container's log (previous instances too), descriptions, events,
-the gateway objects, the release's values, `harness-git.txt`, and `units/`, the unit
-pods' logs streamed while they live (a terminated unit's pod is deleted).
+the seconds to Running and to answering, the gateway probe, the refusal probes
+(`gateway_refusals`) and the termination.
+
+### `run-k8s.sh`
+
+```
+./run-k8s.sh --lock <dir> | --no-lock  [--images <registry>/<tag>] [--source <worktree>] [--port N]
+             [--keep] [--label text] [--time-limit MIN] [--no-workarounds] [--forward relay|kubectl]
+             [--allow-crd-drift] [-- <driver args>]
+```
+
+The run goes like this:
+
+1. Takes the lock and starts the clock.
+2. Runs `down`, then `up`, and starts following the unit pods' logs.
+3. Runs the driver with `--target k8s`.
+4. Runs `stack/k8s-stack.sh post-run <report>`. This waits up to 90 s for the unit's pod
+   to go and reads Envoy's entries for the driver's refusal probes. It writes the outcome
+   into the report as `post_run`, and into the logs directory as `post-run.json`:
+   - A unit pod left behind fails the run (`summary.result` becomes FAIL, with
+     `summary.post_run_failures`), unless the driver ran with `--keep-unit`.
+   - So does a probe that ext-authz did not refuse.
+   - A run through kubectl port-forward gets `summary.reliable: false`.
+5. Collects the logs, runs `down` and releases the lock, also when a step fails, the
+   time limit is reached or the run is interrupted (INT or TERM). Everything a step
+   started is stopped first. `--keep` skips `down`, but the lock is still released.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0, 1, 2 | The driver's |
+| 3 | The deployment did not come up |
+| 4 | The driver passed but `post-run` failed |
+| 5 | The time limit was reached |
+| 64 | Usage error, including a missing `--lock` |
+
+It writes `reports/k8s-<time>.json` and `reports/k8s-<time>-logs/`. The logs directory
+holds:
+
+- every container's log (previous instances too), descriptions and events;
+- the gateway objects and the release's values;
+- `harness-git.txt` and `post-run.json`;
+- `units/`, the unit pods' logs, streamed while they live (a terminated unit's pod is
+  deleted).
 
 ### Workarounds and choices (each recorded in MANIFEST.json)
 
 | What | Why | Upstream? |
 |---|---|---|
-| `STORAGE_S3_ENDPOINT=http://texera-rustfs-svc:9000` added through `texeraEnvVars` | The chart's webserver Deployment sets no `STORAGE_S3_*`, so `POST /api/warehouse` builds per-user Lakekeeper warehouses on storage.conf's `http://localhost:9000`. `texeraEnvVars` is the only values hook that reaches the webserver. The chart's other S3 values already equal storage.conf's defaults. Step 2 sub-part 7 fixes this; the step-1 chart does not have the fix. `up` adds the variable only when the webserver template lacks it, and `--no-workarounds` turns it off | chart bug |
+| `STORAGE_S3_ENDPOINT=http://texera-rustfs-svc:9000` added through `texeraEnvVars` | The chart's webserver Deployment sets no `STORAGE_S3_*`, so `POST /api/warehouse` builds per-user Lakekeeper warehouses on storage.conf's `http://localhost:9000`. `texeraEnvVars` is the only values hook that reaches the webserver. The chart's other S3 values already equal storage.conf's defaults. Step 2 sub-part 7 fixes this; the step-1 chart does not have the fix. `up` renders the chart first and adds the variable only when the rendered Deployment that runs the dashboard image (found by image, whatever its name) gets no `STORAGE_S3_ENDPOINT` through `env` or an `envFrom` ConfigMap or Secret; `MANIFEST.json`'s `webserver.s3_endpoint_from_chart` records what the chart gave. `--no-workarounds` turns it off | chart bug |
 | `helm install --server-side=false` | A consequence of the row above: file-service and the managing service now list `STORAGE_S3_ENDPOINT` twice (same value), and Helm 4's default server-side apply rejects duplicate keys | no |
 | `helm dependency update` in a scratch copy | `Chart.lock` is out of sync with `Chart.yaml` | chart bug |
 | Release name `texera` | `gateway-routes.yaml` points the dynamic route at Backend `texera-dynamic-backend`, whatever the release is called, and the values hard-code `texera-postgresql` and `texera-rustfs-svc` | chart limitation |
 | No other Envoy Gateway in the cluster | The `gateway-helm` dependency has no `condition`, so the chart always installs a controller, and two controllers both reconcile GatewayClass `eg`. The earlier proof's release `eg` (namespace envoy-gateway-system) was uninstalled on 2026-11-16 for this reason. `up` refuses to run beside another controller and never touches it | chart limitation |
 | Gateway and GatewayClass deleted before `helm uninstall` | Envoy Gateway puts a finalizer on GatewayClass `eg`. Once its controller is uninstalled, nothing removes the finalizer and the class hangs in Terminating, which blocks the next install. This happened in the first trial; `up` and `down` now also clear such a finalizer when the class is this release's | ordering of chart parts |
 | Optional services off | Not on a run's path, and memory: the Docker VM's 8 GB is shared with the single-node stack | no |
+| Crash loops judged against Postgres's readiness | The chart has no wait-for-database step, so the JVM services and lakeFS crash until Postgres is up (step 6 of `up`) | chart limitation |
+| CRDs stay after `down` and are compared on `up` | Helm installs CRDs only when absent and never upgrades or deletes them (step 5 of `up`) | Helm behavior |
 
 Like single-node, the unit logs a warning when it reads a dataset: the presigned URL
 from lakeFS points at `localhost:31000` (the chart's `pre_signed_endpoint`), which a pod
@@ -658,12 +758,14 @@ What the runs establish:
 - The unit went Pending -> Running through the managing service and was terminated
   through it (HTTP 200); its pod was gone after the run.
 - `down` left no namespace, release, GatewayClass, metrics APIService, hook object or
-  PersistentVolume behind.
+  PersistentVolume behind. The Gateway API and Envoy Gateway CRDs stay: Helm never
+  deletes CRDs. Those in the cluster predate the harness (created 2026-11-06) and match
+  the chart's: Gateway API bundle v1.4.1, the one gateway-helm 1.6.3 ships.
 
 Branch against upstream: no difference in Kubernetes mode. Both pass all six
 scenarios with the same checks and similar timings. No scenario fails on both. The one
 upstream defect is the chart's: without the S3 workaround, setup fails identically on
 both image sets.
 
-`driver/tests/test_k8s_unit.py` adds offline tests of the Kubernetes path to the
-offline suite.
+`driver/tests/test_k8s_unit.py` and `driver/tests/test_k8s_stack.py` add offline tests of
+the Kubernetes path to the offline suite.
