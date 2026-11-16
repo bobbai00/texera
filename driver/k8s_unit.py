@@ -16,9 +16,16 @@ selector do, over the same REST API, through the gateway:
   DELETE /api/computing-unit/{cuid}/terminate
 
 `setup` creates the unit, waits for Running, then for the unit to answer a websocket
-handshake through the gateway (the pod is Running before its JVM listens), and returns it;
-the scenarios then select it by cuid exactly like single-node runs select the local unit.
+handshake through the gateway (the pod is Running before its JVM listens), checks that the
+gateway refuses the same socket without valid credentials, and returns the unit; the
+scenarios then select it by cuid exactly like single-node runs select the local unit.
 `teardown` terminates it at the end (an atexit hook does so too if the driver dies).
+
+What only the single-node stack has is refused up front (`resolve_args`, `check_selection`):
+the evidence and the gates read its Postgres log and `docker exec` into its containers,
+and some scenarios exec into its unit container or create local units at --unit-uri. As a
+second guard, the driver's DOCKER_HOST points at a socket that does not exist, so nothing it
+runs in Kubernetes mode can reach a container on this machine's Docker.
 """
 
 from __future__ import annotations
@@ -34,12 +41,39 @@ from typing import Any, Callable
 
 import websocket  # websocket-client
 
+from scenarios import NEEDS_OTHER_USER
 from workflow import Workflow
 
 K8S_MANIFEST = Path(__file__).resolve().parent.parent / "stack" / "k8s" / "generated" / "MANIFEST.json"
 SINGLE_NODE_BASE = "http://localhost:8080"  # e2e.py's --base default
 UNIT_PREFIX = "sce-e2e-k8s"
 TERMINAL_UNIT_STATES = {"Failed", "Unknown"}
+# Docker's CLI takes DOCKER_HOST over any context: every `docker` call fails at once.
+NO_DOCKER = "unix:///nonexistent/sce-e2e-kubernetes-mode-has-no-docker-containers.sock"
+
+#: driver options that read or exec into the single-node stack's containers
+SINGLE_NODE_OPTIONS = {
+    "evidence": ("--evidence", "reads the single-node Postgres log and `docker exec`s into its containers"),
+    "negative_control": ("--negative-control", "the evidence checks on the single-node stack"),
+    "gate": ("--gate", "a step-2 gate gates on the evidence checks"),
+    "legacy_env": ("--legacy-env", "g0 `docker exec`s into the single-node unit container"),
+}
+#: scenarios that need the single-node stack whatever the transport
+SINGLE_NODE_SCENARIOS = {
+    "g0": "`docker exec` into the single-node unit container (the tabulate precondition)",
+    "g": "`docker exec` into the single-node unit container (precondition, environment files)",
+    "h": "`docker exec` into the single-node unit container (environment files)",
+    "o": "`docker exec` into the single-node unit container (the unit's own /run endpoint)",
+    "l4": "creates a local unit at --unit-uri",
+    "l9": "a second local unit at --unit-uri",
+}
+#: the refusal probes of the live unit's socket: (name, credential, which cuid)
+REFUSAL_PROBES = (
+    ("no-token", None, "live unit"),
+    ("bogus-token", "sce-e2e-not-a-token", "live unit"),
+    ("unit-without-access", "valid", "a cuid that does not exist"),
+)
+REFUSED = (401, 403)
 
 _state: dict[str, Any] = {"cuid": None, "done": False}
 
@@ -70,6 +104,35 @@ def resolve_args(a: argparse.Namespace) -> None:
     if a.target == "k8s" and a.base == SINGLE_NODE_BASE and not os.environ.get("SCE_BASE"):
         manifest = json.loads(K8S_MANIFEST.read_text()) if K8S_MANIFEST.exists() else {}
         a.base = manifest.get("gateway_url") or "http://127.0.0.1:30080"
+    if a.unit_kind != "kubernetes":
+        return
+    used = [(flag, why) for attr, (flag, why) in SINGLE_NODE_OPTIONS.items() if getattr(a, attr, None)]
+    if used:
+        raise SystemExit("Kubernetes mode does not support " + "; ".join(f"{f} ({w})" for f, w in used)
+                         + ". Use the single-node stack (run-baseline.sh) for them.")
+    # The Kubernetes stack's manifest, not stack/generated/MANIFEST.json (the single-node one).
+    if hasattr(a, "stack_manifest") and a.stack_manifest is None:
+        a.stack_manifest = K8S_MANIFEST
+    guard_docker()
+
+
+def guard_docker() -> None:
+    """Nothing the driver runs in Kubernetes mode may reach a container on this machine's
+    Docker: the fixed names it would use belong to the single-node stack (another run's)."""
+    os.environ["DOCKER_HOST"] = NO_DOCKER
+
+
+def check_selection(a: argparse.Namespace, keys: list[str], transport: str) -> None:
+    """Refuse, before any setup, the scenarios that need the single-node stack."""
+    if a.unit_kind != "kubernetes":
+        return
+    bad = {k: why for k, why in SINGLE_NODE_SCENARIOS.items() if k in keys}
+    if transport == "create-ws":  # the driver gives the second user a local unit at --unit-uri
+        bad.update({k: "the second user's local unit at --unit-uri" for k in keys
+                    if k in NEEDS_OTHER_USER and k not in bad})
+    if bad:
+        raise SystemExit("Kubernetes mode cannot run " + "; ".join(f"{k} ({w})" for k, w in bad.items())
+                         + ". Run them on the single-node stack (run-baseline.sh).")
 
 
 def wanted(a: argparse.Namespace) -> bool:
@@ -133,15 +196,44 @@ def wait_running(api, cuid: int, timeout: float, log: Callable[[str], None]) -> 
                        f"{info.get('statusReason')})")
 
 
+def workflow_socket_url(base: str, params: dict) -> str:
+    parts = urllib.parse.urlsplit(base)
+    scheme = "wss" if parts.scheme == "https" else "ws"
+    return urllib.parse.urlunsplit((scheme, parts.netloc, parts.path.rstrip("/") + "/wsapi/workflow-websocket",
+                                    urllib.parse.urlencode(params), ""))
+
+
+def probe_refusals(base: str, token: str, uid: int, cuid: int, wid: int, run_id: str) -> list[dict]:
+    """The socket that reached the unit, without valid credentials: no token, a bogus one,
+    and a valid token for a unit the user has no access to (one that does not exist). Each
+    must be refused (401/403) by the gateway. `sce-probe` marks each in Envoy's access log,
+    where `stack/k8s-stack.sh post-run` reads whether ext-authz was the one that refused."""
+    out = []
+    for name, credential, which in REFUSAL_PROBES:
+        params: dict = {"wid": wid, "uid": uid, "cuid": cuid if which == "live unit" else cuid + 100000}
+        if credential:
+            params["access-token"] = token if credential == "valid" else credential
+        params["sce-probe"] = f"driver-{name}-{run_id}"
+        rec: dict = {"probe": name, "cuid": params["cuid"], "target": which, "marker": params["sce-probe"]}
+        try:
+            ws = websocket.create_connection(workflow_socket_url(base, params), timeout=10)
+        except websocket.WebSocketBadStatusException as e:
+            rec["status"] = e.status_code
+        except Exception as e:  # noqa: BLE001 -- anything but an HTTP refusal is not one
+            rec.update(status=None, error=f"{type(e).__name__}: {str(e)[:200]}")
+        else:
+            ws.close()
+            rec["status"] = 101
+        rec["refused"] = rec["status"] in REFUSED
+        out.append(rec)
+    return out
+
+
 def wait_reachable(base: str, token: str, uid: int, cuid: int, wid: int, timeout: float,
                    log: Callable[[str], None]) -> dict:
     """Open the workflow websocket through the gateway until the unit answers its handshake
     with a WorkflowStateEvent: Envoy -> ext-authz (access-control-service) -> the pod."""
-    parts = urllib.parse.urlsplit(base)
-    scheme = "wss" if parts.scheme == "https" else "ws"
-    query = urllib.parse.urlencode({"wid": wid, "uid": uid, "cuid": cuid, "access-token": token})
-    url = urllib.parse.urlunsplit((scheme, parts.netloc, parts.path.rstrip("/") + "/wsapi/workflow-websocket",
-                                   query, ""))
+    url = workflow_socket_url(base, {"wid": wid, "uid": uid, "cuid": cuid, "access-token": token})
     t0 = time.monotonic()
     attempts, last_err, last_log = 0, "", 0.0
     errors: dict[str, int] = {}
@@ -231,6 +323,14 @@ def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None]
         rec["ready_after_s"] = round(time.monotonic() - t0, 1)
         log(f"unit {cuid} answers through the gateway ({rec['gateway_probe']['attempts']} attempt(s), "
             f"ready {rec['ready_after_s']}s after create)")
+        rec["gateway_refusals"] = probes = probe_refusals(a.base, api.token, api.uid, cuid, wid, run_id)
+        log("the gateway refuses that socket without valid credentials: " + ", ".join(
+            f"{p['probe']} {p['status']}" for p in probes))
+        let_through = [p for p in probes if not p["refused"]]
+        if let_through:
+            raise RuntimeError("the gateway did not refuse the unit's socket for: " + "; ".join(
+                f"{p['probe']} (cuid {p['cuid']}) -> {p['status']} {p.get('error', '')}".strip()
+                for p in let_through))
     except Exception:
         if not a.keep_unit:
             rec["termination"] = terminate(api, cuid)

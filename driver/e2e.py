@@ -137,6 +137,7 @@ def main() -> int:
     a.transport = transport_name
     legacy_env = a.legacy_env or bool(gate.get("legacy_env"))
     keys = resolve(a.scenario or ([gate["scenarios"]] if gate else []), transport_name, legacy_env)
+    k8s_unit.check_selection(a, keys, transport_name)  # Kubernetes mode: refuse single-node-only scenarios
     evidence_spec = a.evidence if a.evidence is not None else gate.get("evidence")
     required = parse_checks(evidence_spec)
     use_evidence = evidence_spec is not None or a.negative_control

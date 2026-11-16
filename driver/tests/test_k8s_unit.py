@@ -23,13 +23,28 @@ import k8s_unit  # noqa: E402
 
 
 def parse(*argv: str) -> argparse.Namespace:
-    """The driver's own defaults for --base, plus k8s_unit's options, as e2e.py builds them."""
+    """The driver's own defaults for --base and the single-node-only options, plus k8s_unit's
+    options, as e2e.py builds them. The environment is restored afterwards (Kubernetes mode
+    sets DOCKER_HOST)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=k8s_unit.SINGLE_NODE_BASE)
+    ap.add_argument("--evidence", nargs="?", const="all", default=None)
+    ap.add_argument("--negative-control", action="store_true")
+    ap.add_argument("--gate", default=None)
+    ap.add_argument("--legacy-env", action="store_true")
+    ap.add_argument("--stack-manifest", type=Path)
     k8s_unit.add_arguments(ap)
     a = ap.parse_args(list(argv))
-    k8s_unit.resolve_args(a)
+    with mock.patch.dict("os.environ", {}, clear=False):
+        k8s_unit.resolve_args(a)
     return a
+
+
+def refused(status: int = 403):
+    return k8s_unit.websocket.WebSocketBadStatusException(f"Handshake status {status} Forbidden", status)
+
+
+REFUSALS = [refused(), refused(), refused()]  # no token, bogus token, a unit without access
 
 
 class StubResponse:
@@ -115,6 +130,44 @@ class ArgsTest(unittest.TestCase):
                 self.assertEqual(b.base, "http://example:1")
         self.assertTrue(k8s_unit.wanted(parse("--unit-kind", "kubernetes")))
 
+    def test_k8s_mode_refuses_options_that_reach_the_single_node_stack(self):
+        for flags, named in ((["--evidence"], "--evidence"), (["--evidence", "F"], "--evidence"),
+                             (["--negative-control"], "--negative-control"), (["--gate", "A"], "--gate"),
+                             (["--legacy-env"], "--legacy-env")):
+            with self.assertRaises(SystemExit) as cm:
+                parse("--target", "k8s", *flags)
+            self.assertIn(named, str(cm.exception))
+            with self.assertRaises(SystemExit):
+                parse("--unit-kind", "kubernetes", *flags)
+        a = parse("--evidence", "--gate", "A", "--legacy-env")  # single-node: untouched
+        self.assertEqual((a.unit_kind, a.evidence, a.stack_manifest), ("local", "all", None))
+
+    def test_k8s_mode_reads_its_own_manifest_and_cuts_the_driver_off_docker(self):
+        with mock.patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("DOCKER_HOST", None)
+            a = parse("--target", "k8s", "--base", "http://127.0.0.1:30080")
+            self.assertEqual(a.stack_manifest, k8s_unit.K8S_MANIFEST)
+            self.assertNotIn("DOCKER_HOST", env)  # parse() restores the environment
+            k8s_unit.resolve_args(a)
+            self.assertEqual(env["DOCKER_HOST"], k8s_unit.NO_DOCKER)
+        mine = Path("/tmp/m.json")
+        self.assertEqual(parse("--target", "k8s", "--stack-manifest", str(mine)).stack_manifest, mine)
+
+    def test_k8s_mode_refuses_scenarios_that_need_the_single_node_stack(self):
+        a = parse("--target", "k8s", "--base", "http://127.0.0.1:30080")
+        for keys, transport in ((["a", "g0"], "ws"), (["o"], "create-ws"), (["g", "h"], "create-ws"),
+                                (["l4"], "create-ws"), (["l9"], "create-ws"), (["j"], "create-ws"),
+                                (["l2", "l10"], "create-ws")):
+            with self.assertRaises(SystemExit) as cm:
+                k8s_unit.check_selection(a, keys, transport)
+            for k in keys:
+                if k != "a":
+                    self.assertIn(k, str(cm.exception))
+        # the baseline, j on ws (no second user there) and the create-ws scenarios on the unit itself
+        k8s_unit.check_selection(a, ["a", "b", "c", "d", "e", "u", "j"], "ws")
+        k8s_unit.check_selection(a, ["k", "l1", "l6", "l8", "m", "f", "f2", "i"], "create-ws")
+        k8s_unit.check_selection(parse(), ["g0", "o", "l9", "j"], "create-ws")  # single-node: anything
+
 
 @mock.patch("k8s_unit.time.sleep", lambda s: None)
 class LifecycleTest(unittest.TestCase):
@@ -135,6 +188,7 @@ class LifecycleTest(unittest.TestCase):
             ConnectionResetError("503 Service Unavailable"),  # the pod runs, its JVM is not up yet
             StubSocket([{"type": "ClusterStatusUpdateEvent"},
                         {"type": "WorkflowStateEvent", "state": "Uninitialized"}]),
+            *REFUSALS,
         ])
         create = next(body for m, p, body in api.calls if p == "/api/computing-unit/create")
         self.assertEqual(create, {"name": "sce-e2e-k8s-0101-000000", "unitType": "kubernetes",
@@ -144,10 +198,23 @@ class LifecycleTest(unittest.TestCase):
         rec = self.report["setup"]["kubernetes_unit"]
         self.assertEqual([h["status"] for h in rec["status_history"]], ["Pending", "Running"])
         self.assertEqual(rec["gateway_probe"]["attempts"], 2)
-        url = conn.call_args.args[0]
+        url = conn.call_args_list[1].args[0]
         self.assertTrue(url.startswith("ws://127.0.0.1:30080/wsapi/workflow-websocket?"), url)
         self.assertIn("cuid=7", url)
         self.assertIn("wid=42", url)
+        self.assertIn("access-token=jwt", url)
+        # then the same socket without valid credentials: all refused, each marked for Envoy's log
+        probes = rec["gateway_refusals"]
+        self.assertEqual([(p["probe"], p["cuid"], p["status"], p["refused"]) for p in probes],
+                         [("no-token", 7, 403, True), ("bogus-token", 7, 403, True),
+                          ("unit-without-access", 100007, 403, True)])
+        urls = [c.args[0] for c in conn.call_args_list[2:]]
+        self.assertNotIn("access-token", urls[0])
+        self.assertIn("access-token=sce-e2e-not-a-token", urls[1])
+        self.assertIn("access-token=jwt", urls[2])
+        self.assertIn("cuid=100007", urls[2])
+        for p, u in zip(probes, urls):
+            self.assertIn(f"sce-probe={p['marker']}", u)
         self.assertNotIn(("DELETE", "/api/computing-unit/7/terminate", None), api.calls)
 
         k8s_unit.teardown(api, a, log=self.logged.append, report=self.report)
@@ -168,9 +235,18 @@ class LifecycleTest(unittest.TestCase):
             3: {"cuid": 3, "name": "sce-e2e-k8s-old", "type": "kubernetes", "terminateTime": None},
             4: {"cuid": 4, "name": "someone-else", "type": "kubernetes", "terminateTime": None},
         })
-        self.run_setup(api, [StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}])])
+        self.run_setup(api, [StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}]), *REFUSALS])
         self.assertEqual(self.report["setup"]["kubernetes_unit"]["stale_terminated"], [3])
         self.assertIsNone(api.units[4]["terminateTime"])
+
+    def test_a_gateway_that_lets_a_bogus_token_through_fails_setup(self):
+        api = StubApi([("Running", None)])
+        with self.assertRaisesRegex(RuntimeError, "did not refuse the unit's socket for: bogus-token"):
+            self.run_setup(api, [StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}]),
+                                 refused(401), StubSocket([]), refused(403)])
+        probes = self.report["setup"]["kubernetes_unit"]["gateway_refusals"]
+        self.assertEqual([p["status"] for p in probes], [401, 101, 403])
+        self.assertIn(("DELETE", "/api/computing-unit/7/terminate", None), api.calls)  # not left running
 
     def test_a_deployment_without_kubernetes_units_is_refused(self):
         api = StubApi([("Running", None)], types=("local",))
