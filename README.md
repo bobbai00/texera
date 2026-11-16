@@ -386,7 +386,7 @@ records "controls failed as expected".
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 34 tests, about 50 s
+.venv/bin/python -m unittest discover -s driver/tests -v     # 35 tests, about 50 s
 ```
 
 - `test_evidence.py`: the log parser (parameters, continuation lines, interleaved
