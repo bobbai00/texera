@@ -18,8 +18,161 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { adaptLegacySyncExecutionResult } from "./execution-api";
+import { adaptCreateExecutionFailure, adaptLegacySyncExecutionResult, parseCreatedExecution } from "./execution-api";
 import { ConsoleMessageType, OperatorState, WorkflowExecutionState, WorkflowFatalErrorType } from "../types/execution";
+
+// A WorkflowFatalError as the Dashboard service writes one for a workflow that does not compile.
+function compilationError(operatorId: string, message: string) {
+  return {
+    type: { name: "COMPILATION_ERROR" },
+    timestamp: { seconds: 1794873600, nanos: 5 },
+    message,
+    details: `${message}\n\tat org.apache.texera.common.compiler.WorkflowCompiler.compile`,
+    operatorId,
+    workerId: "",
+  };
+}
+
+describe("parseCreatedExecution", () => {
+  test("reads the execution's id and plan table from the Dashboard's answer", () => {
+    const created = parseCreatedExecution({
+      eid: 345,
+      wid: 12,
+      computingUnitId: 3,
+      planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan",
+    });
+
+    expect(created).toEqual({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
+  });
+
+  test.each([
+    ["no plan table", { eid: 345, wid: 12, computingUnitId: 3 }],
+    ["an empty plan table", { eid: 345, planUri: "" }],
+    ["no execution id", { wid: 12, planUri: "vfs:///wid/12/eid/345/plan" }],
+    ["an execution id that is text", { eid: "345", planUri: "vfs:///wid/12/eid/345/plan" }],
+    ["an execution id that is not a whole number", { eid: 3.5, planUri: "vfs:///wid/12/eid/3/plan" }],
+    ["an execution id below 1", { eid: 0, planUri: "vfs:///wid/12/eid/0/plan" }],
+    ["no object at all", null],
+  ])("refuses an answer with %s", (_case, answer) => {
+    expect(() => parseCreatedExecution(answer)).toThrow("Invalid create-execution response");
+  });
+});
+
+describe("adaptCreateExecutionFailure", () => {
+  test("turns a workflow that does not compile into each operator's error, in the order listed, then the others", () => {
+    const summary = adaptCreateExecutionFailure(
+      400,
+      "Bad Request",
+      JSON.stringify({
+        eid: 345,
+        // Not sorted: the Dashboard lists the operators in the order of the workflow.
+        operatorErrors: {
+          "scan-2": compilationError("scan-2", "java.lang.RuntimeException: No file selected."),
+          "filter-1": compilationError("filter-1", "java.lang.RuntimeException: column age does not exist"),
+        },
+        errors: [compilationError("", "java.lang.IllegalStateException: the plan cannot be scheduled")],
+      })
+    );
+
+    expect(summary.state).toBe(WorkflowExecutionState.COMPILATION_FAILED);
+    expect(summary.operators).toEqual({});
+    expect(summary.errors.map(error => [error.type.name, error.operatorId, error.message])).toEqual([
+      [WorkflowFatalErrorType.COMPILATION_ERROR, "scan-2", "java.lang.RuntimeException: No file selected."],
+      [WorkflowFatalErrorType.COMPILATION_ERROR, "filter-1", "java.lang.RuntimeException: column age does not exist"],
+      [WorkflowFatalErrorType.COMPILATION_ERROR, "", "java.lang.IllegalStateException: the plan cannot be scheduled"],
+    ]);
+  });
+
+  test("reads only each error's message, and does not require the errors of no operator", () => {
+    const summary = adaptCreateExecutionFailure(
+      400,
+      "Bad Request",
+      JSON.stringify({ eid: 345, operatorErrors: { "udf-1": { message: "invalid syntax" } } })
+    );
+
+    expect(summary.state).toBe(WorkflowExecutionState.COMPILATION_FAILED);
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.errors[0]).toMatchObject({
+      type: { name: WorkflowFatalErrorType.COMPILATION_ERROR },
+      message: "invalid syntax",
+      details: "",
+      operatorId: "udf-1",
+      workerId: "",
+    });
+  });
+
+  test.each([
+    [400, "Bad Request", "The request names no computing unit: computingUnitId is 0."],
+    [403, "Forbidden", "You may not run workflows on computing unit 3."],
+    [409, "Conflict", "computing unit 3 is terminated"],
+    [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+  ])("turns a %d refusal into an error with its status and message", (status, statusText, message) => {
+    const summary = adaptCreateExecutionFailure(status, statusText, JSON.stringify({ code: status, message }));
+
+    expect(summary.state).toBe(WorkflowExecutionState.ERROR);
+    expect(summary.operators).toEqual({});
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.errors[0]).toMatchObject({
+      type: { name: WorkflowFatalErrorType.EXECUTION_FAILURE },
+      message: `Execution could not be created: ${status} ${statusText} - ${message}`,
+      operatorId: "",
+    });
+  });
+
+  test("takes an answer that is not JSON as it is", () => {
+    const body = "Credentials are required to access this resource.\n";
+
+    const summary = adaptCreateExecutionFailure(401, "Unauthorized", body);
+
+    expect(summary.state).toBe(WorkflowExecutionState.ERROR);
+    expect(summary.errors[0].message).toBe(
+      "Execution could not be created: 401 Unauthorized - Credentials are required to access this resource."
+    );
+  });
+
+  test("names only what the answer has: no body, no status text, or a blank message", () => {
+    const messageOf = (status: number, statusText: string, body: string) =>
+      adaptCreateExecutionFailure(status, statusText, body).errors[0].message;
+
+    expect(messageOf(502, "Bad Gateway", "")).toBe("Execution could not be created: 502 Bad Gateway");
+    expect(messageOf(503, "", "upstream connect error")).toBe(
+      "Execution could not be created: 503 - upstream connect error"
+    );
+    expect(messageOf(500, "Internal Server Error", JSON.stringify({ code: 500, message: " " }))).toBe(
+      "Execution could not be created: 500 Internal Server Error"
+    );
+  });
+
+  test("reads compilation errors only from a 400", () => {
+    const body = JSON.stringify({
+      eid: 345,
+      operatorErrors: { scan: compilationError("scan", "java.lang.RuntimeException: No file selected.") },
+      errors: [],
+    });
+
+    const summary = adaptCreateExecutionFailure(500, "Internal Server Error", body);
+
+    expect(summary.state).toBe(WorkflowExecutionState.ERROR);
+    expect(summary.errors.map(error => error.message)).toEqual([
+      `Execution could not be created: 500 Internal Server Error - ${body}`,
+    ]);
+  });
+
+  test.each([
+    ["lists no error at all", { eid: 345, operatorErrors: {}, errors: [] }],
+    ["lists an operator's error that has no message", { eid: 345, operatorErrors: { scan: { operatorId: "scan" } } }],
+    ["is neither a refusal nor a list of errors", { eid: 345 }],
+  ])("reports a 400 that %s as the answer it is", (_case, answer) => {
+    const body = JSON.stringify(answer);
+
+    const summary = adaptCreateExecutionFailure(400, "Bad Request", body);
+
+    expect(summary.state).toBe(WorkflowExecutionState.ERROR);
+    expect(summary.errors.map(error => error.message)).toEqual([
+      `Execution could not be created: 400 Bad Request - ${body}`,
+    ]);
+  });
+});
 
 describe("adaptLegacySyncExecutionResult", () => {
   test("normalizes sampled table rows, row gaps, counts, and console messages", () => {

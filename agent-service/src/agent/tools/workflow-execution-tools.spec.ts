@@ -21,6 +21,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { executeOperatorAndFormat, createExecuteOperatorTool, type ExecutionConfig } from "./workflow-execution-tools";
 import { WorkflowState } from "../workflow-state";
 import { WorkflowSystemMetadata } from "../util/workflow-system-metadata";
+import { getBackendConfig } from "../../api/backend-api";
+import { env } from "../../config/env";
 import {
   ConsoleMessageType,
   OperatorState,
@@ -102,15 +104,79 @@ function makeFatal(message: string): WorkflowFatalError {
 let fetchSpy: ReturnType<typeof spyOn>;
 let validateSpy: ReturnType<typeof spyOn>;
 
-function setFetchResolving(value: Response): void {
-  fetchSpy.mockResolvedValue(value);
+// An execution is created at the Dashboard service, then run on the computing unit.
+const { apiEndpoint: DASHBOARD, executionEndpoint: UNIT } = getBackendConfig();
+const CREATE_URL = `${DASHBOARD}/api/executions`;
+
+// What the Dashboard answers a create with, unless a test says otherwise.
+const CREATED = { eid: 345, wid: 1, computingUnitId: 3, planUri: "vfs:///wid/1/eid/345/plan" };
+
+function createdResponse(body: unknown = CREATED): Response {
+  return new Response(JSON.stringify(body), { status: 201, headers: { "Content-Type": "application/json" } });
 }
 
+// A create the Dashboard refuses: `{code, message}`.
+function refusedResponse(status: number, statusText: string, message: string): Response {
+  return new Response(JSON.stringify({ code: status, message }), {
+    status,
+    statusText,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// A create of a workflow that does not compile: the execution the Dashboard recorded as failed,
+// and each operator's error, a WorkflowFatalError, under the operator's id.
+function compileFailureResponse(messageByOperator: Record<string, string>): Response {
+  const operatorErrors = Object.fromEntries(
+    Object.entries(messageByOperator).map(([operatorId, message]) => [
+      operatorId,
+      {
+        type: { name: "COMPILATION_ERROR" },
+        timestamp: { seconds: 1794873600, nanos: 0 },
+        message,
+        details: `${message}\n\tat org.apache.texera.common.compiler.WorkflowCompiler.compile`,
+        operatorId,
+        workerId: "",
+      },
+    ])
+  );
+  return new Response(JSON.stringify({ eid: 345, operatorErrors, errors: [] }), {
+    status: 400,
+    statusText: "Bad Request",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Answers the create with `create`, and the run of the execution it names with `run`. Any other
+// request fails loudly: a run when `run` is absent, and the route the agent used to run on.
+function routeFetch(create: Response, run?: Response | Error): void {
+  fetchSpy.mockImplementation(async (input: unknown) => {
+    const url = String(input);
+    if (url === CREATE_URL) return create;
+    if (run !== undefined && /\/api\/execution\/\d+\/run$/.test(url)) {
+      if (run instanceof Error) throw run;
+      return run;
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+}
+
+// The Dashboard creates the execution, and the unit's run of it answers `value`.
+function setFetchResolving(value: Response): void {
+  routeFetch(createdResponse(), value);
+}
+
+// Every request fails, so the create does.
 function setFetchRejecting(error: Error): void {
   fetchSpy.mockRejectedValue(error);
 }
 
-// The JSON body of the nth fetch the code under test issued.
+// The URLs requested so far, in order.
+function requestUrls(): string[] {
+  return fetchSpy.mock.calls.map((call: unknown[]) => String(call[0]));
+}
+
+// The JSON body of the nth request: an execution's create comes first (0), then its run (1).
 function requestBody(callIndex = 0): any {
   return JSON.parse((fetchSpy.mock.calls[callIndex][1] as RequestInit).body as string);
 }
@@ -688,20 +754,10 @@ describe("executeOperatorAndFormat - request construction", () => {
     state.addLink(makeLink("src", "output-9", "dst", "input-1"));
     setFetchResolving(legacyJsonResponse({ success: true, state: "Completed", operators: {} }));
 
-    await executeOperatorAndFormat(
-      state,
-      makeConfig({ workflowId: 7, computingUnitId: 3, executionTimeoutMs: 4200 }),
-      "dst"
-    );
+    await executeOperatorAndFormat(state, makeConfig({ workflowId: 7, computingUnitId: 3 }), "dst");
 
-    expect(String(fetchSpy.mock.calls[0][0])).toBe("http://localhost:8085/api/execution/7/3/run");
-    expect((fetchSpy.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer tok" });
-
+    // The plan goes to the Dashboard, which compiles it: the create's body carries it.
     const body = requestBody();
-    expect(body.executionName).toBe("agent-execution");
-    // 4200 rather than a round 4500: with 4500 the assertion holds for ceil, round *and*
-    // floor-plus-one, so it would not notice the rounding being changed. 4200 separates them.
-    expect(body.timeoutSeconds).toBe(5);
     expect(body.targetOperatorIds).toEqual(["dst"]);
     expect(body.logicalPlan.opsToViewResult).toEqual(["dst"]);
     expect(body.logicalPlan.links).toEqual([
@@ -724,21 +780,23 @@ describe("executeOperatorAndFormat - request construction", () => {
     );
   });
 
-  test("the execute request carries the picked warehouse, and omits it when none is picked", async () => {
+  test("the create carries the picked warehouse, and omits it when none is picked; the run never names one", async () => {
     // The last hop of the chain: the id has travelled request -> agent ->
-    // delegate config -> here, and the backend refuses a run without it while
+    // delegate config -> here, and the Dashboard refuses a create without it while
     // the feature is enabled (#7751).
     const state = makeState(makeOperator("dst"));
     setFetchResolving(legacyJsonResponse({ success: true, state: "Completed", operators: {} }));
 
     await executeOperatorAndFormat(state, makeConfig({ workflowId: 7, computingUnitId: 3, warehouseId: 42 }), "dst");
-    expect(requestBody().warehouseId).toBe(42);
+    expect(requestBody(0).warehouseId).toBe(42);
+    // The unit finds the warehouse in the URI of the plan the Dashboard stored.
+    expect("warehouseId" in requestBody(1)).toBe(false);
 
     fetchSpy.mockClear();
     setFetchResolving(legacyJsonResponse({ success: true, state: "Completed", operators: {} }));
 
     await executeOperatorAndFormat(state, makeConfig({ workflowId: 7, computingUnitId: 3 }), "dst");
-    expect("warehouseId" in requestBody()).toBe(false);
+    expect("warehouseId" in requestBody(0)).toBe(false);
   });
 
   test("sends the whole workflow, not an upstream slice, when the operator id is empty", async () => {
@@ -791,6 +849,186 @@ describe("executeOperatorAndFormat - request construction", () => {
   });
 });
 
+describe("executeOperatorAndFormat - create, then run", () => {
+  const completed = () => legacyJsonResponse({ success: true, state: "Completed", operators: {} });
+
+  test("creates the execution at the Dashboard, then runs it on the unit by its id and stored plan", async () => {
+    const state = makeState(makeOperator("dst"));
+    // Not the default answer: the run has to name the execution and the plan this create answered.
+    const planUri = "vfs:///wh/user-1-7/wid/7/eid/12/plan";
+    routeFetch(createdResponse({ eid: 12, wid: 7, computingUnitId: 3, planUri }), completed());
+    const controller = new AbortController();
+
+    await executeOperatorAndFormat(
+      state,
+      makeConfig({
+        workflowId: 7,
+        computingUnitId: 3,
+        executionTimeoutMs: 4200,
+        maxOperatorResultCharLimit: 111,
+        maxOperatorResultCellCharLimit: 22,
+      }),
+      "dst",
+      { abortSignal: controller.signal }
+    );
+
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/12/run`]);
+    // Both as the user, and both ended by the same stop.
+    for (const [, init] of fetchSpy.mock.calls) {
+      const request = init as RequestInit;
+      expect(request.method).toBe("POST");
+      expect(request.headers).toEqual({ "Content-Type": "application/json", Authorization: "Bearer tok" });
+      expect(request.signal).toBe(controller.signal);
+    }
+    // Exactly these fields: no settings, which the Dashboard defaults, and no warehouse, as none is picked.
+    expect(requestBody(0)).toEqual({
+      wid: 7,
+      executionName: "agent-execution",
+      engineVersion: "agent",
+      logicalPlan: {
+        operators: [{ operatorID: "dst", operatorType: "TestOp", inputPorts: [], outputPorts: [{ portID: "out-0" }] }],
+        links: [],
+        opsToViewResult: ["dst"],
+        opsToReuseResult: [],
+      },
+      computingUnitId: 3,
+      targetOperatorIds: ["dst"],
+      emailNotificationEnabled: false,
+    });
+    // The unit gets no plan to compile, only where the stored one is. 4200 rather than a round
+    // 4500: with 4500 the timeout holds for ceil, round *and* floor-plus-one, so it would not
+    // notice the rounding being changed. 4200 separates them.
+    expect(requestBody(1)).toEqual({
+      planUri,
+      computingUnitId: 3,
+      targetOperatorIds: ["dst"],
+      timeoutSeconds: 5,
+      maxOperatorResultCharLimit: 111,
+      maxOperatorResultCellCharLimit: 22,
+    });
+  });
+
+  test("names no computing unit as unit 0, which the Dashboard refuses before any unit is asked", async () => {
+    const state = makeState(makeOperator("dst"));
+    const message = "The request names no computing unit: computingUnitId is 0.";
+    routeFetch(refusedResponse(400, "Bad Request", message));
+
+    const out = await executeOperatorAndFormat(state, makeConfig(), "dst");
+
+    expect(requestBody(0).computingUnitId).toBe(0);
+    expect(requestUrls()).toEqual([CREATE_URL]);
+    expect(out).toBe(
+      "[ERROR] Execution failed due to the following error:\nError:\n" +
+        `  Execution could not be created: 400 Bad Request - ${message}`
+    );
+  });
+
+  test("reports each operator's compilation error, naming the operator, and runs nothing", async () => {
+    const { state, source, target } = makeLinearState();
+    routeFetch(
+      compileFailureResponse({
+        [source]: "java.lang.RuntimeException: No file selected.",
+        [target]: "java.lang.RuntimeException: column age does not exist",
+      })
+    );
+    const onResult = mock((_operatorId: string, _info: OperatorExecutionSummary) => {});
+
+    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target, { onResult });
+
+    const expected = [
+      "Execution failed due to the following error:",
+      "Compilation error:",
+      `  ${source}: java.lang.RuntimeException: No file selected.`,
+      `  ${target}: java.lang.RuntimeException: column age does not exist`,
+    ].join("\n");
+    expect(out).toBe(`[ERROR] ${expected}`);
+    // There is no execution to run.
+    expect(requestUrls()).toEqual([CREATE_URL]);
+    // The target is told of the failure, as it is of any run that does not complete.
+    expect(onResult).toHaveBeenCalledTimes(1);
+    const [notifiedId, info] = onResult.mock.calls[0];
+    expect(notifiedId).toBe(target);
+    expect(info.state).toBe(OperatorState.FAILED);
+    expect(info.errorMessages.map(error => error.message)).toEqual([expected]);
+  });
+
+  test.each([
+    [400, "Bad Request", "a warehouse must be selected for this execution"],
+    [403, "Forbidden", "You may not run workflows on computing unit 3."],
+    [409, "Conflict", "computing unit 3 is terminated"],
+    [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+  ])("reports a create refused with %d, and runs nothing", async (status, statusText, message) => {
+    const { state, target } = makeLinearState();
+    routeFetch(refusedResponse(status, statusText, message));
+
+    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
+
+    expect(out).toBe(
+      "[ERROR] Execution failed due to the following error:\nError:\n" +
+        `  Execution could not be created: ${status} ${statusText} - ${message}`
+    );
+    expect(requestUrls()).toEqual([CREATE_URL]);
+  });
+
+  test("reports a create whose answer names no stored plan, and runs nothing", async () => {
+    const { state, target } = makeLinearState();
+    routeFetch(createdResponse({ eid: 345, wid: 1, computingUnitId: 3 }), completed());
+
+    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
+
+    expect(out).toStartWith("[ERROR] Execution failed due to the following error:\nError:\n");
+    expect(out).toContain("Invalid create-execution response");
+    expect(requestUrls()).toEqual([CREATE_URL]);
+  });
+
+  test("reports why the unit refused to start the execution", async () => {
+    const { state, target } = makeLinearState();
+    routeFetch(
+      createdResponse(),
+      legacyJsonResponse({
+        success: false,
+        state: "Error",
+        operators: {},
+        errors: ["execution 345 was already started"],
+      })
+    );
+
+    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
+
+    expect(out).toBe(
+      "[ERROR] Execution failed due to the following error:\nError:\n  execution 345 was already started"
+    );
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/345/run`]);
+  });
+
+  test("reports a unit that cannot be reached once the execution is created", async () => {
+    const { state, target } = makeLinearState();
+    routeFetch(createdResponse(), new Error("connection refused"));
+
+    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
+
+    expect(out).toBe("[ERROR] Execution failed due to the following error:\nError:\n  connection refused");
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/345/run`]);
+  });
+
+  test("creates at the Dashboard, and runs at the unit's own endpoint where each unit has one", async () => {
+    // In K8s each unit is a pod of its own, reached through EXECUTION_ENDPOINT_TEMPLATE. Only the
+    // run goes there: no unit creates executions.
+    const saved = env.EXECUTION_ENDPOINT_TEMPLATE;
+    env.EXECUTION_ENDPOINT_TEMPLATE = "http://computing-unit-{cuid}.pool.svc:8085";
+    try {
+      const state = makeState(makeOperator("dst"));
+      routeFetch(createdResponse(), completed());
+
+      await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), "dst");
+
+      expect(requestUrls()).toEqual([CREATE_URL, "http://computing-unit-3.pool.svc:8085/api/execution/345/run"]);
+    } finally {
+      env.EXECUTION_ENDPOINT_TEMPLATE = saved;
+    }
+  });
+});
+
 describe("executeOperatorAndFormat - abort and callback failures", () => {
   test("re-throws AbortError raised by the HTTP layer", async () => {
     const { state, target } = makeLinearState();
@@ -801,6 +1039,33 @@ describe("executeOperatorAndFormat - abort and callback failures", () => {
     await expect(
       executeOperatorAndFormat(state, makeConfig(), target, { abortSignal: new AbortController().signal })
     ).rejects.toThrow("aborted");
+  });
+
+  test("re-throws AbortError raised while the unit runs the execution", async () => {
+    const { state, target } = makeLinearState();
+    const abortErr = new Error("aborted during the run");
+    abortErr.name = "AbortError";
+    routeFetch(createdResponse(), abortErr);
+
+    await expect(
+      executeOperatorAndFormat(state, makeConfig(), target, { abortSignal: new AbortController().signal })
+    ).rejects.toThrow("aborted during the run");
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/345/run`]);
+  });
+
+  test("does not ask the unit to run an execution once the run has been stopped", async () => {
+    const { state, target } = makeLinearState();
+    const controller = new AbortController();
+    fetchSpy.mockImplementation(async () => {
+      // The stop arrives as the Dashboard answers the create: too late to end that request.
+      controller.abort();
+      return createdResponse();
+    });
+
+    await expect(
+      executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target, { abortSignal: controller.signal })
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(requestUrls()).toEqual([CREATE_URL]);
   });
 
   test("wraps a throwing onResult callback into an error result", async () => {
@@ -860,15 +1125,22 @@ describe("createExecuteOperatorTool", () => {
     const out = await runTool(executeTool, target);
     // Invoked twice, with the workflow id changing in between. One invocation cannot tell
     // per-invocation resolution from a config captured once when the tool was built: the call
-    // count is 1 either way. The second URL is what proves the later config is the one used.
+    // count is 1 either way. The second create is what proves the later config is the one used.
     workflowId = 43;
     setFetchResolving(jsonResponse(summary)); // a Response body is single-use
     await runTool(executeTool, target);
 
     expect(getConfig).toHaveBeenCalledTimes(2);
     expect(out).toContain(`Executed operator ${target}`);
-    expect(String(fetchSpy.mock.calls[0][0])).toContain("/api/execution/42/2/run");
-    expect(String(fetchSpy.mock.calls[1][0])).toContain("/api/execution/43/2/run");
+    // Each invocation creates its own execution, then runs it.
+    expect(requestUrls()).toEqual([
+      CREATE_URL,
+      `${UNIT}/api/execution/345/run`,
+      CREATE_URL,
+      `${UNIT}/api/execution/345/run`,
+    ]);
+    expect(requestBody(0)).toMatchObject({ wid: 42, computingUnitId: 2 });
+    expect(requestBody(2)).toMatchObject({ wid: 43, computingUnitId: 2 });
     expect(onResult).toHaveBeenCalledTimes(2);
     expect(onResult).toHaveBeenCalledWith(target, expect.anything());
   });

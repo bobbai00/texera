@@ -51,6 +51,154 @@ export interface LogicalPlan {
   opsToReuseResult?: string[];
 }
 
+function makeWorkflowError(type: WorkflowFatalErrorType, message: string, operatorId: string): WorkflowFatalError {
+  const now = Date.now();
+  return {
+    type: { name: type },
+    timestamp: { seconds: Math.floor(now / 1000), nanos: (now % 1000) * 1_000_000 },
+    message,
+    details: "",
+    operatorId,
+    workerId: "",
+  };
+}
+
+/**
+ * The body of `POST /api/executions` on the Dashboard service (amber's `CreateExecutionRequest`).
+ * The Dashboard creates the execution without a computing unit: it checks the user's rights,
+ * compiles the workflow for them and stores the plan that the unit is then asked to run.
+ */
+export interface CreateExecutionRequest {
+  wid: number;
+  executionName: string;
+  // Names what asks for the execution; the Dashboard keeps it with the execution.
+  engineVersion: string;
+  logicalPlan: LogicalPlan;
+  computingUnitId: number;
+  // The user's warehouse the run writes into: required while per-user warehouses are enabled,
+  // refused while they are disabled.
+  warehouseId?: number;
+  // With exactly one operator, only it and the operators upstream of it are compiled and run.
+  targetOperatorIds: string[];
+  emailNotificationEnabled: boolean;
+}
+
+/** What a create answers with (201, amber's `CreateExecutionResponse`), as far as it is read. */
+export interface CreatedExecution {
+  eid: number;
+  // The execution's plan table, which the computing unit starts the execution from.
+  planUri: string;
+}
+
+/**
+ * The body of `POST /api/execution/{eid}/run` on a computing unit (amber's `SyncRunRequest`): run
+ * execution `eid`, which the Dashboard created for this unit, from its stored plan. The unit
+ * answers with the legacy sync-execution result, which `adaptLegacySyncExecutionResult` reads.
+ */
+export interface RunExecutionRequest {
+  // The execution's plan table, as the create answered it.
+  planUri: string;
+  // The computing unit the execution was created for: the one asked.
+  computingUnitId: number;
+  // The operators whose results are answered.
+  targetOperatorIds: string[];
+  timeoutSeconds: number;
+  maxOperatorResultCharLimit: number;
+  maxOperatorResultCellCharLimit: number;
+}
+
+// Only the fields that are read are validated: the answer also names the workflow and the unit.
+const createdExecutionSchema = z.object({
+  eid: z.number().int().positive(),
+  planUri: z.string().min(1),
+});
+
+/** The execution that a create's 201 names. Throws when the answer names none. */
+export function parseCreatedExecution(input: unknown): CreatedExecution {
+  const parsed = createdExecutionSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(`Invalid create-execution response: ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
+
+// A WorkflowFatalError as the Dashboard writes one. Only its message is read: an operator's error
+// is listed under the operator's id.
+const compileErrorSchema = z.object({ message: z.string() });
+
+// What the Dashboard answers for a workflow that does not compile (amber's `CreateExecutionFailure`).
+const compileFailureSchema = z.object({
+  operatorErrors: z.record(compileErrorSchema),
+  errors: z.array(compileErrorSchema).nullish(),
+});
+
+// What the Dashboard answers for any other create it refuses: `{code, message}`.
+const refusalSchema = z.object({ message: z.string() });
+
+function parseJsonOrUndefined(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The compilation errors that a create's answer lists, when the answer is the one for a workflow
+ * that does not compile: a 400 `{eid, operatorErrors, errors}`. Each operator's error comes first
+ * and names its operator, in the order the Dashboard lists them (the workflow's: an operator
+ * before those downstream of it); the errors of no operator follow. Empty for any other answer.
+ */
+function compilationErrorsOf(status: number, json: unknown): WorkflowFatalError[] {
+  if (status !== 400) {
+    return [];
+  }
+  const failure = compileFailureSchema.safeParse(json);
+  if (!failure.success) {
+    return [];
+  }
+  const { operatorErrors, errors } = failure.data;
+  return [
+    ...Object.entries(operatorErrors).map(([operatorId, error]) =>
+      makeWorkflowError(WorkflowFatalErrorType.COMPILATION_ERROR, error.message, operatorId)
+    ),
+    ...(errors ?? []).map(error => makeWorkflowError(WorkflowFatalErrorType.COMPILATION_ERROR, error.message, "")),
+  ];
+}
+
+/**
+ * The summary of a create that the Dashboard did not answer with an execution: any status but 2xx.
+ *
+ * A workflow that does not compile is a compilation failure, with the errors the answer lists
+ * (`compilationErrorsOf`); the Dashboard has recorded the execution as failed. Any other answer is
+ * an error that names the status and what the Dashboard said: the message of a refusal
+ * `{code, message}` (400 for a request it will not take, 403 without the rights, 409 for a
+ * terminated unit, 500 when the plan cannot be made or stored), or else the body as it is, such
+ * as a proxy's.
+ */
+export function adaptCreateExecutionFailure(
+  status: number,
+  statusText: string,
+  body: string
+): WorkflowExecutionSummary {
+  const json = parseJsonOrUndefined(body);
+  const compilationErrors = compilationErrorsOf(status, json);
+  if (compilationErrors.length > 0) {
+    return { state: WorkflowExecutionState.COMPILATION_FAILED, operators: {}, errors: compilationErrors };
+  }
+
+  const refusal = refusalSchema.safeParse(json);
+  const reason = refusal.success ? refusal.data.message : body;
+  const answer = [`${status} ${statusText}`.trim(), reason.trim()].filter(Boolean).join(" - ");
+  return {
+    state: WorkflowExecutionState.ERROR,
+    operators: {},
+    errors: [
+      makeWorkflowError(WorkflowFatalErrorType.EXECUTION_FAILURE, `Execution could not be created: ${answer}`, ""),
+    ],
+  };
+}
+
 /**
  * TEMPORARY BACKEND COMPATIBILITY LAYER.
  *
@@ -152,18 +300,6 @@ function adaptConsoleMessages(
     consoleMessageTypes.has(message.msgType) ? [{ ...message, msgType: message.msgType as ConsoleMessageType }] : []
   );
   return messages.length > 0 ? messages : undefined;
-}
-
-function makeWorkflowError(type: WorkflowFatalErrorType, message: string, operatorId: string): WorkflowFatalError {
-  const now = Date.now();
-  return {
-    type: { name: type },
-    timestamp: { seconds: Math.floor(now / 1000), nanos: (now % 1000) * 1_000_000 },
-    message,
-    details: "",
-    operatorId,
-    workerId: "",
-  };
 }
 
 function adaptOperatorInfo(

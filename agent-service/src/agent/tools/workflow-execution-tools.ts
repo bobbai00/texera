@@ -21,9 +21,18 @@ import { z } from "zod";
 import { tool } from "ai";
 import { createErrorResult, formatOperatorOutput, getOperatorErrorText } from "./tools-utility";
 import type { WorkflowState } from "../workflow-state";
+import { createAuthHeaders } from "../../api/auth-api";
 import { getBackendConfig } from "../../api/backend-api";
 import { env } from "../../config/env";
-import { adaptLegacySyncExecutionResult, type LogicalPlan, type LogicalLink } from "../../api/execution-api";
+import {
+  adaptCreateExecutionFailure,
+  adaptLegacySyncExecutionResult,
+  parseCreatedExecution,
+  type CreateExecutionRequest,
+  type LogicalPlan,
+  type LogicalLink,
+  type RunExecutionRequest,
+} from "../../api/execution-api";
 import {
   OperatorState,
   WorkflowFatalErrorType,
@@ -248,6 +257,14 @@ function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?: string
   };
 }
 
+/**
+ * Runs the workflow as the user, in two calls. The Dashboard service creates the execution: it
+ * checks the user's rights, compiles the workflow for them and stores the plan. The computing
+ * unit then runs that execution by its id, from the stored plan, and answers with its results.
+ *
+ * The unit is asked only once the Dashboard has created the execution: not when it refuses the
+ * create, not when the workflow does not compile, and not when the run was stopped meanwhile.
+ */
 async function executeWorkflowHttp(
   config: ExecutionConfig,
   logicalPlan: LogicalPlan,
@@ -255,62 +272,91 @@ async function executeWorkflowHttp(
 ): Promise<WorkflowExecutionSummary> {
   const backendConfig = getBackendConfig();
 
-  const workflowId = config.workflowId;
   const computingUnitId = config.computingUnitId ?? 0;
+  const targetOperatorIds = logicalPlan.opsToViewResult ?? [];
 
   // In k8s each computing unit is a separate pod, so the endpoint varies per cuid.
   const executionEndpoint = env.EXECUTION_ENDPOINT_TEMPLATE
     ? env.EXECUTION_ENDPOINT_TEMPLATE.replace("{cuid}", String(computingUnitId))
     : backendConfig.executionEndpoint;
 
-  const url = `${executionEndpoint}/api/execution/${workflowId}/${computingUnitId}/run`;
-
   const timeoutSeconds = config.executionTimeoutMs
     ? Math.ceil(config.executionTimeoutMs / 1000)
     : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
 
-  const request = {
-    executionName: "agent-execution",
-    logicalPlan: {
-      operators: logicalPlan.operators,
-      links: logicalPlan.links,
-      opsToViewResult: logicalPlan.opsToViewResult || [],
-      opsToReuseResult: [],
-    },
-    targetOperatorIds: logicalPlan.opsToViewResult || [],
-    timeoutSeconds,
-    maxOperatorResultCharLimit: config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
-    maxOperatorResultCellCharLimit:
-      config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
-    ...(config.warehouseId !== undefined ? { warehouseId: config.warehouseId } : {}),
-  };
-
-  log.debug(
-    {
-      url,
-      maxOperatorResultCharLimit: request.maxOperatorResultCharLimit,
-      maxOperatorResultCellCharLimit: request.maxOperatorResultCellCharLimit,
-    },
-    "executing workflow"
-  );
-
-  try {
-    const response = await fetch(url, {
+  const postAsUser = (url: string, body: CreateExecutionRequest | RunExecutionRequest): Promise<Response> =>
+    fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.userToken}`,
-      },
-      body: JSON.stringify(request),
+      headers: createAuthHeaders(config.userToken),
+      body: JSON.stringify(body),
       signal: options.abortSignal,
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Execution request failed: ${response.status} ${response.statusText} - ${errorText}`);
+  try {
+    const createUrl = `${backendConfig.apiEndpoint}/api/executions`;
+    // No workflowSettings: the Dashboard creates the execution with the default ones.
+    const createRequest: CreateExecutionRequest = {
+      wid: config.workflowId,
+      executionName: "agent-execution",
+      engineVersion: "agent",
+      logicalPlan: {
+        operators: logicalPlan.operators,
+        links: logicalPlan.links,
+        opsToViewResult: targetOperatorIds,
+        opsToReuseResult: [],
+      },
+      computingUnitId,
+      warehouseId: config.warehouseId,
+      targetOperatorIds,
+      emailNotificationEnabled: false,
+    };
+
+    log.debug({ url: createUrl, computingUnitId }, "creating execution");
+    const createResponse = await postAsUser(createUrl, createRequest);
+
+    if (!createResponse.ok) {
+      const failure = adaptCreateExecutionFailure(
+        createResponse.status,
+        createResponse.statusText,
+        await createResponse.text()
+      );
+      log.info({ status: createResponse.status, state: failure.state }, "execution not created");
+      return failure;
     }
 
-    return adaptLegacySyncExecutionResult(await response.json());
+    const execution = parseCreatedExecution(await createResponse.json());
+
+    // A stop that arrived while the Dashboard created the execution: the unit is not asked to run it.
+    options.abortSignal?.throwIfAborted();
+
+    const runUrl = `${executionEndpoint}/api/execution/${execution.eid}/run`;
+    const runRequest: RunExecutionRequest = {
+      planUri: execution.planUri,
+      computingUnitId,
+      targetOperatorIds,
+      timeoutSeconds,
+      maxOperatorResultCharLimit:
+        config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
+      maxOperatorResultCellCharLimit:
+        config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
+    };
+
+    log.debug(
+      {
+        url: runUrl,
+        maxOperatorResultCharLimit: runRequest.maxOperatorResultCharLimit,
+        maxOperatorResultCellCharLimit: runRequest.maxOperatorResultCellCharLimit,
+      },
+      "running execution"
+    );
+    const runResponse = await postAsUser(runUrl, runRequest);
+
+    if (!runResponse.ok) {
+      const errorText = await runResponse.text();
+      throw new Error(`Execution request failed: ${runResponse.status} ${runResponse.statusText} - ${errorText}`);
+    }
+
+    return adaptLegacySyncExecutionResult(await runResponse.json());
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw error;
@@ -338,7 +384,8 @@ function formatExecutionError(
   if (compilationErrors.length > 0) {
     lines.push("Compilation error:");
     for (const error of compilationErrors) {
-      lines.push(`  ${error.message}`);
+      // A compilation error found on an operator names it, as an execution error does.
+      lines.push(error.operatorId ? `  ${error.operatorId}: ${error.message}` : `  ${error.message}`);
     }
   }
 
@@ -391,7 +438,7 @@ export async function executeOperatorAndFormat(
     }
 
     // Only block on the target operator's validation errors; upstream issues will
-    // surface as runtime errors that correctly identify the failing operator.
+    // surface as compilation or runtime errors that correctly identify the failing operator.
     const validationResult = validateWorkflow(workflowState);
     if (!validationResult.isValid) {
       const targetErrors = validationResult.errors[operatorId];

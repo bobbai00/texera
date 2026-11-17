@@ -128,6 +128,7 @@ export interface WorkflowExecutionSummary {
   readonly state: WorkflowExecutionState;
   readonly operators: Readonly<Record<string, OperatorExecutionSummary>>;
   // Workflow-level errors (timeouts, init/compile failures, fatal errors);
-  // empty means none. For workflow-level failures, operatorId/workerId are empty.
+  // empty means none. A compilation error names the operator it was found on,
+  // when that is known; operatorId/workerId are otherwise empty.
   readonly errors: ReadonlyArray<WorkflowFatalError>;
 }

@@ -895,6 +895,12 @@ describe("delegate mode", () => {
     },
   });
 
+  /** The execution the Dashboard creates for each run; the unit is then asked to run it by its id. */
+  const created = { eid: 21, wid: 7, computingUnitId: 0, planUri: "vfs:///wid/7/eid/21/plan" };
+
+  /** The paths of the execution calls made so far: a create, then a run, per execution. */
+  const executionPaths = () => urls.filter(u => u.includes("/api/execution")).map(u => new URL(u).pathname);
+
   /** Routes each backend call the agent makes to a canned body, and records the URL. */
   function dispatch(execBody: any, seed: any = srcOp("op-1")) {
     fetchSpy.mockImplementation((async (u: any) => {
@@ -904,6 +910,7 @@ describe("delegate mode", () => {
         return { ok: true, json: async () => ({ operatorOutputSchemas: {}, operatorErrors: {} }) } as any;
       if (url.includes("/api/workflow/persist")) return { ok: true, json: async () => wfBody([]) } as any;
       if (url.includes("/api/workflow/")) return { ok: true, json: async () => wfBody([seed]) } as any;
+      if (url.endsWith("/api/executions")) return { ok: true, status: 201, json: async () => created } as any;
       return { ok: true, json: async () => execBody } as any;
     }) as any);
   }
@@ -1018,7 +1025,8 @@ describe("delegate mode", () => {
       await agent.sendMessage("modify it");
       const steps = agent.getAllSteps();
       const txt2 = (model as any).doGenerateCalls[1].prompt[1].content[0].text;
-      expect(urls.some(u => u.includes("/api/execution/7/0/run"))).toBe(true);
+      // Created at the Dashboard, then run on the unit by the created execution's id.
+      expect(executionPaths()).toEqual(["/api/executions", "/api/execution/21/run"]);
       const entry = agent.getWorkflowResultState().get("op-1");
       expect(entry?.stepId).toBe(steps[1].id);
       expect(entry?.operatorInfo.state).toBe(OperatorState.COMPLETED);
@@ -1068,7 +1076,7 @@ describe("delegate mode", () => {
       agent.setDelegateConfig({ userToken: "tok", workflowId: 7, workflowName: "w" });
       await agent.sendMessage("run it");
       const steps = agent.getAllSteps();
-      expect(urls.filter(u => u.includes("/api/execution/")).length).toBe(1);
+      expect(executionPaths()).toEqual(["/api/executions", "/api/execution/21/run"]);
       expect(agent.getWorkflowResultState().get("op-1")?.stepId).toBe(steps[0].id);
     } finally {
       vSpy.mockRestore();
@@ -1103,7 +1111,8 @@ describe("delegate mode", () => {
     await agent.sendMessage("bad call");
     const step = agent.getAllSteps()[1];
     expect(step.toolResults).toEqual([]);
-    expect(urls.some(u => u.includes("/api/execution/"))).toBe(false);
+    // Neither created nor run.
+    expect(executionPaths()).toEqual([]);
   });
 
   test("a rejected modification suppresses the follow-up execution", async () => {
@@ -1153,7 +1162,8 @@ describe("delegate mode", () => {
       await agent.sendMessage("bad props");
       const step = agent.getAllSteps()[1];
       expect(String(step.toolResults?.[0]?.output)).toStartWith("[ERROR]");
-      expect(urls.some(u => u.includes("/api/execution/"))).toBe(false);
+      // Neither created nor run.
+      expect(executionPaths()).toEqual([]);
     } finally {
       // The swap must be undone even on a failed assertion, or the stub metadata leaks into
       // every later test that touches the singleton.
