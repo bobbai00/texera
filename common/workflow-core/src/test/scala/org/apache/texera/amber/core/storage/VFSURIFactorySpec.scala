@@ -97,6 +97,28 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     assert(resourceType == VFSResourceType.CONSOLE_MESSAGES)
   }
 
+  it should "name one table for the whole execution when it is given no operator" in {
+    val uri =
+      VFSURIFactory.createConsoleMessagesURI(WorkflowIdentity(12L), ExecutionIdentity(345L), None)
+    assert(uri.toString == "vfs:///wid/12/eid/345/consolemessages")
+    val inWarehouse = VFSURIFactory.createConsoleMessagesURI(
+      WorkflowIdentity(12L),
+      ExecutionIdentity(345L),
+      Some("user-1-7")
+    )
+    assert(inWarehouse.toString == "vfs:///wh/user-1-7/wid/12/eid/345/consolemessages")
+
+    Seq(uri, inWarehouse).foreach { consoleUri =>
+      val components = VFSURIFactory.decodeURI(consoleUri)
+      assert(components.resourceType == VFSResourceType.CONSOLE_MESSAGES)
+      assert(components.workflowId == WorkflowIdentity(12L))
+      assert(components.executionId == ExecutionIdentity(345L))
+      assert(components.globalPortId.isEmpty)
+    }
+    assert(VFSURIFactory.decodeURI(uri).warehouse.isEmpty)
+    assert(VFSURIFactory.decodeURI(inWarehouse).warehouse.contains("user-1-7"))
+  }
+
   "VFSURIFactory.createPlanURI" should "name the execution's plan table without an operator or a port" in {
     val uri = VFSURIFactory.createPlanURI(WorkflowIdentity(12L), ExecutionIdentity(345L))
     assert(uri.toString == "vfs:///wid/12/eid/345/plan")

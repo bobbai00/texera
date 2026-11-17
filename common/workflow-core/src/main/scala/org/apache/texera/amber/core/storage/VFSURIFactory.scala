@@ -243,6 +243,22 @@ object VFSURIFactory {
   }
 
   /**
+    * Create a URI pointing to the one table that holds the console messages of all operators
+    * of an execution: `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/consolemessages`.
+    */
+  def createConsoleMessagesURI(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      warehouse: Option[String]
+  ): URI =
+    createNonResultVFSURI(
+      VFSResourceType.CONSOLE_MESSAGES,
+      workflowId,
+      executionId,
+      warehouse = warehouse
+    )
+
+  /**
     * Internal helper to create URI pointing to a VFS resource for resource types other than `RESULT`.
     * The URI can be used by the DocumentFactory to create resource or open resource.
     *
@@ -251,8 +267,8 @@ object VFSURIFactory {
     * @param executionId    Execution identifier.
     * @param operatorId     Operator identifier.
     * @return A VFS URI
-    * @throws java.lang.IllegalArgumentException if `resourceType` is `RESULT`, if `operatorId` is provided for
-    *                                  `RUNTIME_STATISTICS`, or if `operatorId` is not provided for `CONSOLE_MESSAGES`.
+    * @throws java.lang.IllegalArgumentException if `resourceType` is `RESULT`, or if `operatorId` is provided for
+    *                                  `RUNTIME_STATISTICS`.
     */
   private def createNonResultVFSURI(
       resourceType: VFSResourceType.Value,
@@ -271,12 +287,6 @@ object VFSURIFactory {
     if (resourceType == VFSResourceType.RUNTIME_STATISTICS && operatorId.isDefined) {
       throw new IllegalArgumentException(
         "Runtime statistics URI should not contain operatorId."
-      )
-    }
-
-    if (resourceType == VFSResourceType.CONSOLE_MESSAGES && operatorId.isEmpty) {
-      throw new IllegalArgumentException(
-        "Console messages URI should contain operatorId."
       )
     }
 
