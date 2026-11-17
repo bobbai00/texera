@@ -90,8 +90,8 @@ object WorkflowService extends LazyLogging {
     *  1. A user is required.
     *  1. The URI is checked before any catalog is opened ([[StoredExecutionStart.checkUri]]).
     *  1. The plan row is read with `readPlan`, and checked: made for `user` and `cuid`, of the
-    *     execution the table is of, with no input link expired
-    *     ([[StoredExecutionStart.checkRecord]]).
+    *     execution the table is of, with its replay logs where this unit keeps them and no input
+    *     link expired ([[StoredExecutionStart.checkRecord]]).
     *
     * It reads the plan row and writes nothing.
     *

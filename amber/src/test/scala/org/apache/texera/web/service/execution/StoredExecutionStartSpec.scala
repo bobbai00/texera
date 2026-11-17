@@ -45,6 +45,7 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalPlanCodec,
   PlanInput,
   PortIdentity,
+  ReplaySource,
   WorkflowContext,
   WorkflowSettings
 }
@@ -111,7 +112,9 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       workflow: Long = wid,
       execution: Long = eid,
       warehouse: Option[String] = None,
-      inputs: Seq[PlanInput] = Seq.empty
+      inputs: Seq[PlanInput] = Seq.empty,
+      replay: Option[URI] = None,
+      replayLog: Option[URI] = None
   ): String =
     PhysicalPlanCodec.toJson(
       PhysicalPlanCodec.encode(
@@ -123,6 +126,8 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
             warehouse = warehouse
           ),
           PhysicalPlan(Set(source("lines", workflow, execution)), Set.empty),
+          replay = replay.map(ReplaySource(ExecutionIdentity(execution - 1), _, "interaction-1")),
+          replayLog = replayLog,
           inputs = inputs
         )
       )
@@ -143,14 +148,25 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   private val now = Instant.parse("2026-11-16T12:00:00Z").toEpochMilli
 
+  /** What executions' replay logs are resolved against on the unit of the checks below. */
+  private val logRoot = new URI("file:///var/texera/replay-logs/")
+
   private def checkRecord(
       planRecord: PlanRecord,
       uri: URI = planUri(),
       user: Int = uid,
       unit: Int = cuid,
-      nowMs: Long = now
+      nowMs: Long = now,
+      replayLogRoot: Option[URI] = Some(logRoot)
   ): Either[String, ExecutionPlan] =
-    StoredExecutionStart.checkRecord(planRecord, VFSURIFactory.decodeURI(uri), user, unit, nowMs)
+    StoredExecutionStart.checkRecord(
+      planRecord,
+      VFSURIFactory.decodeURI(uri),
+      user,
+      unit,
+      nowMs,
+      replayLogRoot
+    )
 
   private def input(name: String, expiresAtMs: Long): PlanInput =
     PlanInput(OperatorIdentity("lines"), name, expiresAtMs)
@@ -334,6 +350,78 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       .getOrElse(fail("refused"))
     plan.inputs.map(_.name) shouldBe Seq("a.csv")
     checkRecord(record()).map(_.inputs) shouldBe Right(Seq.empty)
+  }
+
+  it should "pass a plan that replays and writes replay logs where this unit keeps them" in {
+    // As the Dashboard names an execution's log, and in the other spelling of the same place.
+    val replayed = logRoot.resolve(s"$wid/${eid - 1}/")
+    val written = new URI(s"file:/var/texera/replay-logs/$wid/$eid/")
+    val plan = checkRecord(
+      record(body = savedPlan(replay = Some(replayed), replayLog = Some(written)))
+    ).getOrElse(fail("refused"))
+    plan.replay.map(_.logLocation) shouldBe Some(replayed)
+    plan.replayLog shouldBe Some(written)
+
+    // A root that names no directory is resolved against as the Dashboard resolves against it.
+    val noSlash = new URI("file:///var/texera/replay-logs")
+    checkRecord(
+      record(body = savedPlan(replayLog = Some(noSlash.resolve(s"$wid/$eid/")))),
+      replayLogRoot = Some(noSlash)
+    ).isRight shouldBe true
+    // A plan that names no replay log needs the unit to keep none.
+    checkRecord(record(), replayLogRoot = None).isRight shouldBe true
+  }
+
+  it should "refuse a plan that replays, or writes, a replay log anywhere else" in {
+    // Each with how the refusal names it: without a query, which may hold a secret.
+    val elsewhere = Seq(
+      "file:///etc/texera/" -> "file:/etc/texera/",
+      // a directory beside the unit's, whose name starts as its name does
+      "file:///var/texera/replay-logs-old/1/2/" -> "file:/var/texera/replay-logs-old/1/2/",
+      // a path that steps out of the unit's directory, plainly and escaped
+      "file:///var/texera/replay-logs/../secrets/" -> "file:/var/texera/replay-logs/../secrets/",
+      "file:///var/texera/replay-logs/%2e%2e/secrets/" ->
+        "file:/var/texera/replay-logs/../secrets/",
+      // the same path on another host, in another scheme, and with more than a path
+      "file://another-host/var/texera/replay-logs/1/2/" ->
+        "file://another-host/var/texera/replay-logs/1/2/",
+      "hdfs://namenode:8020/var/texera/replay-logs/1/2/" ->
+        "hdfs://namenode:8020/var/texera/replay-logs/1/2/",
+      "file:///var/texera/replay-logs/1/2/?version=3" -> "file:/var/texera/replay-logs/1/2/",
+      "http://169.254.169.254/latest/meta-data/" -> "http://169.254.169.254/latest/meta-data/"
+    )
+    elsewhere.foreach {
+      case (log, shown) =>
+        withClue(s"$log: ") {
+          checkRecord(record(body = savedPlan(replay = Some(new URI(log))))) shouldBe Left(
+            s"the plan replays the log at $shown, outside where this computing unit keeps " +
+              "replay logs"
+          )
+          checkRecord(record(body = savedPlan(replayLog = Some(new URI(log))))) shouldBe Left(
+            s"the plan writes its replay log to $shown, outside where this computing unit " +
+              "keeps replay logs"
+          )
+        }
+    }
+  }
+
+  it should "refuse a plan that names a replay log on a unit that keeps none" in {
+    val log = Some(logRoot.resolve(s"$wid/$eid/"))
+    val shown = s"file:/var/texera/replay-logs/$wid/$eid/"
+    checkRecord(record(body = savedPlan(replay = log)), replayLogRoot = None) shouldBe
+      Left(s"the plan replays the log at $shown, and this computing unit keeps no replay logs")
+    checkRecord(record(body = savedPlan(replayLog = log)), replayLogRoot = None) shouldBe Left(
+      s"the plan writes its replay log to $shown, and this computing unit keeps no replay logs"
+    )
+  }
+
+  it should "check the plan's replay logs before its input links" in {
+    val body = savedPlan(
+      inputs = Seq(input("a.csv", now - 1000)),
+      replayLog = Some(new URI("file:///etc/texera/"))
+    )
+    checkRecord(record(body = body)).left.getOrElse(fail("passed")) should
+      startWith("the plan writes its replay log to file:/etc/texera/")
   }
 
   // --- withoutSecrets ---
