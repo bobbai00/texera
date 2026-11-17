@@ -19,7 +19,7 @@
 
 package org.apache.texera.web.service
 
-import org.apache.texera.amber.core.storage.LakeFSInputLinker
+import org.apache.texera.amber.core.storage.{LakeFSDatasetVersionLister, LakeFSInputLinker}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   CostHints,
@@ -91,6 +91,10 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
 
   "PlanToRun.bindingsFor" should "bind a plan to the links the deployment's linker signs" in {
     PlanToRun.bindingsFor(7).inputLinker should be theSameInstanceAs LakeFSInputLinker.forDeployment
+  }
+
+  it should "bind a plan to the listings of the dataset versions LakeFS keeps" in {
+    PlanToRun.bindingsFor(7).lister shouldBe a[LakeFSDatasetVersionLister]
   }
 
   "PlanToRun.make" should

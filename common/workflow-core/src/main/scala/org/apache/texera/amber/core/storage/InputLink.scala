@@ -53,7 +53,8 @@ object InputLink {
   * Makes the links a plan's operators read their files through, when the plan is made to run.
   *
   * A linker checks no access: it links whatever file it is handed. It is to be handed only files
-  * a [[ScanFileResolver]] resolved for the plan's user, which is where access is checked.
+  * a [[ScanFileResolver]] resolved, or a [[DatasetVersionLister]] listed, for the plan's user,
+  * which is where access is checked.
   */
 trait InputLinker {
 
@@ -65,6 +66,13 @@ trait InputLinker {
     *                                                       answering, is thrown as it is.
     */
   def link(fileUri: URI): InputLink
+
+  /**
+    * Links `file`, a file a [[DatasetVersionLister]] listed. Its listing says where the file is
+    * kept and how large it is, so nothing is asked about it: thousands of listed files are
+    * linked without a lookup for each.
+    */
+  def linkListed(file: ListedFile): InputLink
 }
 
 object InputLinker {
@@ -73,8 +81,11 @@ object InputLinker {
     * Links nothing. For a compile that makes no plan to run, which never asks; a plan made to run
     * with it fails on the first file it reads rather than running without a link to it.
     */
-  val Unavailable: InputLinker = fileUri =>
-    throw new IllegalStateException(
-      s"No linker for input files was given, so $fileUri cannot be linked."
-    )
+  val Unavailable: InputLinker = new InputLinker {
+    override def link(fileUri: URI): InputLink = throw noLinker(fileUri.toString)
+    override def linkListed(file: ListedFile): InputLink = throw noLinker(file.logicalPath)
+
+    private def noLinker(file: String): IllegalStateException =
+      new IllegalStateException(s"No linker for input files was given, so $file cannot be linked.")
+  }
 }

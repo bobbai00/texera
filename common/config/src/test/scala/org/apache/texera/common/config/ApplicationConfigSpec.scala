@@ -53,6 +53,7 @@ class ApplicationConfigSpec extends AnyFlatSpec with Matchers {
     ifUnset("CONSTANTS_RUNTIME_STATISTICS_PERSISTENCE_INTERVAL")(
       ApplicationConfig.getRuntimeStatisticsPersistenceIntervalInMs shouldBe 2000L
     )
+    ifUnset("CONSTANTS_MAX_LISTED_FILES")(ApplicationConfig.maxListedFiles shouldBe 10000)
   }
 
   "ApplicationConfig flow control" should "load credit and polling defaults" in {

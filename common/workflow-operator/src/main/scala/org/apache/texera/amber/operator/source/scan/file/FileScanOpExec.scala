@@ -20,12 +20,10 @@
 package org.apache.texera.amber.operator.source.scan.file
 
 import org.apache.texera.amber.core.executor.OperatorExecutor
-import org.apache.texera.amber.core.storage.{DocumentFactory, FileResolver}
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
-import java.net.URI
-import java.nio.file.{Files, Paths}
+import java.io.FileNotFoundException
 
 class FileScanOpExec private[scan] (
     descString: String
@@ -33,11 +31,25 @@ class FileScanOpExec private[scan] (
   private val desc: FileScanOpDesc =
     objectMapper.readValue(descString, classOf[FileScanOpDesc])
 
+  /**
+    * The tuples of the file `tuple` names, by its first string field: a file the plan links,
+    * which is one a File Lister upstream of this operator listed when the plan was made. The
+    * file is read through that link. No other name is looked up, wherever a file of that name
+    * may be.
+    *
+    * @throws FileNotFoundException if the plan carries no link to the file
+    */
   override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = {
-    val originalFileName = tuple.getFields.collectFirst { case s: String => s }.get
+    val fileName = tuple.getFields.collectFirst { case s: String => s }.get
+    if (!desc.inputLinks.contains(fileName)) {
+      throw new FileNotFoundException(
+        s"${desc.operatorInfo.userFriendlyName} reads only files listed by a File Lister " +
+          s"upstream of it; $fileName is not one of them."
+      )
+    }
     FileScanUtils.createTuplesFromFile(
-      document = DocumentFactory.openReadonlyDocument(locate(originalFileName)),
-      displayFileName = originalFileName,
+      document = desc.openInputFile(fileName),
+      displayFileName = fileName,
       attributeType = desc.attributeType,
       fileEncoding = desc.fileEncoding,
       extract = desc.extract,
@@ -46,15 +58,4 @@ class FileScanOpExec private[scan] (
       fileScanLimit = desc.fileScanLimit
     )
   }
-
-  /** Resolves the file name carried by an input tuple to a URI. */
-  private def locate(fileName: String): URI =
-    if (FileResolver.isFileResolved(fileName)) {
-      new URI(fileName)
-    } else {
-      val localPath = Paths.get(fileName)
-      if (Files.exists(localPath)) localPath.toUri
-      else FileResolver.resolveVersionedResource(fileName)
-    }
-
 }

@@ -37,10 +37,12 @@ import scala.jdk.CollectionConverters._
 
 /**
   * Spec for [[LakeFSInputLinker]]: what it asks LakeFS, the link it makes from the answer, and
-  * which failures are a file that is not there.
+  * which failures are a file that is not there; and that it asks nothing to link a file of a
+  * listing.
   *
-  * LakeFS is a loopback [[HttpServer]] that answers the one lookup a link takes, `objects/stat`.
-  * Signing asks nothing, so the object store the links are signed for is only a name here.
+  * LakeFS is a loopback [[HttpServer]] that answers the one lookup a link to a resolved file
+  * takes, `objects/stat`. Signing asks nothing, so the object store the links are signed for is
+  * only a name here.
   *
   * Tagged [[NonParallelTest]] so the suite gets its own forked JVM: `beforeAll` repoints
   * `StorageConfig.lakefsEndpoint`, which `LakeFSStorageClient` captures once per JVM.
@@ -207,6 +209,75 @@ class LakeFSInputLinkerSpec
     }
 
     thrown.getMessage shouldBe "Unsupported URI scheme: file for linking an input file"
+    hits shouldBe empty
+  }
+
+  it should "link a listed file to the object its listing names, asking LakeFS nothing" in {
+    val listed = ListedFile(
+      "/dataset/ada@texera.io/letters/v1/2024/q1/sales report.csv",
+      "s3://texera-dataset/dataset-12/data/gdm5/c8a,_Zs",
+      8192
+    )
+    val before = System.currentTimeMillis()
+    val link = linker.linkListed(listed)
+    val after = System.currentTimeMillis()
+
+    val url = new URI(link.url)
+    (url.getScheme, url.getHost, url.getPort) shouldBe (("http", "texera-rustfs", 9000))
+    url.getPath shouldBe "/texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
+    url.getRawQuery should include("X-Amz-Signature=")
+    url.getRawQuery should include("X-Amz-Expires=7200")
+    // The size is the listing's: nothing was asked that could give another.
+    link.sizeBytes shouldBe 8192
+    link.expiresAtMs should be > before + Duration.ofHours(2).toMillis - 1000
+    link.expiresAtMs should be <= after + Duration.ofHours(2).toMillis
+    hits shouldBe empty
+  }
+
+  it should "link the files of a whole listing, each to its own object, asking LakeFS nothing" in {
+    val listing = (1 to 10000).map { i =>
+      ListedFile(s"/dataset/ada@texera.io/letters/v1/file-$i.txt", s"s3://texera-dataset/k/$i", i)
+    }
+
+    val links = listing.map(linker.linkListed)
+
+    links.map(link => new URI(link.url).getPath) shouldBe
+      (1 to 10000).map(i => s"/texera-dataset/k/$i")
+    links.map(_.sizeBytes) shouldBe (1 to 10000)
+    hits shouldBe empty
+  }
+
+  it should "refuse to link a listed file that LakeFS keeps outside an S3 object store" in {
+    val thrown = intercept[IllegalStateException] {
+      linker.linkListed(
+        ListedFile(
+          "/dataset/ada@texera.io/letters/v1/on-disk.csv",
+          "local:///data/dataset-12/on-disk.csv",
+          412
+        )
+      )
+    }
+
+    thrown.getMessage shouldBe "/dataset/ada@texera.io/letters/v1/on-disk.csv is kept at " +
+      "local:///data/dataset-12/on-disk.csv, which is not in an S3 object store, so no link to " +
+      "it can be signed."
+    hits shouldBe empty
+  }
+
+  "The linker of a compile that makes no plan to run" should "link no file, resolved or listed" in {
+    val resolved = intercept[IllegalStateException] {
+      InputLinker.Unavailable.link(new URI(s"dataset:///dataset-12/$commit/people.csv"))
+    }
+    val listed = intercept[IllegalStateException] {
+      InputLinker.Unavailable.linkListed(
+        ListedFile("/dataset/ada@texera.io/letters/v1/a.txt", "s3://texera-dataset/k/a", 1)
+      )
+    }
+
+    resolved.getMessage shouldBe "No linker for input files was given, so " +
+      s"dataset:///dataset-12/$commit/people.csv cannot be linked."
+    listed.getMessage shouldBe "No linker for input files was given, so " +
+      "/dataset/ada@texera.io/letters/v1/a.txt cannot be linked."
     hits shouldBe empty
   }
 

@@ -28,7 +28,8 @@ import org.apache.texera.amber.operator.filter.SpecializedFilterOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.projection.ProjectionOpDesc
 import org.apache.texera.amber.operator.sortPartitions.SortPartitionsOpDesc
-import org.apache.texera.amber.operator.source.scan.ReadsInputFiles
+import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.{ReadsInputFiles, ScanSourceOpDesc}
 import org.apache.texera.amber.operator.source.scan.csv.{
   CSVScanSourceOpDesc,
   ParallelCSVScanSourceOpDesc
@@ -100,13 +101,17 @@ class OperatorMetadataGeneratorSpec extends AnyFlatSpec with Matchers {
       "CSVOldScanSourceOpDesc",
       "JSONLScanSourceOpDesc",
       "ArrowSourceOpDesc",
-      "FileScanSourceOpDesc"
+      "FileScanSourceOpDesc",
+      "FileScanOpDesc"
     )
     readers.foreach { reader =>
       withClue(s"${reader.getSimpleName}: ") {
         val schema = OperatorMetadataGenerator.generateOperatorJsonSchema(reader)
-        // The file is the user's to choose; the link to it is the compiler's to make.
-        schema.get("properties").has("fileName") shouldBe true
+        // What the user chooses stays: a scan source's file, and how a File Scan From Input
+        // reads the files it is sent. The links to the files are the compiler's to make.
+        val chosenByUser =
+          if (classOf[ScanSourceOpDesc].isAssignableFrom(reader)) "fileName" else "attributeType"
+        schema.get("properties").has(chosenByUser) shouldBe true
         schema.get("properties").has("inputLinks") shouldBe false
         schema.get("required").elements().asScala.map(_.asText()).toList should not contain
           "inputLinks"
@@ -136,9 +141,40 @@ class OperatorMetadataGeneratorSpec extends AnyFlatSpec with Matchers {
       compiled.inputLinks
   }
 
+  it should "leave a File Lister's listing out, which reaches the executor all the same" in {
+    val schema =
+      OperatorMetadataGenerator.generateOperatorJsonSchema(classOf[FileListerSourceOpDesc])
+    // The dataset version is the user's to choose; what it lists is the compiler's to find.
+    schema.get("properties").has("datasetVersionPath") shouldBe true
+    schema.get("properties").has("listing") shouldBe false
+    val required = schema.get("required").elements().asScala.map(_.asText()).toList
+    required should contain("datasetVersionPath")
+    required should not contain "listing"
+
+    // Hidden from the editor only: the descriptor's JSON, which the executor is built from,
+    // carries the listing, in its order, and it parses back; so does a version with no file,
+    // which is not a version that was never listed.
+    val files =
+      List("/dataset/ada@texera.io/letters/v1/b.txt", "/dataset/ada@texera.io/letters/v1/a.txt")
+    Seq(Some(files), Some(Nil), None).foreach { listing =>
+      val compiled = new FileListerSourceOpDesc
+      compiled.listing = listing
+      val json = objectMapper.writeValueAsString(compiled)
+      objectMapper.readValue(json, classOf[FileListerSourceOpDesc]).listing shouldBe listing
+    }
+    val compiled = new FileListerSourceOpDesc
+    compiled.listing = Some(files)
+    objectMapper.readTree(objectMapper.writeValueAsString(compiled)).get("listing") shouldBe
+      objectMapper.readTree(
+        """["/dataset/ada@texera.io/letters/v1/b.txt", "/dataset/ada@texera.io/letters/v1/a.txt"]"""
+      )
+  }
+
   it should "name what the compiler sets on an operator, and nothing on one it sets nothing on" in {
     LogicalOp.propertiesSetByCompiler(classOf[CSVScanSourceOpDesc]) shouldBe
       Set("maxColumns", "inputLinks")
+    LogicalOp.propertiesSetByCompiler(classOf[FileListerSourceOpDesc]) shouldBe Set("listing")
+    LogicalOp.propertiesSetByCompiler(classOf[FileScanOpDesc]) shouldBe Set("inputLinks")
     LogicalOp.propertiesSetByCompiler(classOf[SpecializedFilterOpDesc]) shouldBe empty
   }
 

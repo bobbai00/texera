@@ -19,24 +19,16 @@
 
 package org.apache.texera.amber.operator.source.scan.file
 
-import org.apache.texera.amber.core.tuple.{
-  Attribute,
-  AttributeType,
-  Schema,
-  SchemaEnforceable,
-  Tuple
-}
+import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.operator.{StandaloneHelpers, TestOperators}
+import org.apache.texera.amber.operator.StandaloneHelpers
 import org.apache.texera.amber.operator.source.scan.{FileAttributeType, FileDecodingMethod}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.BeforeAndAfter
 import org.scalatest.flatspec.AnyFlatSpec
 
 class FileScanOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
-
-  private val inputSchema = new Schema(new Attribute("filename", AttributeType.STRING))
 
   // How a UTF-8 file's lines are read: decoded from its bytes, then split where
   // `open(..., "r")` splits them.
@@ -55,79 +47,6 @@ class FileScanOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
     assert(inferredSchema.getAttributes.length == 1)
     assert(inferredSchema.getAttribute("line").getType == AttributeType.STRING)
-  }
-
-  it should "read first 5 lines from the input file path tuple into output tuples" in {
-    fileScanOpDesc.attributeType = FileAttributeType.STRING
-    fileScanOpDesc.fileScanLimit = Option(5)
-
-    val inputTuple = Tuple(inputSchema, Array[Any](TestOperators.TestTextFilePath))
-    val fileScanOpExec =
-      new FileScanOpExec(objectMapper.writeValueAsString(fileScanOpDesc))
-
-    fileScanOpExec.open()
-    val processedTuple: Iterator[Tuple] = fileScanOpExec
-      .processTuple(inputTuple, 0)
-      .map(tupleLike =>
-        tupleLike
-          .asInstanceOf[SchemaEnforceable]
-          .enforceSchema(fileScanOpDesc.sourceSchema())
-      )
-
-    assert(processedTuple.next().getField("line").equals("line1"))
-    assert(processedTuple.next().getField("line").equals("line2"))
-    assert(processedTuple.next().getField("line").equals("line3"))
-    assert(processedTuple.next().getField("line").equals("line4"))
-    assert(processedTuple.next().getField("line").equals("line5"))
-    assertThrows[java.util.NoSuchElementException](processedTuple.next().getField("line"))
-    fileScanOpExec.close()
-  }
-
-  it should "read the lines after a 5-line offset from the input file path tuple when no limit is set" in {
-    fileScanOpDesc.attributeType = FileAttributeType.STRING
-    fileScanOpDesc.fileScanOffset = Option(5)
-
-    val inputTuple = Tuple(inputSchema, Array[Any](TestOperators.TestTextFilePath))
-    val fileScanOpExec =
-      new FileScanOpExec(objectMapper.writeValueAsString(fileScanOpDesc))
-
-    fileScanOpExec.open()
-    val processedTuple: Iterator[Tuple] = fileScanOpExec
-      .processTuple(inputTuple, 0)
-      .map(tupleLike =>
-        tupleLike
-          .asInstanceOf[SchemaEnforceable]
-          .enforceSchema(fileScanOpDesc.sourceSchema())
-      )
-
-    assert(processedTuple.next().getField("line").equals("line6"))
-    assert(processedTuple.next().getField("line").equals("line7"))
-    assert(processedTuple.next().getField("line").equals("line8"))
-    assert(processedTuple.next().getField("line").equals("line9"))
-    assert(processedTuple.next().getField("line").equals("line10"))
-    assertThrows[java.util.NoSuchElementException](processedTuple.next().getField("line"))
-    fileScanOpExec.close()
-  }
-
-  it should "preserve the original input filename when include filename is enabled" in {
-    fileScanOpDesc.attributeType = FileAttributeType.SINGLE_STRING
-    fileScanOpDesc.outputFileName = true
-
-    val inputFilePath = TestOperators.TestTextFilePath
-    val inputTuple = Tuple(inputSchema, Array[Any](inputFilePath))
-    val fileScanOpExec =
-      new FileScanOpExec(objectMapper.writeValueAsString(fileScanOpDesc))
-
-    fileScanOpExec.open()
-    val outputSchema = fileScanOpDesc.sourceSchema()
-    val processedTuple = fileScanOpExec
-      .processTuple(inputTuple, 0)
-      .next()
-      .asInstanceOf[SchemaEnforceable]
-      .enforceSchema(outputSchema)
-
-    assert(processedTuple.getField[String]("filename") == inputFilePath)
-    fileScanOpExec.close()
   }
 
   "FileScanOpDesc.getPhysicalOp" should

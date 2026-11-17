@@ -29,10 +29,11 @@ package org.apache.texera.common.compiler
   *     `physicalPlan = None` when any error occurred. Used for editing-time validation.
   *   - [[CompilationErrorHandling.Strict]] throws them together, as a [[WorkflowCompilationFailed]]
   *     that holds each operator's first error. It also links the file each scan source reads,
-  *     and a file that cannot be linked is its scan's error. Only a plan with no error goes on to
-  *     pin the datasets and models its operators name; every operator is bound, and the binding
-  *     errors are thrown the same way. Used before execution, so a plan made to run has no
-  *     error.
+  *     and a file that cannot be linked is its scan's error; and it lists the dataset version
+  *     of each File Lister, and a version that cannot be listed is its File Lister's error.
+  *     Only a plan with no error goes on to pin the datasets and models its operators name;
+  *     every operator is bound, and the binding errors are thrown the same way. Used before
+  *     execution, so a plan made to run has no error.
   */
 sealed trait CompilationErrorHandling
 

@@ -35,8 +35,9 @@ trait ReadsInputFiles { this: LogicalOp =>
 
   /**
     * The link to each file the executor reads, by the name the executor knows the file by. A
-    * compile that makes a plan to run sets it, to the files it resolved for the plan's user. Any
-    * other compile leaves it empty, and no compile keeps a link the operator arrived with.
+    * compile that makes a plan to run sets it, to the files it resolved or listed for the plan's
+    * user. Any other compile leaves it empty, and no compile keeps a link the operator arrived
+    * with.
     */
   @JsonProperty("inputLinks")
   @SetByCompiler

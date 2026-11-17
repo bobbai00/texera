@@ -48,6 +48,7 @@ object ApplicationConfig {
   val getStatusUpdateIntervalInMs: Long = getConfSource.getLong("constants.status-update-interval")
   val getRuntimeStatisticsPersistenceIntervalInMs: Long =
     getConfSource.getLong("constants.runtime-statistics-persistence-interval")
+  val maxListedFiles: Int = getConfSource.getInt("constants.max-listed-files")
 
   // Flow control
   val maxCreditAllowedInBytesPerChannel: Long =

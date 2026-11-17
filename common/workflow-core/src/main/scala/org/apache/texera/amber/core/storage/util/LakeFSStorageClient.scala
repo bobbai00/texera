@@ -307,20 +307,23 @@ object LakeFSStorageClient extends LazyLogging {
   }
 
   /**
-    * Fetches all pages from a paginated LakeFS API call.
+    * Fetches the pages of a paginated LakeFS API call, in order, until it has `atMost` results
+    * or there are no more.
     *
-    * @param fetch A function that takes a pagination cursor and returns (results, pagination).
-    * @return All results across all pages.
+    * @param atMost The most results to fetch.
+    * @param fetch  A function that takes a pagination cursor and the number of results to ask
+    *               for, and returns (results, pagination).
+    * @return The results across the pages fetched: all there are, or the first `atMost`.
     */
-  private def fetchAllPages[T](
-      fetch: String => (java.util.List[T], Pagination)
+  private def fetchPages[T](atMost: Int = Int.MaxValue)(
+      fetch: (String, Int) => (java.util.List[T], Pagination)
   ): List[T] = {
     val allResults = scala.collection.mutable.ListBuffer[T]()
     var hasMore = true
     var after = "" // Pagination cursor returned by LakeFS
 
-    while (hasMore) {
-      val (results, pagination) = fetch(after)
+    while (hasMore && allResults.size < atMost) {
+      val (results, pagination) = fetch(after, math.min(PageSize, atMost - allResults.size))
       allResults ++= results.asScala
       hasMore = pagination.getHasMore
       if (hasMore) after = pagination.getNextOffset
@@ -329,9 +332,21 @@ object LakeFSStorageClient extends LazyLogging {
     allResults.toList
   }
 
-  def retrieveObjectsOfVersion(repoName: String, commitHash: String): List[ObjectStats] = {
-    fetchAllPages[ObjectStats] { after =>
-      val request = objectsApi.listObjects(repoName, commitHash).amount(PageSize)
+  /**
+    * Lists the objects of a specific repository and commit, ordered by their paths.
+    *
+    * @param repoName     Repository name.
+    * @param commitHash   Commit hash of the version.
+    * @param atMost       The most objects to list.
+    * @return             The objects' metadata: all the commit holds, or the first `atMost`.
+    */
+  def retrieveObjectsOfVersion(
+      repoName: String,
+      commitHash: String,
+      atMost: Int = Int.MaxValue
+  ): List[ObjectStats] = {
+    fetchPages[ObjectStats](atMost) { (after, amount) =>
+      val request = objectsApi.listObjects(repoName, commitHash).amount(amount)
       if (after.nonEmpty) request.after(after)
       val response = request.execute()
       (response.getResults, response.getPagination)
@@ -368,8 +383,8 @@ object LakeFSStorageClient extends LazyLogging {
     * @return List of uncommitted object stats.
     */
   def retrieveUncommittedObjects(repoName: String): List[Diff] = {
-    fetchAllPages[Diff] { after =>
-      val request = branchesApi.diffBranch(repoName, branchName).amount(PageSize)
+    fetchPages[Diff]() { (after, amount) =>
+      val request = branchesApi.diffBranch(repoName, branchName).amount(amount)
       if (after.nonEmpty) request.after(after)
       val response = request.execute()
       (response.getResults, response.getPagination)

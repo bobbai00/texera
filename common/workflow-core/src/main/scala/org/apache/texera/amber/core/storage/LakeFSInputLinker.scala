@@ -56,10 +56,12 @@ object LakeFSInputLinker {
 }
 
 /**
-  * Links the files of datasets and models, which LakeFS keeps in the object store. LakeFS is
-  * asked which object holds a file's bytes, and a GET of that object is signed here, by
-  * `presigner`. LakeFS signs links too, but for the one address it is set up with, which is the
-  * address browsers reach the store at.
+  * Links the files of datasets and models, which LakeFS keeps in the object store. A GET of the
+  * object that holds a file's bytes is signed here, by `presigner`. LakeFS signs links too, but
+  * for the one address it is set up with, which is the address browsers reach the store at.
+  *
+  * Which object holds a file, LakeFS says: it is asked for a file a resolver resolved, and has
+  * already answered for a file of a listing.
   *
   * @param presigner signs the links, for the object store as their readers reach it
   * @param lifetime  how long a link works
@@ -84,15 +86,23 @@ class LakeFSInputLinker(presigner: ObjectStorePresigner, lifetime: Duration) ext
         case missing: ApiException if missing.getCode == HttpURLConnection.HTTP_NOT_FOUND =>
           throw new FileNotFoundException(fileUri)
       }
-    val physicalAddress = file.getPhysicalAddress
+    linkTo(fileUri.toString, file.getPhysicalAddress, file.getSizeBytes.longValue())
+  }
+
+  /** Links `file` from the address its listing gives, with no request to LakeFS. */
+  override def linkListed(file: ListedFile): InputLink =
+    linkTo(file.logicalPath, file.physicalAddress, file.sizeBytes)
+
+  /** Signs a GET of the object at `physicalAddress`, which holds the file called `name`. */
+  private def linkTo(name: String, physicalAddress: String, sizeBytes: Long): InputLink = {
     if (!physicalAddress.startsWith("s3://")) {
       throw new IllegalStateException(
-        s"$fileUri is kept at $physicalAddress, which is not in an S3 object store, so no link " +
+        s"$name is kept at $physicalAddress, which is not in an S3 object store, so no link " +
           "to it can be signed."
       )
     }
     val (bucket, key) = LakeFSStorageClient.parsePhysicalAddress(physicalAddress)
     val signed = presigner.presignGet(bucket, key, lifetime)
-    InputLink(signed.url, signed.expiresAt.toEpochMilli, file.getSizeBytes.longValue())
+    InputLink(signed.url, signed.expiresAt.toEpochMilli, sizeBytes)
   }
 }

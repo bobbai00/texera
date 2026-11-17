@@ -20,12 +20,19 @@
 package org.apache.texera.common.compiler.model
 
 import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.texera.amber.core.storage.{InputLink, InputLinker, RepositoryVersionResolver}
+import org.apache.texera.amber.core.storage.{
+  DatasetVersionLister,
+  InputLink,
+  InputLinker,
+  RepositoryVersionResolver
+}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
+import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
 import org.apache.texera.amber.operator.source.scan.json.JSONLScanSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -222,11 +229,12 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
         new WorkflowCompiler(
           new WorkflowContext(),
           RunBindings(
-            TestOperators.fixtureFileResolver,
-            InputLinker.Unavailable,
-            RepositoryVersionResolver.Unavailable,
-            Some(TestOperators.fixtureMountRoot),
-            CompileSettings.Default
+            files = TestOperators.fixtureFileResolver,
+            inputLinker = InputLinker.Unavailable,
+            lister = DatasetVersionLister.Unavailable,
+            repositories = RepositoryVersionResolver.Unavailable,
+            mountRoot = Some(TestOperators.fixtureMountRoot),
+            settings = CompileSettings.Default
           )
         ).compile(pojo, CompilationErrorHandling.Strict)
         Right(())
@@ -358,6 +366,43 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
     // The plan itself is left as it was sent, for the compile that follows to replace.
     csv.asInstanceOf[CSVScanSourceOpDesc].maxColumns shouldBe Some(100000)
     jsonl.inputLinks should have size 1
+  }
+
+  it should "write no listing and no link to a listed file, whatever a request sent or a compile set" in {
+    val versionPath = "/dataset/owner@texera.io/letters/v1"
+    // As a request could send them, with a listing and a link of its own choosing.
+    val lister = objectMapper.readValue(
+      s"""{"operatorID":"lister","operatorType":"FileLister","datasetVersionPath":"$versionPath",
+         |"listing":["$versionPath/a.txt","/dataset/another@texera.io/secrets/v1/keys.txt"]}""".stripMargin,
+      classOf[LogicalOp]
+    )
+    lister.asInstanceOf[FileListerSourceOpDesc].listing.map(_.size) shouldBe Some(2)
+    // And as a compile leaves them, on a plan compiled before it is written.
+    val scan = new FileScanOpDesc
+    scan.setOperatorId("scan")
+    scan.inputLinks = Map(
+      s"$versionPath/a.txt" ->
+        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L, 412)
+    )
+    val sent = plan(List(lister, scan), List(link("lister", "scan")))
+
+    val json = sent.toJson
+
+    json should not include "5ecr3t"
+    json should not include "a.txt"
+    val written = objectMapper.readTree(json).get("operators").elements().asScala.toList
+    // The dataset version is the user's to name, so it stays; what a compile sets goes.
+    written.head.get("datasetVersionPath").asText() shouldBe versionPath
+    written.head.has("listing") shouldBe false
+    written(1).has("inputLinks") shouldBe false
+    // It parses back to the plan an editor sends: nothing listed, nothing linked.
+    val read = objectMapper.readValue(json, classOf[LogicalPlanPojo])
+    ids(read) shouldBe List("lister", "scan")
+    read.operators.head.asInstanceOf[FileListerSourceOpDesc].listing shouldBe None
+    read.operators(1).asInstanceOf[FileScanOpDesc].inputLinks shouldBe empty
+    // The plan itself is left as it was sent, for the compile that follows to replace.
+    lister.asInstanceOf[FileListerSourceOpDesc].listing.map(_.size) shouldBe Some(2)
+    scan.inputLinks should have size 1
   }
 
   it should "write a null where the plan lists one in place of an operator" in {

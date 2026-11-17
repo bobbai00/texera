@@ -28,8 +28,9 @@ import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.limit.LimitOpDesc
+import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.file.FileScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
@@ -319,6 +320,71 @@ class WorkflowCompilationResourceSpec
     assert(Option(ops.get(0).get("repositoryMounts")).forall(_.isNull), s"mounts in $body")
     assert(!body.contains(privateDatasetRepositoryName))
     assert(!body.contains(privateDatasetVersionHash))
+  }
+
+  it should "leave the dataset version a File Lister names to the run, listing nothing while editing" in {
+    // Only a plan made to run lists a version, refusing one its user cannot read. Were the edit
+    // to list it, the user who cannot read it would see an error here, and every edit would ask
+    // the storage for the version's files.
+    val lister = new FileListerSourceOpDesc
+    lister.datasetVersionPath = "/dataset/owner@test.com/private_dataset/v1"
+    val scan = new FileScanOpDesc
+    val plan = LogicalPlanPojo(
+      operators = List(lister, scan),
+      links = List(
+        LogicalLink(
+          lister.operatorIdentifier,
+          PortIdentity(),
+          scan.operatorIdentifier,
+          PortIdentity()
+        )
+      ),
+      opsToViewResult = List.empty,
+      opsToReuseResult = List.empty
+    )
+
+    var response: Response = null
+    val statements = recorder.record { response = postCompile(plan, as = otherUser) }
+
+    assertThat(response.getStatus).isEqualTo(200)
+    val body = response.readEntity(classOf[String])
+    assert(objectMapper.readTree(body).get("type").asText() == "success", s"got $body")
+    // Nothing about the dataset was looked up.
+    assert(!statements.exists(_.sql.contains("dataset")), s"statements: ${statements.map(_.sql)}")
+    assert(!body.contains(privateDatasetRepositoryName))
+    assert(!body.contains(privateDatasetVersionHash))
+  }
+
+  it should "return WorkflowCompilationFailure for a File Scan From Input that no File Lister is upstream of" in {
+    val names = textOp("/dataset/owner@test.com/private_dataset/v1/notes.txt")
+    val scan = new FileScanOpDesc
+    val response = postCompile(
+      LogicalPlanPojo(
+        operators = List(names, scan),
+        links = List(
+          LogicalLink(
+            names.operatorIdentifier,
+            PortIdentity(),
+            scan.operatorIdentifier,
+            PortIdentity()
+          )
+        ),
+        opsToViewResult = List.empty,
+        opsToReuseResult = List.empty
+      )
+    )
+
+    assertThat(response.getStatus).isEqualTo(200)
+    val rootNode = objectMapper.readTree(response.readEntity(classOf[String]))
+    assert(rootNode.get("type").asText() == "failure", s"expected failure, got $rootNode")
+    val errors = rootNode.get("operatorErrors")
+    assert(errors.size() == 1 && errors.has(scan.operatorIdentifier.id), s"errors: $errors")
+    assert(
+      errors.get(scan.operatorIdentifier.id).get("message").asText() ==
+        "java.lang.IllegalArgumentException: File Scan From Input reads only the files a File " +
+          "Lister upstream of it lists. Link a File Lister to its input, directly or through " +
+          "other operators."
+    )
   }
 
   it should "read the site's settings once for a compile, however many operators take one" in {

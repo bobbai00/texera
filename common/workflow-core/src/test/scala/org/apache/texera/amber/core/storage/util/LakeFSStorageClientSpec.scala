@@ -69,8 +69,8 @@ private object LakeFSStubServer {
   *     (`deleteObject`, `resetObjectUploadOrDeletion`, the multipart calls) while their siblings
   *     take a caller-supplied branch (`createCommit`) or a commit hash (`getFileSize`,
   *     `getFilePresignedUrl`, `getFileFromRepo`); mixing them up is silent and destructive;
-  *   - the `fetchAllPages` loop — cursor threading and page accumulation, which a live server can
-  *     only exercise past 1000 objects;
+  *   - the `fetchPages` loop — cursor threading, page accumulation and where a bounded listing
+  *     stops, which a live server can only exercise past 1000 objects;
   *   - `retrieveVersionsOfRepository`'s newest-commit-first ordering, which a live server hides
   *     because it already returns commits newest-first;
   *   - `completePresignedMultipartUploads`'s part sort, which a live server absorbs silently;
@@ -404,7 +404,7 @@ class LakeFSStorageClientSpec
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Pagination (fetchAllPages)
+  // Pagination (fetchPages)
   // ---------------------------------------------------------------------------------------------
 
   "retrieveObjectsOfVersion" should "follow the pagination cursor and concatenate every page" in {
@@ -433,6 +433,55 @@ class LakeFSStorageClientSpec
     recorded(1).query.get("after") shouldBe Some("cursor-1")
     // Both pages ask for the class's page size, so a 110-object repository is one round trip.
     recorded.map(_.query.get("amount")) shouldEqual List(Some("1000"), Some("1000"))
+  }
+
+  it should "stop at the most objects it is asked for, asking for no more than are left to list" in {
+    val repo = "texera-bounded"
+    val hash = "commit-abc"
+    val ls = s"/api/v1/repositories/$repo/refs/$hash/objects/ls"
+    // A commit of 2,500 objects, which answers each request with as many as it asks for.
+    def page(from: Int, amount: Int): String = {
+      val until = math.min(from + amount, 2500)
+      objectPage(
+        hasMore = until < 2500,
+        nextOffset = s"after-$until",
+        (from until until).map(i => f"file-$i%04d" -> i.toLong): _*
+      )
+    }
+    stub {
+      case StubRequest("GET", p, q, _) if p == ls =>
+        val from = q.get("after").fold(0)(_.stripPrefix("after-").toInt)
+        StubResponse(200, page(from, q("amount").toInt))
+    }
+
+    val objects = LakeFSStorageClient.retrieveObjectsOfVersion(repo, hash, atMost = 1201)
+
+    // The first 1,201, in the commit's order: one full page, then only what was still wanted.
+    objects.map(_.getPath) shouldEqual (0 until 1201).map(i => f"file-$i%04d").toList
+    recorded.map(r => (r.query.get("after"), r.query("amount"))) shouldEqual List(
+      (None, "1000"),
+      (Some("after-1000"), "201")
+    )
+  }
+
+  it should "list every object of a commit that holds fewer than it is asked for, and none when asked for none" in {
+    val repo = "texera-bounded-small"
+    val hash = "commit-abc"
+    stub {
+      case StubRequest("GET", p, _, _)
+          if p == s"/api/v1/repositories/$repo/refs/$hash/objects/ls" =>
+        StubResponse(200, objectPage(hasMore = false, "", "a.txt" -> 1L, "b.txt" -> 2L))
+    }
+
+    LakeFSStorageClient
+      .retrieveObjectsOfVersion(repo, hash, atMost = 5)
+      .map(_.getPath) shouldEqual List("a.txt", "b.txt")
+    recorded.map(_.query("amount")) shouldEqual List("5")
+
+    requests.clear()
+    LakeFSStorageClient.retrieveObjectsOfVersion(repo, hash, atMost = 0) shouldBe empty
+    // Nothing to list is nothing to ask for.
+    recorded shouldBe empty
   }
 
   "retrieveUncommittedObjects" should "page through the diff of the main branch" in {

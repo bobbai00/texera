@@ -19,7 +19,7 @@
 
 ---
 title: "File Scan From Input"
-description: "Scan data from file paths provided by input tuples"
+description: "Scan the files listed by an upstream File Lister, each named by an input tuple"
 category: "Data Input"
 operator_type: "FileScanOp"
 tags: [data-input]

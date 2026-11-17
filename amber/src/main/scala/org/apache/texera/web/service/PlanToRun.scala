@@ -21,6 +21,7 @@ package org.apache.texera.web.service
 
 import org.apache.texera.amber.core.storage.{
   FileResolver,
+  LakeFSDatasetVersionLister,
   LakeFSInputLinker,
   RepositoryMountManager
 }
@@ -58,7 +59,7 @@ import java.net.URI
   *                  [[org.apache.texera.amber.core.workflow.ExecutionPlan]]), as JSON text. It
   *                  holds what each operator's executor is given, so it holds the credentials an
   *                  operator is set up with (a SQL source's password, say) and the links its
-  *                  scan sources read their files through: keep it where they may be kept.
+  *                  operators read their files through: keep it where they may be kept.
   */
 final case class PlanToRun(savedPlan: String)
 
@@ -85,6 +86,7 @@ object PlanToRun {
     RunBindings(
       files = FileResolver.forUser(uid),
       inputLinker = LakeFSInputLinker.forDeployment,
+      lister = LakeFSDatasetVersionLister.forUser(uid),
       repositories = FileResolver.repositoryVersionResolverForUser(uid),
       mountRoot = RepositoryMountManager.mountRoot,
       settings = CompileSettings.fromSiteSettings()
@@ -95,12 +97,13 @@ object PlanToRun {
     *
     * The run is the compiler's context: its ids stamp every operator, and the plan is saved with
     * its settings, warehouse and cost hints. The compile is Strict: a workflow with errors fails
-    * here, with each operator's first error, and nothing is saved. It links the files the scan
-    * sources read and pins the datasets and models the operators name, and finds the output
-    * ports whose results are stored, which are saved with the settings. The run's context is
-    * left as it is; the engine takes the settings and cost hints from the saved plan. The plan
-    * saved replays `replay`, writes its replay log to `replayLog`, and lists the files it reads
-    * through links as its inputs, with when each link expires.
+    * here, with each operator's first error, and nothing is saved. It links the files the
+    * operators read, lists the dataset versions File Listers name and pins the datasets and
+    * models the operators name, and finds the output ports whose results are stored, which are
+    * saved with the settings. The run's context is left as it is; the engine takes the settings
+    * and cost hints from the saved plan. The plan saved replays `replay`, writes its replay log
+    * to `replayLog`, and lists the files it reads through links as its inputs, with when each
+    * link expires.
     *
     * @param compiler  the run's compiler, bound for the run's user ([[bindingsFor]]): it resolves
     *                  files, datasets and models as that user may, links the files, and writes

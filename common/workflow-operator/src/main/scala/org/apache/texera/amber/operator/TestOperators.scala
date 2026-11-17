@@ -22,9 +22,11 @@ package org.apache.texera.amber.operator
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.storage.{
+  DatasetVersionLister,
   FileResolver,
   InputLink,
   InputLinker,
+  ListedFile,
   RepositoryVersionResolver,
   ScanFileResolver
 }
@@ -78,7 +80,12 @@ object TestOperators {
     * Tests hand this to the compiler in place of the deployment's linker, which signs links to
     * the store itself. A file is linked once, so two compiles of one workflow make one plan.
     */
-  val fixtureInputLinker: InputLinker = fileUri => fixtureFileServer.link(Paths.get(fileUri))
+  val fixtureInputLinker: InputLinker = new InputLinker {
+    override def link(fileUri: URI): InputLink = fixtureFileServer.link(Paths.get(fileUri))
+
+    override def linkListed(file: ListedFile): InputLink =
+      fixtureFileServer.link(Paths.get(new URI(file.physicalAddress)))
+  }
 
   /**
     * `scan` with the file it reads linked by [[fixtureInputLinker]], as a compile that makes a
@@ -197,6 +204,37 @@ object TestOperators {
   val TestTextFilePath: String = s"$parentDir/src/test/resources/line_numbers.txt"
   val TestCRLFTextFilePath: String = s"$parentDir/src/test/resources/line_numbers_crlf.txt"
   val TestNumbersFilePath: String = s"$parentDir/src/test/resources/numbers.txt"
+
+  /** The dataset version `fixtureDatasetVersionLister` lists. */
+  val fixtureDatasetVersionPath = "/dataset/owner@x.com/sales/v1"
+
+  /**
+    * The files of the fixture dataset version: by its path within the version, the fixture file
+    * on the local disk whose bytes are the file's.
+    */
+  val fixtureDatasetFiles: Seq[(String, String)] =
+    Seq("line_numbers.txt" -> TestTextFilePath, "reports/numbers.txt" -> TestNumbersFilePath)
+
+  /**
+    * Lists the fixture dataset version, as a user's lister lists the versions that user may
+    * read; tests hand it to the compiler in place of one, which needs a database and LakeFS. A
+    * file is kept where its fixture file is, on the local disk, so `fixtureInputLinker` links
+    * what this lists. Any other version is refused, as one that does not exist or that the user
+    * may not read is.
+    */
+  val fixtureDatasetVersionLister: DatasetVersionLister = (versionPath, atMost) => {
+    if (versionPath != fixtureDatasetVersionPath) {
+      throw new FileNotFoundException(s"Version $versionPath not found.")
+    }
+    fixtureDatasetFiles.take(atMost).map {
+      case (file, localPath) =>
+        ListedFile(
+          s"$versionPath/$file",
+          Paths.get(localPath).toUri.toString,
+          Files.size(Paths.get(localPath))
+        )
+    }
+  }
 
   def headerlessSmallCsvScanOpDesc(): CSVScanSourceOpDesc = {
     getCsvScanOpDesc(CountrySalesHeaderlessSmallCsvPath, header = false)

@@ -30,6 +30,7 @@ import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   InputLink,
   InputLinker,
+  ListedFile,
   NoStoredPlanException,
   PlanRecord,
   VFSURIFactory
@@ -56,8 +57,9 @@ import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILAT
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpDesc}
+import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.file.FileScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -545,13 +547,14 @@ class ExecutionResourceSpec
 
   /**
     * `plan` as an editor sends it, written as JSON: but for each operator's loop-variable sidecar,
-    * which a parse sets from scratch, and for what a compile sets on a scan (its column limit and
-    * its links), all of which the plan row leaves out.
+    * which a parse sets from scratch, and for what a compile sets on an operator (a scan's column
+    * limit, the links to the files it reads, a File Lister's listing), all of which the plan row
+    * leaves out.
     */
   private def asSent(plan: LogicalPlanPojo): JsonNode = {
     val tree = objectMapper.readTree(objectMapper.writeValueAsString(plan))
     tree.get("operators").elements().asScala.foreach { operator =>
-      Seq(StateReferencing.SIDECAR_PROPERTY, "maxColumns", "inputLinks")
+      Seq(StateReferencing.SIDECAR_PROPERTY, "maxColumns", "inputLinks", "listing")
         .foreach(operator.asInstanceOf[ObjectNode].remove)
     }
     tree
@@ -587,12 +590,35 @@ class ExecutionResourceSpec
     1234
   )
 
+  /** A linker of the files resolvers resolve, each as `link` links it, and of no listed file. */
+  private def linkerOf(linkFile: URI => InputLink): InputLinker =
+    new InputLinker {
+      override def link(fileUri: URI): InputLink = linkFile(fileUri)
+      override def linkListed(file: ListedFile): InputLink =
+        fail(s"asked to link the listed file ${file.logicalPath}")
+    }
+
   /**
     * A creator bound as the deployment binds a plan for its user, files resolved as the user may
-    * read them, but for the links, which `linker` makes in place of LakeFS and the object store.
+    * read them, but for the links, which `link` makes in place of LakeFS and the object store.
     */
-  private def creatorLinkingWith(linker: InputLinker): FixtureCreator =
-    new FixtureCreator(bindings = _.copy(inputLinker = linker))
+  private def creatorLinkingWith(link: URI => InputLink): FixtureCreator =
+    new FixtureCreator(bindings = _.copy(inputLinker = linkerOf(link)))
+
+  /** The dataset version of the creator's private dataset, as a File Lister names it. */
+  private val notesVersionPath = s"/dataset/$creatorEmail/execution-resource-notes/v1"
+
+  /** A File Lister of the version at `versionPath`, then a File Scan From Input of its files. */
+  private def listedPlan(versionPath: String): LogicalPlanPojo = {
+    val lister = named(new FileListerSourceOpDesc(), "lister")
+    lister.datasetVersionPath = versionPath
+    LogicalPlanPojo(
+      List(lister, named(new FileScanOpDesc(), "scan")),
+      List(link("lister", "scan")),
+      List.empty,
+      List.empty
+    )
+  }
 
   /** The operators of the logical plan `record` keeps, as JSON objects. */
   private def logicalOperators(record: PlanRecord): List[JsonNode] =
@@ -875,6 +901,112 @@ class ExecutionResourceSpec
     logical.has("fileName") shouldBe true
     logical.has("maxColumns") shouldBe false
     logical.has("inputLinks") shouldBe false
+  }
+
+  it should "list each File Lister's dataset version and link the files listed, in the plan it stores and nowhere else" in {
+    // As a request could send it: with a listing and a link of its own choosing.
+    val sent = listedPlan(TestOperators.fixtureDatasetVersionPath)
+    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+    sent.operators.head.asInstanceOf[FileListerSourceOpDesc].listing =
+      Some(List("/dataset/another@example.com/secrets/v1/keys.txt"))
+    sent.operators(1).asInstanceOf[FileScanOpDesc].inputLinks =
+      Map("/dataset/another@example.com/secrets/v1/keys.txt" -> sentLink)
+    val files = TestOperators.fixtureDatasetFiles.map {
+      case (file, _) => s"${TestOperators.fixtureDatasetVersionPath}/$file"
+    }
+
+    val (record, plan) = storedPlan(created(post(request(plan = sent))))
+
+    // The File Lister's executor is given the version's listing, and the File Scan From Input's
+    // a link to each file listed: the compile's own, to the fixture's server.
+    descriptorOf(plan, "lister").get("listing").elements().asScala.map(_.asText()).toList shouldBe
+      files
+    val links = linksOf(plan, "scan")
+    links.keySet shouldBe files.toSet
+    links.values.foreach(_.url should startWith("http://127.0.0.1:"))
+    plan.inputs shouldBe files.map { file =>
+      PlanInput(
+        OperatorIdentity("scan"),
+        file,
+        InputFile(links(file).expiresAtMs, links(file).sizeBytes)
+      )
+    }
+    record.body should not include "169.254.169.254"
+    record.body should not include "secrets"
+    // The logical plan kept beside it is the workflow as its user wrote it: the dataset version
+    // by its path, and neither what it lists nor a link.
+    record.logical should not include "169.254.169.254"
+    record.logical should not include "secrets"
+    files.foreach(file => record.logical should not include file)
+    val List(lister, scan) = logicalOperators(record)
+    lister.get("datasetVersionPath").asText() shouldBe TestOperators.fixtureDatasetVersionPath
+    lister.has("listing") shouldBe false
+    scan.has("inputLinks") shouldBe false
+  }
+
+  it should "refuse a dataset version its creator may not read as the File Lister's error, and list nothing of it" in {
+    // Bound as the deployment binds a plan for its user. The reader may read the workflow and
+    // run it on a unit of their own, but not the dataset its File Lister names, which is the
+    // creator's and private: the version is refused before the storage is asked what it holds.
+    def createdByReader(): Response =
+      post(
+        request(plan = listedPlan(notesVersionPath), cuid = readerCuid),
+        uid = readerUid,
+        creator = new FixtureCreator(bindings = identity)
+      )
+
+    val failure = compileFailure(createdByReader())
+
+    failure.operatorErrors.keySet shouldBe Set("lister")
+    val error = failure.operatorErrors("lister")
+    error.`type` shouldBe COMPILATION_ERROR
+    error.message shouldBe s"java.lang.IllegalArgumentException: Dataset version " +
+      s"$notesVersionPath was not found: it does not exist, or you do not have access to it."
+    row(failure.eid).getStatus shouldBe 4.toByte
+    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
+    )
+
+    // Once the dataset is shared with the reader, the version is the reader's to list, and the
+    // storage is asked for its files. No LakeFS holds this dataset, so that request fails:
+    // as the server's failure, not as an error of the File Lister's.
+    getDSLContext
+      .insertInto(DATASET_USER_ACCESS)
+      .set(DATASET_USER_ACCESS.DID, Integer.valueOf(notesDid))
+      .set(DATASET_USER_ACCESS.UID, Integer.valueOf(readerUid))
+      .set(DATASET_USER_ACCESS.PRIVILEGE, PrivilegeEnum.READ)
+      .execute()
+    try {
+      val storageFailure = intercept[InternalServerErrorException](createdByReader())
+
+      storageFailure.getMessage shouldBe
+        s"Execution $newestEid could not be created: its plan could not be made."
+    } finally {
+      getDSLContext
+        .deleteFrom(DATASET_USER_ACCESS)
+        .where(DATASET_USER_ACCESS.DID.eq(Integer.valueOf(notesDid)))
+        .execute()
+    }
+  }
+
+  it should "refuse a File Scan From Input that no File Lister is upstream of, as its error" in {
+    // The file's path typed by hand, where a File Lister would list it.
+    val names = named(new TextInputSourceOpDesc(), "names")
+    names.textInput = s"${TestOperators.fixtureDatasetVersionPath}/line_numbers.txt"
+    val plan = LogicalPlanPojo(
+      List(names, named(new FileScanOpDesc(), "scan")),
+      List(link("names", "scan")),
+      List.empty,
+      List.empty
+    )
+
+    val failure = compileFailure(post(request(plan = plan)))
+
+    failure.operatorErrors.keySet shouldBe Set("scan")
+    failure.operatorErrors("scan").message shouldBe "java.lang.IllegalArgumentException: File " +
+      "Scan From Input reads only the files a File Lister upstream of it lists. Link a File " +
+      "Lister to its input, directly or through other operators."
+    row(failure.eid).getStatus shouldBe 4.toByte
   }
 
   it should "compile only the target and what is upstream of it, given one target" in {
@@ -1183,7 +1315,10 @@ class ExecutionResourceSpec
     val storageDown = new java.io.IOException("the storage does not answer")
     Seq[(RunBindings => RunBindings, Exception)](
       (_ => TestUtils.fixtureBindings.copy(files = _ => throw databaseDown), databaseDown),
-      (_ => TestUtils.fixtureBindings.copy(inputLinker = _ => throw storageDown), storageDown)
+      (
+        _ => TestUtils.fixtureBindings.copy(inputLinker = linkerOf(_ => throw storageDown)),
+        storageDown
+      )
     ).foreach {
       case (bindings, outage) =>
         val before = executionCount

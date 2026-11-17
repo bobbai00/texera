@@ -19,7 +19,7 @@
 
 package org.apache.texera.common.compiler
 
-import org.apache.texera.common.config.DefaultsConfig
+import org.apache.texera.common.config.{ApplicationConfig, DefaultsConfig}
 import org.apache.texera.dao.jooq.generated.Tables.SITE_SETTINGS
 import org.apache.texera.dao.{MockTexeraDB, SiteSettings}
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
@@ -49,10 +49,17 @@ class CompileSettingsSpec
   "CompileSettings.fromSiteSettings" should
     "take the CSV column limit the site holds, as it stands at each read" in {
     siteHolds("731")
-    CompileSettings.fromSiteSettings() shouldBe CompileSettings(csvParserMaxColumns = 731)
+    CompileSettings.fromSiteSettings().csvParserMaxColumns shouldBe 731
 
     siteHolds("9")
-    CompileSettings.fromSiteSettings() shouldBe CompileSettings(csvParserMaxColumns = 9)
+    CompileSettings.fromSiteSettings().csvParserMaxColumns shouldBe 9
+  }
+
+  it should "take the most files a plan may list from the deployment's configuration" in {
+    siteHolds("731")
+
+    CompileSettings.fromSiteSettings().maxListedFiles shouldBe ApplicationConfig.maxListedFiles
+    CompileSettings.Default.maxListedFiles shouldBe ApplicationConfig.maxListedFiles
   }
 
   it should "take the default for a limit the site does not hold, or holds as no number" in {

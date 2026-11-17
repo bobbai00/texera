@@ -20,31 +20,40 @@
 package org.apache.texera.common.compiler
 
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.SiteSettings
 
 /**
-  * The site's settings that a compile fixes in the plan it makes. They are read once, when the
-  * plan is compiled, and travel in the operators they apply to, so what runs the plan asks the
-  * site for nothing.
+  * The site's settings that a compile makes a plan under. They are read once, when the plan is
+  * compiled, and what they decide is fixed in the plan, in the operators they apply to, so what
+  * runs the plan asks the site for nothing.
   *
   * @param csvParserMaxColumns the most columns a row of a CSV file may have (site setting
   *                            `csv_parser_max_columns`): the limit of every CSV scan
+  * @param maxListedFiles      the most files of dataset versions that an operator of a plan made
+  *                            to run may list or read (`constants.max-listed-files` of the
+  *                            deployment's configuration): the limit of every File Lister's
+  *                            listing, and of the files every File Scan From Input reads
   */
-final case class CompileSettings(csvParserMaxColumns: Int)
+final case class CompileSettings(csvParserMaxColumns: Int, maxListedFiles: Int)
 
 object CompileSettings {
 
   /** The settings of a site whose administrators have changed none. */
   val Default: CompileSettings =
-    CompileSettings(csvParserMaxColumns = CSVScanSourceOpDesc.DefaultMaxColumns)
+    CompileSettings(
+      csvParserMaxColumns = CSVScanSourceOpDesc.DefaultMaxColumns,
+      maxListedFiles = ApplicationConfig.maxListedFiles
+    )
 
   /**
-    * The site's settings as they stand now, read from Postgres: for a service that has it, the
-    * Dashboard and the compiling service. A setting that cannot be read, because the site holds
+    * The site's settings as they stand now, for a service that has Postgres, the Dashboard and
+    * the compiling service: what the site's administrators set is read from there, and the rest
+    * is the deployment's configuration. A setting that cannot be read, because the site holds
     * none, holds one that is no number, or Postgres does not answer, is the default's.
     */
   def fromSiteSettings(): CompileSettings =
-    CompileSettings(
+    Default.copy(
       csvParserMaxColumns =
         SiteSettings.getInt("csv_parser_max_columns", Default.csvParserMaxColumns)
     )

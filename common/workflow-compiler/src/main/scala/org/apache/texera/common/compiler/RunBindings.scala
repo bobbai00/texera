@@ -20,6 +20,7 @@
 package org.apache.texera.common.compiler
 
 import org.apache.texera.amber.core.storage.{
+  DatasetVersionLister,
   InputLinker,
   RepositoryVersionResolver,
   ScanFileResolver
@@ -34,8 +35,11 @@ import java.nio.file.Path
   *
   * @param files        resolves the file names of scan sources to URIs, as the plan's user may
   *                     read them.
-  * @param inputLinker  links the files `files` resolved, for the scan sources' executors to read
-  *                     them through. Only a compile that makes a plan to run asks it.
+  * @param inputLinker  links the files `files` resolved and the files `lister` listed, for the
+  *                     executors that read them to read them through. Only a compile that makes
+  *                     a plan to run asks it.
+  * @param lister       lists the dataset versions File Listers name, as the plan's user may read
+  *                     them. Only a compile that makes a plan to run asks it.
   * @param repositories pins the dataset and model versions operators name, for the plan's user.
   *                     Only a compile that makes a plan to run asks it.
   * @param mountRoot    the directory computing units mount repositories under. The plan's code
@@ -50,6 +54,7 @@ import java.nio.file.Path
 final case class RunBindings(
     files: ScanFileResolver,
     inputLinker: InputLinker,
+    lister: DatasetVersionLister,
     repositories: RepositoryVersionResolver,
     mountRoot: Option[Path],
     settings: CompileSettings
@@ -59,13 +64,15 @@ object RunBindings {
 
   /**
     * The bindings of a compile that makes no plan to run, as the editor's is: it resolves files
-    * and applies the site's settings, links no file ([[InputLinker.Unavailable]]) and pins no
-    * dataset or model version ([[RepositoryVersionResolver.Unavailable]], and no mount root).
+    * and applies the site's settings, links no file ([[InputLinker.Unavailable]]), lists no
+    * dataset version ([[DatasetVersionLister.Unavailable]]) and pins no dataset or model version
+    * ([[RepositoryVersionResolver.Unavailable]], and no mount root).
     */
   def forEditing(files: ScanFileResolver, settings: CompileSettings): RunBindings =
     RunBindings(
       files = files,
       inputLinker = InputLinker.Unavailable,
+      lister = DatasetVersionLister.Unavailable,
       repositories = RepositoryVersionResolver.Unavailable,
       mountRoot = None,
       settings = settings

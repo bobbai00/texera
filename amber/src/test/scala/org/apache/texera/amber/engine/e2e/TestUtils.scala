@@ -105,12 +105,14 @@ object TestUtils {
   /**
     * What a plan compiled in a spec is bound to: its scan sources read fixture files on the local
     * disk, through links to the fixture server, as a run reads a dataset's files through links
-    * to the object store; a UDF's datasets and models are the fixture versions, read under the
-    * fixture mount root; and the site's settings are the defaults.
+    * to the object store; its File Listers list the fixture dataset version, whose files are
+    * read through such links too; a UDF's datasets and models are the fixture versions, read
+    * under the fixture mount root; and the site's settings are the defaults.
     */
   val fixtureBindings: RunBindings = RunBindings(
     files = TestOperators.fixtureFileResolver,
     inputLinker = TestOperators.fixtureInputLinker,
+    lister = TestOperators.fixtureDatasetVersionLister,
     repositories = TestOperators.fixtureRepositoryResolver,
     mountRoot = Some(TestOperators.fixtureMountRoot),
     settings = CompileSettings.Default

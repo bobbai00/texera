@@ -20,7 +20,12 @@
 package org.apache.texera.service.util
 
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.amber.core.storage.{InputLink, LakeFSInputLinker}
+import org.apache.texera.amber.core.storage.{
+  InputLink,
+  LakeFSDatasetVersionLister,
+  LakeFSInputLinker,
+  ListedFile
+}
 import org.apache.texera.amber.core.storage.model.LinkDocument
 import org.apache.texera.amber.core.storage.util.LakeFSStorageClient
 import org.apache.texera.common.config.StorageConfig
@@ -34,28 +39,38 @@ import java.nio.charset.StandardCharsets
 import java.time.Duration
 
 /**
-  * A dataset's file, linked and read as a run reads it, against a real LakeFS and a real object
-  * store (RustFS), each in a container: the Dashboard service's half ([[LakeFSInputLinker]]: where
-  * LakeFS keeps the file, and a link to that object signed here) and the computing unit's half
-  * ([[LinkDocument]]: the file's bytes, from the object store alone).
+  * A dataset's files, linked and read as a run reads them, against a real LakeFS and a real
+  * object store (RustFS), each in a container: the Dashboard service's half
+  * ([[LakeFSInputLinker]]: where LakeFS keeps a file, and a link to that object signed here;
+  * [[LakeFSDatasetVersionLister]]: the files of a version, with where LakeFS keeps each) and the
+  * computing unit's half ([[LinkDocument]]: a file's bytes, from the object store alone).
   */
 class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS {
 
   private val repositoryName = s"input-link-spec-${System.nanoTime()}"
   private val fileRelativePath = "2026/people & places.csv"
   private val content = "id,name\n1,Ada\n2,Grace\n" * 4099
+  private val notesRelativePath = "notes.txt"
+  private val notes = "kept beside the people"
   private var versionHash: String = _
 
   override def afterStart(): Unit = {
     super.afterStart()
     LakeFSStorageClient.initRepo(repositoryName)
-    LakeFSStorageClient.writeFileToRepo(
-      repositoryName,
-      fileRelativePath,
-      new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))
-    )
+    Seq(fileRelativePath -> content, notesRelativePath -> notes).foreach {
+      case (file, text) =>
+        LakeFSStorageClient.writeFileToRepo(
+          repositoryName,
+          file,
+          new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+        )
+    }
     versionHash = LakeFSStorageClient.createCommit(repositoryName, "main", "add people").getId
   }
+
+  /** The version as a File Lister names it, and its lister, for a user who may read it. */
+  private val versionPath = "/dataset/ada@texera.io/people/v1"
+  private val lister = new LakeFSDatasetVersionLister(_ => (repositoryName, versionHash))
 
   /** `file` of the version, as `FileResolver` resolves its name: each segment URL-encoded. */
   private def resolved(file: String): URI = {
@@ -134,11 +149,41 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
       include(missing.toString)
   }
 
+  "A listing of a dataset version" should
+    "hold each file of the version, with its size and the object LakeFS keeps it in" in {
+    val listed = lister.list(versionPath, atMost = 100)
+
+    // In the order of the files' paths, each named under the version's path.
+    listed.map(_.logicalPath) shouldBe
+      Seq(s"$versionPath/$fileRelativePath", s"$versionPath/$notesRelativePath")
+    listed.map(_.sizeBytes) shouldBe Seq(content.length, notes.length)
+    every(listed.map(_.physicalAddress)) should
+      startWith(s"s3://${StorageConfig.lakefsBucketName}/$repositoryName/")
+    // Asked for fewer files than the version holds, it lists the first.
+    lister.list(versionPath, atMost = 1) shouldBe listed.take(1)
+  }
+
+  it should "give each file a link that reads the file's bytes from the object store" in {
+    val linker = linkerFor(objectStoreEndpoint)
+
+    val links = lister.list(versionPath, atMost = 100).map(linker.linkListed)
+
+    links.map(readThrough(_, objectStoreEndpoint)) shouldBe Seq(content, notes)
+    links.map(_.sizeBytes) shouldBe Seq(content.length, notes.length)
+    // To the object LakeFS names when asked for the file by itself.
+    new URI(links.head.url).getPath shouldBe
+      new URI(linker.link(resolved(fileRelativePath)).url).getPath
+  }
+
   // Last: it takes LakeFS away.
-  it should "still read once LakeFS is gone" in {
+  "A link to a dataset's file" should "still read once LakeFS is gone" in {
     val link = linkerFor(objectStoreEndpoint).link(resolved(fileRelativePath))
+    val listed: Seq[ListedFile] = lister.list(versionPath, atMost = 100)
     lakefs.stop()
 
     readThrough(link, objectStoreEndpoint) shouldBe content
+    // And a file listed while LakeFS answered is linked, and read, without it.
+    val linkedSince = listed.map(linkerFor(objectStoreEndpoint).linkListed)
+    linkedSince.map(readThrough(_, objectStoreEndpoint)) shouldBe Seq(content, notes)
   }
 }

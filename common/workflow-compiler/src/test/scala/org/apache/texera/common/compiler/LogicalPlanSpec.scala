@@ -20,7 +20,13 @@
 package org.apache.texera.common.compiler
 
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.amber.core.storage.{InputLink, InputLinker, ScanFileResolver}
+import org.apache.texera.amber.core.storage.{
+  DatasetVersionLister,
+  InputLink,
+  InputLinker,
+  ListedFile,
+  ScanFileResolver
+}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{InputFile, PlanInput, PortIdentity}
 import org.apache.texera.amber.operator.aggregate.AggregateOpDesc
@@ -28,8 +34,11 @@ import org.apache.texera.amber.operator.hashJoin.HashJoinOpDesc
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
+import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
 import org.apache.texera.amber.operator.source.scan.json.JSONLScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.split.SplitOpDesc
 import org.apache.texera.amber.operator.udf.python.DualInputPortsPythonUDFOpDescV2
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
@@ -582,9 +591,20 @@ class LogicalPlanSpec extends AnyFlatSpec {
       412
     )
 
+  /**
+    * A linker of the files resolvers resolve, each as `linkFile` links it. It is asked for no
+    * file of a listing: `bindScanFiles` links none.
+    */
+  private def linkerOf(linkFile: URI => InputLink): InputLinker =
+    new InputLinker {
+      override def link(fileUri: URI): InputLink = linkFile(fileUri)
+      override def linkListed(file: ListedFile): InputLink =
+        fail(s"asked to link the listed file ${file.logicalPath}")
+    }
+
   /** A linker that links any file, and lists the files it was asked to link in `asked`. */
   private def recordingLinker(asked: ArrayBuffer[URI]): InputLinker =
-    file => {
+    linkerOf { file =>
       asked += file
       linkOf(file)
     }
@@ -739,10 +759,10 @@ class LogicalPlanSpec extends AnyFlatSpec {
 
     val inputs = LogicalPlan(List(missing, found), List.empty).bindScanFiles(
       TestOperators.fixtureFileResolver,
-      Some { file =>
+      Some(linkerOf { file =>
         asked += 1
         if (asked == 1) throw notFound else linkOf(file)
-      },
+      }),
       errors
     )
 
@@ -766,7 +786,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
     val fromLinker = intercept[java.io.IOException] {
       LogicalPlan(List(csv()), List.empty).bindScanFiles(
         TestOperators.fixtureFileResolver,
-        Some(_ => throw outage),
+        Some(linkerOf(_ => throw outage)),
         errors
       )
     }
@@ -783,11 +803,470 @@ class LogicalPlanSpec extends AnyFlatSpec {
     val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
     val inputs = plan.bindScanFiles(
       fileName => fail(s"asked to resolve $fileName"),
-      Some(file => fail(s"asked to link $file")),
+      Some(linkerOf(file => fail(s"asked to link $file"))),
       errors
     )
     assert(errors.isEmpty)
     assert(inputs.isEmpty)
+  }
+
+  it should "leave the links of a File Scan From Input alone: its files are listed, not named" in {
+    val fileScan = new FileScanOpDesc
+    val links = Map("/dataset/ada@texera.io/letters/v1/a.txt" -> sentLink)
+    fileScan.inputLinks = links
+
+    LogicalPlan(List(fileScan), List.empty).bindScanFiles(
+      fileName => fail(s"asked to resolve $fileName"),
+      Some(linkerOf(file => fail(s"asked to link $file"))),
+      ArrayBuffer.empty
+    )
+
+    assert(fileScan.inputLinks == links)
+  }
+
+  // ---------------------------------------------------------------------------
+  // bindListedFiles
+  // ---------------------------------------------------------------------------
+  //
+  // Which files a dataset version holds is the lister's business, and how a file gets a
+  // link the linker's; both are passed in by the caller. Here the lister lists the
+  // versions a case gives it and records what it is asked, and the linker links any
+  // listed file and records it.
+
+  private val lettersPath = "/dataset/ada@texera.io/letters/v1"
+  private val almanacPath = "/dataset/ada@texera.io/almanac/v2"
+
+  /** The file at `path` within the version at `versionPath`, as a listing holds it. */
+  private def listedFile(versionPath: String, path: String, sizeBytes: Long = 412): ListedFile =
+    ListedFile(
+      s"$versionPath/$path",
+      s"s3://texera-dataset/${path.hashCode.toHexString}",
+      sizeBytes
+    )
+
+  private val letters =
+    Seq(listedFile(lettersPath, "b.txt", 2), listedFile(lettersPath, "a.txt", 1))
+  private val almanac = Seq(listedFile(almanacPath, "2024/moon.csv", 3))
+
+  /**
+    * A lister of `versions`: it lists the first files of each, as many as it is asked for, and
+    * refuses any other version as one that is not there. `asked` lists what it was asked.
+    */
+  private def listerOf(
+      versions: Map[String, Seq[ListedFile]],
+      asked: ArrayBuffer[(String, Int)] = ArrayBuffer.empty
+  ): DatasetVersionLister =
+    (versionPath, atMost) => {
+      asked += ((versionPath, atMost))
+      versions
+        .getOrElse(versionPath, throw new FileNotFoundException(versionPath))
+        .take(atMost)
+    }
+
+  private val bothVersions = Map(lettersPath -> letters, almanacPath -> almanac)
+
+  /** The link `listedFileLinker` makes for `file`. */
+  private def linkOf(file: ListedFile): InputLink =
+    InputLink(
+      s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}?X-Amz-Signature=5ecr3t",
+      86400000L,
+      file.sizeBytes
+    )
+
+  /**
+    * A linker of listed files, which lists those it was asked to link in `asked`. It is asked
+    * for no file by its URI: `bindListedFiles` links only what was listed.
+    */
+  private def listedFileLinker(asked: ArrayBuffer[ListedFile] = ArrayBuffer.empty): InputLinker =
+    new InputLinker {
+      override def link(fileUri: URI): InputLink = fail(s"asked to link $fileUri")
+      override def linkListed(file: ListedFile): InputLink = {
+        asked += file
+        linkOf(file)
+      }
+    }
+
+  /** A linker that is asked for nothing. */
+  private val linksNothing: InputLinker =
+    new InputLinker {
+      override def link(fileUri: URI): InputLink = fail(s"asked to link $fileUri")
+      override def linkListed(file: ListedFile): InputLink =
+        fail(s"asked to link the listed file ${file.logicalPath}")
+    }
+
+  private def fileLister(id: String, versionPath: String): FileListerSourceOpDesc = {
+    val op = named(new FileListerSourceOpDesc, id)
+    op.datasetVersionPath = versionPath
+    op
+  }
+
+  private def fileScan(id: String): FileScanOpDesc = named(new FileScanOpDesc, id)
+
+  /** The inputs a File Scan From Input of id `id` reads when `files` are linked for it. */
+  private def inputsOf(id: String, files: Seq[ListedFile]): Seq[PlanInput] =
+    files.map(file =>
+      PlanInput(OperatorIdentity(id), file.logicalPath, InputFile(86400000L, file.sizeBytes))
+    )
+
+  private val noFileListerUpstream =
+    "java.lang.IllegalArgumentException: File Scan From Input reads only the files a File " +
+      "Lister upstream of it lists. Link a File Lister to its input, directly or through other " +
+      "operators."
+
+  "LogicalPlan.bindListedFiles" should
+    "set on each File Lister the listing of its version, for a plan made to run" in {
+    val lettersLister = fileLister("letters", lettersPath)
+    val almanacLister = fileLister("almanac", almanacPath)
+    val asked = ArrayBuffer.empty[(String, Int)]
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val inputs = LogicalPlan(List(lettersLister, keyword(), almanacLister), List.empty)
+      .bindListedFiles(Some(listerOf(bothVersions, asked)), linksNothing, 100, errors)
+
+    assert(errors.isEmpty)
+    // Each version is listed once, asked for one file more than may be listed.
+    assert(asked.toList == List((lettersPath, 101), (almanacPath, 101)))
+    // The files by their logical paths, in the order they were listed: not sorted again.
+    assert(lettersLister.listing.contains(List(s"$lettersPath/b.txt", s"$lettersPath/a.txt")))
+    assert(almanacLister.listing.contains(List(s"$almanacPath/2024/moon.csv")))
+    // A File Lister reads no file: with nothing downstream to read them, nothing is linked.
+    assert(inputs.isEmpty)
+  }
+
+  it should "link, for each File Scan From Input, the files listed upstream of it, by any path" in {
+    // letters ─▶ direct          almanac ─▶ search ─▶ through
+    // letters ─▶ union ◀─ almanac            union ─▶ both
+    val lettersLister = fileLister("letters", lettersPath)
+    val almanacLister = fileLister("almanac", almanacPath)
+    val search = named(keyword(), "search")
+    val union = named(new UnionOpDesc(), "union")
+    val (direct, through, both) = (fileScan("direct"), fileScan("through"), fileScan("both"))
+    val plan = LogicalPlan(
+      List(both, lettersLister, direct, search, almanacLister, through, union),
+      List(
+        link(lettersLister.operatorIdentifier, direct.operatorIdentifier),
+        link(almanacLister.operatorIdentifier, search.operatorIdentifier),
+        link(search.operatorIdentifier, through.operatorIdentifier),
+        link(lettersLister.operatorIdentifier, union.operatorIdentifier),
+        link(almanacLister.operatorIdentifier, union.operatorIdentifier),
+        link(union.operatorIdentifier, both.operatorIdentifier)
+      )
+    )
+    val linked = ArrayBuffer.empty[ListedFile]
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val inputs =
+      plan.bindListedFiles(Some(listerOf(bothVersions)), listedFileLinker(linked), 100, errors)
+
+    assert(errors.isEmpty)
+    // The executor looks a link up by the name an input tuple carries: the logical path.
+    def linksOf(files: Seq[ListedFile]) = files.map(file => file.logicalPath -> linkOf(file)).toMap
+    assert(direct.inputLinks == linksOf(letters))
+    assert(through.inputLinks == linksOf(almanac))
+    assert(both.inputLinks == linksOf(letters ++ almanac))
+    // The linker is handed what was listed, a file for each operator that reads it.
+    assert(linked.toList == (letters ++ almanac) ++ letters ++ almanac)
+    // What the plan lists as read from outside the run: each file each operator reads, with
+    // its link's expiry and the file's size, and never the link.
+    assert(
+      inputs == inputsOf("both", letters ++ almanac) ++ inputsOf("direct", letters) ++
+        inputsOf("through", almanac)
+    )
+  }
+
+  it should "link a file that two File Listers upstream list once" in {
+    val first = fileLister("first", lettersPath)
+    val second = fileLister("second", lettersPath)
+    val scan = fileScan("scan")
+    val plan = LogicalPlan(
+      List(first, second, scan),
+      List(
+        link(first.operatorIdentifier, scan.operatorIdentifier),
+        link(second.operatorIdentifier, scan.operatorIdentifier)
+      )
+    )
+    val linked = ArrayBuffer.empty[ListedFile]
+
+    // Two files between them: no more than it can read.
+    val inputs = plan.bindListedFiles(
+      Some(listerOf(bothVersions)),
+      listedFileLinker(linked),
+      2,
+      ArrayBuffer.empty
+    )
+
+    assert(linked.toList == letters)
+    assert(inputs == inputsOf("scan", letters))
+  }
+
+  it should "list and link nothing for a compile that makes no plan to run" in {
+    val lister = fileLister("letters", lettersPath)
+    val scan = fileScan("scan")
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val inputs = LogicalPlan(
+      List(lister, scan),
+      List(link(lister.operatorIdentifier, scan.operatorIdentifier))
+    ).bindListedFiles(None, linksNothing, 100, errors)
+
+    assert(errors.isEmpty)
+    assert(lister.listing.isEmpty)
+    assert(scan.inputLinks.isEmpty)
+    assert(inputs.isEmpty)
+  }
+
+  it should "drop the listing and the links an operator arrived with, whatever becomes of it" in {
+    Seq(None, Some(listerOf(bothVersions))).foreach { lister =>
+      val sent = fileLister("letters", lettersPath)
+      // As a request could send them: a listing of the sender's choosing, and links to it.
+      sent.listing = Some(List("/dataset/another@texera.io/secrets/v1/keys.txt"))
+      val sentLinks = Map(
+        "/dataset/another@texera.io/secrets/v1/keys.txt" -> sentLink,
+        s"$lettersPath/a.txt" -> sentLink
+      )
+      // One scan below the File Lister, and one that is reported: no File Lister feeds it.
+      val (scan, unfed) = (fileScan("scan"), fileScan("unfed"))
+      scan.inputLinks = sentLinks
+      unfed.inputLinks = sentLinks
+
+      LogicalPlan(
+        List(sent, scan, unfed),
+        List(link(sent.operatorIdentifier, scan.operatorIdentifier))
+      ).bindListedFiles(lister, listedFileLinker(), 100, ArrayBuffer.empty)
+
+      withClue(s"with ${lister.fold("no lister")(_ => "a lister")}: ") {
+        assert(sent.listing == lister.map(_ => letters.map(_.logicalPath).toList))
+        assert(
+          scan.inputLinks ==
+            lister.fold(Map.empty[String, InputLink])(_ =>
+              letters.map(file => file.logicalPath -> linkOf(file)).toMap
+            )
+        )
+        assert(unfed.inputLinks.isEmpty)
+      }
+    }
+  }
+
+  it should "report a File Scan From Input with no File Lister upstream, in every compile" in {
+    Seq(None, Some(listerOf(bothVersions))).foreach { lister =>
+      // Names from a Text Input, no input at all, and a File Lister that is in the plan but
+      // not upstream; then one that a File Lister does feed.
+      val names = named(new TextInputSourceOpDesc, "names")
+      val elsewhere = fileLister("elsewhere", lettersPath)
+      val (fed, alone, beside) = (fileScan("fed"), fileScan("alone"), fileScan("beside"))
+      val search = named(keyword(), "search")
+      val listed = fileScan("listed")
+      val plan = LogicalPlan(
+        List(names, elsewhere, fed, alone, beside, search, listed),
+        List(
+          link(names.operatorIdentifier, fed.operatorIdentifier),
+          link(beside.operatorIdentifier, search.operatorIdentifier),
+          link(elsewhere.operatorIdentifier, listed.operatorIdentifier)
+        )
+      )
+      val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+      val inputs = plan.bindListedFiles(lister, listedFileLinker(), 100, errors)
+
+      withClue(s"with ${lister.fold("no lister")(_ => "a lister")}: ") {
+        assert(errors.map(_._1.id).toList == List("fed", "alone", "beside"))
+        assert(errors.forall(_._2.toString == noFileListerUpstream))
+        assert(inputs.map(_.logicalOperatorId.id).toSet == lister.map(_ => "listed").toSet)
+      }
+    }
+  }
+
+  it should "report a File Lister that names no dataset version, without asking for one" in {
+    Seq(false, true).foreach { makesPlanToRun =>
+      val unset = fileLister("unset", null)
+      val blank = fileLister("blank", "  ")
+      val scan = fileScan("scan")
+      val asked = ArrayBuffer.empty[(String, Int)]
+      val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+      LogicalPlan(
+        List(unset, blank, scan),
+        List(link(unset.operatorIdentifier, scan.operatorIdentifier))
+      ).bindListedFiles(
+        Option.when(makesPlanToRun)(listerOf(bothVersions, asked)),
+        linksNothing,
+        100,
+        errors
+      )
+
+      withClue(s"for a plan ${if (makesPlanToRun) "made" else "not made"} to run: ") {
+        // The File Scan From Input has no error of its own: a File Lister is upstream of it.
+        assert(errors.map(_._1.id).toList == List("unset", "blank"))
+        assert(
+          errors.forall(
+            _._2.toString == "java.lang.IllegalArgumentException: No dataset version " +
+              "selected. Please select one in the 'Dataset' field in the right panel."
+          )
+        )
+        assert(asked.isEmpty)
+        assert(unset.listing.isEmpty && blank.listing.isEmpty)
+      }
+    }
+  }
+
+  it should "report a version the lister does not find on its File Lister, and go on" in {
+    val missingPath = "/dataset/ada@texera.io/no-such-dataset/v1"
+    val missing = fileLister("missing", missingPath)
+    val found = fileLister("found", lettersPath)
+    val scan = fileScan("scan")
+    val plan = LogicalPlan(
+      List(missing, found, scan),
+      List(
+        link(missing.operatorIdentifier, scan.operatorIdentifier),
+        link(found.operatorIdentifier, scan.operatorIdentifier)
+      )
+    )
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    plan.bindListedFiles(Some(listerOf(bothVersions)), listedFileLinker(), 100, errors)
+
+    // The error is the File Lister's alone, in words that name the version.
+    assert(errors.map(_._1.id).toList == List("missing"))
+    assert(
+      errors.head._2.toString == "java.lang.IllegalArgumentException: Dataset version " +
+        s"$missingPath was not found: it does not exist, or you do not have access to it."
+    )
+    assert(errors.head._2.getCause.isInstanceOf[FileNotFoundException])
+    assert(missing.listing.isEmpty)
+    // The File Lister after it is listed all the same.
+    assert(found.listing.contains(letters.map(_.logicalPath).toList))
+  }
+
+  it should "report a File Lister whose version holds more files than may be listed" in {
+    val within = fileLister("within", lettersPath)
+    val beyond = fileLister("beyond", almanacPath)
+    val asked = ArrayBuffer.empty[(String, Int)]
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+    // Two files may be listed: the letters are two, and the almanac here is three.
+    val versions = Map(
+      lettersPath -> letters,
+      almanacPath -> Seq("a", "b", "c").map(listedFile(almanacPath, _))
+    )
+
+    LogicalPlan(List(within, beyond), List.empty)
+      .bindListedFiles(Some(listerOf(versions, asked)), linksNothing, 2, errors)
+
+    // One file beyond what may be listed is asked for, which is how a larger version is told.
+    assert(asked.toList == List((lettersPath, 3), (almanacPath, 3)))
+    assert(within.listing.contains(letters.map(_.logicalPath).toList))
+    assert(errors.map(_._1.id).toList == List("beyond"))
+    assert(
+      errors.head._2.toString == "java.lang.IllegalArgumentException: Dataset version " +
+        s"$almanacPath holds more files than the 2 a File Lister can list."
+    )
+    assert(beyond.listing.isEmpty)
+  }
+
+  it should "report a File Scan From Input with more files listed upstream than it can read" in {
+    def plan(): (LogicalPlan, FileScanOpDesc) = {
+      val lettersLister = fileLister("letters", lettersPath)
+      val almanacLister = fileLister("almanac", almanacPath)
+      val scan = fileScan("scan")
+      // It arrives with a link, as a request could send one.
+      scan.inputLinks = Map(s"$lettersPath/a.txt" -> sentLink)
+      (
+        LogicalPlan(
+          List(lettersLister, almanacLister, scan),
+          List(
+            link(lettersLister.operatorIdentifier, scan.operatorIdentifier),
+            link(almanacLister.operatorIdentifier, scan.operatorIdentifier)
+          )
+        ),
+        scan
+      )
+    }
+
+    // Each version is within what a File Lister may list; the three files between them are
+    // one more than a File Scan From Input may read.
+    val (tooMany, unlinked) = plan()
+    val linked = ArrayBuffer.empty[ListedFile]
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+    val inputs =
+      tooMany.bindListedFiles(Some(listerOf(bothVersions)), listedFileLinker(linked), 2, errors)
+
+    assert(errors.map(_._1.id).toList == List("scan"))
+    assert(
+      errors.head._2.toString == "java.lang.IllegalArgumentException: The File Listers " +
+        "upstream of File Scan From Input list 3 files, and it can read at most 2."
+    )
+    assert(linked.isEmpty && inputs.isEmpty && unlinked.inputLinks.isEmpty)
+
+    // At exactly as many as it can read, they are linked.
+    val (withinLimit, scan) = plan()
+    val none = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+    withinLimit.bindListedFiles(Some(listerOf(bothVersions)), listedFileLinker(), 3, none)
+    assert(none.isEmpty)
+    assert(scan.inputLinks.size == 3)
+  }
+
+  it should "ask for as many files as there can be when no fewer may be listed" in {
+    val asked = ArrayBuffer.empty[(String, Int)]
+
+    LogicalPlan(List(fileLister("letters", lettersPath)), List.empty).bindListedFiles(
+      Some(listerOf(bothVersions, asked)),
+      linksNothing,
+      Int.MaxValue,
+      ArrayBuffer.empty
+    )
+
+    assert(asked.toList == List((lettersPath, Int.MaxValue)))
+  }
+
+  it should "throw, as it is, a failure of the lister or the linker that is no operator's error" in {
+    // The database or the storage not answering says nothing about the version: reported on
+    // the File Lister, it would read as the user's mistake.
+    val outage = new java.io.IOException("the storage did not answer")
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+    def plan(): LogicalPlan = {
+      val lister = fileLister("letters", lettersPath)
+      val scan = fileScan("scan")
+      LogicalPlan(
+        List(lister, scan),
+        List(link(lister.operatorIdentifier, scan.operatorIdentifier))
+      )
+    }
+
+    val fromLister = intercept[java.io.IOException] {
+      plan().bindListedFiles(Some((_, _) => throw outage), linksNothing, 100, errors)
+    }
+    val fromLinker = intercept[java.io.IOException] {
+      plan().bindListedFiles(
+        Some(listerOf(bothVersions)),
+        new InputLinker {
+          override def link(fileUri: URI): InputLink = fail(s"asked to link $fileUri")
+          override def linkListed(file: ListedFile): InputLink = throw outage
+        },
+        100,
+        errors
+      )
+    }
+
+    assert(fromLister eq outage)
+    assert(fromLinker eq outage)
+    assert(errors.isEmpty)
+  }
+
+  it should "leave operators that list and read no listed file untouched" in {
+    // A scan source's link is bindScanFiles' to make, and to drop.
+    val scan = csv()
+    scan.inputLinks = Map("dataset:///repository/commit/data.csv" -> sentLink)
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val inputs = LogicalPlan(List(scan, keyword()), List.empty).bindListedFiles(
+      Some((versionPath, _) => fail(s"asked to list $versionPath")),
+      linksNothing,
+      100,
+      errors
+    )
+
+    assert(errors.isEmpty)
+    assert(inputs.isEmpty)
+    assert(scan.inputLinks == Map("dataset:///repository/commit/data.csv" -> sentLink))
   }
 
   // ---------------------------------------------------------------------------
@@ -801,7 +1280,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
     sent.maxColumns = Some(100000)
     val plan = LogicalPlan(List(unset, sent, keyword()), List.empty)
 
-    plan.applyCompileSettings(CompileSettings(csvParserMaxColumns = 77))
+    plan.applyCompileSettings(CompileSettings.Default.copy(csvParserMaxColumns = 77))
 
     assert(unset.maxColumns.contains(77))
     assert(sent.maxColumns.contains(77))
@@ -812,7 +1291,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
     val before = others.map(objectMapper.writeValueAsString)
 
     LogicalPlan(others, List.empty)
-      .applyCompileSettings(CompileSettings(csvParserMaxColumns = 77))
+      .applyCompileSettings(CompileSettings.Default.copy(csvParserMaxColumns = 77))
 
     assert(others.map(objectMapper.writeValueAsString) == before)
   }

@@ -34,15 +34,25 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.operator.StandaloneCodeGenerator
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.operator.source.SourceOperatorDescriptor
-import org.apache.texera.amber.operator.source.scan.{FileAttributeType, FileDecodingMethod}
+import org.apache.texera.amber.operator.source.scan.{
+  FileAttributeType,
+  FileDecodingMethod,
+  ReadsInputFiles
+}
 import org.apache.texera.amber.operator.source.scan.text.TextSourceOpDesc
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
+/**
+  * Scans the files its input tuples name. A file is read only if a File Lister upstream of the
+  * operator lists it: the names arrive while the plan runs, and the plan carries a link
+  * (`inputLinks`) to each file listed upstream when it was made, and to no other.
+  */
 class FileScanOpDesc
     extends SourceOperatorDescriptor
     with TextSourceOpDesc
-    with StandaloneCodeGenerator {
+    with StandaloneCodeGenerator
+    with ReadsInputFiles {
   @JsonProperty(defaultValue = "UTF_8", required = true)
   @JsonSchemaTitle("Encoding")
   var fileEncoding: FileDecodingMethod = FileDecodingMethod.UTF_8
@@ -88,7 +98,8 @@ class FileScanOpDesc
   override def operatorInfo: OperatorInfo =
     OperatorInfo(
       userFriendlyName = "File Scan From Input",
-      operatorDescription = "Scan data from file paths provided by input tuples",
+      operatorDescription =
+        "Scan the files listed by an upstream File Lister, each named by an input tuple",
       operatorGroupName = OperatorGroupConstants.INPUT_GROUP,
       inputPorts = List(InputPort(displayName = "Filename")),
       outputPorts = List(OutputPort())

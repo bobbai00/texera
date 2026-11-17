@@ -36,7 +36,7 @@ tags: [data-input]
 | [CSVOld File Scan](csvold-file-scan/) | Scan data from a CSVOld file |
 | [File Lister](file-lister/) | Select a dataset version and output one filename tuple per file |
 | [File Scan](file-scan/) | Scan data from a file |
-| [File Scan From Input](file-scan-from-input/) | Scan data from file paths provided by input tuples |
+| [File Scan From Input](file-scan-from-input/) | Scan the files listed by an upstream File Lister, each named by an input tuple |
 | [JSONL File Scan](jsonl-file-scan/) | Scan data from a JSONL file |
 | [Text Input](text-input/) | Source data from manually inputted text |
 

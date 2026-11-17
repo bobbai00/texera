@@ -31,8 +31,10 @@ import org.apache.texera.amber.core.executor.{
 }
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.storage.{
+  DatasetVersionLister,
   InputLink,
   InputLinker,
+  ListedFile,
   RepositoryVersionResolver,
   ScanFileResolver
 }
@@ -63,11 +65,15 @@ import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpDesc}
 import org.apache.texera.amber.operator.sort.{SortCriteriaUnit, SortOpDesc, SortPreference}
+import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.ReadsInputFiles
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
+import org.apache.texera.amber.operator.union.UnionOpDesc
 import org.apache.texera.amber.operator.{
   LogicalOp,
   PortDescription,
@@ -101,21 +107,24 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   private def newContext(): WorkflowContext =
     new WorkflowContext(workflowId = WorkflowIdentity(0))
 
-  // The scan sources here read fixture files on the local disk, through the fixture linker's
-  // links in a plan made to run.
+  // The scan sources here read fixture files on the local disk, and the File Listers list the
+  // fixture dataset version, whose files are fixture files too: all through the fixture
+  // linker's links in a plan made to run.
   private def newCompiler(
       fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver,
       settings: CompileSettings = CompileSettings.Default,
-      inputLinker: InputLinker = TestOperators.fixtureInputLinker
+      inputLinker: InputLinker = TestOperators.fixtureInputLinker,
+      lister: DatasetVersionLister = TestOperators.fixtureDatasetVersionLister
   ): WorkflowCompiler =
     new WorkflowCompiler(
       newContext(),
       RunBindings(
-        fileResolver,
-        inputLinker,
-        TestOperators.fixtureRepositoryResolver,
-        Some(TestOperators.fixtureMountRoot),
-        settings
+        files = fileResolver,
+        inputLinker = inputLinker,
+        lister = lister,
+        repositories = TestOperators.fixtureRepositoryResolver,
+        mountRoot = Some(TestOperators.fixtureMountRoot),
+        settings = settings
       )
     )
 
@@ -1182,11 +1191,12 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     new WorkflowCompiler(
       newContext(),
       RunBindings(
-        TestOperators.fixtureFileResolver,
-        TestOperators.fixtureInputLinker,
-        resolver,
-        mountRoot,
-        CompileSettings.Default
+        files = TestOperators.fixtureFileResolver,
+        inputLinker = TestOperators.fixtureInputLinker,
+        lister = TestOperators.fixtureDatasetVersionLister,
+        repositories = resolver,
+        mountRoot = mountRoot,
+        settings = CompileSettings.Default
       )
     )
 
@@ -1499,16 +1509,27 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   }
 
   "RunBindings.forEditing" should
-    "bind a compile to the files and settings it is given, and to no link, dataset or model" in {
-    val settings = CompileSettings(csvParserMaxColumns = 77)
+    "bind a compile to the files and settings it is given, and to no link, listing, dataset or model" in {
+    val settings = CompileSettings.Default.copy(csvParserMaxColumns = 77)
 
     val bindings = RunBindings.forEditing(TestOperators.fixtureFileResolver, settings)
 
     assert(bindings.files eq TestOperators.fixtureFileResolver)
     assert(bindings.settings == settings)
     assert(bindings.inputLinker eq InputLinker.Unavailable)
+    assert(bindings.lister eq DatasetVersionLister.Unavailable)
     assert(bindings.repositories eq RepositoryVersionResolver.Unavailable)
     assert(bindings.mountRoot.isEmpty)
+    // A plan made to run with them, which lists a dataset version, fails rather than run with
+    // no listing: with a failure of the compile's own, as no File Lister is at fault.
+    val unlisted = intercept[IllegalStateException] {
+      new WorkflowCompiler(newContext(), bindings)
+        .compile(pojo(List(fileListerOp()), List.empty), CompilationErrorHandling.Strict)
+    }
+    assert(
+      unlisted.getMessage == "No lister of dataset versions was given, so " +
+        s"${TestOperators.fixtureDatasetVersionPath} cannot be listed."
+    )
     // A plan made to run with them, which reads a file, fails rather than run with no link to
     // it: with a failure of the compile's own, as no scan is at fault.
     val unlinked = intercept[IllegalStateException] {
@@ -1545,7 +1566,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       val first = csvOp(TestOperators.CountrySalesSmallCsvPath)
       val second = csvOp(TestOperators.CountrySalesSmallCsvPath)
 
-      val result = newCompiler(settings = CompileSettings(csvParserMaxColumns = 77))
+      val result = newCompiler(settings = CompileSettings.Default.copy(csvParserMaxColumns = 77))
         .compile(pojo(List(first, second), List.empty), mode)
 
       withClue(s"$mode: ") {
@@ -1565,7 +1586,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       )
       assert(sent.asInstanceOf[CSVScanSourceOpDesc].maxColumns.contains(100000))
 
-      val result = newCompiler(settings = CompileSettings(csvParserMaxColumns = 77))
+      val result = newCompiler(settings = CompileSettings.Default.copy(csvParserMaxColumns = 77))
         .compile(pojo(List(sent), List.empty), mode)
 
       withClue(s"$mode: ") {
@@ -1578,7 +1599,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   it should "report a CSV file with more columns than that limit on its scan, in both modes" in {
     val overflow = "java.lang.RuntimeException: Max columns of 13 exceeded."
     def compilerOf(maxColumns: Int): WorkflowCompiler =
-      newCompiler(settings = CompileSettings(csvParserMaxColumns = maxColumns))
+      newCompiler(settings = CompileSettings.Default.copy(csvParserMaxColumns = maxColumns))
     val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
     val plan = pojo(List(scan), List.empty)
 
@@ -1596,7 +1617,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
   it should "make a plan whose CSV scan's executor reads its file, with no setting to ask for" in {
     val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
-    val result = newCompiler(settings = CompileSettings(csvParserMaxColumns = 14))
+    val result = newCompiler(settings = CompileSettings.Default.copy(csvParserMaxColumns = 14))
       .compile(pojo(List(scan), List.empty), CompilationErrorHandling.Strict)
     assertSavable(result)
     val (className, descString) = executorInit(result, scan)
@@ -1620,12 +1641,29 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   // its descriptor, and the plan lists the file among its inputs. No other compile links
   // anything, and no compile keeps a link a scan arrived with.
 
-  /** The links the plan of `result` gives the executor of `scan`, a CSV scan. */
-  private def linksOf(result: WorkflowCompilationResult, scan: LogicalOp): Map[String, InputLink] =
-    objectMapper.readValue(executorInit(result, scan)._2, classOf[CSVScanSourceOpDesc]).inputLinks
+  /** The links the plan of `result` gives the executor of `reader`, which reads files. */
+  private def linksOf(
+      result: WorkflowCompilationResult,
+      reader: LogicalOp
+  ): Map[String, InputLink] =
+    objectMapper.readValue(executorInit(result, reader)._2, classOf[LogicalOp]) match {
+      case descriptor: ReadsInputFiles => descriptor.inputLinks
+      case other                       => fail(s"${other.getClass.getSimpleName} reads no file")
+    }
+
+  /**
+    * A linker of the files resolvers resolve, each as `linkFile` links it, and of no file of a
+    * listing.
+    */
+  private def linkerOf(linkFile: java.net.URI => InputLink): InputLinker =
+    new InputLinker {
+      override def link(fileUri: java.net.URI): InputLink = linkFile(fileUri)
+      override def linkListed(file: ListedFile): InputLink =
+        fail(s"asked to link the listed file ${file.logicalPath}")
+    }
 
   /** A linker that makes no link, for a compile that must ask for none. */
-  private val linksNothing: InputLinker = file => fail(s"asked to link $file")
+  private val linksNothing: InputLinker = linkerOf(file => fail(s"asked to link $file"))
 
   /** A link a request could send with an operator, to a place of the sender's choosing. */
   private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
@@ -1637,7 +1675,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     val again = csvOp(TestOperators.CountrySalesSmallCsvPath)
     val keyword = TestOperators.keywordSearchOpDesc("Region", "Asia")
     val made = scala.collection.mutable.ArrayBuffer.empty[(java.net.URI, InputLink)]
-    val linker: InputLinker = file => {
+    val linker = linkerOf { file =>
       val link = TestOperators.fixtureInputLinker.link(file)
       made += file -> link
       link
@@ -1737,12 +1775,14 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     val notFound = new FileNotFoundException("the version holds no such file")
     val plan = pojo(List(scan), List.empty)
 
-    val failure = strictFailure(plan, newCompiler(inputLinker = _ => throw notFound))
+    val missesIt = linkerOf(_ => throw notFound)
+
+    val failure = strictFailure(plan, newCompiler(inputLinker = missesIt))
 
     assert(onlyErrorOf(failure, scan) == notFound.toString)
     assert(failure.getCause eq notFound)
     // The editing compile, which links nothing, has no such error.
-    assert(newCompiler(inputLinker = _ => throw notFound).compile(plan).operatorIdToError.isEmpty)
+    assert(newCompiler(inputLinker = missesIt).compile(plan).operatorIdToError.isEmpty)
   }
 
   it should "throw, as it is, a failure to resolve or link a file that is no error of the scan's" in {
@@ -1759,9 +1799,434 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       assert(unresolved eq fault, s"$mode: expected the resolver's own failure, got $unresolved")
     }
     val unlinked = intercept[java.io.IOException] {
-      newCompiler(inputLinker = _ => throw fault).compile(plan(), CompilationErrorHandling.Strict)
+      newCompiler(inputLinker = linkerOf(_ => throw fault))
+        .compile(plan(), CompilationErrorHandling.Strict)
     }
     assert(unlinked eq fault, s"expected the linker's own failure, got: $unlinked")
+  }
+
+  // -------------------- the files a plan lists --------------------
+
+  // A Strict compile, which makes a plan to run, lists the dataset version of each File Lister,
+  // for the plan's user, and links the files listed upstream of each File Scan From Input. The
+  // listing travels to the File Lister's executor in its descriptor, and the links to the File
+  // Scan From Input's, which reads no file but through them. No other compile lists or links
+  // anything, and no compile keeps a listing or a link an operator arrived with. The File
+  // Listers here list the fixture dataset version unless a case gives another lister.
+
+  private def fileListerOp(
+      versionPath: String = TestOperators.fixtureDatasetVersionPath
+  ): FileListerSourceOpDesc = {
+    val op = new FileListerSourceOpDesc()
+    op.datasetVersionPath = versionPath
+    op
+  }
+
+  /** The files of the fixture dataset version, by their logical paths, as it lists them. */
+  private val fixtureFiles: List[String] = TestOperators.fixtureDatasetFiles.map {
+    case (file, _) => s"${TestOperators.fixtureDatasetVersionPath}/$file"
+  }.toList
+
+  /** The listing the plan of `result` gives the executor of `fileLister`. */
+  private def listingOf(
+      result: WorkflowCompilationResult,
+      fileLister: LogicalOp
+  ): Option[List[String]] =
+    objectMapper
+      .readValue(executorInit(result, fileLister)._2, classOf[FileListerSourceOpDesc])
+      .listing
+
+  /**
+    * A lister of `versions`, each a version path with the files it holds: by its path within
+    * the version, a file on the local disk whose bytes are the file's, which is where the
+    * listing says the file is kept. So the fixture linker links what this lists.
+    */
+  private def listerOfLocalFiles(
+      versions: Map[String, Seq[(String, String)]]
+  ): DatasetVersionLister =
+    (versionPath, atMost) =>
+      versions
+        .getOrElse(versionPath, throw new FileNotFoundException(versionPath))
+        .take(atMost)
+        .map {
+          case (file, localPath) =>
+            ListedFile(
+              s"$versionPath/$file",
+              Paths.get(localPath).toUri.toString,
+              java.nio.file.Files.size(Paths.get(localPath))
+            )
+        }
+
+  /** A lister that lists nothing, for a compile that must ask for no listing. */
+  private val listsNothing: DatasetVersionLister =
+    (versionPath, _) => fail(s"asked to list $versionPath")
+
+  private val noFileListerUpstream =
+    "java.lang.IllegalArgumentException: File Scan From Input reads only the files a File " +
+      "Lister upstream of it lists. Link a File Lister to its input, directly or through other " +
+      "operators."
+
+  "WorkflowCompiler" should
+    "list the version of each File Lister of a plan made to run, and link the files for the File Scan From Input below it" in {
+    val lister = fileListerOp()
+    val scan = new FileScanOpDesc()
+
+    val result = newCompiler().compile(
+      pojo(List(lister, scan), List(linked(lister, scan))),
+      CompilationErrorHandling.Strict
+    )
+
+    // The File Lister's executor is handed the listing, and lists nothing itself.
+    assert(listingOf(result, lister).contains(fixtureFiles))
+    // The File Scan From Input's executor finds a link under each name the File Lister outputs.
+    val links = linksOf(result, scan)
+    assert(links.keySet == fixtureFiles.toSet)
+    assert(
+      fixtureFiles.map(links(_).sizeBytes) == TestOperators.fixtureDatasetFiles.map {
+        case (_, localPath) => java.nio.file.Files.size(Paths.get(localPath))
+      }
+    )
+    // The plan lists each file as an input of the operator that reads it, and of no other.
+    assert(
+      result.inputs == fixtureFiles.map { file =>
+        PlanInput(
+          scan.operatorIdentifier,
+          file,
+          InputFile(links(file).expiresAtMs, links(file).sizeBytes)
+        )
+      }
+    )
+    val saved = PhysicalPlanCodec.fromJson(assertSavable(result))
+    assert(saved.inputs.size == fixtureFiles.size)
+    assert(saved.inputs.forall(input => !input.toProtoString.contains("http")))
+  }
+
+  it should "make a plan whose executors list the version and read its files, with nothing to ask" in {
+    val lister = fileListerOp()
+    val scan = new FileScanOpDesc()
+    scan.outputFileName = true
+    val result = newCompiler().compile(
+      pojo(List(lister, scan), List(linked(lister, scan))),
+      CompilationErrorHandling.Strict
+    )
+    def executorOf(op: LogicalOp) = {
+      val (className, descString) = executorInit(result, op)
+      ExecFactory.newExecFromJavaClassName(className, descString)
+    }
+
+    // As a worker runs them: what the File Lister outputs is what the File Scan From Input is
+    // sent.
+    val listed = executorOf(lister)
+      .asInstanceOf[SourceOperatorExecutor]
+      .produceTuple()
+      .map(_.getFields.head.asInstanceOf[String])
+      .toList
+    val fileNames = Schema().add(new Attribute("filename", AttributeType.STRING))
+    val scanner = executorOf(scan)
+    val rows = listed.flatMap { fileName =>
+      scanner.processTuple(Tuple(fileNames, Array[Any](fileName)), 0).map(_.getFields.toList)
+    }
+
+    assert(listed == fixtureFiles)
+    // Each line of each file, beside the name the File Lister gave the file.
+    assert(
+      rows == (1 to 10).map(n => List(fixtureFiles.head, s"line$n")) ++
+        (1 to 10).map(n => List(fixtureFiles.last, n.toString))
+    )
+  }
+
+  it should "link the files of every File Lister upstream of a File Scan From Input, through the operators between" in {
+    // lines ─▶ udf ─▶ union ◀─ numbers        union ─▶ scan
+    val versions = Map(
+      "/dataset/owner@x.com/lines/v1" -> Seq("line_numbers.txt" -> TestOperators.TestTextFilePath),
+      "/dataset/owner@x.com/numbers/v3" -> Seq("numbers.txt" -> TestOperators.TestNumbersFilePath)
+    )
+    val lines = fileListerOp("/dataset/owner@x.com/lines/v1")
+    val numbers = fileListerOp("/dataset/owner@x.com/numbers/v3")
+    val udf = TestOperators.pythonOpDesc()
+    val union = new UnionOpDesc()
+    val scan = new FileScanOpDesc()
+    // A File Scan From Input that only the lines reach.
+    val linesOnly = new FileScanOpDesc()
+
+    val result = newCompiler(lister = listerOfLocalFiles(versions)).compile(
+      pojo(
+        List(lines, numbers, udf, union, scan, linesOnly),
+        List(
+          linked(lines, udf),
+          linked(udf, union),
+          linked(numbers, union),
+          linked(union, scan),
+          linked(udf, linesOnly)
+        )
+      ),
+      CompilationErrorHandling.Strict
+    )
+
+    assert(
+      linksOf(result, scan).keySet == Set(
+        "/dataset/owner@x.com/lines/v1/line_numbers.txt",
+        "/dataset/owner@x.com/numbers/v3/numbers.txt"
+      )
+    )
+    assert(
+      linksOf(result, linesOnly).keySet == Set("/dataset/owner@x.com/lines/v1/line_numbers.txt")
+    )
+    assert(
+      result.inputs.map(input => (input.logicalOperatorId, input.name)) == Seq(
+        (scan.operatorIdentifier, "/dataset/owner@x.com/lines/v1/line_numbers.txt"),
+        (scan.operatorIdentifier, "/dataset/owner@x.com/numbers/v3/numbers.txt"),
+        (linesOnly.operatorIdentifier, "/dataset/owner@x.com/lines/v1/line_numbers.txt")
+      )
+    )
+    assertSavable(result)
+  }
+
+  it should "list the files a plan reads through links, those its scan sources name and those it lists" in {
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val lister = fileListerOp()
+    val scan = new FileScanOpDesc()
+
+    val result = newCompiler().compile(
+      pojo(List(lister, scan, csv), List(linked(lister, scan))),
+      CompilationErrorHandling.Strict
+    )
+
+    assert(
+      result.inputs.map(input => (input.logicalOperatorId, input.name)) ==
+        (csv.operatorIdentifier, csv.fileName.get) +: fixtureFiles.map((scan.operatorIdentifier, _))
+    )
+    assertSavable(result)
+  }
+
+  it should "list and link nothing for the editor's compile, which makes no plan to run" in {
+    val lister = fileListerOp()
+    val scan = new FileScanOpDesc()
+
+    val result = newCompiler(lister = listsNothing, inputLinker = linksNothing)
+      .compile(pojo(List(lister, scan), List(linked(lister, scan))))
+
+    assert(result.operatorIdToError.isEmpty, s"unexpected errors: ${result.operatorIdToError}")
+    assert(result.inputs.isEmpty)
+    assert(listingOf(result, lister).isEmpty)
+    assert(linksOf(result, scan).isEmpty)
+  }
+
+  it should "replace the listing and the links that operators arrive with, as a request could send them" in {
+    def sent(): (LogicalOp, LogicalOp) = {
+      val lister = parsed(
+        s"""{"operatorType":"FileLister",
+           |"datasetVersionPath":"${TestOperators.fixtureDatasetVersionPath}",
+           |"listing":["/dataset/another@x.com/secrets/v1/keys.txt"]}""".stripMargin
+      )
+      val scan = parsed(
+        s"""{"operatorType":"FileScanOp","inputLinks":{
+           |"/dataset/another@x.com/secrets/v1/keys.txt":
+           |  {"url":"${sentLink.url}","expiresAtMs":${sentLink.expiresAtMs},"sizeBytes":1},
+           |"${fixtureFiles.head}":
+           |  {"url":"${sentLink.url}","expiresAtMs":${sentLink.expiresAtMs},"sizeBytes":1}}}""".stripMargin
+      )
+      assert(lister.asInstanceOf[FileListerSourceOpDesc].listing.exists(_.nonEmpty))
+      assert(scan.asInstanceOf[FileScanOpDesc].inputLinks.size == 2)
+      (lister, scan)
+    }
+
+    val (editedLister, editedScan) = sent()
+    val lenient = newCompiler(lister = listsNothing, inputLinker = linksNothing)
+      .compile(pojo(List(editedLister, editedScan), List(linked(editedLister, editedScan))))
+    assert(lenient.operatorIdToError.isEmpty)
+    assert(listingOf(lenient, editedLister).isEmpty)
+    assert(linksOf(lenient, editedScan).isEmpty)
+
+    val (runLister, runScan) = sent()
+    val strict = newCompiler().compile(
+      pojo(List(runLister, runScan), List(linked(runLister, runScan))),
+      CompilationErrorHandling.Strict
+    )
+    assert(listingOf(strict, runLister).contains(fixtureFiles))
+    val links = linksOf(strict, runScan)
+    assert(links.keySet == fixtureFiles.toSet)
+    assert(!links.values.exists(_ == sentLink))
+  }
+
+  it should "report a File Scan From Input that no File Lister is upstream of, in both modes" in {
+    def plan(): (LogicalPlanPojo, LogicalOp) = {
+      // The names come from a Text Input, as a path typed by hand; a File Lister is in the
+      // plan, and reaches another File Scan From Input.
+      val names = textInputOp(fixtureFiles.head)
+      val unlisted = new FileScanOpDesc()
+      val lister = fileListerOp()
+      val listed = new FileScanOpDesc()
+      (
+        pojo(
+          List(names, unlisted, lister, listed),
+          List(linked(names, unlisted), linked(lister, listed))
+        ),
+        unlisted
+      )
+    }
+
+    val (edited, editedScan) = plan()
+    val lenient = newCompiler(lister = listsNothing, inputLinker = linksNothing).compile(edited)
+    assert(lenient.physicalPlan.isEmpty)
+    assert(onlyErrorOf(lenient, editedScan) == noFileListerUpstream)
+
+    val (run, runScan) = plan()
+    assert(onlyErrorOf(strictFailure(run), runScan) == noFileListerUpstream)
+  }
+
+  it should "report a File Lister with no dataset version chosen, in both modes" in {
+    val noVersion = "java.lang.IllegalArgumentException: No dataset version selected. Please " +
+      "select one in the 'Dataset' field in the right panel."
+    def plan(): (LogicalPlanPojo, LogicalOp) = {
+      val lister = new FileListerSourceOpDesc()
+      val scan = new FileScanOpDesc()
+      (pojo(List(lister, scan), List(linked(lister, scan))), lister)
+    }
+
+    val (edited, editedLister) = plan()
+    val lenient = newCompiler(lister = listsNothing, inputLinker = linksNothing).compile(edited)
+    assert(onlyErrorOf(lenient, editedLister) == noVersion)
+
+    val (run, runLister) = plan()
+    val failure = strictFailure(run, newCompiler(lister = listsNothing, inputLinker = linksNothing))
+    assert(onlyErrorOf(failure, runLister) == noVersion)
+  }
+
+  it should "report a version that is not there, or that the plan's user may not read, on its File Lister" in {
+    val versionPath = "/dataset/another@x.com/secrets/v1"
+    val lister = fileListerOp(versionPath)
+    val scan = new FileScanOpDesc()
+    val plan = pojo(List(lister, scan), List(linked(lister, scan)))
+
+    // The fixture lister refuses every version but its own, as a user's lister refuses one that
+    // does not exist or that the user may not read.
+    val failure = strictFailure(plan)
+
+    assert(
+      onlyErrorOf(failure, lister) == s"java.lang.IllegalArgumentException: Dataset version " +
+        s"$versionPath was not found: it does not exist, or you do not have access to it."
+    )
+    assert(failure.getCause.getCause.isInstanceOf[FileNotFoundException])
+    // The editing compile, which lists nothing, has no such error.
+    assert(newCompiler().compile(plan).operatorIdToError.isEmpty)
+  }
+
+  it should "report a File Lister whose version holds more files than the settings allow a plan to list" in {
+    def compilerOf(maxListedFiles: Int): WorkflowCompiler =
+      newCompiler(settings = CompileSettings.Default.copy(maxListedFiles = maxListedFiles))
+    val lister = fileListerOp()
+    val plan = pojo(List(lister), List.empty)
+
+    // The fixture version holds two files.
+    val failure = strictFailure(plan, compilerOf(1))
+
+    assert(
+      onlyErrorOf(failure, lister) == "java.lang.IllegalArgumentException: Dataset version " +
+        s"${TestOperators.fixtureDatasetVersionPath} holds more files than the 1 a File Lister " +
+        "can list."
+    )
+    // At the two it holds, the same plan compiles; and the editing compile lists nothing to
+    // count.
+    assert(listingOf(compilerOf(2).compile(plan, CompilationErrorHandling.Strict), lister).nonEmpty)
+    assert(compilerOf(1).compile(plan).operatorIdToError.isEmpty)
+  }
+
+  it should "report a File Scan From Input below more listed files than the settings allow it to read" in {
+    val versions = Map(
+      "/dataset/owner@x.com/lines/v1" -> Seq(
+        "line_numbers.txt" -> TestOperators.TestTextFilePath,
+        "crlf.txt" -> TestOperators.TestCRLFTextFilePath
+      ),
+      "/dataset/owner@x.com/numbers/v3" -> Seq("numbers.txt" -> TestOperators.TestNumbersFilePath)
+    )
+    def compilerOf(maxListedFiles: Int): WorkflowCompiler =
+      newCompiler(
+        lister = listerOfLocalFiles(versions),
+        settings = CompileSettings.Default.copy(maxListedFiles = maxListedFiles)
+      )
+    val lines = fileListerOp("/dataset/owner@x.com/lines/v1")
+    val numbers = fileListerOp("/dataset/owner@x.com/numbers/v3")
+    val scan = new FileScanOpDesc()
+    val plan =
+      pojo(List(lines, numbers, scan), List(linked(lines, scan), linked(numbers, scan)))
+
+    // Neither version holds more than two files; the two hold three between them.
+    val failure = strictFailure(plan, compilerOf(2))
+
+    assert(
+      onlyErrorOf(failure, scan) == "java.lang.IllegalArgumentException: The File Listers " +
+        "upstream of File Scan From Input list 3 files, and it can read at most 2."
+    )
+    assert(linksOf(compilerOf(3).compile(plan, CompilationErrorHandling.Strict), scan).size == 3)
+  }
+
+  it should "list, link and save as many files as a deployment allows a plan by default" in {
+    val versionPath = "/dataset/owner@x.com/archive/v1"
+    def versionOf(files: Int): DatasetVersionLister =
+      (_, atMost) =>
+        (1 to files).take(atMost).map { i =>
+          ListedFile(f"$versionPath/part-$i%05d.csv", s"s3://texera-dataset/archive/$i", i)
+        }
+    val linker = new InputLinker {
+      override def link(fileUri: java.net.URI): InputLink = fail(s"asked to link $fileUri")
+      override def linkListed(file: ListedFile): InputLink =
+        InputLink(
+          s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}?X-Amz-Signature=5ecr3t",
+          86400000L,
+          file.sizeBytes
+        )
+    }
+    def compilerOf(files: Int): WorkflowCompiler =
+      newCompiler(
+        lister = versionOf(files),
+        inputLinker = linker,
+        settings = CompileSettings.Default.copy(maxListedFiles = 10000)
+      )
+    val lister = fileListerOp(versionPath)
+    val scan = new FileScanOpDesc()
+    val plan = pojo(List(lister, scan), List(linked(lister, scan)))
+
+    val result = compilerOf(10000).compile(plan, CompilationErrorHandling.Strict)
+
+    assert(listingOf(result, lister).exists(_.size == 10000))
+    assert(linksOf(result, scan).size == 10000)
+    assert(result.inputs.size == 10000)
+    assert(PhysicalPlanCodec.fromJson(assertSavable(result)).inputs.size == 10000)
+    // One file more is one too many.
+    val failure = strictFailure(plan, compilerOf(10001))
+    assert(onlyErrorOf(failure, lister).contains(s"$versionPath holds more files than the 10000"))
+  }
+
+  it should "throw, as it is, a failure to list a version or to link a listed file that is no operator's error" in {
+    // A version that does not exist, or that the plan's user may not read, is the error of the
+    // File Lister naming it. A database or a storage that does not answer is not: the compile
+    // fails with that failure itself, which names no operator.
+    val fault = new java.io.IOException("the storage did not answer")
+    def plan() = {
+      val lister = fileListerOp()
+      val scan = new FileScanOpDesc()
+      pojo(List(lister, scan), List(linked(lister, scan)))
+    }
+
+    val unlisted = intercept[java.io.IOException] {
+      newCompiler(lister = (_, _) => throw fault).compile(plan(), CompilationErrorHandling.Strict)
+    }
+    assert(unlisted eq fault, s"expected the lister's own failure, got: $unlisted")
+    val unlinked = intercept[java.io.IOException] {
+      newCompiler(inputLinker = new InputLinker {
+        override def link(fileUri: java.net.URI): InputLink = fail(s"asked to link $fileUri")
+        override def linkListed(file: ListedFile): InputLink = throw fault
+      }).compile(plan(), CompilationErrorHandling.Strict)
+    }
+    assert(unlinked eq fault, s"expected the linker's own failure, got: $unlinked")
+    // The editing compile asks neither, so it meets no such failure.
+    assert(
+      newCompiler(lister = (_, _) => throw fault, inputLinker = linksNothing)
+        .compile(plan())
+        .operatorIdToError
+        .isEmpty
+    )
   }
 
   // -------------------- a plan made to run, saved and read back --------------------
@@ -2098,9 +2563,16 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     )
   }
 
-  /** TextInput -> LoopStart -> `op` -> LoopEnd, every input of `op` fed by the LoopStart. */
+  /**
+    * source -> LoopStart -> `op` -> LoopEnd, every input of `op` fed by the LoopStart. The
+    * source is a Text Input; for a File Scan From Input, which reads only what a File Lister
+    * upstream of it lists, it is a File Lister.
+    */
   private def insideLoopBlock(op: LogicalOp): LogicalPlanPojo = {
-    val src = textInputOp("0\n1")
+    val src = op match {
+      case _: FileScanOpDesc => fileListerOp()
+      case _                 => textInputOp("0\n1")
+    }
     val start = loopStartOp()
     val end = loopEndOp()
     val inputs = op.operatorInfo.inputPorts.map(input => linked(start, op, input.id.id))

@@ -249,9 +249,10 @@ case class WorkflowCompilationResult(
   * editing-path caller simply ignores it — keeping both paths on one code path.
   *
   * Only a Strict compile makes a plan to run, so only it links the files its scan sources read,
-  * and pins the datasets and models operators name (see [[bindResources]]): each is a lookup,
-  * of the storage or the database, and the editing path compiles on every edit. Every compile,
-  * in either mode, gives each operator the site's settings it is compiled under.
+  * lists the dataset versions its File Listers name and links the files listed, and pins the
+  * datasets and models operators name (see [[bindResources]]): each is a lookup, of the storage
+  * or the database, and the editing path compiles on every edit. Every compile, in either mode,
+  * gives each operator the site's settings it is compiled under.
   *
   * @param context  the workflow and execution the compiler makes plans for: their ids stamp
   *                 every operator. Public, so what saves a plan to run saves it for the run the
@@ -469,8 +470,8 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     *                                   each such operator's first error, upstream operators first.
     *                                   A failure that is no operator's error, such as the database
     *                                   or the storage not answering while a file is resolved or
-    *                                   linked, or a version is pinned, is thrown as it is, in
-    *                                   either mode.
+    *                                   linked, or a version is listed or pinned, is thrown as it
+    *                                   is, in either mode.
     */
   def compile(
       logicalPlanPojo: LogicalPlanPojo,
@@ -487,10 +488,19 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     // whatever it arrived with
     logicalPlan.applyCompileSettings(bindings.settings)
 
-    // 3. resolve the file each scan source reads, and, for a plan made to run, link it
-    val inputs = logicalPlan.bindScanFiles(
+    // 3. bind the files the operators read: resolve the file each scan source reads, and, for
+    // a plan made to run, which only a Strict compile makes, link it, list the dataset version
+    // of each File Lister, and link the files listed upstream of each File Scan From Input
+    val makesPlanToRun = errorHandling == CompilationErrorHandling.Strict
+    val scannedFiles = logicalPlan.bindScanFiles(
       bindings.files,
-      Option.when(errorHandling == CompilationErrorHandling.Strict)(bindings.inputLinker),
+      Option.when(makesPlanToRun)(bindings.inputLinker),
+      errors
+    )
+    val listedFiles = logicalPlan.bindListedFiles(
+      Option.when(makesPlanToRun)(bindings.lister),
+      bindings.inputLinker,
+      bindings.settings.maxListedFiles,
       errors
     )
 
@@ -525,7 +535,7 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
       // map each error from OpId to WorkflowFatalError, and report them via logger
       operatorIdToError = convertErrorListToWorkflowFatalErrorMap(logger, errors.toList),
       outputPortsNeedingStorage = outputPortsNeedingStorage,
-      inputs = inputs
+      inputs = scannedFiles ++ listedFiles
     )
   }
 }
