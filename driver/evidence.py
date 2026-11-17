@@ -46,6 +46,12 @@ lake and about how the Dashboard service closes executions. They are evaluated o
 when asked for (a step-3 gate, or --evidence naming them), so a step-2 gate reads and
 reports exactly what it did:
 
+  G  no statement at all comes from the unit (by its addresses or by the name
+     texera-computing-unit) between a scenario's begin and end marks, whatever it
+     is; and, after the last scenario, none since the unit's container started
+  H  pg_stat_activity, sampled at every scenario's start and end, holds no
+     connection from one of the unit's addresses and none named
+     texera-computing-unit
   I  for every run that was started and has ended: the execution log's label names
      the ending; the log holds one row per seq up to the label's; and the log, the
      statistics and the console table hold one data file and one snapshot each (the
@@ -58,6 +64,14 @@ reports exactly what it did:
      record (`ended_at`) within lost-after + 3 closing intervals, and the ones a
      scenario left unstarted on purpose within never-started-after + 2, closed as
      "never started". It replaces the final "no row is left at status 0"
+  J  on a stack started with --unit-no-postgres: at every scenario's end the unit
+     cannot resolve Postgres's name and is healthy (and the scenario passes, which
+     its own checks say)
+
+Checks A and B gate until gate 3B, where the unit still writes its status, and are
+retired at gate 3C: their windows end at the unit's status UPDATE, which no longer
+exists, and G is stronger. With --negative-control 3 (the unit of step 2's end), G
+must fail on the unit's status UPDATEs and H on its idle pool.
 """
 
 from __future__ import annotations
@@ -67,16 +81,22 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Label, Lake, TableState, docker_fetch
 from record_timing import RecordTiming
 from texera_api import REASON_NEVER_STARTED, ExecutionLog
 
-UNIT_APP = "texera-computing-unit"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import pg_activity  # noqa: E402
+
+UNIT_APP = pg_activity.UNIT_APP
 DASHBOARD_APP = "texera-dashboard"
 EXECUTION_DB = "texera_db"
 RUN_STATE_TABLES = frozenset({"workflow_executions", "operator_port_executions", "operator_executions"})
@@ -87,11 +107,17 @@ D_PATTERNS = ("file-service", "texera-lakefs", ":9092", ":8000/api/v1")
 #: step 2's checks: what `--evidence` means without a list
 CHECKS = ("A", "B", "C", "D", "E", "F")
 #: step 3's checks: evaluated only when a gate or `--evidence` names them
-STEP3_CHECKS = ("I", "K")
+STEP3_CHECKS = ("G", "H", "I", "J", "K")
 ALL_CHECKS = CHECKS + STEP3_CHECKS
 #: the checks made once, after the last scenario, not at each scenario's end
 FINAL_CHECKS = ("K",)
+#: step 2's checks that a step-3 gate retires, by the product's level from which they no
+#: longer apply: at gate 3C the unit writes no status, where their windows end
+RETIRED_FROM = {"A": "C", "B": "C"}
+#: the checks that must fail on the old unit, by the step whose negative control it is
 NEGATIVE_CONTROLS = ("A", "D", "F")
+STEP3_CONTROLS = ("G", "H")
+CONTROLS_BY_STEP = {"2": NEGATIVE_CONTROLS, "3": STEP3_CONTROLS}
 CHECK_TITLES = {
     "A": "the unit only writes run state while starting (no SELECT/WITH; INSERT/UPDATE on the "
          "three run-state tables)",
@@ -100,13 +126,18 @@ CHECK_TITLES = {
     "D": "the unit reaches neither file-service nor LakeFS",
     "E": "the execution's plan table carries the `started` tag",
     "F": "every statement from the unit's addresses carries app=texera-computing-unit",
+    "G": "no statement at all comes from the unit",
+    "H": "Postgres holds no connection of the unit",
     "I": "the record of every ended run is whole and tidied in the lake",
+    "J": "the unit cannot resolve Postgres, and is healthy",
     "K": "every execution of this run's workflows is closed",
 }
 CONTROL_REASONS = {
     "A": "the old unit SELECTs while starting",
     "D": "the old unit names file-service",
     "F": "the old unit's connections carry no name; its statements are found by its address",
+    "G": "the old unit writes its status to Postgres",
+    "H": "the old unit keeps an idle pool",
 }
 #: the names whose appearance in the unit's log makes the D control fail for its reason
 D_CONTROL_NAMES = ("file-service", "texera-lakefs")
@@ -116,6 +147,9 @@ DEFAULT_CONTAINERS = {
     "dashboard-service": "sce-dashboard-service",
     "nginx": "sce-texera-nginx",
 }
+#: where the unit would find Postgres: the host of this setting, else the stack's name for it
+JDBC_URL_ENV = "STORAGE_JDBC_URL"
+DEFAULT_POSTGRES_HOST = "texera-postgres"
 CLEANUP_ENV = "WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS"
 DEFAULT_CLEANUP_S = 30  # the unit's default without the env (application.conf)
 PLAN_NAMESPACE_ENV = "STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE"
@@ -153,6 +187,14 @@ def logged_states(told: Iterable[str]) -> list[str]:
         if logged and (not out or out[-1] != logged):
             out.append(logged)
     return out
+
+
+def controls_of(negative_control: bool | str | None) -> tuple[str, ...]:
+    """The checks that must fail in a negative control: none without one; step 2's for
+    `True` or "2" (--negative-control as it always was); step 3's for "3"."""
+    if not negative_control:
+        return ()
+    return CONTROLS_BY_STEP["2" if negative_control is True else str(negative_control)]
 
 
 class EvidenceUnavailable(RuntimeError):
@@ -327,6 +369,8 @@ class Stmt:
     params_text: str | None = None
     error: str | None = None
     duplicate: bool = False
+    #: when docker read the line from Postgres, in nanoseconds since the epoch
+    at_ns: int | None = None
     _norm: str | None = field(default=None, repr=False)
     _params: dict[int, str | None] | None = field(default=None, repr=False)
 
@@ -447,8 +491,10 @@ class PgLog:
         self._error_by_pid: dict[int, str] = {}
         self._target: tuple[Stmt, str] | None = None
 
-    def feed(self, lines: Iterable[str]) -> None:
-        for line in lines:
+    def feed(self, lines: Iterable[str], stamps: Sequence[int] = ()) -> None:
+        """Parse log lines; `stamps`: when docker read each (ContainerLog.stamps)."""
+        for i, line in enumerate(lines):
+            at_ns = stamps[i] if i < len(stamps) else None
             m = _PG_LINE.match(line)
             if not m:
                 # Postgres starts each continuation line of a multi-line message with a tab.
@@ -467,7 +513,7 @@ class PgLog:
                 if sm:
                     st = Stmt(len(self.stmts), m.group("ts"), pid, m.group("app"), m.group("db"),
                               m.group("host"), "statement" if msg.startswith("statement") else "execute",
-                              sm.group("sql"))
+                              sm.group("sql"), at_ns=at_ns)
                     self.stmts.append(st)
                     self._last_by_pid[pid] = st
                     self._target = (st, "sql")
@@ -484,7 +530,7 @@ class PgLog:
                 # `execute` log line, so this may be the only record of the attempt.
                 prev = self._last_by_pid.get(pid)
                 st = Stmt(len(self.stmts), m.group("ts"), pid, m.group("app"), m.group("db"),
-                          m.group("host"), "failed", msg, error=self._error_by_pid.pop(pid, None))
+                          m.group("host"), "failed", msg, error=self._error_by_pid.pop(pid, None), at_ns=at_ns)
                 self.stmts.append(st)
                 self._target = (st, "sql")
                 st._prev_same_pid = prev  # type: ignore[attr-defined]
@@ -588,14 +634,17 @@ class CheckResult:
 class Evidence:
     """Marks, the statement log and the checks, for one driver run."""
 
-    def __init__(self, *, run_id: str, required: Iterable[str] = CHECKS, negative_control: bool = False,
+    def __init__(self, *, run_id: str, required: Iterable[str] = CHECKS, negative_control: bool | str = False,
                  containers: dict[str, str] | None = None, env: dict[str, str] | None = None,
                  log: Callable[[str], None] = print, runner: Runner = docker_runner,
                  cleanup_wait_s: float = CLEANUP_WAIT_S, quiet_s: float = QUIET_S,
                  record_settle_s: float = RECORD_SETTLE_S, level: str | None = None,
                  timing: RecordTiming | None = None,
-                 read_log: Callable[[int], ExecutionLog] | None = None):
+                 read_log: Callable[[int], ExecutionLog] | None = None,
+                 connections: Callable[[], list[dict]] | None = None):
         self.run_id = run_id
+        #: asks Postgres who is connected (the stack control's `pg_activity`), for Check H
+        self._connections = connections
         #: how far the product is: the letter of the last step-3 gate it has passed, or None
         self.level = level
         self.timing = timing or RecordTiming()
@@ -603,6 +652,8 @@ class Evidence:
         self._read_log = read_log
         self.required = [c for c in ALL_CHECKS if c in set(required)]
         self.negative_control = negative_control
+        #: the checks that must fail (a negative control): none, step 2's or step 3's
+        self.controls = controls_of(negative_control)
         c = dict(DEFAULT_CONTAINERS)
         c.update(containers or {})
         self.pg_container = c["postgres"]
@@ -644,6 +695,12 @@ class Evidence:
         self.allowed_status_zero: dict[int, str] = {}
         self.warehouse_name: str | None = None
         self.info: dict[str, Any] = {}
+        #: Check G: when the unit's container started, as docker stamps its log lines
+        self.unit_started_ns: int | None = None
+        #: Check H: the unit's connections at the scenario's start and at its end
+        self._unit_connections: dict[str, dict] = {}
+        jdbc = re.search(r"//([^:/?]+)", self.env.get(JDBC_URL_ENV, ""))
+        self.postgres_host = jdbc.group(1) if jdbc else DEFAULT_POSTGRES_HOST
 
     # ------------------------------------------------------------------ basics
 
@@ -655,8 +712,13 @@ class Evidence:
                             "-v", "ON_ERROR_STOP=1", "-Atc", sql)
 
     def refresh_log(self) -> None:
-        self.pg.feed(self.pg_log.poll())
+        fresh = self.pg_log.poll()
+        self.pg.feed(fresh, self.pg_log.stamps[len(self.pg_log.stamps) - len(fresh):])
         self.pg.finalize()
+
+    def _watches(self, check: str) -> bool:
+        """Whether `check` is looked at in this run: it gates, or it is a control."""
+        return check in self.required or check in self.controls
 
     def mark(self, scenario: str, phase: str, eid: int | None = None) -> str:
         """Run a mark statement; return its id. The statement is in the log before
@@ -709,15 +771,39 @@ class Evidence:
             "catalog_uri": self.catalog_uri,
             "probe_mark": {"app": st.app, "db": st.db, "host": st.host},
             "required_checks": self.required,
-            "negative_control": self.negative_control,
+            "negative_control": bool(self.negative_control),
         }
+        if self.controls:
+            self.info["control_checks"] = list(self.controls)
         if not cleanup or not cleanup.isdigit() or int(cleanup) > 5:
             self._log(f"evidence: WARNING the unit's {CLEANUP_ENV} is {cleanup or 'unset (30 s)'}; an "
                       f"idle workflow's cleanup can land in the next scenario's windows "
                       f"(the stack's --pg-statement-log sets 2 s)")
         if "D" in self.required and not self.isolated:
             self._log("evidence: WARNING Check D needs a stack started with --isolate-unit")
+        if self._watches("G"):
+            started = self._docker("inspect", "--format", "{{.State.StartedAt}}", self.unit_container)
+            if started.returncode != 0 or not _DOCKER_TS.match(started.stdout.strip()):
+                raise EvidenceUnavailable(f"docker inspect {self.unit_container}: when it started is not "
+                                          f"readable: {started.stdout.strip()[:200]}")
+            self.unit_started_ns = docker_ts_ns(started.stdout.strip())
+            self.info["unit_started_at"] = started.stdout.strip()
+        if "J" in self.required:
+            resolved = self._unit_resolves_postgres()
+            self.info["unit_resolves_postgres"] = resolved
+            if resolved:
+                raise EvidenceUnavailable(
+                    f"Check J needs a stack started with --unit-no-postgres: the unit resolves "
+                    f"{self.postgres_host} ({'; '.join(resolved)[:200]})")
         return self.info
+
+    def _unit_resolves_postgres(self) -> list[str] | None:
+        """What `getent hosts <Postgres>` answers in the unit: no line when the name does not
+        resolve there; None when getent itself failed."""
+        g = self._docker("exec", self.unit_container, "getent", "hosts", self.postgres_host)
+        if g.returncode not in (0, 2):
+            return None
+        return [ln.strip() for ln in g.stdout.splitlines() if ln.strip()]
 
     def _inspect_unit(self) -> tuple[dict, dict[str, str]]:
         """The unit container's networks and environment."""
@@ -764,8 +850,25 @@ class Evidence:
         self._expect_silent = []
         self._records = {}
         self._left = {}
+        self._unit_connections = {}
+        self._sample_connections("start")
         self._begin_mark = self.mark(key, "begin")
         return waited
+
+    def _sample_connections(self, when: str) -> None:
+        """Check H: ask Postgres who is connected now, and keep the unit's connections."""
+        if not self._watches("H"):
+            return
+        if self._connections is None:
+            self._unit_connections[when] = {"error": "this driver was given no way to ask Postgres"}
+            return
+        try:
+            backends = self._connections()
+        except Exception as e:  # noqa: BLE001 -- H is then not evaluable, and says why
+            self._unit_connections[when] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+            return
+        self._unit_connections[when] = {"of_the_unit": pg_activity.of_unit(backends, self.unit_hosts),
+                                        "all": len(backends)}
 
     def _wait_for_cleanup(self) -> dict:
         """After a scenario that sent a start to the unit: its sockets closed just before
@@ -1079,13 +1182,18 @@ class Evidence:
     # ------------------------------------------------------------- the checks
 
     def _evaluated(self) -> list[str]:
-        """The checks a scenario's end evaluates: step 2's always, step 3's when required."""
-        return [c for c in ALL_CHECKS if c in CHECKS or (c in self.required and c not in FINAL_CHECKS)]
+        """The checks a scenario's end evaluates: step 2's unless the product is past them
+        (RETIRED_FROM) and nobody asks for them; step 3's when required or a control."""
+        def kept(check: str) -> bool:
+            retired = check in RETIRED_FROM and self.at_least(RETIRED_FROM[check])
+            return check in CHECKS and not retired
+        return [c for c in ALL_CHECKS if c not in FINAL_CHECKS and (kept(c) or self._watches(c))]
 
     def end_scenario(self, resolve_eid: Callable[[RunRecord], int | None] | None = None) -> dict:
         """Mark the end, read the log and evaluate every check for this scenario.
         Returns {"checks": {key: CheckResult}, "report": {...}}."""
         key = self.scenario or "?"
+        self._sample_connections("end")
         end_id = self.mark(key, "end")
         self._previous_ended_at = time.monotonic()
         self._previous_touched = any(r.start_mark for r in self.runs)
@@ -1178,8 +1286,14 @@ class Evidence:
 
         results["D"] = self._check_d(started)
         results["E"] = self._check_e(started)
+        if self._watches("G"):
+            results["G"] = self._check_g(begin, end)
+        if self._watches("H"):
+            results["H"] = self._check_h()
         if "I" in self.required:
             results["I"] = self._check_i(started)
+        if "J" in self.required:
+            results["J"] = self._check_j()
 
         from_unit_addr = [s for s in scen if s.host in self.unit_hosts]
         unnamed = [s for s in from_unit_addr if s.app != UNIT_APP]
@@ -1233,7 +1347,56 @@ class Evidence:
             wid = run.wid if run.wid is not None else -1
             self._previous_started[wid] = max(run.eid, self._previous_started.get(wid, 0))
         self.scenario = None
-        return {"checks": results, "report": report}
+        evaluated = self._evaluated()
+        return {"checks": {c: r for c, r in results.items() if c in evaluated}, "report": report}
+
+    # --------------------------------------- Checks G, H, J: the unit without Postgres
+
+    def _unit_statements(self, after: Stmt | None, until: Stmt | None = None) -> list[Stmt]:
+        """Every statement the unit sent after `after` (up to `until`), whatever it is: a
+        setting, one on another database, one that failed. Only the driver's marks and the
+        repeat of a failed statement are not counted."""
+        lo = after.seq + 1 if after is not None else 0
+        hi = until.seq if until is not None else len(self.pg.stmts)
+        return [s for s in self.pg.stmts[lo:hi] if self.is_unit(s) and not s.duplicate and s.mark is None]
+
+    def _statements_result(self, sent: list[Stmt], where: str) -> CheckResult:
+        updates = [s for s in sent if s.status_update()]
+        heads = "; ".join(f"[{s.app or '-'}@{s.host or '-'}] {s.sql[:120]}" for s in sent[:4])
+        detail = (f"{len(sent)} statement(s) from the unit {where}, {len(updates)} of them UPDATEs of an "
+                  f"execution's status: {heads}" if sent else
+                  f"no statement from the unit ({UNIT_APP}, or from {sorted(self.unit_hosts)}) {where}")
+        return CheckResult("G", not sent, detail, {"statements": [s.to_json(300) for s in sent[:50]],
+                                                   "status_updates": len(updates)})
+
+    def _check_g(self, begin: Stmt, end: Stmt) -> CheckResult:
+        return self._statements_result(self._unit_statements(begin, end), "between the scenario's marks")
+
+    def _check_h(self) -> CheckResult:
+        samples = self._unit_connections
+        errors = [f"at the scenario's {when}: {s['error']}" for when, s in samples.items() if "error" in s]
+        if errors or set(samples) != {"start", "end"}:
+            return CheckResult("H", None, "; ".join(errors) or f"only sampled at {sorted(samples)}")
+        found = [dict(b, when=when) for when, s in samples.items() for b in s["of_the_unit"]]
+        if not found:
+            return CheckResult("H", True, f"no connection of the unit among {samples['start']['all']} at the "
+                                          f"scenario's start and {samples['end']['all']} at its end",
+                               {"connections": []})
+        shown = "; ".join(f"at the {b['when']}: pid {b['pid']} app={b['application_name'] or '-'} "
+                          f"from {b['client_addr'] or '-'}, {b['state'] or 'no state'}" for b in found[:6])
+        return CheckResult("H", False, f"{len(found)} connection(s) of the unit in pg_stat_activity: {shown}",
+                           {"connections": found})
+
+    def _check_j(self) -> CheckResult:
+        resolved = self._unit_resolves_postgres()
+        if resolved is None:
+            return CheckResult("J", None, f"getent failed in the unit for {self.postgres_host}")
+        health = self._docker("inspect", "--format", "{{.State.Health.Status}}", self.unit_container)
+        healthy = health.returncode == 0 and health.stdout.strip() == "healthy"
+        return CheckResult("J", not resolved and healthy,
+                           f"the unit resolves {self.postgres_host} to {resolved or 'nothing'} and is "
+                           f"{health.stdout.strip() or 'of unknown health'}",
+                           {"resolved": resolved, "health": health.stdout.strip()})
 
     def _check_d(self, started: list[RunRecord]) -> CheckResult:
         if not started:
@@ -1322,6 +1485,25 @@ class Evidence:
             return {"name": f"Check K: {CHECK_TITLES['K']}", **self._check_k(ids)}
         return {"name": "no row of this run's workflows is left at status 0 (refused starts excepted)",
                 **self._no_status_zero(ids)}
+
+    def final_checks(self, wids: Iterable[int]) -> list[dict]:
+        """Every check made once, after the last scenario: the one on the executions' rows
+        (`final_check`) and, with Check G required, that the unit sent Postgres nothing
+        since its container started, between the scenarios either."""
+        checks = [self.final_check(wids)]
+        if "G" in self.required:
+            checks.append(self._check_g_since_start())
+        return checks
+
+    def _check_g_since_start(self) -> dict:
+        self.refresh_log()
+        name = "Check G, the whole run: no statement from the unit since its container started"
+        if self.unit_started_ns is None:
+            return {"name": name, "ok": False, "detail": "when the unit's container started is not known"}
+        # a line docker stamped before the unit started is another container's, which had its address
+        sent = [s for s in self._unit_statements(None) if (s.at_ns or 0) >= self.unit_started_ns]
+        result = self._statements_result(sent, f"since its container started ({self.info.get('unit_started_at')})")
+        return {"name": name, "ok": bool(result.ok), "detail": result.detail, **result.data}
 
     def _closing_records(self, wids: list[int]) -> tuple[list[dict], str]:
         """The closing record of every execution of the workflows; ([], why) when Postgres
@@ -1413,25 +1595,32 @@ def control_failed_for_its_reason(key: str, r: CheckResult) -> tuple[bool, str]:
         return on_names, f"D failed, but on no unit log line naming {' or '.join(D_CONTROL_NAMES)}"
     if key == "F":
         return bool(d.get("unnamed")), "F failed, but on no unnamed statement from the unit's address"
+    if key == "G":
+        return d.get("status_updates", 0) > 0, "G failed, but on no status UPDATE of the unit"
+    if key == "H":
+        return (any(b.get("state") == "idle" for b in d.get("connections") or []),
+                "H failed, but on no idle connection of the unit")
     return True, ""
 
 
 def evaluate(results: dict[str, CheckResult], required: Sequence[str],
-             negative_control: bool) -> tuple[list[tuple[str, bool, str]], dict]:
+             negative_control: bool | str) -> tuple[list[tuple[str, bool, str]], dict]:
     """Turn check results into (name, ok, detail) gate checks plus an info dict.
 
     Normal mode: each required check gates (not evaluable counts as failed); the
-    others are information. Negative control: A, D and F must have failed, each for
-    its own reason (control_failed_for_its_reason); any other failure is reported as
-    "control inconclusive" and fails the gate."""
+    others are information. Negative control (`controls_of`: A, D and F for step 2,
+    G and H for step 3): each must have failed, for its own reason
+    (control_failed_for_its_reason); any other failure is reported as "control
+    inconclusive" and fails the gate."""
     gates: list[tuple[str, bool, str]] = []
     info: dict[str, Any] = {}
+    controls = controls_of(negative_control)
     for key in ALL_CHECKS:
         r = results.get(key)
         if r is None:
             continue
         entry = {"ok": r.ok, "detail": r.detail}
-        if negative_control and key in NEGATIVE_CONTROLS:
+        if negative_control and key in controls:
             if r.ok is False:
                 reason_ok, why = control_failed_for_its_reason(key, r)
                 ok = reason_ok

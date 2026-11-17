@@ -7,6 +7,10 @@ stack scripts, which ask theirs for the driver.
 
 from __future__ import annotations
 
+from typing import Iterable
+
+#: the name the computing unit gives its connections (step 2: every one of them carries it)
+UNIT_APP = "texera-computing-unit"
 #: one line per client connection but the asking one: pid|application name|client address|database|state
 QUERY = ("SELECT pid, COALESCE(application_name, ''), COALESCE(host(client_addr), ''), "
          "COALESCE(datname, ''), COALESCE(state, '') FROM pg_stat_activity "
@@ -27,3 +31,10 @@ def parse(text: str) -> list[dict]:
         backends.append({"pid": int(pid), "application_name": app, "client_addr": addr, "datname": db,
                          "state": state})
     return backends
+
+
+def of_unit(backends: Iterable[dict], addresses: Iterable[str] = ()) -> list[dict]:
+    """The connections that are the computing unit's: the ones named after it, and the
+    ones that come from one of its addresses."""
+    known = set(addresses)
+    return [b for b in backends if b["application_name"] == UNIT_APP or b["client_addr"] in known]

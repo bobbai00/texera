@@ -5,8 +5,8 @@
 #
 #   ./run-baseline.sh [--keep] [--reset] [--source <worktree>] [--images <registry>/<tag>]
 #                     [--pg-statement-log] [--isolate-unit] [--with-replay-log] [--fast-record]
-#                     [--unit-env KEY=VAL ...] [--dashboard-env KEY=VAL ...] [--label <text>]
-#                     [-- <driver args>]
+#                     [--unit-no-postgres] [--unit-env KEY=VAL ...] [--dashboard-env KEY=VAL ...]
+#                     [--label <text>] [-- <driver args>]
 #
 #   --images   default ghcr.io/apache/latest (the published images); a branch
 #              build from images/build.sh is sce/<tag>
@@ -14,10 +14,11 @@
 #   --keep     leave the stack running afterwards (default: sce-stack.sh down,
 #              volumes kept)
 #   --pg-statement-log, --isolate-unit, --with-replay-log, --fast-record,
-#   --unit-env KEY=VAL, --dashboard-env KEY=VAL
+#   --unit-no-postgres, --unit-env KEY=VAL, --dashboard-env KEY=VAL
 #              stack options for the evidence checks, passed to `sce-stack.sh up`
 #              (see the README); the driver's --evidence needs --pg-statement-log,
-#              the step-3 gates need --fast-record
+#              the step-3 gates need --fast-record, and gate 3C is run a second
+#              time with --unit-no-postgres (Check J)
 #   anything after `--` goes to driver/e2e.py (e.g. -- --scenario a,d)
 #
 # Exit code: the driver's (0 all pass, 1 a scenario failed, 2 setup failed),
@@ -35,10 +36,11 @@ while [[ $# -gt 0 ]]; do
         --images) images="$2"; shift ;;
         --source) source_args=(--source "$2"); shift ;;
         --label) label="$2"; shift ;;
-        --pg-statement-log|--isolate-unit|--with-replay-log|--fast-record) stack_opts+=("$1") ;;
+        --pg-statement-log|--isolate-unit|--with-replay-log|--fast-record|--unit-no-postgres)
+            stack_opts+=("$1") ;;
         --unit-env|--dashboard-env) stack_opts+=("$1" "$2"); shift ;;
         --) shift; driver_args=("$@"); break ;;
-        -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1 (see --help)" >&2; exit 64 ;;
     esac
     shift

@@ -44,6 +44,12 @@ run. With `kubernetes` set, each unit is a pod of its own: one unit goes down, a
 that comes back is a new one, a listing of the units stamps the ones whose pod is gone
 as terminated (which closes their executions at the job's next tick), and until "3C"
 the gateway sends a statistics request to the unit its `cuid` names.
+
+At "3C" (sub-parts 16 to 19) the unit is off Postgres: it sends no statement and opens
+no pool, a Kubernetes unit is given no database login, and it no longer answers a
+result page for a workflow whose run it does not hold. The Dashboard serves stored
+console output and exports by execution (an export of expired results is 410), and
+statistics without a unit in any mode.
 """
 
 from __future__ import annotations
@@ -75,11 +81,17 @@ REPLAY_DELAY_S = 0.1
 STATUS_CODES = {"Uninitialized": 0, "Initializing": 0, "Running": 1, "Paused": 2, "Completed": 3,
                 "Failed": 4, "Killed": 5}
 #: the products the fake models, in order (see the module doc)
-STEPS = ("2", "3A", "3B")
-#: the unit's own faults, for the tests of checks that must fail (the recorder's are in
-#: fake_record.FAULTS, the Dashboard's in fake_closing.FAULTS)
+STEPS = ("2", "3A", "3B", "3C")
+#: the unit's own faults, and those of the routes that serve stored output, for the tests
+#: of checks that must fail (the recorder's are in fake_record.FAULTS, the closing
+#: Dashboard's in fake_closing.FAULTS)
 FAULTS = {
     "stop-unrecorded": "a unit that is stopped politely records nothing: its runs end as if it was killed",
+    "unit-statement": "the unit still writes its run's status to Postgres",
+    "unit-pool": "the unit still opens its pool: two idle connections",
+    "stored-reads-need-unit": "stored statistics, console output and exports are answered only while the "
+                              "unit is up",
+    "export-after-expiry": "an export of expired results fails as a missing result does, not with 410",
 }
 REASON_UNIT_STOPPED = "the computing unit was stopped"
 #: how long a unit that is stopping waits for its runs' records to land (design 4.1 step 7)
@@ -258,22 +270,27 @@ class Run:
         self.state = state
         code = STATUS_CODES.get(state)
         if code is not None and state != "Uninitialized":
-            if state != "Initializing":
-                self.fake.executions[self.eid]["status"] = code
-            # design D26: one write-only UPDATE by eid per state change (READY at Initializing)
-            self.fake.sql("unit", "update workflow_executions set status = $1, last_update_time = $2 "
-                                  "where workflow_executions.eid = $3",
-                          f"$1 = '{code}', $2 = '2026-11-16 10:00:00', $3 = '{self.eid}'")
-            if state == "Initializing":
-                for op in self.ops:
-                    self.fake.sql("unit", "insert into operator_port_executions (workflow_execution_id, "
-                                          "global_port_id, result_uri) values ($1, $2, $3)",
-                                  f"$1 = '{self.eid}', $2 = '{op}-out-0', $3 = 'vfs:///result/{op}'")
+            if self.fake.unit_uses_postgres("unit-statement"):
+                self.write_status(state, code)
             if state in ("Completed", "Failed", "Killed"):
                 self.fake.on_terminal(self)
         if self.recorder is not None and state in LOGGED_STATES:
             self.recorder.state(LOGGED_STATES[state], reason, errors, final_tidy=final_tidy)
         self.emit(self.state_event())
+
+    def write_status(self, state: str, code: int) -> None:
+        """What the unit writes to Postgres for a state, until step 3's sub-part 17."""
+        if state != "Initializing":
+            self.fake.executions[self.eid]["status"] = code
+        # step 2's design D26: one write-only UPDATE by eid per state change (READY at Initializing)
+        self.fake.sql("unit", "update workflow_executions set status = $1, last_update_time = $2 "
+                              "where workflow_executions.eid = $3",
+                      f"$1 = '{code}', $2 = '2026-11-16 10:00:00', $3 = '{self.eid}'")
+        if state == "Initializing" and not self.fake.at("3C"):
+            for op in self.ops:
+                self.fake.sql("unit", "insert into operator_port_executions (workflow_execution_id, "
+                                      "global_port_id, result_uri) values ($1, $2, $3)",
+                              f"$1 = '{self.eid}', $2 = '{op}-out-0', $3 = 'vfs:///result/{op}'")
 
     @property
     def ended(self) -> bool:
@@ -552,8 +569,6 @@ class FakeTexera:
         #: design 3.2: the log names each stored output port in an `output` row. Off: the
         #: ports' locations are in the plan (the owner's variant), and the log has state rows only
         self.log_names_stored_ports = True
-        #: the environment the unit was started with
-        self.unit_env: dict[str, str] = {"WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS": "1", **UNIT_JDBC_ENV}
         #: how much of a UDF's time.sleep() the fake engine sleeps
         self.sleep_scale = 0.0
         self.users: dict[int, dict] = {1: {"uid": 1, "name": "texera", "email": "texera@texera.io",
@@ -708,9 +723,10 @@ class FakeTexera:
                     return raw.decode()
 
             def _reply(self, status: int, body=None):
-                data = b"" if body is None else json.dumps(body).encode()
+                raw = isinstance(body, bytes)  # a file to download
+                data = body if raw else b"" if body is None else json.dumps(body).encode()
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", "application/octet-stream" if raw else "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -830,14 +846,28 @@ class FakeTexera:
         with self.lock:
             self.unit_up = True
 
+    def unit_uses_postgres(self, fault: str) -> bool:
+        """Whether the unit still does a thing with Postgres that step 3's sub-part 17 ends:
+        until "3C" it does; from then on only with the fault that names the thing."""
+        return not self.at("3C") or fault in self.faults
+
+    @property
+    def unit_env(self) -> dict[str, str]:
+        """The environment the unit was started with. A single-node or local-dev stack hands
+        every service the whole of it; a Kubernetes manager gives a unit no database login
+        from sub-part 19 on."""
+        login = {} if self.kubernetes and self.at("3C") else UNIT_JDBC_ENV
+        return {"WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS": "1", **login}
+
     def backends(self) -> list[dict]:
         """Postgres's client connections, as pg_stat_activity lists them: the Dashboard's
-        pool and, while the unit is up, the unit's (two idle connections, opened at boot)."""
+        pool and, while a unit that still uses Postgres is up, its pool (two idle
+        connections, opened at boot)."""
         def pool(app: str, address: str, first_pid: int) -> list[dict]:
             return [{"pid": first_pid + i, "application_name": app, "client_addr": address,
                      "datname": "texera_db", "state": "idle"} for i in range(2)]
-        return pool(DASHBOARD_APP, DASHBOARD_ADDRESS, 400) + (pool(UNIT_APP, self.unit_address, 300)
-                                                              if self.unit_up else [])
+        units = self.unit_up and self.unit_uses_postgres("unit-pool")
+        return pool(DASHBOARD_APP, DASHBOARD_ADDRESS, 400) + (pool(UNIT_APP, self.unit_address, 300) if units else [])
 
     @staticmethod
     def err(status: int, message: str):
@@ -866,6 +896,8 @@ class FakeTexera:
                 self.users[uid] = {"uid": uid, "name": body["username"], "email": body["email"],
                                    "password": body["password"], "role": "INACTIVE", "comment": ""}
                 return 200, {"accessToken": self.token_of(self.users[uid])}
+            if path == "/api/executions/result/export/local" and method == "POST" and self.at("3C"):
+                return self.export_local(urllib.parse.parse_qs(body or ""))  # its token is in the form
             if user is None:
                 return self.err(401, "no credentials")
             uid = user["uid"]
@@ -914,9 +946,14 @@ class FakeTexera:
                 return self.post_update(uid, int(m.group(1)), body)
             m = re.fullmatch(r"/api/executions/(\d+)/stats/(\d+)", path)
             if m and method == "GET" and self.at("3A"):
-                if self.kubernetes and not self.statistics_reach_the_unit(query):
+                if (self.kubernetes and not self.statistics_reach_the_unit(query)) or self.stored_read_refused():
                     return self.err(503, "no healthy upstream")
                 return self.statistics(uid, int(m.group(1)), int(m.group(2)))
+            m = re.fullmatch(r"/api/executions/(\d+)/console", path)
+            if m and method == "GET" and self.at("3C"):
+                if self.stored_read_refused():
+                    return self.err(503, "no healthy upstream")
+                return self.closing.console(uid, int(m.group(1)), query)
             m = re.fullmatch(r"/api/executions/(\d+)/(state|log)", path)
             if m and method == "GET" and self.at("3B"):
                 answer = self.closing.state if m.group(2) == "state" else self.closing.log
@@ -1024,8 +1061,44 @@ class FakeTexera:
     def statistics_reach_the_unit(self, query: dict) -> bool:
         """Kubernetes until step 3's sub-part 16: the gateway sends a statistics request to
         the unit its `cuid` names, so it is answered only while that unit is up."""
+        if self.at("3C"):
+            return True
         cuid = (query.get("cuid") or [None])[0]
         return cuid is not None and self.unit_reachable(int(cuid))
+
+    def stored_read_refused(self) -> bool:
+        """The fault of a Dashboard that still needs a unit to serve stored output."""
+        return "stored-reads-need-unit" in self.faults and not (self.unit_up and not self.pods_gone)
+
+    def export_local(self, form: dict):
+        """POST /api/executions/result/export/local from step 3's sub-part 16 on: one
+        operator's result of the execution the request names, as CSV. Errors answer as the
+        route does today, 500 with {"error"}; expired results are 410."""
+        def failed(message: str, status: int = 500):
+            return status, {"error": message}
+        user = self.user_of((form.get("token") or [""])[0])
+        if user is None:
+            return failed("Invalid or expired token")
+        request = json.loads((form.get("request") or ["{}"])[0])
+        wid, eid = request.get("workflowId"), request.get("executionId")
+        if self.workflows.get(wid, {}).get("owner") != user["uid"]:
+            return self.err(403, f"no access to workflow {wid}")
+        e = self.executions.get(eid)
+        if e is None or e["wid"] != wid:
+            return failed(f"execution {eid} is not an execution of workflow {wid}")
+        if self.stored_read_refused():
+            return self.err(503, "no healthy upstream")
+        if e["results_expired_at"] is not None and "export-after-expiry" not in self.faults:
+            return failed(f"the results of execution {eid} have expired", 410)
+        run = self.runs.get(eid)
+        rows, _schema = run.results(request["operators"][0]["id"]) if run else ([], [])
+        if not rows or e["results_expired_at"] is not None:
+            return failed("Failed to export operator")
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(list(rows[0]))
+        writer.writerows([list(row.values()) for row in rows])
+        return 200, out.getvalue().encode()
 
     def statistics(self, uid: int, wid: int, eid: int):
         """GET /api/executions/{wid}/stats/{eid}, from step 3's sub-part 6 on: the rows of
@@ -1235,8 +1308,11 @@ class FakeTexera:
                                 {"type": {"name": "COMPILATION_ERROR"}, "message": "workflow execution is not initialized",
                                  "operatorId": "unknown operator"}]})
                     elif typ == "ResultPaginationRequest":
-                        run = current or next((r for r in reversed(list(self.runs.values()))
-                                               if self.executions[r.eid]["wid"] == wid), None)
+                        # until sub-part 17 a unit that holds no run of the workflow looks the
+                        # workflow's newest execution up in Postgres; from then on the page is empty
+                        run = current or (None if self.at("3C") else next(
+                            (r for r in reversed(list(self.runs.values()))
+                             if self.executions[r.eid]["wid"] == wid), None))
                         rows, schema = run.results(msg["operatorID"]) if run else ([], [])
                         size, page = msg["pageSize"], msg["pageIndex"]
                         # a result table shows the start of a long string cell, as the real one does

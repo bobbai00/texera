@@ -117,6 +117,9 @@ AUTHZ_PROBES = (
 )
 REFUSED = (401, 403)
 EXT_AUTHZ_DENIED = "ext_authz_denied"
+#: the chart's HTTPRoute whose rules send a request to a computing unit's pod (Envoy's
+#: `route_name` of a request holds the name of the HTTPRoute that matched it)
+UNIT_ROUTE = f"{RELEASE}-dynamic-routes"
 
 # Through the gateway: any answer but Envoy's own 502/503/504 proves the route reaches a
 # live backend (401/404/405 come from the service).
@@ -1164,6 +1167,18 @@ def judge_refusal(status: int | None, envoy: dict | None) -> tuple[bool, bool | 
     return True, True, f"refused ({status}) by ext-authz ({EXT_AUTHZ_DENIED})"
 
 
+def judge_stored_read(status: int | None, envoy: dict | None) -> tuple[bool | None, str]:
+    """(answered by the webserver (None: Envoy's entry not found), verdict) for a request
+    for stored output that scenario v marked: from step 3's sub-part 16 on no such request
+    is routed to a computing unit."""
+    if envoy is None:
+        return None, f"answered ({status}); Envoy's access-log entry not found"
+    route = str(envoy.get("route_name") or "")
+    if UNIT_ROUTE in route:
+        return False, f"routed to a computing unit ({route}), answered {envoy.get('response_code')}"
+    return True, f"answered {envoy.get('response_code')} through {route or 'a route Envoy does not name'}, not a unit's"
+
+
 def gateway_refusals(ns: str, port: int) -> dict:
     """Websocket handshakes ext-authz must refuse (AUTHZ_PROBES), each judged from its HTTP
     status and Envoy's own access-log entry for it."""
@@ -1199,10 +1214,11 @@ def gateway_refusals(ns: str, port: int) -> dict:
 
 
 def evaluate_post_run(*, pods_left: list[str], unit_kept: bool, forward: dict, driver_probes: list[dict],
-                      envoy: dict[str, dict]) -> dict:
+                      envoy: dict[str, dict], stored_reads: list[dict] | None = None) -> dict:
     """After the driver: its unit's pod must be gone (unless kept), its refusal probes must
-    have been refused by ext-authz (Envoy's entries), and a run through kubectl port-forward
-    is unreliable."""
+    have been refused by ext-authz (Envoy's entries), the requests for stored output that
+    scenario v marked (`stored_reads`) must not have been routed to a unit, and a run
+    through kubectl port-forward is unreliable."""
     failures: list[str] = []
     warnings: list[str] = []
     if pods_left and not unit_kept:
@@ -1221,9 +1237,19 @@ def evaluate_post_run(*, pods_left: list[str], unit_kept: bool, forward: dict, d
             failures.append(f"the driver's {p.get('probe')} probe: {verdict}")
         elif by_authz is None:
             warnings.append(f"the driver's {p.get('probe')} probe: {verdict}")
+    reads = []
+    for r in stored_reads or []:
+        rec = envoy.get(r.get("marker"))
+        by_webserver, verdict = judge_stored_read(r.get("status"), rec)
+        reads.append({k: r.get(k) for k in ("what", "status", "marker")}
+                     | {"envoy": rec, "by_the_webserver": by_webserver, "verdict": verdict})
+        if by_webserver is False:
+            failures.append(f"the driver's request for stored {r.get('what')}: {verdict}")
+        elif by_webserver is None:
+            warnings.append(f"the driver's request for stored {r.get('what')}: {verdict}")
     return {"unit_pods_left": pods_left, "unit_kept": unit_kept, "gateway_forward": mode,
             "reliable": None if mode is None else mode == "relay", "gateway_refusals": refusals,
-            "failures": failures, "warnings": warnings}
+            "stored_reads": reads, "failures": failures, "warnings": warnings}
 
 
 def apply_post_run(report: dict, post: dict) -> None:
@@ -1502,8 +1528,9 @@ def cmd_collect_logs(a) -> None:
 
 def cmd_post_run(a) -> None:
     """After a driver run: wait for the unit's pod to go, read Envoy's entries of the driver's
-    refusal probes, and fold the outcome into the report (`post_run`; a failure turns
-    summary.result to FAIL). Exit 4 on a failure."""
+    refusal probes and of the requests for stored output that scenario v marked, and fold
+    the outcome into the report (`post_run`; a failure turns summary.result to FAIL). Exit 4
+    on a failure."""
     ns = a.namespace
     report = json.loads(a.report.read_text()) if a.report.exists() else None
     deadline = time.time() + a.wait
@@ -1514,10 +1541,12 @@ def cmd_post_run(a) -> None:
         time.sleep(2)
     m = load_manifest()
     probes = (((report or {}).get("setup") or {}).get("kubernetes_unit") or {}).get("gateway_refusals") or []
-    markers = [p["marker"] for p in probes if p.get("marker")]
+    reads = [r for sc in (report or {}).get("scenarios") or []
+             for r in (sc.get("facts") or {}).get("gateway_markers") or []]
+    markers = [p["marker"] for p in probes + reads if p.get("marker")]
     envoy = envoy_access_records(ns, markers, wait_s=30) if markers else {}
     post = evaluate_post_run(pods_left=pods, unit_kept=a.unit_kept, forward=m.get("gateway_forward") or {},
-                             driver_probes=probes, envoy=envoy)
+                             driver_probes=probes, envoy=envoy, stored_reads=reads)
     post["checked_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     if report is not None:
         apply_post_run(report, post)
@@ -1529,6 +1558,8 @@ def cmd_post_run(a) -> None:
     log(f"unit pods after the run: {', '.join(pods) or 'none'}{' (--keep-unit)' if a.unit_kept else ''}; "
         f"driver refusal probes: " + (", ".join(f"{r['probe']} {r['verdict']}" for r in post["gateway_refusals"])
                                        or "none recorded"))
+    for r in post["stored_reads"]:
+        log(f"stored {r['what']}: {r['verdict']}")
     for w in post["warnings"]:
         log(f"post-run warning: {w}")
     for f in post["failures"]:

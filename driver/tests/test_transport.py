@@ -7,9 +7,11 @@ step-3 design's section 3.5 (the routes of an execution's record).
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -304,10 +306,8 @@ class ApiTest(FakeCase):
         self.assertEqual(200, self.api.terminate_unit(int(unit["cuid"])).status_code)
 
 
-class RecordApiTest(FakeCase):
-    """TexeraApi's step-3 calls, against the fake at gate 3B."""
-
-    fake_options = {"step": "3B", "timing": RecordTiming(commit_interval_s=0.2, closing_interval_s=0.1)}
+class RecordApiCase(FakeCase):
+    """A run to its end on the fake at a step-3 gate, and its execution once it is closed."""
 
     def run_once(self):
         wf, udf = self.plan()
@@ -322,6 +322,12 @@ class RecordApiTest(FakeCase):
                 return state
             time.sleep(0.05)
         self.fail(f"execution {eid} was not closed")
+
+
+class RecordApiTest(RecordApiCase):
+    """TexeraApi's step-3 calls, against the fake at gate 3B."""
+
+    fake_options = {"step": "3B", "timing": RecordTiming(commit_interval_s=0.2, closing_interval_s=0.1)}
 
     def test_state_and_log_of_an_execution(self):
         h = self.run_once()
@@ -363,6 +369,54 @@ class RecordApiTest(FakeCase):
         pages = [r["path"] for r in self.fake.rest_log if "/executionList/" in r["path"]]
         self.assertEqual(["/api/admin/execution/executionList/1/0/end_time/desc",
                           "/api/admin/execution/executionList/1/1/end_time/desc"], pages)
+
+
+class StoredOutputApiTest(RecordApiCase):
+    """TexeraApi's calls for stored output, against the fake at gate 3C."""
+
+    fake_options = {"step": "3C", "timing": RecordTiming(commit_interval_s=0.2, closing_interval_s=0.1)}
+    PRINTS = TAG.replace('tuple_["tag"] = "{tag}"', 'print(f"line {{tuple_[\'n\']}}")')
+
+    def plan(self, tag="v1"):
+        wf = Workflow("w")
+        src = wf.add("numbers", "CSVFileScan", csv_scan("/dataset/x/ds/v1/numbers.csv"), n_in=0)
+        udf = wf.add("printer", "PythonUDFV2", python_udf(self.PRINTS.format(tag=tag)))
+        wf.link(src, udf)
+        return wf, udf
+
+    def test_console_output_page_by_page(self):
+        h = self.run_once()
+        self.closed(h.eid)
+        self.assertTrue(self.fake.runs[h.eid].recorder.await_idle(5))  # the last lines land after the ending
+        first = self.api.execution_console(h.eid, limit=250)
+        self.assertEqual((250, 250, True), (len(first.messages), first.last_seq, first.more))
+        self.assertEqual({"seq", "timeMs", "operatorId", "workerId", "msgType", "source", "title", "message"},
+                         set(first.messages[0]))
+        rest = self.api.execution_console(h.eid, after_seq=first.last_seq, limit=250)
+        self.assertEqual(([251, 300], False), ([rest.messages[0]["seq"], rest.messages[-1]["seq"]], rest.more))
+        self.assertEqual([], self.api.execution_console(h.eid, operator_id="another-operator").messages)
+        asked = self.fake.rest_log[-1]["query"]
+        self.assertEqual({"afterSeq": ["0"], "limit": ["1000"], "operatorId": ["another-operator"]}, asked)
+
+    def test_an_export_is_a_form_with_the_users_token_and_names_the_execution(self):
+        wf, udf = self.plan()
+        h = self.start(wf, udf)
+        h.wait_for_state("Completed", timeout=30)
+        answer = self.api.export_local(self.wid, h.eid, [udf], "csv", probe="mark-1")
+        self.assertEqual(200, answer.status_code)
+        self.assertEqual(301, len(answer.text.splitlines()))  # the header and the 300 rows
+        sent = self.fake.rest_log[-1]
+        self.assertEqual(("/api/executions/result/export/local", {"sce-probe": ["mark-1"]}, ""),
+                         (sent["path"], sent["query"], sent["token"]))  # no Authorization header: the form has it
+        form = urllib.parse.parse_qs(sent["body"])
+        self.assertEqual([self.api.token], form["token"])
+        self.assertEqual({"exportType": "csv", "workflowId": self.wid, "workflowName": "",
+                          "operators": [{"id": udf, "outputType": "csv"}], "datasetIds": [], "rowIndex": 0,
+                          "columnIndex": 0, "filename": "", "executionId": h.eid}, json.loads(form["request"][0]))
+        another = self.api.create_workflow("another", {})  # the execution must be the workflow's
+        refused = self.api.export_local(another, h.eid, [udf])
+        self.assertEqual((500, {"error": f"execution {h.eid} is not an execution of workflow {another}"}),
+                         (refused.status_code, refused.json()))
 
 
 if __name__ == "__main__":

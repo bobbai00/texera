@@ -18,9 +18,13 @@ images/build.sh <worktree> step1     # branch images sce/texera-*:step1 (thin la
 ./run-negative-control.sh            # published images: Checks A, D and F must fail
 .venv/bin/python -m unittest discover -s driver/tests   # offline: transports and scenarios vs a fake
 
-# step 3 (a run's record lives in the lake, and the Dashboard closes executions; see "Step 3" under the driver)
+# step 3 (a run's record lives in the lake, the Dashboard closes executions, the unit is off Postgres; see the gates under the driver)
 ./run-baseline.sh --reset --images sce/<tag> --pg-statement-log --isolate-unit --fast-record -- --gate 3A
 ./run-baseline.sh --reset --images sce/<tag> --pg-statement-log --isolate-unit --fast-record -- --gate 3B
+# gate 3C is run twice: with Postgres beside the unit (Checks G and H), and without (Check J)
+./run-baseline.sh --reset --images sce/<tag> --pg-statement-log --isolate-unit --fast-record -- --gate 3C
+./run-baseline.sh --reset --images sce/<tag> --pg-statement-log --isolate-unit --fast-record --unit-no-postgres -- --gate 3C
+./run-negative-control.sh --step 3 --images sce/<step 2's last tag>   # once per gate 3C: G and H must fail, q must stay Running
 
 # the real editor in headless Chromium (see "Browser smoke" below); images built with --frontend
 ./run-browser-smoke.sh --lock <scratchpad>/sce/stack.lock --reset --images sce/<tag> --source <worktree>
@@ -45,10 +49,10 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `images/build.sh` | Builds branch images from a worktree (`sbt dist`, optional frontend), as thin layers on the published images |
 | `build/<tag>/` | Scratch build contexts and `BUILD-MANIFEST.json` (outside any repo) |
 | `driver/` | The e2e driver: `e2e.py` (CLI), `transport.py` (start, watch and control a run), `texera_api.py` (REST calls), `workflow.py` (plan builders), `scenarios.py`, `evidence.py` (the step-2 Checks A-F and the step-3 checks), `lake.py` (an execution's tables as Lakekeeper shows them), `record_timing.py` (step 3's timers, as the stack was started), `stack_control.py` (taking the unit down and bringing it back, per mode), `data/*.csv` |
-| `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the designs' protocols, at step 2 or at a step-3 gate), `fake_record.py`, `fake_lake.py` and `fake_closing.py` (its recorder, its lake and its Dashboard's closing job), `fake_stack.py` (the stack's control over it), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack), `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_lake.py`, `test_stack_options.py`, `test_stack_control.py` |
+| `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the designs' protocols, at step 2 or at a step-3 gate), `fake_record.py`, `fake_lake.py` and `fake_closing.py` (its recorder, its lake and its Dashboard's closing job), `fake_stack.py` (the stack's control over it), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack), `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_lake.py`, `test_stack_options.py`, `test_stack_control.py`, `test_negative_control.py` |
 | `lib/` | What the harness's programs share: `venv.sh` (the Python venv), `record_env.py` (the timers `--fast-record` sets), `pg_activity.py` (who is connected to Postgres) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
-| `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
+| `run-negative-control.sh` | The negative controls (H5 of each design): step 2's on the published images, and with `--step 3` step 3's on the images of step 2's end |
 | `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B8, with the page's requests and websocket frames recorded |
 | `run-browser-smoke.sh` | The browser smoke end to end: lock, `up`, the smoke, API scenario a on the same stack, `down` |
 | `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), its schema step, the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv`, and for the driver's stack control `unit-kill`, `unit-stop`, `unit-start`, `pg-activity` |
@@ -61,7 +65,7 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 ```
 stack/sce-stack.sh [--source <worktree>] up [--images <registry>/<tag>] [--timeout S] [--with-optional] [--bind IP]
                    [--pg-statement-log] [--isolate-unit] [--with-replay-log] [--unit-env KEY=VAL ...]
-                   [--fast-record] [--dashboard-env KEY=VAL ...]
+                   [--fast-record] [--dashboard-env KEY=VAL ...] [--unit-no-postgres [--expect-unit-down]]
 stack/sce-stack.sh down       # stop and remove containers and the network; keep the volumes
 stack/sce-stack.sh reset      # down, then delete only the sce_* volumes
 stack/sce-stack.sh status [--json]
@@ -91,6 +95,7 @@ that look like secrets are masked):
 | `--unit-env KEY=VAL` | Extra unit environment, repeatable (for example `USER_JWT_TOKEN=...` for the negative control) |
 | `--dashboard-env KEY=VAL` | Extra environment for the Dashboard service, repeatable |
 | `--fast-record` | Step 3's timers shortened (`lib/record_env.py`), so a scenario sees a commit, a verdict or an expiry in seconds. The unit gets `STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS=2000`. The Dashboard service gets `EXECUTION_CLOSING_INTERVAL_SECONDS=2`, `EXECUTION_CLOSING_LOST_AFTER_SECONDS=12`, `EXECUTION_CLOSING_NEVER_STARTED_AFTER_SECONDS=15`, `RESULT_CLEANUP_TTL_IN_SECONDS=20` and `RESULT_CLEANUP_COLLECTION_CHECK_INTERVAL_IN_SECONDS=5`. A value given with `--unit-env` or `--dashboard-env` wins. The manifest's `options.record_timing` holds the timers the two services were given, and the driver's waits and deadlines follow it (a timer it does not name keeps the product's default: 30 s, 30 s, 180 s, 600 s, a day, a day) |
+| `--unit-no-postgres` | Needs `--isolate-unit`. Postgres is not attached to `sce-unit-net`, so no network holds both it and the unit: the unit cannot even resolve `texera-postgres` (Lakekeeper, RustFS and nginx stay beside it). The network check after generation proves the attachments, and the driver's preflight, when Check J gates, runs `getent hosts texera-postgres` in the unit and refuses a stack where it answers. With `up --expect-unit-down` it is a negative control instead: `up` waits for every service but the unit, watches the unit for 90 s (`--unit-down-watch`), prints one JSON verdict and exits 0 only when the unit never became healthy and its log says Postgres is why (it names Postgres's host, `PSQLException` or `HikariPool`); a unit that became healthy "passed, so the control proves nothing", and one that stayed down for another reason is "inconclusive" |
 
 - `--source` is the worktree whose `bin/single-node/` (compose, `.env`, nginx) and
   `sql/*.sql` are copied. It defaults to `$SCE_SOURCE`, or else
@@ -190,7 +195,7 @@ Do not run `build.sh` while another sbt is using the same worktree.
 
 ```
 driver/run.sh [--base http://localhost:8080] [--scenario a,c | --scenario d ...] [--report path.json]
-              [--transport ws|create-ws] [--gate A|B|C|D|3A|3B] [--evidence [CHECKS]] [--negative-control]
+              [--transport ws|create-ws] [--gate A|B|C|D|3A|3B|3C] [--evidence [CHECKS]] [--negative-control [2|3]]
               [--legacy-env] [--with-replay-log] [--timeout 300]
               [--unit-uri http://workflow-runtime-coordinator-service:8085] [--list] [--print-token]
 ```
@@ -247,19 +252,35 @@ explicit flags win:
 | D | `create-ws` | a-e, u, j, k, l, m, o, f, f2, g, h, i (g0 retired) | A-F | as C |
 | 3A | `create-ws` | D + p | A-F, I | `--pg-statement-log --isolate-unit --fast-record` |
 | 3B | `create-ws` | 3A + q, r, s, t, w | A-F, I, K | as 3A |
+| 3C | `create-ws` | 3B + v | C-F, G, H, I, K; and J on a stack started with `--unit-no-postgres` | as 3A, and once more with `--unit-no-postgres`; then `./run-negative-control.sh --step 3` once |
 
 A step-3 gate also runs in Kubernetes and in local-dev mode, where it selects what
-that mode runs (3A: a-e, u, p; 3B: a-e, u, p, q, s, w, the design's H6) and no
-evidence: the statement log exists on the single-node stack only. Gate 3A is step
-2's last gate plus p, so Check D still gates and the stack needs `--isolate-unit`,
-as for gate D (the step-3 design's one-line command leaves the option out).
+that mode runs (3A: a-e, u, p; 3B: a-e, u, p, q, s, w; 3C: a-e, u, p, q, s, v, w, the
+design's H6) and no evidence: the statement log exists on the single-node stack
+only. Gate 3A is step 2's last gate plus p, so Check D still gates and the stack
+needs `--isolate-unit`, as for gate D (the step-3 design's one-line command leaves
+the option out).
+
+Gate 3C is two runs on the single-node stack, because the design's Checks G, H and J
+cannot all say something in one. With Postgres beside the unit, G (no statement) and H
+(no connection) show that the unit does not use a Postgres it could reach. On a stack
+started with `--unit-no-postgres` they hold whatever the unit tries, and J shows that
+the unit, and every scenario, works with no Postgres to find. The driver reads the
+option from the stack's manifest: J gates on such a stack and is left out, with a
+line saying so, on any other. At gate 3C, Kubernetes and local-dev mode also show,
+after the setup and after the last scenario, that Postgres holds no connection named
+`texera-computing-unit` and none from the unit pod's address, and in Kubernetes that
+the unit was given no `STORAGE_JDBC_*` setting (the report's `unit_without_postgres`;
+a failure fails the run).
 
 A step-3 gate also tells the scenarios how far the product is (its letter, A to C),
 because step 3 lands in parts and a scenario asks a later part's routes only once
-they exist. Without a gate the driver takes the product to be the whole of step 3;
-to run one scenario against an earlier part, name the gate too
-(`--gate 3A --scenario p`). Until gate 3C a statistics request names the unit
-(`?cuid=`), as the browser's does: in Kubernetes the gateway still routes it there.
+they exist. Without a step-3 gate, a run that selects a step-3 scenario is taken to
+be on the whole of step 3 (to run one against an earlier part, name the gate too:
+`--gate 3A --scenario p`), and any other run is as it was before step 3, so step 2's
+images run as they always did (j, for one, asks them for none of step 3's routes).
+Until gate 3C a statistics request names the unit (`?cuid=`), as the browser's does:
+in Kubernetes the gateway still routes it there.
 
 Add `--with-replay-log` for m's replay run once the engine's global checkpoint works
 (see the verification table below); without it m runs its two refusals only.
@@ -318,12 +339,13 @@ earlier (`--gate`).
 
 | Key | Name | From gate | What it does | Checks |
 |---|---|---|---|---|
-| p | `record-in-lake` | 3A | the slow run, paused and resumed once | while it runs: the log's label, read from Lakekeeper after each state change, names RUNNING, PAUSED, RUNNING at rising `seq`; at gate 3A the log table holds one row per `seq` up to the label's, five at the least (READY, an output row, RUNNING, PAUSED, RUNNING); from gate 3B `GET /api/executions/{eid}/log` shows READY, RUNNING, PAUSED, RUNNING with `seq` 1, 2, 3, ..., names the stored output port (its id, its result table, its output mode) and has no `closing`; the statistics endpoint returns rows, their count grows between two reads 2.5 commit intervals (5 s) apart, and each row names an operator and a time in epoch milliseconds; the console table has a snapshot with rows; after: the label names COMPLETED at a higher `seq` (from 3B: `/log`'s last row is COMPLETED); status 3; Check I |
+| p | `record-in-lake` | 3A | the slow run, paused and resumed once | while it runs: the log's label, read from Lakekeeper after each state change, names RUNNING, PAUSED, RUNNING at rising `seq`; at gate 3A the log table holds one row per `seq` up to the label's, five at the least (READY, an output row, RUNNING, PAUSED, RUNNING); from gate 3B `GET /api/executions/{eid}/log` shows READY, RUNNING, PAUSED, RUNNING with `seq` 1, 2, 3, ..., names the stored output port (its id, its result table, its output mode) and has no `closing`; the statistics endpoint returns rows, their count grows between two reads 2.5 commit intervals (5 s) apart, and each row names an operator and a time in epoch milliseconds; the console table has a snapshot with rows; after: the label names COMPLETED at a higher `seq` (from 3B: `/log`'s last row is COMPLETED); from gate 3C `GET /api/executions/{eid}/console` returns the UDF's stored lines while the run goes and, after it, all 300 in two pages (`afterSeq`, `more`), `seq` 1 to 300; status 3; Check I |
 | q | `unit-lost` | 3B | the slow run; once it is Running and has statistics and console rows in the lake, `kill_unit()`. Twice: the unit left down until the verdict, and `start_unit()` right after the kill. Where a listing of the units makes the platform notice a unit that is gone (Kubernetes), a third pass lists them once after the kill | each pass: the history entry, read every poll interval, says status 1 with a `completionTime` that is a time until it turns 4, "unit lost", within lost-after + 3 closing intervals of the kill (18 s), and not before lost-after less a commit and a closing interval (third pass: within 2 closing intervals of the listing); right after the kill, with the unit gone, the statistics rows read before it read back unchanged and the console table kept its rows (later the console table goes with the results, which expire by age, counted from the unit's last beat); once it is closed, `/state` says `open: false`, 4, "unit lost"; `/log` has no ending row and a `closing` with the verdict; its statistics table still holds its rows; `completionTime` is the last beat: not before the last state change, not after the kill. After the second pass: a new socket on the workflow is told "Uninitialized", naming no execution; scenario a passes on the unit that is back; both lost executions' history entries are as they were closed. The readings are in the report (`facts.lost_verdicts`) |
 | r | `never-started` | 3B | create, and no start | the history says status 0 until it turns 4, "never started", within never-started-after + 2 closing intervals of the create (19 s), and not before never-started-after; `/state` closed, 4, "never started"; the plan table has `started`; a start is then refused "already started" (as l5-l10 check a refusal), the row stays 4 |
 | s | `polite-stop` | 3B | the slow run; `stop_unit()` | the history turns 4 with reason "the computing unit was stopped" within 2 closing intervals of the stop (the status comes from the log's label at once; the reason with the closing record, a tick later); `/log` ends with a FAILED row carrying that reason |
-| t | `expiry` | 3B | scenario a's workflow, run twice as one workflow; the second execution is created before the TTL has passed | first execution: closed Completed, with result, state and console tables in the lake and a size on the quota page; after the second create its result, state and console tables are gone, its plan, log and statistics are there, `/state` still says Completed, and `storedBytes` fell to exactly what the catalog says the plan, the log and the statistics hold. Second execution: the same once its results are gone by age, within TTL + one expiry pass + 2 closing intervals of its end and not before the TTL, with no third create |
+| t | `expiry` | 3B | scenario a's workflow, run twice as one workflow; the second execution is created before the TTL has passed | first execution: closed Completed, with result, state and console tables in the lake and a size on the quota page; after the second create its result, state and console tables are gone, its plan, log and statistics are there, `/state` still says Completed, and `storedBytes` fell to exactly what the catalog says the plan, the log and the statistics hold. Second execution: the same once its results are gone by age, within TTL + one expiry pass + 2 closing intervals of its end and not before the TTL, with no third create. From gate 3C an export of either then answers 410, "the results of execution N have expired" |
 | w | `history-outcomes` | 3B | d, k, a, and a UDF whose module raises as it is loaded (a raise in `process_tuple` only pauses the worker), each as a part with its own checks | once the four are closed, the history says 5 "killed by the user"; 4 "compile error: ..." naming the column; 3 with no reason; 4 with the raised message; the admin's list has the same status and reason for each workflow's newest execution; d's log is READY, RUNNING, PAUSED, RUNNING, KILLED, the last row with the reason |
+| v | `stored-reads-without-unit` | 3C | e, then a (each as a part with its own checks; a is the quicker one and runs last); the scenario's sockets are closed; `stop_unit()` | with the unit down (a new socket to it is refused): the console route returns e's 10 lines, all `PRINT`, of its UDF; a local CSV export of a's aggregate (`POST /api/executions/result/export/local`, a form with the request and the user's token, the request naming `executionId`) gives the columns `department, total_salary, n` and exactly the 4 groups; the Filter's newest stored statistics row reports 8 output rows; both executions' `/state` say closed, Completed; a's `/log` is READY, RUNNING, COMPLETED with its closing record. The statistics and the export request carry a `sce-probe` mark, which Kubernetes mode's `post-run` looks up in Envoy's access log. The unit is started again at the end |
 
 What changes for the scenarios of step 2 (design H3):
 
@@ -335,6 +357,17 @@ What changes for the scenarios of step 2 (design H3):
 - From gate 3B the driver no longer waits for the unit's cleanup `DELETE` between
   scenarios (the unit deletes nothing when it lets go of a run); it waits the unit's
   cleanup delay plus 0.5 s, and until the unit is quiet.
+- From gate 3C a statistics request names no unit (`?cuid=` is gone).
+
+Results and console output expire by age, and `--fast-record` makes that 20 s after
+a run ended (25 s at the latest, with the 5 s expiry pass). Two scenarios read them
+later than a moment after the run, and are ordered for it. q reads back what a lost
+run stored right after the kill, not after the verdict: a lost execution ended at its
+unit's last beat, so its results can be gone a few seconds after it is closed. v runs
+e first and a last and stops the unit at once, and each of its checks says how old the
+results were when it read them; a unit that takes most of `docker stop`'s 20 s to stop
+leaves v too little time, and the cure is a longer TTL for that stack
+(`--dashboard-env RESULT_CLEANUP_TTL_IN_SECONDS=60`; t follows the stack's timers).
 
 ### The stack's control (`driver/stack_control.py`)
 
@@ -498,10 +531,17 @@ evaluated and reported as `info`.
 
 Step 3's checks (its design, section 7 H4) are evaluated only when a gate or
 `--evidence` names them, so a step-2 gate reads and reports exactly what it did.
+Checks A and B gate 3A and 3B, where the unit still writes its status, and are
+retired at gate 3C (not evaluated, unless `--evidence` names one): their windows end
+at the unit's status UPDATE, which no longer exists, and G is stronger. C, D, E and
+F stay; F passes trivially once the unit sends nothing.
 
 | Check | Holds when |
 |---|---|
+| G | no statement at all comes from the unit between the scenario's begin and end marks: by its name or from one of its addresses, on any database, a setting or transaction control included (the step-2 checks skip those), a failed one too. After the last scenario a second part looks at the whole log: none since the unit's container started (`docker inspect`'s `State.StartedAt` at the preflight, against the time docker stamped each log line, so a line of an earlier container that had the unit's address does not count) |
+| H | `pg_stat_activity`'s client backends, asked through the stack's control right before the scenario's begin mark and right before its end mark, hold no connection named `texera-computing-unit` and none from one of the unit's addresses. Postgres that cannot be asked makes H not evaluable |
 | I | for every run of the scenario that was started and has ended, read from Lakekeeper as Check E reads the plan table (`driver/lake.py`): the execution log's label names the ending the socket reported; the log holds exactly as many rows as the label's `seq` (more: a row landed twice, or a `seq` was skipped and another repeated; fewer: the label is ahead of its rows, or a `seq` was skipped); and the end tidy has run: the log holds one data file and one snapshot, the statistics table too (a run that never reached Running may have none of either), the console table too when the run printed, and no row when it did not. From gate 3B the rows are read as well, from `GET /api/executions/{eid}/log`: their `seq` are 1, 2, 3, ..., and their states are the ones the run's socket was told, in order (READY for "Initializing"; Pausing and Resuming are not logged; a state told twice is one row). A run whose unit a scenario took down (q, s) is judged by the last state its unit recorded (RUNNING where it was killed, FAILED where it was stopped), its log may hold more than its socket heard, and its files are not counted: a unit that was lost or stopped does not finish its last tidy. A catalog that cannot be read makes I not evaluable |
+| J | on a stack started with `--unit-no-postgres` (the preflight refuses any other when J gates): at the scenario's end `getent hosts texera-postgres` in the unit finds nothing (the host is the stack's `STORAGE_JDBC_URL`'s), and `docker inspect` says the unit is healthy. That every scenario passes there is what the scenarios' own checks say |
 | K | after the last scenario, read from Postgres (`outcome`, `outcome_reason`, `ended_at` of the run's workflows' executions) every poll interval: every execution has its closing record within lost-after + 3 closing intervals of the last scenario's end (18 s); one that a scenario left unstarted on purpose (l5, l6, l9, l10) within never-started-after + 2 closing intervals (19 s), since it is closed only once it is that old, and as failed, "never started". K takes the place of the final "no row is left at status 0" |
 
 - **When a record is judged.** A state's row and label reach the lake a moment after
@@ -534,7 +574,8 @@ scenarios (l8 before its second start, o before its repeat). From gate 3B the un
 runs no cleanup statement, so only the delay and the quiet are waited for. After all
 scenarios, the final check: no execution of this run's workflows is left at status
 0, except the refused starts (l5, l6, l9, l10); with Check K required (gates 3B and
-3C), Check K instead.
+3C), Check K instead; and with Check G required, G's look at the whole log (the
+report's `final_checks` then holds both).
 
 A scenario that took the unit down tells the evidence when it is back
 (`unit_restarted`): the unit's addresses are read again, and the ones it had stay
@@ -558,10 +599,29 @@ The scenario's own checks and the other evidence are reported only. Take the
 source from a clean worktree (for example `--source <step-1 worktree>`): its
 deployment files and DDL are the ones the stack uses.
 
+`./run-negative-control.sh --step 3 --images <registry>/<tag>` is step 3's control
+(its design, H5), run once per gate 3C against the images of step 2's last sub-part,
+whose unit still writes its status to Postgres and boots with a pool:
+
+1. The stack with `--pg-statement-log --isolate-unit --fast-record`, then scenarios a
+   and q over `create-ws` with `--negative-control 3`. On each, Check G must fail on
+   the unit's status UPDATEs and Check H on an idle connection of the unit; one that
+   fails without that reason is "control inconclusive", one that passes "proves
+   nothing". In q, which then makes one pass and asks none of step 3's routes, the
+   history entry of the killed unit's execution must still say status 1 at every
+   reading until past the deadline by which step 3 closes it (lost-after + 3 closing
+   intervals); an execution that was closed means the control proved nothing.
+2. The stack again with `--unit-no-postgres --expect-unit-down` (see the stack's
+   options): the unit must not become healthy, and its log must say Postgres is why.
+   The verdict is written to `reports/negative-control-<time>-unit.json`.
+
+The exit code is the driver's, and 1 when the driver's controls held and the unit's
+did not.
+
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 250 tests (55 of step 2 and 120 of step 3 on the single-node stack, 33 Kubernetes mode, 42 local-dev mode), about 5 minutes
+.venv/bin/python -m unittest discover -s driver/tests -v     # 310 tests (55 of step 2 and 176 of step 3 on the single-node stack, 37 Kubernetes mode, 42 local-dev mode), about 5 minutes
 ```
 
 - `test_evidence.py` (21): the log parser (parameters, continuation lines,
@@ -575,7 +635,7 @@ deployment files and DDL are the ones the stack uses.
   not evaluable with stale addresses; D failing on a gateway request from the unit
   and not evaluable without the gateway log; each negative control "inconclusive"
   when it fails for another reason.
-- `test_transport.py` (18): both transports against `fake_texera.py`: the create
+- `test_transport.py` (20): both transports against `fake_texera.py`: the create
   body of 3.4, the start by id as the first command, `CreateRefused`, the update then
   `OperatorUpdateRequest`, `UpdateRefused` (409 after the end), a refused second
   start that is not killed, a start as another user, the unchanged
@@ -587,7 +647,9 @@ deployment files and DDL are the ones the stack uses.
   that only joined learns the execution's id from the replayed state). And step 3's
   calls against the fake at gate 3B: an execution's state and log, the 403 for
   another user and for an execution that does not exist, the quota sizes, and the
-  admin's list read page by page.
+  admin's list read page by page; and at gate 3C: stored console output page by
+  page, and an export as the browser sends it (a form with the request and the
+  user's token, the request naming the execution).
 - `test_scenarios.py` (14): g0, j, k, l1-l10, m (with and without a replay log), o,
   f, f2, g, h, i through the real driver code against the fake (and a fake
   `docker exec` for o and the environment scenarios); j on `ws`; g removing an
@@ -600,7 +662,7 @@ deployment files and DDL are the ones the stack uses.
   mark; o's repeat is silent; a refusal path that reads Postgres fails the silence
   check; and the start rule before this fix fails l8's Check A (the review's case).
 
-- `test_step3_scenarios.py` (37): the step-3 scenarios through the real driver code
+- `test_step3_scenarios.py` (54): the step-3 scenarios through the real driver code
   against the fake at a step-3 gate, with the stack's timers a tenth of
   `--fast-record`'s. Each scenario passes against the product as the design has it,
   and fails on the checks that name the fault when the fake is given one (the faults
@@ -624,10 +686,21 @@ deployment files and DDL are the ones the stack uses.
     before the TTL.
   - w: fails on the six checks of a reason when the closing record gives none.
   - j at gate 3B waits for the closing record, and fails when the row stays open.
+  - v: every read is made while the unit is down, its statistics and export requests
+    are marked, the export names the execution and carries the token in its form; it
+    fails on its console, export and statistics checks when stored output needs the
+    unit. p at gate 3C reads the console route while the run goes and, after it, in
+    two pages; t fails when an export of expired results is not 410.
+  - What Kubernetes and local-dev mode show of a unit off Postgres: a pool found by
+    its name alone, a Kubernetes unit that was given the database login, a stack
+    that cannot be asked.
+  - What step 3's negative control reads of q: Running past the deadline holds; a
+    closed execution "proved nothing"; anything else is inconclusive.
 
-  Also what gates 3A and 3B select in each mode, and that `--scenario all` and step
-  2's gates select what they did.
-- `test_step3_evidence.py` (47): Check I alone, against a fake `docker` whose catalog
+  Also what gates 3A, 3B and 3C select in each mode, that `--scenario all` and step
+  2's gates select what they did, and that a run without a step-3 gate and without a
+  step-3 scenario is taken as a run of step 2.
+- `test_step3_evidence.py` (68): Check I alone, against a fake `docker` whose catalog
   is the fake lake and a recorder that writes into it: a whole record passes; a label
   ahead of its rows, a gap in `seq`, a row that landed twice, several data files
   after the end, an ending the log does not have, a missing log, console rows of a
@@ -649,16 +722,38 @@ deployment files and DDL are the ones the stack uses.
   scenario f; at gate 3B a run and a refused start end closed (the latter by the job,
   "never started"), q and s pass A-F and I with their records judged as they were
   left, and Check K fails for a row left open, for a lost unit never closed and for
-  an unstarted execution never closed.
+  an unstarted execution never closed. Checks G, H and J alone: any statement of
+  the unit fails G (its status UPDATE; a setting sent under its name from an unknown
+  address; a statement on another database from its address), one between two
+  scenarios fails only G's look at the whole run, and a line stamped before the
+  unit started is another container's; a connection named after the unit, or from
+  its address, at the scenario's start or at its end, fails H, and a Postgres that
+  cannot be asked makes it not evaluable; J fails for a unit that resolves Postgres
+  or is not healthy, and the preflight refuses such a stack; A and B are not
+  evaluated at gate 3C. At gate 3C with the scenarios: v and q pass C to J and both
+  final checks; a unit that still writes its status fails G and only G, one that
+  still opens its pool H, one that is not healthy J. Step 3's negative control,
+  against the fake at the end of step 2: a fails G and H as expected, each for its
+  reason, and q's execution stays Running past its deadline; against the fake at gate
+  3C the same controls say that they proved nothing.
 - `test_lake.py` (8): what `lake.py` reads from the catalog's answers: a tidied
   table, a table nothing was written to ("no snapshot" as a missing key, null or
   -1), a missing table against an outage, a summary without totals, namespaces from
   the services' settings, a name that needs percent-encoding, a listing over several
   pages.
-- `test_stack_options.py` (11): `--fast-record` and `--dashboard-env` in the
+- `test_stack_options.py` (21): `--fast-record` and `--dashboard-env` in the
   single-node generator (against a small source tree written by the test), the Helm
   values and the refusal of a chart that does not hand the timers over, local-dev's
-  exports, and the timers the driver reads back from a manifest.
+  exports, and the timers the driver reads back from a manifest. `--unit-no-postgres`:
+  Postgres is on the default network alone and Lakekeeper, RustFS and nginx stay
+  beside the unit; it needs `--isolate-unit`; the network check refuses a compose
+  that leaves Postgres reachable. `up --expect-unit-down`: the three verdicts, and
+  that every service but the unit is waited for.
+- `test_negative_control.py` (6): `run-negative-control.sh` with a stand-in stack and
+  driver: step 2's calls are what they were; step 3 runs a and q with
+  `--negative-control 3`, then the stack with `--unit-no-postgres --expect-unit-down`;
+  its exit code when the unit came up, when the driver's controls failed and when
+  the stack did not come up; `--step 3` without `--images` is refused.
 - `test_stack_control.py` (14): the single-node control against a fake `docker`
   (`kill`, `stop -t 20`, `start` and the wait for healthy, nginx restarted only when
   the unit came back at another address, Postgres asked who is connected, the unit's
@@ -666,8 +761,10 @@ deployment files and DDL are the ones the stack uses.
   rows, and how a stack script's one JSON document is read. The Kubernetes control
   is in `test_k8s_unit.py` (the unit that comes back is created without listing the
   units; every unit a run made is terminated) and the stack's subcommands in
-  `test_k8s_stack.py`; local-dev's are in `test_localdev.py`, run on throwaway
-  processes (a "JVM" leading a process group with a "worker" in it).
+  `test_k8s_stack.py`, with `post-run`'s verdict on the requests v marked (through
+  the webserver's route, routed to a unit, not in Envoy's log); local-dev's are in
+  `test_localdev.py`, run on throwaway processes (a "JVM" leading a process group
+  with a "worker" in it).
 
 `fake_texera.py` models the design, not Texera: a scenario that passes against it
 drives the design's protocol and judges its answers as the design says; it proves
@@ -696,9 +793,12 @@ what it had buffered is lost; stopped politely, it first ends its runs as FAILED
 leaves their tables untidied; while it is down its sockets and routes answer 502;
 back, it holds no run. In its Kubernetes flavour a unit is a pod of its own, a
 listing stamps the units whose pod is gone, and until gate 3C a statistics request
-goes to the unit its `cuid` names. `faults` makes the recorder, the Dashboard or
-the unit misbehave in one named way at a time, for the tests that show a check
-failing.
+goes to the unit its `cuid` names. At gate 3C the unit sends Postgres nothing and
+opens no pool, a Kubernetes unit is given no database login, the Dashboard serves
+stored console output page by page and exports by execution (410 once the results
+expired), and a unit that holds no run of a workflow answers an empty result page.
+`faults` makes the recorder, the Dashboard or the unit misbehave in one named way at
+a time, for the tests that show a check failing.
 
 ## What is verified against a real stack, and what is not yet
 
@@ -744,6 +844,9 @@ rows also name what the harness had to assume (see "Step 3: what is assumed"):
 | Gate 3A as a whole: p, Check I, `--fast-record` in the three stacks, the catalog read from each mode's stack | step 3's sub-parts 2-7 | `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_lake.py`, `test_stack_options.py` |
 | Gate 3B as a whole: q, r, s, t, w, p's and Check I's reading of `/log`, j's wait for the closing record, Check K, the cleanup wait without the unit's DELETE | step 3's sub-parts 9, 11-15 | `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_transport.py` (`RecordApiTest`) |
 | The stack's control on a real stack: `docker kill`, `stop` and `start` of the unit and what nginx and the open sockets do then; a pod deleted with and without its grace period, and a second unit made mid-run; local-dev's unit killed, stopped and started again under a running stack; `pg_stat_activity` read in each mode. Also Checks A-F across a unit restart (q, s): the unit's boot must log no file-service or LakeFS name (it logged none in a local-dev run of step 2) and run no statement outside the run-state tables | gate 3B | `test_stack_control.py`, `test_k8s_unit.py`, `test_k8s_stack.py`, `test_localdev.py` (`UnitControlTest`), `test_step3_evidence.py` (`ClosingEvidence`) |
+| Gate 3C as a whole: v, p's console route, t's 410, Checks G, H and J, the retirement of A and B, `--unit-no-postgres`, the other modes' proof (`unit_without_postgres`), and in Kubernetes Envoy's routes for v's marked requests | step 3's sub-parts 16-19 | `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_stack_options.py`, `test_k8s_stack.py` (`StoredReadsTest`), `test_transport.py` (`StoredOutputApiTest`) |
+| Step 3's negative control: G and H failing for their reasons on a unit of step 2's end, q staying at status 1, and that unit not booting without Postgres (what its log says then: the control looks for Postgres's host name, `PSQLException` or `HikariPool`) | gate 3C | `test_step3_evidence.py` (`Step3Control`), `test_stack_options.py` (`UnitDownControlTest`), `test_negative_control.py` |
+| What a real stack must still show for gate 3C: how long the unit takes to stop politely (v reads results that expire 20 s after their run; see the scenarios); that `docker inspect`'s `State.StartedAt` and docker's log stamps order a unit's first statement after its start (G's look at the whole log); Envoy's `route_name` for a request the static route answers | gate 3C | - |
 | D failing on a gateway request from the unit, F not evaluable with stale addresses, a negative control reported "inconclusive", gate D | PR C-D | `test_evidence.py`, `test_scenario_evidence.py` |
 | m's replay run after the checkpoint: its interactions, the replay's create and start | PR B, and an engine whose global checkpoint works | `test_scenarios.py` (`ReplayScenario`) |
 
@@ -775,13 +878,20 @@ a one-line change:
 | A log's state rows are the states the run's socket was told, in order (both come from the unit's one `transitionTo`) | 4.1 | `logged_states`, `Evidence._log_problems` in `driver/evidence.py` |
 | How long a beat must stand still, and by when a lost or an unstarted execution is closed | D26, 7 H3, H4 | `lost_watch_s`, `lost_verdict_s`, `never_started_verdict_s` in `driver/record_timing.py` |
 | A UDF that raises as its module is loaded fails the run with the raised message in the first error (read in step 2's code: a raise in `process_tuple` only pauses the worker) | 7 H3 (w) | `udf_raises_on_load` in `driver/scenarios.py` |
+| `GET /api/executions/{eid}/console?operatorId=&afterSeq=&limit=` answers `{messages[{seq, operatorId, msgType, title, message, ...}], lastSeq, more}` | 3.5 | `ConsolePage.of`, `TexeraApi.execution_console` in `driver/texera_api.py` |
+| An export's request is today's (`exportType`, `workflowId`, `workflowName`, `operators[{id, outputType}]`, `datasetIds`, `rowIndex`, `columnIndex`, `filename`, all required), with `executionId` in place of `computingUnitId`; the local export stays a form with `request` and `token`, and one operator as `csv` answers the CSV itself, header first (read in step 2's code) | 3.5, brief 16 | `export_request`, `TexeraApi.export_local` in `driver/texera_api.py`; `_export_rows` in `driver/scenarios.py` |
+| An export of expired results answers 410 with a body that names "execution N" and "expired" | 3.5, brief 16 | `_check_expired` in `driver/scenarios.py` |
+| The unit reaches Postgres by the host of the stack's `STORAGE_JDBC_URL` (else `texera-postgres`) | 7 H2 | `JDBC_URL_ENV`, `DEFAULT_POSTGRES_HOST` in `driver/evidence.py`; `postgres_host` in `stack/sce_stack.py` |
+| The unit names its connections `texera-computing-unit` (step 2) | 7 H4 | `UNIT_APP` in `lib/pg_activity.py` |
+| In Kubernetes a request that reaches a unit matched the HTTPRoute `texera-dynamic-routes`, whose name is in Envoy's `route_name` (read in the chart) | 7 H6 | `UNIT_ROUTE`, `judge_stored_read` in `stack/k8s/k8s_stack.py` |
+| A Kubernetes unit's database login is the three `STORAGE_JDBC_*` settings of its engine container | brief 19 | `_unit_without_postgres` in `driver/e2e.py` |
 
 ## `run-baseline.sh`
 
 ```
 ./run-baseline.sh [--reset] [--keep] [--images <registry>/<tag>] [--source <worktree>] [--label text]
                   [--pg-statement-log] [--isolate-unit] [--with-replay-log] [--unit-env KEY=VAL ...]
-                  [--fast-record] [--dashboard-env KEY=VAL ...] [-- <driver args>]
+                  [--fast-record] [--dashboard-env KEY=VAL ...] [--unit-no-postgres] [-- <driver args>]
 ```
 
 `up` (published images by default, with the stack options given), then wait until
@@ -1067,8 +1177,8 @@ What needs the single-node stack is refused before any setup, with the reason:
 - `--evidence`, `--negative-control`, a step-2 `--gate` and `--legacy-env`. They read the
   single-node Postgres log and `docker exec` into its fixed container names, which on
   this machine belong to another run's stack. A step-3 gate is accepted: it selects
-  what this mode runs (`--gate 3A`: a-e, u, p; `--gate 3B`: a-e, u, p, q, s, w), without
-  that evidence.
+  what this mode runs (`--gate 3A`: a-e, u, p; `--gate 3B`: a-e, u, p, q, s, w; `--gate 3C`:
+  a-e, u, p, q, s, v, w), without that evidence.
 - Scenario g0, which uses the legacy environment endpoints of the single-node unit.
 - l4 and l9, which create local units at `--unit-uri`.
 - On `create-ws`, the scenarios that need the second user (j, l2, l3, l5, l7, l10): the
@@ -1097,6 +1207,18 @@ closed by its beat; its third pass lists them once after the kill, as the worksp
 its socket drops, and the verdict must come within two closing intervals. Until gate 3C the
 gateway sends a statistics request to the unit, so while a unit is down q counts the
 statistics table's rows in the catalog instead of asking the route.
+
+At gate 3C this mode shows that the unit has no Postgres in three ways (the design's H6):
+
+- After the setup and after the last scenario the driver asks `stack/k8s-stack.sh
+  pg-activity` and `unit-env <cuid>`: Postgres holds no connection named
+  `texera-computing-unit` and none from the unit pod's address, and the unit's engine
+  container was given no `STORAGE_JDBC_*` setting. Both go into the report's
+  `unit_without_postgres`; a failure, or a stack that cannot be asked, fails the run.
+- Scenario v marks its statistics and its export request (`sce-probe`), and `post-run`
+  looks the marks up in Envoy's access log: a request whose `route_name` names the
+  HTTPRoute `texera-dynamic-routes` was sent to a computing unit and fails the run; an
+  entry that is not found is a warning (`post_run.stored_reads`).
 
 `--stack-manifest` defaults to `stack/k8s/generated/MANIFEST.json`, not the single-node
 one. As a second guard, the driver sets `DOCKER_HOST` to a socket that does not exist.
@@ -1142,11 +1264,13 @@ The run goes like this:
 2. Runs `down`, then `up`, and starts following the unit pods' logs.
 3. Runs the driver with `--target k8s`.
 4. Runs `stack/k8s-stack.sh post-run <report>`. This waits up to 90 s for the unit's pod
-   to go and reads Envoy's entries for the driver's refusal probes. It writes the outcome
-   into the report as `post_run`, and into the logs directory as `post-run.json`:
+   to go and reads Envoy's entries for the driver's refusal probes and for the requests
+   scenario v marked. It writes the outcome into the report as `post_run`, and into the
+   logs directory as `post-run.json`:
    - A unit pod left behind fails the run (`summary.result` becomes FAIL, with
      `summary.post_run_failures`), unless the driver ran with `--keep-unit`.
    - So does a probe that ext-authz did not refuse.
+   - So does a request for stored output that Envoy sent to a computing unit (gate 3C).
    - A run through kubectl port-forward gets `summary.reliable: false`.
 5. Collects the logs, runs `down` and releases the lock, also when a step fails, the
    time limit is reached or the run is interrupted (INT or TERM). Everything a step
@@ -1558,6 +1682,12 @@ group; `unit-start` runs the unit's launcher again with the environment `up` gav
 `--fast-record` export included), in the same working directory and log, waits until it is
 ready, and records its new pid, so `post-run` and `down` find it. The driver then waits
 until the unit answers a workflow socket through the dev server's proxy.
+
+At gate 3C (`--gate 3C`: a-e, u, p, q, s, v, w) the driver asks `stack/localdev-stack.sh
+pg-activity` after the setup and after the last scenario: no connection may be named
+`texera-computing-unit` (the report's `unit_without_postgres`). Every JVM of this stack
+reaches Postgres from 127.0.0.1 and is handed the same environment, so here the name is
+the only thing that tells the unit's connections apart.
 
 ### `run-localdev.sh`
 

@@ -160,6 +160,87 @@ class FastRecordTest(SingleNodeCase):
             self.assertIn("--dashboard-env takes KEY=VALUE", err.getvalue())
 
 
+class UnitWithoutPostgresTest(SingleNodeCase):
+    """--unit-no-postgres: no network holds both the unit and Postgres."""
+
+    @staticmethod
+    def networks_of(services: dict) -> dict[str, list[str]]:
+        return {name: sorted(svc["networks"]) for name, svc in services.items()}
+
+    def test_postgres_is_not_on_the_units_network(self):
+        manifest, services = self.generate(isolate_unit=True, unit_no_postgres=True)
+        nets = self.networks_of(services)
+        self.assertEqual((["unit"], ["default"]), (nets[UNIT], nets["postgres"]))
+        # what the unit still needs is beside it: the lake's catalog and store, and the gateway
+        self.assertEqual({"lakekeeper", "rustfs", "nginx"}, {n for n, on in nets.items() if on == ["default", "unit"]})
+        opts = manifest["options"]
+        self.assertTrue(opts["unit_no_postgres"])
+        self.assertIn("unit isolated on sce-unit-net, without Postgres", ss.describe_options(opts))
+
+    def test_without_the_option_postgres_stays_beside_the_unit(self):
+        manifest, services = self.generate(isolate_unit=True)
+        self.assertEqual(["default", "unit"], self.networks_of(services)["postgres"])
+        self.assertFalse(manifest["options"]["unit_no_postgres"])
+
+    def test_it_needs_a_unit_on_a_network_of_its_own(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            ss.StackOptions(unit_no_postgres=True)
+        self.assertIn("--unit-no-postgres needs --isolate-unit", err.getvalue())
+
+    def test_the_network_check_refuses_a_compose_that_leaves_postgres_reachable(self):
+        _, services = self.generate(isolate_unit=True)  # Postgres on both networks
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            ss._check_networks(services, ss.StackOptions(isolate_unit=True, unit_no_postgres=True))
+        self.assertIn("postgres is on ['default', 'unit'], want ['default']", err.getvalue())
+
+    def test_the_name_of_postgres_is_read_from_the_generated_environment(self):
+        with mock.patch.object(ss, "GEN_DIR", self.out):
+            self.assertEqual("texera-postgres", ss.postgres_host())  # nothing generated yet: the stack's name
+            self.out.mkdir()
+            (self.out / ".env").write_text("A=1\nSTORAGE_JDBC_URL=jdbc:postgresql://pg.internal:5432/texera_db\n")
+            self.assertEqual("pg.internal", ss.postgres_host())
+
+
+class UnitDownControlTest(unittest.TestCase):
+    """`up --expect-unit-down`: the verdict on a unit that must not start without Postgres."""
+
+    BOOT = ["INFO  ComputingUnitMaster - starting", "ERROR com.zaxxer.hikari.pool.HikariPool - Exception during pool "
+            "initialization.", "org.postgresql.util.PSQLException: The connection attempt failed.",
+            "Caused by: java.net.UnknownHostException: texera-postgres"]
+
+    def test_a_unit_that_stays_down_because_of_postgres_is_the_control_holding(self):
+        verdict = ss.unit_down_verdict(["starting"] * 20 + ["unhealthy"] * 10, self.BOOT, "texera-postgres")
+        self.assertTrue(verdict["ok"])
+        self.assertTrue(verdict["verdict"].startswith("failed as expected"))
+        self.assertEqual((["starting", "unhealthy"], 30, 3),
+                         (verdict["unit_health_seen"], verdict["looks"], len(verdict["log_lines_naming_postgres"])))
+
+    def test_a_unit_that_becomes_healthy_passed_so_nothing_is_proved(self):
+        verdict = ss.unit_down_verdict(["starting", "starting", "healthy"], self.BOOT[:1], "texera-postgres")
+        self.assertFalse(verdict["ok"])
+        self.assertIn("PASSED, so the control proves nothing", verdict["verdict"])
+
+    def test_a_unit_that_stays_down_for_another_reason_is_inconclusive(self):
+        verdict = ss.unit_down_verdict(["starting"] * 30, ["OutOfMemoryError: Java heap space"], "texera-postgres")
+        self.assertFalse(verdict["ok"])
+        self.assertIn("control inconclusive: the unit did not become healthy, but its log names neither "
+                      "texera-postgres nor PSQLException nor HikariPool", verdict["verdict"])
+
+    def test_the_control_is_only_for_a_stack_without_postgres_for_the_unit(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            ss.expect_unit_down(mock.Mock(), {"options": {"unit_no_postgres": False}})
+        self.assertIn("--expect-unit-down is the negative control of --unit-no-postgres", err.getvalue())
+
+    def test_every_service_but_the_unit_is_waited_for(self):
+        services = {"postgres": {"healthcheck": {}}, ss.UNIT_SERVICE: {"healthcheck": {}}}
+        rows = [{"Service": "postgres", "State": "running", "Health": "healthy"},
+                {"Service": ss.UNIT_SERVICE, "State": "restarting", "Health": ""}]
+        with mock.patch.object(ss, "compose_services", return_value=services), \
+                mock.patch.object(ss, "compose_ps", return_value=rows), mock.patch.object(ss, "log") as said:
+            ss.wait_healthy(5, {}, skip=frozenset({ss.UNIT_SERVICE}))  # returns at once: only Postgres counts
+        self.assertIn(f"not waited for: {ss.UNIT_SERVICE}", said.call_args.args[0])
+
+
 class RecordEnvTest(unittest.TestCase):
     def test_fast_record_is_the_designs(self):
         self.assertEqual(FAST_UNIT, record_env.fast_record_env("unit"))

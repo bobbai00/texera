@@ -199,6 +199,63 @@ class PostRunTest(unittest.TestCase):
         self.assertIn("bogus-token", post["warnings"][0])
 
 
+class StoredReadsTest(unittest.TestCase):
+    """post-run on the requests for stored output that scenario v marked (gate 3C): from
+    sub-part 16 on Envoy sends none of them to a computing unit."""
+
+    READS = [{"what": "statistics", "marker": "v-statistics-r", "status": 200},
+             {"what": "export", "marker": "v-export-r", "status": 200}]
+
+    def post(self, envoy: dict) -> dict:
+        return ks.evaluate_post_run(pods_left=[], unit_kept=False, forward={"mode": "relay"}, driver_probes=[],
+                                    envoy=envoy, stored_reads=self.READS)
+
+    def test_answered_through_the_webservers_route(self):
+        route = "httproute/sce-k8s/texera-static-routes/rule/14/match/0/*"
+        post = self.post({r["marker"]: {"response_code": 200, "route_name": route} for r in self.READS})
+        self.assertEqual(([], []), (post["failures"], post["warnings"]))
+        self.assertEqual([True, True], [r["by_the_webserver"] for r in post["stored_reads"]])
+        self.assertIn("through httproute/sce-k8s/texera-static-routes/rule/14/match/0/*, not a unit's",
+                      post["stored_reads"][0]["verdict"])
+
+    def test_a_read_routed_to_a_unit_fails_the_run(self):
+        post = self.post({"v-statistics-r": {"response_code": 200,
+                                             "route_name": "httproute/sce-k8s/texera-dynamic-routes/rule/1/match/0/*"},
+                          "v-export-r": {"response_code": 200,
+                                         "route_name": "httproute/sce-k8s/texera-static-routes/rule/14/match/0/*"}})
+        self.assertEqual(1, len(post["failures"]))
+        self.assertIn("the driver's request for stored statistics: routed to a computing unit", post["failures"][0])
+        report = {"summary": {"result": "PASS"}}
+        ks.apply_post_run(report, post)
+        self.assertEqual("FAIL", report["summary"]["result"])
+
+    def test_a_read_envoy_did_not_log_only_warns(self):
+        post = self.post({})
+        self.assertEqual([], post["failures"])
+        self.assertEqual(2, len(post["warnings"]))
+        self.assertIn("Envoy's access-log entry not found", post["warnings"][0])
+
+    def test_the_marks_come_from_the_scenarios_facts(self):
+        report = {"setup": {}, "scenarios": [{"key": "a"}, {"key": "v", "facts": {"gateway_markers": self.READS}}]}
+        seen = {}
+
+        def records(ns, markers, wait_s=45):
+            seen["markers"] = markers
+            return {}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "report.json"
+            path.write_text(json.dumps(report))
+            args = mock.Mock(namespace="sce-k8s", report=path, wait=0, unit_kept=False, out=None)
+            with mock.patch.object(ks, "_unit_pods", return_value=[]), mock.patch.object(ks, "load_manifest",
+                                                                                         return_value={}), \
+                    mock.patch.object(ks, "envoy_access_records", side_effect=records), \
+                    mock.patch.object(ks, "log"), self.assertRaises(SystemExit) as done:
+                ks.cmd_post_run(args)
+            self.assertEqual(0, done.exception.code)
+            self.assertEqual(["v-statistics-r", "v-export-r"], seen["markers"])
+            self.assertEqual(2, len(json.loads(path.read_text())["post_run"]["stored_reads"]))
+
+
 def unit_pod(cuid: int, ip: str = "10.42.0.9") -> dict:
     return {"metadata": {"name": f"computing-unit-{cuid}", "labels": {"type": "computing-unit", "cuid": str(cuid)},
                          "creationTimestamp": f"2026-11-17T00:00:0{cuid}Z"},

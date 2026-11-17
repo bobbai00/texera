@@ -36,6 +36,10 @@ class FakeDocker:
         self.cleanup = cleanup
         self.tables: dict[str, dict] = {}  # "wid_1_eid_2_plan" -> refs
         self.getent = ""
+        #: what `getent hosts texera-postgres` answers in the unit, its health, and when it started
+        self.getent_postgres = ""
+        self.health = "healthy"
+        self.started_at = "2023-11-14T22:13:20Z"  # the moment this fake's clock starts
         self.pid = 500
         # the fake stack's threads log while the driver reads: append and stamp in order
         self.lock = threading.RLock()
@@ -105,11 +109,17 @@ class FakeDocker:
                 frac = f"{ns:09d}".rstrip("0") or "0"
                 rendered.append(f"{base}.{frac}Z {line}")
             out = "\n".join(rendered) + ("\n" if rendered else "")
+        elif args[0] == "inspect" and "{{.State.StartedAt}}" in args:
+            out = self.started_at
+        elif args[0] == "inspect" and "{{.State.Health.Status}}" in args:
+            out = self.health
         elif args[0] == "inspect":
             nets = ({"sce-unit-net": {"IPAddress": UNIT_IP}} if self.isolated
                     else {"sce-net": {"IPAddress": UNIT_IP}})
             env = [f"WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS={self.cleanup}"]
             out = json.dumps(nets) + "|" + json.dumps(env)
+        elif args[0] == "exec" and "getent" in args and "texera-postgres" in args:
+            out, rc = self.getent_postgres, (0 if self.getent_postgres else 2)
         elif args[0] == "exec" and "getent" in args:
             out, rc = self.getent, (0 if self.getent else 2)
         elif args[0] == "exec" and "curl" in args:

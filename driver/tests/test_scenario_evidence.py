@@ -79,6 +79,8 @@ class EvidenceCase(ScenarioCase):
     #: the fake `docker` of the stack, and what the evidence is asked for beyond its defaults
     docker_class = StackDocker
     evidence_options: dict = {}
+    #: the negative control the scenarios run under: none, or the step it is of ("2", "3")
+    negative: str | None = None
 
     def setUp(self):
         super().setUp()
@@ -102,7 +104,7 @@ class EvidenceCase(ScenarioCase):
     def run_ev(self, key: str, expect: str = "PASS"):
         waited = self.ev.begin_scenario(key)
         rec = run_scenario(self.ctx, key)
-        e2e._apply_evidence(self.ev, rec, waited, self.ctx.api, False)
+        e2e._apply_evidence(self.ev, rec, waited, self.ctx.api, self.negative)
         failed = [(c.name, c.detail[:300]) for c in rec.checks if not c.ok]
         self.assertEqual(expect, rec.outcome, f"{key}: failed {failed}; error {rec.error}")
         return rec

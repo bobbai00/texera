@@ -37,6 +37,12 @@ fields: a name the product chooses differently is one line to change.
                                              inputTupleCount, outputTupleCount, numWorkers, status, ...}]
                                              read from the lake from sub-part 6 on; until sub-part 16 a
                                              Kubernetes gateway routes it to the unit `cuid` names
+  GET  /api/executions/{eid}/console?operatorId=&afterSeq=0&limit=1000
+                                             dashboard-service  -> {eid, messages[{seq, timeMs, operatorId,
+                                             workerId, msgType, source, title, message}], lastSeq, more}
+  POST /api/executions/result/export/local   dashboard-service  form {request: JSON, token} -> the file;
+                                             the request names `executionId` (sub-part 16; `computingUnitId`
+                                             before); 410 once the execution's results have expired
   GET  /api/executions/{eid}/state           dashboard-service  -> {eid, status, open, reason, timeMs}
   GET  /api/executions/{eid}/log             dashboard-service  -> {eid, entries[{seq, timeMs, kind, state |
                                              portId, uri, outputMode, reason?, errors?}], closing{outcome,
@@ -199,6 +205,37 @@ class AdminExecution:
     def of(cls, row: dict) -> "AdminExecution":
         return cls(wid=int(row.get("workflowId", -1)), eid=int(row.get("executionId", -1)),
                    status_name=str(row.get("executionStatus")), reason=row.get("reason"))
+
+
+@dataclass
+class ConsolePage:
+    """GET /api/executions/{eid}/console: stored console messages after `afterSeq`, oldest
+    first, and whether more follow."""
+
+    messages: list[dict]
+    last_seq: int | None
+    more: bool
+
+    @classmethod
+    def of(cls, body: dict) -> "ConsolePage":
+        return cls(messages=list(body.get("messages") or []), last_seq=body.get("lastSeq"),
+                   more=bool(body.get("more")))
+
+
+def export_request(wid: int, eid: int, operator_ids: Iterable[str], export_type: str) -> dict:
+    """The body of an export of operators' results as a download (ResultExportRequest, read
+    in step 2's code: every field is required; an empty file name lets the service name
+    the file). Step 3's sub-part 16 names the execution in `executionId`, where step 2
+    named the unit in `computingUnitId`."""
+    return {"exportType": export_type, "workflowId": wid, "workflowName": "",
+            "operators": [{"id": op, "outputType": export_type} for op in operator_ids],
+            "datasetIds": [], "rowIndex": 0, "columnIndex": 0, "filename": "", "executionId": eid}
+
+
+def _marked(probe: str | None) -> dict:
+    """The query parameter that marks a request in a gateway's access log (`sce-probe`,
+    which stack/k8s-stack.sh post-run looks for in Envoy's); the services ignore it."""
+    return {"sce-probe": probe} if probe else {}
 
 
 def history_reason(entry: dict) -> str | None:
@@ -539,12 +576,30 @@ class TexeraApi:
 
     # ------------------------------------------------- step 3: the stored record
 
-    def execution_statistics(self, wid: int, eid: int, cuid: int | None = None) -> list[StatisticsRow]:
+    def execution_console(self, eid: int, operator_id: str | None = None, after_seq: int = 0,
+                          limit: int = 1000) -> ConsolePage:
+        """One page of an execution's stored console output, of one operator or of all."""
+        params: dict[str, Any] = {"afterSeq": after_seq, "limit": limit}
+        if operator_id is not None:
+            params["operatorId"] = operator_id
+        return ConsolePage.of(self.get_json(f"/api/executions/{eid}/console", params=params))
+
+    def export_local(self, wid: int, eid: int, operator_ids: Iterable[str], export_type: str = "csv",
+                     probe: str | None = None) -> requests.Response:
+        """Export operators' results of an execution as a download: the response, whatever
+        its status (one operator: the file itself; several: a zip). The browser sends this
+        as a form, with the user's token in it."""
+        form = {"request": json.dumps(export_request(wid, eid, operator_ids, export_type)), "token": self.token}
+        return self.request("POST", "/api/executions/result/export/local", expect=None, auth=False, data=form,
+                            params=_marked(probe))
+
+    def execution_statistics(self, wid: int, eid: int, cuid: int | None = None,
+                             probe: str | None = None) -> list[StatisticsRow]:
         """The stored statistics of an execution, oldest first. `cuid`, as the browser
         sends it until the Dashboard serves statistics by execution alone (step 3's
         sub-part 16): a Kubernetes gateway routes the request to that unit."""
-        query = f"?cuid={cuid}" if cuid is not None else ""
-        return [StatisticsRow.of(r) for r in self.get_json(f"/api/executions/{wid}/stats/{eid}{query}") or []]
+        params = {**({"cuid": cuid} if cuid is not None else {}), **_marked(probe)}
+        return [StatisticsRow.of(r) for r in self.get_json(f"/api/executions/{wid}/stats/{eid}", params=params) or []]
 
     def execution_state(self, eid: int) -> ExecutionState:
         return ExecutionState.of(self.get_json(f"/api/executions/{eid}/state"))

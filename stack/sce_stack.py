@@ -35,7 +35,11 @@ default, all recorded in MANIFEST.json):
   * --fast-record       step 3's timers shortened (lib/record_env.py): the unit
     commits an execution's record every 2 s, the Dashboard closes executions
     every 2 s, declares a unit lost after 12 s and an execution never started
-    after 15 s, and expires results 20 s after a run ended.
+    after 15 s, and expires results 20 s after a run ended;
+  * --unit-no-postgres  (with --isolate-unit) Postgres is not on the unit's
+    network, so the unit cannot even resolve its name. `up --expect-unit-down`
+    is the negative control of it: a unit that needs Postgres to boot must not
+    become healthy, and its log must say that Postgres is why.
 
 Commands: generate | up | down | reset | status | logs. See --help.
 """
@@ -114,6 +118,11 @@ CLEANUP_SECONDS_WITH_STATEMENT_LOG = "2"
 UNIT_NETWORK_KEY = "unit"
 UNIT_NETWORK = "sce-unit-net"
 UNIT_NETWORK_PEERS = ("postgres", "lakekeeper", "rustfs", NGINX_SERVICE, "agent-service")
+#: `up --expect-unit-down`: how long the unit is watched once the other services are up,
+#: and what in its log says that Postgres is what it lacks (besides Postgres's own name)
+UNIT_DOWN_WATCH_S = 90
+POSTGRES_FAILURE_MARKS = ("PSQLException", "HikariPool")
+DEFAULT_POSTGRES_HOST = "texera-postgres"
 # --isolate-unit also turns nginx's access log on (upstream: `access_log off;`): the
 # isolated unit still reaches nginx, which proxies file-service and the Dashboard, so
 # Check D reads which requests came from the unit's address. $uri has no query
@@ -296,9 +305,14 @@ class StackOptions:
 
     def __init__(self, pg_statement_log: bool = False, isolate_unit: bool = False,
                  with_replay_log: bool = False, unit_env: list[str] | None = None,
-                 fast_record: bool = False, dashboard_env: list[str] | None = None):
+                 fast_record: bool = False, dashboard_env: list[str] | None = None,
+                 unit_no_postgres: bool = False):
+        if unit_no_postgres and not isolate_unit:
+            die("--unit-no-postgres needs --isolate-unit: the unit loses Postgres by being on a network "
+                "of its own that Postgres is not on")
         self.pg_statement_log = pg_statement_log
         self.isolate_unit = isolate_unit
+        self.unit_no_postgres = unit_no_postgres
         self.with_replay_log = with_replay_log
         self.fast_record = fast_record
         self.unit_env = _env_items(unit_env, "--unit-env")
@@ -327,6 +341,10 @@ class StackOptions:
         env.update(self.dashboard_env)
         return env
 
+    def unit_peers(self) -> tuple[str, ...]:
+        """The services beside the unit on its own network (--isolate-unit)."""
+        return tuple(p for p in UNIT_NETWORK_PEERS if not (self.unit_no_postgres and p == POSTGRES_SERVICE))
+
     def describe(self) -> dict:
         def shown(env: dict[str, str]) -> dict[str, str]:
             return {k: f"<set, {len(v)} chars>" if _SECRET_KEY.search(k) else v for k, v in env.items()}
@@ -336,6 +354,7 @@ class StackOptions:
             "pg_statement_log": self.pg_statement_log,
             "pg_log_line_prefix": PG_LOG_LINE_PREFIX if self.pg_statement_log else None,
             "isolate_unit": self.isolate_unit,
+            "unit_no_postgres": self.unit_no_postgres,
             "unit_network": UNIT_NETWORK if self.isolate_unit else None,
             "gateway_access_log": GATEWAY_LOG_FORMAT if self.isolate_unit else None,
             "with_replay_log": self.with_replay_log,
@@ -396,17 +415,19 @@ def _self_check(original: dict, generated: dict, dropped: set[str],
         die("generated compose failed its round-trip check: " + "; ".join(problems))
 
 
-def _check_networks(generated: dict, isolate_unit: bool) -> None:
+def _check_networks(generated: dict, options: StackOptions) -> None:
     """Every service is on sce-net only, except with --isolate-unit: the unit on
-    sce-unit-net only, its peers on both, each with its aliases on each."""
+    sce-unit-net only, its peers on both, each with its aliases on each. With
+    --unit-no-postgres Postgres is not one of the peers: no network holds both it and
+    the unit."""
     problems = []
     for name, svc in generated.items():
         nets = svc.get("networks") or {}
-        if not isolate_unit:
+        if not options.isolate_unit:
             want = {"default"}
         elif name == UNIT_SERVICE:
             want = {UNIT_NETWORK_KEY}
-        elif name in UNIT_NETWORK_PEERS:
+        elif name in options.unit_peers():
             want = {"default", UNIT_NETWORK_KEY}
         else:
             want = {"default"}
@@ -483,7 +504,7 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
         aliases = sorted({name, original_cn})
         if options.isolate_unit and name == UNIT_SERVICE:
             svc["networks"] = {UNIT_NETWORK_KEY: {"aliases": aliases}}
-        elif options.isolate_unit and name in UNIT_NETWORK_PEERS:
+        elif options.isolate_unit and name in options.unit_peers():
             svc["networks"] = {"default": {"aliases": aliases},
                                UNIT_NETWORK_KEY: {"aliases": list(aliases)}}
         else:
@@ -588,7 +609,7 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
 
     written = yaml.safe_load((gen_dir / "docker-compose.yml").read_text())["services"]
     _self_check(services, written, dropped, edits)
-    _check_networks(written, options.isolate_unit)
+    _check_networks(written, options)
 
     env_vals = dict(
         re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", (gen_dir / ".env").read_text(), re.M)
@@ -741,8 +762,9 @@ def check_images(manifest: dict) -> None:
         log("images not present locally (compose will pull them):\n  " + "\n  ".join(missing))
 
 
-def wait_healthy(timeout: int, manifest: dict) -> None:
-    services = compose_services()
+def wait_healthy(timeout: int, manifest: dict, skip: frozenset = frozenset()) -> None:
+    """Wait until every service but the ones in `skip` is up, healthy or finished."""
+    services = {n: s for n, s in compose_services().items() if n not in skip}
     one_shot = {n for n, s in services.items() if str(s.get("restart", "")).lower() == "no"}
     with_hc = {n for n, s in services.items() if "healthcheck" in s}
     deadline = time.time() + timeout
@@ -788,7 +810,49 @@ def wait_healthy(timeout: int, manifest: dict) -> None:
         time.sleep(3)
     else:
         die(f"timed out after {timeout}s; still pending: {', '.join(pending)}")
-    log("all containers are up, healthy, and init jobs finished")
+    log("all containers are up, healthy, and init jobs finished"
+        + (f" (not waited for: {', '.join(sorted(skip))})" if skip else ""))
+
+
+def postgres_host() -> str:
+    """The name the services reach Postgres by: the host of the generated STORAGE_JDBC_URL."""
+    env = (GEN_DIR / ".env").read_text() if (GEN_DIR / ".env").exists() else ""
+    found = re.search(r"^STORAGE_JDBC_URL=.*?//([^:/?\s]+)", env, re.M)
+    return found.group(1) if found else DEFAULT_POSTGRES_HOST
+
+
+def unit_down_verdict(seen: list[str], log_lines: list[str], host: str) -> dict:
+    """The negative control of --unit-no-postgres. `seen`: the unit's health at each look
+    while it was watched; `log_lines`: its log. The control holds when the unit never
+    became healthy and its log says Postgres is why (it names Postgres's host, or a
+    failure of its Postgres driver or pool); a unit that became healthy passed, so the
+    control proves nothing; one that stayed down for another reason is inconclusive."""
+    named = [ln for ln in log_lines if host in ln or any(mark in ln for mark in POSTGRES_FAILURE_MARKS)]
+    if "healthy" in seen:
+        verdict, ok = "PASSED, so the control proves nothing: the unit became healthy without Postgres", False
+    elif not named:
+        verdict, ok = (f"control inconclusive: the unit did not become healthy, but its log names neither {host} "
+                       f"nor {' nor '.join(POSTGRES_FAILURE_MARKS)}"), False
+    else:
+        verdict, ok = "failed as expected: the unit did not become healthy, and its log says Postgres is why", True
+    return {"ok": ok, "verdict": verdict, "unit_health_seen": sorted(set(seen)), "looks": len(seen),
+            "log_lines_naming_postgres": [ln[:300] for ln in named[:5]]}
+
+
+def watch_unit_down(manifest: dict, watch_s: int) -> dict:
+    """Look at the unit's health every 3 s for `watch_s` seconds (it may be restarting: no
+    health then), then read its log."""
+    unit = manifest["containers"][UNIT_SERVICE]
+    seen: list[str] = []
+    deadline = time.time() + watch_s
+    while time.time() < deadline and "healthy" not in seen:
+        p = run(["docker", "inspect", "--format", "{{.State.Status}}/{{.State.Health.Status}}", unit],
+                check=False, capture=True)
+        seen.append((p.stdout.strip().partition("/")[2] or p.stdout.strip() or "absent") if p.returncode == 0
+                    else "absent")
+        time.sleep(3)
+    logs = run(["docker", "logs", "--tail", "400", unit], check=False, capture=True)
+    return unit_down_verdict(seen, ((logs.stdout or "") + (logs.stderr or "")).splitlines(), postgres_host())
 
 
 def http_ok(url: str, timeout: float = 5) -> bool:
@@ -815,7 +879,8 @@ def wait_http(url: str, timeout: int) -> None:
 def options_from_args(a) -> StackOptions:
     return StackOptions(pg_statement_log=a.pg_statement_log, isolate_unit=a.isolate_unit,
                         with_replay_log=a.with_replay_log, unit_env=a.unit_env,
-                        fast_record=a.fast_record, dashboard_env=a.dashboard_env)
+                        fast_record=a.fast_record, dashboard_env=a.dashboard_env,
+                        unit_no_postgres=a.unit_no_postgres)
 
 
 def describe_options(opts: dict) -> str:
@@ -823,7 +888,8 @@ def describe_options(opts: dict) -> str:
     if opts.get("pg_statement_log"):
         parts.append("Postgres statement log")
     if opts.get("isolate_unit"):
-        parts.append(f"unit isolated on {opts.get('unit_network')}")
+        parts.append(f"unit isolated on {opts.get('unit_network')}"
+                     + (", without Postgres" if opts.get("unit_no_postgres") else ""))
     if opts.get("with_replay_log"):
         parts.append("replay logs")
     if opts.get("fast_record"):
@@ -873,7 +939,7 @@ def cmd_up(a) -> None:
         if a.images:
             die("--images needs a regenerate; drop --no-generate")
         if (a.pg_statement_log or a.isolate_unit or a.with_replay_log or a.unit_env or a.fast_record
-                or a.dashboard_env):
+                or a.dashboard_env or a.unit_no_postgres):
             die("the stack options need a regenerate; drop --no-generate")
     else:
         cmd_generate(a)
@@ -885,6 +951,8 @@ def cmd_up(a) -> None:
     compose("up", "-d", "--remove-orphans", "--pull", pull)
     if not (manifest.get("options") or {}).get("isolate_unit"):
         remove_unit_network_if_unused()
+    if a.expect_unit_down:
+        expect_unit_down(a, manifest)
     wait_healthy(a.timeout, manifest)
     if (manifest.get("options") or {}).get("with_replay_log"):
         prepare_replay_log_dir(manifest)
@@ -894,6 +962,18 @@ def cmd_up(a) -> None:
     port = manifest["ports"]["texera"]
     wait_http(f"http://127.0.0.1:{port}/api/healthcheck", 120)
     log(f"stack is up: http://localhost:{port}  (login texera / texera)")
+
+
+def expect_unit_down(a, manifest: dict) -> None:
+    """`up --expect-unit-down`: the rest of the stack comes up, the unit must not. Prints the
+    verdict as one JSON document and exits 0 when the control held, 1 when it did not."""
+    if not (manifest.get("options") or {}).get("unit_no_postgres"):
+        die("--expect-unit-down is the negative control of --unit-no-postgres; add that option")
+    wait_healthy(a.timeout, manifest, skip=frozenset({UNIT_SERVICE}))
+    verdict = watch_unit_down(manifest, a.unit_down_watch)
+    log(f"the unit without Postgres: {verdict['verdict']}")
+    print(json.dumps(verdict))
+    sys.exit(0 if verdict["ok"] else 1)
 
 
 def cmd_down(a) -> None:
@@ -1009,6 +1089,9 @@ def main() -> None:
                        help="step 3's timers shortened: the unit commits every 2 s; the Dashboard closes "
                             "every 2 s, loses a unit after 12 s, an unstarted execution after 15 s, and "
                             "expires results after 20 s")
+        p.add_argument("--unit-no-postgres", action="store_true",
+                       help=f"with --isolate-unit: Postgres is not on {UNIT_NETWORK}, so the unit cannot "
+                            "resolve it")
 
     p = sub.add_parser("generate", help="write stack/generated/ from the source worktree")
     gen_args(p)
@@ -1016,6 +1099,12 @@ def main() -> None:
     gen_args(p)
     p.add_argument("--no-generate", action="store_true", help="reuse stack/generated/ as is")
     p.add_argument("--timeout", type=int, default=int(os.environ.get("SCE_UP_TIMEOUT", "900")))
+    p.add_argument("--expect-unit-down", action="store_true",
+                   help="the negative control of --unit-no-postgres: wait for every service but the unit, "
+                        "then watch the unit; exit 0 when it did not become healthy and its log says "
+                        "Postgres is why (prints the verdict as JSON), 1 otherwise")
+    p.add_argument("--unit-down-watch", type=int, default=UNIT_DOWN_WATCH_S, metavar="S",
+                   help="seconds the unit is watched with --expect-unit-down (default %(default)s)")
     sub.add_parser("down", help="stop and remove containers and network; keep volumes")
     sub.add_parser("reset", help="down, then delete the sce_* volumes")
     p = sub.add_parser("status", help="container states and the generated manifest")

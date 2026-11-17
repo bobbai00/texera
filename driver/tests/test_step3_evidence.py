@@ -1,11 +1,13 @@
 """Offline tests of the step-3 evidence (driver/evidence.py, Checks G to K of the step-3
-design; Checks I and K so far): first each check alone, against a fake `docker` whose
-catalog is a fake lake that a fake recorder writes into and whose Postgres answers the
-closing records a test gives it; then scenarios and evidence together, as e2e.py runs
-them, on the fake Texera at a step-3 gate.
+design): first each check alone, against a fake `docker` whose catalog is a fake lake
+that a fake recorder writes into, whose Postgres log holds the statements a test puts
+there and whose Postgres answers the closing records a test gives it; then scenarios and
+evidence together, as e2e.py runs them, on the fake Texera at a step-3 gate; then step
+3's negative control, on the fake at the end of step 2.
 
 Every check is shown to fail for the reason it exists: the fake is given one fault at a
-time (fake_record.FAULTS, fake_closing.FAULTS) and the check must name it.
+time (fake_record.FAULTS, fake_closing.FAULTS, fake_texera.FAULTS) and the check must
+name it.
 
     .venv/bin/python -m unittest discover -s driver/tests -v
 """
@@ -27,7 +29,7 @@ import evidence as ev  # noqa: E402
 from fake_lake import FakeLake  # noqa: E402
 from fake_record import NAMESPACES, Recorder, table_name  # noqa: E402
 from record_timing import RecordTiming  # noqa: E402
-from test_evidence import FakeDocker, Handle  # noqa: E402
+from test_evidence import DASH_IP, UNIT_IP, FakeDocker, Handle  # noqa: E402
 from test_scenario_evidence import EvidenceCase, StackDocker  # noqa: E402
 from test_step3_scenarios import FAST  # noqa: E402
 from texera_api import ExecutionLog  # noqa: E402
@@ -511,6 +513,167 @@ class ClosingCheckTest(unittest.TestCase):
         self.assertNotIn("K", self.ev.end_scenario()["checks"])
 
 
+STATUS_UPDATE = ("update workflow_executions set status = $1, last_update_time = $2 "
+                 "where workflow_executions.eid = $3")
+
+
+def connection(pid: int, app: str, address: str, state: str = "idle") -> dict:
+    return {"pid": pid, "application_name": app, "client_addr": address, "datname": "texera_db", "state": state}
+
+
+class UnitOffPostgresTest(unittest.TestCase):
+    """Checks G, H and J alone: a fake `docker` whose Postgres log holds what a test puts
+    there, and a Postgres whose connections a test lists."""
+
+    def setUp(self):
+        self.docker = FakeDocker()
+        self.connections = [connection(401, ev.DASHBOARD_APP, DASH_IP)]
+        self.ev = self.evidence(required=list("GHJ"))
+
+    def evidence(self, **options) -> ev.Evidence:
+        evidence = ev.Evidence(run_id="t", runner=self.docker, log=lambda m: None, level="C",
+                               connections=lambda: list(self.connections), cleanup_wait_s=0.3, quiet_s=0.1,
+                               **options)
+        evidence.preflight()
+        return evidence
+
+    def scenario(self, during=lambda: None, evidence: ev.Evidence | None = None) -> dict:
+        evidence = evidence or self.ev
+        evidence.begin_scenario("a")
+        during()
+        return evidence.end_scenario()["checks"]
+
+    def unit_writes_its_status(self):
+        self.docker.execute(ev.UNIT_APP, UNIT_IP, STATUS_UPDATE, "$1 = '1', $2 = '2026-11-17', $3 = '5'", pid=300)
+
+    def test_a_unit_that_sends_postgres_nothing_passes(self):
+        checks = self.scenario(lambda: self.docker.execute(ev.DASHBOARD_APP, DASH_IP, STATUS_UPDATE,
+                                                           "$1 = '1', $2 = 'x', $3 = '5'", pid=400))
+        self.assertEqual({"G": True, "H": True, "J": True}, {k: checks[k].ok for k in "GHJ"})
+        self.assertIn(f"no statement from the unit (texera-computing-unit, or from ['{UNIT_IP}']) between the "
+                      f"scenario's marks", checks["G"].detail)
+        self.assertEqual("no connection of the unit among 1 at the scenario's start and 1 at its end",
+                         checks["H"].detail)
+        self.assertEqual("the unit resolves texera-postgres to nothing and is healthy", checks["J"].detail)
+
+    def test_any_statement_of_the_unit_fails_g(self):
+        """Whatever it is: a write of its status; a setting, sent under the unit's name from
+        an address the driver does not know; a statement on another database, from the
+        unit's address under another name. The step-2 checks look at none of the last two."""
+        def during():
+            self.unit_writes_its_status()
+            self.docker.pg_line(301, ev.UNIT_APP, "10.9.9.9", "LOG", "statement: SET search_path = texera_db")
+            self.docker.pg_line(302, "PostgreSQL JDBC Driver", UNIT_IP, "LOG", "statement: SELECT 1", db="postgres")
+        g = self.scenario(during)["G"]
+        self.assertIs(False, g.ok)
+        self.assertIn("3 statement(s) from the unit between the scenario's marks, 1 of them UPDATEs of an "
+                      "execution's status", g.detail)
+        self.assertEqual(1, g.data["status_updates"])
+        self.assertEqual([300, 301, 302], [s["pid"] for s in g.data["statements"]])
+
+    def test_a_statement_between_scenarios_fails_the_whole_runs_check(self):
+        self.assertTrue(self.scenario()["G"].ok)
+        self.unit_writes_its_status()  # after the scenario's end mark: no scenario's
+        self.assertTrue(self.scenario()["G"].ok)
+        finals = self.ev.final_checks([])
+        self.assertEqual("Check G, the whole run: no statement from the unit since its container started",
+                         finals[-1]["name"])
+        self.assertIs(False, finals[-1]["ok"])
+        self.assertIn("1 statement(s) from the unit since its container started (2023-11-14T22:13:20Z)",
+                      finals[-1]["detail"])
+
+    def test_a_line_from_before_the_unit_started_is_another_containers(self):
+        """An init job that had the unit's address before the unit got it."""
+        self.docker.pg_line(77, "lakekeeper-migrate", UNIT_IP, "LOG", "statement: CREATE TABLE x ()", db="lakekeeper")
+        _, self.docker.started_at = self.docker._ts()
+        evidence = self.evidence(required=["G"])
+        self.assertTrue(self.scenario(evidence=evidence)["G"].ok)
+        self.assertTrue(evidence.final_checks([])[-1]["ok"])
+        self.unit_writes_its_status()
+        self.assertIs(False, evidence.final_checks([])[-1]["ok"])
+
+    def test_a_connection_of_the_unit_fails_h(self):
+        self.connections.append(connection(300, ev.UNIT_APP, "10.9.9.9"))  # by its name, from anywhere
+        h = self.scenario()["H"]
+        self.assertIs(False, h.ok)
+        self.assertIn("2 connection(s) of the unit in pg_stat_activity: at the start: pid 300 "
+                      "app=texera-computing-unit from 10.9.9.9, idle; at the end: pid 300", h.detail)
+        self.connections[-1] = connection(301, "PostgreSQL JDBC Driver", UNIT_IP, "active")  # by its address
+        self.assertIs(False, self.scenario()["H"].ok)
+
+    def test_h_looks_at_the_scenarios_start_and_at_its_end(self):
+        h = self.scenario(lambda: self.connections.append(connection(300, ev.UNIT_APP, UNIT_IP)))["H"]
+        self.assertIs(False, h.ok)
+        self.assertEqual(["end"], [c["when"] for c in h.data["connections"]])
+
+    def test_h_is_not_evaluable_when_postgres_cannot_be_asked(self):
+        def refused():
+            raise RuntimeError("docker exec sce-texera-postgres psql: exit 2")
+        self.ev._connections = refused
+        h = self.scenario()["H"]
+        self.assertIsNone(h.ok)
+        self.assertIn("at the scenario's start: RuntimeError: docker exec sce-texera-postgres psql: exit 2", h.detail)
+        gates, _ = ev.evaluate({"H": h}, ["H"], negative_control=False)
+        self.assertEqual([False], [ok for _, ok, _ in gates])
+
+    def test_j_fails_for_a_unit_that_resolves_postgres_or_is_not_healthy(self):
+        self.docker.health = "unhealthy"
+        j = self.scenario()["J"]
+        self.assertIs(False, j.ok)
+        self.assertIn("is unhealthy", j.detail)
+        self.docker.health, self.docker.getent_postgres = "healthy", "172.30.0.2      texera-postgres"
+        j = self.scenario()["J"]
+        self.assertIs(False, j.ok)
+        self.assertIn("resolves texera-postgres to ['172.30.0.2      texera-postgres']", j.detail)
+
+    def test_j_refuses_a_stack_whose_unit_can_find_postgres(self):
+        self.docker.getent_postgres = "172.30.0.2      texera-postgres"
+        with self.assertRaisesRegex(ev.EvidenceUnavailable, "Check J needs a stack started with --unit-no-postgres"):
+            self.evidence(required=["J"])
+        self.evidence(required=["G", "H"])  # without J the stack may hold Postgres for the unit
+
+    def test_the_name_of_postgres_is_the_stacks(self):
+        named = ev.Evidence(run_id="t", runner=self.docker, log=lambda m: None,
+                            env={"STORAGE_JDBC_URL": "jdbc:postgresql://pg.internal:5432/texera_db"})
+        self.assertEqual(("pg.internal", "texera-postgres"), (named.postgres_host, self.ev.postgres_host))
+
+    def test_checks_a_and_b_are_retired_at_gate_3c(self):
+        """Their windows end at the unit's status UPDATE, which no longer exists."""
+        self.assertEqual(set("CDEFGHJ"), set(self.scenario()))
+        earlier = ev.Evidence(run_id="t", runner=self.docker, log=lambda m: None, level="B", cleanup_wait_s=0.3,
+                              quiet_s=0.1)
+        earlier.preflight()
+        self.assertEqual(set("ABCDEF"), set(self.scenario(evidence=earlier)))
+        asked = self.evidence(required=["A", "G"])  # ... unless a run asks for one by name
+        self.assertEqual(set("ACDEFG"), set(self.scenario(evidence=asked)))
+
+    def test_step_3s_controls_must_fail_each_for_its_reason(self):
+        self.assertEqual(((), (), ("A", "D", "F"), ("A", "D", "F"), ("G", "H")),
+                         tuple(ev.controls_of(c) for c in (False, None, True, "2", "3")))
+        control = self.evidence(required=[], negative_control="3")
+
+        def gates(during) -> dict[str, tuple[bool, str]]:
+            found, _ = ev.evaluate(self.scenario(during, evidence=control), [], negative_control="3")
+            return {name.split()[1]: (ok, detail) for name, ok, detail in found}
+
+        # the old unit: it writes its status, and its pool idles
+        self.connections.append(connection(300, ev.UNIT_APP, UNIT_IP, "idle"))
+        old = gates(self.unit_writes_its_status)
+        self.assertEqual({"G": True, "H": True}, {k: ok for k, (ok, _) in old.items()})
+        self.assertTrue(old["G"][1].startswith("failed as expected: 1 statement(s) from the unit"))
+        # a unit that fails them for another reason proves nothing about the reason
+        self.connections[-1] = connection(300, ev.UNIT_APP, UNIT_IP, "active")
+        other = gates(lambda: self.docker.execute(ev.UNIT_APP, UNIT_IP, "select 1", pid=300))
+        self.assertEqual((False, False), (other["G"][0], other["H"][0]))
+        self.assertIn("control inconclusive (G failed, but on no status UPDATE of the unit)", other["G"][1])
+        self.assertIn("control inconclusive (H failed, but on no idle connection of the unit)", other["H"][1])
+        # and the new unit passes them, so the control did not control
+        self.connections.pop()
+        new = gates(lambda: None)
+        self.assertTrue(all(detail.startswith("PASSED, so the control proves nothing") for _, detail in new.values()))
+        self.assertEqual({"G": False, "H": False}, {k: ok for k, (ok, _) in new.items()})
+
+
 class RecordEvidence(EvidenceCase):
     """Scenarios and evidence together at gate 3A: step 2's six checks and Check I."""
 
@@ -641,6 +804,124 @@ class ClosingEvidence(EvidenceCase):
         rec = self.run_ev("f", expect="FAIL")
         self.assertEqual(["evidence I"], [c.name.split(":")[0] for c in rec.checks if not c.ok])
         self.assertIn("the log's seq are [1, 3, 4, 5], not 1 to 4", self.record_check(rec).detail)
+
+
+class OffPostgresEvidence(EvidenceCase):
+    """Scenarios and evidence together at gate 3C, on a stack whose unit has no Postgres to
+    find: Checks C to K (A and B are retired)."""
+
+    step = "3C"
+    level = "C"
+    timing = FAST
+    docker_class = StackLakeDocker
+    evidence_options = {"required": list("CDEFGHIJK"), "record_settle_s": 1.0, "level": "C", "timing": FAST}
+
+    def setUp(self):
+        super().setUp()
+        self.fake.sleep_scale = 0.1
+
+    def evidence_kwargs(self) -> dict:
+        return {**self.evidence_options, "read_log": self.ctx.api.execution_log,
+                "connections": self.ctx.stack.pg_activity}
+
+    def failed(self, rec) -> list[str]:
+        return [c.name.split(":")[0] for c in rec.checks if not c.ok]
+
+    def test_v_passes_every_check_of_the_gate(self):
+        rec = self.run_ev("v")
+        self.assertEqual(set("CDEFGHIJ"), self.gated(rec))
+        self.assertFalse({"A", "B"} & set(rec.evidence["checks"]))  # retired: not even reported
+        finals = self.ev.final_checks(self.ctx.created_wids)
+        self.assertEqual([True, True], [f["ok"] for f in finals], finals)
+        self.assertTrue(finals[0]["name"].startswith("Check K"))
+        self.assertTrue(finals[1]["name"].startswith("Check G, the whole run"))
+
+    def test_the_unit_taken_down_and_back_passes_them_too(self):
+        self.assertEqual(set("CDEFGHIJ"), self.gated(self.run_ev("q")))
+        self.assertTrue(all(f["ok"] for f in self.ev.final_checks(self.ctx.created_wids)))
+
+    def test_a_unit_that_still_writes_its_status_fails_check_g(self):
+        self.fake.faults.add("unit-statement")
+        rec = self.run_ev("a", expect="FAIL")
+        self.assertEqual(["evidence G"], self.failed(rec))
+        g = next(c for c in rec.checks if c.name.startswith("evidence G:"))
+        self.assertRegex(g.detail, r"\d+ statement\(s\) from the unit between the scenario's marks, \d+ of them "
+                                   r"UPDATEs of an execution's status")
+        whole_run = self.ev.final_checks(self.ctx.created_wids)[-1]
+        self.assertIs(False, whole_run["ok"])
+        self.assertGreater(whole_run["status_updates"], 0)
+
+    def test_a_unit_that_still_opens_its_pool_fails_check_h(self):
+        self.fake.faults.add("unit-pool")
+        rec = self.run_ev("a", expect="FAIL")
+        self.assertEqual(["evidence H"], self.failed(rec))
+        h = next(c for c in rec.checks if c.name.startswith("evidence H:"))
+        self.assertIn("4 connection(s) of the unit in pg_stat_activity", h.detail)  # two at the start, two at the end
+        self.assertIn("app=texera-computing-unit", h.detail)
+
+    def test_a_unit_that_is_not_healthy_fails_check_j(self):
+        self.docker.health = "unhealthy"
+        rec = self.run_ev("a", expect="FAIL")
+        self.assertEqual(["evidence J"], self.failed(rec))
+
+
+class Step3Control(EvidenceCase):
+    """Step 3's negative control (design H5), against the product at the end of step 2: its
+    unit writes its status to Postgres and keeps a pool, and nothing closes an execution."""
+
+    step = "2"
+    level = "C"  # the driver asks what the whole of step 3 would answer
+    timing = FAST
+    docker_class = StackLakeDocker
+    evidence_options = {"required": [], "negative_control": "3", "level": "C", "timing": FAST}
+    negative = "3"
+
+    def setUp(self):
+        super().setUp()
+        self.fake.sleep_scale = 0.1
+        self.ctx.negative_control = True
+
+    def evidence_kwargs(self) -> dict:
+        return {**self.evidence_options, "connections": self.ctx.stack.pg_activity}
+
+    def controls(self, rec) -> dict[str, tuple[bool, str]]:
+        return {c.name.split(" ")[1]: (c.ok, c.detail) for c in rec.checks if c.name.startswith("control ")}
+
+    def test_a_fails_g_and_h_as_expected(self):
+        rec = self.run_ev("a")
+        controls = self.controls(rec)
+        self.assertEqual({"G": True, "H": True}, {k: ok for k, (ok, _) in controls.items()})
+        self.assertIn("UPDATEs of an execution's status", controls["G"][1])
+        self.assertIn("app=texera-computing-unit", controls["H"][1])
+        self.assertEqual(2, len(rec.checks))  # the scenario's own checks are information only
+        self.assertTrue(rec.functional_checks)
+
+    def test_qs_execution_stays_running_past_its_deadline(self):
+        rec = self.run_ev("q")
+        controls = self.controls(rec)
+        self.assertEqual({"G", "H", "q"}, set(controls))
+        self.assertTrue(all(ok for ok, _ in controls.values()), controls)
+        self.assertRegex(controls["q"][1], r"failed as expected: the history still says status 1 [\d.]+ s after "
+                                           r"the kill, past the deadline of 1\.8 s")
+        self.assertEqual(["kill", "start"], self.ctx.stack.calls)  # one pass, and the unit is back
+
+
+class Step3ControlOnTheNewProduct(Step3Control):
+    """The same control on a unit that is off Postgres: it must say that it proved nothing."""
+
+    step = "3C"
+
+    def test_a_fails_g_and_h_as_expected(self):
+        rec = self.run_ev("a", expect="FAIL")
+        controls = self.controls(rec)
+        self.assertEqual({"G": False, "H": False}, {k: ok for k, (ok, _) in controls.items()})
+        self.assertTrue(all(d.startswith("PASSED, so the control proves nothing") for _, d in controls.values()))
+
+    def test_qs_execution_stays_running_past_its_deadline(self):
+        rec = self.run_ev("q", expect="FAIL")
+        ok, detail = self.controls(rec)["q"]
+        self.assertFalse(ok)
+        self.assertIn("PASSED, so the control proves nothing: the execution was closed", detail)
 
 
 if __name__ == "__main__":

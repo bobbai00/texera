@@ -61,12 +61,29 @@ class GateTest(unittest.TestCase):
         # the other modes run what the design's H6 names: the unit taken down both ways, and the history
         self.assertEqual(list("abcdeu") + list("pqsw"), self.keys(gate["other_modes"]))
         self.assertEqual("B", gate["level"])
-        self.assertEqual(frozenset({"3A", "3B"}), e2e.PORTABLE_GATES)
+
+    def test_gate_3c_adds_v_and_the_checks_of_a_unit_off_postgres(self):
+        gate = e2e.GATES["3C"]
+        self.assertEqual(self.keys(e2e.GATES["3B"]["scenarios"]) + ["v"], self.keys(gate["scenarios"]))
+        # A and B are retired; J is among them, and gates on a stack started with --unit-no-postgres
+        self.assertEqual(list("CDEFGHIJK"), parse_checks(gate["evidence"]))
+        self.assertEqual(list("abcdeu") + list("pqsvw"), self.keys(gate["other_modes"]))
+        self.assertEqual((e2e.FINISHED_LEVEL, "C"), (gate["level"], gate["level"]))
+        self.assertEqual(frozenset({"3A", "3B", "3C"}), e2e.PORTABLE_GATES)
+
+    def test_a_run_without_a_step_3_gate_is_as_it_was_unless_it_selects_a_step_3_scenario(self):
+        """Step 2's images are still run (the negative controls, an ad hoc scenario): j must
+        not ask them for step 3's routes."""
+        self.assertIsNone(e2e.product_level({}, ["a", "j", "l8"]))
+        self.assertIsNone(e2e.product_level(e2e.GATES["D"], self.keys(e2e.GATES["D"]["scenarios"])))
+        self.assertEqual("C", e2e.product_level({}, ["j", "p"]))  # named: on the whole of step 3
+        self.assertEqual("C", e2e.product_level({}, ["a", "q"]))  # as step 3's negative control selects
+        self.assertEqual(["A", "B", "C"], [e2e.product_level(e2e.GATES[g], ["a"]) for g in ("3A", "3B", "3C")])
 
     def test_step_2s_gates_and_selections_are_what_they_were(self):
         self.assertEqual("all", e2e.GATES["D"]["evidence"])
         self.assertEqual(list("ABCDEF"), parse_checks("all"))
-        self.assertFalse(set("pqrstw") & set(self.keys("all")))
+        self.assertFalse(set("pqrstwv") & set(self.keys("all")))
         self.assertEqual(["p"], self.keys("p"))
         self.assertEqual(["p"], self.keys("record-in-lake"))
         self.assertEqual(["q", "s"], self.keys("unit-lost,polite-stop"))
@@ -411,6 +428,160 @@ class HistoryOutcomes(Step3BCase):
     def test_w_fails_when_the_record_does_not_say_why(self):
         """a's entries hold: a completed run has no reason to give."""
         self.fails_on("w", *self.REASONS[:6], fault="no-reason")
+
+
+class Step3CCase(Step3BCase):
+    """The product at gate 3C: stored output is served by execution, with or without a unit."""
+
+    step = "3C"
+    level = "C"
+
+
+class StoredReadsWithoutTheUnit(Step3CCase):
+    def test_v(self):
+        rec = self.run_key("v")
+        self.assertEqual(["stop", "start"], self.ctx.stack.calls)
+        own = [name for name in self.names(rec) if not name.startswith(("e: ", "a: "))]
+        self.assertEqual(7, len(own), own)
+        # every read was made while the unit was down
+        self.assertEqual("the unit is down: a new socket to it is refused", own[0])
+        # the statistics and the export carry the marks a Kubernetes run looks for in Envoy's log
+        marks = {m["what"]: m for m in rec.facts["gateway_markers"]}
+        self.assertEqual({"export": 200, "statistics": 200}, {what: m["status"] for what, m in marks.items()})
+        asked = {r["path"]: r["query"]["sce-probe"] for r in self.fake.rest_log if "sce-probe" in r["query"]}
+        self.assertEqual([marks["export"]["marker"]], asked.pop("/api/executions/result/export/local"))
+        ((path, mark),) = asked.items()  # the other marked request: a's statistics
+        self.assertRegex(path, r"^/api/executions/\d+/stats/\d+$")
+        self.assertEqual([marks["statistics"]["marker"]], mark)
+        # from gate 3C a statistics request names no unit
+        self.assertFalse(any("cuid" in r["query"] for r in self.fake.rest_log if "/stats/" in r["path"]))
+        # the export named the execution, not a unit, and carried the user's token in its form
+        form = next(r["body"] for r in self.fake.rest_log if r["path"].endswith("/export/local"))
+        self.assertIn("executionId", form)
+        self.assertNotIn("computingUnitId", form)
+        self.assertIn("token=", form)
+
+    def test_v_fails_when_stored_output_needs_the_unit(self):
+        rec = self.fails_on("v", "console: the console route returns", "export: a local CSV export",
+                            "statistics: the Filter's newest stored row", fault="stored-reads-need-unit")
+        self.assertIn("HTTP 503", self.detail(rec, "export: a local CSV export"))
+        self.assertEqual(["stop", "start"], self.ctx.stack.calls)  # the unit is back all the same
+
+    def test_v_needs_gate_3c(self):
+        self.ctx.level = "B"
+        rec = run_scenario(self.ctx, "v")
+        self.assertIn("needs what step 3's gate 3C brings", rec.error)
+        self.assertEqual([], self.ctx.stack.calls)
+
+    def test_an_export_reads_as_rows(self):
+        header, rows = scenarios._export_rows("department,total_salary,n\r\neng,320000.5,3\r\nops,9E4,1\r\n")
+        self.assertEqual((["department", "total_salary", "n"],
+                          [{"department": "eng", "total_salary": 320000.5, "n": 3},
+                           {"department": "ops", "total_salary": 90000.0, "n": 1}]), (header, rows))
+        self.assertEqual(([], []), scenarios._export_rows(""))
+
+
+class RecordByExecutionAtGate3C(Step3CCase):
+    """p and t at gate 3C: the console route, and an export of results that have expired."""
+
+    def test_p_reads_the_console_route_while_the_run_goes_and_after(self):
+        rec = self.run_key("p")
+        self.assertEqual(14, len(rec.checks), self.names(rec))
+        self.assertIn("after the run the console route returns all 300 lines in 2 page(s), seq rising by one",
+                      self.names(rec))
+        pages = [r["query"] for r in self.fake.rest_log if r["path"].endswith("/console") and "afterSeq" in r["query"]]
+        self.assertEqual([["0"], ["200"]], [q["afterSeq"] for q in pages[-2:]])
+
+    def test_p_fails_when_console_output_reaches_the_lake_only_at_the_end(self):
+        self.fails_on("p", "console lines are stored before the run ends",
+                      "the console route returns the UDF's stored lines before the run ends",
+                      fault="console-at-end-only")
+
+    def test_t_asks_for_an_export_of_expired_results(self):
+        rec = self.run_key("t")
+        self.assertEqual(2, len([n for n in self.names(rec) if "an export answers 410" in n]))
+
+    def test_t_fails_when_an_export_of_expired_results_is_not_410(self):
+        rec = self.fails_on("t", *[f"{after}: an export answers 410" for after in Expiry.AFTER],
+                            fault="export-after-expiry")
+        self.assertIn("HTTP 500", self.detail(rec, f"{Expiry.AFTER[0]}: an export answers 410"))
+
+
+class UnitWithoutPostgresInTheOtherModes(Step3CCase):
+    """What Kubernetes and local-dev mode show of a unit off Postgres (design H6), where no
+    statement log is read: the driver asks the stack's control (e2e._unit_without_postgres)."""
+
+    def proof(self, env_names: bool = False) -> dict:
+        return e2e._unit_without_postgres(self.ctx.stack, "after the setup", env_names=env_names)
+
+    def test_a_unit_off_postgres(self):
+        proof = self.proof()
+        self.assertEqual((True, "after the setup", "Postgres holds no connection of the unit"),
+                         (proof["ok"], proof["when"], proof["detail"]))
+
+    def test_a_unit_that_keeps_its_pool_is_found_by_its_name(self):
+        """local-dev: every JVM reaches Postgres from 127.0.0.1, so the name is all there is."""
+        self.fake.faults.add("unit-pool")
+        self.fake.unit_address = "127.0.0.1"
+        self.ctx.stack.unit_addresses = lambda: []
+        proof = self.proof()
+        self.assertFalse(proof["ok"])
+        self.assertIn("2 connection(s) of the unit in pg_stat_activity: pid 300 app=texera-computing-unit "
+                      "from 127.0.0.1", proof["detail"])
+
+    def test_a_kubernetes_unit_must_not_be_given_the_database_login(self):
+        self.fake.kubernetes = True
+        proof = self.proof(env_names=True)
+        self.assertTrue(proof["ok"], proof)
+        self.assertIn("the unit was given no STORAGE_JDBC_* setting", proof["detail"])
+        self.fake.step = "3B"  # before sub-part 19 the manager hands the login over, and the unit uses it
+        proof = self.proof(env_names=True)
+        self.assertFalse(proof["ok"])
+        self.assertEqual(["STORAGE_JDBC_PASSWORD", "STORAGE_JDBC_URL", "STORAGE_JDBC_USERNAME"],
+                         proof["database_login"])
+        self.assertEqual(2, len(proof["connections"]))
+
+    def test_a_stack_that_cannot_be_asked_proves_nothing(self):
+        def refused():
+            raise RuntimeError("k8s-stack.sh pg-activity: exit 1")
+        self.ctx.stack.pg_activity = refused
+        proof = self.proof()
+        self.assertFalse(proof["ok"])
+        self.assertIn("not evaluable: RuntimeError: k8s-stack.sh pg-activity: exit 1", proof["detail"])
+
+
+class ControlOnQ(unittest.TestCase):
+    """What step 3's negative control reads of q (scenarios.stayed_running)."""
+
+    @staticmethod
+    def record(*statuses: int, deadline: float = 18.0, step: float = 5.0, unanswered: int = 0):
+        rec = scenarios.ScenarioRecord("q", "unit-lost", "")
+        readings = [{"t": i * step, "status": status, "reason": None} for i, status in enumerate(statuses)]
+        readings += [{"t": 1.0, "status": None, "unanswered": "ConnectionError"}] * unanswered
+        if statuses:
+            rec.facts["lost_verdicts"] = [{"pass": "unit left down", "deadline_s": deadline, "readings": readings}]
+        return rec
+
+    def test_running_past_the_deadline_is_the_old_products_way(self):
+        held, detail = scenarios.stayed_running(self.record(1, 1, 1, 1, 1))
+        self.assertTrue(held)
+        self.assertIn("still says status 1 20.0 s after the kill, past the deadline of 18 s", detail)
+
+    def test_a_closed_execution_means_the_control_proved_nothing(self):
+        held, detail = scenarios.stayed_running(self.record(1, 1, 4))
+        self.assertFalse(held)
+        self.assertTrue(detail.startswith("PASSED, so the control proves nothing: the execution was closed"))
+
+    def test_anything_else_is_inconclusive(self):
+        for rec, why in ((self.record(), "the unit was never killed under a run"),
+                         # not watched long enough
+                         (self.record(1, 1), "the last 5.0 s after the kill (deadline 18 s)"),
+                         (self.record(1, 0, 1, 1, 1), "the history read status [0, 1]"),
+                         (self.record(1, 1, 1, 1, unanswered=1), "over 4 reading(s)")):
+            held, detail = scenarios.stayed_running(rec)
+            self.assertFalse(held)
+            self.assertTrue(detail.startswith("control inconclusive"), detail)
+            self.assertIn(why, detail)
 
 
 if __name__ == "__main__":

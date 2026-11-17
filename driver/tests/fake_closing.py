@@ -344,6 +344,24 @@ class Closing:
             "outcome": e["outcome"], "reason": e["outcome_reason"], "endedAtMs": e["ended_at"]}
         return 200, {"eid": eid, "entries": entries, "closing": closing}
 
+    def console(self, uid: int, eid: int, query: dict):
+        """GET /api/executions/{eid}/console (from "3C"): the stored messages after
+        `afterSeq`, of one operator or of all, oldest first, at most `limit` (5,000 at the
+        most); none when the table is gone (expired) or was never written."""
+        def given(name: str, default: str) -> str:
+            return (query.get(name) or [default])[0]
+        if not self.may_read(uid, eid):
+            return self.fake.err(403, f"no access to execution {eid}")
+        operator, after = given("operatorId", ""), int(given("afterSeq", "0"))
+        limit = min(int(given("limit", "1000")), 5000)
+        table = self.fake.execution_table(eid, "console")
+        with self.fake.lake.lock:
+            rows = sorted(table.rows, key=lambda r: r["seq"]) if table is not None else []
+        rows = [r for r in rows if r["seq"] > after and (not operator or r["operatorId"] == operator)]
+        page = rows[:limit]
+        return 200, {"eid": eid, "messages": page, "lastSeq": page[-1]["seq"] if page else after,
+                     "more": len(rows) > limit}
+
     def quota(self, uid: int):
         return 200, [{"eid": eid, "workflowId": e["wid"],
                       "workflowName": self.fake.workflows.get(e["wid"], {}).get("name"),
