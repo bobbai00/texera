@@ -218,7 +218,7 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     request.emailNotificationEnabled shouldBe false
     request.warehouseId shouldBe None
     request.replayFromExecution shouldBe None
-    request.targetOperatorIds shouldBe Nil
+    request.targetOperatorId shouldBe None
   }
 
   it should "parse a change to a paused operator with the loop-variable module" in {

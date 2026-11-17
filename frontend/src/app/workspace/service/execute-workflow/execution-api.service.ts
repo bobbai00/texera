@@ -37,7 +37,7 @@ export type ReplayExecutionInfo = Readonly<{
  * The body of `POST /api/executions`, as the editor sends it: an execution of workflow `wid` to create, to run
  * on computing unit `computingUnitId`.
  *
- * The route also takes `targetOperatorIds`, which the editor leaves out: for a run up to an operator it sends
+ * The route also takes `targetOperatorId`, which the editor leaves out: for a run up to an operator it sends
  * only the part of the workflow that run needs.
  */
 export type CreateExecutionRequest = Readonly<{

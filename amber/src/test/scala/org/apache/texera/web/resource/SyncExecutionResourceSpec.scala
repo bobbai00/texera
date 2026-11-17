@@ -1105,7 +1105,7 @@ class SyncExecutionResourceSpec
           computingUnitId = testCuid,
           warehouseId = None,
           replayFromExecution = None,
-          targetOperatorIds = List("limit")
+          targetOperatorId = Some("limit")
         ),
         syncUser().getUser,
         new URI("http://texera.example/api/executions")

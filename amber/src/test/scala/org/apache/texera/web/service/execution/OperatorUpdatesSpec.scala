@@ -493,7 +493,7 @@ class OperatorUpdatesSpec
   private def createRequest(
       plan: LogicalPlanPojo,
       warehouseId: Option[Int] = None,
-      targets: List[String] = Nil
+      target: Option[String] = None
   ): CreateExecutionRequest =
     CreateExecutionRequest(
       wid = testWid,
@@ -504,7 +504,7 @@ class OperatorUpdatesSpec
       computingUnitId = unitCuid,
       warehouseId = warehouseId,
       replayFromExecution = None,
-      targetOperatorIds = targets
+      targetOperatorId = target
     )
 
   /** An execution the creator created; its plan table is dropped after the suite. */
@@ -512,10 +512,10 @@ class OperatorUpdatesSpec
       plan: LogicalPlanPojo = udfPlan(),
       creator: FixtureCreator = new FixtureCreator(),
       warehouseId: Option[Int] = None,
-      targets: List[String] = Nil
+      target: Option[String] = None
   ): CreateExecutionResponse = {
     val response = resource(fixtureCreator = creator)
-      .create(createRequest(plan, warehouseId, targets), sessionUser(creatorUid), uriInfo)
+      .create(createRequest(plan, warehouseId, target), sessionUser(creatorUid), uriInfo)
     withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 201 }
     val execution = response.getEntity.asInstanceOf[CreateExecutionResponse]
     madePlans += new URI(execution.planUri)
@@ -1026,7 +1026,7 @@ class OperatorUpdatesSpec
   it should "refuse an operator the workflow the execution runs does not have" in {
     val execution = created()
     // Created up to the UDF: the Limit after it is not in the workflow the execution runs.
-    val upToUdf = created(targets = List("udf"))
+    val upToUdf = created(target = Some("udf"))
 
     refused(404)(post(execution.eid, limit("ghost", 7))) shouldBe
       s"Operator ghost is not in the workflow execution ${execution.eid} runs."

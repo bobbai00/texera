@@ -77,6 +77,7 @@ import org.apache.texera.dao.jooq.generated.Tables.{
   SITE_SETTINGS,
   USER_WAREHOUSE,
   VIRTUAL_ENVIRONMENTS,
+  WORKFLOW,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_OF_USER,
   WORKFLOW_USER_ACCESS,
@@ -522,7 +523,7 @@ class ExecutionResourceSpec
       emailNotificationEnabled: Boolean = false,
       warehouseId: Option[Int] = None,
       replay: Option[ReplayExecutionInfo] = None,
-      targets: List[String] = Nil
+      target: Option[String] = None
   ): CreateExecutionRequest =
     CreateExecutionRequest(
       wid = wid,
@@ -534,7 +535,7 @@ class ExecutionResourceSpec
       computingUnitId = cuid,
       warehouseId = warehouseId,
       replayFromExecution = replay,
-      targetOperatorIds = targets
+      targetOperatorId = target
     )
 
   /** The execution a 201 created; its plan table is dropped after the suite. */
@@ -1231,7 +1232,7 @@ class ExecutionResourceSpec
     noException should be thrownBy ExecFactory.newExecFromJavaClassName(className, descriptor)
   }
 
-  it should "compile only the target and what is upstream of it, given one target" in {
+  it should "compile only the target and what is upstream of it, given a target" in {
     val whole = LogicalPlanPojo(
       List(
         named(TestOperators.smallCsvScanOpDesc(), "scan"),
@@ -1243,7 +1244,7 @@ class ExecutionResourceSpec
       List.empty
     )
 
-    val execution = created(post(request(plan = whole, targets = List("search"))))
+    val execution = created(post(request(plan = whole, target = Some("search"))))
     val (_, plan) = storedPlan(execution)
 
     plan.plan.operators.map(_.id.logicalOpId) shouldBe
@@ -1258,28 +1259,15 @@ class ExecutionResourceSpec
       List("search")
   }
 
-  it should "compile the whole workflow given no target, several, or one it does not have" in {
-    def three(): LogicalPlanPojo =
-      LogicalPlanPojo(
-        List(
-          named(TestOperators.smallCsvScanOpDesc(), "scan"),
-          named(TestOperators.keywordSearchOpDesc("Region", "Asia"), "search"),
-          named(TestOperators.keywordSearchOpDesc("Country", "China"), "search-2")
-        ),
-        List(link("scan", "search"), link("search", "search-2")),
-        List.empty,
-        List.empty
-      )
-
-    Seq(Nil, List("scan", "search"), List("ghost")).foreach { targets =>
-      val (_, plan) = storedPlan(created(post(request(plan = three(), targets = targets))))
-      withClue(s"targets $targets: ") {
-        plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan", "search", "search-2")
-      }
-    }
+  it should "refuse a target the workflow does not have" in {
+    refused(400)(post(request(target = Some("ghost")))) shouldBe
+      "The workflow has no operator ghost to run up to."
+    // Not the whole workflow in its place.
+    refused(400)(post(request(target = Some("")))) shouldBe
+      "The workflow has no operator  to run up to."
   }
 
-  it should "check only the part of the workflow it compiles, given one target" in {
+  it should "check only the part of the workflow it compiles, given a target" in {
     // scan -> search, the target, and elsewhere two operators whose links form a cycle: a run up
     // to the target never reaches them.
     def withCycleElsewhere(): LogicalPlanPojo =
@@ -1296,14 +1284,14 @@ class ExecutionResourceSpec
       )
 
     val (_, plan) =
-      storedPlan(created(post(request(plan = withCycleElsewhere(), targets = List("search")))))
+      storedPlan(created(post(request(plan = withCycleElsewhere(), target = Some("search")))))
 
     plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan", "search")
-    // Up to an operator on the cycle, the cycle is compiled; with no target, or one the workflow
-    // does not have, the whole workflow is.
-    Seq(List("y"), Nil, List("ghost")).foreach { targets =>
-      withClue(s"targets $targets: ") {
-        refused(400)(post(request(plan = withCycleElsewhere(), targets = targets))) shouldBe
+    // Up to an operator on the cycle, the cycle is compiled; with no target, the whole workflow
+    // is.
+    Seq(Some("y"), None).foreach { target =>
+      withClue(s"target $target: ") {
+        refused(400)(post(request(plan = withCycleElsewhere(), target = target))) shouldBe
           "The workflow's links form a cycle: x -> y -> x."
       }
     }
@@ -1315,6 +1303,29 @@ class ExecutionResourceSpec
     val (_, plan) = storedPlan(created(post(request(plan = sent))))
 
     plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan", "search")
+  }
+
+  it should "let any user run a public workflow on a unit of their own" in {
+    // Upstream checked only the unit when a workflow was run, and its editor let whoever could
+    // open a workflow run it: a public one is open to every user.
+    refused(403)(post(request(cuid = strangerCuid), uid = strangerUid))
+    getDSLContext
+      .update(WORKFLOW)
+      .set(WORKFLOW.IS_PUBLIC, java.lang.Boolean.TRUE)
+      .where(WORKFLOW.WID.eq(Integer.valueOf(testWid)))
+      .execute()
+    try {
+      val execution = created(post(request(cuid = strangerCuid), uid = strangerUid))
+
+      row(execution.eid).getUid shouldBe strangerUid
+      storedPlan(execution)._1.createdBy shouldBe strangerUid
+    } finally {
+      getDSLContext
+        .update(WORKFLOW)
+        .set(WORKFLOW.IS_PUBLIC, java.lang.Boolean.FALSE)
+        .where(WORKFLOW.WID.eq(Integer.valueOf(testWid)))
+        .execute()
+    }
   }
 
   it should "let a user who may read a workflow run it on a unit of their own" in {
@@ -1738,6 +1749,17 @@ class ExecutionResourceSpec
     refused(400) {
       post(request(replay = Some(ReplayExecutionInfo(replaySourceEid, " "))))
     } shouldBe s"The replay of execution $replaySourceEid names no interaction to replay up to."
+  }
+
+  it should "refuse a replay of another user's run of the workflow" in {
+    // The reader may read the workflow, and so may run it, but the replay log is the creator's.
+    refused(400) {
+      post(
+        request(cuid = readerCuid, replay = Some(ReplayExecutionInfo(replaySourceEid, "i-1"))),
+        uid = readerUid
+      )
+    } shouldBe
+      s"Execution $replaySourceEid is another user's: only your own executions can be replayed."
   }
 
   // --- refused: malformed ---

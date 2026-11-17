@@ -50,9 +50,9 @@ case class ReplayExecutionInfo(
   * @param warehouseId              the user_warehouse the run writes into: required while per-user
   *                                 warehouses are enabled, refused while they are disabled
   * @param replayFromExecution      the replay log the run replays; None for none
-  * @param targetOperatorIds        with exactly one operator, the run executes up to it ("Execute
-  *                                 To"), and only that operator and those upstream of it are
-  *                                 compiled
+  * @param targetOperatorId         the operator the run executes up to ("Execute To"): only it
+  *                                 and the operators upstream of it are compiled. None for the
+  *                                 whole workflow.
   */
 case class CreateExecutionRequest(
     wid: Long,
@@ -65,5 +65,5 @@ case class CreateExecutionRequest(
     @JsonDeserialize(contentAs = classOf[java.lang.Integer])
     warehouseId: Option[Int],
     replayFromExecution: Option[ReplayExecutionInfo],
-    targetOperatorIds: List[String] = Nil
+    targetOperatorId: Option[String] = None
 )

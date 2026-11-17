@@ -726,7 +726,8 @@ describe("executeOperatorAndFormat - request construction", () => {
 
     // The plan goes to the Dashboard, which compiles it: the create's body carries it.
     const body = requestBody();
-    expect(body.targetOperatorIds).toEqual(["dst"]);
+    // The plan is already cut to the target: the request names none for the Dashboard to cut at.
+    expect(body).not.toHaveProperty("targetOperatorId");
     expect(body.logicalPlan.opsToViewResult).toEqual(["dst"]);
     expect(body.logicalPlan.links).toEqual([
       {
@@ -860,7 +861,6 @@ describe("executeOperatorAndFormat - create, then run", () => {
         opsToReuseResult: [],
       },
       computingUnitId: 3,
-      targetOperatorIds: ["dst"],
       emailNotificationEnabled: false,
     });
     // The unit gets no plan to compile, only where the stored one is. 4200 rather than a round

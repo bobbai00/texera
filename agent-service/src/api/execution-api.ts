@@ -73,13 +73,13 @@ export interface CreateExecutionRequest {
   executionName: string;
   // Names what asks for the execution; the Dashboard keeps it with the execution.
   engineVersion: string;
+  // The part of the workflow to run: the target operator and what is upstream of it. The agent
+  // cuts it from its own graph, so the request names no target for the Dashboard to cut at.
   logicalPlan: LogicalPlan;
   computingUnitId: number;
   // The user's warehouse the run writes into: required while per-user warehouses are enabled,
   // refused while they are disabled.
   warehouseId?: number;
-  // With exactly one operator, only it and the operators upstream of it are compiled and run.
-  targetOperatorIds: string[];
   emailNotificationEnabled: boolean;
 }
 

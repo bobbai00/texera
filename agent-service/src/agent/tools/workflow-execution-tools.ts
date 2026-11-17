@@ -307,7 +307,6 @@ async function executeWorkflowHttp(
       },
       computingUnitId,
       warehouseId: config.warehouseId,
-      targetOperatorIds,
       emailNotificationEnabled: false,
     };
 

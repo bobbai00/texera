@@ -122,11 +122,13 @@ final class WorkflowNotCompiled(
   *
   * In this order, which decides what a refused request leaves behind:
   *  1. The request is checked: a workflow, a computing unit, an engine version, settings a plan
-  *     can be made to run under, and a workflow whose graph the compiler can read (with one
-  *     target, the part of it up to the target, which is all that is compiled). Otherwise 400.
+  *     can be made to run under, and a workflow whose graph the compiler can read (with a target,
+  *     which must be one of its operators, the part of it up to the target, which is all that is
+  *     compiled). Otherwise 400.
   *  1. The user must be able to read the workflow and run workflows on the unit (403, also for a
   *     unit that does not exist), and the unit must not be terminated (409).
-  *  1. The warehouse the run writes into and the replay log it replays are checked (400).
+  *  1. The warehouse the run writes into and the replay log it replays, which is one of the
+  *     user's own executions of the workflow, are checked (400).
   *  1. The execution's row is inserted, as Created, with where it writes its replay log when
   *     replay logs are kept. No row is left by a request refused before this.
   *  1. The workflow is compiled for the user, Strict, under the site's settings as they stand and
@@ -199,7 +201,7 @@ class ExecutionCreator(
       } catch {
         case refused: IllegalArgumentException => throw new BadRequestException(refused.getMessage)
       }
-    val replay = checked.replay.map(replaySourceOf(checked.wid, _))
+    val replay = checked.replay.map(replaySourceOf(checked.wid, uid, _))
 
     val (eid, replayLog) = ExecutionsMetadataPersistService.insertCreatedExecution(
       wid,
@@ -292,8 +294,8 @@ class ExecutionCreator(
 
   /**
     * The parts of `request` a create uses, with what it may leave out filled in, or 400 with what
-    * is missing or wrong. The plan compiled is the one sent, or, with exactly one target, the
-    * part of it upstream of the target.
+    * is missing or wrong. The plan compiled is the one sent, or, with a target, the target and
+    * the part of the plan upstream of it.
     */
   private def checkedRequest(request: CreateExecutionRequest): CheckedRequest = {
     def refuse(message: String): Nothing = throw new BadRequestException(message)
@@ -326,11 +328,15 @@ class ExecutionCreator(
       opsToViewResult = Option(sent.opsToViewResult).getOrElse(Nil),
       opsToReuseResult = Option(sent.opsToReuseResult).getOrElse(Nil)
     )
-    // Only the plan compiled has to be a graph the compiler reads: with one target, a part of the
+    // Only the plan compiled has to be a graph the compiler reads: with a target, a part of the
     // workflow the run does not reach is neither compiled nor checked.
-    val plan = Option(request.targetOperatorIds).getOrElse(Nil) match {
-      case List(target) => whole.upstreamOf(target)
-      case _            => whole
+    val plan = Option(request.targetOperatorId).flatten match {
+      case Some(target) =>
+        if (!whole.operators.exists(_.operatorIdentifier.id == target)) {
+          refuse(s"The workflow has no operator $target to run up to.")
+        }
+        whole.upstreamOf(target)
+      case None => whole
     }
     plan.graphProblem().foreach(problem => refuse(problem))
     // Any output ports whose results are stored that the settings name are replaced by the ones
@@ -391,10 +397,11 @@ class ExecutionCreator(
   }
 
   /**
-    * The replay log that `info` names, or 400: an execution of workflow `wid` that kept a replay
-    * log, at an absolute URI.
+    * The replay log that `info` names, or 400: an execution of workflow `wid` that user `uid`
+    * ran themselves and that kept a replay log, at an absolute URI. A log holds what its run
+    * read, so it is replayed only by the user who made it.
     */
-  private def replaySourceOf(wid: Long, info: ReplayExecutionInfo): ReplaySource = {
+  private def replaySourceOf(wid: Long, uid: Integer, info: ReplayExecutionInfo): ReplaySource = {
     def refuse(message: String): Nothing = throw new BadRequestException(message)
     val source =
       Option
@@ -404,7 +411,11 @@ class ExecutionCreator(
             SqlServer
               .getInstance()
               .createDSLContext()
-              .select(WORKFLOW_VERSION.WID, WORKFLOW_EXECUTIONS.LOG_LOCATION)
+              .select(
+                WORKFLOW_VERSION.WID,
+                WORKFLOW_EXECUTIONS.UID,
+                WORKFLOW_EXECUTIONS.LOG_LOCATION
+              )
               .from(WORKFLOW_EXECUTIONS)
               .join(WORKFLOW_VERSION)
               .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
@@ -414,7 +425,10 @@ class ExecutionCreator(
         }
         .filter(_.value1().longValue() == wid)
         .getOrElse(refuse(s"Workflow $wid has no execution ${info.eid} to replay."))
-    val location = Option(source.value2()).filter(_.nonEmpty).getOrElse {
+    if (source.value2() != uid) {
+      refuse(s"Execution ${info.eid} is another user's: only your own executions can be replayed.")
+    }
+    val location = Option(source.value3()).filter(_.nonEmpty).getOrElse {
       refuse(s"Execution ${info.eid} kept no replay log to replay.")
     }
     val logUri = Try(new URI(location)).toOption.filter(_.isAbsolute).getOrElse {
