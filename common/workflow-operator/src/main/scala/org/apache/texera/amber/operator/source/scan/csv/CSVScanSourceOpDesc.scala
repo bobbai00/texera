@@ -20,6 +20,7 @@
 package org.apache.texera.amber.operator.source.scan.csv
 
 import com.fasterxml.jackson.annotation.{JsonInclude, JsonProperty, JsonPropertyDescription}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import com.univocity.parsers.csv.{CsvFormat, CsvParser, CsvParserSettings}
 import org.apache.texera.amber.core.executor.OpExecWithClassName
@@ -30,7 +31,7 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Workflow
 import org.apache.texera.amber.core.workflow.{PhysicalOp, SchemaPropagationFunc}
 import org.apache.texera.amber.operator.{StandaloneCodeGenerator, StandaloneHelpers}
 import org.apache.texera.amber.operator.StandaloneCodeGenerator.SourceFilePlaceholder
-import org.apache.texera.amber.operator.metadata.annotations.UIWidget
+import org.apache.texera.amber.operator.metadata.annotations.{SetByCompiler, UIWidget}
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpExec
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
@@ -55,6 +56,16 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
   @JsonSchemaTitle("Header")
   @JsonPropertyDescription("whether the CSV file contains a header line")
   var hasHeader: Boolean = true
+
+  /**
+    * The most columns a row of the file may have: the site's limit as it stood when the plan
+    * was compiled. The executor reads the file under it and asks for no other, so a plan runs
+    * under the limit it was made with wherever it runs.
+    */
+  @JsonProperty("maxColumns")
+  @JsonDeserialize(contentAs = classOf[Int])
+  @SetByCompiler
+  var maxColumns: Option[Int] = None
 
   fileTypeName = Option("CSV")
 
@@ -85,6 +96,11 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
       )
   }
 
+  /**
+    * The schema of the file, inferred from its first rows, read under [[maxColumns]]; a
+    * descriptor no compile has set a limit on is read under
+    * [[CSVScanSourceOpDesc.DefaultMaxColumns]].
+    */
   override def sourceSchema(): Schema = {
     val delimiterChar = customDelimiter.filter(_.nonEmpty).getOrElse(",").charAt(0)
     require(
@@ -108,8 +124,8 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
     csvFormat.setLineSeparator("\n")
     val csvSetting = new CsvParserSettings()
     csvSetting.setMaxCharsPerColumn(-1)
-    val maxColumns = CSVScanSourceOpExec.getMaxColumns
-    csvSetting.setMaxColumns(maxColumns)
+    val columnLimit = maxColumns.getOrElse(CSVScanSourceOpDesc.DefaultMaxColumns)
+    csvSetting.setMaxColumns(columnLimit)
     csvSetting.setFormat(csvFormat)
     csvSetting.setHeaderExtractionEnabled(hasHeader)
     // No setNullValue here, so a blank cell reads as null exactly as it does at
@@ -122,7 +138,7 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
     var data: Array[Array[String]] = Array()
     val readLimit = inferSampleSize
     for (_ <- 0 until readLimit) {
-      val row = CSVScanSourceOpExec.parseNextRow(parser, maxColumns)
+      val row = CSVScanSourceOpExec.parseNextRow(parser, columnLimit)
       if (row != null) {
         data = data :+ row
       }
@@ -249,4 +265,10 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
            |out1df.columns = [f"column-{i + 1}" for i in range(len(out1df.columns))]""".stripMargin
     }
   }
+}
+
+object CSVScanSourceOpDesc {
+
+  /** The most columns a row may have on a site whose administrators have set no other limit. */
+  val DefaultMaxColumns: Int = 512
 }

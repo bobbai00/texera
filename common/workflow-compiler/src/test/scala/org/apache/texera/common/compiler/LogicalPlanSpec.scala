@@ -626,4 +626,31 @@ class LogicalPlanSpec extends AnyFlatSpec {
     plan.resolveScanSourceOpFileName(TestOperators.fixtureFileResolver, Some(errors))
     assert(errors.isEmpty)
   }
+
+  // ---------------------------------------------------------------------------
+  // applyCompileSettings
+  // ---------------------------------------------------------------------------
+
+  "LogicalPlan.applyCompileSettings" should
+    "set the column limit on every CSV scan, in place of any it held" in {
+    val unset = csv()
+    val sent = csv()
+    sent.maxColumns = Some(100000)
+    val plan = LogicalPlan(List(unset, sent, keyword()), List.empty)
+
+    plan.applyCompileSettings(CompileSettings(csvParserMaxColumns = 77))
+
+    assert(unset.maxColumns.contains(77))
+    assert(sent.maxColumns.contains(77))
+  }
+
+  it should "leave an operator that reads no setting of the site's as it is" in {
+    val others = List(keyword(), TestOperators.smallJSONLScanOpDesc(), new LimitOpDesc())
+    val before = others.map(objectMapper.writeValueAsString)
+
+    LogicalPlan(others, List.empty)
+      .applyCompileSettings(CompileSettings(csvParserMaxColumns = 77))
+
+    assert(others.map(objectMapper.writeValueAsString) == before)
+  }
 }

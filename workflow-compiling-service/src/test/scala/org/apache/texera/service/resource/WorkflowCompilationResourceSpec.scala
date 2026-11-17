@@ -34,6 +34,7 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.dao.StatementRecorder
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.assertj.core.api.Assertions.assertThat
 import org.scalatest.BeforeAndAfterAll
@@ -56,9 +57,11 @@ class WorkflowCompilationResourceSpec
     with LoggedInResourceFixture {
 
   private val resources: ResourceExtension = resourcesFor(new WorkflowCompilationResource())
+  private var recorder: StatementRecorder = _
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
+    recorder = StatementRecorder.installOn(getDSLContext)
     insertUsersAndPrivateDataset()
     resources.before()
   }
@@ -288,5 +291,27 @@ class WorkflowCompilationResourceSpec
     assert(Option(ops.get(0).get("repositoryMounts")).forall(_.isNull), s"mounts in $body")
     assert(!body.contains(privateDatasetRepositoryName))
     assert(!body.contains(privateDatasetVersionHash))
+  }
+
+  it should "read the site's settings once for a compile, however many operators take one" in {
+    // A CSV scan's column limit is the site's: the compile reads it for the plan, not each scan
+    // for itself.
+    def settingsReads(plan: LogicalPlanPojo): Int =
+      recorder
+        .record(assertThat(postCompile(plan).getStatus).isEqualTo(200))
+        .count(statement => statement.verb == "SELECT" && statement.sql.contains("site_settings"))
+    val privateCsv = "/dataset/owner@test.com/private_dataset/v1/table.csv"
+
+    assert(
+      settingsReads(
+        LogicalPlanPojo(
+          operators = List(csvOp(privateCsv), csvOp(privateCsv)),
+          links = List.empty,
+          opsToViewResult = List.empty,
+          opsToReuseResult = List.empty
+        )
+      ) == 1
+    )
+    assert(settingsReads(planOf(textOp("north\nsouth"))) == 1)
   }
 }

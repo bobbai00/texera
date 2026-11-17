@@ -33,10 +33,10 @@ import scala.util.Try
   * one place.
   *
   * Failures swallowed by the outer Try on the read path include: SqlServer not
-  * initialised (e.g. on workers in distributed mode), no row for the key, and
-  * value that can't be parsed. In all of these cases the caller's default takes
-  * over. The write helpers take an explicit [[DSLContext]] so callers can run
-  * them inside their own transaction and surface failures.
+  * initialised, no row for the key, and value that can't be parsed. In all of
+  * these cases the caller's default takes over. The write helpers take an
+  * explicit [[DSLContext]] so callers can run them inside their own transaction
+  * and surface failures.
   */
 object SiteSettings {
 

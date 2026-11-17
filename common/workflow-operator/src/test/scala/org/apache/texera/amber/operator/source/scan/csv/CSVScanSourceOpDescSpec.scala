@@ -655,6 +655,44 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     assert(columnNames(oldCsv, path) == List("id", "name", "age"))
   }
 
+  // Writes a headered CSV of `columns` columns, c1 to cN, with one data row, and
+  // returns the absolute path.
+  private def writeWideCsv(columns: Int): String = {
+    val tmpFile = Files.createTempFile("wide-", ".csv")
+    tmpFile.toFile.deleteOnExit()
+    val header = (1 to columns).map(i => s"c$i").mkString(",")
+    val row = (1 to columns).mkString(",")
+    Files.write(tmpFile, s"$header\n$row\n".getBytes(StandardCharsets.UTF_8))
+    tmpFile.toString
+  }
+
+  // The compiler sets the limit, from the site's setting, and the executor reads
+  // the file under it. The schema has to be inferred under the same one, or a
+  // file the site allows would fail to compile, and one it refuses would compile
+  // and then fail its run.
+  it should "infer the schema under the column limit it carries" in {
+    val csv = new CSVScanSourceOpDesc()
+    csv.maxColumns = Some(3)
+    assert(columnNames(csv, writeWideCsv(3)) == List("c1", "c2", "c3"))
+    val overflow = intercept[RuntimeException](columnNames(csv, writeWideCsv(4)))
+    assert(overflow.getMessage == "Max columns of 3 exceeded.")
+
+    // Above the default as well as below it.
+    csv.maxColumns = Some(600)
+    assert(columnNames(csv, writeWideCsv(600)).size == 600)
+  }
+
+  // 512 columns: the limit a site is seeded with.
+  it should "infer under the default column limit until a compile sets one" in {
+    assert(csvScanSourceOpDesc.maxColumns.isEmpty)
+    assert(columnNames(csvScanSourceOpDesc, writeWideCsv(512)).size == 512)
+
+    val overflow = intercept[RuntimeException] {
+      columnNames(new CSVScanSourceOpDesc(), writeWideCsv(513))
+    }
+    assert(overflow.getMessage == "Max columns of 512 exceeded.")
+  }
+
   // With no header line left after the offset, pandas had nothing to count the
   // columns from and the script raised EmptyDataError where the engine emits no
   // rows.
@@ -670,6 +708,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     csvScanSourceOpDesc.customDelimiter = Some(",")
     csvScanSourceOpDesc.hasHeader = false
     csvScanSourceOpDesc.offset = Some(10)
+    csvScanSourceOpDesc.maxColumns = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
     csvScanSourceOpDesc.setResolvedFileName(TestOperators.localFileUri(path))
 
     val exec = new CSVScanSourceOpExec(objectMapper.writeValueAsString(csvScanSourceOpDesc))
@@ -723,6 +762,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     )
     val path = tmpFile.toString
     csvScanSourceOpDesc.customDelimiter = Some(",")
+    csvScanSourceOpDesc.maxColumns = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
     parallelCsvScanSourceOpDesc.customDelimiter = Some(",")
 
     val readers

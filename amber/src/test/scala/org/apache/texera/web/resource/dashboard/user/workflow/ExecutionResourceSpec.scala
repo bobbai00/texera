@@ -22,6 +22,7 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import io.dropwizard.setup.Bootstrap
+import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
@@ -29,8 +30,6 @@ import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   NoStoredPlanException,
   PlanRecord,
-  RepositoryVersionResolver,
-  ScanFileResolver,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.virtualidentity.{
@@ -50,6 +49,7 @@ import org.apache.texera.amber.core.workflow.{
   WorkflowSettings
 }
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILATION_ERROR
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpDesc}
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
@@ -57,12 +57,14 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
+import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.{MockTexeraDB, SiteSettings}
 import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
   OPERATOR_EXECUTIONS,
+  SITE_SETTINGS,
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_OF_USER,
@@ -106,7 +108,6 @@ import org.scalatest.matchers.should.Matchers
 
 import java.lang.reflect.Proxy
 import java.net.URI
-import java.nio.file.Path
 import java.sql.Timestamp
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
@@ -358,8 +359,9 @@ class ExecutionResourceSpec
   }
 
   /**
-    * The creator under test, with the fixture resolvers, which also record the user each was
-    * asked for, and with seams set as the case needs.
+    * The creator under test, bound to the fixture files, versions and mount root in place of a
+    * user's, and with seams set as the case needs. `resolvedFor` records the user each plan was
+    * bound for. The site's settings stay the ones the database holds.
     */
   private class FixtureCreator(
       logRoot: Option[URI] = None,
@@ -368,15 +370,10 @@ class ExecutionResourceSpec
       failWrite: Option[RuntimeException] = None
   ) extends ExecutionCreator {
     val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
-    override protected def fileResolverFor(uid: Integer): ScanFileResolver = {
+    override protected def bindingsFor(uid: Integer): RunBindings = {
       resolvedFor += uid
-      TestOperators.fixtureFileResolver
+      TestUtils.fixtureBindings.copy(settings = super.bindingsFor(uid).settings)
     }
-    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver = {
-      resolvedFor += uid
-      TestOperators.fixtureRepositoryResolver
-    }
-    override protected def mountRoot: Option[Path] = Some(TestOperators.fixtureMountRoot)
     override protected def replayLogRoot: Option[URI] = logRoot
     override protected def warehousesEnabled: Boolean = warehouses
     override protected def costHintsLoader: CostHintsLoader = hints
@@ -661,6 +658,30 @@ class ExecutionResourceSpec
 
     plan.context.workflowSettings.outputPortsNeedingStorage.map(_.opId.logicalOpId) shouldBe
       Set(OperatorIdentity("search"))
+  }
+
+  it should "save the plan under the site's CSV column limit as it stands, whatever the request says" in {
+    // The limit is fixed in the plan when the execution is created: the unit that runs it asks
+    // the site for none.
+    val scan = named(TestOperators.smallCsvScanOpDesc(), "scan")
+    scan.maxColumns = Some(100000)
+    SiteSettings.upsert(getDSLContext, "csv_parser_max_columns", "731", "spec")
+    try {
+      val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
+
+      val (_, plan) = storedPlan(created(post(request(plan = sent))))
+
+      plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity("scan")).head.opExecInitInfo match {
+        case OpExecWithClassName(_, descString) =>
+          objectMapper.readTree(descString).get("maxColumns").asInt() shouldBe 731
+        case other => fail(s"the scan's executor is $other")
+      }
+    } finally {
+      getDSLContext
+        .deleteFrom(SITE_SETTINGS)
+        .where(SITE_SETTINGS.KEY.eq("csv_parser_max_columns"))
+        .execute()
+    }
   }
 
   it should "compile only the target and what is upstream of it, given one target" in {

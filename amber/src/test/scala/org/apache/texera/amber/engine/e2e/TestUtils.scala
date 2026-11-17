@@ -76,7 +76,12 @@ import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.amber.core.storage.ExecutionResultUris.getResultUriByLogicalPortId
 import org.apache.texera.web.service.{ExecutionResultService, PlanToRun, WorkflowExecutionService}
 import org.apache.texera.common.compiler.model.LogicalLink
-import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.apache.texera.common.compiler.{
+  CompilationErrorHandling,
+  CompileSettings,
+  RunBindings,
+  WorkflowCompiler
+}
 import org.scalatest.Assertions
 
 object TestUtils {
@@ -98,6 +103,18 @@ object TestUtils {
     )
 
   /**
+    * What a plan compiled in a spec is bound to: its scan sources read fixture files on the local
+    * disk, a UDF's datasets and models are the fixture versions, read under the fixture mount
+    * root, and the site's settings are the defaults.
+    */
+  val fixtureBindings: RunBindings = RunBindings(
+    files = TestOperators.fixtureFileResolver,
+    repositories = TestOperators.fixtureRepositoryResolver,
+    mountRoot = Some(TestOperators.fixtureMountRoot),
+    settings = CompileSettings.Default
+  )
+
+  /**
     * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
     * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that and
     * checked to be one the engine can run (`WorkflowExecutionService.requireRunnableHere`), so a
@@ -115,14 +132,7 @@ object TestUtils {
       context: WorkflowContext,
       fromSavedPlan: Boolean = true
   ): Workflow = {
-    // the scan sources in these tests read fixture files on the local disk, and a UDF's datasets
-    // and models are the fixture versions, read under the fixture mount root
-    val workflowCompiler = new WorkflowCompiler(
-      context,
-      TestOperators.fixtureFileResolver,
-      TestOperators.fixtureRepositoryResolver,
-      Some(TestOperators.fixtureMountRoot)
-    )
+    val workflowCompiler = new WorkflowCompiler(context, fixtureBindings)
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
     if (fromSavedPlan) {
       val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan).savedPlan

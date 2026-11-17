@@ -30,8 +30,7 @@ import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   NoStoredPlanException,
   PlanRecord,
-  RepositoryVersionResolver,
-  ScanFileResolver
+  RepositoryVersionResolver
 }
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -47,6 +46,7 @@ import org.apache.texera.amber.core.workflow.{
   PortIdentity,
   RepositoryMounts
 }
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.filter.{
   ComparisonType,
   FilterPredicate,
@@ -60,6 +60,7 @@ import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdf
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
+import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -282,13 +283,9 @@ class OperatorUpdatesSpec
       .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
       .execute()
 
-  /** Creates executions with the fixture resolvers and no cost hints. */
+  /** Creates executions with the fixture bindings and no cost hints. */
   private class FixtureCreator(warehouses: Boolean = false) extends ExecutionCreator {
-    override protected def fileResolverFor(uid: Integer): ScanFileResolver =
-      TestOperators.fixtureFileResolver
-    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
-      TestOperators.fixtureRepositoryResolver
-    override protected def mountRoot: Option[Path] = Some(TestOperators.fixtureMountRoot)
+    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
     override protected def replayLogRoot: Option[URI] = None
     override protected def warehousesEnabled: Boolean = warehouses
     override protected def costHintsLoader: CostHintsLoader = NoHints
@@ -299,10 +296,10 @@ class OperatorUpdatesSpec
   }
 
   /**
-    * The updates under test, with `resolver` (the fixture resolver, unless a case gives another)
-    * and with seams set as the case needs. `resolverUsers` records the user each resolver was made
-    * for: one is made for every change that reaches the binding, whether or not it names a
-    * dataset or a model.
+    * The updates under test, bound to the fixtures but for `resolver` and `root` (the fixture
+    * resolver and mount root, unless a case gives others), and with seams set as the case needs.
+    * `resolverUsers` records the user each change was bound for: bindings are made for every
+    * change that reaches the binding, whether or not it names a dataset or a model.
     */
   private class FixtureUpdates(
       root: Option[Path] = Some(TestOperators.fixtureMountRoot),
@@ -311,11 +308,10 @@ class OperatorUpdatesSpec
       resolver: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver
   ) extends OperatorUpdates {
     val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
-    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver = {
+    override protected def bindingsFor(uid: Integer): RunBindings = {
       resolverUsers += uid
-      resolver
+      TestUtils.fixtureBindings.copy(repositories = resolver, mountRoot = root)
     }
-    override protected def mountRoot: Option[Path] = root
     override protected def warehousesEnabled: Boolean = warehouses
     override protected def appendUpdate(planUri: URI, record: PlanRecord): Unit =
       failAppend match {

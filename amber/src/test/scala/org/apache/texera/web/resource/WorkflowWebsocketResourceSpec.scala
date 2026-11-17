@@ -30,13 +30,7 @@ import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.ClusterListener
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionPlanStore,
-  RepositoryVersionResolver,
-  ScanFileResolver,
-  VFSURIFactory
-}
+import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionPlanStore, VFSURIFactory}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -70,11 +64,13 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
+import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
 import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_OF_USER}
@@ -127,7 +123,6 @@ import org.slf4j.LoggerFactory
 
 import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
-import java.nio.file.Path
 import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import java.util.UUID
@@ -954,23 +949,17 @@ class WorkflowWebsocketResourceSpec
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
-  /** The Dashboard's create, with the fixture resolvers and no cost hints. */
+  /** The Dashboard's create, with the fixture bindings and no cost hints. */
   private object FixtureCreator extends ExecutionCreator {
-    override protected def fileResolverFor(uid: Integer): ScanFileResolver =
-      TestOperators.fixtureFileResolver
-    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
-      TestOperators.fixtureRepositoryResolver
-    override protected def mountRoot: Option[Path] = Some(TestOperators.fixtureMountRoot)
+    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
     override protected def replayLogRoot: Option[URI] = None
     override protected def warehousesEnabled: Boolean = false
     override protected def costHintsLoader: CostHintsLoader = NoHints
   }
 
-  /** The Dashboard's store of a change to a paused operator, with the fixture resolver. */
+  /** The Dashboard's store of a change to a paused operator, with the fixture bindings. */
   private object FixtureUpdates extends OperatorUpdates {
-    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
-      TestOperators.fixtureRepositoryResolver
-    override protected def mountRoot: Option[Path] = Some(TestOperators.fixtureMountRoot)
+    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
     override protected def warehousesEnabled: Boolean = false
   }
 

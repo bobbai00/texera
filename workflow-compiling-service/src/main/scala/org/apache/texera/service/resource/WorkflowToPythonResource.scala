@@ -25,12 +25,17 @@ import io.dropwizard.auth.Auth
 import jakarta.annotation.security.RolesAllowed
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.{Consumes, POST, Path, Produces}
-import org.apache.texera.amber.core.storage.{FileResolver, RepositoryVersionResolver}
+import org.apache.texera.amber.core.storage.FileResolver
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
-import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.apache.texera.common.compiler.{
+  CompilationErrorHandling,
+  CompileSettings,
+  RunBindings,
+  WorkflowCompiler
+}
 import org.apache.texera.amber.translator.WorkflowToPythonTranslator
 import org.apache.texera.auth.SessionUser
 
@@ -96,8 +101,7 @@ class WorkflowToPythonResource extends LazyLogging {
     try {
       new WorkflowCompiler(
         new WorkflowContext(workflowId = WorkflowIdentity(0)),
-        FileResolver.forUser(uid),
-        RepositoryVersionResolver.Unavailable // a Lenient compile pins no version
+        RunBindings.forEditing(FileResolver.forUser(uid), CompileSettings.fromSiteSettings())
       ).compile(logicalPlanPojo, CompilationErrorHandling.Lenient).operatorIdToOutputSchemas
     } catch {
       case e: Exception =>

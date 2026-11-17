@@ -27,7 +27,9 @@ import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.common.compiler.CompileSettings
 import org.jgrapht.graph.DirectedAcyclicGraph
 import org.jgrapht.util.SupplierUtil
 
@@ -148,6 +150,18 @@ case class LogicalPlan(
       operatorsInsideLoopBlocks.contains(op.operatorIdentifier) &&
         literalReferences(objectMapper.valueToTree[ObjectNode](op)).nonEmpty
     )
+
+  /**
+    * Sets, on each operator that reads one, the site's setting its plan is compiled under: the
+    * column limit of each CSV scan. A value the operator arrived with is replaced, so a request
+    * cannot choose one.
+    */
+  def applyCompileSettings(settings: CompileSettings): Unit =
+    operators.foreach {
+      case csvScan: CSVScanSourceOpDesc =>
+        csvScan.maxColumns = Some(settings.csvParserMaxColumns)
+      case _ => // reads no setting of the site's
+    }
 
   /**
     * Resolves each scan source operator's user-given file name to a URI and sets it on the

@@ -26,8 +26,6 @@ import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionPlanStore,
   PlanRecord,
-  RepositoryVersionResolver,
-  ScanFileResolver,
   VFSURIFactory,
   WarehouseUnavailableException
 }
@@ -67,11 +65,13 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorMetrics,
   OperatorStatistics
 }
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
+import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -1066,14 +1066,9 @@ class SyncExecutionResourceSpec
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
-  /** The Dashboard's create, with the fixture resolvers and no cost hints. */
+  /** The Dashboard's create, with the fixture bindings and no cost hints. */
   private object FixtureCreator extends ExecutionCreator {
-    override protected def fileResolverFor(uid: Integer): ScanFileResolver =
-      TestOperators.fixtureFileResolver
-    override protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
-      TestOperators.fixtureRepositoryResolver
-    override protected def mountRoot: Option[java.nio.file.Path] =
-      Some(TestOperators.fixtureMountRoot)
+    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
     override protected def replayLogRoot: Option[URI] = None
     override protected def warehousesEnabled: Boolean = false
     override protected def costHintsLoader: CostHintsLoader = NoHints

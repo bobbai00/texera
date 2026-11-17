@@ -29,6 +29,7 @@ import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.dao.StatementRecorder
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.assertj.core.api.Assertions.assertThat
 import org.scalatest.BeforeAndAfterAll
@@ -50,9 +51,11 @@ class WorkflowToPythonResourceSpec
     with LoggedInResourceFixture {
 
   private val resources: ResourceExtension = resourcesFor(new WorkflowToPythonResource())
+  private var recorder: StatementRecorder = _
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
+    recorder = StatementRecorder.installOn(getDSLContext)
     insertUsersAndPrivateDataset()
     resources.before()
   }
@@ -247,5 +250,19 @@ class WorkflowToPythonResourceSpec
     assert(code.contains("import pandas as pd"), s"unexpected script: $code")
     assert(!code.contains(privateDatasetRepositoryName), s"unexpected script: $code")
     assert(!code.contains(privateDatasetVersionHash), s"unexpected script: $code")
+  }
+
+  it should "read the site's settings once for an export, as the editing compile does" in {
+    // The export infers a CSV scan's schema under the site's column limit, which its compile
+    // reads for the plan.
+    val statements = recorder.record {
+      exportedCodeOf(postExport(csvScanPlan("/dataset/owner@test.com/private_dataset/v1/t.csv")))
+    }
+
+    assert(
+      statements.count(statement =>
+        statement.verb == "SELECT" && statement.sql.contains("site_settings")
+      ) == 1
+    )
   }
 }

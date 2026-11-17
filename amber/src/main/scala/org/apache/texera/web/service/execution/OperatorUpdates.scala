@@ -23,20 +23,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.state.StateReferencing
-import org.apache.texera.amber.core.storage.{
-  ExecutionPlanStore,
-  FileResolver,
-  NoStoredPlanException,
-  PlanRecord,
-  RepositoryMountManager,
-  RepositoryVersionResolver
-}
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, PhysicalPlanCodec}
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
-import org.apache.texera.common.compiler.WorkflowCompiler
+import org.apache.texera.common.compiler.{RunBindings, WorkflowCompiler}
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.SqlServer
@@ -49,9 +42,9 @@ import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.http.request.execution.OperatorUpdateRequestBody
 import org.apache.texera.web.model.http.response.execution.OperatorUpdateResponse
+import org.apache.texera.web.service.PlanToRun
 
 import java.net.URI
-import java.nio.file.Path
 import java.sql.Timestamp
 import java.util.UUID
 import javax.ws.rs.core.Response
@@ -104,12 +97,8 @@ object OperatorUpdates extends OperatorUpdates {
 class OperatorUpdates extends LazyLogging {
   import OperatorUpdates.ExecutionRow
 
-  /** Pins the dataset and model versions a change reads, as user `uid` may. A seam for a spec. */
-  protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
-    FileResolver.repositoryVersionResolverForUser(uid)
-
-  /** The directory computing units mount datasets and models under. A seam, as above. */
-  protected def mountRoot: Option[Path] = RepositoryMountManager.mountRoot
+  /** What a change is bound to, for user `uid`, as the execution's plan was. A seam for a spec. */
+  protected def bindingsFor(uid: Integer): RunBindings = PlanToRun.bindingsFor(uid)
 
   /** Whether runs write into per-user warehouses. A seam for a spec. */
   protected def warehousesEnabled: Boolean = StorageConfig.warehouseEnabled
@@ -388,13 +377,7 @@ class OperatorUpdates extends LazyLogging {
     * is.
     */
   private def boundFor(uid: Integer, running: ExecutionPlan, op: PhysicalOp): PhysicalOp = {
-    val compiler =
-      new WorkflowCompiler(
-        running.context,
-        FileResolver.forUser(uid),
-        repositoryResolverFor(uid),
-        mountRoot
-      )
+    val compiler = new WorkflowCompiler(running.context, bindingsFor(uid))
     try compiler.bindResources(op)
     catch {
       case error @ (_: FileNotFoundException | _: IllegalStateException) =>

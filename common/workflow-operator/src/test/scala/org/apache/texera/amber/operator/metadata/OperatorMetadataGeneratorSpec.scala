@@ -27,8 +27,10 @@ import org.apache.texera.amber.operator.filter.SpecializedFilterOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.projection.ProjectionOpDesc
 import org.apache.texera.amber.operator.sortPartitions.SortPartitionsOpDesc
+import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
 import org.apache.texera.amber.operator.unneststring.UnnestStringOpDesc
+import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -58,6 +60,25 @@ class OperatorMetadataGeneratorSpec extends AnyFlatSpec with Matchers {
     properties.has(StateReferencing.SIDECAR_PROPERTY) shouldBe false
     val required = schema.get("required").elements().asScala.map(_.asText()).toList
     required should not contain StateReferencing.SIDECAR_PROPERTY
+  }
+
+  it should "leave out a property the compiler sets, which reaches the executor all the same" in {
+    val schema = OperatorMetadataGenerator.generateOperatorJsonSchema(classOf[CSVScanSourceOpDesc])
+    val properties = schema.get("properties")
+    // The scan's own settings are the user's to edit; its column limit is the compiler's.
+    properties.has("customDelimiter") shouldBe true
+    properties.has("hasHeader") shouldBe true
+    properties.has("maxColumns") shouldBe false
+    val required = schema.get("required").elements().asScala.map(_.asText()).toList
+    required should not contain "maxColumns"
+
+    // Hidden from the editor only: the descriptor's JSON, which the executor is built from,
+    // carries it, and it parses back.
+    val compiled = new CSVScanSourceOpDesc
+    compiled.maxColumns = Some(731)
+    val json = objectMapper.writeValueAsString(compiled)
+    objectMapper.readTree(json).get("maxColumns").asInt() shouldBe 731
+    objectMapper.readValue(json, classOf[CSVScanSourceOpDesc]).maxColumns shouldBe Some(731)
   }
 
   /** The properties of `opDescClass`'s schema whose `noLoopVariable` keyword is `true`. */

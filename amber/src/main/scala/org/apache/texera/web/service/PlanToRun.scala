@@ -19,6 +19,7 @@
 
 package org.apache.texera.web.service
 
+import org.apache.texera.amber.core.storage.{FileResolver, RepositoryMountManager}
 import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
   PhysicalPlanCodec,
@@ -28,7 +29,12 @@ import org.apache.texera.amber.core.workflow.{
 }
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.apache.texera.common.compiler.{
+  CompilationErrorHandling,
+  CompileSettings,
+  RunBindings,
+  WorkflowCompiler
+}
 
 import java.net.URI
 
@@ -66,6 +72,19 @@ object PlanToRun {
     )
 
   /**
+    * What a plan made to run for user `uid` is bound to: the files, datasets and models that
+    * user may read, the directory this deployment's computing units mount datasets and models
+    * under, and the site's settings as they stand now.
+    */
+  def bindingsFor(uid: Integer): RunBindings =
+    RunBindings(
+      files = FileResolver.forUser(uid),
+      repositories = FileResolver.repositoryVersionResolverForUser(uid),
+      mountRoot = RepositoryMountManager.mountRoot,
+      settings = CompileSettings.fromSiteSettings()
+    )
+
+  /**
     * Makes, from `logicalPlan`, the plan to run for the run `compiler` was made for, and saves it.
     *
     * The run is the compiler's context: its ids stamp every operator, and the plan is saved with
@@ -76,9 +95,9 @@ object PlanToRun {
     * and cost hints from the saved plan. The plan saved replays `replay`, writes its replay log
     * to `replayLog`, and reads no input.
     *
-    * @param compiler  the run's compiler: it resolves files, datasets and models as the run's user
-    *                  may, and writes code against the root the deployment's computing units
-    *                  mount datasets and models under
+    * @param compiler  the run's compiler, bound for the run's user ([[bindingsFor]]): it resolves
+    *                  files, datasets and models as that user may, and writes code against the
+    *                  root the deployment's computing units mount datasets and models under
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors

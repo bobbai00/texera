@@ -25,9 +25,14 @@ import io.dropwizard.auth.Auth
 import jakarta.annotation.security.RolesAllowed
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.{Consumes, POST, Path, Produces}
-import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
+import org.apache.texera.common.compiler.{
+  CompilationErrorHandling,
+  CompileSettings,
+  RunBindings,
+  WorkflowCompiler
+}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.amber.core.storage.{FileResolver, RepositoryVersionResolver}
+import org.apache.texera.amber.core.storage.FileResolver
 import org.apache.texera.amber.core.tuple.Attribute
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
@@ -74,12 +79,14 @@ class WorkflowCompilationResource extends LazyLogging {
 
     // Compile the pojo using WorkflowCompiler; the editing path must never
     // throw, so pass Lenient explicitly (mirrors amber passing Strict). It makes no
-    // plan to run, so it pins no dataset or model version and is given no resolver.
+    // plan to run, so it is bound for editing, which pins no dataset or model version.
     val compilationResult =
       new WorkflowCompiler(
         context,
-        FileResolver.forUser(user.getUid),
-        RepositoryVersionResolver.Unavailable
+        RunBindings.forEditing(
+          FileResolver.forUser(user.getUid),
+          CompileSettings.fromSiteSettings()
+        )
       ).compile(logicalPlanPojo, CompilationErrorHandling.Lenient)
 
     val operatorOutputSchemas = compilationResult.operatorIdToOutputSchemas.map {

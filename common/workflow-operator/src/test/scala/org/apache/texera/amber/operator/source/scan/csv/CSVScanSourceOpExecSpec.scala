@@ -19,13 +19,14 @@
 
 package org.apache.texera.amber.operator.source.scan.csv
 
-import com.univocity.parsers.common.TextParsingException
+import com.univocity.parsers.common.{ParsingContext, TextParsingException}
 import com.univocity.parsers.csv.{CsvParser, CsvParserSettings}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 
 import java.io.StringReader
+import java.lang.reflect.Proxy
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -34,7 +35,8 @@ import java.nio.file.{Files, Path}
   * Verifies the column-overflow translation in [[CSVScanSourceOpExec.parseNextRow]]
   * — the path that turns a deep Univocity stack trace into a single-sentence message
   * the workflow user can act on — and the instance-side open()/produceTuple()/close()
-  * scan loop driven over real temp CSV files.
+  * scan loop driven over real temp CSV files, under the column limit its descriptor
+  * carries.
   */
 class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
 
@@ -107,6 +109,49 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     assert(!CSVScanSourceOpExec.isColumnOverflow(ex, maxColumns = 5))
   }
 
+  /** The context of a parser that has counted `column` values in the row it is reading. */
+  private def parsingAt(column: Int): ParsingContext =
+    Proxy
+      .newProxyInstance(
+        classOf[ParsingContext].getClassLoader,
+        Array[Class[_]](classOf[ParsingContext]),
+        (_, method, _) =>
+          (method.getName, method.getReturnType) match {
+            case ("currentColumn", _)        => Int.box(column)
+            case (_, java.lang.Integer.TYPE) => Int.box(0)
+            case (_, java.lang.Long.TYPE)    => Long.box(0L)
+            case (_, java.lang.Boolean.TYPE) => Boolean.box(false)
+            case _                           => null
+          }
+      )
+      .asInstanceOf[ParsingContext]
+
+  // HotSpot throws an exception from code it has compiled as a hot path with no message
+  // (-XX:+OmitStackTraceInFastThrow), which is how a JVM that has met overflows before
+  // throws the next ones. The index is then not there to read, and the parser's own count
+  // of the row's values tells the overflow instead.
+  it should "detect an AIOOBE thrown with no message, by the values the parser had counted" in {
+    def thrownAt(column: Int): TextParsingException =
+      new TextParsingException(parsingAt(column), "wrapper", new ArrayIndexOutOfBoundsException())
+
+    assert(CSVScanSourceOpExec.isColumnOverflow(thrownAt(column = 6), maxColumns = 5))
+    // Within the limit, or nowhere in a row, it is some other array's bound.
+    assert(!CSVScanSourceOpExec.isColumnOverflow(thrownAt(column = 5), maxColumns = 5))
+    val nowhere = new TextParsingException(null, "wrapper", new ArrayIndexOutOfBoundsException())
+    assert(!CSVScanSourceOpExec.isColumnOverflow(nowhere, maxColumns = 5))
+  }
+
+  it should "find the parser one value past the limit when it overflows, whatever the message" in {
+    // What the count above stands on: the parser counts a value before it stores it.
+    val parser = parserWithMaxColumns(2)
+    parser.beginParsing(new StringReader("a,b,c,d,e\n"))
+
+    val thrown = intercept[TextParsingException](parser.parseNext())
+
+    assert(thrown.getCause.isInstanceOf[ArrayIndexOutOfBoundsException])
+    assert(thrown.getColumnIndex == 3)
+  }
+
   "columnOverflowMessage" should "include the configured maximum so the user knows the current limit" in {
     val msg = CSVScanSourceOpExec.columnOverflowMessage(750)
     assert(msg.contains("750"))
@@ -137,19 +182,22 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     * Builds a CSVScanSourceOpExec over `path`. The descriptor MUST have a custom
     * delimiter and a resolved file URI *before* the exec is constructed: the
     * constructor eagerly computes the schema via desc.sourceSchema(), which needs
-    * both to return a non-null schema.
+    * both to return a non-null schema. It carries the column limit a compile
+    * would have set, the default unless a case gives another.
     */
   private def execOver(
       path: Path,
       hasHeader: Boolean,
       offset: Option[Int] = None,
-      limit: Option[Int] = None
+      limit: Option[Int] = None,
+      maxColumns: Option[Int] = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
   ): CSVScanSourceOpExec = {
     val desc = new CSVScanSourceOpDesc()
     desc.customDelimiter = Some(",")
     desc.hasHeader = hasHeader
     desc.offset = offset
     desc.limit = limit
+    desc.maxColumns = maxColumns
     desc.setResolvedFileName(URI.create(path.toUri.toString))
     new CSVScanSourceOpExec(objectMapper.writeValueAsString(desc))
   }
@@ -291,5 +339,60 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     assert(tuples(2).getFields(0) == null)
     assert(tuples(2).getFields(1).toString == "z")
     assert(exec.getWarnings.isEmpty)
+  }
+
+  // ---------------------------------------------------------------------------
+  // The column limit: the one the descriptor carries, which the compiler set.
+  // ---------------------------------------------------------------------------
+
+  it should "scan under the column limit its descriptor carries" in {
+    // The 100 rows the schema is inferred from have one column, so only the scan
+    // meets data row 101, which has three.
+    val narrow = (1 to 100).map(_.toString).mkString("\n")
+    val path = writeTempCsv(s"a\n$narrow\n7,8,9\n")
+
+    val within = execOver(path, hasHeader = true, maxColumns = Some(3))
+    within.open()
+    val tuples =
+      try within.produceTuple().toList
+      finally within.close()
+    // Within the limit the wide row is parsed, then skipped for not fitting the schema.
+    assert(tuples.size == 100)
+    assert(within.getWarnings.size == 1)
+    assert(within.getWarnings.head.contains("row 101"))
+
+    val past = execOver(path, hasHeader = true, maxColumns = Some(2))
+    past.open()
+    val overflow = intercept[RuntimeException] {
+      try past.produceTuple().toList
+      finally past.close()
+    }
+    assert(overflow.getMessage == "Max columns of 2 exceeded.")
+  }
+
+  it should "infer its schema under that limit too" in {
+    val path = writeTempCsv("a,b,c\n1,2,3\n")
+
+    val within = execOver(path, hasHeader = true, maxColumns = Some(3))
+    within.open()
+    val tuples =
+      try within.produceTuple().toList
+      finally within.close()
+    assert(tuples.map(_.getFields.toList) == List(List(1, 2, 3)))
+
+    val overflow = intercept[RuntimeException] {
+      execOver(path, hasHeader = true, maxColumns = Some(2))
+    }
+    assert(overflow.getMessage == "Max columns of 2 exceeded.")
+  }
+
+  it should "refuse a descriptor with no column limit, which the compiler did not make" in {
+    val refused = intercept[IllegalStateException] {
+      execOver(writeTempCsv("a,b\n1,x\n"), hasHeader = true, maxColumns = None)
+    }
+    assert(
+      refused.getMessage ==
+        "The CSV scan has no column limit: its plan was not made by the compiler."
+    )
   }
 }

@@ -35,11 +35,6 @@ import org.apache.texera.amber.core.state.StateReferencing.{
   literalReferences,
   noLoopVariableReferences
 }
-import org.apache.texera.amber.core.storage.{
-  RepositoryMountManager,
-  RepositoryVersionResolver,
-  ScanFileResolver
-}
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{
@@ -58,7 +53,6 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.StackTraceUtils.getStackTraceWithAllCauses
 import org.apache.texera.common.config.EnvironmentalVariable
 
-import java.nio.file.Path
 import java.time.Instant
 import scala.collection.immutable.VectorMap
 import scala.collection.mutable
@@ -253,27 +247,17 @@ case class WorkflowCompilationResult(
   *
   * Only a Strict compile makes a plan to run, so only it pins the datasets and models operators
   * name (see [[bindResources]]): that is a database lookup per version, and the editing path
-  * compiles on every edit.
+  * compiles on every edit. Every compile, in either mode, gives each operator the site's
+  * settings it is compiled under.
   *
-  * @param context            the workflow and execution the compiler makes plans for: their ids
-  *                           stamp every operator. Public, so what saves a plan to run saves it
-  *                           for the run the compiler made it for.
-  * @param fileResolver       resolves scan source file names to URIs.
-  * @param repositoryResolver pins the dataset and model versions operators name, for the user
-  *                           the plan is made for. Only a Strict compile asks it, so a compile
-  *                           that makes no plan to run passes
-  *                           [[RepositoryVersionResolver.Unavailable]].
-  * @param mountRoot          the directory computing units mount repositories under. The plan's
-  *                           code reads each version from below it, and the plan records it, as
-  *                           text, beside what to mount ([[RepositoryMounts.root]]): the engine
-  *                           checks its own root against that before mounting.
+  * @param context  the workflow and execution the compiler makes plans for: their ids stamp
+  *                 every operator. Public, so what saves a plan to run saves it for the run the
+  *                 compiler made it for.
+  * @param bindings what the plans are bound to, for the user and the deployment they are made
+  *                 for. A compile that makes no plan to run is given
+  *                 [[RunBindings.forEditing]]'s.
   */
-class WorkflowCompiler(
-    val context: WorkflowContext,
-    fileResolver: ScanFileResolver,
-    repositoryResolver: RepositoryVersionResolver,
-    mountRoot: Option[Path] = RepositoryMountManager.mountRoot
-) extends LazyLogging {
+class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) extends LazyLogging {
 
   /**
     * Pins the datasets and models `op` names, as a Strict compile does for every operator: its
@@ -290,14 +274,14 @@ class WorkflowCompiler(
     */
   def bindResources(op: PhysicalOp): PhysicalOp =
     op.resourceBinding.fold(op) { binding =>
-      val root = mountRoot.getOrElse(
+      val root = bindings.mountRoot.getOrElse(
         throw new IllegalStateException(
           s"Operator ${op.id.logicalOpId.id} reads a dataset or model, but there is no " +
             s"directory to mount it under: ${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is " +
             "not set."
         )
       )
-      val bound = binding.bind(repositoryResolver, root)
+      val bound = binding.bind(bindings.repositories, root)
       op.copy(
         opExecInitInfo = bound.opExecInitInfo,
         repositoryMounts = Option.when(bound.mountLocators.nonEmpty)(
@@ -495,14 +479,18 @@ class WorkflowCompiler(
     // 1. convert the pojo to logical plan
     val logicalPlan: LogicalPlan = LogicalPlan(logicalPlanPojo)
 
-    // 2. resolve the file name in each scan source operator
-    logicalPlan.resolveScanSourceOpFileName(fileResolver, Some(errors))
+    // 2. give each operator the site's settings the plan is compiled under, in place of
+    // whatever it arrived with
+    logicalPlan.applyCompileSettings(bindings.settings)
 
-    // 3. expand the logical plan to the physical plan, and get the output ports that need storage
+    // 3. resolve the file name in each scan source operator
+    logicalPlan.resolveScanSourceOpFileName(bindings.files, Some(errors))
+
+    // 4. expand the logical plan to the physical plan, and get the output ports that need storage
     val (expandedPlan, outputPortsNeedingStorage) =
       expandLogicalPlan(logicalPlan, logicalPlanPojo.opsToViewResult, errors)
 
-    // 4. collect the output schema for each logical op
+    // 5. collect the output schema for each logical op
     // even if an error is encountered during logical => physical expansion, we still want to
     // collect the output schemas of the remaining no-error operators. Schema-propagation failures
     // are errors of their operators too (e.g. a Projection on a missing column, which would
@@ -515,7 +503,7 @@ class WorkflowCompiler(
         expandedPlan
       case CompilationErrorHandling.Strict =>
         if (errors.nonEmpty) failWith(logicalPlan, errors)
-        // 5. a plan made to run pins the datasets and models its operators name, last, once the
+        // 6. a plan made to run pins the datasets and models its operators name, last, once the
         // plan is otherwise valid: the engine is handed the final code and the repositories to
         // mount, never a binding.
         val boundPlan = bindPlanResources(expandedPlan, errors)

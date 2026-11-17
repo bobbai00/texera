@@ -20,14 +20,7 @@
 package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{
-  ExecutionPlanStore,
-  FileResolver,
-  PlanRecord,
-  RepositoryMountManager,
-  RepositoryVersionResolver,
-  ScanFileResolver
-}
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   PhysicalPlanCodec,
@@ -37,7 +30,7 @@ import org.apache.texera.amber.core.workflow.{
 }
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.common.compiler.{WorkflowCompilationFailed, WorkflowCompiler}
+import org.apache.texera.common.compiler.{RunBindings, WorkflowCompilationFailed, WorkflowCompiler}
 import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -64,7 +57,6 @@ import org.apache.texera.web.service.{
 }
 
 import java.net.URI
-import java.nio.file.Path
 import java.sql.Timestamp
 import javax.ws.rs.core.Response
 import javax.ws.rs.{
@@ -113,9 +105,10 @@ object ExecutionCreator extends ExecutionCreator {
   *  1. The warehouse the run writes into and the replay log it replays are checked (400).
   *  1. The execution's row is inserted, at status 0, with where it writes its replay log when
   *     replay logs are kept. No row is left by a request refused before this.
-  *  1. The workflow is compiled for the user, Strict, with the cost hints of their newest completed
-  *     run of it, and the plan made ([[PlanToRun.make]]). A workflow that does not compile marks
-  *     the row FAILED and is answered with each operator's error (400).
+  *  1. The workflow is compiled for the user, Strict, under the site's settings as they stand and
+  *     with the cost hints of their newest completed run of it, and the plan made
+  *     ([[PlanToRun.make]]). A workflow that does not compile marks the row FAILED and is
+  *     answered with each operator's error (400).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
   *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
   *     the email notification. A write that fails marks the row FAILED (500).
@@ -128,15 +121,8 @@ object ExecutionCreator extends ExecutionCreator {
 class ExecutionCreator extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, ExecutionNotCreated, MaxColumnLength}
 
-  /** Resolves the scan files the plan reads, as user `uid` may. A seam for a spec's fixtures. */
-  protected def fileResolverFor(uid: Integer): ScanFileResolver = FileResolver.forUser(uid)
-
-  /** Pins the dataset and model versions the plan reads, as user `uid` may. A seam, as above. */
-  protected def repositoryResolverFor(uid: Integer): RepositoryVersionResolver =
-    FileResolver.repositoryVersionResolverForUser(uid)
-
-  /** The directory computing units mount datasets and models under, which the plan's code reads. */
-  protected def mountRoot: Option[Path] = RepositoryMountManager.mountRoot
+  /** What the plan is bound to, for user `uid`. A seam for a spec's fixtures. */
+  protected def bindingsFor(uid: Integer): RunBindings = PlanToRun.bindingsFor(uid)
 
   /** Where runs keep their replay logs; None when they keep none. A seam for a spec. */
   protected def replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder
@@ -223,8 +209,7 @@ class ExecutionCreator extends LazyLogging {
       // The plan compiled, as the request sent it, loop-variable references included: written
       // before the compile resolves its operators in place.
       val logical = checked.plan.toJson
-      val compiler =
-        new WorkflowCompiler(context, fileResolverFor(uid), repositoryResolverFor(uid), mountRoot)
+      val compiler = new WorkflowCompiler(context, bindingsFor(uid))
       val made =
         try Right(PlanToRun.make(compiler, checked.plan, replay, replayLog))
         catch { case failed: WorkflowCompilationFailed => Left(failed) }

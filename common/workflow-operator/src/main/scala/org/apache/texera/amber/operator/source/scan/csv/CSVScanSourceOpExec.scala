@@ -26,7 +26,6 @@ import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.{AttributeTypeUtils, Schema, TupleLike}
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.dao.SiteSettings
 
 import java.io.InputStreamReader
 import java.net.URI
@@ -35,11 +34,16 @@ import scala.util.Try
 
 class CSVScanSourceOpExec private[csv] (descString: String) extends SourceOperatorExecutor {
   val desc: CSVScanSourceOpDesc = objectMapper.readValue(descString, classOf[CSVScanSourceOpDesc])
+  // The plan's limit, which the compiler set: an executor asks for no setting of the site's.
+  private val maxColumns: Int = desc.maxColumns.getOrElse(
+    throw new IllegalStateException(
+      "The CSV scan has no column limit: its plan was not made by the compiler."
+    )
+  )
   var inputReader: InputStreamReader = _
   var parser: CsvParser = _
   var nextRow: Array[String] = _
   var numRowGenerated = 0
-  private var maxColumns: Int = CSVScanSourceOpExec.DEFAULT_MAX_COLUMNS
   private val schema: Schema = desc.sourceSchema()
   private val skippedRows = new SkippedRowReporter()
 
@@ -105,7 +109,6 @@ class CSVScanSourceOpExec private[csv] (descString: String) extends SourceOperat
     ) // disable skipping lines starting with # (default comment character)
     val csvSetting = new CsvParserSettings()
     csvSetting.setMaxCharsPerColumn(-1)
-    maxColumns = CSVScanSourceOpExec.getMaxColumns
     csvSetting.setMaxColumns(maxColumns)
     csvSetting.setFormat(csvFormat)
     csvSetting.setHeaderExtractionEnabled(desc.hasHeader)
@@ -125,10 +128,6 @@ class CSVScanSourceOpExec private[csv] (descString: String) extends SourceOperat
 }
 
 object CSVScanSourceOpExec {
-  val DEFAULT_MAX_COLUMNS = 512
-
-  def getMaxColumns: Int =
-    SiteSettings.getInt("csv_parser_max_columns", DEFAULT_MAX_COLUMNS)
 
   /**
     * Wraps `parser.parseNext()` so a column-count overflow is reported to the user
@@ -146,10 +145,23 @@ object CSVScanSourceOpExec {
     }
   }
 
+  /**
+    * Whether `e` is the parser storing a value past `maxColumns`: an array index out of bounds,
+    * at the limit.
+    *
+    * The index is read from the exception's message, which HotSpot leaves out of an exception
+    * thrown from code it has compiled as a hot path (`-XX:+OmitStackTraceInFastThrow`): a JVM
+    * that has met overflows before throws the next ones with no message. Such an overflow is
+    * told by the values the parser had counted in the row, more than the limit allows, since it
+    * counts a value before it stores it.
+    */
   private[csv] def isColumnOverflow(e: TextParsingException, maxColumns: Int): Boolean =
     Option(e.getCause)
       .collect { case aioobe: ArrayIndexOutOfBoundsException => aioobe }
-      .exists(aioobe => aioobeIndex(aioobe).exists(_ == maxColumns))
+      .exists { aioobe =>
+        if (aioobe.getMessage == null) e.getColumnIndex > maxColumns
+        else aioobeIndex(aioobe).contains(maxColumns)
+      }
 
   private def aioobeIndex(aioobe: ArrayIndexOutOfBoundsException): Option[Int] = {
     val msg = Option(aioobe.getMessage).getOrElse("")

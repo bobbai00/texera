@@ -29,6 +29,8 @@ import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.{
   CompilationErrorHandling,
+  CompileSettings,
+  RunBindings,
   WorkflowCompilationFailed,
   WorkflowCompiler
 }
@@ -217,9 +219,12 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
       try {
         new WorkflowCompiler(
           new WorkflowContext(),
-          TestOperators.fixtureFileResolver,
-          RepositoryVersionResolver.Unavailable,
-          Some(TestOperators.fixtureMountRoot)
+          RunBindings(
+            TestOperators.fixtureFileResolver,
+            RepositoryVersionResolver.Unavailable,
+            Some(TestOperators.fixtureMountRoot),
+            CompileSettings.Default
+          )
         ).compile(pojo, CompilationErrorHandling.Strict)
         Right(())
       } catch { case failure: Throwable => Left(failure) }

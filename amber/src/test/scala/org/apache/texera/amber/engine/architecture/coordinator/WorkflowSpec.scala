@@ -20,6 +20,7 @@
 package org.apache.texera.amber.engine.architecture.coordinator
 
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
@@ -37,12 +38,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 class WorkflowSpec extends AnyFlatSpec {
 
   private def newCompiler(context: WorkflowContext): WorkflowCompiler =
-    new WorkflowCompiler(
-      context,
-      TestOperators.fixtureFileResolver,
-      TestOperators.fixtureRepositoryResolver,
-      Some(TestOperators.fixtureMountRoot)
-    )
+    new WorkflowCompiler(context, TestUtils.fixtureBindings)
 
   "Workflow.fromCompilationResult" should
     "write outputPortsNeedingStorage onto the context and unwrap the physical plan" in {

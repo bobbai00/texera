@@ -60,12 +60,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
 
   // The scan reads a fixture on the local disk, and no operator names a dataset or model.
   private def newCompiler(context: WorkflowContext): WorkflowCompiler =
-    new WorkflowCompiler(
-      context,
-      TestOperators.fixtureFileResolver,
-      TestOperators.fixtureRepositoryResolver,
-      Some(TestOperators.fixtureMountRoot)
-    )
+    new WorkflowCompiler(context, TestUtils.fixtureBindings)
 
   private def pojo(operators: List[LogicalOp], links: List[LogicalLink]): LogicalPlanPojo =
     LogicalPlanPojo(operators, links, List.empty, List.empty)

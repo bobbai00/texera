@@ -21,7 +21,12 @@ package org.apache.texera.common.compiler
 
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.executor.{
+  ExecFactory,
+  OpExecWithClassName,
+  OpExecWithCode,
+  SourceOperatorExecutor
+}
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.storage.{RepositoryVersionResolver, ScanFileResolver}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
@@ -86,13 +91,17 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
   // The scan sources here read fixture files on the local disk.
   private def newCompiler(
-      fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver
+      fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver,
+      settings: CompileSettings = CompileSettings.Default
   ): WorkflowCompiler =
     new WorkflowCompiler(
       newContext(),
-      fileResolver,
-      TestOperators.fixtureRepositoryResolver,
-      Some(TestOperators.fixtureMountRoot)
+      RunBindings(
+        fileResolver,
+        TestOperators.fixtureRepositoryResolver,
+        Some(TestOperators.fixtureMountRoot),
+        settings
+      )
     )
 
   /**
@@ -1132,7 +1141,10 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       resolver: RepositoryVersionResolver,
       mountRoot: Option[Path] = Some(planMountRoot)
   ): WorkflowCompiler =
-    new WorkflowCompiler(newContext(), TestOperators.fixtureFileResolver, resolver, mountRoot)
+    new WorkflowCompiler(
+      newContext(),
+      RunBindings(TestOperators.fixtureFileResolver, resolver, mountRoot, CompileSettings.Default)
+    )
 
   private def uiParameter(
       name: String,
@@ -1440,6 +1452,111 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(bound.repositoryMounts == inPlan.repositoryMounts)
     // An operator with nothing to bind comes back as it is.
     assert(compiler.bindResources(bound) eq bound)
+  }
+
+  "RunBindings.forEditing" should
+    "bind a compile to the files and settings it is given, and to no dataset or model" in {
+    val settings = CompileSettings(csvParserMaxColumns = 77)
+
+    val bindings = RunBindings.forEditing(TestOperators.fixtureFileResolver, settings)
+
+    assert(bindings.files eq TestOperators.fixtureFileResolver)
+    assert(bindings.settings == settings)
+    assert(bindings.repositories eq RepositoryVersionResolver.Unavailable)
+    assert(bindings.mountRoot.isEmpty)
+    // A plan made to run with them, which reads a dataset, is refused rather than left unpinned.
+    val source = resourceSourceUdf()
+    val message = onlyErrorOf(
+      strictFailure(pojo(List(source), List.empty), new WorkflowCompiler(newContext(), bindings)),
+      source
+    )
+    assert(message.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), message)
+  }
+
+  // -------------------- the site's settings --------------------
+
+  // Every compile, in either mode, sets the site's CSV column limit on each CSV scan, where the
+  // scan's schema inference and its executor find it: what runs the plan asks the site nothing.
+  // The scans here read country_sales_small.csv, which has 14 columns.
+
+  private val bothModes = Seq(CompilationErrorHandling.Lenient, CompilationErrorHandling.Strict)
+
+  /** The column limit the plan of `result` gives `scan`'s executor, if it gives one. */
+  private def columnLimitOf(result: WorkflowCompilationResult, scan: LogicalOp): Option[Int] =
+    Option(objectMapper.readTree(executorInit(result, scan)._2).get("maxColumns")).map(_.asInt())
+
+  "WorkflowCompiler" should
+    "give each CSV scan's executor the column limit of its settings, in both modes" in {
+    bothModes.foreach { mode =>
+      val first = csvOp(TestOperators.CountrySalesSmallCsvPath)
+      val second = csvOp(TestOperators.CountrySalesSmallCsvPath)
+
+      val result = newCompiler(settings = CompileSettings(csvParserMaxColumns = 77))
+        .compile(pojo(List(first, second), List.empty), mode)
+
+      withClue(s"$mode: ") {
+        assert(result.operatorIdToError.isEmpty, s"unexpected errors: ${result.operatorIdToError}")
+        assert(columnLimitOf(result, first).contains(77))
+        assert(columnLimitOf(result, second).contains(77))
+      }
+    }
+  }
+
+  it should "replace the column limit a CSV scan arrives with, as a request could send it" in {
+    bothModes.foreach { mode =>
+      val sent = parsed(
+        s"""{"operatorType":"CSVFileScan","customDelimiter":",","hasHeader":true,
+           |"fileName":${objectMapper.writeValueAsString(TestOperators.CountrySalesSmallCsvPath)},
+           |"maxColumns":100000}""".stripMargin
+      )
+      assert(sent.asInstanceOf[CSVScanSourceOpDesc].maxColumns.contains(100000))
+
+      val result = newCompiler(settings = CompileSettings(csvParserMaxColumns = 77))
+        .compile(pojo(List(sent), List.empty), mode)
+
+      withClue(s"$mode: ") {
+        assert(result.operatorIdToError.isEmpty, s"unexpected errors: ${result.operatorIdToError}")
+        assert(columnLimitOf(result, sent).contains(77))
+      }
+    }
+  }
+
+  it should "report a CSV file with more columns than that limit on its scan, in both modes" in {
+    val overflow = "java.lang.RuntimeException: Max columns of 13 exceeded."
+    def compilerOf(maxColumns: Int): WorkflowCompiler =
+      newCompiler(settings = CompileSettings(csvParserMaxColumns = maxColumns))
+    val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val plan = pojo(List(scan), List.empty)
+
+    val lenient = compilerOf(13).compile(plan)
+
+    assert(lenient.physicalPlan.isEmpty)
+    assert(onlyErrorOf(lenient, scan) == overflow)
+    assert(onlyErrorOf(strictFailure(plan, compilerOf(13)), scan) == overflow)
+    // At the file's own 14 columns, the same plan compiles.
+    bothModes.foreach { mode =>
+      val result = compilerOf(14).compile(plan, mode)
+      assert(result.operatorIdToError.isEmpty, s"$mode: ${result.operatorIdToError}")
+    }
+  }
+
+  it should "make a plan whose CSV scan's executor reads its file, with no setting to ask for" in {
+    val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val result = newCompiler(settings = CompileSettings(csvParserMaxColumns = 14))
+      .compile(pojo(List(scan), List.empty), CompilationErrorHandling.Strict)
+    assertSavable(result)
+    val (className, descString) = executorInit(result, scan)
+
+    val exec = ExecFactory
+      .newExecFromJavaClassName(className, descString)
+      .asInstanceOf[SourceOperatorExecutor]
+    exec.open()
+    val rows =
+      try exec.produceTuple().toList
+      finally exec.close()
+
+    assert(rows.nonEmpty)
+    assert(rows.forall(_.getFields.size == 14))
   }
 
   // -------------------- a plan made to run, saved and read back --------------------
