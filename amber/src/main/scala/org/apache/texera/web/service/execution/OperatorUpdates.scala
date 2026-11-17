@@ -36,7 +36,7 @@ import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.{RunBindings, WorkflowCompiler}
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
@@ -159,7 +159,7 @@ class OperatorUpdates extends LazyLogging {
     val execution =
       executionOf(eid).getOrElse(throw new NotFoundException(s"There is no execution $eid."))
     val cuid = requireAllowed(eid, execution, uid)
-    if (ExecutionResources.EndedStatuses.contains(java.lang.Short.valueOf(execution.status))) {
+    if (WorkflowExecutionStatus.Ended.contains(execution.status)) {
       throw new WebApplicationException(s"execution $eid has ended", Response.Status.CONFLICT)
     }
     // Opened while the switch is off, a per-user warehouse would be the shared one, where the plan

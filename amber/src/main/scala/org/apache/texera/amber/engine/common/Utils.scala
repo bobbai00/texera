@@ -22,6 +22,7 @@ package org.apache.texera.amber.engine.common
 import com.twitter.util.{Duration, Future, Timer}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+import org.apache.texera.dao.WorkflowExecutionStatus
 
 import java.nio.file.{Files, Path, Paths}
 import java.util.concurrent.locks.Lock
@@ -152,22 +153,22 @@ object Utils extends LazyLogging {
   }
 
   /**
-    * @param state indicates the workflow state
-    * @return code indicates the status of the execution in the DB it is 0 by default for any unused states.
-    *         This code is stored in the DB and read in the frontend.
-    *         If these codes are changed, they also have to be changed in the frontend `ngbd-modal-workflow-executions.component.ts`
+    * The code the database keeps for `state`, of those in [[WorkflowExecutionStatus]]: an
+    * execution's row keeps it as its status, and the runtime statistics keep it for each
+    * operator's state. A state that has no code of its own is kept as Unknown.
     */
   def maptoStatusCode(state: WorkflowAggregatedState): Byte = {
-    state match {
-      case WorkflowAggregatedState.UNINITIALIZED => 0
-      case WorkflowAggregatedState.READY         => 0
-      case WorkflowAggregatedState.RUNNING       => 1
-      case WorkflowAggregatedState.PAUSED        => 2
-      case WorkflowAggregatedState.COMPLETED     => 3
-      case WorkflowAggregatedState.FAILED        => 4
-      case WorkflowAggregatedState.KILLED        => 5
-      case other                                 => -1
+    val code = state match {
+      case WorkflowAggregatedState.UNINITIALIZED => WorkflowExecutionStatus.Initializing
+      case WorkflowAggregatedState.READY         => WorkflowExecutionStatus.Initializing
+      case WorkflowAggregatedState.RUNNING       => WorkflowExecutionStatus.Running
+      case WorkflowAggregatedState.PAUSED        => WorkflowExecutionStatus.Paused
+      case WorkflowAggregatedState.COMPLETED     => WorkflowExecutionStatus.Completed
+      case WorkflowAggregatedState.FAILED        => WorkflowExecutionStatus.Failed
+      case WorkflowAggregatedState.KILLED        => WorkflowExecutionStatus.Killed
+      case _                                     => WorkflowExecutionStatus.Unknown
     }
+    code.toByte
   }
 
   def withLock[X](instructions: => X)(implicit lock: Lock): X = {

@@ -28,14 +28,8 @@ import org.apache.texera.amber.core.storage.{
   WarehouseReadGuard
 }
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
-  FAILED,
-  KILLED
-}
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
   OPERATOR_PORT_EXECUTIONS,
@@ -58,10 +52,6 @@ import scala.util.control.NonFatal
   * on its unit replaces it ([[clearFinishedExecutions]]) or its unit is done with it.
   */
 object ExecutionResources extends LazyLogging {
-
-  /** The states of an execution that has ended, as its row records them. */
-  private[execution] val EndedStatuses: Seq[java.lang.Short] =
-    Seq(COMPLETED, FAILED, KILLED).map(state => java.lang.Short.valueOf(maptoStatusCode(state)))
 
   /**
     * Maps an execution's chosen warehouse (its user_warehouse row id) to its Lakekeeper
@@ -294,7 +284,7 @@ object ExecutionResources extends LazyLogging {
         WORKFLOW_VERSION.WID
           .eq(Integer.valueOf(Math.toIntExact(wid.id)))
           .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
-          .and(WORKFLOW_EXECUTIONS.STATUS.in(EndedStatuses.asJava))
+          .and(WORKFLOW_EXECUTIONS.STATUS.in(WorkflowExecutionStatus.Ended.map(Short.box).asJava))
           .and(WORKFLOW_EXECUTIONS.EID.lt(Integer.valueOf(Math.toIntExact(replacedBy.id))))
           .and(
             DSL

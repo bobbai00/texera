@@ -21,12 +21,7 @@ package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  FAILED,
-  READY
-}
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
@@ -84,7 +79,7 @@ object ExecutionsMetadataPersistService extends LazyLogging {
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, uid)
       .set(WORKFLOW_EXECUTIONS.CUID, computingUnitId)
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(maptoStatusCode(READY).toShort))
+      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Initializing))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
       .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)
@@ -98,7 +93,7 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     * failure as its last update), the way [[updateStatus]] records any status.
     */
   def markFailed(eid: ExecutionIdentity): Unit =
-    updateStatus(eid, maptoStatusCode(FAILED), new Timestamp(System.currentTimeMillis()))
+    updateStatus(eid, WorkflowExecutionStatus.Failed, new Timestamp(System.currentTimeMillis()))
 
   def tryUpdateExistingExecution(
       executionId: ExecutionIdentity
@@ -120,11 +115,11 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     * no other column of the row. An unknown eid updates nothing. A failure is logged and
     * swallowed: a run must not fail because its status could not be stored.
     */
-  def updateStatus(eid: ExecutionIdentity, status: Byte, at: Timestamp): Unit =
+  def updateStatus(eid: ExecutionIdentity, status: Short, at: Timestamp): Unit =
     tryUpdate(eid) {
       context
         .update(WORKFLOW_EXECUTIONS)
-        .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(status.toShort))
+        .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(status))
         .set(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME, at)
         .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
         .execute()

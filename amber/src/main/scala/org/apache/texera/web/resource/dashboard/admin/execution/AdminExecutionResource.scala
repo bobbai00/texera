@@ -22,7 +22,7 @@ package org.apache.texera.web.resource.dashboard.admin.execution
 import io.dropwizard.auth.Auth
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.auth.util.WorkflowAccess
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.web.resource.dashboard.admin.execution.AdminExecutionResource._
 import org.jooq.impl.DSL
@@ -56,29 +56,21 @@ object AdminExecutionResource {
       access: Boolean
   )
 
-  def mapToName(code: Short): String = {
-    code match {
-      case 0 => "READY"
-      case 1 => "RUNNING"
-      case 2 => "PAUSED"
-      case 3 => "COMPLETED"
-      case 4 => "FAILED"
-      case 5 => "KILLED"
-      case _ => "UNKNOWN" // or throw an exception, depends on your needs
-    }
-  }
+  /** The names the admin page shows and filters by, for each status an execution's row keeps. */
+  private val statusNames: Seq[(Short, String)] = Seq(
+    WorkflowExecutionStatus.Initializing -> "READY",
+    WorkflowExecutionStatus.Running -> "RUNNING",
+    WorkflowExecutionStatus.Paused -> "PAUSED",
+    WorkflowExecutionStatus.Completed -> "COMPLETED",
+    WorkflowExecutionStatus.Failed -> "FAILED",
+    WorkflowExecutionStatus.Killed -> "KILLED"
+  )
 
-  def mapToStatus(status: String): Int = {
-    status match {
-      case "READY"     => 0
-      case "RUNNING"   => 1
-      case "PAUSED"    => 2
-      case "COMPLETED" => 3
-      case "FAILED"    => 4
-      case "KILLED"    => 5
-      case _           => -1 // or throw an exception, depends on your needs
-    }
-  }
+  def mapToName(code: Short): String =
+    statusNames.collectFirst { case (`code`, name) => name }.getOrElse("UNKNOWN")
+
+  def mapToStatus(status: String): Int =
+    statusNames.collectFirst { case (code, `status`) => code.toInt }.getOrElse(-1)
 
   val sortFieldMapping = Map(
     "workflow_name" -> WORKFLOW.NAME,

@@ -24,9 +24,7 @@ import org.apache.texera.amber.core.storage.{DocumentFactory, WarehouseReadGuard
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.amber.core.workflow.CostHints
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.COMPLETED
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
 
 import java.net.URI
@@ -133,10 +131,7 @@ class CostHintsLoader(cacheCapacity: Int, waitLimit: FiniteDuration = 30.seconds
           WORKFLOW_VERSION.WID
             .eq(Integer.valueOf(Math.toIntExact(wid)))
             .and(WORKFLOW_EXECUTIONS.UID.eq(Integer.valueOf(uid)))
-            .and(
-              WORKFLOW_EXECUTIONS.STATUS
-                .eq(java.lang.Short.valueOf(maptoStatusCode(COMPLETED).toShort))
-            )
+            .and(WORKFLOW_EXECUTIONS.STATUS.eq(Short.box(WorkflowExecutionStatus.Completed)))
             .and(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI.isNotNull)
             .and(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI.ne(""))
             .and(WORKFLOW_EXECUTIONS.EID.ge(Integer.valueOf(1)))
