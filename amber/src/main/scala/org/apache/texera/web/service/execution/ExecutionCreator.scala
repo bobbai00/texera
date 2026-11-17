@@ -20,7 +20,7 @@
 package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord, PlanTooLargeException}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext, WorkflowSettings}
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
@@ -111,8 +111,8 @@ object ExecutionCreator extends ExecutionCreator {
   *     linked, marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
   *     from (as JSON that parses back to it, without what a compile sets,
-  *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A write that
-  *     fails marks the row FAILED (500).
+  *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A plan larger
+  *     than the table keeps marks the row FAILED (400); so does a write that fails (500).
   *  1. The results of the workflow's earlier executions on the unit that have ended are cleared:
   *     the new execution replaces them. A run that may still be running is left alone.
   *
@@ -146,7 +146,9 @@ class ExecutionCreator extends LazyLogging {
     * @return the execution created (Right), or, for a workflow that does not compile, the
     *         execution recorded as failed with each operator's error (Left)
     * @throws BadRequestException          (400) for a request that is malformed, names a warehouse
-    *                                      the user may not write into, or a replay log there is not
+    *                                      the user may not write into, or a replay log there is
+    *                                      not; and for a workflow whose plan is larger than a plan
+    *                                      may be, whose execution is recorded as failed
     * @throws ForbiddenException           (403) unless the user may read the workflow and run
     *                                      workflows on the computing unit
     * @throws WebApplicationException      (409) if the computing unit is terminated
@@ -238,6 +240,8 @@ class ExecutionCreator extends LazyLogging {
               logical
             )
           } catch {
+            // The workflow's doing, not the lake's: answered as such below.
+            case tooLarge: PlanTooLargeException => throw tooLarge
             case NonFatal(failure) =>
               throw new ExecutionNotCreated(
                 s"Execution ${eid.id} could not be created: its plan could not be written to " +
@@ -254,9 +258,10 @@ class ExecutionCreator extends LazyLogging {
   }
 
   /**
-    * `body`, which runs once execution `eid`'s row exists: any failure marks the row FAILED. One
+    * `body`, which runs once execution `eid`'s row exists: any failure marks the row FAILED. A
+    * plan too large to store is answered 400, with how large it is and may be. Any other failure
     * the JVM can go on after is answered 500, with the reason for the user when it is an
-    * [[ExecutionNotCreated]]; any other is thrown as it is.
+    * [[ExecutionNotCreated]]; a failure it cannot go on after is thrown as it is.
     */
   private def failingTheExecution[T](eid: ExecutionIdentity)(body: => T): T =
     try body
@@ -264,6 +269,13 @@ class ExecutionCreator extends LazyLogging {
       case failure: Throwable =>
         ExecutionsMetadataPersistService.markFailed(eid)
         failure match {
+          case tooLarge: PlanTooLargeException =>
+            throw new BadRequestException(
+              s"Execution ${eid.id} could not be created. ${tooLarge.getMessage} A plan holds a " +
+                "link to each file its operators read, so a workflow that lists fewer files " +
+                "makes a smaller plan.",
+              tooLarge
+            )
           case notCreated: ExecutionNotCreated =>
             throw new InternalServerErrorException(notCreated.getMessage, notCreated.getCause)
           case NonFatal(other) =>

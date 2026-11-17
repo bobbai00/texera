@@ -40,6 +40,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Callable, CyclicBarrier, Executors, TimeUnit}
@@ -146,6 +147,14 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
       notification = None
     )
 
+  /** A body of `bytes` bytes of UTF-8, with German, Japanese and an emoji (a surrogate pair). */
+  private def bodyOf(bytes: Int): String = {
+    val (start, end) = ("{\"note\":\"Grüße 日本語 😀\",\"padding\":\"", "\"}")
+    val body = start + ("x" * (bytes - (start + end).getBytes(StandardCharsets.UTF_8).length)) + end
+    body.getBytes(StandardCharsets.UTF_8).length shouldBe bytes
+    body
+  }
+
   /** The operator an update row's body was compiled from, as its row keeps it. */
   private def changedOperator(code: String = "print(1)"): String =
     s"""{"operatorID":"PythonUDFV2-operator-1","code":"$code"}"""
@@ -238,11 +247,9 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     }
   }
 
-  it should "keep a body of megabytes with text outside ASCII intact" in {
-    // German, Japanese and an emoji (a surrogate pair), then 4 MiB: a plan carrying thousands of
-    // input links runs to megabytes.
-    val body = "{\"note\":\"Grüße 日本語 😀\",\"padding\":\"" +
-      ("x" * (4 * 1024 * 1024)) + "\"}"
+  it should "keep a body of the most bytes a row may hold intact, text outside ASCII included" in {
+    // A plan carrying a link to each of thousands of files runs to megabytes.
+    val body = bodyOf(ExecutionPlanStore.MaxBodyBytes)
     val uri = freshPlanUri()
     ExecutionPlanStore.writePlan(uri, planRow(body = body), logicalPlan)
     ExecutionPlanStore.readPlan(uri).body shouldBe body
@@ -278,6 +285,21 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     }
     an[IllegalArgumentException] should be thrownBy
       ExecutionPlanStore.writePlan(uri, planRow(), null)
+    DocumentFactory.documentExists(uri) shouldBe false
+  }
+
+  it should "refuse a body of one byte more than a row may hold, saying its size, and write nothing" in {
+    val uri = freshPlanUri()
+    val tooLarge = intercept[PlanTooLargeException] {
+      ExecutionPlanStore.writePlan(
+        uri,
+        planRow(body = bodyOf(ExecutionPlanStore.MaxBodyBytes + 1)),
+        logicalPlan
+      )
+    }
+    tooLarge.bytes shouldBe ExecutionPlanStore.MaxBodyBytes + 1
+    // Rounded up, so that a size refused never reads as the limit.
+    tooLarge.getMessage shouldBe "The plan is 16.1 MiB, and a stored plan may be at most 16 MiB."
     DocumentFactory.documentExists(uri) shouldBe false
   }
 
@@ -401,6 +423,23 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     }
     thrown.getMessage should include("already holds update-1")
     ExecutionPlanStore.readUpdate(uri, "update-1") shouldBe first
+  }
+
+  it should "keep a body of the most bytes a row may hold, and refuse one byte more, appending nothing" in {
+    val uri = writtenPlan()
+    val largest = updateRow("update-1").copy(body = bodyOf(ExecutionPlanStore.MaxBodyBytes))
+    appendUpdate(uri, largest)
+    ExecutionPlanStore.readUpdate(uri, "update-1") shouldBe largest
+
+    val tooLarge = intercept[PlanTooLargeException] {
+      appendUpdate(
+        uri,
+        updateRow("update-2").copy(body = bodyOf(ExecutionPlanStore.MaxBodyBytes + 1))
+      )
+    }
+    tooLarge.getMessage shouldBe
+      "The change is 16.1 MiB, and a stored change may be at most 16 MiB."
+    a[NoSuchUpdateException] should be thrownBy ExecutionPlanStore.readUpdate(uri, "update-2")
   }
 
   it should "fail with NoStoredPlanException where there is no table, and create none" in {

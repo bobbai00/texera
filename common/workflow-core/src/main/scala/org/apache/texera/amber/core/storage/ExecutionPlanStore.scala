@@ -30,6 +30,8 @@ import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.common.config.StorageConfig
 
 import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.util.Locale
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters._
 import scala.util.{Try, Using}
@@ -74,6 +76,26 @@ final class ExecutionAlreadyStartedException(val executionId: ExecutionIdentity)
     extends RuntimeException(s"execution ${executionId.id} was already started")
 
 /**
+  * A row's body is larger than the store keeps ([[ExecutionPlanStore.MaxBodyBytes]]). Its message
+  * is for the user whose plan or change it is, the size rounded up so that it reads as more
+  * than the limit.
+  *
+  * @param what  what the body is: "plan" or "change"
+  * @param bytes the body's size, in bytes of UTF-8
+  */
+final class PlanTooLargeException(what: String, val bytes: Int)
+    extends RuntimeException(
+      String.format(
+        Locale.ROOT,
+        "The %s is %.1f MiB, and a stored %s may be at most %d MiB.",
+        what,
+        Double.box(math.ceil(bytes * 10.0 / (1024 * 1024)) / 10),
+        what,
+        Int.box(ExecutionPlanStore.MaxBodyBytes / (1024 * 1024))
+      )
+    )
+
+/**
   * Keeps each execution's plan in the lake: one Iceberg table per execution, in the warehouse the
   * execution writes into, at the URI [[planUri]] names (namespace
   * `storage.iceberg.table.plan-namespace`, table `wid_<wid>_eid_<eid>_plan`).
@@ -100,6 +122,16 @@ object ExecutionPlanStore {
   val PlanEntryId = "plan"
   val UpdateEntryIdPrefix = "update-"
   val StartedTag = "started"
+
+  /**
+    * The most bytes of UTF-8 a row's body may be: 16 MiB. A plan holds a link to each file its
+    * operators read, so it grows with the files it lists: at the default of
+    * `constants.max-listed-files`, with links of 600 characters, it is about 10 MiB. The limit
+    * is below the longest string a JSON reader takes (20 million characters) and the largest
+    * message between the nodes of a computing unit (30 MiB), so a body that was stored can be
+    * read back, and each operator of its plan handed its executor.
+    */
+  val MaxBodyBytes: Int = 16 * 1024 * 1024
 
   // An update row's entry id also names the data file the row is written to, so it stays one
   // plain file name: the prefix, then 1 to 64 letters, digits or hyphens (a UUID fits).
@@ -130,6 +162,7 @@ object ExecutionPlanStore {
     * execution id is written once, so it is replaced, with its rows and its tag.
     *
     * @param logical the logical plan `record`'s body was compiled from
+    * @throws PlanTooLargeException if the body is more than [[MaxBodyBytes]]; nothing is written.
     */
   def writePlan(uri: URI, record: PlanRecord, logical: String): Unit = {
     requirePlanUri(uri)
@@ -138,6 +171,7 @@ object ExecutionPlanStore {
       s"a plan row has entry id '$PlanEntryId', not '${record.entryId}'"
     )
     requireLogical(logical)
+    requireBodyFits("plan", record)
     val document = DocumentFactory
       .createDocument(uri, executionPlanSchema)
       .asInstanceOf[VirtualDocument[Tuple]]
@@ -182,6 +216,7 @@ object ExecutionPlanStore {
     *
     * @param logical the operator as changed, which `record`'s body was compiled from
     * @throws NoStoredPlanException if the table does not exist.
+    * @throws PlanTooLargeException if the body is more than [[MaxBodyBytes]]; nothing is written.
     */
   def appendUpdate(uri: URI, record: PlanRecord, logical: String): Unit = {
     requirePlanUri(uri)
@@ -191,6 +226,7 @@ object ExecutionPlanStore {
         s"digits or hyphens, not '${record.entryId}'"
     )
     requireLogical(logical)
+    requireBodyFits("change", record)
     val table = loadPlanTable(uri)
     require(
       rowsWithEntryId(table, record.entryId, Seq("entryId")).isEmpty,
@@ -290,6 +326,11 @@ object ExecutionPlanStore {
 
   private def requireLogical(logical: String): Unit =
     require(logical != null, "a plan table row needs what its body was compiled from")
+
+  private def requireBodyFits(what: String, record: PlanRecord): Unit = {
+    val bytes = record.body.getBytes(StandardCharsets.UTF_8).length
+    if (bytes > MaxBodyBytes) throw new PlanTooLargeException(what, bytes)
+  }
 
   private def requirePlanUri(uri: URI): VFSUriComponents =
     planTableOf(uri).getOrElse(

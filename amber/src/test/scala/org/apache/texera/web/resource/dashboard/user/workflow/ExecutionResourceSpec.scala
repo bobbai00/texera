@@ -22,7 +22,7 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import io.dropwizard.setup.Bootstrap
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName}
 import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
@@ -115,6 +115,7 @@ import org.apache.texera.web.model.http.response.execution.{
   CreateExecutionResponse
 }
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
+import org.apache.texera.web.service.WorkflowService
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.JSONB
@@ -125,9 +126,10 @@ import org.scalatest.matchers.should.Matchers
 
 import java.lang.reflect.Proxy
 import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.sql.Timestamp
 import javax.ws.rs.core.{Response, UriInfo}
-import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
+import javax.ws.rs.{BadRequestException, InternalServerErrorException, WebApplicationException}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -1145,6 +1147,72 @@ class ExecutionResourceSpec
     row(failure.eid).getStatus shouldBe 4.toByte
   }
 
+  /** A dataset version as a File Lister names it, which only [[creatorListing]] lists. */
+  private val archiveVersionPath = s"/dataset/$creatorEmail/sensor-archive-2026/v12"
+
+  /**
+    * A creator whose File Listers list `files` files of a dataset version, and whose links to
+    * them are `linkLength` characters long. The object store signs links of 400 to 600.
+    */
+  private def creatorListing(files: Int, linkLength: Int): FixtureCreator = {
+    val expiresAtMs = System.currentTimeMillis() + 3600L * 1000
+    new FixtureCreator(
+      bindings = _ =>
+        TestUtils.fixtureBindings.copy(
+          lister = (versionPath, atMost) =>
+            (1 to files).take(atMost).map { i =>
+              ListedFile(
+                f"$versionPath/site-042/2026/11/readings-$i%06d.parquet",
+                f"s3://texera-dataset/dataset-9631/data/gq0e7ts6d4ks72q1bql0/cq0e7ts6d4ks$i%06d"
+              )
+            },
+          inputLinker = new InputLinker {
+            override def link(fileUri: URI): InputLink = fail(s"asked to link the file $fileUri")
+            override def linkListed(file: ListedFile): InputLink =
+              InputLink(
+                (s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}" +
+                  "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=").padTo(linkLength, 'a'),
+                expiresAtMs
+              )
+          }
+        )
+    )
+  }
+
+  it should "store a plan of as many files as an operator may list, linked as the object store signs links, which a computing unit reads back and starts from" in {
+    val files = ApplicationConfig.maxListedFiles
+    val execution = created(
+      post(
+        request(plan = listedPlan(archiveVersionPath)),
+        creator = creatorListing(files, linkLength = 600)
+      )
+    )
+    val planUri = new URI(execution.planUri)
+
+    // About 10 MiB for the 10,000 files an operator may list by default.
+    val stored = ExecutionPlanStore.readPlan(planUri)
+    stored.body.getBytes(StandardCharsets.UTF_8).length should be <=
+      ExecutionPlanStore.MaxBodyBytes
+    // What a unit checks before it starts the execution passes, on the plan read back whole.
+    val plan = WorkflowService
+      .checkStoredStart(
+        execution.eid,
+        planUri,
+        sessionUser(creatorUid).getUser,
+        unitCuid,
+        Some(testWid.toLong)
+      )
+      .fold(why => fail(s"the start was refused: $why"), _.executionPlan)
+    plan.inputs should have size files
+    val links = linksOf(plan, "scan")
+    links should have size files
+    links.values.map(_.url.length).toSet shouldBe Set(600)
+    // A worker builds the scan's executor from the descriptor it is handed.
+    val OpExecWithClassName(className, descriptor) =
+      plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity("scan")).head.opExecInitInfo: @unchecked
+    noException should be thrownBy ExecFactory.newExecFromJavaClassName(className, descriptor)
+  }
+
   it should "compile only the target and what is upstream of it, given one target" in {
     val whole = LogicalPlanPojo(
       List(
@@ -1418,6 +1486,30 @@ class ExecutionResourceSpec
     failure.getMessage shouldBe
       s"Execution $eid could not be created: its plan could not be written to the lake."
     row(eid.toLong).getStatus shouldBe 4.toByte
+  }
+
+  it should "answer 400 with how large the plan is and may be, and record the execution FAILED, when its plan is larger than its table keeps" in {
+    // A thousand files, whose links alone fill what a plan may hold.
+    val before = executionCount
+
+    val failure = intercept[BadRequestException] {
+      post(
+        request(plan = listedPlan(archiveVersionPath)),
+        creator = creatorListing(1000, linkLength = ExecutionPlanStore.MaxBodyBytes / 1000)
+      )
+    }
+
+    failure.getResponse.getStatus shouldBe 400
+    executionCount shouldBe before + 1
+    val eid = newestEid
+    failure.getMessage should fullyMatch regex
+      s"Execution $eid could not be created\\. The plan is 1[67]\\.[0-9] MiB, and a stored plan " +
+        "may be at most 16 MiB\\. A plan holds a link to each file its operators read, so a " +
+        "workflow that lists fewer files makes a smaller plan\\."
+    row(eid.toLong).getStatus shouldBe 4.toByte
+    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
+    )
   }
 
   it should "answer 500 and record the execution FAILED when its plan cannot be made for a reason not the workflow's" in {

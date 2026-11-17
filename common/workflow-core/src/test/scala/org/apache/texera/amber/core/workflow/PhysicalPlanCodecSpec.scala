@@ -20,6 +20,7 @@
 package org.apache.texera.amber.core.workflow
 
 import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.storage.ExecutionPlanStore
 import org.apache.texera.amber.core.storedplan.StoredAttribute.{AttributeType => StoredType}
 import org.apache.texera.amber.core.storedplan.StoredPartitionInfo.Kind
 import org.apache.texera.amber.core.storedplan.StoredPartitionRequirement.Requirement
@@ -1742,6 +1743,19 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       }
     assert(PhysicalPlanCodec.fromJson(compact(reversed(parse(validJson)))) == valid)
     assert(PhysicalPlanCodec.fromJson(s"\n  $validJson\n\n") == valid)
+  }
+
+  it should "read a plan of the most bytes the plan store keeps, nearly all of them one string" in {
+    // A scan's descriptor holds a link to each file the scan reads, and is one JSON string.
+    def scanning(descriptor: String): StoredPhysicalPlan =
+      withStoredOp(scan.id)(_.withOpExecInitInfo(OpExecWithClassName("Scan", descriptor)))
+    def bytesOf(stored: StoredPhysicalPlan): Int =
+      PhysicalPlanCodec.toJson(stored).getBytes(StandardCharsets.UTF_8).length
+    val largest =
+      scanning("x" * (ExecutionPlanStore.MaxBodyBytes - bytesOf(scanning("x")) + 1))
+    assert(bytesOf(largest) == ExecutionPlanStore.MaxBodyBytes)
+
+    assert(PhysicalPlanCodec.fromJson(PhysicalPlanCodec.toJson(largest)) == largest)
   }
 
   it should "refuse JSON with a field the format does not have, at any depth" in {

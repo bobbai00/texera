@@ -945,6 +945,16 @@ class OperatorUpdatesSpec
     updateRows(execution.planUri) shouldBe empty
   }
 
+  it should "refuse a change larger than the plan table keeps, with how large it is and may be" in {
+    val execution = created()
+    // New code, then a comment as long as a change may be.
+    val code = changedCode("v2") + "# " + ("x" * ExecutionPlanStore.MaxBodyBytes) + "\n"
+
+    refused(400)(post(execution.eid, udf(code = code))) should fullyMatch regex
+      "The change is 16\\.[0-9] MiB, and a stored change may be at most 16 MiB\\."
+    updateRows(execution.planUri) shouldBe empty
+  }
+
   it should "throw, as it is, a failure to pin a version that is not the change's error" in {
     // A version that does not exist, or that the creator may not read, is the change's error
     // (400). A database that does not answer is not: it is thrown as it is, which the Dashboard

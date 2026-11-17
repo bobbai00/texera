@@ -22,7 +22,12 @@ package org.apache.texera.web.service.execution
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
+import org.apache.texera.amber.core.storage.{
+  ExecutionPlanStore,
+  NoStoredPlanException,
+  PlanRecord,
+  PlanTooLargeException
+}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, PhysicalPlanCodec}
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc}
@@ -87,7 +92,7 @@ object OperatorUpdates extends OperatorUpdates {
   *     models the creator may read (400).
   *  1. The operator made to run, as its executor and what its code reads, is appended to the plan
   *     table under a new update id ([[PhysicalPlanCodec.encodeUpdate]]), with the change as the
-  *     editor sent it.
+  *     editor sent it. A change larger than the table keeps is refused (400).
   *
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
@@ -123,7 +128,8 @@ class OperatorUpdates extends LazyLogging {
     *
     * @return the update stored: the id the computing unit is to apply it by, and the operator
     * @throws BadRequestException          (400) for a request that names no operator, or a change
-    *                                      the running operator cannot take
+    *                                      the running operator cannot take or that is larger than
+    *                                      a change may be
     * @throws ForbiddenException           (403) unless `user` created the execution and may still
     *                                      read its workflow and run workflows on its unit
     * @throws NotFoundException            (404) for an execution, a stored plan or an operator of
@@ -199,6 +205,7 @@ class OperatorUpdates extends LazyLogging {
       // the append loaded the table. A drop after that load fails the write instead: 500.
       case _: NoStoredPlanException =>
         throw new NotFoundException(s"execution $eid has no stored plan")
+      case tooLarge: PlanTooLargeException => throw new BadRequestException(tooLarge.getMessage)
       case NonFatal(failure) =>
         throw new InternalServerErrorException(
           s"The change to operator ${operatorId.id} of execution $eid could not be stored.",
