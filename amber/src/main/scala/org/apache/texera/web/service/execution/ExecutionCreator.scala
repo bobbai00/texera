@@ -51,7 +51,18 @@ import org.apache.texera.web.service.{
 
 import java.net.URI
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.{Executor, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
+import java.util.concurrent.{
+  ArrayBlockingQueue,
+  BlockingQueue,
+  ExecutionException,
+  Executor,
+  ExecutorService,
+  LinkedBlockingQueue,
+  RejectedExecutionException,
+  ThreadPoolExecutor,
+  TimeUnit,
+  TimeoutException
+}
 import javax.ws.rs.core.Response
 import javax.ws.rs.{
   BadRequestException,
@@ -59,6 +70,7 @@ import javax.ws.rs.{
   InternalServerErrorException,
   WebApplicationException
 }
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -68,17 +80,33 @@ object ExecutionCreator {
   val MaxColumnLength = 128
 
   /**
-    * A pool of at most `threads` daemon threads named after `name`, which queues the work they
-    * are all busy with and lets go of a thread that has had none for a minute.
+    * How long a workflow's compile may take: half of the 120 seconds each deployment's route
+    * gives a create, which leaves the rest for the cost hints before it and the plan's write
+    * after it.
     */
-  private def daemonThreads(name: String, threads: Int): ThreadPoolExecutor = {
+  val CompileDeadline: FiniteDuration = 60.seconds
+
+  /** How many creates compile at once, and how many more may wait for a compile to begin. */
+  private val CompileThreads = 8
+  private val CompilesWaiting = 32
+
+  /**
+    * A pool of at most `threads` daemon threads named after `name`, which holds the work they
+    * are all busy with in `waiting`, refuses work once that is full, and lets go of a thread
+    * that has had none for a minute.
+    */
+  private def daemonThreads(
+      name: String,
+      threads: Int,
+      waiting: BlockingQueue[Runnable]
+  ): ThreadPoolExecutor = {
     val count = new AtomicInteger()
     val pool = new ThreadPoolExecutor(
       threads,
       threads,
       1,
       TimeUnit.MINUTES,
-      new LinkedBlockingQueue[Runnable](),
+      waiting,
       (task: Runnable) => {
         val thread = new Thread(task, s"$name-${count.incrementAndGet()}")
         thread.setDaemon(true)
@@ -138,9 +166,10 @@ final class WorkflowNotCompiled(
   *     an operator names is one the user keeps, and the plan carries its packages for the unit
   *     to install. A workflow that does not compile, a scan of a file the user may not read or
   *     an operator in an environment the user does not have among them, marks the row FAILED and
-  *     is answered with each operator's error ([[WorkflowNotCompiled]], 400). A plan that cannot
-  *     be made for another reason, such as the database or the storage not answering while a file
-  *     is resolved or linked, marks the row FAILED too (500).
+  *     is answered with each operator's error ([[WorkflowNotCompiled]], 400). The compile runs
+  *     on a pool of its own with a deadline, and one that passes it marks the row FAILED (504).
+  *     A plan that cannot be made for another reason, such as the database or the storage not
+  *     answering while a file is resolved or linked, marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
   *     from (as JSON that parses back to it, without what a compile sets,
   *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A plan larger
@@ -159,6 +188,8 @@ final class WorkflowNotCompiled(
   * @param writePlan         writes the plan row, and the logical plan it was compiled from, to
   *                          the plan table at a URI
   * @param background        runs what a create leaves to be done after it has answered
+  * @param compiles          runs the compiles, a bounded number at once
+  * @param compileDeadline   how long a compile may take
   */
 class ExecutionCreator(
     bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
@@ -166,7 +197,17 @@ class ExecutionCreator(
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     costHints: CostHintsLoader = new CostHintsLoader(),
     writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan,
-    background: Executor = ExecutionCreator.daemonThreads("execution-clearing", threads = 1)
+    background: Executor = ExecutionCreator.daemonThreads(
+      "execution-clearing",
+      threads = 1,
+      waiting = new LinkedBlockingQueue[Runnable]()
+    ),
+    compiles: ExecutorService = ExecutionCreator.daemonThreads(
+      "execution-compile",
+      ExecutionCreator.CompileThreads,
+      waiting = new ArrayBlockingQueue[Runnable](ExecutionCreator.CompilesWaiting)
+    ),
+    compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline
 ) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, MaxColumnLength}
 
@@ -229,7 +270,9 @@ class ExecutionCreator(
         // whatever the request sent there.
         val logical = checked.plan.toJson
         val compiler = new WorkflowCompiler(context, bindingsFor(uid))
-        val savedPlan = PlanToRun.make(compiler, checked.plan, replay, replayLog)
+        val savedPlan = withinDeadline(eid) {
+          PlanToRun.make(compiler, checked.plan, replay, replayLog)
+        }
         val planUri = ExecutionPlanStore.planUri(wid, eid, warehouse)
         val record = PlanRecord(
           entryId = ExecutionPlanStore.PlanEntryId,
@@ -268,10 +311,48 @@ class ExecutionCreator(
   }
 
   /**
+    * `compile`, the compile of execution `eid`'s workflow, run on a thread of the pool of
+    * compiles while the request's thread waits for it, for no longer than the deadline. A compile
+    * reads what the workflow's operators name, such as the files of its scans or the database of
+    * a SQL source, at addresses the request chose: a source that does not answer holds one of the
+    * pool's threads, not the service's.
+    *
+    * @throws WebApplicationException (504) if the deadline passes, when the compile is
+    *                                 interrupted, or (503) if as many compiles as the pool holds
+    *                                 wait already
+    */
+  private def withinDeadline[T](eid: ExecutionIdentity)(compile: => T): T = {
+    val compiling =
+      try compiles.submit[T](() => compile)
+      catch {
+        case _: RejectedExecutionException =>
+          throw new WebApplicationException(
+            s"Execution ${eid.id} could not be created: too many workflows are being compiled. " +
+              "Try again in a moment.",
+            Response.Status.SERVICE_UNAVAILABLE
+          )
+      }
+    try compiling.get(compileDeadline.toMillis, TimeUnit.MILLISECONDS)
+    catch {
+      case failed: ExecutionException => throw failed.getCause
+      case _: TimeoutException =>
+        compiling.cancel(true)
+        throw new WebApplicationException(
+          s"Execution ${eid.id} could not be created: compiling the workflow took longer than " +
+            s"$compileDeadline.",
+          Response.Status.GATEWAY_TIMEOUT
+        )
+      case interrupted: InterruptedException =>
+        compiling.cancel(true)
+        throw interrupted
+    }
+  }
+
+  /**
     * What a create answers when `failure` stops it after execution `eid`'s row exists: each
-    * operator's error for a workflow that does not compile (400), the refusal of the step that
-    * refused it (400 for a plan too large to store), and otherwise 500, with the failure as its
-    * cause.
+    * operator's error for a workflow that does not compile (400), the answer a step chose for
+    * its own failure (400 for a plan too large to store), and otherwise 500, with the failure as
+    * its cause.
     */
   private def answerTo(eid: ExecutionIdentity, failure: Throwable): WebApplicationException =
     failure match {

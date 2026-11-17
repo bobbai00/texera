@@ -129,10 +129,11 @@ import java.lang.reflect.Proxy
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.sql.Timestamp
-import java.util.concurrent.Executor
+import java.util.concurrent.{CountDownLatch, Executor, ExecutorService, Executors, TimeUnit}
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{BadRequestException, InternalServerErrorException, WebApplicationException}
 import scala.collection.mutable
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -201,6 +202,9 @@ class ExecutionResourceSpec
 
   private val requestUri = new URI("http://texera.example:4200/api/executions")
   private val logRoot = new URI("file:///tmp/texera-spec-replay-logs/")
+
+  /** The pool the suite's creators compile on, unless a case gives one its own. */
+  private val compilePool: ExecutorService = Executors.newCachedThreadPool()
 
   /** Every plan, result and console table this suite makes, dropped after it. */
   private val madePlans = mutable.ListBuffer.empty[URI]
@@ -322,6 +326,7 @@ class ExecutionResourceSpec
       madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
       madeTables.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
     } finally {
+      compilePool.shutdownNow()
       closeConnectionPool()
       super.afterAll()
     }
@@ -433,6 +438,8 @@ class ExecutionResourceSpec
       failWrite: Option[RuntimeException] = None,
       bindings: RunBindings => RunBindings = _ => TestUtils.fixtureBindings,
       background: Executor = _.run(),
+      compiles: ExecutorService = compilePool,
+      compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
   ) extends ExecutionCreator(
         bindingsFor = uid => {
@@ -448,7 +455,9 @@ class ExecutionResourceSpec
             case Some(failure) => throw failure
             case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
           },
-        background = background
+        background = background,
+        compiles = compiles,
+        compileDeadline = compileDeadline
       )
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -1567,6 +1576,75 @@ class ExecutionResourceSpec
     // A create that fails clears nothing.
     consolesOf(961921) shouldBe 1
     hasTable(console) shouldBe true
+  }
+
+  it should "compile on a pool of its own, not on the request's thread" in {
+    val pool = Executors.newSingleThreadExecutor(task => new Thread(task, "spec-compile"))
+    val linkedOn = mutable.ListBuffer.empty[String]
+    val creator = new FixtureCreator(
+      bindings = _.copy(inputLinker = linkerOf { _ =>
+        linkedOn += Thread.currentThread().getName
+        signedLink
+      }),
+      compiles = pool
+    )
+
+    try created(post(request(plan = notesPlan()), creator = creator))
+    finally pool.shutdownNow()
+
+    linkedOn.toList shouldBe List("spec-compile")
+  }
+
+  it should "answer 504 and record the execution FAILED when its compile takes longer than the deadline" in {
+    // A source that never answers: the link of the scan's file is still being made when the
+    // deadline passes.
+    val linking = new CountDownLatch(1)
+    val interrupted = new CountDownLatch(1)
+    val creator = new FixtureCreator(
+      bindings = _.copy(inputLinker = linkerOf { _ =>
+        linking.countDown()
+        try new CountDownLatch(1).await()
+        catch { case _: InterruptedException => interrupted.countDown() }
+        signedLink
+      }),
+      compileDeadline = 1.second
+    )
+    val before = executionCount
+
+    val failure = intercept[WebApplicationException] {
+      post(request(plan = notesPlan()), creator = creator)
+    }
+
+    failure.getResponse.getStatus shouldBe 504
+    linking.getCount shouldBe 0
+    executionCount shouldBe before + 1
+    val eid = newestEid
+    failure.getMessage shouldBe
+      s"Execution $eid could not be created: compiling the workflow took longer than 1 second."
+    row(eid.toLong).getStatus shouldBe 4.toByte
+    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
+    )
+    // The compile is not left running.
+    interrupted.await(10, TimeUnit.SECONDS) shouldBe true
+  }
+
+  it should "answer 503 and record the execution FAILED when no more compiles can wait" in {
+    val full = Executors.newSingleThreadExecutor()
+    full.shutdown()
+    val before = executionCount
+
+    val failure = intercept[WebApplicationException] {
+      post(request(), creator = new FixtureCreator(compiles = full))
+    }
+
+    failure.getResponse.getStatus shouldBe 503
+    executionCount shouldBe before + 1
+    val eid = newestEid
+    failure.getMessage shouldBe
+      s"Execution $eid could not be created: too many workflows are being compiled. Try again " +
+        "in a moment."
+    row(eid.toLong).getStatus shouldBe 4.toByte
   }
 
   it should "answer 500, not the scan's error, when a file cannot be resolved or linked for a reason not the workflow's" in {
