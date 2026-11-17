@@ -34,7 +34,11 @@ with what the harness needs on a shared machine:
     `yarn start`; its y-websocket half is only for shared editing), so every request of
     the driver goes through the dev server's proxy, as a developer's browser's does.
 
-Commands: generate | build | up | down | reset | status | logs | collect-logs | post-run.
+`unit-kill`, `unit-stop`, `unit-start` and `pg-activity` are what the driver's StackControl
+(driver/stack_control.py) asks of this stack; each prints one JSON document.
+
+Commands: generate | build | up | down | reset | status | logs | collect-logs | post-run |
+unit-kill | unit-stop | unit-start | pg-activity.
 `up`, `build`, `down` and `reset` change Docker state: hold the stack lock (README, "One
 run at a time"), or use run-localdev.sh, which takes it. Nothing outside this project's
 containers, network and volumes, and the processes it started, is ever stopped.
@@ -64,6 +68,11 @@ import yaml
 
 HERE = Path(__file__).resolve().parent            # stack/localdev
 HARNESS = HERE.parents[1]
+sys.path.insert(0, str(HARNESS / "lib"))
+
+import pg_activity  # noqa: E402
+from record_env import fast_record_env, record_timing  # noqa: E402
+
 GEN_DIR = HERE / "generated"
 MANIFEST = GEN_DIR / "MANIFEST.json"
 STATE_DIR = HARNESS / ".state" / "localdev"
@@ -125,6 +134,9 @@ DEFAULT_HEAPS = {
     "texera-web": "1g",
 }
 SBT_HEAP = os.environ.get("SCE_LOCALDEV_SBT_HEAP", "3g")
+# local-dev's names of the two services step 3's timers belong to
+UNIT_SERVICE = "computing-unit-master"
+DASHBOARD_SERVICE = "texera-web"
 FRONTEND = "frontend"
 FRONTEND_PORT = 4200
 FRONTEND_URL = f"http://localhost:{FRONTEND_PORT}"
@@ -1504,6 +1516,23 @@ def service_env(m: dict, py: Path) -> dict[str, str]:
     return env
 
 
+def record_options(fast_record: bool) -> dict:
+    """What --fast-record asks for, as MANIFEST.json's `options` records it: exports for the
+    unit's JVM and for the Dashboard's, set before each starts."""
+    unit_env = fast_record_env("unit") if fast_record else {}
+    dashboard_env = fast_record_env("dashboard") if fast_record else {}
+    return {"fast_record": fast_record, "unit_env": unit_env, "dashboard_env": dashboard_env,
+            "record_timing": record_timing(unit_env, dashboard_env)}
+
+
+def launch_env(m: dict, svc: dict, base: dict[str, str]) -> dict[str, str]:
+    """The environment one JVM service starts with: local-dev's (`base`), its heap, and the
+    exports the stack options add for the unit and for the Dashboard."""
+    options = m.get("options") or {}
+    extra = {UNIT_SERVICE: options.get("unit_env"), DASHBOARD_SERVICE: options.get("dashboard_env")}
+    return dict(base, JAVA_OPTS=svc["java_opts"], **(extra.get(svc["name"]) or {}))
+
+
 def ready(svc: dict) -> tuple[bool, str]:
     port = svc["local_dev_port"]
     if not port_open(port):
@@ -1655,6 +1684,7 @@ def cmd_up(a) -> None:
             f"the UDF Python differs from amber/requirements.txt: {'; '.join(m['python']['requirements_mismatches'])}")
     heaps = parse_heaps(a.heap)
     m["heaps"] = heaps
+    m["options"] = record_options(a.fast_record)
     m["frontend_heap_mb"] = frontend_heap(a.source, a.frontend_heap)
     check_ports_free(m)  # before anything is written or started
     # dists that do not match the source are refused before anything starts (missing ones are
@@ -1717,7 +1747,9 @@ def cmd_up(a) -> None:
         svc.update(zip=str(zip_path), zip_provenance=provenance[str(zip_path)],
                    dist=str(dist), launcher_path=str(launcher),
                    java_opts=f"-Xmx{heaps[svc['name']]} -XX:+ExitOnOutOfMemoryError")
-        senv = dict(env, JAVA_OPTS=svc["java_opts"])
+        senv = launch_env(m, svc, env)
+        if svc["name"] == UNIT_SERVICE:
+            m["unit_env_names"] = sorted(senv)
         procs[svc["name"]] = start_process(svc["name"], [str(launcher)], a.source / svc["cwd"], senv,
                                            logs / f"{svc['name']}.log")
         log(f"started {svc['name']} (pid {procs[svc['name']].pid}, cwd {svc['cwd']}, {svc['java_opts']})")
@@ -2016,6 +2048,95 @@ def cmd_post_run(a) -> None:
         sys.exit(4)
 
 
+# ------------------------------------------- what the driver's StackControl asks
+
+#: `unit-stop` gives the unit's JVM this long to stop by itself, as `docker stop -t 20` does
+UNIT_STOP_GRACE_S = 20
+
+
+def unit_record() -> dict:
+    """The pid file of the unit's JVM; its process group holds its Python workers."""
+    rec = next((r for r in pid_records() if r["name"] == UNIT_SERVICE), None)
+    if rec is None:
+        die(f"no pid file of {UNIT_SERVICE}: is the stack up?")
+    return rec
+
+
+def wait_gone(alive, timeout: float) -> float | None:
+    """Seconds until `alive()` is false, or None when it still is after `timeout`."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if not alive():
+            return round(time.time() - t0, 1)
+        time.sleep(0.2)
+    return None
+
+
+def cmd_unit_kill(a) -> None:
+    """kill -9 the unit's JVM and its Python workers, as when its machine is lost."""
+    rec = unit_record()
+    if not record_alive(rec):
+        die(f"{UNIT_SERVICE} (pid {rec['pid']}) is not running")
+    pgid = int(rec["pgid"])
+    killed = len(group_members(pgid))
+    os.killpg(pgid, signal.SIGKILL)
+    gone = wait_gone(lambda: bool(group_members(pgid)), 10)
+    if gone is None:
+        die(f"processes of group {pgid} are still there 10 s after SIGKILL")
+    print(json.dumps({"how": "kill -9", "pid": rec["pid"], "processes": killed, "seconds": gone}))
+
+
+def cmd_unit_stop(a) -> None:
+    """SIGTERM to the unit's JVM alone, as `docker stop` and a pod's deletion signal a
+    container's main process, so the JVM stops its own workers. What is left of its process
+    group after the grace period is killed."""
+    rec = unit_record()
+    if not record_alive(rec):
+        die(f"{UNIT_SERVICE} (pid {rec['pid']}) is not running")
+    pid, pgid = int(rec["pid"]), int(rec["pgid"])
+    os.kill(pid, signal.SIGTERM)
+    exited = wait_gone(lambda: pid_running(pid), UNIT_STOP_GRACE_S)
+    left = group_members(pgid)
+    if left:
+        os.killpg(pgid, signal.SIGKILL)
+        wait_gone(lambda: bool(group_members(pgid)), 10)
+    print(json.dumps({"how": "SIGTERM", "pid": pid, "exited_after_s": exited,
+                      "killed_after_the_grace_period": len(left)}))
+
+
+def cmd_unit_start(a) -> None:
+    """Start the unit's JVM again as `up` started it (same launcher, working directory,
+    environment and log), and wait until it answers."""
+    m = load_manifest()
+    svc = next(s for s in m["services"] if s["name"] == UNIT_SERVICE)
+    if record_alive(unit_record()):
+        die(f"{UNIT_SERVICE} is already running")
+    env = launch_env(m, svc, service_env(m, Path(m["python"]["executable"])))
+    t0 = time.time()
+    proc = start_process(UNIT_SERVICE, [svc["launcher_path"]], Path(m["source"]) / svc["cwd"], env,
+                         Path(m["logs_dir"]) / f"{UNIT_SERVICE}.log")
+    while not ready(svc)[0]:
+        if proc.poll() is not None:
+            die(f"{UNIT_SERVICE} exited with {proc.returncode} while starting; last log lines:\n"
+                f"{tail(Path(m['logs_dir']) / f'{UNIT_SERVICE}.log')}")
+        if time.time() - t0 > a.timeout:
+            die(f"{UNIT_SERVICE} is not ready after {a.timeout}s: {ready(svc)[1]}")
+        time.sleep(1)
+    m["unit_env_names"] = sorted(env)
+    m.setdefault("up", {}).setdefault("pids", {})[UNIT_SERVICE] = proc.pid
+    write_json(MANIFEST, m)
+    print(json.dumps({"pid": proc.pid, "ready_after_s": round(time.time() - t0, 1)}))
+
+
+def cmd_pg_activity(a) -> None:
+    """Postgres's client connections. Every JVM of this stack reaches Postgres through the
+    same published port, so they are told apart by application name, not by address."""
+    container = load_manifest()["containers"]["postgres"]
+    p = run(["docker", "exec", container, "psql", "-U", "texera", "-d", "texera_db", *pg_activity.PSQL_ARGS],
+            capture=True, timeout=60)
+    print(json.dumps(pg_activity.parse(p.stdout)))
+
+
 def cmd_venv(a) -> None:
     """A Python 3.11 venv with amber's requirements at .state/localdev/py311 (uv)."""
     if not shutil.which("uv"):
@@ -2070,6 +2191,10 @@ def main() -> None:
     schema_args(p)
     p.add_argument("--allow-stale-dists", action="store_true",
                    help="run dist zips that do not match the source (recorded as warnings) instead of refusing")
+    p.add_argument("--fast-record", action="store_true",
+                   help="step 3's timers shortened, as exports before the unit's and the Dashboard's JVM "
+                        "start: the unit commits every 2 s; the Dashboard closes every 2 s, loses a unit "
+                        "after 12 s, an unstarted execution after 15 s, and expires results after 20 s")
     p.add_argument("--python", help="interpreter for Python UDF workers (UDF_PYTHON_PATH); default "
                                     "$SCE_LOCALDEV_PYTHON, .state/localdev/py311, or the step-1 py311 venv")
     p.add_argument("--heap", action="append", default=[], metavar="NAME=SIZE",
@@ -2098,6 +2223,11 @@ def main() -> None:
     p.add_argument("--out")
     p = sub.add_parser("venv", help="build .state/localdev/py311 (Python 3.11, amber's requirements) with uv")
     p.add_argument("--with-operator-requirements", action="store_true")
+    sub.add_parser("unit-kill", help="kill -9 the unit's JVM and its Python workers (JSON)")
+    sub.add_parser("unit-stop", help="SIGTERM the unit's JVM and wait for it to stop (JSON)")
+    p = sub.add_parser("unit-start", help="start the unit's JVM again as `up` did, and wait until it answers (JSON)")
+    p.add_argument("--timeout", type=int, default=240, help="seconds the unit may take to answer")
+    sub.add_parser("pg-activity", help="Postgres's client connections, from pg_stat_activity (JSON)")
 
     a = ap.parse_args()
     a.source = a.source.expanduser().resolve()
@@ -2105,7 +2235,9 @@ def main() -> None:
         cmd_down(a, volumes=True)
         return
     {"generate": cmd_generate, "build": cmd_build, "up": cmd_up, "down": cmd_down, "status": cmd_status,
-     "logs": cmd_logs, "collect-logs": cmd_collect_logs, "post-run": cmd_post_run, "venv": cmd_venv}[a.cmd](a)
+     "logs": cmd_logs, "collect-logs": cmd_collect_logs, "post-run": cmd_post_run, "venv": cmd_venv,
+     "unit-kill": cmd_unit_kill, "unit-stop": cmd_unit_stop, "unit-start": cmd_unit_start,
+     "pg-activity": cmd_pg_activity}[a.cmd](a)
 
 
 if __name__ == "__main__":

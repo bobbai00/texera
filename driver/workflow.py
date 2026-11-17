@@ -5,6 +5,8 @@
   operatorID/operatorType; links use port ordinals {id, internal:false}.
   Ports are omitted, so every operator gets its declared default ports
   (the frontend sends its port list; the engine accepts either).
+* `plan_up_to(target)` -- the same shape, cut to what one operator needs: what a
+  client sends to have the workflow run up to that operator.
 * `ui_content()` -- the JSON string the dashboard stores for the workflow
   (operators/operatorPositions/links/commentBoxes/settings), so a run's
   workflow can be opened and inspected in the UI.
@@ -58,8 +60,25 @@ class Workflow:
     # ------------------------------------------------------------------ shapes
 
     def logical_plan(self, view_results: list[str] | None = None) -> dict:
+        return self._plan(self.ops, self.links, view_results if view_results is not None else self.terminal_ops())
+
+    def plan_up_to(self, target: str) -> dict:
+        """The part of the workflow that `target` needs, with `target` to view: it and what
+        is upstream of it, as the agent service cuts a plan it runs up to one operator
+        (agent-service, WorkflowState.getSubDAG). The Dashboard is not asked to cut."""
+        needed, todo = set(), [target]
+        while todo:
+            op = todo.pop()
+            if op not in needed:
+                needed.add(op)
+                todo += [s for s, _, d, _ in self.links if d == op]
+        return self._plan([o for o in self.ops if o.id in needed], [ln for ln in self.links if ln[2] in needed],
+                          [target])
+
+    @staticmethod
+    def _plan(ops: list[Op], links: list[tuple[str, int, str, int]], view: list[str]) -> dict:
         return {
-            "operators": [{**o.props, "operatorID": o.id, "operatorType": o.type} for o in self.ops],
+            "operators": [{**o.props, "operatorID": o.id, "operatorType": o.type} for o in ops],
             "links": [
                 {
                     "fromOpId": s,
@@ -67,9 +86,9 @@ class Workflow:
                     "toOpId": d,
                     "toPortId": {"id": dp, "internal": False},
                 }
-                for s, sp, d, dp in self.links
+                for s, sp, d, dp in links
             ],
-            "opsToViewResult": list(view_results if view_results is not None else self.terminal_ops()),
+            "opsToViewResult": list(view),
             "opsToReuseResult": [],
         }
 

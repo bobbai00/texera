@@ -7,7 +7,7 @@
 #
 #   ./run-k8s.sh --lock <dir> [--images <registry>/<tag>] [--source <worktree>] [--port N] [--keep]
 #                [--label <text>] [--time-limit MIN] [--no-workarounds] [--forward relay|kubectl]
-#                [--allow-crd-drift] [-- <driver args>]
+#                [--allow-crd-drift] [--fast-record] [-- <driver args>]
 #   ./run-k8s.sh --no-lock ...
 #
 #   --lock        the stack lock: a directory taken with mkdir (waiting while another run holds
@@ -26,7 +26,9 @@
 #   --port        local port of the gateway forward (default 30080)
 #   --keep        leave the deployment running afterwards (default: k8s-stack.sh down); the
 #                 lock is released all the same
-#   --no-workarounds / --forward / --allow-crd-drift   passed to `k8s-stack.sh up` (see its --help)
+#   --no-workarounds / --forward / --allow-crd-drift / --fast-record
+#                 passed to `k8s-stack.sh up` (see its --help); the step-3 scenarios need
+#                 --fast-record
 #   anything after `--` goes to driver/e2e.py (e.g. -- --scenario a,d)
 #
 # Writes reports/k8s-<UTC time>.json and reports/k8s-<UTC time>-logs/ (every container's
@@ -52,9 +54,9 @@ while [[ $# -gt 0 ]]; do
         --no-lock) no_lock=true ;;
         --time-limit) limit_min="$2"; shift ;;
         --) shift; driver_args=("$@"); break ;;
-        --no-workarounds|--allow-crd-drift) up_args+=("$1") ;;
+        --no-workarounds|--allow-crd-drift|--fast-record) up_args+=("$1") ;;
         --forward) up_args+=(--forward "$2"); shift ;;
-        -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1 (see --help)" >&2; exit 64 ;;
     esac
     shift

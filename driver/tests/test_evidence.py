@@ -36,6 +36,12 @@ class FakeDocker:
         self.cleanup = cleanup
         self.tables: dict[str, dict] = {}  # "wid_1_eid_2_plan" -> refs
         self.getent = ""
+        #: what `getent hosts texera-postgres` answers in the unit, its health, and when it started
+        self.getent_postgres = ""
+        self.health = "healthy"
+        self.started_at = "2023-11-14T22:13:20Z"  # the moment this fake's clock starts
+        #: the final check's rows: (eid, wid, status) of the executions left at status 0 or 6
+        self.never_ran: list[tuple[int, int, int]] = []
         self.pid = 500
         # the fake stack's threads log while the driver reads: append and stamp in order
         self.lock = threading.RLock()
@@ -87,8 +93,8 @@ class FakeDocker:
             if sql.startswith("SELECT 'sce-mark"):
                 self.pg_line(999, "psql", "[local]", "LOG", f"statement: {sql}")
                 out = sql.split("'")[1]
-            elif "status = 0" in sql:
-                out = ""
+            elif "e.status IN (0, 6)" in sql:
+                out = "".join(f"{eid}|{wid}|{status}\n" for eid, wid, status in self.never_ran)
         elif args[0] == "logs":
             container = args[-1]
             lines = {"sce-texera-postgres": self.pg, "sce-texera-nginx": self.gateway}.get(container, self.unit)
@@ -105,11 +111,17 @@ class FakeDocker:
                 frac = f"{ns:09d}".rstrip("0") or "0"
                 rendered.append(f"{base}.{frac}Z {line}")
             out = "\n".join(rendered) + ("\n" if rendered else "")
+        elif args[0] == "inspect" and "{{.State.StartedAt}}" in args:
+            out = self.started_at
+        elif args[0] == "inspect" and "{{.State.Health.Status}}" in args:
+            out = self.health
         elif args[0] == "inspect":
             nets = ({"sce-unit-net": {"IPAddress": UNIT_IP}} if self.isolated
                     else {"sce-net": {"IPAddress": UNIT_IP}})
             env = [f"WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS={self.cleanup}"]
             out = json.dumps(nets) + "|" + json.dumps(env)
+        elif args[0] == "exec" and "getent" in args and "texera-postgres" in args:
+            out, rc = self.getent_postgres, (0 if self.getent_postgres else 2)
         elif args[0] == "exec" and "getent" in args:
             out, rc = self.getent, (0 if self.getent else 2)
         elif args[0] == "exec" and "curl" in args:
@@ -526,6 +538,36 @@ class ChecksTest(unittest.TestCase):
         gates, _ = ev.evaluate({"D": d_gateway_only}, [], negative_control=True)
         self.assertFalse(gates[0][1])
         self.assertIn("control inconclusive", gates[0][2])
+
+    def final(self, *rows: tuple[int, int, int], unstarted: tuple[int, ...] = ()) -> dict:
+        """The final check on a Postgres that holds `rows` at status 0 or 6 ((eid, wid,
+        status)), after scenarios that left `unstarted` so on purpose."""
+        fake = FakeDocker()
+        fake.never_ran = list(rows)
+        e = make(fake)
+        for eid in unstarted:
+            e.leave_unstarted(eid, "l5: start refused on purpose")
+        return e.final_check([5])
+
+    def test_the_final_check_passes_rows_left_unstarted_on_purpose(self):
+        self.assertTrue(self.final()["ok"])
+        final = self.final((91, 5, 6), (92, 5, 6), unstarted=(91, 92))
+        self.assertTrue(final["ok"], final)
+        self.assertEqual("2 row(s) at status 0 or 6; 0 of them not left unstarted on purpose, or not at 6: []",
+                         final["detail"])
+        self.assertEqual("l5: start refused on purpose", final["left"][0]["allowed"])
+
+    def test_the_final_check_fails_on_a_row_that_never_ran(self):
+        """A run whose unit never got past setting it up, a create nobody started, and a
+        refused start's row that does not read Created (a unit wrote to it, or the
+        Dashboard created it as before the review of step 2)."""
+        for rows, unstarted, bad in ((((92, 5, 0),), (), "[(92, 0)]"),
+                                     (((93, 5, 6),), (), "[(93, 6)]"),
+                                     (((91, 5, 0),), (91,), "[(91, 0)]"),
+                                     (((91, 5, 6), (94, 5, 6)), (91,), "[(94, 6)]")):
+            final = self.final(*rows, unstarted=unstarted)
+            self.assertIs(False, final["ok"], rows)
+            self.assertTrue(final["detail"].endswith(f"not at 6: {bad}"), final["detail"])
 
     def test_unavailable_without_statement_log(self):
         class NoLog(FakeDocker):

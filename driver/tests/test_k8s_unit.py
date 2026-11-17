@@ -93,6 +93,7 @@ class StubApi:
         return StubResponse(200)
 
     def list_units(self):
+        self.calls.append(("GET", "/api/computing-unit", None))
         return [{"computingUnit": u} for u in self.units.values() if not u.get("terminateTime")]
 
     def create_workflow(self, name: str, content: dict) -> int:
@@ -141,6 +142,23 @@ class ArgsTest(unittest.TestCase):
                 parse("--unit-kind", "kubernetes", *flags)
         a = parse("--evidence", "--gate", "A", "--legacy-env")  # single-node: untouched
         self.assertEqual((a.unit_kind, a.evidence, a.stack_manifest), ("local", "all", None))
+
+    def test_a_step_3_gate_is_not_single_node_only(self):
+        """A step-3 gate names what Kubernetes mode runs (design H6); step 2's gates gate on
+        the statement log, which only the single-node stack has."""
+        portable = frozenset({"3A"})
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--base", default="http://127.0.0.1:30080")
+        ap.add_argument("--gate", default=None)
+        ap.add_argument("--evidence", default=None)
+        k8s_unit.add_arguments(ap)
+        with mock.patch.dict("os.environ", {}, clear=False):
+            a = ap.parse_args(["--target", "k8s", "--gate", "3A"])
+            k8s_unit.resolve_args(a, portable_gates=portable)  # accepted
+            for refused in (["--gate", "D"], ["--gate", "3A", "--evidence", "I"]):
+                with self.assertRaises(SystemExit) as cm:
+                    k8s_unit.resolve_args(ap.parse_args(["--target", "k8s", *refused]), portable_gates=portable)
+                self.assertIn(refused[-2], str(cm.exception))
 
     def test_k8s_mode_reads_its_own_manifest_and_cuts_the_driver_off_docker(self):
         with mock.patch.dict("os.environ", {}, clear=False) as env:
@@ -195,7 +213,7 @@ class ArgsTest(unittest.TestCase):
 @mock.patch("k8s_unit.time.sleep", lambda s: None)
 class LifecycleTest(unittest.TestCase):
     def setUp(self):
-        k8s_unit._state.update(cuid=None, done=False)
+        k8s_unit._state.update(cuids=[], done=False)
         self.report = {"setup": {}}
         self.logged: list[str] = []
 
@@ -246,6 +264,76 @@ class LifecycleTest(unittest.TestCase):
         self.assertTrue(rec["termination"]["gone_from_list"])
         k8s_unit.teardown(api, a, log=self.logged.append, report=self.report)  # once only
         self.assertEqual(sum(1 for c in api.calls if c[0] == "DELETE"), 1)
+
+    def control(self, api, a) -> k8s_unit.KubernetesControl:
+        manifest = Path(tempfile.mkdtemp()) / "MANIFEST.json"
+        manifest.write_text(json.dumps({"namespace": "sce-k8s", "context": "ctx", "unit_namespace": "units"}))
+        with mock.patch.object(k8s_unit, "K8S_MANIFEST", manifest):
+            return k8s_unit.KubernetesControl(api, a, run_id="0101-000000", cuid=7, log=self.logged.append)
+
+    def test_the_stacks_control_deletes_the_pod_through_the_stack_script(self):
+        api = StubApi([("Running", None)])
+        a, _unit, _conn = self.run_setup(api, [StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}]),
+                                              *REFUSALS])
+        control = self.control(api, a)
+        self.assertTrue(control.listing_notices_lost_unit)
+        answers = {"unit-kill": {"pod": "computing-unit-7"}, "unit-stop": {"pod": "computing-unit-7"},
+                   "pg-activity": [{"pid": 1, "application_name": "texera-dashboard"}],
+                   "unit-env": {"cuid": 7, "address": "10.42.0.9", "env_names": ["A", "B"]}}
+        with mock.patch("k8s_unit.run_stack_script", side_effect=lambda script, *args: answers[args[2]]) as run:
+            self.assertEqual({"pod": "computing-unit-7"}, control.kill_unit())
+            self.assertEqual({"pod": "computing-unit-7"}, control.stop_unit())
+            self.assertEqual(answers["pg-activity"], control.pg_activity())
+            self.assertEqual(["A", "B"], control.unit_env_names())
+            self.assertEqual(["10.42.0.9"], control.unit_addresses())
+        self.assertEqual([(k8s_unit.K8S_STACK, "--namespace", "sce-k8s", "unit-kill", "7"),
+                          (k8s_unit.K8S_STACK, "--namespace", "sce-k8s", "unit-stop", "7"),
+                          (k8s_unit.K8S_STACK, "--namespace", "sce-k8s", "pg-activity"),
+                          (k8s_unit.K8S_STACK, "--namespace", "sce-k8s", "unit-env", "7"),
+                          (k8s_unit.K8S_STACK, "--namespace", "sce-k8s", "unit-env", "7")],
+                         [c.args for c in run.call_args_list])
+        gone = k8s_unit.StackControlError("expected one pod of computing unit 7, found 0")
+        with mock.patch("k8s_unit.run_stack_script", side_effect=gone):
+            self.assertEqual([], control.unit_addresses())  # a unit whose pod is gone has no address
+
+    def test_the_unit_that_comes_back_is_a_new_one_made_without_listing_the_units(self):
+        """A listing makes the manager stamp units whose pod is gone, which ends a wait for
+        the beat at once (design D27): `start_unit` must not cause one."""
+        api = StubApi([("Running", None)])
+        a, _unit, _conn = self.run_setup(api, [StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}]),
+                                              *REFUSALS])
+        control = self.control(api, a)
+        api.calls.clear()
+        with mock.patch("k8s_unit.websocket.create_connection", side_effect=[
+                StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}])]) as conn:
+            started = control.start_unit()
+        self.assertEqual((8, "sce-e2e-k8s-0101-000000-2"), (started["cuid"], started["name"]))
+        self.assertEqual(8, control.cuid)
+        self.assertNotIn(("GET", "/api/computing-unit", None), api.calls)
+        self.assertIn("cuid=8", conn.call_args.args[0])
+        self.assertIn("wid=42", conn.call_args.args[0])  # the setup's probe workflow
+        create = next(body for m, p, body in api.calls if p == "/api/computing-unit/create")
+        self.assertEqual(("kubernetes", "2", "2Gi"), (create["unitType"], create["cpuLimit"], create["memoryLimit"]))
+        # every unit the run made is terminated at its end, the setup's and the later one
+        k8s_unit.teardown(api, a, log=self.logged.append, report=self.report)
+        self.assertEqual([("DELETE", "/api/computing-unit/7/terminate", None),
+                          ("DELETE", "/api/computing-unit/8/terminate", None)],
+                         [c for c in api.calls if c[0] == "DELETE"])
+        rec = self.report["setup"]["kubernetes_unit"]
+        self.assertEqual((7, 200, ["8"]), (rec["cuid"], rec["termination"]["http_status"], list(rec["later_units"])))
+
+    def test_keep_unit_keeps_the_one_in_use(self):
+        api = StubApi([("Running", None)])
+        a, _unit, _conn = self.run_setup(api, [StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}]),
+                                              *REFUSALS])
+        with mock.patch("k8s_unit.websocket.create_connection", side_effect=[
+                StubSocket([{"type": "WorkflowStateEvent", "state": "Uninitialized"}])]):
+            self.control(api, a).start_unit()
+        a.keep_unit = True
+        k8s_unit.teardown(api, a, log=self.logged.append, report=self.report)
+        self.assertEqual([("DELETE", "/api/computing-unit/7/terminate", None)],
+                         [c for c in api.calls if c[0] == "DELETE"])
+        self.assertEqual(8, self.report["setup"]["kubernetes_unit"]["kept"])
 
     def test_a_failed_unit_fails_setup_at_once_and_is_terminated(self):
         api = StubApi([("Failed", "The computing unit's image could not be pulled.")])

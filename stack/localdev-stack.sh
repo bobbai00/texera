@@ -15,6 +15,10 @@
 #                                                (records what each zip was built from)
 #   stack/localdev-stack.sh venv                 build .state/localdev/py311 (Python 3.11 + amber's requirements)
 #   stack/localdev-stack.sh post-run <report>    after a driver run: every service alive and healthy
+#   stack/localdev-stack.sh unit-kill | unit-stop | unit-start | pg-activity
+#                                                for the driver's StackControl: kill -9 the unit's JVM and its
+#                                                workers, SIGTERM it, start it again, Postgres's connections
+#                                                (each prints JSON)
 #   stack/localdev-stack.sh generate             write stack/localdev/generated/ only
 #
 # --source defaults to $SCE_LOCALDEV_SOURCE or

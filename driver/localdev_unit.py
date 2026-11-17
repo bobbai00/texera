@@ -26,7 +26,9 @@ What reads or execs into the single-node stack's containers is refused up front 
 evidence, the gates and g0), and DOCKER_HOST points at a socket that does not exist, as in
 Kubernetes mode, so nothing the driver runs here can reach another stack's containers.
 What a scenario runs where the unit runs (the environment scenarios, the unit's own /run
-endpoint) runs on this host (`exec_prefix`): the unit is a host process here.
+endpoint) runs on this host (`exec_prefix`): the unit is a host process here. A step-3
+scenario that takes the unit down does it through `LocalDevControl` (stack_control.py's
+seam): stack/localdev-stack.sh signals the unit's JVM and starts it again as `up` did.
 """
 
 from __future__ import annotations
@@ -43,9 +45,12 @@ from typing import Callable
 import requests
 
 import k8s_unit
+from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Lake, host_fetch
+from stack_control import StackControl, run_stack_script
 from workflow import Workflow
 
 TARGET = "localdev"
+STACK = Path(__file__).resolve().parent.parent / "stack" / "localdev-stack.sh"
 MANIFEST = Path(__file__).resolve().parent.parent / "stack" / "localdev" / "generated" / "MANIFEST.json"
 DEV_SERVER = "http://localhost:4200"
 SINGLE_NODE_BASE = k8s_unit.SINGLE_NODE_BASE  # e2e.py's --base default
@@ -67,7 +72,7 @@ def local_unit_uri(base: str) -> str:
     return f"{parts.scheme}://{parts.hostname}{port}/wsapi"
 
 
-def resolve_args(a: argparse.Namespace) -> None:
+def resolve_args(a: argparse.Namespace, portable_gates: frozenset = frozenset()) -> None:
     if not wanted(a):
         return
     if getattr(a, "unit_kind", None) == "kubernetes":
@@ -77,13 +82,22 @@ def resolve_args(a: argparse.Namespace) -> None:
         a.base = manifest.get("frontend_url") or DEV_SERVER
     if a.unit_uri == SINGLE_NODE_UNIT_URI and not os.environ.get("SCE_UNIT_URI"):
         a.unit_uri = local_unit_uri(a.base)
-    used = [(flag, why) for attr, (flag, why) in k8s_unit.SINGLE_NODE_OPTIONS.items() if getattr(a, attr, None)]
+    used = k8s_unit.single_node_options_used(a, portable_gates)
     if used:
         raise SystemExit("local-dev mode does not support " + "; ".join(f"{f} ({w})" for f, w in used)
                          + ". Use the single-node stack (run-baseline.sh) for them.")
     if hasattr(a, "stack_manifest") and a.stack_manifest is None:
         a.stack_manifest = MANIFEST
     k8s_unit.guard_docker()
+
+
+def lake() -> Lake:
+    """The lake's catalog, asked from this host: the stack publishes Lakekeeper on a local
+    port, and the services' own environment (in the manifest) names it."""
+    env = json.loads(MANIFEST.read_text()).get("service_env") or {}
+    uri = env.get("STORAGE_ICEBERG_CATALOG_REST_URI", DEFAULT_CATALOG_URI).rstrip("/")
+    return Lake(Catalog(host_fetch(uri)), env.get("STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME",
+                                                  DEFAULT_WAREHOUSE), env)
 
 
 def exec_prefix() -> Callable[[bool], list[str]]:
@@ -96,6 +110,40 @@ def exec_prefix() -> Callable[[bool], list[str]]:
     if root:
         env.append(f"UDF_PYTHON_ENVIRONMENTS_ROOT={root}")
     return lambda interactive: ["env", *env]
+
+
+class LocalDevControl(StackControl):
+    """local-dev: the unit is a JVM on this host, its Python workers in its process group.
+    Every JVM of the stack reaches Postgres from 127.0.0.1, so the unit has no address of
+    its own there; its connections are known by their application name."""
+
+    def __init__(self, wait_reachable: Callable[[], dict]):
+        #: waits until the unit answers a workflow socket through the dev server's proxy
+        self._wait_reachable = wait_reachable
+
+    def kill_unit(self) -> dict:
+        return run_stack_script(STACK, "unit-kill")
+
+    def stop_unit(self) -> dict:
+        return run_stack_script(STACK, "unit-stop")
+
+    def start_unit(self) -> dict:
+        started = run_stack_script(STACK, "unit-start")
+        return {**started, "answers_after": self._wait_reachable()}
+
+    def pg_activity(self) -> list[dict]:
+        return run_stack_script(STACK, "pg-activity")
+
+    def unit_env_names(self) -> list[str]:
+        """The names the stack recorded when it last started the unit's JVM."""
+        return list(json.loads(MANIFEST.read_text()).get("unit_env_names") or [])
+
+
+def control(api, a: argparse.Namespace, *, cuid: int, report: dict, log: Callable[[str], None]) -> LocalDevControl:
+    """The stack's control for a run whose `setup` made unit `cuid` and probed its socket."""
+    wid = report["setup"]["localdev"]["websocket_probe"]["wid"]
+    return LocalDevControl(lambda: k8s_unit.wait_reachable(a.base, api.token, api.uid, cuid, wid,
+                                                           max(30.0, a.timeout), log))
 
 
 def check_selection(a: argparse.Namespace, keys: list[str], transport: str) -> None:

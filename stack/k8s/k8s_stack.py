@@ -15,8 +15,11 @@ answers through it and that ext-authz refuses unit websockets without valid cred
 `down` uninstalls the release and deletes both namespaces (and with them any unit pod)
 plus the cluster-scoped hook objects the chart leaves behind (not the CRDs). `post-run`
 checks a driver run's leftovers and refusal probes and folds the outcome into its report.
+`unit-kill`, `unit-stop`, `unit-env` and `pg-activity` are what the driver's StackControl
+(driver/stack_control.py) asks of this stack; each prints one JSON document.
 
-Commands: generate | up | down | status | logs | port-forward | collect-logs | follow-units | post-run.
+Commands: generate | up | down | status | logs | port-forward | collect-logs | follow-units | post-run |
+unit-kill | unit-stop | unit-env | pg-activity.
 Everything runs against the kube context `orbstack` (SCE_K8S_CONTEXT); nothing outside
 the two namespaces and this release's cluster-scoped objects is ever changed.
 """
@@ -46,6 +49,11 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "lib"))
+
+import pg_activity  # noqa: E402
+from record_env import fast_record_env, record_timing  # noqa: E402
+
 GEN_DIR = HERE / "generated"
 CHART_DIR = GEN_DIR / "chart"
 DEPS_CACHE = GEN_DIR / "deps-cache"
@@ -109,6 +117,9 @@ AUTHZ_PROBES = (
 )
 REFUSED = (401, 403)
 EXT_AUTHZ_DENIED = "ext_authz_denied"
+#: the chart's HTTPRoute whose rules send a request to a computing unit's pod (Envoy's
+#: `route_name` of a request holds the name of the HTTPRoute that matched it)
+UNIT_ROUTE = f"{RELEASE}-dynamic-routes"
 
 # Through the gateway: any answer but Envoy's own 502/503/504 proves the route reaches a
 # live backend (401/404/405 come from the service).
@@ -384,8 +395,31 @@ def env_names(workload: dict, docs: list[dict]) -> set[str]:
     return names
 
 
+def record_options(fast_record: bool) -> dict:
+    """What --fast-record asks for, as MANIFEST.json's `options` records it. Both lists go into
+    `texeraEnvVars`, which reaches every Texera service: the webserver (the Dashboard service)
+    reads its own, and the managing service forwards the unit's commit interval to the unit
+    pods it creates (step 3's sub-part 6 on)."""
+    unit_env = fast_record_env("unit") if fast_record else {}
+    dashboard_env = fast_record_env("dashboard") if fast_record else {}
+    return {"fast_record": fast_record, "unit_env": unit_env, "dashboard_env": dashboard_env,
+            "record_timing": record_timing(unit_env, dashboard_env)}
+
+
+def missing_record_env(docs: list[dict], registry: str, tag: str, options: dict) -> list[str]:
+    """The --fast-record variables that the rendered chart does not give the service that
+    reads them: the webserver its own, the managing service the unit's (to forward)."""
+    missing = []
+    for image, wanted in (("texera-dashboard-service", options["dashboard_env"]),
+                          ("texera-workflow-computing-unit-managing-service", options["unit_env"])):
+        workload = workload_with_image(docs, f"{registry}/{image}:{tag}")
+        have = env_names(workload, docs) if workload else set()
+        missing += [f"{name} ({image})" for name in wanted if name not in have]
+    return missing
+
+
 def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile: str,
-             workarounds: bool, metrics_server: bool = True) -> dict:
+             workarounds: bool, metrics_server: bool = True, fast_record: bool = False) -> dict:
     GEN_DIR.mkdir(parents=True, exist_ok=True)
     chart_src = _copy_chart(source)
     deps = _resolve_dependencies()
@@ -411,6 +445,9 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
     _set_env(env, "KUBERNETES_IMAGE_PULL_POLICY", pull_policy)
     # agent-service is not deployed (below), so the workspace must not offer the copilot.
     _set_env(env, "GUI_WORKFLOW_WORKSPACE_COPILOT_ENABLED", "false")
+    options = record_options(fast_record)
+    for name, value in {**options["unit_env"], **options["dashboard_env"]}.items():
+        _set_env(env, name, value)
 
     s3_endpoint = (base_values.get("storage") or {}).get("s3", {}).get("endpoint") \
         or f"http://{RELEASE}-rustfs-svc:9000"
@@ -464,6 +501,10 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
         })
         docs = render()
     values_files.append(VALUES_FILE)
+    not_given = missing_record_env(docs, registry, tag, options)
+    if not_given:
+        die("--fast-record: the rendered chart does not hand these to the service that reads them "
+            "(texeraEnvVars no longer reaches it?): " + ", ".join(not_given))
 
     # Server-side apply (Helm 4's default) rejects a container listing an env name twice.
     duplicates = {}
@@ -518,6 +559,7 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
         "unit_namespace": unit_namespace(ns),
         "values_profile": profile,
         "values_files": [str(v) for v in values_files],
+        "options": options,
         "images": {
             "registry": registry,
             "tag": tag,
@@ -1125,6 +1167,18 @@ def judge_refusal(status: int | None, envoy: dict | None) -> tuple[bool, bool | 
     return True, True, f"refused ({status}) by ext-authz ({EXT_AUTHZ_DENIED})"
 
 
+def judge_stored_read(status: int | None, envoy: dict | None) -> tuple[bool | None, str]:
+    """(answered by the webserver (None: Envoy's entry not found), verdict) for a request
+    for stored output that scenario v marked: from step 3's sub-part 16 on no such request
+    is routed to a computing unit."""
+    if envoy is None:
+        return None, f"answered ({status}); Envoy's access-log entry not found"
+    route = str(envoy.get("route_name") or "")
+    if UNIT_ROUTE in route:
+        return False, f"routed to a computing unit ({route}), answered {envoy.get('response_code')}"
+    return True, f"answered {envoy.get('response_code')} through {route or 'a route Envoy does not name'}, not a unit's"
+
+
 def gateway_refusals(ns: str, port: int) -> dict:
     """Websocket handshakes ext-authz must refuse (AUTHZ_PROBES), each judged from its HTTP
     status and Envoy's own access-log entry for it."""
@@ -1160,10 +1214,11 @@ def gateway_refusals(ns: str, port: int) -> dict:
 
 
 def evaluate_post_run(*, pods_left: list[str], unit_kept: bool, forward: dict, driver_probes: list[dict],
-                      envoy: dict[str, dict]) -> dict:
+                      envoy: dict[str, dict], stored_reads: list[dict] | None = None) -> dict:
     """After the driver: its unit's pod must be gone (unless kept), its refusal probes must
-    have been refused by ext-authz (Envoy's entries), and a run through kubectl port-forward
-    is unreliable."""
+    have been refused by ext-authz (Envoy's entries), the requests for stored output that
+    scenario v marked (`stored_reads`) must not have been routed to a unit, and a run
+    through kubectl port-forward is unreliable."""
     failures: list[str] = []
     warnings: list[str] = []
     if pods_left and not unit_kept:
@@ -1182,9 +1237,19 @@ def evaluate_post_run(*, pods_left: list[str], unit_kept: bool, forward: dict, d
             failures.append(f"the driver's {p.get('probe')} probe: {verdict}")
         elif by_authz is None:
             warnings.append(f"the driver's {p.get('probe')} probe: {verdict}")
+    reads = []
+    for r in stored_reads or []:
+        rec = envoy.get(r.get("marker"))
+        by_webserver, verdict = judge_stored_read(r.get("status"), rec)
+        reads.append({k: r.get(k) for k in ("what", "status", "marker")}
+                     | {"envoy": rec, "by_the_webserver": by_webserver, "verdict": verdict})
+        if by_webserver is False:
+            failures.append(f"the driver's request for stored {r.get('what')}: {verdict}")
+        elif by_webserver is None:
+            warnings.append(f"the driver's request for stored {r.get('what')}: {verdict}")
     return {"unit_pods_left": pods_left, "unit_kept": unit_kept, "gateway_forward": mode,
             "reliable": None if mode is None else mode == "relay", "gateway_refusals": refusals,
-            "failures": failures, "warnings": warnings}
+            "stored_reads": reads, "failures": failures, "warnings": warnings}
 
 
 def apply_post_run(report: dict, post: dict) -> None:
@@ -1201,7 +1266,8 @@ def apply_post_run(report: dict, post: dict) -> None:
 
 def cmd_generate(a) -> None:
     reg, tag = parse_images(a.images)
-    m = generate(a.source, reg, tag, a.namespace, a.port, a.profile, not a.no_workarounds)
+    m = generate(a.source, reg, tag, a.namespace, a.port, a.profile, not a.no_workarounds,
+                 fast_record=a.fast_record)
     src = m["source_git"]
     log(f"generated {GEN_DIR.relative_to(HERE.parent.parent)} from {m['chart_source']} @ "
         f"{src.get('head', '')[:10]}{' (dirty)' if src.get('dirty') else ''}")
@@ -1214,10 +1280,11 @@ def cmd_up(a) -> None:
     ns, port = a.namespace, a.port
     facts = preflight(ns, port)
     m = generate(a.source, reg, tag, ns, port, a.profile, not a.no_workarounds,
-                 metrics_server=facts["metrics_server"])
+                 metrics_server=facts["metrics_server"], fast_record=a.fast_record)
     log(f"chart {m['chart_source']} @ {m['source_git'].get('head', '')[:10]}; images {reg}/texera-*:{tag} "
         f"(pull {m['images']['pull_policy']}); workarounds: "
-        f"{', '.join(w['name'] for w in m['workarounds']) or 'none'}")
+        f"{', '.join(w['name'] for w in m['workarounds']) or 'none'}"
+        + ("; fast record" if a.fast_record else ""))
     m["crds"] = check_crds(a.allow_crd_drift)
     log(f"CRDs: {m['crds']['same']} of the chart's {m['crds']['chart_crds']} are in the cluster as the chart "
         f"has them (Gateway API bundle {', '.join(m['crds']['chart_gateway_api_bundle']) or '-'}), "
@@ -1461,8 +1528,9 @@ def cmd_collect_logs(a) -> None:
 
 def cmd_post_run(a) -> None:
     """After a driver run: wait for the unit's pod to go, read Envoy's entries of the driver's
-    refusal probes, and fold the outcome into the report (`post_run`; a failure turns
-    summary.result to FAIL). Exit 4 on a failure."""
+    refusal probes and of the requests for stored output that scenario v marked, and fold
+    the outcome into the report (`post_run`; a failure turns summary.result to FAIL). Exit 4
+    on a failure."""
     ns = a.namespace
     report = json.loads(a.report.read_text()) if a.report.exists() else None
     deadline = time.time() + a.wait
@@ -1473,10 +1541,12 @@ def cmd_post_run(a) -> None:
         time.sleep(2)
     m = load_manifest()
     probes = (((report or {}).get("setup") or {}).get("kubernetes_unit") or {}).get("gateway_refusals") or []
-    markers = [p["marker"] for p in probes if p.get("marker")]
+    reads = [r for sc in (report or {}).get("scenarios") or []
+             for r in (sc.get("facts") or {}).get("gateway_markers") or []]
+    markers = [p["marker"] for p in probes + reads if p.get("marker")]
     envoy = envoy_access_records(ns, markers, wait_s=30) if markers else {}
     post = evaluate_post_run(pods_left=pods, unit_kept=a.unit_kept, forward=m.get("gateway_forward") or {},
-                             driver_probes=probes, envoy=envoy)
+                             driver_probes=probes, envoy=envoy, stored_reads=reads)
     post["checked_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     if report is not None:
         apply_post_run(report, post)
@@ -1488,6 +1558,8 @@ def cmd_post_run(a) -> None:
     log(f"unit pods after the run: {', '.join(pods) or 'none'}{' (--keep-unit)' if a.unit_kept else ''}; "
         f"driver refusal probes: " + (", ".join(f"{r['probe']} {r['verdict']}" for r in post["gateway_refusals"])
                                        or "none recorded"))
+    for r in post["stored_reads"]:
+        log(f"stored {r['what']}: {r['verdict']}")
     for w in post["warnings"]:
         log(f"post-run warning: {w}")
     for f in post["failures"]:
@@ -1533,6 +1605,63 @@ def cmd_follow_units(a) -> None:
         time.sleep(2)
 
 
+# ------------------------------------------- what the driver's StackControl asks
+
+
+def unit_pod(ns: str, cuid: int) -> dict:
+    """The pod of computing unit `cuid`: the one the managing service labelled with its id."""
+    pods = [p for p in _unit_pods(ns) if (p["metadata"].get("labels") or {}).get("cuid") == str(cuid)]
+    if len(pods) != 1:
+        die(f"expected one pod of computing unit {cuid} in {unit_namespace(ns)}, found {len(pods)}")
+    return pods[0]
+
+
+def unit_facts(pod: dict) -> dict:
+    """What the driver asks about a unit's pod: its address, and the names of the
+    environment variables its engine container was given."""
+    engine = next((c for c in pod["spec"].get("containers") or [] if c.get("name") == UNIT_CONTAINER), {})
+    return {"pod": pod["metadata"]["name"], "address": (pod.get("status") or {}).get("podIP"),
+            "env_names": sorted(e["name"] for e in engine.get("env") or [] if e.get("name"))}
+
+
+def delete_unit_pod(ns: str, cuid: int, force: bool) -> dict:
+    """Delete the unit's pod and wait until it is gone: with `force` at once, as when its node
+    is lost (the engine is killed); otherwise with the pod's grace period (SIGTERM first)."""
+    pod = unit_pod(ns, cuid)["metadata"]["name"]
+    args = ["delete", "pod", pod, "--wait=true", "--timeout=180s"]
+    if force:
+        args += ["--grace-period=0", "--force"]
+    t0 = time.time()
+    kubectl(*args, ns=unit_namespace(ns), capture=True, timeout=240)
+    return {"cuid": cuid, "pod": pod, "how": "kubectl " + " ".join(args[:2] + args[3:]),
+            "seconds": round(time.time() - t0, 1)}
+
+
+def pg_backends(ns: str) -> list[dict]:
+    """Postgres's client connections, asked inside its pod. The password is the one the pod
+    itself holds, as the chart's init script uses it."""
+    script = 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -U postgres -d texera_db "$@"'
+    p = kubectl("exec", f"{POSTGRES_STS}-0", "--", "sh", "-c", script, "sh", *pg_activity.PSQL_ARGS,
+                ns=ns, capture=True, timeout=60)
+    return pg_activity.parse(p.stdout)
+
+
+def cmd_unit_kill(a) -> None:
+    print(json.dumps(delete_unit_pod(a.namespace, a.cuid, force=True)))
+
+
+def cmd_unit_stop(a) -> None:
+    print(json.dumps(delete_unit_pod(a.namespace, a.cuid, force=False)))
+
+
+def cmd_unit_env(a) -> None:
+    print(json.dumps({"cuid": a.cuid, **unit_facts(unit_pod(a.namespace, a.cuid))}))
+
+
+def cmd_pg_activity(a) -> None:
+    print(json.dumps(pg_backends(a.namespace)))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         prog="k8s-stack.sh",
@@ -1553,6 +1682,10 @@ def main() -> None:
                             "(the chart's single-node profile, default) or only values.yaml")
         p.add_argument("--no-workarounds", action="store_true",
                        help="deploy without the harness's workarounds for chart bugs")
+        p.add_argument("--fast-record", action="store_true",
+                       help="step 3's timers shortened, as Helm values (texeraEnvVars): the unit commits "
+                            "every 2 s; the Dashboard closes every 2 s, loses a unit after 12 s, an "
+                            "unstarted execution after 15 s, and expires results after 20 s")
 
     p = sub.add_parser("generate", help="write stack/k8s/generated/ (chart copy, values, render)")
     gen_args(p)
@@ -1587,11 +1720,18 @@ def main() -> None:
     p = sub.add_parser("follow-units", help="stream every unit pod's log into a directory")
     p.add_argument("dir", type=Path)
     p = sub.add_parser("post-run", help="after a driver run: the unit's pod is gone, the driver's refusal "
-                                        "probes were ext-authz's; folded into the report (exit 4 on a failure)")
+                                        "probes were ext-authz's, no marked request for stored output went "
+                                        "to a unit; folded into the report (exit 4 on a failure)")
     p.add_argument("report", type=Path)
     p.add_argument("--wait", type=float, default=90, help="seconds to wait for unit pods to go")
     p.add_argument("--unit-kept", action="store_true", help="the driver ran with --keep-unit")
     p.add_argument("--out", type=Path, help="also write the outcome to this JSON file")
+    for name, what in (("unit-kill", "delete a unit's pod at once (--grace-period=0 --force): the unit is lost"),
+                       ("unit-stop", "delete a unit's pod with its grace period: the unit is stopped politely"),
+                       ("unit-env", "a unit pod's address and the names of its engine's environment variables")):
+        p = sub.add_parser(name, help=what + " (JSON)")
+        p.add_argument("cuid", type=int)
+    sub.add_parser("pg-activity", help="Postgres's client connections, from pg_stat_activity (JSON)")
     p = sub.add_parser("_pf-supervise", help=argparse.SUPPRESS)
     p.add_argument("--port", type=int, required=True)
 
@@ -1607,6 +1747,10 @@ def main() -> None:
         "collect-logs": cmd_collect_logs,
         "follow-units": cmd_follow_units,
         "post-run": cmd_post_run,
+        "unit-kill": cmd_unit_kill,
+        "unit-stop": cmd_unit_stop,
+        "unit-env": cmd_unit_env,
+        "pg-activity": cmd_pg_activity,
         "_pf-supervise": cmd_pf_supervise,
     }[a.cmd](a)
 

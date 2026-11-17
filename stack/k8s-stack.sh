@@ -12,6 +12,10 @@
 #   stack/k8s-stack.sh collect-logs <dir>          logs, events, objects of both namespaces
 #   stack/k8s-stack.sh follow-units <dir>          stream every unit pod's log (until killed)
 #   stack/k8s-stack.sh post-run <report.json>      after a driver run: unit pod gone, refusals by ext-authz
+#   stack/k8s-stack.sh unit-kill|unit-stop|unit-env <cuid>, pg-activity
+#                                                  for the driver's StackControl: delete a unit's pod at once or
+#                                                  with its grace period, its address and environment names,
+#                                                  Postgres's connections (each prints JSON)
 #   stack/k8s-stack.sh generate [--images ...]     write stack/k8s/generated/ only
 #
 # --source defaults to $SCE_SOURCE or

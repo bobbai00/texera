@@ -2,8 +2,8 @@
 (begin_scenario, run_scenario, _apply_evidence). The fake Texera reports the
 Postgres statements the design's services would run and the requests a gateway
 would log; a fake `docker` serves them as the Postgres, unit and nginx logs, and
-answers the catalog (Check E) and the final status-0 check from the fake's
-executions.
+answers the catalog (Check E) and the final check (the rows left at status 0 or 6,
+or from gate 3B on the closing records of Check K) from the fake's executions.
 
 The review's case: l8 opens a second socket on a completed run, and the unit
 replays that run (state Completed, its console) to it about 0.1 s after the
@@ -59,35 +59,52 @@ class StackDocker(FakeDocker):
                 if e.get("started"):
                     refs["started"] = {"snapshot-id": 1, "type": "tag"}
                 return subprocess.CompletedProcess(args, 0, json.dumps({"metadata": {"refs": refs}}) + "\n200", "")
-        if args[0] == "exec" and "psql" in args and "status = 0" in args[-1]:
+        if args[0] == "exec" and "psql" in args and "e.status IN (0, 6)" in args[-1]:
+            wids = {int(w) for w in re.search(r"v\.wid IN \(([^)]*)\)", args[-1]).group(1).split(",")}
+            rows = [f"{eid}|{x['wid']}|{x['status']}" for eid, x in sorted(self.fake.executions.items())
+                    if x["status"] in (0, 6) and x["wid"] in wids]
+            return subprocess.CompletedProcess(args, 0, "\n".join(rows) + "\n", "")
+        if args[0] == "exec" and "psql" in args and "ended_at IS NOT NULL" in args[-1]:  # Check K
             wids = {int(w) for w in re.search(r"IN \(([^)]*)\)", args[-1]).group(1).split(",")}
-            rows = [f"{eid}|{x['wid']}" for eid, x in sorted(self.fake.executions.items())
-                    if x["status"] == 0 and x["wid"] in wids]
+            rows = [f"{eid}|{x['wid']}|{'' if x['outcome'] is None else x['outcome']}|"
+                    f"{int(x['ended_at'] is not None)}|{x['outcome_reason'] or ''}"
+                    for eid, x in sorted(self.fake.executions.items()) if x["wid"] in wids]
             return subprocess.CompletedProcess(args, 0, "\n".join(rows) + "\n", "")
         return super()._call(args)
 
 
-class ScenarioEvidence(ScenarioCase):
+class EvidenceCase(ScenarioCase):
+    """A scenario case whose scenarios run with evidence, as e2e.py runs them."""
+
+    #: the fake `docker` of the stack, and what the evidence is asked for beyond its defaults
+    docker_class = StackDocker
+    evidence_options: dict = {}
+    #: the negative control the scenarios run under: none, or the step it is of ("2", "3")
+    negative: str | None = None
+
     def setUp(self):
         super().setUp()
         quiet = e2e.log
         e2e.log = lambda m: None
         self.addCleanup(setattr, e2e, "log", quiet)
-        self.docker = StackDocker(self.fake)
+        self.docker = self.docker_class(self.fake)
         self.fake.statement_sink = self.docker.statement
         self.fake.access_sink = self.docker.access
         self.fake.cleanup_s = 0.3
         self.messages: list[str] = []
         self.ev = ev.Evidence(run_id="t", runner=self.docker, log=self.messages.append,
-                              cleanup_wait_s=8.0, quiet_s=0.4)
+                              cleanup_wait_s=8.0, quiet_s=0.4, **self.evidence_kwargs())
         self.ev.preflight()
         self.ctx.evidence = self.ev
         self.ctx.transport.phase_hook = self.ev.on_phase
 
+    def evidence_kwargs(self) -> dict:
+        return dict(self.evidence_options)
+
     def run_ev(self, key: str, expect: str = "PASS"):
         waited = self.ev.begin_scenario(key)
         rec = run_scenario(self.ctx, key)
-        e2e._apply_evidence(self.ev, rec, waited, self.ctx.api, False)
+        e2e._apply_evidence(self.ev, rec, waited, self.ctx.api, self.negative)
         failed = [(c.name, c.detail[:300]) for c in rec.checks if not c.ok]
         self.assertEqual(expect, rec.outcome, f"{key}: failed {failed}; error {rec.error}")
         return rec
@@ -95,6 +112,8 @@ class ScenarioEvidence(ScenarioCase):
     def gated(self, rec) -> set[str]:
         return {c.name.split(":")[0].removeprefix("evidence ") for c in rec.checks if c.name.startswith("evidence ")}
 
+
+class ScenarioEvidence(EvidenceCase):
     def test_l8_second_start_on_a_replayed_run(self):
         rec = self.run_ev("l8")
         self.assertEqual(set("ABCDEF"), self.gated(rec))
@@ -129,7 +148,18 @@ class ScenarioEvidence(ScenarioCase):
                                 for c in rec.checks), key)
         final = self.ev.final_check(self.ctx.created_wids)
         self.assertTrue(final["ok"], final)
-        self.assertTrue(final["left"])  # the refused starts' rows, allowed
+        # the refused starts' rows, and the one l6 created for its plan: Created, and allowed
+        self.assertEqual([6] * 5, [row["status"] for row in final["left"]])
+        self.assertTrue(all(row["allowed"] for row in final["left"]))
+
+    def test_a_refused_starts_row_that_reads_initializing_fails_the_scenario_and_the_final_check(self):
+        """The Dashboard of before step 2's review, which created a row as Initializing."""
+        self.fake.faults.add("created-reads-initializing")
+        rec = self.run_ev("l5", expect="FAIL")
+        self.assertEqual(["l5 another user's socket: the row stays 6"], [c.name for c in rec.checks if not c.ok])
+        final = self.ev.final_check(self.ctx.created_wids)
+        self.assertIs(False, final["ok"])
+        self.assertTrue(final["detail"].endswith(f"not at 6: [({rec.eid}, 0)]"), final["detail"])
 
     def test_o_repeat_call_is_silent(self):
         rec = self.run_ev("o")
