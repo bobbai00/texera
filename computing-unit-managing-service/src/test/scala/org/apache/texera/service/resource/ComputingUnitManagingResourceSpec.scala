@@ -565,6 +565,16 @@ class ComputingUnitManagingResourceSpec
 
   private val payloadSize = EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
 
+  // Mirrors the private production list too: the payload size, and what a unit reads to run a
+  // stored plan.
+  private val optionalEnvNames = Seq(
+    payloadSize,
+    EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS,
+    EnvironmentalVariable.ENV_ICEBERG_TABLE_PLAN_NAMESPACE,
+    EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT,
+    EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES
+  )
+
   "requiredComputingUnitEnv" should "return every variable when all are set" in {
     val env = ComputingUnitManagingResource.requiredComputingUnitEnv(name => Some(s"value-$name"))
     env.keySet shouldBe requiredEnvNames.toSet
@@ -633,19 +643,28 @@ class ComputingUnitManagingResourceSpec
     requiredEnvNames.foreach(name => thrown.getMessage should include(name))
   }
 
-  "optionalComputingUnitEnv" should "forward an override that is set" in {
-    ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some("2048")) shouldBe
-      Map(payloadSize -> "2048")
+  "optionalComputingUnitEnv" should "forward every override that is set" in {
+    ComputingUnitManagingResource.optionalComputingUnitEnv(name => Some(s"value-$name")) shouldBe
+      optionalEnvNames.map(name => name -> s"value-$name").toMap
+  }
+
+  // A deployment whose Dashboard signs input links for another address of the object store names
+  // that address to the units, or they refuse every link: nothing else needs setting with it.
+  it should "forward the one override a deployment sets, and no other" in {
+    val set = Map(
+      EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS -> "http://store.example:9000"
+    )
+    ComputingUnitManagingResource.optionalComputingUnitEnv(set.get) shouldBe set
   }
 
   // HOCON refuses " 2048" as an int, and the unit then dies at startup naming nothing.
   it should "trim what it forwards" in {
     ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some(" 2048\n")) shouldBe
-      Map(payloadSize -> "2048")
+      optionalEnvNames.map(_ -> "2048").toMap
   }
 
-  // application.conf already defaults this to 1024; forwarding "" would override the default
-  // with a value HOCON cannot read as an int.
+  // Each has a default in the unit's configuration; forwarding "" would override the default
+  // with a value HOCON cannot read as an int, or with no namespace or directory at all.
   it should "forward nothing when unset or blank" in {
     ComputingUnitManagingResource.optionalComputingUnitEnv(_ => None) shouldBe empty
     ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some("  ")) shouldBe empty

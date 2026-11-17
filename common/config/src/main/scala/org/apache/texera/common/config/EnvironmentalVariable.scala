@@ -87,6 +87,9 @@ object EnvironmentalVariable {
   val ENV_ICEBERG_CATALOG_POSTGRES_USERNAME = "STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME"
   val ENV_ICEBERG_CATALOG_POSTGRES_PASSWORD = "STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD"
 
+  // Iceberg namespace of the executions' plan tables
+  val ENV_ICEBERG_TABLE_PLAN_NAMESPACE = "STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE"
+
   // LakeFS
   val ENV_LAKEFS_ENDPOINT = "STORAGE_LAKEFS_ENDPOINT"
 
@@ -95,6 +98,14 @@ object EnvironmentalVariable {
   val ENV_S3_REGION = "STORAGE_S3_REGION"
   val ENV_S3_AUTH_USERNAME = "STORAGE_S3_AUTH_USERNAME"
   val ENV_S3_AUTH_PASSWORD = "STORAGE_S3_AUTH_PASSWORD"
+
+  // The object-store endpoints a computing unit reads a plan's input links from
+  val ENV_INPUT_LINKS_ALLOWED_ENDPOINTS = "STORAGE_INPUT_LINKS_ALLOWED_ENDPOINTS"
+
+  // The Python environments a computing unit installs (see udf.conf)
+  val ENV_PYTHON_ENVIRONMENTS_ROOT = "UDF_PYTHON_ENVIRONMENTS_ROOT"
+  val ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES =
+    "UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES"
 
   /**
     * Variables in application.conf that code also refers to by name

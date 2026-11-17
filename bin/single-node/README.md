@@ -172,6 +172,19 @@ To change these ports, open the `.env` file and update the corresponding variabl
 - For the RustFS port (9000): change `RUSTFS_PORT=9000` to your desired port, e.g., `RUSTFS_PORT=9001`.
 - For the JupyterLab port (9100): change `JUPYTER_PORT=9100` to your desired port, e.g., `JUPYTER_PORT=9101`.
 
+### Change how runs read files and install Python environments
+When Texera creates an execution, it links each dataset file the run reads, and the computing unit reads the file through the link. A run's Python environments are installed on the computing unit the first time a run needs them. Each of the following has a default, so add a line to the `.env` file only to override one:
+
+| Variable | What it sets | Default |
+| --- | --- | --- |
+| `STORAGE_INPUT_LINKS_S3_ENDPOINT` | The object-store address the links are signed for. Set it when computing units reach the store at another address than the services do. | `STORAGE_S3_ENDPOINT` |
+| `STORAGE_INPUT_LINKS_ALLOWED_ENDPOINTS` | The object-store addresses a computing unit reads links from, separated by commas. It must include the address the links are signed for. | `STORAGE_S3_ENDPOINT` |
+| `STORAGE_INPUT_LINKS_TTL_SECONDS` | How long a link works, in seconds, from 60 to 604800. A run that opens a file after its link expired fails and has to be run again. | `604800` (7 days) |
+| `CONSTANTS_MAX_LISTED_FILES` | The most files of dataset versions that one operator of a run may list. A workflow that lists more does not compile. | `10000` |
+| `UDF_PYTHON_ENVIRONMENTS_ROOT` | The directory a computing unit installs Python environments under. | `/tmp/texera-python-environments` |
+| `UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES` | How long one install may take, in minutes. | `30` |
+| `STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE` | The Iceberg namespace of the tables that hold each execution's plan. | `execution-plan` |
+
 ### Change the locations of Texera data
 By default, Docker manages Texera's data locations. To change them to your own locations:
 - Find the `persistent volumes` section. For each data volume you want to specify, add the following configuration:

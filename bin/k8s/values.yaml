@@ -453,6 +453,24 @@ texeraEnvVars:
     value: "true"
   - name: MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
     value: "1024"
+  # Stored plans: what the Dashboard service writes when it creates an execution, and a
+  # computing unit reads to run it. Each of these has a default, so add an entry only to override
+  # one; the computing unit manager hands the units it creates the ones a unit reads.
+  #   STORAGE_INPUT_LINKS_S3_ENDPOINT  the object-store address the Dashboard signs the links to
+  #     a run's input files for, when computing units reach the store at another address than the
+  #     services do. The units must be allowed to read from it:
+  #   STORAGE_INPUT_LINKS_ALLOWED_ENDPOINTS  the object-store addresses a unit reads links from,
+  #     separated by commas. A unit refuses a link to any other address.
+  #   STORAGE_INPUT_LINKS_TTL_SECONDS  how long a link works: 60 to 604800 (7 days, the default).
+  #   CONSTANTS_MAX_LISTED_FILES  the most files of dataset versions one operator may list.
+  #   UDF_PYTHON_ENVIRONMENTS_ROOT  the directory a unit installs a run's Python environments
+  #     under (default /tmp/texera-python-environments).
+  #   UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES  how long one install may take (default 30).
+  #   STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE  the Iceberg namespace of the executions' plan tables
+  #     (default execution-plan).
+  # For example:
+  # - name: STORAGE_INPUT_LINKS_TTL_SECONDS
+  #   value: "86400"
   - name: MAX_NUM_OF_RUNNING_COMPUTING_UNITS_PER_USER
     value: "10"
   - name: KUBERNETES_COMPUTING_UNIT_CPU_LIMIT_OPTIONS

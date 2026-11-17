@@ -66,6 +66,24 @@ class EnvironmentalVariableSpec extends AnyFlatSpec with Matchers {
     EnvironmentalVariable.ENV_CACHE_ENABLED shouldBe "CACHE_ENABLED"
   }
 
+  // The names the computing unit manager hands a unit must be the ones the unit's *.conf reads.
+  it should "name the unit's settings for stored plans as storage.conf and udf.conf read them" in {
+    def read(resource: String): String = {
+      val source = scala.io.Source.fromResource(resource)
+      try source.mkString
+      finally source.close()
+    }
+    val storage = read("storage.conf")
+    val udf = read("udf.conf")
+
+    storage should include("${?" + EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS + "}")
+    storage should include("${?" + EnvironmentalVariable.ENV_ICEBERG_TABLE_PLAN_NAMESPACE + "}")
+    udf should include("${?" + EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT + "}")
+    udf should include(
+      "${?" + EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES + "}"
+    )
+  }
+
   "EnvironmentalVariable.get" should "return None for an unset variable" in {
     val absent = "TEXERA_DEFINITELY_UNSET_" + System.nanoTime().toString
     EnvironmentalVariable.get(absent) shouldBe None
