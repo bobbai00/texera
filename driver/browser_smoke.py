@@ -3,9 +3,11 @@
 
 The API scenarios (e2e.py) speak the protocol themselves. This drives the page the
 user sees: it opens a workflow in the editor, presses Run, Pause, Resume and Stop,
-changes a paused operator in the property editor, and reads the result table. What
-the page sent is recorded beside what it showed: every request to /api/executions*
-with its status, and every frame the page sent on the workflow websocket.
+changes a paused operator in the property editor, and reads an operator's result in
+the window the page opens beside the operator, and its messages and errors in the
+console. What the page sent is recorded beside what it showed: every request to
+/api/executions* and /api/environments* with its status, and every frame the page
+sent on the workflow websocket.
 
 Setup is the driver's (texera_api.py, workflow.py): log in, the CSV dataset, the
 warehouse, the local computing unit, one workflow per case stored in UI format.
@@ -15,20 +17,24 @@ frontend remembers for the workflow (localStorage `computing-unit-of-workflow-<w
 ComputingUnitSelectionComponent).
 
 Cases
-  B1  Run to completion: CSV scan -> Filter -> Aggregate; the rows in the result table.
-  B2  A compile error from the create (a Projection of a missing column): the page shows
-      the operator's error, nothing is sent on the websocket, Run works again; then the
-      operator is fixed in the property editor and the run completes.
+  B1  Run to completion: CSV scan -> Filter -> Aggregate; the rows of the last
+      operator's result, opened beside it.
+  B2  A compile error from the create (a Projection of a missing column): the console
+      shows the operator's error, nothing is sent on the websocket, Run works again; then
+      the operator is fixed in the property editor and the run completes.
   B3  Pause, resume, stop with the buttons on a slow Python UDF.
   B4  Change a paused operator: the UDF's code, in the code editor; resume; the rows.
   B5  Run again on the same page after a completed run: a second create and start, and
-      the result table shows the second run's rows.
+      the result window left open shows the second run's rows.
   B6  (extra) Stop pressed while the execution is still being created: the run is given
       up in the browser, nothing goes to the unit, and Run works again.
   B7  B4 with the page loaded again while its run is paused: the page that makes the
       change no longer holds the create's answer, only the execution the unit names.
   B8  B4 with the change made, and the run resumed, in a second tab opened on the paused
       run.
+  B9  A Python environment kept at the Dashboard: made on the Environments page, picked
+      in a UDF's property editor, installed by the unit when the run starts (the UDF's
+      console says so); the computing-unit menu offers no environment action.
 
 Writes <out>/report.json and one screenshot (or more) per case. Exit code 0 when every
 selected case passes, 1 when one fails, 2 when setup fails.
@@ -48,6 +54,7 @@ import sys
 import time
 import traceback
 import urllib.parse
+import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,9 +64,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from e2e import DATA_DIR, DATA_FILES, REPORTS, STACK_GENERATED, harness_git  # noqa: E402
+from scenarios import TABULATE_LINES, UDF_TABULATE, Ctx, _installs_of, _precondition_no_tabulate  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
 from transport import make_transport  # noqa: E402
-from workflow import Workflow, aggregate, csv_scan, filter_op, projection, python_udf  # noqa: E402
+from workflow import Workflow, aggregate, csv_scan, filter_op, projection, python_udf, text_input  # noqa: E402
 
 from playwright.sync_api import Error as PlaywrightError  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
@@ -67,8 +75,10 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 STATUS_COMPLETED, STATUS_FAILED, STATUS_KILLED = 3, 4, 5
 OLD_REQUESTS = ("WorkflowExecuteRequest", "ModifyLogicRequest")
 WS_PATH = "/wsapi/workflow-websocket"
+EXECUTIONS_PATH, ENVIRONMENTS_PATH = "/api/executions", "/api/environments"
 UPDATES_PATH = re.compile(r"/api/executions/\d+/updates")
 MISSING_COLUMN = "sce_no_such_column"
+UNIT_CONTAINER = "sce-workflow-runtime-coordinator-service"
 
 _T0 = time.monotonic()
 
@@ -177,9 +187,9 @@ class CaseRecord:
 
 
 class NetLog:
-    """The network evidence of one page: requests to /api/executions* with their
-    status, and the frames of every websocket the page opened. Handlers only store;
-    bodies are read later, from the main flow."""
+    """The network evidence of one page: requests to /api/executions* and
+    /api/environments* with their status, and the frames of every websocket the page
+    opened. Handlers only store; bodies are read later, from the main flow."""
 
     def __init__(self, page, token: str):
         self.token = token
@@ -204,18 +214,18 @@ class NetLog:
         return text.replace(self.token, "<token>") if self.token else text
 
     @staticmethod
-    def _is_executions(url: str) -> bool:
-        return urllib.parse.urlsplit(url).path.startswith("/api/executions")
+    def _is_recorded(url: str) -> bool:
+        return urllib.parse.urlsplit(url).path.startswith((EXECUTIONS_PATH, ENVIRONMENTS_PATH))
 
     def _on_response(self, resp) -> None:
-        if self._is_executions(resp.url):
+        if self._is_recorded(resp.url):
             self._responses.append((self._now(), resp))
         if resp.status >= 400:
             path = urllib.parse.urlsplit(resp.url).path
             self.http_errors[f"{resp.request.method} {path} -> {resp.status}"] += 1
 
     def _on_failed(self, req) -> None:
-        if self._is_executions(req.url):
+        if self._is_recorded(req.url):
             self._failed.append((self._now(), req))
 
     def _on_ws(self, ws) -> None:
@@ -268,19 +278,22 @@ class NetLog:
         """When the answer `resp` to a request to /api/executions* was reported."""
         return next((t for t, r in self._responses if r is resp), None)
 
-    def executions_requests(self) -> list[dict]:
-        """Every request to /api/executions*: method, path, status and a short view of
-        the bodies. An answer is read the first time it is listed (a body the browser no
-        longer holds is noted): the browser drops the bodies of a document that is reloaded."""
+    def requests(self) -> list[dict]:
+        """Every recorded request: method, path, status and a short view of the bodies (of
+        a request that writes, and of what /api/environments answers to a read). An answer
+        is read the first time it is listed (a body the browser no longer holds is noted):
+        the browser drops the bodies of a document that is reloaded or left."""
         for t, resp in self._responses[len(self._views):]:
             req = resp.request
-            entry: dict[str, Any] = {"t": t, "method": req.method,
-                                     "path": urllib.parse.urlsplit(resp.url).path, "status": resp.status}
-            if req.method == "POST":
+            path = urllib.parse.urlsplit(resp.url).path
+            entry: dict[str, Any] = {"t": t, "method": req.method, "path": path, "status": resp.status}
+            writes = req.method in ("POST", "PUT")
+            if writes:
                 try:
                     entry["request"] = self._brief_request(json.loads(req.post_data or "null"))
                 except (ValueError, PlaywrightError) as e:
                     entry["request"] = f"<unreadable: {e}>"
+            if writes or (req.method == "GET" and path.startswith(ENVIRONMENTS_PATH)):
                 try:
                     entry["response"] = self._brief_response(resp.json())
                 except Exception as e:  # noqa: BLE001 -- no body, or not JSON
@@ -294,6 +307,14 @@ class NetLog:
             out.append({"t": t, "method": req.method, "path": urllib.parse.urlsplit(req.url).path,
                         "status": None, "failure": req.failure})
         return sorted(out, key=lambda e: e["t"])
+
+    def executions_requests(self) -> list[dict]:
+        """Every request to /api/executions* (see `requests`)."""
+        return [e for e in self.requests() if e["path"].startswith(EXECUTIONS_PATH)]
+
+    def environments_requests(self) -> list[dict]:
+        """Every request to /api/environments* (see `requests`)."""
+        return [e for e in self.requests() if e["path"].startswith(ENVIRONMENTS_PATH)]
 
     @staticmethod
     def _brief_request(body: Any) -> Any:
@@ -355,6 +376,7 @@ class NetLog:
                     if m.get("type") in ("WorkflowErrorEvent", "ModifyLogicResponse", "ModifyLogicCompletedEvent")]
             sockets.append(entry)
         return {"executions_requests": [{**e, "t": rel(e["t"])} for e in self.executions_requests()],
+                "environments_requests": [{**e, "t": rel(e["t"])} for e in self.environments_requests()],
                 "websockets": sockets,
                 "sockets_without_frames": dict(others),
                 "http_answers_400_and_up": dict(self.http_errors)}
@@ -362,15 +384,50 @@ class NetLog:
 
 # ------------------------------------------------------------------------ the page
 
+# The console (the bottom panel) as it is shown, a function of the page: whether it is open,
+# the operator it is narrowed to ("Showing: <operator>"; null for every operator's messages),
+# and its messages in order. A message's type is its badge's (PRINT, COMMAND, DEBUGGER, ERROR,
+# ConsoleFrameComponent.labelMapping); `detail` is what a click on its title opens under it
+# (in the page from the start, hidden until then: `opened`); the tags follow.
+CONSOLE_JS = r"""() => {
+  const frame = document.querySelector('#result-container texera-console-frame');
+  if (!frame || frame.offsetParent === null) return { shown: false, showing: null, rows: [] };
+  const text = e => (e ? e.textContent || '' : '').trim();
+  const types = { default: 'PRINT', processing: 'COMMAND', warning: 'DEBUGGER', error: 'ERROR' };
+  const notice = frame.querySelector('.operator-filter-notice');
+  const rows = Array.from(frame.querySelectorAll('.console-message-entry')).map(li => {
+    const dot = li.querySelector('.type-tag .ant-badge-status-dot');
+    const status = dot
+      ? (Array.from(dot.classList).find(c => c.startsWith('ant-badge-status-') && c !== 'ant-badge-status-dot') || '')
+          .replace('ant-badge-status-', '')
+      : null;
+    const title = li.querySelector('.collapse-message-header');
+    const body = li.querySelector('.console-message');
+    const header = li.querySelector('.ant-collapse-header');
+    return {
+      type: status === null ? null : types[status] || status,
+      title: text(title || body),
+      detail: title ? text(body) : '',
+      opened: header ? header.getAttribute('aria-expanded') === 'true' : null,
+      operator: text(li.querySelector('.operator-tag')),
+      source: text(li.querySelector('.source-tag')),
+      time: text(li.querySelector('.timestamp-tag')),
+      worker: text(li.querySelector('.worker-tag')),
+    };
+  });
+  return { shown: true, showing: notice ? text(notice).replace(/^Showing:\s*/, '') : null, rows };
+}"""
+
 INIT_SCRIPT = r"""
 (() => {
   if (window.__sce) return;
-  const s = (window.__sce = { run: [], toasts: [] });
+  const s = (window.__sce = { run: [], toasts: [], console: [], consoleKey: null });
+  const readConsole = """ + CONSOLE_JS + r""";
   const tick = () => {
     try {
       const b = document.querySelector('#run-button');
+      const text = b ? (b.innerText || '').trim() : null;
       if (b) {
-        const text = (b.innerText || '').trim();
         const disabled = !!b.disabled;
         const kill = document.querySelector('button[title^="Stop this run"]');
         const killDisabled = kill ? !!kill.disabled : null;
@@ -383,6 +440,19 @@ INIT_SCRIPT = r"""
         const text = (n.textContent || '').trim();
         if (text && !n.__sceSeen) { n.__sceSeen = true; s.toasts.push({ t: Date.now(), text }); }
       });
+      // what the console showed, as it changed, with what the run button said then
+      const c = readConsole();
+      if (!c.shown) {
+        s.consoleKey = null;
+      } else {
+        const view = { button: text, showing: c.showing,
+                       rows: c.rows.slice(-40).map(r => ({ type: r.type, title: r.title.slice(0, 300) })) };
+        const key = JSON.stringify(view);
+        if (key !== s.consoleKey) {
+          s.consoleKey = key;
+          if (s.console.length < 500) s.console.push({ t: Date.now(), ...view });
+        }
+      }
     } catch (e) {}
   };
   setInterval(() => {
@@ -410,13 +480,14 @@ class Editor:
         self.key = f"{key}-tab" if tab_of else key  # the prefix of this page's files
         self.label = label or f"wid {wid}"
         self.t0 = time.time()
-        self.earlier: dict[str, list[dict]] = {"run": [], "toasts": []}  # of the page's loads before a reload
+        # what the page's earlier documents recorded (before a reload, or another address)
+        self.earlier: dict[str, list[dict]] = {"run": [], "toasts": [], "console": []}
+        self.loaded = False
         if tab_of:
             self.context = tab_of.context
         else:
             self.context = browser.new_context(viewport={"width": 1680, "height": 1050})
-            storage = {"access_token": token, f"computing-unit-of-workflow-{wid}": str(cuid),
-                       "result-panel-height": "430"}
+            storage = {"access_token": token, f"computing-unit-of-workflow-{wid}": str(cuid)}
             self.context.add_init_script(
                 "try {" + "".join(f"localStorage.setItem({json.dumps(k)}, {json.dumps(v)});"
                                   for k, v in storage.items()) + "} catch (e) {}\n" + INIT_SCRIPT)
@@ -462,20 +533,36 @@ class Editor:
     # ---- opening
 
     def open(self, operators: list[str], timeout: float = 90) -> None:
-        url = f"{self.base}/user/workflow/{self.wid}"
-        self.page.goto(url, wait_until="domcontentloaded")
+        """Load the workflow in the editor."""
+        self._leave_document("(the workflow opened)")
+        self.page.goto(f"{self.base}/user/workflow/{self.wid}", wait_until="domcontentloaded")
+        self.loaded = True
         self._wait_loaded(operators, timeout)
+
+    def goto(self, path: str, selector: str, timeout: float = 90) -> None:
+        """Load another page of the app, by its path, and wait for `selector` on it."""
+        self._leave_document(f"(left for {path})")
+        self.page.goto(f"{self.base}{path}", wait_until="domcontentloaded")
+        self.loaded = True
+        self.page.wait_for_selector(selector, timeout=timeout * 1000)
 
     def reload(self, operators: list[str], timeout: float = 90) -> None:
         """Load the page again, as the browser's reload does: the page's code starts from
         nothing. What the page showed until now is kept for the report."""
-        self.net.executions_requests()  # read while the browser holds the answers' bodies
-        for name in self.earlier:
-            self.earlier[name] = self._page_log(name)
-        self.earlier["run"].append({"t": time.time() * 1000, "text": "(page reloaded)", "disabled": None,
-                                    "killDisabled": None})
+        self._leave_document("(page reloaded)")
         self.page.reload(wait_until="domcontentloaded")
         self._wait_loaded(operators, timeout)
+
+    def _leave_document(self, marker: str) -> None:
+        """Before the page loads a document again or another one: keep what this one recorded,
+        with `marker` among the run button's texts."""
+        if not self.loaded:
+            return
+        self.net.requests()  # read while the browser holds the answers' bodies
+        for name in self.earlier:
+            self.earlier[name] = self._page_log(name)
+        self.earlier["run"].append({"t": time.time() * 1000, "text": marker, "disabled": None,
+                                    "killDisabled": None})
 
     def _wait_loaded(self, operators: list[str], timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -510,6 +597,12 @@ class Editor:
 
     def toasts(self) -> list[dict]:
         return [{"t": round(e["t"] / 1000 - self.t0, 3), "text": e["text"]} for e in self._page_log("toasts")]
+
+    def console_timeline(self) -> list[dict]:
+        """What the console showed while it was open, as it changed: the operator it was
+        narrowed to, each message's type and title, and what the run button said then."""
+        return [{"t": round(e["t"] / 1000 - self.t0, 3), "button": e["button"], "showing": e["showing"],
+                 "rows": e["rows"]} for e in self._page_log("console")]
 
     def wait_run_button(self, *texts: str, timeout: float, enabled: bool | None = None) -> str:
         deadline = time.monotonic() + timeout
@@ -553,53 +646,76 @@ class Editor:
             return [id, st ? (st.textContent || '').trim() : null];
         }))""", operators)
 
-    def select_operator(self, op_id: str) -> None:
-        """Click the operator on the canvas, so the property editor and the result
-        panel show it."""
-        # By coordinates: the operator's own boundary rect lies over its body, so an
-        # element click on the body waits forever for "nothing else to receive the click".
+    def _operator_centre(self, op_id: str) -> tuple[float, float]:
         box = self.page.locator(f'[model-id="{op_id}"] rect.body').first.bounding_box()
         if not box:
             raise UiTimeout(f"operator {op_id} is not on the canvas")
-        self.page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+    def select_operator(self, op_id: str) -> None:
+        """Click the operator on the canvas, so the property editor shows it and the
+        console is narrowed to it."""
+        # By coordinates: the operator's own boundary rect lies over its body, so an
+        # element click on the body waits forever for "nothing else to receive the click".
+        self.page.mouse.click(*self._operator_centre(op_id))
         self.page.wait_for_timeout(300)
 
-    # ---- the result panel
+    # ---- an operator's result: the window the page pins beside the operator
 
-    def open_result_panel(self) -> None:
-        content = self.page.locator("#result-container #content")
-        if content.count() == 0 or not content.first.is_visible():
-            self.page.locator("#result-buttons .anticon-border").first.click()
-            content.first.wait_for(state="visible", timeout=10000)
+    @staticmethod
+    def result_window(op_id: str) -> str:
+        return f'texera-pinned-result-window[data-operator-id="{op_id}"]'
 
-    def result_tabs(self) -> list[str]:
-        return [t.strip() for t in self.page.locator("#result-container .ant-tabs-tab").all_inner_texts()]
+    def result_is_open(self, op_id: str) -> bool:
+        window = self.page.locator(self.result_window(op_id))
+        return window.count() > 0 and window.first.is_visible()
 
-    def open_result_tab(self, name: str, timeout: float = 20) -> None:
-        self.open_result_panel()
-        tab = self.page.locator("#result-container .ant-tabs-tab", has_text=re.compile(rf"^\s*{re.escape(name)}\s*$"))
-        deadline = time.monotonic() + timeout
-        while tab.count() == 0 and time.monotonic() < deadline:
-            self.page.wait_for_timeout(200)
-        if tab.count() == 0:
-            raise UiTimeout(f"the result panel has no '{name}' tab; tabs {self.result_tabs()}; "
-                            f"title {self.result_title()!r}")
-        tab.first.click()
-        self.page.wait_for_timeout(300)
+    def open_result(self, op_id: str, how: str = "double-click", timeout: float = 15) -> None:
+        """Open the operator's result beside it, as a user does: a double-click on the
+        operator, or "pin result" in its right-click menu (`how` "menu"). The window stays
+        until it is closed, so one that is open is left as it is."""
+        if self.result_is_open(op_id):
+            return
+        x, y = self._operator_centre(op_id)
+        way = "'pin result' in its right-click menu" if how == "menu" else "a double-click"
+        if how == "menu":
+            log("    right-click the operator, then 'pin result'")
+            self.page.mouse.click(x, y, button="right")
+            item = self.page.locator("texera-context-menu li", has_text=re.compile(r"^\s*pin result\s*$"))
+            try:
+                item.first.wait_for(state="visible", timeout=10000)
+            except PlaywrightError:
+                items = [t.strip() for t in self.page.locator("texera-context-menu li").all_inner_texts()]
+                raise UiTimeout(f"the operator's right-click menu has no 'pin result'; its items: {items}")
+            item.first.click()
+        else:
+            log("    double-click the operator")
+            self.page.mouse.dblclick(x, y)
+        try:
+            self.page.locator(self.result_window(op_id)).first.wait_for(state="visible", timeout=timeout * 1000)
+        except PlaywrightError:
+            raise UiTimeout(f"no result window opened beside operator {op_id} within {timeout:.0f}s of {way}; "
+                            f"result windows on the page: "
+                            f"{self.page.locator('texera-pinned-result-window').count()}")
 
-    def result_title(self) -> str:
-        loc = self.page.locator("#result-container #title")
-        return loc.first.inner_text().strip() if loc.count() else ""
-
-    def read_table(self) -> dict:
-        """The result table as shown: header texts, the rows of the current page, and
-        the pagination's page numbers."""
-        return self.page.evaluate("""() => {
-            const root = document.querySelector('#result-container');
-            const tables = root ? Array.from(root.querySelectorAll('.result-table')) : [];
-            const table = tables.find(t => t.offsetParent !== null) || null;
-            if (!table) return {shown: false, columns: [], rows: [], pages: [], current: null};
+    def read_table(self, op_id: str) -> dict:
+        """The operator's result window as shown: its title, the table's header texts, the
+        rows of the current page and the pagination's page numbers. A window without a table
+        (no result kept, an error) gives what it says instead, in `says`."""
+        return self.page.evaluate("""(selector) => {
             const txt = e => (e.textContent || '').trim();
+            const root = document.querySelector(selector);
+            const none = {shown: false, open: !!root, title: '', says: '', columns: [], rows: [], pages: [],
+                          current: null};
+            if (!root) return none;
+            const title = root.querySelector('.pinned-result__title');
+            const tables = Array.from(root.querySelectorAll('.result-table'));
+            const table = tables.find(t => t.offsetParent !== null) || null;
+            if (!table) {
+                const body = root.querySelector('.pinned-result__body');
+                return {...none, title: title ? txt(title) : '',
+                        says: body ? txt(body).replace(/\\s+/g, ' ').slice(0, 400) : ''};
+            }
             const columns = Array.from(table.querySelectorAll('thead tr:first-child th')).map(txt);
             const rows = Array.from(table.querySelectorAll('tbody tr.table-row-hover'))
                 .map(tr => Array.from(tr.querySelectorAll('td')).map(td => {
@@ -608,65 +724,103 @@ class Editor:
                 }));
             const pages = Array.from(table.querySelectorAll('.ant-pagination li.ant-pagination-item')).map(txt);
             const cur = table.querySelector('.ant-pagination li.ant-pagination-item-active');
-            return {shown: true, columns, rows, pages, current: cur ? txt(cur) : null};
-        }""")
+            return {shown: true, open: true, title: title ? txt(title) : '', says: '', columns, rows, pages,
+                    current: cur ? txt(cur) : null};
+        }""", self.result_window(op_id))
 
-    def wait_table(self, predicate: Callable[[dict], bool], timeout: float, what: str) -> dict:
+    def wait_table(self, op_id: str, predicate: Callable[[dict], bool], timeout: float, what: str) -> dict:
         deadline = time.monotonic() + timeout
         table: dict = {}
         while time.monotonic() < deadline:
-            table = self.read_table()
+            table = self.read_table(op_id)
             if table.get("shown") and predicate(table):
                 return table
             self.page.wait_for_timeout(200)
-        raise UiTimeout(f"the result table did not show {what} within {timeout:.0f}s; it shows "
-                        f"{json.dumps(table)[:800]}; tabs {self.result_tabs()}")
+        raise UiTimeout(f"the result window of {op_id} did not show {what} within {timeout:.0f}s; it shows "
+                        f"{json.dumps(table)[:800]}")
 
     def table_dicts(self, table: dict) -> list[dict]:
         return [dict(zip(table["columns"], row)) for row in table["rows"]]
 
-    def _pager(self, css: str):
-        """The visible pagination control `css` of the result table, or None."""
-        loc = self.page.locator(f"#result-container .result-table .ant-pagination {css}")
+    def _pager(self, op_id: str, css: str):
+        """The visible pagination control `css` of the operator's result table, or None."""
+        loc = self.page.locator(f"{self.result_window(op_id)} .result-table .ant-pagination {css}")
         return next((loc.nth(i) for i in range(loc.count()) if loc.nth(i).is_visible()), None)
 
-    def _turn_page(self, control, table: dict, what: str) -> dict:
+    def _turn_page(self, op_id: str, control, table: dict, what: str) -> dict:
         """Click a pagination control and wait for another page's rows: the page number
         turns at once, its rows come over the websocket a moment later."""
         before = (table["current"], table["rows"])
         control.click()
-        return self.wait_table(lambda t: t["current"] != before[0] and t["rows"] != before[1]
+        return self.wait_table(op_id, lambda t: t["current"] != before[0] and t["rows"] != before[1]
                                and len(t["rows"]) > 0, 15, what)
 
-    def read_all_pages(self, table: dict, max_pages: int = 80) -> list[dict]:
-        """The rows of every page of the result table, first page to last. (A table that
-        was on page 2 before a new run is still on page 2 after it.)"""
+    def read_all_pages(self, op_id: str, table: dict, max_pages: int = 80) -> list[dict]:
+        """The rows of every page of the operator's result table, first page to last. (A
+        window left open on page 2 over a new run is still on page 2 after it.)"""
         if table["current"] not in (None, "1"):
-            first = self._pager("li.ant-pagination-item")
+            first = self._pager(op_id, "li.ant-pagination-item")
             if first is not None:
-                table = self._turn_page(first, table, "the first page")
+                table = self._turn_page(op_id, first, table, "the first page")
         rows = self.table_dicts(table)
         for _ in range(max_pages):
-            nxt = self._pager("li.ant-pagination-next")
+            nxt = self._pager(op_id, "li.ant-pagination-next")
             if nxt is None or "ant-pagination-disabled" in (nxt.get_attribute("class") or ""):
                 break
-            table = self._turn_page(nxt, table, "the next page")
+            table = self._turn_page(op_id, nxt, table, "the next page")
             rows.extend(self.table_dicts(table))
         return rows
 
-    def goto_last_page(self) -> str | None:
-        items = self.page.locator("#result-container .result-table .ant-pagination li.ant-pagination-item")
+    def goto_last_page(self, op_id: str) -> str | None:
+        items = self.page.locator(f"{self.result_window(op_id)} .result-table .ant-pagination "
+                                  f"li.ant-pagination-item")
         visible = [items.nth(i) for i in range(items.count()) if items.nth(i).is_visible()]
         if not visible:
             return None
         last = visible[-1]
         number = last.inner_text().strip()
-        before = self.read_table()["rows"]
+        before = self.read_table(op_id)["rows"]
         last.click()
         # the page number turns at once; its rows come over the websocket a moment later
-        self.wait_table(lambda t: t["current"] == number and t["rows"] != before and len(t["rows"]) > 0, 15,
-                        f"the rows of page {number}")
+        self.wait_table(op_id, lambda t: t["current"] == number and t["rows"] != before and len(t["rows"]) > 0,
+                        15, f"the rows of page {number}")
         return number
+
+    # ---- the console: the bottom panel, with every message and error of the operators
+
+    def open_console(self) -> None:
+        """Open the console. Nothing opens it by itself: its button at the bottom left does."""
+        content = self.page.locator("#result-container #content")
+        if content.count() == 0 or not content.first.is_visible():
+            log("    open the console")
+            self.page.locator("#result-buttons .anticon-border").first.click()
+            content.first.wait_for(state="visible", timeout=10000)
+            self.page.mouse.move(760, 620)  # off the button, whose hover shows its tooltip
+
+    def read_console(self) -> dict:
+        """The console as shown (CONSOLE_JS): the operator it is narrowed to and its messages."""
+        return self.page.evaluate(CONSOLE_JS)
+
+    def open_console_message(self, title: str, timeout: float = 10) -> dict:
+        """Click the title of the console message `title`, which opens what the message
+        holds under it, and return the message as the console then shows it."""
+        def find() -> dict | None:
+            return next((r for r in self.read_console()["rows"] if r["title"] == title), None)
+
+        row = find()
+        if row is None:
+            raise UiTimeout(f"the console has no message titled {title!r}")
+        if not row["opened"]:
+            self.page.locator("#result-container texera-console-frame .console-message-entry "
+                              ".ant-collapse-header", has_text=title).first.click()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            row = find()
+            if row and row["opened"]:
+                self.page.wait_for_timeout(300)  # the panel slides open
+                return row
+            self.page.wait_for_timeout(150)
+        raise UiTimeout(f"the console message {title!r} did not open within {timeout:.0f}s: {row}")
 
     # ---- evidence
 
@@ -688,12 +842,13 @@ class Editor:
 
     def evidence(self) -> dict:
         try:
-            timeline, toasts, url = self.run_timeline(), self.toasts(), self.page.url
+            timeline, toasts, console, url = (self.run_timeline(), self.toasts(), self.console_timeline(),
+                                              self.page.url)
         except PlaywrightError as e:
-            timeline, toasts, url = [], [], f"<page gone: {e}>"
+            timeline, toasts, console, url = [], [], [], f"<page gone: {e}>"
         return {"label": self.label, "wid": self.wid, "url": url,
                 "network": self.net.to_json(self.t0),
-                "run_button_timeline": timeline, "toasts": toasts,
+                "run_button_timeline": timeline, "toasts": toasts, "console_timeline": console,
                 "console": [{"first_at": round(e["t"] - self.t0, 3), "type": kind, "count": e["count"], "text": text}
                             for (kind, text), e in sorted(self.console.items(), key=lambda kv: kv[1]["t"])],
                 "page_errors": sum(e["count"] for (kind, _), e in self.console.items() if kind == "pageerror"),
@@ -712,12 +867,31 @@ class Editor:
 # ---------------------------------------------------------------------- the cases
 
 
+class UnitChecks(Ctx):
+    """scenarios.py's context, for what scenario g does on the unit (its precondition, the
+    directory the unit installs environments in): a command runs in the unit's container,
+    and its checks and notes go to the case's record."""
+
+    def __init__(self, smoke: Smoke, rec: CaseRecord):
+        super().__init__(smoke.api, smoke.transport, run_id=smoke.run_id, cuid=smoke.cuid, whid=smoke.whid,
+                         paths=smoke.paths, data_dir=DATA_DIR, timeout=smoke.a.timeout, log=log,
+                         transport_name="create-ws", unit_container=smoke.unit_container)
+        self.case = rec
+
+    def check(self, name: str, ok: bool, detail: Any = "") -> bool:
+        return self.case.check(name, ok, detail)
+
+    def note(self, text: str) -> None:
+        self.case.note(text)
+
+
 class Smoke:
     def __init__(self, a, api: TexeraApi, browser, *, cuid: int, whid: int | None, paths: dict[str, str],
-                 run_id: str, out: Path, transport):
+                 run_id: str, out: Path, transport, unit_container: str = UNIT_CONTAINER):
         self.a, self.api, self.browser = a, api, browser
         self.cuid, self.whid, self.paths, self.run_id, self.out = cuid, whid, paths, run_id, out
         self.transport = transport
+        self.unit_container = unit_container
         self.data = {name: list(csv.DictReader(io.StringIO((DATA_DIR / name).read_text()))) for name in paths}
         self.editors: list[Editor] = []
 
@@ -867,20 +1041,22 @@ class Smoke:
         self.no_old_requests(rec, ed)
 
     def check_rows(self, ed: Editor, rec: CaseRecord, op: str, expected: list[dict], *, key: str,
-                   columns: list[str], what: str = "") -> None:
-        """Open the operator's result table and compare what it shows with `expected`."""
+                   columns: list[str], what: str = "", whose: str = "the last operator's",
+                   how: str = "double-click") -> None:
+        """Open the operator's result beside it (`how`: Editor.open_result) and compare the
+        table it shows with `expected`."""
+        by = "'pin result' in its right-click menu" if how == "menu" else "a double-click on it"
         try:
-            ed.select_operator(op)
-            ed.open_result_tab("Result")
-            table = ed.wait_table(lambda t: len(t["rows"]) >= min(len(expected), 1) and t["columns"] == columns,
-                                  30, f"columns {columns} with rows")
+            ed.open_result(op, how)
+            table = ed.wait_table(op, lambda t: len(t["rows"]) >= min(len(expected), 1)
+                                  and t["columns"] == columns, 30, f"columns {columns} with rows")
         except (UiTimeout, PlaywrightError) as e:
-            rec.check(f"{what}the result table of the last operator is shown", False, str(e))
+            rec.check(f"{what}{whose} result table is shown beside it ({by})", False, str(e))
             return
-        rec.check(f"{what}the result table of the last operator is shown, with its columns",
-                  table["columns"] == columns, {"columns": table["columns"], "title": ed.result_title()})
+        rec.check(f"{what}{whose} result table is shown beside it ({by}), with its columns",
+                  table["columns"] == columns, {"columns": table["columns"], "window": table["title"]})
         try:
-            shown = sorted(ed.read_all_pages(table), key=lambda r: r.get(key, ""))
+            shown = sorted(ed.read_all_pages(op, table), key=lambda r: r.get(key, ""))
         except (UiTimeout, PlaywrightError) as e:
             rec.check(f"{what}every page of the result table can be read", False, str(e))
             return
@@ -946,18 +1122,24 @@ class Smoke:
         rec.check("nothing was sent on the websocket for the refused run (no WorkflowStartRequest)",
                   ed.net.sent_types(t_click) == [], {"sent_after_run": ed.net.sent_types(t_click)})
 
-        # the page shows the operator's error
+        # the page shows the operator's error: in the console, as an error message of the Projection
+        def projection_errors() -> list[dict]:
+            console = ed.read_console()
+            return [r for r in console["rows"] if console["showing"] == wf.op(prj).title
+                    and r["type"] == "ERROR" and MISSING_COLUMN in r["title"]]
+
         try:
             ed.select_operator(prj)
-            ed.open_result_tab("Static Error")
-            ed.wait_until(lambda: MISSING_COLUMN in self._error_frame_text(ed), 15,
-                          "the error frame to name the column")
+            ed.open_console()
+            ed.wait_until(lambda: bool(projection_errors()), 15,
+                          "the console, narrowed to the Projection, to show an error naming the column")
         except (UiTimeout, PlaywrightError) as e:
-            rec.check("the result panel shows the Projection's error", False, str(e))
+            rec.check("the console shows the Projection's error", False,
+                      f"{e} -- the console: {json.dumps(_console_brief(ed.read_console()))[:1500]}")
         else:
-            text = self._error_frame_text(ed)
-            rec.check("the result panel shows the Projection's error (Static Error tab, naming the column)",
-                      MISSING_COLUMN in text, {"title": ed.result_title(), "text": text[:500]})
+            console = ed.read_console()
+            rec.check("the console shows the Projection's error (the Projection selected: an error message "
+                      "naming the column)", bool(projection_errors()), _console_brief(console))
         ed.screenshot("compile-error-shown")
 
         # Run is usable again: press it once more, as it is
@@ -992,21 +1174,14 @@ class Smoke:
             self.check_start(ed, rec, body3, t_click3, what="after the fix ", resp=resp3)
             if self.wait_completed(ed, rec, [scan, prj], t_click3, self.a.timeout, what="after the fix "):
                 expected = [{"name": p["name"]} for p in self.data["people.csv"]]
-                self.check_rows(ed, rec, prj, expected, key="name", columns=["name"], what="after the fix ")
+                self.check_rows(ed, rec, prj, expected, key="name", columns=["name"], what="after the fix ",
+                                how="menu")
             self.persisted(rec, wid, body3.get("eid"), STATUS_COMPLETED, what="after the fix ")
         rec.check("exactly one WorkflowStartRequest went out on this page (the fixed run's)",
                   ed.net.sent_types().count("WorkflowStartRequest") == 1,
                   {"sent_types": dict(Counter(ed.net.sent_types()))})
         ed.screenshot("fixed-completed")
         self.no_old_requests(rec, ed)
-
-    @staticmethod
-    def _error_frame_text(ed: Editor) -> str:
-        return ed.page.evaluate("""() => {
-            const root = document.querySelector('#result-container');
-            const f = root && root.querySelector('texera-error-frame');
-            return f ? (f.textContent || '').replace(/\\s+/g, ' ').trim() : '';
-        }""")
 
     def _fix_projection_in_ui(self, ed: Editor, rec: CaseRecord, prj: str) -> bool:
         """Pick an existing column for the Projection in the property editor."""
@@ -1335,25 +1510,28 @@ class Smoke:
         rec.check("the unit reported ModifyLogicCompletedEvent for the UDF",
                   any(udf in (e.get("opIds") or []) for e in done), done)
 
-        # the rows, as the page shows them: the first page is v1, the last page v2
+        # the rows, as the page shows them beside the UDF: the first page is v1, the last page v2
         try:
-            ed.select_operator(udf)
-            ed.open_result_tab("Result")
-            first = ed.wait_table(lambda t: len(t["rows"]) > 0 and "tag" in t["columns"], 30, "rows with a tag column")
+            ed.open_result(udf)
+            first = ed.wait_table(udf, lambda t: len(t["rows"]) > 0 and "tag" in t["columns"], 30,
+                                  "rows with a tag column")
             first_rows = ed.table_dicts(first)
             ed.screenshot("result-first-page")
-            last_no = ed.goto_last_page()
-            last = ed.read_table()
+            last_no = ed.goto_last_page(udf)
+            last = ed.read_table(udf)
             last_rows = ed.table_dicts(last)
             ed.screenshot("result-last-page")
         except (UiTimeout, PlaywrightError) as e:
-            rec.check("the result table of the UDF shows v1 on its first page and v2 on its last", False, str(e))
+            rec.check("the result table of the UDF, opened beside it, shows v1 on its first page and v2 on its "
+                      "last", False, str(e))
         else:
-            rec.check("the result table of the UDF shows v1 rows on its first page and v2 rows on its last",
-                      bool(first_rows) and all(r.get("tag") == "v1" for r in first_rows)
+            rec.check("the result table of the UDF, opened beside it (a double-click), shows v1 rows on its "
+                      "first page and v2 rows on its last",
+                      first.get("current") == "1" and bool(first_rows)
+                      and all(r.get("tag") == "v1" for r in first_rows)
                       and bool(last_rows) and all(r.get("tag") == "v2" for r in last_rows),
                       {"first_page": first_rows[:3], "last_page_number": last_no, "last_page": last_rows[-3:],
-                       "pages": first.get("pages")})
+                       "pages": first.get("pages"), "window": first.get("title")})
 
         # all rows, read back over a second socket on the same run (the driver's transport)
         try:
@@ -1400,6 +1578,7 @@ class Smoke:
 
         stamps: list[str] = []
         bodies: list[dict] = []
+        left_open: list[bool] = []  # per run: the UDF's result window was open when the run ended
         for n, what in ((1, "first run: "), (2, "second run: ")):
             resp, body, t_click = self.press_run(ed, rec, what=what.strip(": "))
             body = body if isinstance(body, dict) else {}
@@ -1413,35 +1592,38 @@ class Smoke:
                 ed.screenshot(f"run{n}-not-completed")
                 return
             try:
-                ed.select_operator(udf)
-                ed.open_result_tab("Result")
+                # the first run's window is not closed: the second run's rows are read in it
+                left_open.append(ed.result_is_open(udf))
+                ed.open_result(udf)
                 table = ed.wait_table(
-                    lambda t: len(t["rows"]) > 0 and "stamp" in t["columns"]
+                    udf, lambda t: len(t["rows"]) > 0 and "stamp" in t["columns"]
                     and not ({r.get("stamp") for r in ed.table_dicts(t)} & set(stamps)),
                     30, "rows with this run's stamp")
             except (UiTimeout, PlaywrightError) as e:
-                rec.check(f"{what}the result table shows this run's rows", False, str(e))
+                rec.check(f"{what}the UDF's result window shows this run's rows", False, str(e))
                 ed.screenshot(f"run{n}-no-result")
                 return
             try:
-                rows = ed.read_all_pages(table)
+                rows = ed.read_all_pages(udf, table)
             except (UiTimeout, PlaywrightError) as e:
                 rec.check(f"{what}every page of the result table can be read", False, str(e))
                 return
             seen = {r.get("stamp") for r in rows}
             names = sorted(r.get("name") for r in rows)
-            rec.check(f"{what}the result table shows this run's rows (one stamp on all {len(people)} people)",
-                      len(seen) == 1 and names == sorted(p["name"] for p in people),
-                      {"stamps": sorted(seen), "names": names, "earlier_stamps": stamps})
+            rec.check(f"{what}the UDF's result window shows this run's rows (one stamp on all {len(people)} "
+                      f"people)", len(seen) == 1 and names == sorted(p["name"] for p in people),
+                      {"stamps": sorted(seen), "names": names, "earlier_stamps": stamps,
+                       "window_open_when_the_run_ended": left_open[-1]})
             stamps.extend(sorted(seen))
             ed.screenshot(f"run{n}-completed")
             self.persisted(rec, wid, body.get("eid"), STATUS_COMPLETED, what=what)
         rec.check("the second run is another execution with another plan",
                   bodies[0].get("eid") != bodies[1].get("eid") and bodies[0].get("planUri") != bodies[1].get("planUri"),
                   {"first": bodies[0], "second": bodies[1]})
-        rec.check("the second run's rows replaced the first's in the result table (a later stamp)",
-                  len(stamps) == 2 and stamps[0].isdigit() and stamps[1].isdigit() and int(stamps[1]) > int(stamps[0]),
-                  {"stamps": stamps})
+        rec.check("the second run's rows replaced the first's in the result window, left open over the second "
+                  "run (a later stamp)",
+                  len(stamps) == 2 and stamps[0].isdigit() and stamps[1].isdigit() and int(stamps[1]) > int(stamps[0])
+                  and left_open == [False, True], {"stamps": stamps, "window_open_when_each_run_ended": left_open})
         starts = [m for _, m in ed.net.sent() if m.get("type") == "WorkflowStartRequest"]
         rec.check("two WorkflowStartRequest frames, one per run, each with its own execution",
                   [s.get("executionId") for s in starts] == [b.get("eid") for b in bodies], starts)
@@ -1536,6 +1718,292 @@ class Smoke:
         ed.screenshot("ran-again")
         self.no_old_requests(rec, ed)
 
+    # ---- B9: a Python environment kept at the Dashboard
+
+    def b9(self, rec: CaseRecord) -> None:
+        """A Python environment as a user has one now that a unit keeps none of its own: made
+        on the Dashboard's Environments page, picked in a UDF's property editor, installed by
+        the unit when the run starts. What the unit holds is looked at as scenario g does."""
+        unit = UnitChecks(self, rec)
+        _precondition_no_tabulate(unit)  # scenario g's; raises when the unit's own python3 has tabulate
+        # As in scenario g: an install is reused by its requirements, whatever the environment
+        # is called, so one that a kept stack still holds is removed for this run to install.
+        for d in _installs_of(unit.environment_dirs(), TABULATE_LINES):
+            p = unit.unit_exec("rm", "-rf", d["path"])
+            rec.note(f"removed an earlier install of {TABULATE_LINES} at {d['path']} (exit {p.returncode}) so "
+                     f"that this run installs afresh")
+        name = f"sce-browser-env-{uuid.uuid4().hex[:8]}"
+        wf = self.workflow("B9 python-environment")
+        src = wf.add("one-line", "TextInput", text_input(["sce-e2e"]), n_in=0)
+        # saved as a new UDF is: in the engine's own environment. The page picks the other one.
+        udf = wf.add("tabulate-version", "PythonUDFV2",
+                     python_udf(UDF_TABULATE, out_columns=[("tabulate_version", "string")]))
+        wf.link(src, udf)
+        ops = [src, udf]
+        wid = self.save(rec, wf)
+        ed = self.editor(rec, wid)
+
+        # (1) the Environments page: a new environment holding tabulate==0.9.0
+        if not self._make_environment(ed, rec, name):
+            return
+        # (2) the editor: the UDF's property editor lists the environment, and it is picked there
+        ed.open(ops)
+        ed.wait_run_button("Run", timeout=90, enabled=True)
+        if not self._pick_environment(ed, rec, udf, name):
+            self.no_old_requests(rec, ed)
+            return
+
+        # (3) Run, with the console open: the UDF is selected, so the console is the UDF's
+        ed.open_console()
+        shows = wf.op(udf).title
+        resp, body, t_click = self.press_run(ed, rec)
+        body = body if isinstance(body, dict) else {}
+        if not rec.check("Run: POST /api/executions answers 201", resp.status == 201,
+                         {"status": resp.status, "body": body}):
+            ed.screenshot("create-failed")
+            self.no_old_requests(rec, ed)
+            return
+        sent_ops = ((json.loads(resp.request.post_data or "{}") or {}).get("logicalPlan") or {}).get("operators") or []
+        sent_udf = next((o for o in sent_ops if o.get("operatorID") == udf), {})
+        rec.check("the create carries the UDF in the environment picked (defaultEnv false, envName)",
+                  sent_udf.get("defaultEnv") is False and sent_udf.get("envName") == name,
+                  {"defaultEnv": sent_udf.get("defaultEnv"), "envName": sent_udf.get("envName"), "picked": name})
+        self.check_start(ed, rec, body, t_click, resp=resp)
+
+        installing = f"Installing Python environment '{name}' (1 package)"
+        ready = re.compile(rf"Python environment '{re.escape(name)}' is ready \(\d+(?:\.\d+)? s\)")
+
+        def said_in_order(titles: list[str]) -> bool:
+            i_ready = next((i for i, t in enumerate(titles) if ready.fullmatch(t)), None)
+            return installing in titles and i_ready is not None and titles.index(installing) < i_ready
+
+        try:  # a picture of the console while the unit installs; the timeline below has it either way
+            ed.wait_until(lambda: installing in [r["title"] for r in ed.read_console()["rows"]]
+                          or bool({"Running", "Completed", "Failed"} & set(ed.net.states(t_click))),
+                          120, "the console to say that the environment is being installed")
+            ed.screenshot("installing")
+        except UiTimeout:
+            pass
+        completed = self.wait_completed(ed, rec, ops, t_click, self.a.timeout)
+
+        # what the UDF's console showed before the run was Running: the install, as it went
+        timeline = [e for e in ed.console_timeline() if e["t"] >= t_click - ed.t0]
+        starting = [[r["title"] for r in e["rows"]] for e in timeline
+                    if e["button"] == "Submitting" and e["showing"] == shows]
+        rec.check("while the run was starting (run button Submitting) the UDF's console said that the "
+                  "environment is being installed, then that it is ready (Installing Python environment "
+                  "'<name>' (1 package); Python environment '<name>' is ready (N s))",
+                  any(installing in said for said in starting) and any(said_in_order(said) for said in starting),
+                  _timeline_brief(timeline))
+        emptied = [e["t"] for e in timeline if e["button"] in ("Pause", "Pausing") and not e["rows"]]
+        if emptied and any(said_in_order(said) for said in starting):
+            back = next((e["t"] for e in timeline if e["t"] > emptied[0] and e["rows"]), None)
+            rec.note(f"while the run was Running the UDF's console showed no message: the two it showed while "
+                     f"the run was starting were gone {emptied[0] - (t_click - ed.t0):.1f} s after Run, and "
+                     + (f"were shown again {back - emptied[0]:.1f} s later, when the run ended"
+                        if back is not None else "did not come back while the console was watched")
+                     + " (the console's own rule: a run that goes from Initializing to Running empties it "
+                       "until the next message or state)")
+
+        # and after the run: both are in the UDF's console, and the ready one says what it holds
+        console = ed.read_console()
+        titles = [r["title"] for r in console["rows"]]
+        holds: list[str] = []
+        try:
+            if said_in_order(titles):
+                holds = _held_packages(ed.open_console_message(next(t for t in titles if ready.fullmatch(t)))["detail"])
+        except (UiTimeout, PlaywrightError) as e:
+            rec.note(f"the console's ready message could not be opened: {e}")
+        ed.screenshot("console-after-run")
+        rec.check("with the run ended the UDF's console shows both messages, in that order, and the ready one, "
+                  f"opened, lists what the environment holds: {TABULATE_LINES}",
+                  console["showing"] == shows and said_in_order(titles) and holds == TABULATE_LINES,
+                  {**_console_brief(ed.read_console()), "the_ready_message_lists": holds})
+
+        if completed:
+            self.check_rows(ed, rec, udf, [{"line": "sce-e2e", "tabulate_version": "0.9.0"}], key="line",
+                            columns=["line", "tabulate_version"], whose="the UDF's")
+        ed.screenshot("completed")
+        self.persisted(rec, wid, body.get("eid"), STATUS_COMPLETED)
+
+        # (4) the unit keeps no environment of its own: its menu has no action for one
+        try:
+            menu = self._unit_menu(ed)
+        except (UiTimeout, PlaywrightError) as e:
+            rec.check("the computing-unit menu offers no environment action", False, str(e))
+            ed.screenshot("unit-menu-not-read")
+        else:
+            actions = [a for u in menu["units"] for a in u["actions"]]
+            said = " | ".join([menu["text"], *(t for a in actions for t in a["tooltips"])]).lower()
+            rec.check("the computing-unit menu offers no environment action: no unit's row has a '+' (it was "
+                      "'Python Environment'), and nothing in the menu names an environment",
+                      any(u["unit"] == self.a.unit_name and u["actions"] for u in menu["units"])
+                      and all(a["icon"] != "plus" for a in actions) and "environment" not in said, menu)
+        self.no_old_requests(rec, ed)
+
+    def _make_environment(self, ed: Editor, rec: CaseRecord, name: str) -> bool:
+        """On the Dashboard's Environments page (the sidebar's Environments): Create
+        Environment, the name, one package row (tabulate, ==, 0.9.0), Save."""
+        page = ed.page
+        packages = {"tabulate": "==0.9.0"}
+        operator = None
+        try:
+            ed.goto("/user/workflow", 'li[nz-menu-item]:has-text("Environments")')
+            log("    the sidebar's Environments, then Create Environment")
+            page.locator("li[nz-menu-item]", has_text=re.compile(r"^\s*Environments\s*$")).first.click()
+            page.wait_for_selector("texera-user-venv", timeout=30000)
+            page.locator("texera-user-venv button.create-btn").click()
+            form = page.locator(".ant-modal.pve-modal")
+            form.locator('input[placeholder="Environment Name"]').fill(name)
+            form.locator(".add-btn button").click()  # a row for one more package
+            form.locator('input[placeholder="Package Name"]').fill("tabulate")
+            form.locator('input[placeholder="Package Version"]').fill("0.9.0")
+            operator = form.locator(".operator-select .ant-select-selection-item").first.inner_text().strip()
+            ed.screenshot("environment-form")
+            with page.expect_response(
+                    lambda r: r.request.method == "POST"
+                    and urllib.parse.urlsplit(r.url).path == ENVIRONMENTS_PATH, timeout=60000) as info:
+                form.locator(".ant-modal-footer button", has_text=re.compile(r"^\s*Save\s*$")).click()
+            resp = info.value
+        except (UiTimeout, PlaywrightError) as e:
+            rec.check("an environment is made on the Environments page (Create Environment, its name, a "
+                      "package, Save)", False, f"{e} -- at {page.url}; toasts {ed.toasts()[-3:]}")
+            ed.screenshot("environment-not-made")
+            ed.dump_html("environment-not-made")
+            return False
+        try:
+            row = resp.json()
+        except Exception:  # noqa: BLE001
+            row = resp.text()
+        try:
+            sent = json.loads(resp.request.post_data or "null")
+        except ValueError:
+            sent = resp.request.post_data
+        if not rec.check("the Environments page saves the environment: POST /api/environments answers 201 with "
+                         "the row, {veid, name, packages: {tabulate: ==0.9.0}}",
+                         resp.status == 201 and sent == {"name": name, "packages": packages}
+                         and isinstance(row, dict) and isinstance(row.get("veid"), int)
+                         and row.get("name") == name and row.get("packages") == packages,
+                         {"status": resp.status, "sent": sent, "answer": row, "version_operator_shown": operator}):
+            ed.screenshot("environment-not-saved")
+            return False
+
+        def listed() -> list[str]:
+            return [t.strip() for t in page.locator("texera-user-venv .python-env-name").all_inner_texts()]
+
+        def said_saved() -> bool:
+            return any(f'Saved environment "{name}"' in t["text"] for t in ed.toasts())
+
+        try:
+            ed.wait_until(lambda: said_saved() and name in listed(), 15,
+                          "the page to say that the environment is saved, and to list it")
+        except UiTimeout:
+            pass
+        kept = [e for e in self.api.list_environments() if e.get("name") == name]
+        ed.screenshot("environment-saved")
+        return rec.check("the page says the environment is saved and lists it, and the Dashboard lists it for "
+                         "the user (GET /api/environments)",
+                         said_saved() and name in listed() and len(kept) == 1
+                         and kept[0].get("packages") == packages,
+                         {"toasts": ed.toasts()[-3:], "listed_on_the_page": listed(), "dashboard": kept})
+
+    def _pick_environment(self, ed: Editor, rec: CaseRecord, udf: str, name: str) -> bool:
+        """In the UDF's property editor: Default Python Environment unchecked, which brings up
+        the Virtual Environment list; the environment picked in it."""
+        page = ed.page
+        picker = page.locator('#property-editor nz-select[id*="_enum_envName_"]')
+        option = page.locator(".ant-select-dropdown .ant-select-item-option")
+        options: list[str] = []
+        from_dashboard: Any = None
+        with_default: bool | None = None
+
+        def picked() -> str:
+            item = picker.locator(".ant-select-selection-item")
+            return item.first.inner_text().strip() if item.count() else ""
+
+        try:
+            # The property editor of a Python UDF asks the Dashboard for the user's environments
+            # and lays its form out again with them: the form is used once that has happened.
+            with page.expect_response(
+                    lambda r: r.request.method == "GET"
+                    and urllib.parse.urlsplit(r.url).path == ENVIRONMENTS_PATH, timeout=30000) as info:
+                ed.select_operator(udf)
+            try:
+                from_dashboard = [e.get("name") for e in info.value.json()]
+            except Exception as e:  # noqa: BLE001
+                from_dashboard = f"<unreadable: {type(e).__name__}>"
+            default = page.locator('#property-editor label[nz-checkbox][id*="_boolean_defaultEnv_"]')
+            default.first.wait_for(state="visible", timeout=20000)
+            ed.wait_until(lambda: page.locator('#property-editor input[id*="_string_envName_"]').count() == 0,
+                          10, "the property editor to lay its form out with the user's environments")
+            page.wait_for_timeout(300)
+            with_default = picker.count() > 0 and picker.first.is_visible()
+            if "ant-checkbox-wrapper-checked" in (default.first.get_attribute("class") or ""):
+                log("    uncheck Default Python Environment")
+                default.first.click()
+            picker.first.wait_for(state="visible", timeout=10000)
+            picker.first.click()
+            option.first.wait_for(state="visible", timeout=10000)
+            options = [t.strip() for t in option.all_inner_texts()]
+            if name not in options:
+                # a long list is drawn in part: the picker's own search narrows it
+                page.keyboard.type(name)
+                ed.wait_until(lambda: name in [t.strip() for t in option.all_inner_texts()], 10,
+                              "the picker's search to bring up the environment")
+                options += [t.strip() for t in option.all_inner_texts()]
+            ed.screenshot("environment-picker")
+            option.filter(has_text=re.compile(rf"^\s*{re.escape(name)}\s*$")).first.click()
+            ed.wait_until(lambda: picked() == name, 10, "the picker to show the environment")
+            ed.wait_run_button("Run", timeout=40, enabled=True)
+        except (UiTimeout, PlaywrightError) as e:
+            rec.check("the environment is picked in the UDF's property editor", False,
+                      f"{e} -- the picker listed {options}; it shows {picked()!r}; run button {ed.run_button()}")
+            ed.screenshot("environment-not-picked")
+            ed.dump_html("environment-not-picked")
+            return False
+        ed.screenshot("environment-picked")
+        return rec.check("the UDF's property editor lists the environment (Default Python Environment unchecked, "
+                         "the Virtual Environment list), and it is picked there",
+                         name in options and picked() == name,
+                         {"listed": options, "picked": picked(), "the_dashboard_answered": from_dashboard,
+                          "list_shown_while_the_default_environment_was_checked": with_default,
+                          "run_button": ed.run_button()})
+
+    def _unit_menu(self, ed: Editor) -> dict:
+        """Open the editor's computing-unit menu and read it: each unit's row with the actions
+        it offers (each icon, with what a pointer on it brings up), the menu's other items and
+        its whole text. The menu is closed again."""
+        page = ed.page
+        log("    open the computing-unit menu")
+        page.locator("button.computing-units-dropdown-button").click()
+        menu = page.locator("ul.computing-units-dropdown")
+        menu.first.wait_for(state="visible", timeout=10000)
+        units = []
+        rows = menu.locator("li.computing-unit-option")
+        for i in range(rows.count()):
+            row = rows.nth(i)
+            icons = row.locator(".computing-unit-row > i[nz-icon]")
+            actions = []
+            for j in range(icons.count()):
+                icons.nth(j).hover()
+                page.wait_for_timeout(600)
+                tooltips = page.evaluate("""() => Array.from(document.querySelectorAll('.ant-tooltip'))
+                    .filter(t => t.offsetParent !== null && !t.classList.contains('ant-tooltip-hidden'))
+                    .map(t => (t.textContent || '').trim())""")
+                actions.append({"icon": icons.nth(j).get_attribute("nztype"), "tooltips": tooltips})
+            units.append({"unit": row.locator(".computing-unit-name").first.inner_text().strip(),
+                          "actions": actions})
+        others = [" ".join(t.split()) for t in menu.locator(
+            "li:not(.computing-unit-option):not(.ant-dropdown-menu-item-divider)").all_inner_texts()]
+        text = " ".join(menu.first.inner_text().split())
+        ed.screenshot("unit-menu")
+        page.keyboard.press("Escape")
+        try:
+            menu.first.wait_for(state="hidden", timeout=3000)
+        except PlaywrightError:
+            page.locator("button.computing-units-dropdown-button").click()  # the button closes it too
+        return {"units": units, "other_items": others, "text": text}
+
     # ---- running a case
 
     CASES: dict[str, tuple[str, str]] = {
@@ -1547,6 +2015,7 @@ class Smoke:
         "B6": ("b6", "Extra: Stop while the execution is being created; nothing reaches the unit"),
         "B7": ("b7", "Change a paused operator after the page was loaded again"),
         "B8": ("b8", "Change a paused operator, and resume, in a second tab"),
+        "B9": ("b9", "A Python environment of the Dashboard, picked in the UDF"),
     }
 
     def run_case(self, key: str) -> CaseRecord:
@@ -1612,6 +2081,37 @@ def _same_row(shown: dict, want: dict) -> bool:
 def _is_subsequence(needle: list[str], hay: list[str]) -> bool:
     it = iter(hay)
     return all(any(x == y for y in it) for x in needle)
+
+
+def _console_brief(console: dict) -> dict:
+    """The console as read (Editor.read_console), for a check's detail: each message with
+    the tags it has, and what it holds cut short."""
+    rows = []
+    for r in console.get("rows", []):
+        row = {k: r[k] for k in ("type", "title", "operator", "source", "worker", "time") if r.get(k)}
+        if r.get("detail"):
+            row["detail"] = r["detail"][:300]
+            row["opened"] = r.get("opened")
+        rows.append(row)
+    return {"shown": console.get("shown"), "showing": console.get("showing"), "rows": rows}
+
+
+def _timeline_brief(timeline: list[dict], last: int = 30) -> list[dict]:
+    """A console timeline (Editor.console_timeline) with each entry's messages as their titles."""
+    return [{"t": e["t"], "button": e["button"], "showing": e["showing"],
+             "messages": [r["title"] for r in e["rows"]]} for e in timeline[-last:]]
+
+
+def _held_packages(detail: str) -> list[str]:
+    """The packages that the console's message of a ready environment lists: the lines under
+    "It holds, beside the engine's packages:", up to the next empty line."""
+    lines = [ln.strip() for ln in detail.splitlines()]
+    try:
+        start = lines.index("It holds, beside the engine's packages:") + 1
+    except ValueError:
+        return []
+    end = next((i for i in range(start, len(lines)) if not lines[i]), len(lines))
+    return lines[start:end]
 
 
 # --------------------------------------------------------------------------- main
@@ -1702,8 +2202,10 @@ def main() -> int:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=not a.headed, slow_mo=a.slow_mo or None)
             report["browser"] = {"name": "chromium", "version": browser.version, "headless": not a.headed}
+            containers = (report.get("stack") or {}).get("containers") or {}
             smoke = Smoke(a, api, browser, cuid=cuid, whid=whid, paths=ds["paths"], run_id=run_id, out=out,
-                          transport=transport)
+                          transport=transport,
+                          unit_container=containers.get("workflow-runtime-coordinator-service", UNIT_CONTAINER))
             for key in keys:
                 log(f"=== case {key}: {Smoke.CASES[key][1]}")
                 rec = smoke.run_case(key)
@@ -1731,6 +2233,11 @@ def main() -> int:
             f"{e['status'] if e['status'] is not None else 'dropped by the page (' + str(e.get('failure')) + ')'}"
             for r in records for pg in r.pages
             for e in pg["network"]["executions_requests"] if e["method"] == "POST"],
+        # what the pages wrote to the user's environments (their reads are in each page's network)
+        "environments_requests": [
+            f"{r.key}: {e['method']} {e['path']} -> {e['status']}"
+            for r in records for pg in r.pages
+            for e in pg["network"]["environments_requests"] if e["method"] != "GET"],
     }
     report["cases"] = [r.to_json() for r in records]
     write()
@@ -1753,6 +2260,8 @@ def main() -> int:
     print("-" * 78)
     print(f" frames the pages sent: {dict(sent)}")
     print(f" POST /api/executions*: {report['summary']['executions_requests']}")
+    if report["summary"]["environments_requests"]:
+        print(f" writes to /api/environments*: {report['summary']['environments_requests']}")
     print(f" overall: {report['summary']['result']}   report: {report_path}")
     print("=" * 78)
     if not setup_ok:
