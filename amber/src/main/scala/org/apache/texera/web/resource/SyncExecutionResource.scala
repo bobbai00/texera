@@ -35,7 +35,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   OperatorIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.PortIdentity
+import org.apache.texera.amber.core.workflow.{PhysicalPlan, PortIdentity}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
   ConsoleMessageType
@@ -183,7 +183,10 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
           awaitResults(
             execution,
             targetOperatorIds,
-            expectedExternalInputsOf(execution, targetOperatorIds),
+            // A run that could not be set up has ended already, and waits for no input.
+            execution.services.fold(Map.empty[String, Int])(services =>
+              expectedExternalInputsOf(services.workflow.physicalPlan, targetOperatorIds)
+            ),
             request.timeoutSeconds,
             Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS),
             Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
@@ -206,27 +209,24 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     )
 
   /**
-    * How many external input ports each of `targets`, a logical operator, has in the plan
-    * `execution` runs: the distinct port ids over its physical operators, which the unit has in
-    * place of the logical operator. A HashJoin's two layers have two external input ports between
-    * them, the build layer's port 0 and the probe layer's port 1. Empty for a run that failed
-    * before it built its plan, which has ended already.
+    * How many external input ports each of `targets`, a logical operator, has in `plan`, the plan
+    * a run runs: the distinct port ids over its physical operators, which the unit has in place
+    * of the logical operator. A HashJoin's two layers have two external input ports between
+    * them, the build layer's port 0 and the probe layer's port 1.
     */
   private def expectedExternalInputsOf(
-      execution: WorkflowExecutionService,
+      plan: PhysicalPlan,
       targets: List[String]
   ): Map[String, Int] =
-    Option(execution.workflow).fold(Map.empty[String, Int]) { workflow =>
-      targets.map { target =>
-        target -> workflow.physicalPlan
-          .getPhysicalOpsOfLogicalOp(OperatorIdentity(target))
-          .flatMap(_.inputPorts.keys)
-          .filterNot(_.internal)
-          .map(_.id)
-          .distinct
-          .size
-      }.toMap
-    }
+    targets.map { target =>
+      target -> plan
+        .getPhysicalOpsOfLogicalOp(OperatorIdentity(target))
+        .flatMap(_.inputPorts.keys)
+        .filterNot(_.internal)
+        .map(_.id)
+        .distinct
+        .size
+    }.toMap
 
   /**
     * Waits for `executionService`'s run to end, for every one of `targetOperatorIds` to complete
@@ -385,9 +385,7 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
       executionService: WorkflowExecutionService
   ): Unit = {
     try {
-      if (executionService.client != null) {
-        executionService.client.shutdown()
-      }
+      executionService.services.foreach(_.client.shutdown())
       executionService.executionStateStore.statsStore.updateState(stats =>
         stats.withEndTimeStamp(System.currentTimeMillis())
       )

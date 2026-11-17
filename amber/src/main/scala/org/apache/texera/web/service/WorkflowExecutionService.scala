@@ -49,6 +49,7 @@ import org.apache.texera.web.model.websocket.event.{
 }
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.ExecutionEnvironmentService.EnvironmentNotInstalled
+import org.apache.texera.web.service.WorkflowExecutionService.RunServices
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
@@ -59,6 +60,7 @@ import java.nio.file.Path
 import java.time.Instant
 import scala.collection.mutable
 import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 object WorkflowExecutionService extends LazyLogging {
   def getLatestExecutionId(
@@ -99,6 +101,19 @@ object WorkflowExecutionService extends LazyLogging {
     */
   def mountedUnder(plan: PhysicalPlan, unitMountRoot: Option[Path]): PhysicalPlan =
     plan.copy(operators = plan.operators.map(UdfRepositoryDirectories.mountedUnder(unitMountRoot)))
+
+  /**
+    * What a run is made of once it is set up: the plan as this unit runs it, under the run's
+    * context, the client of the engine built on that plan, and the services around the run.
+    */
+  final case class RunServices(
+      workflow: Workflow,
+      client: AmberClient,
+      reconfiguration: ExecutionReconfigurationService,
+      stats: ExecutionStatsService,
+      runtime: ExecutionRuntimeService,
+      console: ExecutionConsoleService
+  )
 }
 
 /**
@@ -167,12 +182,14 @@ class WorkflowExecutionService(
     WorkflowStateEvent(stateName, Some(workflowContext.executionId.id))
   }
 
-  var workflow: Workflow = _
-  var client: AmberClient = _
-  var executionReconfigurationService: ExecutionReconfigurationService = _
-  var executionStatsService: ExecutionStatsService = _
-  var executionRuntimeService: ExecutionRuntimeService = _
-  var executionConsoleService: ExecutionConsoleService = _
+  // Set once, by the start that sets the run up. Read on other threads than that start's.
+  @volatile private var built: Option[RunServices] = None
+
+  /**
+    * What the run is made of, once [[startStored]] has set it up; None before that, and for a
+    * run that could not be set up.
+    */
+  def services: Option[RunServices] = built
 
   /**
     * Starts the run from `executionPlan`, the plan the plan row `record` of the plan table at
@@ -189,58 +206,82 @@ class WorkflowExecutionService(
     * runs after it; a run whose environment cannot be installed ends FAILED, with pip's words as
     * its error.
     *
-    * @return Some(failure) when the run fails before its engine is built, once reported through
-    *         the error handler; None once the run is set up
+    * @return Some(failure) when the run could not be set up, once reported through the error
+    *         handler: nothing is kept of it, and its engine, if one was built, is shut down.
+    *         None once the run is set up
     */
   def startStored(
       executionPlan: ExecutionPlan,
       record: PlanRecord,
       planUri: URI
-  ): Option[Throwable] = {
-    val (plan, notification) =
-      try {
-        (
-          WorkflowExecutionService.mountedUnder(executionPlan.plan, mountRoot),
-          record.notification.map(Notification.fromJson)
-        )
-      } catch {
-        case err: Throwable =>
-          // The run ends here, reported, before anything is built for it.
-          errorHandler(err)
-          return Some(err)
-      }
-    // The run, and every service built around it below, use the plan as this unit runs it.
-    workflow = Workflow(workflowContext, plan)
+  ): Option[Throwable] =
+    Try(setUp(executionPlan, record, planUri)) match {
+      case Failure(failure) =>
+        errorHandler(failure)
+        Some(failure)
+      case Success(run) =>
+        built = Some(run)
+        start(run)
+        None
+    }
+
+  /**
+    * Builds the engine and every service around the run on `executionPlan`, as this unit runs
+    * it. All of them or none: when a service cannot be built, the engine built before it is shut
+    * down.
+    */
+  private def setUp(executionPlan: ExecutionPlan, record: PlanRecord, planUri: URI): RunServices = {
+    val workflow = Workflow(
+      workflowContext,
+      WorkflowExecutionService.mountedUnder(executionPlan.plan, mountRoot)
+    )
+    val notification = record.notification.map(Notification.fromJson)
     val coordinatorConfig = WorkflowExecutionService.coordinatorConfigOf(executionPlan)
+    val client =
+      createAmberRuntime(workflowContext, workflow.physicalPlan, coordinatorConfig, errorHandler)
+    try {
+      val reconfiguration = new ExecutionReconfigurationService(
+        client,
+        executionStateStore,
+        workflow,
+        planUri,
+        record.createdBy,
+        mountRoot
+      )
+      RunServices(
+        workflow,
+        client,
+        reconfiguration,
+        new ExecutionStatsService(client, executionStateStore, workflowContext),
+        new ExecutionRuntimeService(
+          client,
+          executionStateStore,
+          wsInput,
+          reconfiguration,
+          coordinatorConfig.faultToleranceConfOpt,
+          workflowContext.workflowId.id,
+          notification
+        ),
+        new ExecutionConsoleService(client, executionStateStore, wsInput, workflowContext)
+      )
+    } catch {
+      case NonFatal(failure) =>
+        client.shutdown()
+        throw failure
+    }
+  }
 
-    client = createAmberRuntime(workflowContext, plan, coordinatorConfig, errorHandler)
-    executionReconfigurationService = new ExecutionReconfigurationService(
-      client,
-      executionStateStore,
-      workflow,
-      planUri,
-      record.createdBy,
-      mountRoot
-    )
-    executionStatsService = new ExecutionStatsService(client, executionStateStore, workflow.context)
-    executionRuntimeService = new ExecutionRuntimeService(
-      client,
-      executionStateStore,
-      wsInput,
-      executionReconfigurationService,
-      coordinatorConfig.faultToleranceConfOpt,
-      workflowContext.workflowId.id,
-      notification
-    )
-    executionConsoleService =
-      new ExecutionConsoleService(client, executionStateStore, wsInput, workflow.context)
-
+  /**
+    * Makes the run READY, and asks its engine to start once the Python environments its plan
+    * names are ready.
+    */
+  private def start(run: RunServices): Unit = {
     logger.info("Starting the workflow execution.")
     resultService.attachToExecution(
-      workflow.context.executionId,
+      workflowContext.executionId,
       executionStateStore,
-      workflow.physicalPlan,
-      client
+      run.workflow.physicalPlan,
+      run.client
     )
     executionStateStore.metadataStore.updateState(metadataStore =>
       updateWorkflowState(READY, metadataStore)
@@ -250,35 +291,34 @@ class WorkflowExecutionService(
       stats.withStartTimeStamp(System.currentTimeMillis())
     )
     val environments = new ExecutionEnvironmentService(
-      workflow.physicalPlan,
-      executionConsoleService,
+      run.workflow.physicalPlan,
+      run.console,
       environmentInstaller,
-      () => awaitsStart
+      () => awaitsStart(run)
     )
     environments.prepare().whenComplete { (_, failure) =>
       try {
-        if (awaitsStart) failure match {
-          case null                                  => startEngine()
-          case notInstalled: EnvironmentNotInstalled => failBeforeStart(notInstalled)
+        if (awaitsStart(run)) failure match {
+          case null                                  => startEngine(run)
+          case notInstalled: EnvironmentNotInstalled => failBeforeStart(run, notInstalled)
           case other                                 => errorHandler(other)
         }
       } catch {
         case NonFatal(err) => errorHandler(err)
       }
     }
-    None
   }
 
   /**
-    * Whether the run is set up and still waits for its engine to start: nothing has killed,
-    * superseded or failed it since.
+    * Whether the run still waits for its engine to start: nothing has killed, superseded or
+    * failed it since it was set up.
     */
-  private def awaitsStart: Boolean =
-    client.isActive &&
+  private def awaitsStart(run: RunServices): Boolean =
+    run.client.isActive &&
       !WorkflowService.FinishedStates.contains(executionStateStore.metadataStore.getState.state)
 
-  private def startEngine(): Unit =
-    client.coordinatorInterface
+  private def startEngine(run: RunServices): Unit =
+    run.client.coordinatorInterface
       .startWorkflow(EmptyRequest(), ())
       .onFailure(err => {
         errorHandler(err)
@@ -301,7 +341,7 @@ class WorkflowExecutionService(
     * environment and holds what the install wrote. The consoles are committed here, as the
     * engine will report no end. A run that ended meanwhile keeps the state it ended in.
     */
-  private def failBeforeStart(notInstalled: EnvironmentNotInstalled): Unit = {
+  private def failBeforeStart(run: RunServices, notInstalled: EnvironmentNotInstalled): Unit = {
     val failedAt = System.currentTimeMillis()
     var failed = false
     // Decided under the store's lock, against a kill that may arrive at this moment.
@@ -326,23 +366,21 @@ class WorkflowExecutionService(
         s"Execution ${workflowContext.executionId.id} fails before its engine starts: " +
           notInstalled.getMessage
       )
-      client.shutdown()
+      run.client.shutdown()
       executionStateStore.statsStore.updateState(_.withEndTimeStamp(failedAt))
-      executionConsoleService.commitMessages()
+      run.console.commitMessages()
     }
   }
 
   override def unsubscribeAll(): Unit = {
     super.unsubscribeAll()
-    if (client != null) {
-      // runtime created
-      client.shutdown()
-      executionRuntimeService.unsubscribeAll()
-      executionConsoleService.unsubscribeAll()
-      executionStatsService.unsubscribeAll()
-      executionReconfigurationService.unsubscribeAll()
+    services.foreach { run =>
+      run.client.shutdown()
+      run.runtime.unsubscribeAll()
+      run.console.unsubscribeAll()
+      run.stats.unsubscribeAll()
+      run.reconfiguration.unsubscribeAll()
     }
-
   }
 
 }

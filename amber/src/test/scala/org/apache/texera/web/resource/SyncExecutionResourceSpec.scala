@@ -47,7 +47,6 @@ import org.apache.texera.amber.core.workflow.{
   PortIdentity,
   WorkflowContext
 }
-import org.apache.texera.amber.engine.architecture.coordinator.{Workflow => EngineWorkflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
   ConsoleMessageType
@@ -1305,17 +1304,12 @@ class SyncExecutionResourceSpec
       PrivateMethod[Map[String, Int]](Symbol("expectedExternalInputsOf"))
     val join = TestOperators.joinOpDesc("a", "b")
     join.setOperatorId("join")
-    val built = newExecution(new ExecutionStateStore())
-    built.workflow = EngineWorkflow(
-      new WorkflowContext(),
-      join.getPhysicalPlan(WorkflowIdentity(testWid.toLong), ExecutionIdentity(1L))
-    )
+    val joinPlan = join.getPhysicalPlan(WorkflowIdentity(testWid.toLong), ExecutionIdentity(1L))
     // The build layer takes the left input; the probe layer the right one, and the build
     // layer's output on an internal port: two external input ports, not three.
-    built.workflow.physicalPlan.getPhysicalOpsOfLogicalOp(OperatorIdentity("join")) should
-      have size 2
+    joinPlan.getPhysicalOpsOfLogicalOp(OperatorIdentity("join")) should have size 2
 
-    resource invokePrivate expectedExternalInputsOf(built, List("join", "absent")) shouldBe
+    resource invokePrivate expectedExternalInputsOf(joinPlan, List("join", "absent")) shouldBe
       Map("join" -> 2, "absent" -> 0)
 
     // Two layers of one operator that both take its external input port 0 count it once.
@@ -1326,17 +1320,8 @@ class SyncExecutionResourceSpec
         executionId = ExecutionIdentity(1L),
         opExecInitInfo = OpExecWithClassName("unused")
       ).withInputPorts(List(InputPort(PortIdentity(0))))
-    val twice = newExecution(new ExecutionStateStore())
-    twice.workflow = EngineWorkflow(
-      new WorkflowContext(),
-      PhysicalPlan(Set(layer("first"), layer("second")), Set.empty)
-    )
+    val twice = PhysicalPlan(Set(layer("first"), layer("second")), Set.empty)
     resource invokePrivate expectedExternalInputsOf(twice, List("twice")) shouldBe
       Map("twice" -> 1)
-    // A run that failed before it built its plan expects nothing.
-    resource invokePrivate expectedExternalInputsOf(
-      newExecution(new ExecutionStateStore()),
-      List("join")
-    ) shouldBe Map.empty
   }
 }

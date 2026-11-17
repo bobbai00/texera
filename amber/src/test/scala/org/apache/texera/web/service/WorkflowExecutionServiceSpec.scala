@@ -109,7 +109,6 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowExecutions,
   WorkflowVersion
 }
-import org.apache.texera.web.WebsocketInput
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
   WorkflowErrorEvent,
@@ -138,6 +137,7 @@ import java.util.{Comparator, UUID}
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
+import scala.reflect.ClassTag
 import scala.util.{Try, Using}
 
 /**
@@ -155,12 +155,11 @@ import scala.util.{Try, Using}
   *
   *   - `unsubscribeAll`, the session-teardown contract. This is what makes the
   *     suite carry a TestKit `ActorSystem` and `MockTexeraDB`: the method walks the
-  *     four runtime services, and `ExecutionStatsService`'s constructor creates its
-  *     iceberg runtime-statistics table and stamps the URI onto a `workflow_executions`
-  *     row, so a non-null value for that field cannot be had more cheaply. There is
-  *     no second home for the test -- one spec file per source class -- and stubbing
-  *     the services out would leave the four teardown calls unobserved, which is the
-  *     entire content of the method.
+  *     four services of a run that is set up, and `ExecutionStatsService`'s constructor
+  *     creates its iceberg runtime-statistics table and stamps the URI onto a
+  *     `workflow_executions` row. There is no second home for the test -- one spec file
+  *     per source class -- and stubbing the services out would leave the four teardown
+  *     calls unobserved, which is the entire content of the method.
   *
   *   - `startStored`, the start of a run from the plan read back from its execution's plan
   *     table. Its runs are built as a computing unit builds one to start it by id (`StoredRun`),
@@ -179,13 +178,8 @@ import scala.util.{Try, Using}
   * that builds one leaks a single-thread executor into the shared JVM, as every
   * construction of that service already does.
   *
-  * Three further gaps are deliberately described and NOT pinned, because a test that
+  * Two further gaps are deliberately described and NOT pinned, because a test that
   * froze the current behaviour would cement it:
-  *
-  *   - Partial construction. `startStored` assigns `client` first and the four
-  *     services after it, and `WorkflowService` catches whatever they throw while
-  *     leaving the half-built service published. `unsubscribeAll` then passes its
-  *     `client != null` guard and NPEs on the first null service, aborting teardown.
   *
   *   - A recovery that ends in failure. `createStateEvent` carves out COMPLETED only,
   *     while the flag itself is lowered only by a `WorkflowRecoveryStatus(false)` from
@@ -368,7 +362,7 @@ class WorkflowExecutionServiceSpec
     * The engine a stored run is given: the client the service specs share, whose coordinator
     * answers nothing unless a test answers it, so a run set up on it never starts.
     */
-  private final class UnansweredClient extends RecordingExecutionClient(system) {
+  private class UnansweredClient extends RecordingExecutionClient(system) {
 
     /** The answer to the last request of each name asked of the engine, for a test to give. */
     val answers: TrieMap[String, Promise[Any]] = TrieMap.empty
@@ -571,82 +565,47 @@ class WorkflowExecutionServiceSpec
     // only flips a flag and posts a PoisonPill, so whether it runs before or after the four
     // unsubscribes changes only a race against the client actor's mailbox -- nothing a
     // deterministic test can observe, and not an order any contract here states.
-    val store = new ExecutionStateStore()
-    val service = buildService(store)
-    val events = collectEvents(store)
+    val executionPlan = readBack(storedSourcePlan())
+    val run = new StoredRun(executionPlan)
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      val services = run.service.services.getOrElse(fail("the run was not set up"))
+      val events = collectEvents(run.store)
 
-    val client = new RecordingExecutionClient(system)
-    val wsInput = new WebsocketInput(_ => ())
-    // `workflow` is only dereferenced by the reconfiguration diff handler when a
-    // reconfiguration actually completes, which is not what this test drives.
-    val reconfigurationService =
-      new ExecutionReconfigurationService(
-        client,
-        store,
-        workflow = null,
-        planUri = storedPlanTable,
-        creator = testUid,
-        mountRoot = None
-      )
-    val statsService = new ExecutionStatsService(client, store, runContext())
-    val runtimeService = new ExecutionRuntimeService(
-      client,
-      store,
-      wsInput,
-      reconfigurationService,
-      logConf = None,
-      workflowId = testWid.longValue(),
-      notification = None
-    )
-    val consoleService = new ExecutionConsoleService(client, store, wsInput, new WorkflowContext())
+      // One tracker per manager, so a teardown call that goes missing names its own service.
+      val ownTracker = new Tracker
+      val reconfigurationTracker = new Tracker
+      val statsTracker = new Tracker
+      val runtimeTracker = new Tracker
+      val consoleTracker = new Tracker
+      run.service.addSubscription(ownTracker.disposable)
+      services.reconfiguration.addSubscription(reconfigurationTracker.disposable)
+      services.stats.addSubscription(statsTracker.disposable)
+      services.runtime.addSubscription(runtimeTracker.disposable)
+      services.console.addSubscription(consoleTracker.disposable)
 
-    service.client = client
-    service.executionReconfigurationService = reconfigurationService
-    service.executionStatsService = statsService
-    service.executionRuntimeService = runtimeService
-    service.executionConsoleService = consoleService
+      run.service.unsubscribeAll()
 
-    // One tracker per manager, so a teardown call that goes missing names its own service.
-    val ownTracker = new Tracker
-    val reconfigurationTracker = new Tracker
-    val statsTracker = new Tracker
-    val runtimeTracker = new Tracker
-    val consoleTracker = new Tracker
-    service.addSubscription(ownTracker.disposable)
-    reconfigurationService.addSubscription(reconfigurationTracker.disposable)
-    statsService.addSubscription(statsTracker.disposable)
-    runtimeService.addSubscription(runtimeTracker.disposable)
-    consoleService.addSubscription(consoleTracker.disposable)
+      withClue("the engine client: ") { run.engine.get.shutdownCount shouldBe 1 }
+      withClue("the execution's own subscriptions: ") { ownTracker.disposed shouldBe true }
+      withClue("the runtime service: ") { runtimeTracker.disposed shouldBe true }
+      withClue("the console service: ") { consoleTracker.disposed shouldBe true }
+      withClue("the statistics service: ") { statsTracker.disposed shouldBe true }
+      withClue("the reconfiguration service: ") { reconfigurationTracker.disposed shouldBe true }
 
-    service.unsubscribeAll()
-
-    withClue("the engine client: ") { client.shutdownCount shouldBe 1 }
-    withClue("the execution's own subscriptions: ") { ownTracker.disposed shouldBe true }
-    withClue("executionRuntimeService: ") { runtimeTracker.disposed shouldBe true }
-    withClue("executionConsoleService: ") { consoleTracker.disposed shouldBe true }
-    withClue("executionStatsService: ") { statsTracker.disposed shouldBe true }
-    withClue("executionReconfigurationService: ") {
-      reconfigurationTracker.disposed shouldBe true
-    }
-
-    // The constructor-registered diff handler is part of "its own subscriptions": after teardown
-    // the store is inert, which is what stops a closed session from still producing websocket
-    // events for its (now disconnected) client.
-    events.clear()
-    store.metadataStore.updateState(_.withState(RUNNING))
-    events shouldBe empty
+      // The constructor-registered diff handler is part of "its own subscriptions": after
+      // teardown the store is inert, which is what stops a closed session from still producing
+      // websocket events for its (now disconnected) client.
+      events.clear()
+      run.store.metadataStore.updateState(_.withState(RUNNING))
+      events shouldBe empty
+    } finally run.close()
   }
 
   it should "leave a never-started execution alone on teardown" in {
-    // `unsubscribeAll` also runs for a run that failed before its engine was built, where the
-    // client and all four service fields are still null: teardown of that run must not throw, and
-    // its own subscriptions must still be let go.
-    //
-    // Which field the guard reads is NOT observed here, and cannot honestly be. The two states
-    // that would separate the five candidates are (client set, services null) -- whose current
-    // behaviour is an NPE, so pinning it would cement the partial-construction defect noted in the
-    // class header -- and (client null, services set), which the assignment order in
-    // `startStored` makes unreachable.
+    // `unsubscribeAll` also runs for a run that was never set up, which is made of nothing:
+    // teardown of that run must not throw, and its own subscriptions must still be let go.
     val store = new ExecutionStateStore()
     val service = buildService(store)
     val events = collectEvents(store)
@@ -667,11 +626,13 @@ class WorkflowExecutionServiceSpec
     *
     * @param installer installs the plan's Python environments; the unit's own when not given,
     *                  which a plan that names no environment asks nothing of
+    * @param newEngine makes the engine the run is given
     */
   private final class StoredRun(
       executionPlan: ExecutionPlan,
       installer: Option[PythonEnvironmentInstaller] = None,
-      mountRoot: Option[Path] = Some(unitMountRoot)
+      mountRoot: Option[Path] = Some(unitMountRoot),
+      newEngine: () => UnansweredClient = () => new UnansweredClient
   ) {
     val errors: ListBuffer[Throwable] = ListBuffer.empty
     var engineWorkflow: Option[EngineWorkflow] = None
@@ -696,7 +657,7 @@ class WorkflowExecutionServiceSpec
       createAmberRuntime = (context, plan, config, _) => {
         engineWorkflow = Some(EngineWorkflow(context, plan))
         coordinatorConfig = Some(config)
-        val built = new UnansweredClient
+        val built = newEngine()
         engine = Some(built)
         built
       }
@@ -757,17 +718,17 @@ class WorkflowExecutionServiceSpec
         Set(PhysicalPlanCodec.ReadBackSchemaPropagation)
       engineWorkflow.context should be theSameInstanceAs executionPlan.context
       // Every service is built around that same plan, under that context.
-      run.service.workflow.physicalPlan should be theSameInstanceAs engineWorkflow.physicalPlan
-      run.service.workflow.context should be theSameInstanceAs engineWorkflow.context
+      val services = run.service.services.getOrElse(fail("the run was not set up"))
+      services.workflow.physicalPlan should be theSameInstanceAs engineWorkflow.physicalPlan
+      services.workflow.context should be theSameInstanceAs engineWorkflow.context
+      services.client should be theSameInstanceAs run.engine.get
       // The run replays what the plan replays, and writes its replay log where the plan says.
       run.coordinatorConfig shouldBe Some(
         WorkflowExecutionService.coordinatorConfigOf(executionPlan)
       )
       // Its status emails go where the plan row says.
-      run.service.executionRuntimeService.notification shouldBe Some(notification)
-      // Every service is built, the run is READY, and the engine was asked to start.
-      run.service.executionStatsService should not be null
-      run.service.executionConsoleService should not be null
+      services.runtime.notification shouldBe Some(notification)
+      // The run is READY, and the engine was asked to start.
       run.store.metadataStore.getState.state shouldBe READY
       run.engine.getOrElse(fail("no engine")).answers.keySet should contain("startWorkflow")
       // The run checkpoints into its replay log: a checkpoint request is taken.
@@ -788,7 +749,7 @@ class WorkflowExecutionServiceSpec
       config.stateRestoreConfOpt shouldBe None
       config.faultToleranceConfOpt shouldBe None
       // Nor do its status emails go anywhere: its plan row names no one.
-      run.service.executionRuntimeService.notification shouldBe None
+      run.service.services.get.runtime.notification shouldBe None
       // So it cannot checkpoint: a checkpoint request is refused.
       run.service.wsInput.onNext(WorkflowCheckpointRequest(), None)
       run.errors.map(_.getMessage) should have size 1
@@ -818,7 +779,7 @@ class WorkflowExecutionServiceSpec
       started.getOperator(storedSource.id).opExecInitInfo shouldBe udfReading(datasetDirectory)
       started.getOperator(storedSource.id).repositoryMounts shouldBe
         Some(RepositoryMounts(Set(datasetLocator)))
-      run.service.workflow.physicalPlan shouldBe started
+      run.service.services.get.workflow.physicalPlan shouldBe started
     } finally run.close()
   }
 
@@ -834,8 +795,7 @@ class WorkflowExecutionServiceSpec
         s"($datasetLocator), which this computing unit cannot mount."
       run.errors shouldBe Seq(failure)
       run.engineWorkflow shouldBe None
-      run.service.workflow shouldBe null
-      run.service.client shouldBe null
+      run.service.services shouldBe None
     } finally run.close()
   }
 
@@ -881,7 +841,35 @@ class WorkflowExecutionServiceSpec
           "workflowName, workflowUrl missing or not a string."
       run.errors shouldBe Seq(failure)
       run.engineWorkflow shouldBe None
-      run.service.workflow shouldBe null
+      run.service.services shouldBe None
+    } finally run.close()
+  }
+
+  it should "shut the engine down and keep nothing of a run when a service around it cannot be built" in {
+    val executionPlan = readBack(storedSourcePlan())
+    // The console service, the last one built, registers for the operators' console messages.
+    val engine = new UnansweredClient {
+      override def registerCallback[T](callback: T => Unit)(implicit ct: ClassTag[T]): Disposable =
+        if (ct.runtimeClass == classOf[ConsoleMessage]) {
+          throw new IllegalStateException("the engine takes no console")
+        } else super.registerCallback(callback)
+    }
+    val run = new StoredRun(executionPlan, newEngine = () => engine)
+    try {
+      val failure = run.service
+        .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
+        .getOrElse(fail("the run was set up"))
+
+      failure.getMessage shouldBe "the engine takes no console"
+      run.errors shouldBe Seq(failure)
+      // The engine built before that service is shut down, and the run is made of nothing.
+      engine.shutdownCount shouldBe 1
+      run.service.services shouldBe None
+      run.store.metadataStore.getState.state should not be READY
+      startWorkflowAsked(run) shouldBe false
+      // So it can be let go of, as the start of the workflow's next run lets go of it.
+      noException should be thrownBy run.service.unsubscribeAll()
+      engine.shutdownCount shouldBe 1
     } finally run.close()
   }
 
@@ -947,7 +935,7 @@ class WorkflowExecutionServiceSpec
     try {
       run.service.startStored(executionPlan, record, storedPlanTable) shouldBe None
 
-      run.service.executionReconfigurationService
+      run.service.services.get.reconfiguration
         .applyStoredUpdate(updateId, Some(testUid.intValue()))
         .isValid shouldBe true
       run.store.reconfigurationStore.getState.unscheduledReconfigurations

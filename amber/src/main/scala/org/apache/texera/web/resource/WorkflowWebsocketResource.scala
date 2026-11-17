@@ -229,10 +229,12 @@ class WorkflowWebsocketResource extends LazyLogging {
       user: Option[User],
       update: OperatorUpdateRequest
   ): Option[String] =
-    runOf(update, run)
-      .flatMap(execution => Option(execution.executionReconfigurationService)) match {
-      case Some(service) =>
-        sender.send(service.applyStoredUpdate(update.updateId, user.map(_.getUid.intValue())))
+    runOf(update, run).flatMap(_.services) match {
+      case Some(services) =>
+        sender.send(
+          services.reconfiguration
+            .applyStoredUpdate(update.updateId, user.map(_.getUid.intValue()))
+        )
         None
       case None => Some(notRunningHere(update))
     }

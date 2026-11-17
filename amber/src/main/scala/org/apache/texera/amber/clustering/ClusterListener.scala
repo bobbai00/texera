@@ -81,7 +81,7 @@ class ClusterListener extends Actor with AmberLogging {
   }
 
   private def forcefullyStop(executionService: WorkflowExecutionService, cause: Throwable): Unit = {
-    executionService.client.shutdown()
+    executionService.services.foreach(_.client.shutdown())
     executionService.executionStateStore.statsStore.updateState(stats =>
       stats.withEndTimeStamp(System.currentTimeMillis())
     )
@@ -114,7 +114,9 @@ class ClusterListener extends Actor with AmberLogging {
                 s"Trigger recovery process for execution id = ${executionService.executionStateStore.metadataStore.getState.executionId.id}"
               )
               try {
-                futures.append(executionService.client.notifyNodeFailure(member.address))
+                executionService.services.foreach(services =>
+                  futures.append(services.client.notifyNodeFailure(member.address))
+                )
               } catch {
                 case t: Throwable =>
                   logger.warn(
