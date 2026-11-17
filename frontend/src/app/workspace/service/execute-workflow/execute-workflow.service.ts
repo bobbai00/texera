@@ -47,8 +47,6 @@ import {
   WorkflowFatalError,
 } from "../../types/workflow-websocket.interface";
 import { isEqual } from "lodash-es";
-import { PAGINATION_INFO_STORAGE_KEY, ResultPaginationInfo } from "../../types/result-table.interface";
-import { sessionGetObject, sessionSetObject } from "../../../common/util/storage";
 import { Version as version } from "src/environments/version";
 import { NotificationService } from "src/app/common/service/notification/notification.service";
 import { exhaustiveGuard } from "../../../common/util/switch";
@@ -400,17 +398,6 @@ export class ExecuteWorkflowService {
       warehouseId: this.warehouseService.getSelectedWarehouseIdValue(),
       replayFromExecution,
     });
-
-    // add flag for new execution of workflow
-    // so when next time the result panel is displayed, it will use new data
-    // instead of those stored in the session storage
-    const resultPaginationInfo = sessionGetObject<ResultPaginationInfo>(PAGINATION_INFO_STORAGE_KEY);
-    if (resultPaginationInfo) {
-      sessionSetObject(PAGINATION_INFO_STORAGE_KEY, {
-        ...resultPaginationInfo,
-        newWorkflowExecuted: true,
-      });
-    }
     return true;
   }
 

@@ -57,8 +57,6 @@ import {
   WorkflowFatalError,
 } from "../../types/workflow-websocket.interface";
 import { mockScanPredicate } from "../workflow-graph/model/mock-workflow-data";
-import { PAGINATION_INFO_STORAGE_KEY, ResultPaginationInfo } from "../../types/result-table.interface";
-import { sessionGetObject, sessionSetObject } from "../../../common/util/storage";
 import { Version } from "src/environments/version";
 import { CreateExecutionResponse, ReplayExecutionInfo } from "./execution-api.service";
 
@@ -160,8 +158,6 @@ describe("ExecuteWorkflowService", () => {
   afterEach(() => {
     // A spec that mocks the static getLogicalPlanRequest must not hand its plan to the next one.
     vi.restoreAllMocks();
-    // a run reads/writes sessionStorage; keep tests isolated
-    sessionStorage.clear();
     // Every request for an execution was expected by its spec.
     httpMock.verify();
   });
@@ -1181,16 +1177,6 @@ describe("ExecuteWorkflowService", () => {
     service.executeWorkflow("exec");
     // Left out of what is written, which the Dashboard reads as the shared default storage.
     expect(JSON.parse(expectCreate().request.serializeBody() as string)).not.toHaveProperty("warehouseId");
-  }));
-
-  it("a run flags stored pagination info as belonging to a new execution", fakeAsync(() => {
-    sessionSetObject(PAGINATION_INFO_STORAGE_KEY, { newWorkflowExecuted: false });
-
-    service.executeWorkflow("exec");
-    expectCreate();
-
-    const stored = sessionGetObject<ResultPaginationInfo>(PAGINATION_INFO_STORAGE_KEY);
-    expect(stored?.newWorkflowExecuted).toBe(true);
   }));
 
   // ---- control commands ----------------------------------------------------------------------

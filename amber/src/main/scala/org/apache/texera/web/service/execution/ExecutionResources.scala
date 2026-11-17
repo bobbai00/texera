@@ -103,13 +103,8 @@ object ExecutionResources extends LazyLogging {
   }
 
   /**
-    * Where execution `eid`'s plan table is: in the warehouse the execution writes into, or the
-    * default one when it names none. None when there is no such execution.
-    */
-  def planUriOf(eid: ExecutionIdentity): Option[URI] = planUrisOf(Seq(eid)).get(eid)
-
-  /**
-    * [[planUriOf]] for each of `eids`, in one SELECT. An execution with no row is left out.
+    * Where the plan table of each of `eids` is, in one SELECT: in the warehouse the execution
+    * writes into, or the default one when it names none. An execution with no row is left out.
     *
     * A row whose warehouse was deleted names none (its `whid` is set to null), so its URI names
     * the default warehouse, where the plan table is not: dropping it there finds no table.

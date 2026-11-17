@@ -1271,8 +1271,8 @@ class WorkflowWebsocketResourceSpec
     val mislabeled = created()
     val mislabeledUri = new URI(mislabeled.planUri)
     rewritePlan(mislabeledUri, _ => ExecutionPlanStore.readPlan(new URI(execution.planUri)).body)
-    // An execution whose plan reads a file through a link that expired long ago, encoded by hand
-    // until the Dashboard makes links (sub-part 16).
+    // An execution whose plan reads a file through a link that expired long ago, encoded by hand:
+    // the Dashboard makes no link that has expired.
     val expired = created()
     val expiredUri = new URI(expired.planUri)
     val expiry = 1000L

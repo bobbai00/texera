@@ -338,20 +338,6 @@ class ExecutionResourcesSpec
     error.getMessage shouldBe "Per-user warehouses are disabled in this deployment."
   }
 
-  "ExecutionResources.planUriOf" should "find the plan table of an execution that names no warehouse in the default one" in {
-    ExecutionResources.planUriOf(ExecutionIdentity(defaultEid.toLong)) shouldBe
-      Some(new URI(s"vfs:///wid/$testWid/eid/$defaultEid/plan"))
-  }
-
-  it should "find the plan table of an execution in the warehouse it writes into" in {
-    ExecutionResources.planUriOf(ExecutionIdentity(warehouseEid.toLong)) shouldBe
-      Some(new URI(s"vfs:///wh/$warehouseName/wid/$testWid/eid/$warehouseEid/plan"))
-  }
-
-  it should "find none for an execution that does not exist" in {
-    ExecutionResources.planUriOf(ExecutionIdentity(943199L)) shouldBe None
-  }
-
   "ExecutionResources.planUrisOf" should "find the plan tables of many executions in one SELECT, leaving out unknown ones" in {
     var found: Map[ExecutionIdentity, URI] = Map.empty
     val statements = recorder.record {
