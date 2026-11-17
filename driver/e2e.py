@@ -12,9 +12,10 @@ selected scenario creates its own workflow, runs it through the transport
 With --evidence the driver also reads the stack's Postgres statement log and the
 unit's network around every scenario and evaluates the step-2 Checks A-F
 (evidence.py); --negative-control expects A, D and F to fail (the old unit). A
-step-3 gate (--gate 3A) adds the scenarios and the checks of the record a run
-leaves in the lake; its waits follow the timers the stack was started with
-(record_timing.py).
+step-3 gate (--gate 3A, 3B) adds the scenarios and the checks of the record a run
+leaves in the lake and of how the Dashboard service closes executions; its waits
+follow the timers the stack was started with (record_timing.py), and its scenarios
+take the unit down through the stack's control (stack_control.py).
 
 Prints PASS/FAIL per scenario and writes a JSON report. Exit code 0 only when
 every selected scenario passes (1 = a scenario failed, 2 = setup failed).
@@ -43,6 +44,7 @@ from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Lake, docker_f
 from record_timing import RecordTiming  # noqa: E402
 from scenarios import (GROUPS, NEEDS_OTHER_USER, NEEDS_UNIT2, SCENARIOS, Check, Ctx,  # noqa: E402
                        OtherUser, resolve, run_scenario)
+from stack_control import SingleNodeControl, StackControl  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
 from transport import TRANSPORTS, make_transport  # noqa: E402
 
@@ -73,6 +75,9 @@ GATES = {
     # of the statement log does not exist.
     "3A": {"transport": "create-ws", "scenarios": STEP2_LAST + ",p", "other_modes": "a,b,c,d,e,u,p",
            "evidence": "A,B,C,D,E,F,I", "legacy_env": False, "level": "A"},
+    "3B": {"transport": "create-ws", "scenarios": STEP2_LAST + ",p,q,r,s,t,w",
+           "other_modes": "a,b,c,d,e,u,p,q,s,w", "evidence": "A,B,C,D,E,F,I,K", "legacy_env": False,
+           "level": "B"},
 }
 #: the gates that also run in Kubernetes and local-dev mode
 PORTABLE_GATES = frozenset(g for g, v in GATES.items() if "other_modes" in v)
@@ -101,14 +106,14 @@ def main() -> int:
                     help="how runs are started/watched (default $SCE_TRANSPORT or ws; "
                          "create-ws from step 2's PR B on)")
     ap.add_argument("--gate", choices=list(GATES),
-                    help="a harness gate of step 2 (A-D) or step 3 (3A): sets the transport, scenarios "
+                    help="a harness gate of step 2 (A-D) or step 3 (3A, 3B): sets the transport, scenarios "
                          "and gating evidence checks (explicit flags win): " + "; ".join(
                              f"{g}: {v['transport']} {v['scenarios']} checks {v['evidence']}"
                              for g, v in GATES.items()))
     ap.add_argument("--evidence", nargs="?", const="all", default=None, metavar="CHECKS",
                     help="evaluate Checks A-F from the stack's Postgres statement log and the "
                          "unit's network; the listed checks gate (default all six), the others are "
-                         "reported. A step-3 check (I) is evaluated only when listed. Needs a stack "
+                         "reported. A step-3 check (I, K) is evaluated only when listed. Needs a stack "
                          "started with --pg-statement-log")
     ap.add_argument("--negative-control", action="store_true",
                     help="the old unit: Checks A, D and F must FAIL (the scenario's own checks are "
@@ -169,6 +174,7 @@ def main() -> int:
     stack_manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     with_replay_log = a.with_replay_log or bool((stack_manifest.get("options") or {}).get("with_replay_log"))
     timing = RecordTiming.from_manifest(stack_manifest)
+    level = gate.get("level") if gate else FINISHED_LEVEL
     started = dt.datetime.now(dt.timezone.utc)
     run_id = started.strftime("%m%d-%H%M%S")
     report_path = a.report or REPORTS / f"e2e-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -260,7 +266,8 @@ def main() -> int:
         if use_evidence:
             evidence = Evidence(run_id=run_id.replace("-", ""), required=required,
                                 negative_control=a.negative_control, containers=containers,
-                                env=stack_env, log=log)
+                                env=stack_env, log=log, level=level, timing=timing,
+                                read_log=api.execution_log)
             info = evidence.preflight()
             evidence.warehouse_name = wh_name
             transport.phase_hook = evidence.on_phase
@@ -277,8 +284,10 @@ def main() -> int:
                   with_replay_log=with_replay_log, other=other, unit2_cuid=unit2, unit_uri=a.unit_uri,
                   unit_exec_prefix=(k8s_unit.exec_prefix(cuid) if k8s_unit.wanted(a)
                                     else localdev_unit.exec_prefix() if localdev_unit.wanted(a) else None),
-                  timing=timing, lake=_lake(a, containers, stack_env),
-                  level=gate.get("level") if gate else FINISHED_LEVEL)
+                  timing=timing, lake=_lake(a, containers, stack_env), level=level,
+                  stack=_stack_control(a, api, containers, run_id=run_id, cuid=cuid, report=report),
+                  # until gate 3C a Kubernetes gateway sends a statistics request to the unit
+                  stats_through_unit=k8s_unit.wanted(a) and level != FINISHED_LEVEL)
         setup_ok = True
     except Exception as e:  # noqa: BLE001
         report["setup"]["error"] = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
@@ -297,10 +306,8 @@ def main() -> int:
             report["scenarios"] = [r.to_json() for r in records]
             _write(report_path, report)
         if evidence:
-            final = evidence.final_check(ctx.created_wids)
-            report["final_check"] = {"name": "no row of this run's workflows is left at status 0 "
-                                             "(refused starts excepted)", **final}
-            log(f"final check: {'ok' if final['ok'] else 'FAIL'} -- {final['detail']}")
+            report["final_check"] = final = evidence.final_check(ctx.created_wids)
+            log(f"final check ({final['name']}): {'ok' if final['ok'] else 'FAIL'} -- {final['detail']}")
 
     k8s_unit.teardown(api, a, log=log, report=report)  # Kubernetes mode: terminate the unit
 
@@ -386,6 +393,15 @@ def _lake(a, containers: dict, stack_env: dict) -> Lake:
     dashboard = containers.get("dashboard-service", "sce-dashboard-service")
     return Lake(Catalog(docker_fetch(docker_runner, dashboard, uri)),
                 stack_env.get("STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME", DEFAULT_WAREHOUSE), stack_env)
+
+
+def _stack_control(a, api: TexeraApi, containers: dict, *, run_id: str, cuid: int, report: dict) -> StackControl:
+    """How this mode's stack takes the unit down and brings one back (stack_control.py)."""
+    if k8s_unit.wanted(a):
+        return k8s_unit.KubernetesControl(api, a, run_id=run_id, cuid=cuid, log=log)
+    if localdev_unit.wanted(a):
+        return localdev_unit.control(api, a, cuid=cuid, report=report, log=log)
+    return SingleNodeControl(containers, wait_gateway=lambda: api.wait_ready(a.ready_timeout))
 
 
 def _lakekeeper_name(status: dict | None, whid: int | None, uid: int) -> str | None:

@@ -15,8 +15,11 @@ answers through it and that ext-authz refuses unit websockets without valid cred
 `down` uninstalls the release and deletes both namespaces (and with them any unit pod)
 plus the cluster-scoped hook objects the chart leaves behind (not the CRDs). `post-run`
 checks a driver run's leftovers and refusal probes and folds the outcome into its report.
+`unit-kill`, `unit-stop`, `unit-env` and `pg-activity` are what the driver's StackControl
+(driver/stack_control.py) asks of this stack; each prints one JSON document.
 
-Commands: generate | up | down | status | logs | port-forward | collect-logs | follow-units | post-run.
+Commands: generate | up | down | status | logs | port-forward | collect-logs | follow-units | post-run |
+unit-kill | unit-stop | unit-env | pg-activity.
 Everything runs against the kube context `orbstack` (SCE_K8S_CONTEXT); nothing outside
 the two namespaces and this release's cluster-scoped objects is ever changed.
 """
@@ -48,6 +51,7 @@ import yaml
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "lib"))
 
+import pg_activity  # noqa: E402
 from record_env import fast_record_env, record_timing  # noqa: E402
 
 GEN_DIR = HERE / "generated"
@@ -1570,6 +1574,63 @@ def cmd_follow_units(a) -> None:
         time.sleep(2)
 
 
+# ------------------------------------------- what the driver's StackControl asks
+
+
+def unit_pod(ns: str, cuid: int) -> dict:
+    """The pod of computing unit `cuid`: the one the managing service labelled with its id."""
+    pods = [p for p in _unit_pods(ns) if (p["metadata"].get("labels") or {}).get("cuid") == str(cuid)]
+    if len(pods) != 1:
+        die(f"expected one pod of computing unit {cuid} in {unit_namespace(ns)}, found {len(pods)}")
+    return pods[0]
+
+
+def unit_facts(pod: dict) -> dict:
+    """What the driver asks about a unit's pod: its address, and the names of the
+    environment variables its engine container was given."""
+    engine = next((c for c in pod["spec"].get("containers") or [] if c.get("name") == UNIT_CONTAINER), {})
+    return {"pod": pod["metadata"]["name"], "address": (pod.get("status") or {}).get("podIP"),
+            "env_names": sorted(e["name"] for e in engine.get("env") or [] if e.get("name"))}
+
+
+def delete_unit_pod(ns: str, cuid: int, force: bool) -> dict:
+    """Delete the unit's pod and wait until it is gone: with `force` at once, as when its node
+    is lost (the engine is killed); otherwise with the pod's grace period (SIGTERM first)."""
+    pod = unit_pod(ns, cuid)["metadata"]["name"]
+    args = ["delete", "pod", pod, "--wait=true", "--timeout=180s"]
+    if force:
+        args += ["--grace-period=0", "--force"]
+    t0 = time.time()
+    kubectl(*args, ns=unit_namespace(ns), capture=True, timeout=240)
+    return {"cuid": cuid, "pod": pod, "how": "kubectl " + " ".join(args[:2] + args[3:]),
+            "seconds": round(time.time() - t0, 1)}
+
+
+def pg_backends(ns: str) -> list[dict]:
+    """Postgres's client connections, asked inside its pod. The password is the one the pod
+    itself holds, as the chart's init script uses it."""
+    script = 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -U postgres -d texera_db "$@"'
+    p = kubectl("exec", f"{POSTGRES_STS}-0", "--", "sh", "-c", script, "sh", *pg_activity.PSQL_ARGS,
+                ns=ns, capture=True, timeout=60)
+    return pg_activity.parse(p.stdout)
+
+
+def cmd_unit_kill(a) -> None:
+    print(json.dumps(delete_unit_pod(a.namespace, a.cuid, force=True)))
+
+
+def cmd_unit_stop(a) -> None:
+    print(json.dumps(delete_unit_pod(a.namespace, a.cuid, force=False)))
+
+
+def cmd_unit_env(a) -> None:
+    print(json.dumps({"cuid": a.cuid, **unit_facts(unit_pod(a.namespace, a.cuid))}))
+
+
+def cmd_pg_activity(a) -> None:
+    print(json.dumps(pg_backends(a.namespace)))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         prog="k8s-stack.sh",
@@ -1633,6 +1694,12 @@ def main() -> None:
     p.add_argument("--wait", type=float, default=90, help="seconds to wait for unit pods to go")
     p.add_argument("--unit-kept", action="store_true", help="the driver ran with --keep-unit")
     p.add_argument("--out", type=Path, help="also write the outcome to this JSON file")
+    for name, what in (("unit-kill", "delete a unit's pod at once (--grace-period=0 --force): the unit is lost"),
+                       ("unit-stop", "delete a unit's pod with its grace period: the unit is stopped politely"),
+                       ("unit-env", "a unit pod's address and the names of its engine's environment variables")):
+        p = sub.add_parser(name, help=what + " (JSON)")
+        p.add_argument("cuid", type=int)
+    sub.add_parser("pg-activity", help="Postgres's client connections, from pg_stat_activity (JSON)")
     p = sub.add_parser("_pf-supervise", help=argparse.SUPPRESS)
     p.add_argument("--port", type=int, required=True)
 
@@ -1648,6 +1715,10 @@ def main() -> None:
         "collect-logs": cmd_collect_logs,
         "follow-units": cmd_follow_units,
         "post-run": cmd_post_run,
+        "unit-kill": cmd_unit_kill,
+        "unit-stop": cmd_unit_stop,
+        "unit-env": cmd_unit_env,
+        "pg-activity": cmd_pg_activity,
         "_pf-supervise": cmd_pf_supervise,
     }[a.cmd](a)
 

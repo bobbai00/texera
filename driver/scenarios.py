@@ -14,6 +14,7 @@ import io
 import json
 import re
 import subprocess
+import threading
 import time
 import traceback
 import uuid
@@ -21,15 +22,20 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import requests
+
 from lake import Label, Lake, TableState
 from record_timing import RecordTiming
-from texera_api import StatisticsRow, TexeraApi
+from texera_api import (LOG_NAMES_STORED_PORTS, REASON_COMPILE_ERROR, REASON_KILLED_BY_USER,
+                        REASON_NEVER_STARTED, REASON_UNIT_LOST, REASON_UNIT_STOPPED, ExecutionLog,
+                        ExecutionState, StatisticsRow, TexeraApi, TexeraApiError, history_completion_ms,
+                        history_reason)
 from transport import (CreateRefused, RunFailed, RunHandle, RunTimeout, Transport, UpdateRefused,
                        console_type, response_body)
 from workflow import (Workflow, aggregate, csv_scan, file_lister, file_scan_from_input, filter_op,
                       hash_join, projection, python_udf, sort_op, text_input)
 
-STATUS_READY, STATUS_COMPLETED, STATUS_FAILED, STATUS_KILLED = 0, 3, 4, 5
+STATUS_READY, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED, STATUS_KILLED = 0, 1, 3, 4, 5
 #: udf.python.environments.root's default (design 3.9)
 DEFAULT_ENVIRONMENTS_ROOT = "/tmp/texera-python-environments"
 #: run by the unit's python3 with the root as argv[1]: one JSON line, every entry but *.lock
@@ -77,6 +83,8 @@ class ScenarioRecord:
     persisted: dict | None = None
     error: str | None = None
     notes: list[str] = field(default_factory=list)
+    #: what the scenario measured, beyond its checks' verdicts (the readings behind a deadline)
+    facts: dict = field(default_factory=dict)
     evidence: dict | None = None
     #: under --negative-control the scenario's own checks are information only
     functional_checks: list[Check] | None = None
@@ -91,6 +99,8 @@ class ScenarioRecord:
         }
         if self.notes:
             out["notes"] = self.notes
+        if self.facts:
+            out["facts"] = self.facts
         if self.functional_checks is not None:
             out["functional_checks"] = [{"name": c.name, "ok": c.ok, "detail": c.detail}
                                         for c in self.functional_checks]
@@ -118,7 +128,8 @@ class Ctx:
                  with_replay_log: bool = False, other: OtherUser | None = None,
                  unit2_cuid: int | None = None, unit_uri: str = "",
                  unit_exec_prefix: Callable[[bool], list[str]] | None = None,
-                 timing: RecordTiming | None = None, lake: Lake | None = None, level: str | None = None):
+                 timing: RecordTiming | None = None, lake: Lake | None = None, level: str | None = None,
+                 stack: Any = None, stats_through_unit: bool = False):
         self.api, self.transport = api, transport
         self.run_id, self.cuid, self.whid = run_id, cuid, whid
         self.paths, self.timeout, self.log = paths, timeout, log
@@ -146,10 +157,18 @@ class Ctx:
         self.timing = timing or RecordTiming()
         self.lake = lake
         self.level = level
+        # The stack's control (stack_control.py): how a scenario takes the unit down.
+        self.stack = stack
+        # Kubernetes before gate 3C: the gateway routes a statistics request to the unit,
+        # so stored statistics cannot be asked for while the unit is down.
+        self.stats_through_unit = stats_through_unit
+        #: while another scenario's body runs as a part of this one: the part's key
+        self.part: str | None = None
         self.created_wids: list[int] = []
         self.hex = uuid.uuid4().hex[:8]
 
     def check(self, name: str, ok: bool, detail: Any = "") -> bool:
+        name = f"{self.part}: {name}" if self.part else name
         detail = detail if isinstance(detail, str) else repr(detail)
         self.rec.checks.append(Check(name, bool(ok), detail[:2000]))
         self.log(f"  [{'ok' if ok else 'FAIL'}] {name}{'' if ok else ' -- ' + detail[:400]}")
@@ -265,6 +284,26 @@ class Ctx:
             raise RuntimeError("this scenario reads the lake's catalog, which this driver was not given")
         return self.lake.table(self.warehouse_name, wid, eid, kind)
 
+    def unit_is_back(self, started: dict) -> None:
+        """A unit runs again after a scenario took it down (`started`: what the stack's
+        `start_unit` answered). In Kubernetes it is another unit, which the rest of the
+        run then uses."""
+        if started.get("cuid") is not None:
+            self.cuid = int(started["cuid"])
+        prefix = self.stack.exec_prefix()
+        if prefix is not None:
+            self.unit_exec_prefix = prefix
+        if self.evidence is not None:
+            self.evidence.unit_restarted()
+        self.log(f"  the unit is back: {started}")
+
+    def record_left_as_is(self, eid: int | None, label_state: str, why: str) -> None:
+        """The unit is about to be taken down under this execution. Check I then expects
+        its log's label at `label_state`, the last state the unit records of it, and does
+        not count the files of its tables: their last tidy may not have run."""
+        if eid is not None and self.evidence is not None:
+            self.evidence.record_left_as_is(int(eid), label_state, why)
+
     def settle_records(self) -> None:
         """With Check I: judge now the record of every run of this scenario that has
         ended, before something changes its tables (see Evidence.settle_records)."""
@@ -363,8 +402,10 @@ def poll(probe: Callable[[], Any], accept: Callable[[Any], bool], timeout: float
         time.sleep(min(every, max(0.0, timeout - waited)))
 
 
-def run_to_completion(ctx: Ctx, wf: Workflow, sink: str) -> tuple[RunHandle, dict]:
-    handle = ctx.start(wf, view=[sink])
+def run_to_completion(ctx: Ctx, wf: Workflow, sink: str, wid: int | None = None) -> tuple[RunHandle, dict]:
+    """Run `wf` (as a new workflow, or as another execution of workflow `wid`) until it
+    completes, and read its sink's rows."""
+    handle = ctx.start(wf, view=[sink], wid=wid)
     try:
         state = handle.wait_for_state("Completed", timeout=ctx.timeout)
     except (RunFailed, RunTimeout) as e:
@@ -390,9 +431,11 @@ def check_columns(ctx: Ctx, res: dict, names: list[str], types: list[str] | None
 # ----------------------------------------------------------------- scenarios
 
 
-def scenario_a(ctx: Ctx) -> None:
+def _workflow_a(ctx: Ctx, key: str = "a-filter-project-aggregate") -> tuple[Workflow, dict[str, str], list[dict], int]:
     """CSV scan -> Filter(age > 30) -> Projection(dept AS department, salary)
-    -> Aggregate(group by department: sum(salary) AS total_salary, count(salary) AS n)."""
+    -> Aggregate(group by department: sum(salary) AS total_salary, count(salary) AS n).
+    Returns the workflow, its operators' ids by role, the groups it must give, and how
+    many rows pass the Filter."""
     people = ctx.data["people.csv"]
     groups: dict[str, dict] = {}
     passed = [p for p in people if int(p["age"]) > 30]
@@ -402,7 +445,7 @@ def scenario_a(ctx: Ctx) -> None:
         g["n"] += 1
     expected = sorted(groups.values(), key=lambda r: r["department"])
 
-    wf = ctx.workflow("a-filter-project-aggregate")
+    wf = ctx.workflow(key)
     scan = wf.add("people", "CSVFileScan", csv_scan(ctx.paths["people.csv"]), n_in=0)
     flt = wf.add("age-over-30", "Filter", filter_op(("age", ">", "30")))
     prj = wf.add("dept-salary", "Projection", projection(("dept", "department"), ("salary", "")))
@@ -411,22 +454,35 @@ def scenario_a(ctx: Ctx) -> None:
     wf.link(scan, flt)
     wf.link(flt, prj)
     wf.link(prj, agg)
+    return wf, {"scan": scan, "filter": flt, "projection": prj, "aggregate": agg}, expected, len(passed)
 
-    handle, res = run_to_completion(ctx, wf, agg)
+
+def _check_groups(ctx: Ctx, res: dict, expected: list[dict]) -> None:
+    """The rows of a's Aggregate: its three columns and exactly the expected groups."""
     rows = sorted(res["rows"], key=lambda r: str(r.get("department")))
     check_columns(ctx, res, ["department", "total_salary", "n"], ["string", "double", "integer"])
     ctx.check("row count", len(rows) == len(expected), f"got {len(rows)}, want {len(expected)}")
     d = diff_rows(rows, expected, ordered=True)
     ctx.check("exact rows", not d, d or f"{rows}")
+
+
+def scenario_a(ctx: Ctx) -> dict:
+    """CSV scan -> Filter(age > 30) -> Projection(dept AS department, salary)
+    -> Aggregate(group by department: sum(salary) AS total_salary, count(salary) AS n)."""
+    wf, ops, expected, passed = _workflow_a(ctx)
+    flt = ops["filter"]
+    handle, res = run_to_completion(ctx, wf, ops["aggregate"])
+    _check_groups(ctx, res, expected)
     try:
-        handle.wait_until(lambda: handle.output_rows(flt) == len(passed), 15, "final Filter statistics")
+        handle.wait_until(lambda: handle.output_rows(flt) == passed, 15, "final Filter statistics")
     except Exception:
         pass
     ctx.check("operator statistics: Filter emitted the rows with age > 30",
-              handle.output_rows(flt) == len(passed),
-              f"Filter output rows {handle.output_rows(flt)}, want {len(passed)}; "
-              f"scan output {handle.output_rows(scan)}")
+              handle.output_rows(flt) == passed,
+              f"Filter output rows {handle.output_rows(flt)}, want {passed}; "
+              f"scan output {handle.output_rows(ops['scan'])}")
     ctx.persisted_status(STATUS_COMPLETED)
+    return {"ops": ops, "expected": expected}
 
 
 UDF_ADD_COLUMNS = '''from pytexera import *
@@ -861,6 +917,12 @@ def scenario_j(ctx: Ctx) -> None:
               f"v1 n in [{min(v1, default=None)}, {max(v1, default=None)}], "
               f"v2 n in [{min(v2, default=None)}, {max(v2, default=None)}]")
     if create_ws:
+        if ctx.at_least("B"):
+            # The Dashboard refuses a change by the closing record (ended_at), which its
+            # closing job writes a tick after the run ended: until then it takes the change.
+            closed, waited = _wait_closed(ctx, handle.eid)
+            ctx.note(f"waited {waited:.1f} s for the Dashboard to close the execution "
+                     f"({'closed' if not closed.open else 'still open'}) before the late change")
         r = ctx.api.post_operator_update(handle.eid, new_op)
         ctx.check("a change after the run completed is refused (409)", r.status_code == 409,
                   f"HTTP {r.status_code}: {r.text[:300]}")
@@ -921,17 +983,21 @@ def _created(ctx: Ctx, wf: Workflow, view: list[str], wid: int, **kw) -> dict:
     return body
 
 
+#: a start that is refused is answered within this
+REFUSAL_WAIT_S = 30.0
 #: after a refusal arrived: anything else the unit sends or runs for that start happens within this
 REFUSAL_SETTLE_S = 3.0
 
 
 def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: int, eid: int,
-                   plan_uri: str, socket_cuid: int | None = None, token: str | None = None) -> None:
+                   plan_uri: str, socket_cuid: int | None = None, token: str | None = None,
+                   row_status: int = STATUS_READY) -> None:
     """Start `eid` on a socket that must be refused: the error reaches that socket
     only (a session of the creator on the same workflow sees none), nothing runs,
-    the row stays 0, and the unit runs no statement at all from the start until
-    after the refusal (D33). `expect`: the refusal's message contains one of these
-    (the design's StoredExecutionStart messages)."""
+    the row stays as it was (`row_status`: 0 for an execution nobody started), and
+    the unit runs no statement at all from the start until after the refusal (D33).
+    `expect`: the refusal's message contains one of these (the design's
+    StoredExecutionStart messages)."""
     expect = (expect,) if isinstance(expect, str) else expect
     watcher = ctx.transport.open_socket(wid, ctx.cuid)
     ctx.handles.append(watcher)
@@ -939,7 +1005,7 @@ def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: 
                                           plan_uri=plan_uri, token=token)
     ctx.handles.append(handle)
     try:
-        handle.wait_until(lambda: handle.error_event_count > 0, 30, "the refusal", fail_fast=False)
+        handle.wait_until(lambda: handle.error_event_count > 0, REFUSAL_WAIT_S, "the refusal", fail_fast=False)
     except RunTimeout:
         pass
     time.sleep(REFUSAL_SETTLE_S)  # anything else the unit sends or runs for this start happens by now
@@ -955,7 +1021,8 @@ def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: 
     ctx.check(f"{label}: never Running", "Running" not in handle.states and "Running" not in watcher.states,
               f"starting socket {handle.states}; watcher {watcher.states}")
     entry = ctx.api.execution_entry(wid, eid)
-    ctx.check(f"{label}: the row stays 0", bool(entry) and entry.get("status") == STATUS_READY, f"{entry}")
+    ctx.check(f"{label}: the row stays {row_status}", bool(entry) and entry.get("status") == row_status,
+              f"{entry}")
     ctx.expect_no_unit_statement(eid, f"{label}: a refused start writes nothing")
     ctx.allow_status_zero(eid, f"{ctx.rec.key}: start refused on purpose")
 
@@ -1061,7 +1128,7 @@ def scenario_l8(ctx: Ctx) -> None:
                                          plan_uri=first.plan_uri)
     ctx.handles.append(again)
     try:
-        again.wait_until(lambda: again.error_event_count > 0, 30, "the refusal", fail_fast=False)
+        again.wait_until(lambda: again.error_event_count > 0, REFUSAL_WAIT_S, "the refusal", fail_fast=False)
     except RunTimeout:
         pass
     time.sleep(REFUSAL_SETTLE_S)
@@ -1517,10 +1584,13 @@ def scenario_i(ctx: Ctx) -> None:
 
 
 # ===================================================================== step 3
-# Scenarios of the step 3 design (section 7 H3): the record a run leaves in the lake.
-# They wait on the unit's commit timer, so they need a stack started with
-# --fast-record; every wait below is a multiple of the stack's timers (ctx.timing).
+# Scenarios of the step 3 design (section 7 H3): the record a run leaves in the lake,
+# and what the Dashboard service makes of it. They wait on the unit's commit timer and
+# on the Dashboard's closing job, so they need a stack started with --fast-record;
+# every wait below is a multiple of the stack's timers (ctx.timing).
 
+#: the states a log ends in
+LOGGED_ENDINGS = ("COMPLETED", "FAILED", "KILLED")
 SLOW_RUN_SLEEP_S = 0.1
 UDF_SLOW_PRINT = f'''from pytexera import *
 import time
@@ -1539,6 +1609,8 @@ LABEL_WAIT_S = 10.0
 FIRST_COMMIT_INTERVALS = 3
 #: p reads the stored statistics twice, this many commit intervals apart (5 s with --fast-record)
 STATS_GROWTH_INTERVALS = 2.5
+#: an execution whose run ended is closed within this many closing intervals
+CLOSE_INTERVALS = 3
 
 
 def _need_fast_record(ctx: Ctx) -> None:
@@ -1546,6 +1618,38 @@ def _need_fast_record(ctx: Ctx) -> None:
         raise RuntimeError(f"scenario {ctx.rec.key} waits on step 3's timers, which take minutes to a day "
                            f"with the product's defaults; start the stack with --fast-record "
                            f"(this stack: {ctx.timing.describe()})")
+
+
+def _need_level(ctx: Ctx, level: str) -> None:
+    if not ctx.at_least(level):
+        has = f"gate 3{ctx.level}" if ctx.level else "step 2"
+        raise RuntimeError(f"scenario {ctx.rec.key} needs what step 3's gate 3{level} brings; this run takes "
+                           f"the product to be at {has} (--gate)")
+
+
+def _need_stack(ctx: Ctx) -> None:
+    if ctx.stack is None:
+        raise RuntimeError(f"scenario {ctx.rec.key} takes the computing unit down, which needs the stack's "
+                           f"control (driver/stack_control.py); this driver was given none")
+
+
+def _part(ctx: Ctx, key: str, body: Callable[[Ctx], Any]) -> tuple[Any, int | None, int | None]:
+    """Run another scenario's `body` as a part of this one: its checks join this
+    scenario's, named after `key`. Returns what the body returns, and the workflow and
+    the execution it left in the record."""
+    kept = (ctx.rec.wid, ctx.rec.eid)
+    ctx.rec.wid = ctx.rec.eid = None
+    ctx.part = key
+    try:
+        out = body(ctx)
+    finally:
+        ctx.part = None
+    # Check I judges the part's runs now: by the scenario's end their results, and with
+    # them their console tables, may have expired by age.
+    ctx.settle_records()
+    wid, eid = ctx.rec.wid, ctx.rec.eid
+    ctx.rec.wid, ctx.rec.eid = kept[0] or wid, kept[1] or eid
+    return out, wid, eid
 
 
 def _slow_run(ctx: Ctx, key: str) -> tuple[RunHandle, str]:
@@ -1561,6 +1665,21 @@ def _slow_run(ctx: Ctx, key: str) -> tuple[RunHandle, str]:
     return handle, udf
 
 
+def _wait_closed(ctx: Ctx, eid: int) -> tuple[ExecutionState, float]:
+    """The execution's state once the Dashboard has closed it (or as it is after
+    CLOSE_INTERVALS closing intervals), and the seconds waited."""
+    return poll(lambda: ctx.api.execution_state(eid), lambda state: not state.open,
+                CLOSE_INTERVALS * ctx.timing.closing_interval_s, ctx.timing.poll_s)
+
+
+def _is_time(value: Any) -> bool:
+    """Whether `value` is a time as the Dashboard sends one: epoch milliseconds."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 1e12 < value < 1e13
+
+
+# ----------------------------------------------------------- p: record in lake
+
+
 def _wait_label(ctx: Ctx, wid: int, eid: int, state: str, after_seq: int = 0) -> Label:
     """The label of the execution's log once it names `state` at a seq above `after_seq`
     (or as it is after LABEL_WAIT_S)."""
@@ -1569,19 +1688,43 @@ def _wait_label(ctx: Ctx, wid: int, eid: int, state: str, after_seq: int = 0) ->
     return label
 
 
+def _check_stored_ports(ctx: Ctx, wid: int, eid: int, log: ExecutionLog) -> None:
+    """What a log says of its run's stored output ports. With the flag off (the ports'
+    locations are in the plan), the log says nothing of them and nothing is asked."""
+    if not LOG_NAMES_STORED_PORTS:
+        return
+    ports = log.stored_ports()
+    ctx.check("/log names the stored output port: its id, its result table (of this execution) and its "
+              "output mode",
+              bool(ports) and all(p["portId"] and p["outputMode"] and f"/wid/{wid}/eid/{eid}/" in str(p["uri"])
+                                  and str(p["uri"]).endswith("/result") for p in ports), f"{ports}")
+
+
 def _check_log_while_running(ctx: Ctx, wid: int, eid: int, labels: list[Label]) -> None:
-    """Before the Dashboard serves the log: the label, read after each state change,
-    names RUNNING, PAUSED and RUNNING at rising seq, and the table holds a row per seq:
-    READY, an output row, RUNNING, PAUSED, RUNNING at the least."""
+    """The label, read after each state change, names RUNNING, PAUSED and RUNNING at rising
+    seq. From gate 3B on the Dashboard serves the log: READY, RUNNING, PAUSED, RUNNING, seq
+    rising by one, and no closing record. Before that the row count is all the catalog
+    shows: one row per seq."""
     seen = [(l.state, l.state_seq) for l in labels]
     seqs = [l.state_seq or 0 for l in labels]
     ctx.check("while it runs the log's label names RUNNING, PAUSED, RUNNING at rising seq",
               [l.state for l in labels] == ["RUNNING", "PAUSED", "RUNNING"] and seqs == sorted(set(seqs))
               and seqs[0] >= 2, f"label after each state change: {seen}")
-    log = ctx.lake_table("log", wid, eid)
-    ctx.check("the log holds one row per seq up to the label's: READY, an output row, RUNNING, PAUSED, "
-              "RUNNING at the least", log.records == labels[-1].state_seq and (log.records or 0) >= 5,
-              f"{log.describe()}; label {seen[-1]}")
+    if not ctx.at_least("B"):
+        table = ctx.lake_table("log", wid, eid)
+        fewest = 4 + (1 if LOG_NAMES_STORED_PORTS else 0)
+        ctx.check(f"the log holds one row per seq up to the label's, {fewest} at the least: READY, RUNNING, "
+                  f"PAUSED, RUNNING" + (" and the stored output port" if LOG_NAMES_STORED_PORTS else ""),
+                  table.records == labels[-1].state_seq and (table.records or 0) >= fewest,
+                  f"{table.describe()}; label {seen[-1]}")
+        return
+    log = ctx.api.execution_log(eid)
+    states = [e.state for e in log.state_rows]
+    ctx.check("while it runs /log shows READY, RUNNING, PAUSED, RUNNING, with seq rising by one",
+              states == ["READY", "RUNNING", "PAUSED", "RUNNING"] and log.whole, f"states {states}; seq {log.seqs}")
+    _check_stored_ports(ctx, wid, eid, log)
+    ctx.check("/log has no closing record while the execution is open", not log.closed,
+              f"closing: outcome {log.outcome}, reason {log.reason}")
 
 
 def _check_statistics_grow(ctx: Ctx, handle: RunHandle, wid: int, eid: int, udf: str) -> None:
@@ -1597,8 +1740,7 @@ def _check_statistics_grow(ctx: Ctx, handle: RunHandle, wid: int, eid: int, udf:
               f"{len(first)} then {len(second)} row(s); state {handle.last_state}")
     times = [r.time_ms for r in second]
     ctx.check("the stored rows are per operator, with times in epoch milliseconds",
-              udf in {r.operator_id for r in second}
-              and all(isinstance(t, (int, float)) and not isinstance(t, bool) and 1e12 < t < 1e13 for t in times),
+              udf in {r.operator_id for r in second} and all(_is_time(t) for t in times),
               f"operators {sorted({r.operator_id for r in second})}; times {times[:3]}")
 
 
@@ -1612,8 +1754,8 @@ def _check_console_stored(ctx: Ctx, handle: RunHandle, wid: int, eid: int) -> No
 
 def scenario_p(ctx: Ctx) -> None:
     """A slow run, paused and resumed once. While it runs, its log, statistics and console
-    output are in the lake; after it, the log's newest state is COMPLETED. Check I then
-    judges the whole record."""
+    output are in the lake; after it, the log ends COMPLETED. Check I then judges the
+    whole record."""
     _need_create_ws(ctx)
     _need_fast_record(ctx)
     handle, udf = _slow_run(ctx, "p-record-in-lake")
@@ -1635,10 +1777,484 @@ def scenario_p(ctx: Ctx) -> None:
     ctx.check("after the run the log's newest state is COMPLETED, at the highest seq",
               ended.state == "COMPLETED" and (ended.state_seq or 0) > (resumed.state_seq or 0),
               f"label {(ended.state, ended.state_seq)}, {(resumed.state, resumed.state_seq)} while it ran")
+    if ctx.at_least("B"):
+        log = ctx.api.execution_log(eid)
+        last = log.entries[-1] if log.entries else None
+        ctx.check("after the run /log's last row is COMPLETED, with seq still rising by one",
+                  last is not None and (last.kind, last.state) == ("state", "COMPLETED") and log.whole,
+                  f"last {last}; seq {log.seqs}")
     ctx.persisted_status(STATUS_COMPLETED, eid=eid)
 
 
-SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], None]]] = {
+# ------------------------------------------------------ q, s: the unit goes down
+
+
+class _Background:
+    """A call running beside the scenario. `result()` waits for it and gives what it
+    returned, or raises what it raised."""
+
+    def __init__(self, call: Callable[[], Any]):
+        self._out: dict[str, Any] = {}
+        self._t0 = time.monotonic()
+        self._thread = threading.Thread(target=self._run, args=(call,), daemon=True)
+        self._thread.start()
+
+    def _run(self, call: Callable[[], Any]) -> None:
+        try:
+            self._out["value"] = call()
+        except Exception as e:  # noqa: BLE001 -- raised again where the scenario asks for the result
+            self._out["error"] = e
+        self._out["seconds"] = time.monotonic() - self._t0
+
+    def seconds(self) -> float | None:
+        """How long the call took, None while it runs."""
+        return self._out.get("seconds")
+
+    def result(self) -> Any:
+        self._thread.join()
+        if "error" in self._out:
+            raise self._out["error"]
+        return self._out["value"]
+
+
+def _stored(ctx: Ctx, wid: int, eid: int) -> dict:
+    """How much of a run's output is stored: its statistics rows as the Dashboard serves
+    them and the rows of its console table. In Kubernetes before gate 3C the unit serves
+    the statistics, so only the table's row count can be read while it is down."""
+    rows = None if ctx.stats_through_unit else [(r.operator_id, r.time_ms, r.output_count)
+                                                for r in ctx.statistics(wid, eid)]
+    statistics = len(rows) if rows is not None else ctx.lake_table("statistics", wid, eid).records or 0
+    return {"statistics": statistics, "rows": rows, "console": ctx.lake_table("console", wid, eid).records or 0}
+
+
+def _slow_run_with_stored_output(ctx: Ctx, key: str, label: str) -> tuple[RunHandle, int, int, dict]:
+    """A slow run that is Running and has statistics and console output in the lake: what
+    a unit can be taken down under. Returns it with its workflow, its execution and what
+    is stored of it."""
+    handle, _udf = _slow_run(ctx, key)
+    wid, eid = ctx.rec.wid, handle.eid
+    stored, _ = poll(lambda: _stored(ctx, wid, eid), lambda s: s["statistics"] > 0 and s["console"] > 0,
+                     FIRST_COMMIT_INTERVALS * ctx.timing.commit_interval_s, ctx.timing.poll_s)
+    ctx.check(f"{label}: the run is Running, with statistics and console output in the lake",
+              stored["statistics"] > 0 and stored["console"] > 0 and handle.last_state == "Running",
+              f"{stored['statistics']} statistics row(s), {stored['console']} console row(s); "
+              f"state {handle.last_state}")
+    return handle, wid, eid, stored
+
+
+def _reading(ctx: Ctx, wid: int, eid: int, t: float) -> dict:
+    """The execution's history entry, read `t` seconds after the scenario's event. A
+    reading that got no answer says so and is no verdict: the gateway restarts when the
+    unit comes back at another address."""
+    try:
+        entry = ctx.api.execution_entry(wid, eid) or {}
+    except (TexeraApiError, requests.RequestException) as e:
+        return {"t": round(t, 2), "status": None, "unanswered": f"{type(e).__name__}: {str(e)[:200]}"}
+    return {"t": round(t, 2), "status": entry.get("status"), "reason": history_reason(entry),
+            "completion": history_completion_ms(entry)}
+
+
+def _before_verdict(seen: list[dict], verdict: dict | None) -> list[dict]:
+    """The readings before the verdict that got an answer."""
+    return [r for r in (seen[:-1] if verdict else seen) if "unanswered" not in r]
+
+
+def _watch_history(ctx: Ctx, wid: int, eid: int, t0: float, give_up_s: float,
+                   closed: Callable[[dict], bool] = lambda reading: reading["status"] == STATUS_FAILED) -> list[dict]:
+    """Read the execution's history entry every poll interval until it reads as `closed`
+    wants it (by default: status 4) or `give_up_s` seconds passed since `t0`. Every
+    reading, with the seconds since `t0` at which it was taken."""
+    seen = []
+    while True:
+        seen.append(_reading(ctx, wid, eid, time.monotonic() - t0))
+        if closed(seen[-1]) or seen[-1]["t"] >= give_up_s:
+            return seen
+        time.sleep(ctx.timing.poll_s)
+
+
+def _check_lost_verdict(ctx: Ctx, label: str, running: dict, seen: list[dict], deadline: float,
+                        earliest: float | None) -> None:
+    """The readings of a lost execution's history entry (`running`: the one taken before
+    the kill): Running, with a completionTime that is a time, until it turns Failed,
+    "unit lost", by the deadline and not before the Dashboard can know."""
+    verdict = seen[-1] if seen[-1]["status"] == STATUS_FAILED else None
+    before = [running] + _before_verdict(seen, verdict)
+    ctx.check(f"{label}: until the verdict the history reads status 1, with a completionTime that is a time",
+              all(s["status"] == STATUS_RUNNING and _is_time(s.get("completion")) for s in before),
+              f"{len(before)} reading(s): {before[:2]} ... {before[-1:]}")
+    ctx.check(f"{label}: the history turns status 4, \"{REASON_UNIT_LOST}\", within {deadline:g} s",
+              verdict is not None and verdict["t"] <= deadline and verdict["reason"] == REASON_UNIT_LOST,
+              f"last reading {seen[-1]}")
+    if earliest is not None:
+        ctx.check(f"{label}: the verdict does not come before the beat stood still for lost-after "
+                  f"({earliest:.1f} s after the kill at the earliest)",
+                  verdict is None or verdict["t"] >= earliest, f"verdict {verdict}")
+
+
+def _check_read_back(ctx: Ctx, label: str, wid: int, eid: int, before: dict) -> None:
+    """Right after the kill: what the run had stored is still there, with its unit gone.
+    (Later its console table goes with its results: they expire by age, counted from the
+    unit's last beat.)"""
+    after = _stored(ctx, wid, eid)
+    kept = after["rows"] is None or after["rows"][:len(before["rows"])] == before["rows"]
+    ctx.check(f"{label}: statistics and console output written before the kill read back",
+              kept and after["statistics"] >= before["statistics"] and after["console"] >= before["console"],
+              f"statistics {before['statistics']} -> {after['statistics']} row(s), the earlier rows "
+              f"{'kept' if kept else 'changed'}; console {before['console']} -> {after['console']} row(s)")
+
+
+def _check_lost_record(ctx: Ctx, label: str, wid: int, eid: int, before: dict, killed_at_ms: float) -> dict | None:
+    """What the Dashboard tells of an execution it closed as lost. Returns its history entry."""
+    state = ctx.api.execution_state(eid)
+    ctx.check(f"{label}: /state says closed, status 4, \"{REASON_UNIT_LOST}\"",
+              (state.open, state.status, state.reason) == (False, STATUS_FAILED, REASON_UNIT_LOST), f"{state}")
+    log = ctx.api.execution_log(eid)
+    last = log.state_rows[-1] if log.state_rows else None
+    ctx.check(f"{label}: /log has no ending row, and a closing record with the verdict",
+              last is not None and last.state not in LOGGED_ENDINGS and log.closed
+              and (log.outcome, log.reason) == (STATUS_FAILED, REASON_UNIT_LOST),
+              f"last state row {last}; closing: outcome {log.outcome}, reason {log.reason}")
+    statistics = ctx.lake_table("statistics", wid, eid)
+    ctx.check(f"{label}: its statistics are still in the lake once it is closed",
+              (statistics.records or 0) >= before["statistics"],
+              f"{statistics.describe()}; {before['statistics']} row(s) before the kill")
+    entry = ctx.api.execution_entry(wid, eid)
+    completion = history_completion_ms(entry or {})
+    # The execution ended at its unit's last beat (design D43): after its last state change,
+    # and before the kill (a commit interval is allowed for the clocks to differ).
+    latest = killed_at_ms + 1000 * ctx.timing.commit_interval_s
+    ctx.check(f"{label}: completionTime is the last beat: not before the last state change, not after the kill",
+              last is not None and _is_time(completion) and (last.time_ms or 0) <= completion <= latest,
+              f"completionTime {completion}; last state change {last.time_ms if last else None}; "
+              f"the kill had returned at {killed_at_ms:.0f}")
+    return entry
+
+
+def _lose_unit(ctx: Ctx, label: str, key: str, *, back_at_once: bool = False, list_units: bool = False) -> dict:
+    """Kill the unit under a slow run and follow the execution until the Dashboard closes
+    it. The unit comes back after the verdict, or (`back_at_once`) is started again right
+    after the kill. `list_units`: the units are listed once after the kill, as the
+    workspace does when its socket drops, so the platform notices the unit is gone.
+    Returns the workflow, the execution and its history entry."""
+    timing = ctx.timing
+    handle, wid, eid, before = _slow_run_with_stored_output(ctx, key, label)
+    ctx.record_left_as_is(eid, "RUNNING", "its unit was killed under it")
+    running = _reading(ctx, wid, eid, 0.0)
+    asked = time.monotonic()
+    ctx.log(f"  {label}: killing the unit: {ctx.stack.kill_unit()}")
+    killed, killed_at_ms = time.monotonic(), time.time() * 1000
+    restart = _Background(ctx.stack.start_unit) if back_at_once else None
+    try:
+        _check_read_back(ctx, label, wid, eid, before)
+        if list_units:
+            ctx.api.list_units()
+            t0, deadline, earliest = time.monotonic(), 2 * timing.closing_interval_s, None
+        else:
+            # The Dashboard counts its own ticks while the beat stands still. The last beat
+            # was up to a commit interval before the kill, and a tick is allowed for a job
+            # that counts the tick at which it first saw that beat.
+            t0, deadline = killed, timing.lost_verdict_s
+            earliest = timing.lost_watch_s - timing.commit_interval_s - timing.closing_interval_s - (killed - asked)
+        seen = _watch_history(ctx, wid, eid, t0, deadline + 2 * timing.closing_interval_s)
+        ctx.rec.facts.setdefault("lost_verdicts", []).append(
+            {"pass": label, "eid": eid, "deadline_s": deadline, "earliest_s": earliest, "before_the_kill": running,
+             "readings": seen})
+        _check_lost_verdict(ctx, label, running, seen, deadline, earliest)
+        if restart is not None and restart.seconds() is not None:
+            ctx.note(f"{label}: the unit was back {restart.seconds():.1f} s after the kill, the last reading "
+                     f"of the history was taken at {seen[-1]['t']} s")
+    finally:
+        ctx.unit_is_back(restart.result() if restart is not None else ctx.stack.start_unit())
+    entry = _check_lost_record(ctx, label, wid, eid, before, killed_at_ms)
+    return {"label": label, "wid": wid, "eid": eid, "entry": entry}
+
+
+def scenario_q(ctx: Ctx) -> None:
+    """The unit is killed under a slow run, twice: left down until the verdict, and
+    started again right after the kill. Both times the Dashboard closes the execution
+    "failed: unit lost" once the beat has stood still for lost-after, and what the run
+    had stored reads back. The unit that is back holds no run, runs a new one, and the
+    lost executions stay as they were closed. Where the platform notices a unit that is
+    gone (Kubernetes), a third pass lists the units after the kill and the verdict comes
+    at once."""
+    _need_create_ws(ctx)
+    _need_fast_record(ctx)
+    _need_level(ctx, "B")
+    _need_stack(ctx)
+    lost = [_lose_unit(ctx, "unit left down", "q-unit-lost"),
+            _lose_unit(ctx, "unit back at once", "q-unit-lost-and-back", back_at_once=True)]
+    watcher = ctx.transport.open_socket(lost[-1]["wid"], ctx.cuid)
+    ctx.handles.append(watcher)
+    opened = watcher.replayed
+    ctx.check("unit back at once: the unit holds no run of the workflow (a new socket is told Uninitialized, "
+              "naming no execution)", opened.get("states") == ["Uninitialized"] and watcher.eid is None,
+              f"{opened}")
+    _part(ctx, "a", scenario_a)
+    for run in lost:
+        entry = ctx.api.execution_entry(run["wid"], run["eid"])
+        ctx.check(f"{run['label']}: after a run on the unit that is back, the lost execution is unchanged",
+                  entry is not None and entry == run["entry"], f"{run['entry']} -> {entry}")
+    if ctx.stack.listing_notices_lost_unit:
+        _lose_unit(ctx, "units listed after the kill", "q-unit-lost-and-listed", list_units=True)
+
+
+def scenario_s(ctx: Ctx) -> None:
+    """The unit is stopped politely under a slow run: it records the ending itself, so the
+    Dashboard closes the execution "failed: the computing unit was stopped" at its next
+    tick, long before it could call the unit lost."""
+    _need_create_ws(ctx)
+    _need_fast_record(ctx)
+    _need_level(ctx, "B")
+    _need_stack(ctx)
+    handle, wid, eid, _stored_before = _slow_run_with_stored_output(ctx, "s-polite-stop", "s")
+    ctx.record_left_as_is(eid, "FAILED", "its unit was stopped under it")
+    ctx.log(f"  stopping the unit: {ctx.stack.stop_unit()}")
+    try:
+        # The history reads the ending from the log's label as soon as the unit wrote it;
+        # why it ended is in the closing record, which the Dashboard writes at its next tick.
+        deadline = 2 * ctx.timing.closing_interval_s
+        seen = _watch_history(ctx, wid, eid, time.monotonic(), deadline + ctx.timing.closing_interval_s,
+                              closed=lambda r: r["status"] == STATUS_FAILED and r.get("reason") is not None)
+        ctx.rec.facts["stop_verdict"] = {"eid": eid, "deadline_s": deadline, "readings": seen}
+        ctx.check(f"the history turns status 4, \"{REASON_UNIT_STOPPED}\", within 2 closing intervals "
+                  f"({deadline:g} s) of the stop",
+                  (seen[-1]["status"], seen[-1].get("reason")) == (STATUS_FAILED, REASON_UNIT_STOPPED)
+                  and seen[-1]["t"] <= deadline, f"last reading {seen[-1]}")
+        log = ctx.api.execution_log(eid)
+        last = log.entries[-1] if log.entries else None
+        ctx.check("/log ends with a FAILED row carrying that reason",
+                  last is not None and (last.kind, last.state, last.reason) == ("state", "FAILED",
+                                                                                  REASON_UNIT_STOPPED),
+                  f"last row {last}")
+    finally:
+        ctx.unit_is_back(ctx.stack.start_unit())
+
+
+# -------------------------------------------------------- r: never started
+
+
+def scenario_r(ctx: Ctx) -> None:
+    """An execution that is created and never started: the Dashboard closes it "failed:
+    never started" once it is older than never-started-after, taking its one start, so a
+    start that comes later is refused."""
+    _need_create_ws(ctx)
+    _need_fast_record(ctx)
+    _need_level(ctx, "B")
+    timing = ctx.timing
+    wf, src = _tiny(ctx, "r-never-started")
+    wid = ctx.create_workflow(wf)
+    t0 = time.monotonic()
+    created = _created(ctx, wf, [src], wid)
+    eid = ctx.rec.eid = created["eid"]
+    deadline = timing.never_started_verdict_s
+    seen = _watch_history(ctx, wid, eid, t0, deadline + timing.closing_interval_s)
+    ctx.rec.facts["never_started_verdict"] = {"eid": eid, "deadline_s": deadline, "readings": seen}
+    verdict = seen[-1] if seen[-1]["status"] == STATUS_FAILED else None
+    before = _before_verdict(seen, verdict)
+    ctx.check("until then the history reads status 0",
+              bool(before) and all(s["status"] == STATUS_READY for s in before), f"{before[:2]} ... {before[-1:]}")
+    ctx.check(f"the history turns status 4, \"{REASON_NEVER_STARTED}\", within never-started-after + 2 closing "
+              f"intervals ({deadline:g} s) of the create",
+              verdict is not None and verdict["t"] <= deadline and verdict["reason"] == REASON_NEVER_STARTED,
+              f"last reading {seen[-1]}")
+    # The row's age counts from its creation, which is after t0; a second is allowed for
+    # a creation time kept to the second.
+    earliest = timing.never_started_after_s - 1
+    ctx.check(f"... and not before it is older than never-started-after ({earliest:g} s at the earliest)",
+              verdict is None or verdict["t"] >= earliest, f"verdict {verdict}")
+    state = ctx.api.execution_state(eid)
+    ctx.check(f"/state says closed, status 4, \"{REASON_NEVER_STARTED}\"",
+              (state.open, state.status, state.reason) == (False, STATUS_FAILED, REASON_NEVER_STARTED), f"{state}")
+    plan = ctx.lake_table("plan", wid, eid)
+    ctx.check("the plan table has the `started` tag: the Dashboard took the execution's one start",
+              "started" in plan.refs, f"{plan.describe()}; refs {sorted(plan.refs)}")
+    _refused_start(ctx, "a start after that", "already started", wid=wid, eid=eid, plan_uri=created["planUri"],
+                   row_status=STATUS_FAILED)
+
+
+# ---------------------------------------------------------------- t: expiry
+
+#: an execution's tables that its expiry keeps, and the ones it drops (design D31)
+KEPT_TABLES = ("plan", "log", "statistics")
+DROPPED_TABLES = ("result", "state", "console")
+
+
+def _dropped_tables(ctx: Ctx, wid: int, eid: int) -> dict[str, int | None]:
+    """How many result tables, state tables and console tables the execution has in the
+    lake (None: the namespace could not be listed)."""
+    counts: dict[str, int | None] = {}
+    for kind in ("result", "state"):
+        names, _why = ctx.lake.port_tables(ctx.warehouse_name, wid, eid, kind)
+        counts[kind] = None if names is None else len(names)
+    counts["console"] = int(ctx.lake_table("console", wid, eid).exists)
+    return counts
+
+
+def _kept_tables(ctx: Ctx, wid: int, eid: int) -> dict[str, TableState]:
+    return {kind: ctx.lake_table(kind, wid, eid) for kind in KEPT_TABLES}
+
+
+def _wait_tidied(ctx: Ctx, wid: int, eid: int) -> None:
+    """Wait (at most LABEL_WAIT_S) for the end tidy of the execution's log and statistics:
+    their sizes, which the expiry adds up, do not change after it."""
+    poll(lambda: [ctx.lake_table(kind, wid, eid) for kind in ("log", "statistics")],
+         lambda tables: all((t.data_files, t.snapshots) == (1, 1) for t in tables), LABEL_WAIT_S, 0.25)
+
+
+def _closed_with_results(ctx: Ctx, label: str, wid: int, eid: int) -> int | None:
+    """A completed execution, once closed and before anything expired: closed Completed,
+    its results in the lake, and a size. Returns the size."""
+    state, _waited = _wait_closed(ctx, eid)
+    ctx.check(f"{label}: closed, status 3", (state.open, state.status) == (False, STATUS_COMPLETED), f"{state}")
+    tables = _dropped_tables(ctx, wid, eid)
+    ctx.check(f"{label}: its result, state and console tables are in the lake",
+              all(tables[kind] for kind in DROPPED_TABLES), f"{tables}")
+    size = ctx.api.quota_sizes().get(eid)
+    ctx.check(f"{label}: the quota page counts its stored bytes", bool(size), f"storedBytes {size}")
+    _wait_tidied(ctx, wid, eid)
+    return size
+
+
+def _check_expired(ctx: Ctx, label: str, wid: int, eid: int, size_before: int | None) -> None:
+    """An execution whose results expired: the result, state and console tables are gone,
+    the plan, the log and the statistics stay, it still reads Completed, and it holds
+    what those three hold (design 4.4: the sizes the catalog keeps of them, added up)."""
+    tables = _dropped_tables(ctx, wid, eid)
+    ctx.check(f"{label}: its result and state tables are gone from the lake, and its console table",
+              tables == dict.fromkeys(DROPPED_TABLES, 0), f"{tables}")
+    kept = _kept_tables(ctx, wid, eid)
+    ctx.check(f"{label}: its plan, log and statistics are still there", all(t.exists for t in kept.values()),
+              "; ".join(t.describe() for t in kept.values()))
+    state = ctx.api.execution_state(eid)
+    ctx.check(f"{label}: /state still says Completed", (state.open, state.status) == (False, STATUS_COMPLETED),
+              f"{state}")
+    size = ctx.api.quota_sizes().get(eid)
+    left = sum(t.size_bytes or 0 for t in kept.values())
+    ctx.check(f"{label}: storedBytes fell, to what the plan, the log and the statistics hold",
+              bool(size_before) and size == left and size < size_before,
+              f"storedBytes {size_before} -> {size}; the three tables hold {left} bytes")
+
+
+def scenario_t(ctx: Ctx) -> None:
+    """Scenario a's workflow, run twice as one workflow. The second create replaces the
+    first execution's results; the second execution's results expire by age, with no
+    third create. Either way the plan, the log and the statistics stay."""
+    _need_create_ws(ctx)
+    _need_fast_record(ctx)
+    _need_level(ctx, "B")
+    timing = ctx.timing
+    wf, ops, expected, _passed = _workflow_a(ctx, "t-expiry")
+    wid = ctx.create_workflow(wf)
+
+    first, res = run_to_completion(ctx, wf, ops["aggregate"], wid=wid)
+    first_ended = time.monotonic()
+    _check_groups(ctx, res, expected)
+    size = _closed_with_results(ctx, "first execution", wid, first.eid)
+    ctx.settle_records()
+    created = _created(ctx, wf, [ops["aggregate"]], wid)
+    age = time.monotonic() - first_ended
+    _check_expired(ctx, "first execution, after the second create", wid, first.eid, size)
+    ctx.check("... and it was the create that replaced them: their age was under the TTL",
+              age < timing.result_ttl_s, f"{age:.1f} s after the run ended; the TTL is {timing.result_ttl_s:g} s")
+
+    second = ctx.transport.start_existing(wid=wid, cuid=ctx.cuid, eid=created["eid"], plan_uri=created["planUri"])
+    ctx.handles.append(second)
+    done = second.wait_for_state("Completed", timeout=ctx.timeout)
+    second_ended = time.monotonic()
+    ctx.check("second execution: completes", done == "Completed", f"states {second.states}")
+    size = _closed_with_results(ctx, "second execution", wid, second.eid)
+    ctx.settle_records()
+    deadline = timing.result_ttl_s + timing.expiry_check_interval_s + 2 * timing.closing_interval_s
+    tables, _ = poll(lambda: _dropped_tables(ctx, wid, second.eid), lambda t: t["result"] == 0,
+                     deadline - (time.monotonic() - second_ended), timing.poll_s)
+    gone_after = time.monotonic() - second_ended
+    ctx.check(f"second execution: its results expire by age, without a third create: within the TTL + one expiry "
+              f"pass + 2 closing intervals ({deadline:g} s) of its end, and not before the TTL",
+              tables["result"] == 0 and timing.result_ttl_s - 1 <= gone_after,
+              f"result tables {tables['result']} at {gone_after:.1f} s after the run ended")
+    _check_expired(ctx, "second execution, after the TTL", wid, second.eid, size)
+    ctx.rec.eid = second.eid
+
+
+# ------------------------------------------------------ w: history outcomes
+
+
+def udf_raises_on_load(message: str) -> str:
+    """A UDF whose module raises as the worker loads it. The engine reports that as a
+    fatal error and the run fails; a raise in process_tuple would only pause the worker
+    and leave the run Running (see "Python exceptions do not end a run" in the README)."""
+    return f'''from pytexera import *
+
+raise RuntimeError("{message}")
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        yield tuple_
+'''
+
+
+def _run_that_raises(ctx: Ctx, message: str) -> None:
+    wf = ctx.workflow("w-udf-raises")
+    src = wf.add("one-line", "TextInput", text_input(["sce-e2e"]), n_in=0)
+    udf = wf.add("raises", "PythonUDFV2", python_udf(udf_raises_on_load(message)))
+    wf.link(src, udf)
+    handle = ctx.start(wf, view=[udf])
+    try:
+        state = handle.wait_for_state("Failed", timeout=ctx.timeout, fail_fast=False)
+        handle.wait_until(lambda: bool(handle.fatal_errors), 10, "the fatal error", fail_fast=False)
+    except (RunFailed, RunTimeout):
+        state = handle.last_state
+    errors = [str(e.get("message")) for e in handle.fatal_errors]
+    ctx.check("the run fails with the Python error", state == "Failed" and any(message in e for e in errors),
+              f"states {handle.states}; errors {errors[:2]}")
+
+
+def scenario_w(ctx: Ctx) -> None:
+    """How runs ended, as the history and the admin's list tell it: after d (killed), k (a
+    compile error), a (completed) and a UDF that raises as it is loaded."""
+    _need_create_ws(ctx)
+    _need_fast_record(ctx)
+    _need_level(ctx, "B")
+    raised = f"sce-e2e w {ctx.hex}: raised on purpose"
+    parts: dict[str, Callable[[Ctx], Any]] = {
+        "d": scenario_d, "k": scenario_k, "a": scenario_a, "a UDF that raises": lambda c: _run_that_raises(c, raised)}
+    # what the history must say of each: its status, the admin list's name for it, and its reason
+    expected: dict[str, tuple[int, str, str, Callable[[str | None], bool]]] = {
+        "d": (STATUS_KILLED, "KILLED", f"\"{REASON_KILLED_BY_USER}\"", lambda r: r == REASON_KILLED_BY_USER),
+        "k": (STATUS_FAILED, "FAILED", f"\"{REASON_COMPILE_ERROR}...\" naming the column",
+              lambda r: bool(r) and r.startswith(REASON_COMPILE_ERROR) and "sce_no_such_column" in r),
+        "a": (STATUS_COMPLETED, "COMPLETED", "no reason", lambda r: not r),
+        "a UDF that raises": (STATUS_FAILED, "FAILED", "the Python error's first line",
+                              lambda r: bool(r) and raised in r),
+    }
+    runs = {key: _part(ctx, key, body)[1:] for key, body in parts.items()}
+    closed = {key: _wait_closed(ctx, eid)[0] for key, (_wid, eid) in runs.items() if eid is not None}
+    admin = ctx.api.admin_executions(wid for wid, _eid in runs.values() if wid is not None)
+    for key, (wid, eid) in runs.items():
+        status, name, reason_says, reason_ok = expected[key]
+        if key not in closed:
+            ctx.check(f"{key}: left an execution to look at", False, f"workflow {wid}, execution {eid}")
+            continue
+        entry = ctx.api.execution_entry(wid, eid) or {}
+        ctx.check(f"{key}: the history says {status}, {reason_says}",
+                  not closed[key].open and entry.get("status") == status and reason_ok(history_reason(entry)),
+                  f"status {entry.get('status')}, reason {history_reason(entry)!r}, open {closed[key].open}")
+        listed = admin.get(wid)
+        ctx.check(f"{key}: the admin's list agrees",
+                  listed is not None and (listed.eid, listed.status_name) == (eid, name) and reason_ok(listed.reason),
+                  f"{listed}")
+    killed = runs["d"][1]
+    rows = ctx.api.execution_log(killed).state_rows if killed is not None else []
+    states = [e.state for e in rows]
+    ctx.check("d's log is READY, RUNNING, PAUSED, RUNNING, KILLED, the kill by the user",
+              states == ["READY", "RUNNING", "PAUSED", "RUNNING", "KILLED"]
+              and rows[-1].reason == REASON_KILLED_BY_USER,
+              f"states {states}; last reason {rows[-1].reason if rows else None}")
+
+
+SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
     "a": ("scan-filter-project-aggregate",
           "CSV scan -> Filter -> Projection -> Aggregate; exact grouped rows", scenario_a),
     "b": ("python-udf-column",
@@ -1681,15 +2297,24 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], None]]] = {
     # step 3 (design section 7 H3)
     "p": ("record-in-lake", "a slow run, paused and resumed: its log, statistics and console are in the "
                             "lake while it runs", scenario_p),
+    "q": ("unit-lost", "the unit is killed under a slow run: the execution is closed \"unit lost\"",
+          scenario_q),
+    "r": ("never-started", "an execution nobody starts is closed \"never started\", and cannot be started",
+          scenario_r),
+    "s": ("polite-stop", "the unit is stopped under a slow run: it records \"the computing unit was stopped\"",
+          scenario_s),
+    "t": ("expiry", "results go at the next create and by age; the plan, the log and the statistics stay",
+          scenario_t),
+    "w": ("history-outcomes", "the history and the admin's list say how runs ended, and why", scenario_w),
 }
 
 #: the scenarios run when none is selected (both transports): today's baseline
 BASELINE = ["a", "b", "c", "d", "e", "u"]
 #: scenarios that run only on create-ws (the Dashboard creates executions)
 CREATE_WS_ONLY = {"k", "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", "l10", "m", "o",
-                  "f", "f2", "g", "h", "i", "p"}
+                  "f", "f2", "g", "h", "i", "p", "q", "r", "s", "t", "w"}
 #: step 3's scenarios: named, or selected by a step-3 gate; `all` stays what it was
-STEP3 = {"p"}
+STEP3 = {"p", "q", "r", "s", "t", "w"}
 #: group keys
 GROUPS = {"l": [f"l{i}" for i in range(1, 11)]}
 #: what each scenario needs from the driver's setup

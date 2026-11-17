@@ -21,6 +21,11 @@ gateway refuses the same socket without valid credentials, and returns the unit;
 scenarios then select it by cuid exactly like single-node runs select the local unit.
 `teardown` terminates it at the end (an atexit hook does so too if the driver dies).
 
+A step-3 scenario that takes the unit down does it through `KubernetesControl`
+(stack_control.py's seam): the pod is deleted by stack/k8s-stack.sh, and the unit that
+"comes back" is a new one, created as the first was, which the scenarios after it use.
+Every unit a run created is terminated at its end.
+
 What only the single-node stack has is refused up front (`resolve_args`, `check_selection`):
 the evidence and the gates read its Postgres log and `docker exec` into its containers,
 and some scenarios create local units at --unit-uri. As a second guard, the driver's
@@ -46,8 +51,10 @@ import websocket  # websocket-client
 
 from lake import DEFAULT_WAREHOUSE, Catalog, Lake, pod_fetch
 from scenarios import NEEDS_OTHER_USER
+from stack_control import StackControl, StackControlError, run_stack_script
 from workflow import Workflow
 
+K8S_STACK = Path(__file__).resolve().parent.parent / "stack" / "k8s-stack.sh"
 K8S_MANIFEST = Path(__file__).resolve().parent.parent / "stack" / "k8s" / "generated" / "MANIFEST.json"
 SINGLE_NODE_BASE = "http://localhost:8080"  # e2e.py's --base default
 UNIT_PREFIX = "sce-e2e-k8s"
@@ -78,7 +85,8 @@ REFUSAL_PROBES = (
 )
 REFUSED = (401, 403)
 
-_state: dict[str, Any] = {"cuid": None, "done": False}
+#: the units this run created and has not terminated, oldest first (the last one is in use)
+_state: dict[str, Any] = {"cuids": [], "done": False}
 
 
 def add_arguments(ap: argparse.ArgumentParser) -> None:
@@ -312,17 +320,12 @@ def _pick(options: list[str], wanted_value: str | None, prefer: str | None = Non
     return options[0]
 
 
-def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None], report: dict) -> dict:
-    report["target"] = a.target
-    rec = report["setup"].setdefault("kubernetes_unit", {})
-    types = (api.get_json("/api/computing-unit/types") or {}).get("typeOptions") or []
-    rec["types_offered"] = types
-    if "kubernetes" not in types:
-        raise RuntimeError(f"the deployment does not offer Kubernetes units (types {types})")
+def unit_request(api, a: argparse.Namespace, name: str) -> tuple[dict, dict]:
+    """The body of the create dialog for a Kubernetes unit named `name`, and the limit
+    options the deployment offers."""
     limits = api.get_json("/api/computing-unit/limits") or {}
-    rec["limit_options"] = limits
-    params = {
-        "name": f"{UNIT_PREFIX}-{run_id}",
+    return {
+        "name": name,
         "unitType": "kubernetes",
         "cpuLimit": _pick(limits.get("cpuLimitOptions") or [], a.k8s_unit_cpu),
         "memoryLimit": _pick(limits.get("memoryLimitOptions") or [], a.k8s_unit_memory),
@@ -330,16 +333,21 @@ def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None]
         "jvmMemorySize": a.k8s_unit_jvm,
         "shmSize": a.k8s_unit_shm,
         "uri": "",
-    }
-    rec["stale_terminated"] = terminate_stale(api, log)
-    rec["request"] = params
+    }, limits
 
+
+def create_unit(api, a: argparse.Namespace, *, name: str, probe_wid: int, log: Callable[[str], None],
+                rec: dict) -> dict:
+    """Create a Kubernetes unit and wait until it is Running and answers a websocket
+    handshake through the gateway. It never lists the units: a listing makes the manager
+    notice units whose pod is gone, which a scenario may be waiting not to happen."""
+    params, rec["limit_options"] = unit_request(api, a, name)
+    rec["request"] = params
     t0 = time.monotonic()
     created = api.post_json("/api/computing-unit/create", params)
     cu = created["computingUnit"]
     cuid = int(cu["cuid"])
-    _state.update(cuid=cuid, done=False, api=api, keep=a.keep_unit)
-    atexit.register(_terminate_at_exit)
+    _state["cuids"].append(cuid)
     rec.update({"cuid": cuid, "uri": cu.get("uri"), "status_at_create": created.get("status")})
     log(f"created Kubernetes unit {cuid} '{params['name']}' (cpu {params['cpuLimit']}, memory "
         f"{params['memoryLimit']}, gpu {params['gpuLimit']}, JVM {params['jvmMemorySize']}, shm "
@@ -350,14 +358,35 @@ def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None]
         rec["running_after_s"] = round(time.monotonic() - t0, 1)
         rec["resource"] = (info.get("computingUnit") or {}).get("resource")
         log(f"unit {cuid} Running after {rec['running_after_s']}s; checking it answers through the gateway")
-        probe_wf = Workflow(f"sce-e2e {run_id} k8s-unit-probe")
-        wid = api.create_workflow(probe_wf.name, probe_wf.ui_content())
         left = max(30.0, a.k8s_unit_timeout - (time.monotonic() - t0))
-        rec["gateway_probe"] = dict(wait_reachable(a.base, api.token, api.uid, cuid, wid, left, log),
-                                    wid=wid)
+        rec["gateway_probe"] = dict(wait_reachable(a.base, api.token, api.uid, cuid, probe_wid, left, log),
+                                    wid=probe_wid)
         rec["ready_after_s"] = round(time.monotonic() - t0, 1)
         log(f"unit {cuid} answers through the gateway ({rec['gateway_probe']['attempts']} attempt(s), "
             f"ready {rec['ready_after_s']}s after create)")
+    except Exception:
+        if not a.keep_unit:
+            rec["termination"] = terminate(api, cuid)
+            _state["cuids"].remove(cuid)
+        raise
+    return dict(cu, type="kubernetes")
+
+
+def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None], report: dict) -> dict:
+    report["target"] = a.target
+    rec = report["setup"].setdefault("kubernetes_unit", {})
+    types = (api.get_json("/api/computing-unit/types") or {}).get("typeOptions") or []
+    rec["types_offered"] = types
+    if "kubernetes" not in types:
+        raise RuntimeError(f"the deployment does not offer Kubernetes units (types {types})")
+    rec["stale_terminated"] = terminate_stale(api, log)
+    _state.update(done=False, api=api, keep=a.keep_unit)
+    atexit.register(_terminate_at_exit)
+    probe_wf = Workflow(f"sce-e2e {run_id} k8s-unit-probe")
+    _state["probe_wid"] = wid = api.create_workflow(probe_wf.name, probe_wf.ui_content())
+    unit = create_unit(api, a, name=f"{UNIT_PREFIX}-{run_id}", probe_wid=wid, log=log, rec=rec)
+    cuid = int(unit["cuid"])
+    try:
         rec["gateway_refusals"] = probes = probe_refusals(a.base, api.token, api.uid, cuid, wid, run_id)
         log("the gateway refuses that socket without valid credentials: " + ", ".join(
             f"{p['probe']} {p['status']}" for p in probes))
@@ -369,35 +398,89 @@ def setup(api, a: argparse.Namespace, *, run_id: str, log: Callable[[str], None]
     except Exception:
         if not a.keep_unit:
             rec["termination"] = terminate(api, cuid)
-            _state["done"] = True
+            _state["cuids"].remove(cuid)
         raise
-    return dict(cu, type="kubernetes")
+    return unit
+
+
+class KubernetesControl(StackControl):
+    """Kubernetes: a computing unit is a pod of its own. stack/k8s-stack.sh deletes it; the
+    unit that comes back is another one, created through the managing service."""
+
+    #: the manager stamps a unit as terminated when a listing finds its pod gone (D27)
+    listing_notices_lost_unit = True
+
+    def __init__(self, api, a: argparse.Namespace, *, run_id: str, cuid: int, log: Callable[[str], None]):
+        self.api, self.a, self.run_id, self.cuid = api, a, run_id, cuid
+        self._log = log
+        self._namespace = json.loads(K8S_MANIFEST.read_text())["namespace"]
+        #: what the manager was asked for each unit this control created
+        self.created: list[dict] = []
+
+    def _stack(self, *args: str) -> Any:
+        return run_stack_script(K8S_STACK, "--namespace", self._namespace, *args)
+
+    def kill_unit(self) -> dict:
+        return self._stack("unit-kill", str(self.cuid))
+
+    def stop_unit(self) -> dict:
+        return self._stack("unit-stop", str(self.cuid))
+
+    def start_unit(self) -> dict:
+        rec: dict = {}
+        self.created.append(rec)
+        name = f"{UNIT_PREFIX}-{self.run_id}-{len(self.created) + 1}"
+        unit = create_unit(self.api, self.a, name=name, probe_wid=_state["probe_wid"], log=self._log, rec=rec)
+        self.cuid = int(unit["cuid"])
+        return {"cuid": self.cuid, "name": name, "ready_after_s": rec.get("ready_after_s")}
+
+    def pg_activity(self) -> list[dict]:
+        return self._stack("pg-activity")
+
+    def unit_env_names(self) -> list[str]:
+        return self._stack("unit-env", str(self.cuid))["env_names"]
+
+    def unit_addresses(self) -> list[str]:
+        try:
+            address = self._stack("unit-env", str(self.cuid)).get("address")
+        except StackControlError:  # the unit's pod is gone
+            return []
+        return [address] if address else []
+
+    def exec_prefix(self) -> Callable[[bool], list[str]]:
+        return exec_prefix(self.cuid)
 
 
 def teardown(api, a: argparse.Namespace, *, log: Callable[[str], None], report: dict) -> None:
-    cuid = _state.get("cuid")
-    if cuid is None or _state.get("done"):
+    """Terminate every unit this run created (with --keep-unit, all but the one in use)."""
+    cuids = list(_state["cuids"])
+    if not cuids or _state.get("done"):
         return
     rec = report["setup"].setdefault("kubernetes_unit", {})
     _state["done"] = True
     if a.keep_unit:
-        rec["kept"] = True
-        log(f"--keep-unit: unit {cuid} left running")
-        return
-    try:
-        rec["termination"] = terminate(api, cuid)
-        log(f"terminated Kubernetes unit {cuid} (HTTP {rec['termination']['http_status']}, gone from the "
-            f"unit list: {rec['termination']['gone_from_list']})")
-    except Exception as e:  # noqa: BLE001
-        rec["termination"] = {"error": f"{type(e).__name__}: {e}"}
-        log(f"terminating unit {cuid} failed: {e}")
+        rec["kept"] = cuids.pop()
+        log(f"--keep-unit: unit {rec['kept']} left running")
+    for cuid in cuids:
+        try:
+            done = terminate(api, cuid)
+            log(f"terminated Kubernetes unit {cuid} (HTTP {done['http_status']}, gone from the unit list: "
+                f"{done['gone_from_list']})")
+        except Exception as e:  # noqa: BLE001
+            done = {"error": f"{type(e).__name__}: {e}"}
+            log(f"terminating unit {cuid} failed: {e}")
+        if cuid == rec.get("cuid"):  # the unit of the setup
+            rec["termination"] = done
+        else:  # one a scenario got after it took a unit down
+            rec.setdefault("later_units", {})[str(cuid)] = done
 
 
 def _terminate_at_exit() -> None:
-    if _state.get("cuid") is None or _state.get("done") or _state.get("keep"):
+    if _state.get("done") or _state.get("keep"):
         return
     _state["done"] = True
-    try:
-        terminate(_state["api"], _state["cuid"], timeout=10)
-    except Exception:  # noqa: BLE001 -- best effort on the way out
-        pass
+    for cuid in _state["cuids"]:
+        try:
+            terminate(_state["api"], cuid, timeout=10)
+        except Exception:  # noqa: BLE001 -- best effort on the way out
+            pass

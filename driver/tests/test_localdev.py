@@ -223,6 +223,33 @@ class DriverSetupTest(unittest.TestCase):
         self.assertEqual(unit["cuid"], 3)
         self.assertFalse(self.report["setup"]["localdev"]["unit"]["created"])
 
+    def test_the_stacks_control_goes_through_the_stack_script(self):
+        api = StubApi(types=["local"])
+        unit, _get, ws = self.run_setup(api)
+        with mock.patch.object(k8s_unit, "wait_reachable", return_value={"attempts": 3, "seconds": 4.0}) as answers, \
+                mock.patch.object(localdev_unit, "run_stack_script",
+                                  side_effect=lambda script, *args: {"asked": args[0]}) as run:
+            control = localdev_unit.control(api, self.a, cuid=unit["cuid"], report=self.report, log=self.logs.append)
+            self.assertFalse(control.listing_notices_lost_unit)
+            self.assertEqual(([], None), (control.unit_addresses(), control.exec_prefix()))
+            self.assertEqual({"asked": "unit-kill"}, control.kill_unit())
+            self.assertEqual({"asked": "unit-stop"}, control.stop_unit())
+            self.assertEqual({"asked": "pg-activity"}, control.pg_activity())
+            started = control.start_unit()
+        self.assertEqual([(localdev_unit.STACK, name) for name in ("unit-kill", "unit-stop", "pg-activity",
+                                                                   "unit-start")], [c.args for c in run.call_args_list])
+        # a unit that is back also answers a workflow socket through the dev server's proxy
+        self.assertEqual({"asked": "unit-start", "answers_after": {"attempts": 3, "seconds": 4.0}}, started)
+        self.assertEqual(("http://localhost:4200", "jwt", 1, unit["cuid"], 77), answers.call_args.args[:5])
+
+    def test_the_units_environment_is_the_one_the_stack_recorded(self):
+        with tempfile.TemporaryDirectory() as d:
+            manifest = Path(d) / "MANIFEST.json"
+            manifest.write_text(json.dumps({"unit_env_names": ["JAVA_OPTS", "STORAGE_JDBC_URL"]}))
+            with mock.patch.object(localdev_unit, "MANIFEST", manifest):
+                self.assertEqual(["JAVA_OPTS", "STORAGE_JDBC_URL"],
+                                 localdev_unit.LocalDevControl(lambda: {}).unit_env_names())
+
     def test_fails_without_local_units_or_without_the_app(self):
         with self.assertRaises(RuntimeError):
             self.run_setup(StubApi(types=["kubernetes"]))
@@ -510,6 +537,99 @@ class LeftoverProcessTest(unittest.TestCase):
                     if p.poll() is None:
                         p.kill()
                         p.wait()
+
+
+class UnitControlTest(unittest.TestCase):
+    """What the driver's StackControl asks of this stack (unit-kill, unit-stop, unit-start),
+    on throwaway processes: a "JVM" that leads a process group with a "worker" in it."""
+
+    #: the launcher: says what it was given, starts a worker, and stops when it is told to
+    LAUNCHER = ('#!/bin/sh\necho "$STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS|$JAVA_OPTS|$FROM_LOCAL_DEV" > "$0.env"\n'
+                'trap "exit 0" TERM\nsleep 60 &\nwait\n')
+
+    def setUp(self):
+        import subprocess
+        import warnings
+        # the stack script leaves the processes it starts running, by design
+        self.enterContext(warnings.catch_warnings())
+        warnings.simplefilter("ignore", ResourceWarning)
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.launcher = self.tmp / "launcher.sh"
+        self.launcher.write_text(self.LAUNCHER)
+        self.launcher.chmod(0o755)
+        (self.tmp / "service.env.json").write_text(json.dumps({"FROM_LOCAL_DEV": "yes"}))
+        self.manifest = {
+            "source": str(self.tmp), "logs_dir": str(self.tmp), "lan_ip": "192.0.2.1",
+            "java": {"home": "/nonexistent-jdk"}, "python": {"executable": "/usr/bin/python3"},
+            "options": {"unit_env": {"STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS": "2000"}, "dashboard_env": {}},
+            "services": [{"name": ls.UNIT_SERVICE, "cwd": ".", "launcher_path": str(self.launcher),
+                          "java_opts": "-Xmx1g", "local_dev_port": 1}],
+        }
+        for name, value in (("PID_DIR", self.tmp / "pids"), ("GEN_DIR", self.tmp), ("MANIFEST", self.tmp / "M.json")):
+            self.enterContext(mock.patch.object(ls, name, value))
+        ls.write_json(ls.MANIFEST, self.manifest)
+        # the pid file `up` wrote, of a unit that is no longer running
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        ls.write_json(ls.PID_DIR / f"{ls.UNIT_SERVICE}.json",
+                      {"name": ls.UNIT_SERVICE, "pid": dead.pid, "pgid": dead.pid, "lstart": "long ago"})
+        self.enterContext(mock.patch.object(ls, "ready", return_value=(True, "ok")))
+        self.args = argparse.Namespace(timeout=20)
+        self.addCleanup(self.kill_leftovers)
+        self.run_cmd(ls.cmd_unit_start)
+        self.pgid = int(ls.unit_record()["pgid"])
+        for _ in range(100):  # until the launcher has started its worker
+            if len(ls.group_members(self.pgid)) == 2:
+                break
+            subprocess.run(["sleep", "0.05"])
+
+    def kill_leftovers(self):
+        import signal
+        for rec in ls.pid_records():
+            try:
+                os.killpg(int(rec["pgid"]), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def run_cmd(self, cmd) -> dict:
+        """A subcommand's one JSON document."""
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cmd(self.args)
+        return json.loads(out.getvalue())
+
+    def test_start_runs_the_launcher_with_the_units_environment_and_records_it(self):
+        self.assertEqual("2000|-Xmx1g|yes", (self.tmp / "launcher.sh.env").read_text().strip())
+        manifest = ls.load_manifest()
+        self.assertIn("STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS", manifest["unit_env_names"])
+        self.assertIn("JAVA_OPTS", manifest["unit_env_names"])
+        self.assertEqual(ls.unit_record()["pid"], manifest["up"]["pids"][ls.UNIT_SERVICE])
+        with self.assertRaises(SystemExit):
+            self.run_cmd(ls.cmd_unit_start)  # it is running already
+
+    def test_kill_takes_the_whole_process_group_at_once(self):
+        killed = self.run_cmd(ls.cmd_unit_kill)
+        self.assertEqual(("kill -9", 2), (killed["how"], killed["processes"]))
+        self.assertEqual([], ls.group_members(self.pgid))
+        with self.assertRaises(SystemExit):
+            self.run_cmd(ls.cmd_unit_kill)  # nothing left to kill
+
+    def test_stop_signals_the_jvm_alone_and_then_clears_what_it_left(self):
+        with mock.patch.object(ls, "UNIT_STOP_GRACE_S", 5):
+            stopped = self.run_cmd(ls.cmd_unit_stop)
+        self.assertEqual("SIGTERM", stopped["how"])
+        self.assertLess(stopped["exited_after_s"], 5)  # the leader stopped by itself, on the signal
+        self.assertEqual(1, stopped["killed_after_the_grace_period"])  # its worker, which it left behind
+        self.assertEqual([], ls.group_members(self.pgid))
+
+    def test_a_unit_can_be_started_again_after_it_was_killed(self):
+        first = ls.unit_record()["pid"]
+        self.run_cmd(ls.cmd_unit_kill)
+        started = self.run_cmd(ls.cmd_unit_start)
+        self.assertNotEqual(first, started["pid"])
+        self.assertTrue(ls.record_alive(ls.unit_record()))
 
 
 class PortsAndOrderTest(unittest.TestCase):

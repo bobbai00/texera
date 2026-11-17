@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scenarios  # noqa: E402
+from fake_stack import FakeStack  # noqa: E402
 from fake_texera import FakeTexera  # noqa: E402
 from lake import Catalog, Lake  # noqa: E402
 from scenarios import Ctx, OtherUser, run_scenario  # noqa: E402
@@ -111,7 +112,8 @@ class ScenarioCase(unittest.TestCase):
                        with_replay_log=self.replay_log,
                        other=OtherUser(other_api, o_cuid, o_whid, f"user-{other_api.uid}-{o_whid}"),
                        unit2_cuid=unit2, unit_uri=URI, timing=self.timing,
-                       lake=Lake(Catalog(self.fake.lake.fetch)), level=self.level)
+                       lake=Lake(Catalog(self.fake.lake.fetch)), level=self.level,
+                       stack=FakeStack(self.fake, api))
         self.unit = FakeUnitExec(self.fake, base)
         self.ctx.unit_exec = self.unit
 

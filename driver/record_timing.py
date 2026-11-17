@@ -48,6 +48,23 @@ class RecordTiming:
                    self.never_started_after_s, self.result_ttl_s, self.expiry_check_interval_s) <= 60
 
     @property
+    def lost_watch_s(self) -> float:
+        """How long an execution's beat must stand still before the closing job calls its
+        unit lost: lost-after, and never less than four beats (design D26)."""
+        return max(self.lost_after_s, 4 * self.commit_interval_s)
+
+    @property
+    def lost_verdict_s(self) -> float:
+        """A lost unit's execution is closed within this long of the unit's death: the
+        watch, and three ticks of the closing job (design H3, H4)."""
+        return self.lost_watch_s + 3 * self.closing_interval_s
+
+    @property
+    def never_started_verdict_s(self) -> float:
+        """An execution nobody starts is closed within this long of its creation (design H3)."""
+        return self.never_started_after_s + 2 * self.closing_interval_s
+
+    @property
     def poll_s(self) -> float:
         """How often a scenario looks while it waits for the closing job."""
         return min(0.5, self.closing_interval_s / 4)

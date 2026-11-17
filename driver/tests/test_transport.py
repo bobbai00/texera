@@ -1,5 +1,6 @@
 """Offline tests of the transports and TexeraApi's step-2 calls against the fake
-Texera (tests/fake_texera.py): the wire shapes of design sections 3.4-3.8.
+Texera (tests/fake_texera.py): the wire shapes of design sections 3.4-3.8, and of the
+step-3 design's section 3.5 (the routes of an execution's record).
 
     .venv/bin/python -m unittest discover -s driver/tests -v
 """
@@ -7,6 +8,7 @@ Texera (tests/fake_texera.py): the wire shapes of design sections 3.4-3.8.
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -14,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fake_texera import FakeTexera  # noqa: E402
-from texera_api import TexeraApi  # noqa: E402
+from record_timing import RecordTiming  # noqa: E402
+from texera_api import TexeraApi, TexeraApiError  # noqa: E402
 from transport import (CreateRefused, CreateStartTransport, UpdateRefused,  # noqa: E402
                        WebSocketTransport)
 from workflow import Workflow, csv_scan, python_udf, text_input  # noqa: E402
@@ -29,8 +32,11 @@ class ProcessTupleOperator(UDFOperatorV2):
 
 
 class FakeCase(unittest.TestCase):
+    #: the product the fake models (FakeTexera's options)
+    fake_options: dict = {}
+
     def setUp(self):
-        self.fake = FakeTexera()
+        self.fake = FakeTexera(**self.fake_options)
         self.base = self.fake.start()
         self.api = TexeraApi(self.base)
         self.api.login("texera", "texera")
@@ -166,11 +172,14 @@ class CreateWsTest(FakeCase):
         self.assertEqual(2, len(h.console(udf)))  # Installing, then ready
         self.assertEqual(["Initializing", "Running", "Completed"], h.states)
         self.assertEqual(["Uninitialized"], h.replayed["states"])
+        self.assertIsNone(h.replayed["execution_id"])  # the unit held no run of the workflow then
         second = self.t.open_socket(self.wid, self.cuid)
         self.handles.append(second)
         r = second.replayed
         self.assertEqual("ClusterStatusUpdateEvent", r["closed_by"])
         self.assertEqual(["Uninitialized", "Completed"], r["states"])
+        # a socket that only joined learns the execution from the state event that names it
+        self.assertEqual((h.eid, h.eid), (second.eid, r["execution_id"]))
         self.assertEqual(2, r["console_messages"])
         self.assertEqual([], second.states)
         self.assertEqual([], second.console(udf))
@@ -293,6 +302,67 @@ class ApiTest(FakeCase):
         self.assertEqual(other.uid, same.uid)
         unit = self.api.create_local_unit("t", "http://unit:8085")
         self.assertEqual(200, self.api.terminate_unit(int(unit["cuid"])).status_code)
+
+
+class RecordApiTest(FakeCase):
+    """TexeraApi's step-3 calls, against the fake at gate 3B."""
+
+    fake_options = {"step": "3B", "timing": RecordTiming(commit_interval_s=0.2, closing_interval_s=0.1)}
+
+    def run_once(self):
+        wf, udf = self.plan()
+        h = self.start(wf, udf)
+        h.wait_for_state("Completed", timeout=30)
+        return h
+
+    def closed(self, eid: int):
+        for _ in range(100):
+            state = self.api.execution_state(eid)
+            if not state.open:
+                return state
+            time.sleep(0.05)
+        self.fail(f"execution {eid} was not closed")
+
+    def test_state_and_log_of_an_execution(self):
+        h = self.run_once()
+        state = self.closed(h.eid)
+        self.assertEqual((3, False, None), (state.status, state.open, state.reason))
+        self.assertGreater(state.time_ms, 1_700_000_000_000)
+        log = self.api.execution_log(h.eid)
+        self.assertEqual(["READY", "RUNNING", "COMPLETED"], [e.state for e in log.state_rows])
+        self.assertTrue(log.whole)
+        self.assertEqual((True, 3, None, state.time_ms), (log.closed, log.outcome, log.reason, log.ended_at_ms))
+        # the one place that reads the log's rows of stored output ports
+        (port,) = log.stored_ports()
+        self.assertEqual({"seq", "portId", "uri", "outputMode"}, set(port))
+        self.assertEqual((2, "SET_SNAPSHOT"), (port["seq"], port["outputMode"]))
+        self.assertTrue(port["uri"].endswith("/result") and f"/eid/{h.eid}/" in port["uri"], port)
+
+    def test_another_user_may_not_read_them(self):
+        h = self.run_once()
+        other = self.api.ensure_user("sce-e2e-other", "o@example.com", "pw")
+        for read in (other.execution_state, other.execution_log):
+            with self.assertRaises(TexeraApiError) as cm:
+                read(h.eid)
+            self.assertEqual(403, cm.exception.status)
+        with self.assertRaises(TexeraApiError) as cm:
+            self.api.execution_state(999)  # an execution that does not exist is 403 too
+        self.assertEqual(403, cm.exception.status)
+
+    def test_quota_sizes_and_the_admins_list(self):
+        h = self.run_once()
+        self.closed(h.eid)
+        sizes = self.api.quota_sizes()
+        self.assertEqual([h.eid], list(sizes))
+        self.assertGreater(sizes[h.eid], 0)
+        other_wid = self.api.create_workflow("another", {})
+        listed = self.api.admin_executions([self.wid, other_wid], page_size=1)
+        self.assertEqual([self.wid], list(listed))  # the other workflow has no execution
+        self.assertEqual((h.eid, "COMPLETED", None),
+                         (listed[self.wid].eid, listed[self.wid].status_name, listed[self.wid].reason))
+        pages = [r["path"] for r in self.fake.rest_log if "/executionList/" in r["path"]]
+        self.assertEqual(["/api/admin/execution/executionList/1/0/end_time/desc",
+                          "/api/admin/execution/executionList/1/1/end_time/desc"], pages)
 
 
 if __name__ == "__main__":

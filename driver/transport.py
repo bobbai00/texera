@@ -29,7 +29,8 @@ Two transports:
   * results  {"type":"ResultPaginationRequest", requestID, operatorID, pageIndex(1-based), pageSize}
              -> PaginatedResultEvent{requestID, table[], schema[] (+ totalTuples on newer builds)}
   * keepalive {"type":"HeartBeatRequest"} every 10 s (nginx closes idle sockets at 60 s)
-  * events   WorkflowStateEvent{state}, WorkflowErrorEvent{fatalErrors},
+  * events   WorkflowStateEvent{state, executionId (step 2's sub-part 14 on; null when the
+             unit holds no run of the workflow)}, WorkflowErrorEvent{fatalErrors},
              OperatorStatisticsUpdateEvent{operatorStatistics{op: metrics}},
              WebResultUpdateEvent{updates{op: {totalNumTuples,...}}},
              ConsoleUpdateEvent{operatorId, messages[{title, message, msgType,...}]},
@@ -127,8 +128,10 @@ class RunHandle(ABC):
 
     wid: int
     cuid: int
-    #: the execution id: known at start on `create-ws`; None on `ws`, where the
-    #: driver reads it back (TexeraApi.latest_execution)
+    #: the execution id. `create-ws` knows it from the create. A socket that only joined
+    #: a workflow learns it from the first WorkflowStateEvent that names an execution
+    #: (the run the unit holds there). None on `ws` against a unit that names none,
+    #: where the driver reads it back (TexeraApi.latest_execution)
     eid: int | None = None
     #: the plan's location the Dashboard returned (`create-ws` only)
     plan_uri: str | None = None
@@ -299,6 +302,8 @@ class WebSocketRunHandle(RunHandle):
         self._handshake_at: float | None = None  # monotonic time of the first state
         self._last_message_at = _now()
         self._replay: dict[str, Any] = {}
+        #: the execution the newest state event named (None: it named none)
+        self._named_eid: int | None = None
         self.eid: int | None = None
         self.plan_uri: str | None = None
         #: create-ws: posts an operator change to the Dashboard -> requests.Response
@@ -360,6 +365,10 @@ class WebSocketRunHandle(RunHandle):
                 state = msg.get("state")
                 if self._opening and self._handshake_at is None:
                     self._handshake_at = _now()
+                named = msg.get("executionId")
+                self._named_eid = int(named) if named is not None else None
+                if self.eid is None:
+                    self.eid = self._named_eid
                 self._state_log.append((self._elapsed(), state))
                 self._log(f"state {state} (+{self._elapsed()}s)"
                           + (" [open sequence]" if self._opening else ""))
@@ -408,6 +417,7 @@ class WebSocketRunHandle(RunHandle):
         self._opening = False
         self._replay = {
             "closed_by": how, "t": self._elapsed(), "state_log": self._state_log,
+            "execution_id": self._named_eid,
             "errors": self._errors, "error_events": self._error_events, "console": self._console,
             "stats": self._stats, "stats_events": self._stats_events,
             "result_updates": self._result_updates, "modify_responses": self._modify_responses,
@@ -445,13 +455,16 @@ class WebSocketRunHandle(RunHandle):
         with self._cv:
             r = self._replay
             if not r:
-                return {"closed_by": None, "states": [s for _, s in self._state_log]}
+                return {"closed_by": None, "states": [s for _, s in self._state_log],
+                        "execution_id": self._named_eid}
             states: list[str] = []
             for _, s in r["state_log"]:
                 if not states or states[-1] != s:
                     states.append(s)
             return {
                 "closed_by": r["closed_by"], "t": r["t"], "states": states,
+                # the execution of the run the unit held for the workflow, None when it held none
+                "execution_id": r["execution_id"],
                 "error_events": r["error_events"],
                 "fatal_errors": [str(e.get("message"))[:300] for e in r["errors"][:5]],
                 "console_messages": len(r["console"]),

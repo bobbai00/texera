@@ -2,8 +2,8 @@
 (begin_scenario, run_scenario, _apply_evidence). The fake Texera reports the
 Postgres statements the design's services would run and the requests a gateway
 would log; a fake `docker` serves them as the Postgres, unit and nginx logs, and
-answers the catalog (Check E) and the final status-0 check from the fake's
-executions.
+answers the catalog (Check E) and the final check (the rows left at status 0, or
+from gate 3B on the closing records of Check K) from the fake's executions.
 
 The review's case: l8 opens a second socket on a completed run, and the unit
 replays that run (state Completed, its console) to it about 0.1 s after the
@@ -64,6 +64,12 @@ class StackDocker(FakeDocker):
             rows = [f"{eid}|{x['wid']}" for eid, x in sorted(self.fake.executions.items())
                     if x["status"] == 0 and x["wid"] in wids]
             return subprocess.CompletedProcess(args, 0, "\n".join(rows) + "\n", "")
+        if args[0] == "exec" and "psql" in args and "ended_at IS NOT NULL" in args[-1]:  # Check K
+            wids = {int(w) for w in re.search(r"IN \(([^)]*)\)", args[-1]).group(1).split(",")}
+            rows = [f"{eid}|{x['wid']}|{'' if x['outcome'] is None else x['outcome']}|"
+                    f"{int(x['ended_at'] is not None)}|{x['outcome_reason'] or ''}"
+                    for eid, x in sorted(self.fake.executions.items()) if x["wid"] in wids]
+            return subprocess.CompletedProcess(args, 0, "\n".join(rows) + "\n", "")
         return super()._call(args)
 
 
@@ -85,10 +91,13 @@ class EvidenceCase(ScenarioCase):
         self.fake.cleanup_s = 0.3
         self.messages: list[str] = []
         self.ev = ev.Evidence(run_id="t", runner=self.docker, log=self.messages.append,
-                              cleanup_wait_s=8.0, quiet_s=0.4, **self.evidence_options)
+                              cleanup_wait_s=8.0, quiet_s=0.4, **self.evidence_kwargs())
         self.ev.preflight()
         self.ctx.evidence = self.ev
         self.ctx.transport.phase_hook = self.ev.on_phase
+
+    def evidence_kwargs(self) -> dict:
+        return dict(self.evidence_options)
 
     def run_ev(self, key: str, expect: str = "PASS"):
         waited = self.ev.begin_scenario(key)

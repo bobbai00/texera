@@ -199,6 +199,65 @@ class PostRunTest(unittest.TestCase):
         self.assertIn("bogus-token", post["warnings"][0])
 
 
+def unit_pod(cuid: int, ip: str = "10.42.0.9") -> dict:
+    return {"metadata": {"name": f"computing-unit-{cuid}", "labels": {"type": "computing-unit", "cuid": str(cuid)},
+                         "creationTimestamp": f"2026-11-17T00:00:0{cuid}Z"},
+            "spec": {"containers": [
+                {"name": "computing-unit-master", "env": [{"name": "STORAGE_S3_ENDPOINT", "value": "x"},
+                                                           {"name": "ICEBERG_COMMIT", "valueFrom": {}}]},
+                {"name": "sidecar", "env": [{"name": "NOT_THE_ENGINES", "value": "y"}]}]},
+            "status": {"podIP": ip}}
+
+
+class UnitControlTest(unittest.TestCase):
+    """What the driver's StackControl asks of this stack (unit-kill, unit-stop, unit-env, pg-activity)."""
+
+    def kubectl(self, pods: list[dict], stdout: str = ""):
+        """Patches of the two ways the stack calls kubectl: the unit pods, and a command."""
+        done = mock.Mock(returncode=0, stdout=stdout)
+        return (mock.patch.object(ks, "kjson", return_value={"items": pods}),
+                mock.patch.object(ks, "kubectl", return_value=done))
+
+    def test_a_unit_is_the_pod_labelled_with_its_id(self):
+        listing, _ = self.kubectl([unit_pod(7), unit_pod(8, "10.42.0.10")])
+        with listing as kjson:
+            facts = ks.unit_facts(ks.unit_pod("sce-k8s", 8))
+        self.assertEqual({"pod": "computing-unit-8", "address": "10.42.0.10",
+                          "env_names": ["ICEBERG_COMMIT", "STORAGE_S3_ENDPOINT"]}, facts)  # the engine's container
+        self.assertEqual("sce-k8s-units", kjson.call_args.kwargs["ns"])
+        for pods in ([], [unit_pod(7), unit_pod(7)]):
+            with self.kubectl(pods)[0], mock.patch.object(ks, "die", side_effect=SystemExit) as die, \
+                    self.assertRaises(SystemExit):
+                ks.unit_pod("sce-k8s", 7)
+            self.assertIn(f"expected one pod of computing unit 7 in sce-k8s-units, found {len(pods)}",
+                          die.call_args.args[0])
+
+    def test_a_kill_deletes_the_pod_at_once_and_a_stop_with_its_grace_period(self):
+        listing, command = self.kubectl([unit_pod(7)])
+        with listing, command as kubectl:
+            killed = ks.delete_unit_pod("sce-k8s", 7, force=True)
+            stopped = ks.delete_unit_pod("sce-k8s", 7, force=False)
+        kill, stop = [c.args for c in kubectl.call_args_list]
+        self.assertEqual(("delete", "pod", "computing-unit-7", "--wait=true", "--timeout=180s",
+                          "--grace-period=0", "--force"), kill)
+        self.assertEqual(("delete", "pod", "computing-unit-7", "--wait=true", "--timeout=180s"), stop)
+        self.assertEqual({"sce-k8s-units"}, {c.kwargs["ns"] for c in kubectl.call_args_list})
+        self.assertEqual("kubectl delete pod --wait=true --timeout=180s --grace-period=0 --force", killed["how"])
+        self.assertEqual(("computing-unit-7", 7), (stopped["pod"], stopped["cuid"]))
+
+    def test_postgres_is_asked_in_its_own_pod_with_its_own_password(self):
+        _, command = self.kubectl([], "41|texera-dashboard|10.42.0.5|texera_db|idle\n")
+        with command as kubectl:
+            backends = ks.pg_backends("sce-k8s")
+        self.assertEqual([{"pid": 41, "application_name": "texera-dashboard", "client_addr": "10.42.0.5",
+                           "datname": "texera_db", "state": "idle"}], backends)
+        args = kubectl.call_args.args
+        self.assertEqual(("exec", "texera-postgresql-0", "--", "sh", "-c"), args[:5])
+        self.assertIn('PGPASSWORD="$POSTGRES_PASSWORD" exec psql -U postgres -d texera_db "$@"', args[5])
+        self.assertEqual(ks.pg_activity.QUERY, args[-1])
+        self.assertEqual("sce-k8s", kubectl.call_args.kwargs["ns"])
+
+
 class ForwardTest(unittest.TestCase):
     def test_an_unreachable_cluster_ip_fails_instead_of_falling_back_to_kubectl(self):
         with mock.patch.object(ks, "pf_running", return_value=None), \

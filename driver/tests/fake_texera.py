@@ -28,6 +28,22 @@ console into the fake lake (fake_lake.py), and the statistics route reads the la
 The fake engine also sleeps what a UDF's `time.sleep()` asks for, scaled by
 `sleep_scale` (0 unless a test sets it), prints what its `print(f"...")` prints, and
 fails a run whose UDF raises as its module is loaded, as the real engine does.
+
+At "3B" (sub-parts 9 and 11 to 15) the Dashboard closes executions (fake_closing.py: the
+closing record, its timer job, the expiry, the state and log routes, reasons in the
+history and the admin's list, sizes on the quota page), and the unit deletes nothing
+when it lets go of a run. The unit still writes its status to Postgres.
+
+The unit can be taken down and brought back (`take_unit_down`, `bring_unit_up`), as a
+stack's control does it. Killed, it stops where it is: its sockets drop, its runs and
+their recorders stop without a word, and what was buffered is lost. Stopped politely
+(from "3A" on, design 4.1 step 7), it first ends every run it holds as FAILED, "the
+computing unit was stopped", and gives the record 5 s to land. While it is down the
+gateway answers 502 for its sockets and its own routes. A unit that is back holds no
+run. With `kubernetes` set, each unit is a pod of its own: one unit goes down, a unit
+that comes back is a new one, a listing of the units stamps the ones whose pod is gone
+as terminated (which closes their executions at the job's next tick), and until "3C"
+the gateway sends a statistics request to the unit its `cuid` names.
 """
 
 from __future__ import annotations
@@ -46,6 +62,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from fake_closing import REASON_CHARS, REASON_COMPILE_ERROR, Closing
 from fake_lake import FakeLake
 from fake_record import NAMESPACES, Recorder, table_name
 from record_timing import RecordTiming
@@ -58,11 +75,25 @@ REPLAY_DELAY_S = 0.1
 STATUS_CODES = {"Uninitialized": 0, "Initializing": 0, "Running": 1, "Paused": 2, "Completed": 3,
                 "Failed": 4, "Killed": 5}
 #: the products the fake models, in order (see the module doc)
-STEPS = ("2", "3A")
+STEPS = ("2", "3A", "3B")
+#: the unit's own faults, for the tests of checks that must fail (the recorder's are in
+#: fake_record.FAULTS, the Dashboard's in fake_closing.FAULTS)
+FAULTS = {
+    "stop-unrecorded": "a unit that is stopped politely records nothing: its runs end as if it was killed",
+}
+REASON_UNIT_STOPPED = "the computing unit was stopped"
+#: how long a unit that is stopping waits for its runs' records to land (design 4.1 step 7)
+STOP_AWAIT_S = 5.0
 #: the states the execution log holds, by the name a socket is told (design D2, D6)
 LOGGED_STATES = {"Initializing": "READY", "Running": "RUNNING", "Paused": "PAUSED",
                  "Completed": "COMPLETED", "Failed": "FAILED", "Killed": "KILLED"}
 DEFAULT_WAREHOUSE = "texera"
+#: where the services' connections to Postgres come from, and how they are named
+UNIT_ADDRESS, DASHBOARD_ADDRESS = "172.30.0.7", "172.30.0.9"
+UNIT_APP, DASHBOARD_APP = "texera-computing-unit", "texera-dashboard"
+#: what the stack gives the unit to reach Postgres with (the old unit's pool)
+UNIT_JDBC_ENV = {"STORAGE_JDBC_URL": "jdbc:postgresql://texera-postgres:5432/texera_db",
+                 "STORAGE_JDBC_USERNAME": "texera", "STORAGE_JDBC_PASSWORD": "password"}
 #: a slow operator's statistics reach its sockets at least this often
 STATS_EVERY_S = 0.2
 _PRINT = re.compile(r'print\(f"((?:[^"\\]|\\.)*)"\)')
@@ -139,6 +170,15 @@ class WsConn:
                 pass
             self.closed = True
 
+    def drop(self) -> None:
+        """The connection breaks without a close frame, as when the server's process dies."""
+        with self.lock:
+            self.closed = True
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
 
 def _csv_rows(name: str) -> list[dict]:
     out = []
@@ -174,6 +214,8 @@ class Run:
         self.state = "Uninitialized"
         self.paused = threading.Event()
         self.killed = threading.Event()
+        #: the unit died under the run: it changes no state and writes nothing any more
+        self.dead = False
         self.pending_updates: list[dict] = []
         self.checkpoints = 0
         self.ops = {o["operatorID"]: dict(o) for o in plan["operators"]}
@@ -185,6 +227,8 @@ class Run:
         self.errors: list[dict] = []
 
     def emit(self, msg) -> None:
+        if self.dead:
+            return
         if msg.get("type") == "OperatorStatisticsUpdateEvent":
             self.last_stats = msg
         elif msg.get("type") == "ConsoleUpdateEvent":
@@ -207,7 +251,10 @@ class Run:
         named = {"executionId": self.eid} if self.named else {}
         return {"type": "WorkflowStateEvent", "state": self.state, **named}
 
-    def set_state(self, state: str, reason: str | None = None, errors: tuple | list = ()) -> None:
+    def set_state(self, state: str, reason: str | None = None, errors: tuple | list = (),
+                  final_tidy: bool = True) -> None:
+        if self.dead:
+            return
         self.state = state
         code = STATUS_CODES.get(state)
         if code is not None and state != "Uninitialized":
@@ -225,8 +272,29 @@ class Run:
             if state in ("Completed", "Failed", "Killed"):
                 self.fake.on_terminal(self)
         if self.recorder is not None and state in LOGGED_STATES:
-            self.recorder.state(LOGGED_STATES[state], reason, errors)
+            self.recorder.state(LOGGED_STATES[state], reason, errors, final_tidy=final_tidy)
         self.emit(self.state_event())
+
+    @property
+    def ended(self) -> bool:
+        return self.state in ("Completed", "Failed", "Killed")
+
+    def unit_stops(self) -> None:
+        """The unit is stopping politely: a run that has not ended ends FAILED, and its
+        tables are left as they are (the unit does not wait for a tidy)."""
+        if not self.ended:
+            self.killed.set()
+            self.set_state("Failed", reason=REASON_UNIT_STOPPED, final_tidy=False)
+
+    def unit_dies(self, await_record_s: float = 0.0) -> None:
+        """The unit is gone: the run stops where it is and its recorder with it, after
+        `await_record_s` for what it was handed (a polite stop waits; a kill does not)."""
+        if self.recorder is not None and await_record_s:
+            self.recorder.await_idle(await_record_s)
+        self.dead = True
+        self.killed.set()
+        if self.recorder is not None:
+            self.recorder.kill()
 
     def sink(self) -> str:
         view = self.plan.get("opsToViewResult") or []
@@ -470,8 +538,22 @@ class FakeTexera:
         #: step 3's timers, as the stack would set them (tests give short ones)
         self.timing = timing or RecordTiming()
         self.lake = FakeLake()
-        #: how the product misbehaves, for the tests of checks that must fail (fake_record.FAULTS)
+        #: how the product misbehaves, for the tests of checks that must fail (FAULTS here,
+        #: fake_record.FAULTS, fake_closing.FAULTS)
         self.faults: set[str] = set()
+        #: step 3, from 3B on: the Dashboard's closing record, job and expiry
+        self.closing = Closing(self)
+        #: the unit's process is up (single-node and local-dev: one process behind every unit row)
+        self.unit_up = True
+        #: Kubernetes: every unit is a pod of its own; the units whose pod is gone
+        self.kubernetes = False
+        self.pods_gone: set[int] = set()
+        self.unit_address = UNIT_ADDRESS
+        #: design 3.2: the log names each stored output port in an `output` row. Off: the
+        #: ports' locations are in the plan (the owner's variant), and the log has state rows only
+        self.log_names_stored_ports = True
+        #: the environment the unit was started with
+        self.unit_env: dict[str, str] = {"WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS": "1", **UNIT_JDBC_ENV}
         #: how much of a UDF's time.sleep() the fake engine sleeps
         self.sleep_scale = 0.0
         self.users: dict[int, dict] = {1: {"uid": 1, "name": "texera", "email": "texera@texera.io",
@@ -552,7 +634,7 @@ class FakeTexera:
         tables = self.port_tables(run)
         for kind, (_uri, name) in tables.items():
             self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
-        if run.recorder is not None:
+        if run.recorder is not None and self.log_names_stored_ports:
             port = tables["result"][0].split("/globalportid/")[1].rsplit("/", 1)[0]
             run.recorder.output(port, tables["result"][0], "SET_SNAPSHOT")
 
@@ -589,10 +671,14 @@ class FakeTexera:
 
     def _schedule_cleanup(self, eid: int, key) -> None:
         def clean():
+            if self.runs[eid].dead:
+                return  # the unit went down meanwhile: it cleans nothing up
             if key is not None and self.sessions_by_key.get(key):
                 return  # somebody opened the workflow again
             if key is not None:
                 self.held.pop(key, None)
+            if self.at("3B"):
+                return  # sub-part 14: the unit lets go of the run and deletes nothing
             self.clear_results(eid)  # the unit clears the storage of the run it lets go of
             for table in ("operator_port_executions", "operator_executions"):
                 self.sql("unit", f"delete from {table} where {table}.workflow_execution_id = $1", f"$1 = '{eid}'")
@@ -643,6 +729,11 @@ class FakeTexera:
 
             def do_GET(self):
                 if (self.headers.get("Upgrade") or "").lower() == "websocket":
+                    parts = urllib.parse.urlsplit(self.path)
+                    cuid = (urllib.parse.parse_qs(parts.query).get("cuid") or [None])[0]
+                    if cuid is not None and not fake.unit_reachable(int(cuid)):
+                        self._reply(502, {"message": "the computing unit does not answer"})
+                        return
                     key = self.headers["Sec-WebSocket-Key"]
                     accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
                     self.send_response(101, "Switching Protocols")
@@ -669,9 +760,12 @@ class FakeTexera:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        if self.at("3B"):
+            self.closing.start()
         return f"http://127.0.0.1:{self.server.server_address[1]}"
 
     def stop(self) -> None:
+        self.closing.stop()
         for run in self.runs.values():
             run.killed.set()
             if run.recorder is not None:
@@ -694,10 +788,56 @@ class FakeTexera:
     def token_of(self, user: dict) -> str:
         return make_token(user["uid"], user["role"], user["email"])
 
-    def entry(self, eid: int) -> dict:
+    def entry(self, eid: int, uid: int | None = None) -> dict:
+        """An entry of the history as `uid` sees it. From 3B on its status, its completion
+        time and its reason come from the closing record and the label (design D21)."""
         e = self.executions[eid]
-        return {"eId": eid, "vId": 1, "cuId": e["cuid"], "whId": e.get("whid"), "status": e["status"],
-                "result": "", "name": e.get("name", ""), "logLocation": e.get("log")}
+        entry = {"eId": eid, "vId": 1, "cuId": e["cuid"], "whId": e.get("whid"), "name": e.get("name", ""),
+                 "logLocation": e.get("log")}
+        if self.at("3B") and e.get("plan_uri"):
+            return {**entry, **self.closing.entry_fields(eid, uid)}
+        return {**entry, "status": e["status"], "result": ""}
+
+    # ------------------------------------------- the unit goes down and comes back
+
+    def unit_reachable(self, cuid: int) -> bool:
+        return self.unit_up and cuid not in self.pods_gone
+
+    def take_unit_down(self, *, polite: bool, cuid: int | None = None) -> None:
+        """The unit stops answering: all of it, or with `cuid` the pod of that unit. Killed,
+        it stops where it is. Stopped politely, it first ends the runs it holds."""
+        with self.lock:
+            if cuid is None:
+                self.unit_up = False
+            else:
+                self.pods_gone.add(cuid)
+            keys = [k for k in self.sessions_by_key if cuid is None or k[1] == cuid]
+            runs = [r for r in self.runs.values() if cuid is None or self.executions[r.eid]["cuid"] == cuid]
+            sockets = [c for k in keys for c in self.sessions_by_key[k]]
+            for key in [k for k in self.held if cuid is None or k[1] == cuid]:
+                del self.held[key]
+        recorded = polite and self.at("3A") and "stop-unrecorded" not in self.faults
+        for run in runs:
+            if recorded:
+                run.unit_stops()
+        for run in runs:
+            run.unit_dies(STOP_AWAIT_S if recorded else 0.0)
+        for conn in sockets:
+            conn.drop()
+
+    def bring_unit_up(self) -> None:
+        """The unit's process answers again. It holds no run."""
+        with self.lock:
+            self.unit_up = True
+
+    def backends(self) -> list[dict]:
+        """Postgres's client connections, as pg_stat_activity lists them: the Dashboard's
+        pool and, while the unit is up, the unit's (two idle connections, opened at boot)."""
+        def pool(app: str, address: str, first_pid: int) -> list[dict]:
+            return [{"pid": first_pid + i, "application_name": app, "client_addr": address,
+                     "datname": "texera_db", "state": "idle"} for i in range(2)]
+        return pool(DASHBOARD_APP, DASHBOARD_ADDRESS, 400) + (pool(UNIT_APP, self.unit_address, 300)
+                                                              if self.unit_up else [])
 
     @staticmethod
     def err(status: int, message: str):
@@ -742,16 +882,21 @@ class FakeTexera:
                 self.workflows[wid] = {"owner": uid, "name": body["name"]}
                 return 200, {"workflow": {"wid": wid}}
             if path == "/api/computing-unit" and method == "GET":
+                # a listing stamps the Kubernetes units whose pod is gone (design D27)
+                for c, u in self.units.items():
+                    if u["uid"] == uid and c in self.pods_gone and not u.get("terminateTime"):
+                        u.update(terminateTime=time.time(), terminationReason="GARBAGE_COLLECTED")
                 return 200, [{"computingUnit": {"cuid": c, **u}} for c, u in self.units.items()
                              if u["uid"] == uid and not u.get("terminateTime")]
             if path == "/api/computing-unit/create":
                 cuid = self.next["cuid"]
                 self.next["cuid"] += 1
-                self.units[cuid] = {"uid": uid, "name": body["name"], "uri": body["uri"], "type": "local"}
+                self.units[cuid] = {"uid": uid, "name": body["name"], "uri": body["uri"],
+                                    "type": body.get("unitType", "local")}
                 return 200, {"computingUnit": {"cuid": cuid, **self.units[cuid]}}
             m = re.fullmatch(r"/api/computing-unit/(\d+)/terminate", path)
             if m and method == "DELETE":
-                self.units[int(m.group(1))]["terminateTime"] = time.time()
+                self.units[int(m.group(1))].update(terminateTime=time.time(), terminationReason="USER_REQUESTED")
                 return 200, None
             if path == "/api/warehouse/status":
                 return 200, {"enabled": self.warehouses_enabled,
@@ -769,11 +914,22 @@ class FakeTexera:
                 return self.post_update(uid, int(m.group(1)), body)
             m = re.fullmatch(r"/api/executions/(\d+)/stats/(\d+)", path)
             if m and method == "GET" and self.at("3A"):
+                if self.kubernetes and not self.statistics_reach_the_unit(query):
+                    return self.err(503, "no healthy upstream")
                 return self.statistics(uid, int(m.group(1)), int(m.group(2)))
+            m = re.fullmatch(r"/api/executions/(\d+)/(state|log)", path)
+            if m and method == "GET" and self.at("3B"):
+                answer = self.closing.state if m.group(2) == "state" else self.closing.log
+                return answer(uid, int(m.group(1)))
+            if path == "/api/quota/user_quota_size" and method == "GET" and self.at("3B"):
+                return self.closing.quota(uid)
+            m = re.fullmatch(r"/api/admin/execution/executionList/(\d+)/(\d+)/\w+/\w+", path)
+            if m and method == "GET" and self.at("3B"):
+                return self.closing.admin_list(user, int(m.group(1)), int(m.group(2)))
             m = re.fullmatch(r"/api/executions/(\d+)/latest", path)
             if m:
                 eids = [e for e, x in self.executions.items() if x["wid"] == int(m.group(1))]
-                return (200, self.entry(max(eids))) if eids else (404, None)
+                return (200, self.entry(max(eids), uid)) if eids else (404, None)
             m = re.fullmatch(r"/api/executions/(\d+)/interactions/(\d+)", path)
             if m:
                 e = self.executions.get(int(m.group(2)))
@@ -785,7 +941,8 @@ class FakeTexera:
                 wid = int(m.group(1))
                 if self.workflows.get(wid, {}).get("owner") != uid:
                     return 200, []
-                return 200, [self.entry(e) for e, x in sorted(self.executions.items(), reverse=True) if x["wid"] == wid]
+                return 200, [self.entry(e, uid) for e, x in sorted(self.executions.items(), reverse=True)
+                             if x["wid"] == wid]
             if path in ("/api/environments", "/api/pve/db"):
                 if method == "GET":
                     return 200, [dict(veid=v, **{k: x[k] for k in ("name", "packages")})
@@ -803,6 +960,8 @@ class FakeTexera:
                 return 200, {"veid": int(m.group(1))}
             m = re.fullmatch(r"/api/execution/(\d+)/run", path)
             if m and method == "POST":
+                if not self.unit_up:
+                    return self.err(502, "the computing unit does not answer")
                 return self.sync_run(user, int(m.group(1)), body)
             return self.err(404, f"no route {method} {path}")
 
@@ -836,7 +995,7 @@ class FakeTexera:
                                 "name": body.get("executionName", ""), "plan": body["logicalPlan"],
                                 "started": False, "log": (f"file:///logs/{wid}/{eid}/" if self.replay_log else None),
                                 "targets": body.get("targetOperatorIds") or [], "updates": {},
-                                "plan_uri": self.plan_uri(uid, whid, wid, eid)}
+                                "plan_uri": self.plan_uri(uid, whid, wid, eid), **Closing.new_row()}
         self.sql("dashboard", "insert into workflow_executions (vid, uid, cuid, whid, status) values "
                               "($1, $2, $3, $4, $5) returning eid",
                  f"$1 = '1', $2 = '{uid}', $3 = '{cuid}', $4 = '{whid}', $5 = '0'")
@@ -845,14 +1004,28 @@ class FakeTexera:
             self.executions[eid]["status"] = 4
             self.sql("dashboard", "update workflow_executions set status = $1 where workflow_executions.eid = $2",
                      f"$1 = '4', $2 = '{eid}'")
+            if self.at("3B"):  # D29: a create that fails closes its own row at once
+                first = next(iter(errors.values()))["message"]
+                self.closing.close(eid, 4, (REASON_COMPILE_ERROR + first)[:REASON_CHARS], int(time.time() * 1000),
+                                   never_started=True)
             return 400, {"eid": eid, "operatorErrors": errors, "errors": []}
         self.write_plan(eid)
         # step 2, D8: a new execution replaces the results of the finished earlier ones of
-        # its workflow on its unit
-        for earlier, x in self.executions.items():
-            if earlier < eid and (x["wid"], x["cuid"]) == (wid, cuid) and x["status"] in (3, 4, 5):
-                self.clear_results(earlier)
+        # its workflow on its unit. From 3B on the Dashboard's expiry does it, by the
+        # closing record (step 3, D31).
+        if self.at("3B"):
+            self.closing.expire_replaced(wid, cuid, eid)
+        else:
+            for earlier, x in self.executions.items():
+                if earlier < eid and (x["wid"], x["cuid"]) == (wid, cuid) and x["status"] in (3, 4, 5):
+                    self.clear_results(earlier)
         return 201, {"eid": eid, "wid": wid, "computingUnitId": cuid, "planUri": self.executions[eid]["plan_uri"]}
+
+    def statistics_reach_the_unit(self, query: dict) -> bool:
+        """Kubernetes until step 3's sub-part 16: the gateway sends a statistics request to
+        the unit its `cuid` names, so it is answered only while that unit is up."""
+        cuid = (query.get("cuid") or [None])[0]
+        return cuid is not None and self.unit_reachable(int(cuid))
 
     def statistics(self, uid: int, wid: int, eid: int):
         """GET /api/executions/{wid}/stats/{eid}, from step 3's sub-part 6 on: the rows of
@@ -906,7 +1079,8 @@ class FakeTexera:
             return self.err(404, f"execution {eid} does not exist")
         if e["uid"] != uid:
             return self.err(403, f"only the creator of execution {eid} may change it")
-        if e["status"] in (3, 4, 5):
+        ended = e["ended_at"] is not None if self.at("3B") else e["status"] in (3, 4, 5)
+        if ended:  # from 3B on by the closing record, which the job writes a tick after the end
             return self.err(409, f"execution {eid} has ended")
         op = body["operator"]
         if op["operatorID"] not in {o["operatorID"] for o in e["plan"]["operators"]}:
@@ -1020,7 +1194,7 @@ class FakeTexera:
                         self.next["eid"] += 1
                         self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": user["uid"], "status": 0,
                                                 "plan": msg["logicalPlan"], "started": True, "log": None,
-                                                "updates": {}, "plan_uri": None}
+                                                "updates": {}, "plan_uri": None, **Closing.new_row()}
                         # the old unit reads before it inserts the row itself
                         self.sql("unit", "select user_warehouse.whid from user_warehouse where "
                                          "user_warehouse.uid = $1", f"$1 = '{user['uid']}'")
