@@ -1,0 +1,379 @@
+<title>Amber Engine Handover</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a sticky contents rail beside one reading column on wide screens; one column on phones. */
+:root {
+  --bg: #f4f6f7; --surface: #ffffff; --fg: #17202a; --muted: #566371; --line: #dbe1e6;
+  --accent: #0b6e83; --accent-soft: #e2f0f3; --code-bg: #edf1f3;
+  --ok: #1f7444; --ok-soft: #e1f1e7; --warn: #8d5300; --warn-soft: #fbeed6;
+  --risk: #b42318; --risk-soft: #fbe3df; --idle: #5f6b78; --idle-soft: #eaeef1;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #151c23; --fg: #e3e8ed; --muted: #9ba8b5; --line: #27323c;
+    --accent: #5cc0d5; --accent-soft: #11303a; --code-bg: #1a232c;
+    --ok: #6fcb95; --ok-soft: #12301f; --warn: #e5ad52; --warn-soft: #33250e;
+    --risk: #f2887c; --risk-soft: #3a1814; --idle: #8f9ba8; --idle-soft: #1d2630;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #151c23; --fg: #e3e8ed; --muted: #9ba8b5; --line: #27323c;
+  --accent: #5cc0d5; --accent-soft: #11303a; --code-bg: #1a232c;
+  --ok: #6fcb95; --ok-soft: #12301f; --warn: #e5ad52; --warn-soft: #33250e;
+  --risk: #f2887c; --risk-soft: #3a1814; --idle: #8f9ba8; --idle-soft: #1d2630;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.6; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+:not(pre) > code { background: var(--code-bg); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+
+.page {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 72px;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px;
+}
+@media (min-width: 1040px) {
+  .page { grid-template-columns: 200px minmax(0, 1fr); gap: 48px; }
+  nav.toc { position: sticky; top: calc(24px + env(safe-area-inset-top, 0px)); align-self: start; }
+}
+main { min-width: 0; max-width: 840px; display: flex; flex-direction: column; gap: 44px; }
+
+nav.toc { font-size: 13.5px; }
+nav.toc p { margin: 0 0 8px; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+nav.toc a { color: var(--fg); text-decoration: none; display: block; padding: 3px 0 3px 10px; border-left: 2px solid var(--line); }
+nav.toc a:hover { border-left-color: var(--accent); color: var(--accent); }
+@media (max-width: 1039px) {
+  nav.toc ol { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  nav.toc a { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--surface); }
+}
+
+header.top { display: flex; flex-direction: column; gap: 10px; }
+header.top .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+h1 { margin: 0; font-size: clamp(28px, 4.2vw, 38px); line-height: 1.15; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { margin: 0; max-width: 66ch; color: var(--fg); font-size: 16px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.fact { font-size: 13px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; }
+.fact b { color: var(--fg); font-weight: 600; }
+
+section { display: flex; flex-direction: column; gap: 14px; scroll-margin-top: 20px; }
+h2 { margin: 0; font-size: 21px; font-weight: 600; text-wrap: balance; display: flex; align-items: baseline; gap: 10px; }
+h2 .num { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; }
+h3 { margin: 6px 0 0; font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 70ch; }
+ul, ol.plain { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; max-width: 72ch; }
+.muted { color: var(--muted); }
+
+/* the step ladder: steps 0-6 are a real sequence, so they are numbered */
+.ladder { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.ladder li { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--line); }
+.ladder li:first-child { border-top: 0; }
+.ladder .n { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.ladder .what { min-width: 0; }
+.ladder .what b { font-weight: 600; }
+.ladder .what span { display: block; font-size: 13px; color: var(--muted); }
+.ladder li.scope-end { box-shadow: inset 0 -2px 0 var(--accent); }
+
+.pill { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { color: var(--ok); background: var(--ok-soft); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.idle { color: var(--idle); background: var(--idle-soft); }
+.pill.risk { color: var(--risk); background: var(--risk-soft); }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-top: 1px solid var(--line); }
+thead th { border-top: 0; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--bg); }
+td.mono, td .mono { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+td.result { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+td.result.ok { color: var(--ok); } td.result.warn { color: var(--warn); }
+
+.code { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--code-bg); }
+.code pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+.code button.copy {
+  position: absolute; top: 8px; right: 8px; font: 500 12px var(--sans); color: var(--fg);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+}
+.code button.copy:hover { border-color: var(--accent); color: var(--accent); }
+
+.note { border: 1px solid var(--line); border-left: 3px solid var(--warn); background: var(--surface); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.note.risk { border-left-color: var(--risk); }
+.note b { font-weight: 600; }
+
+.cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 760px) { .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.col { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.col h3 { margin: 0; }
+
+ol.steps { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 8px; max-width: 72ch; }
+ol.steps li::marker { font-family: var(--mono); color: var(--accent); }
+
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Contents">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#glance">Where it stands</a></li>
+      <li><a href="#get">Get the code</a></li>
+      <li><a href="#main-branch">Main branch</a></li>
+      <li><a href="#side-branch">Plan-shape batch</a></li>
+      <li><a href="#next">What is left</a></li>
+      <li><a href="#decisions">Decisions</a></li>
+      <li><a href="#bugs">Upstream bugs</a></li>
+      <li><a href="#running">Running things</a></li>
+      <li><a href="#documents">Documents</a></li>
+      <li><a href="#machine">This machine</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="top">
+      <span class="kicker">apache/texera #5011 · #5012 · #5013 · Linear P-TEX-22</span>
+      <h1>Amber Engine Handover</h1>
+      <p class="lede">Amber's computing unit is becoming a self-contained engine: it takes a stored physical plan with every location resolved, reads and writes storage, keeps no execution metadata and calls no service during a run. This page says where that work stopped and how to pick it up.</p>
+      <div class="facts">
+        <span class="fact">State on <b>17 Nov 2026</b></span>
+        <span class="fact">Nothing merged upstream, <b>no PR open</b></span>
+        <span class="fact">Branches on <b>github.com/bobbai00/texera</b> (public)</span>
+        <span class="fact">Scope: <b>stop after step 3</b></span>
+      </div>
+    </header>
+
+    <section id="glance">
+      <h2><span class="num">01</span>Where it stands</h2>
+      <ol class="ladder">
+        <li><span class="n">0</span><div class="what"><b>Prove the riskiest assumptions</b><span>Envoy ask-then-route, per-run lake tokens, the cost of Iceberg commits · TEX-423</span></div><span class="pill ok">Done</span></li>
+        <li><span class="n">1</span><div class="what"><b>Run every workflow from its saved physical plan</b><span>TEX-424</span></div><span class="pill ok">Done</span></li>
+        <li><span class="n">2</span><div class="what"><b>The unit reads nothing from Postgres, and calls no service, to start a run</b><span>Verified in single-node, Kubernetes, local dev and the browser · review fixes mostly in · TEX-425</span></div><span class="pill ok">Built</span></li>
+        <li class="scope-end"><span class="n">3</span><div class="what"><b>Run state in the lake; the unit opens no Postgres connection</b><span>4 of 16 parts done · the agreed end of this effort · TEX-426</span></div><span class="pill warn">In progress</span></li>
+        <li><span class="n">4</span><div class="what"><b>Only the gateway (Envoy) reaches a unit</b><span>Research notes only; not to be built now · TEX-427</span></div><span class="pill idle">Deferred</span></li>
+        <li><span class="n">5</span><div class="what"><b>Lock down the unit</b><span>Per-run credentials, a lake namespace per execution · TEX-428</span></div><span class="pill idle">Later</span></li>
+        <li><span class="n">6</span><div class="what"><b>Run units on Kubernetes, Slurm and EC2</b><span>TEX-429</span></div><span class="pill idle">Later</span></li>
+      </ol>
+    </section>
+
+    <section id="get">
+      <h2><span class="num">02</span>Get the code</h2>
+      <p>Everything is on branches of your fork. The fork is public, so these branches are visible to anyone.</p>
+      <div class="code"><button class="copy" type="button">Copy</button><pre><code># in any clone of texera
+git remote add bobbai00 https://github.com/bobbai00/texera.git   # skip if origin is the fork
+git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
+  spike/sce-step0-proofs fix/checkpoint-on-source-worker sce-e2e-harness
+git worktree add ../self-contained-engine bobbai00/feat/self-contained-engine
+
+# the test harness and every document: its own history, on one branch
+git clone --branch sce-e2e-harness --single-branch \
+  https://github.com/bobbai00/texera.git sce-e2e</code></pre></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Branch</th><th>Commit</th><th>What it holds</th></tr></thead>
+        <tbody>
+          <tr><td><a href="https://github.com/bobbai00/texera/tree/feat/self-contained-engine"><code>feat/self-contained-engine</code></a></td><td class="mono"><a href="https://github.com/bobbai00/texera/commit/3d84565a58e6dc699eecbc51f0661f92c3287f86">3d84565a5</a></td><td>The main branch: steps 1 and 2, upstream main merged in, three batches of review fixes, step 3 parts 2-5</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/tree/feat/sce-step2-lane"><code>feat/sce-step2-lane</code></a></td><td class="mono"><a href="https://github.com/bobbai00/texera/commit/c5511fab05b1ea987f45b5f249b5bcafafa2bbe5">c5511fab0</a></td><td>The plan-shape batch (P), pieces 1-4, on <code>e05b2705a</code>. Not merged into the main branch</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/tree/spike/sce-step0-proofs/proofs/step0"><code>spike/sce-step0-proofs</code></a></td><td class="mono"><a href="https://github.com/bobbai00/texera/commit/ff472936379208cb68a067de44cbe34a6915ab0e">ff4729363</a></td><td>Step 0's proof scripts and their results</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/tree/fix/checkpoint-on-source-worker"><code>fix/checkpoint-on-source-worker</code></a></td><td class="mono"><a href="https://github.com/bobbai00/texera/commit/57c64e9215e3fa1d0cc218e208a680d273fffaa5">57c64e921</a></td><td>An upstream bug fix found on the way. Rebase on upstream main before proposing it</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/tree/sce-e2e-harness"><code>sce-e2e-harness</code></a></td><td class="mono">latest</td><td>The end-to-end harness, the designs, the reviews, the scripts, and this handover as <a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/HANDOVER.md">docs/HANDOVER.md</a></td></tr>
+        </tbody>
+      </table></div>
+      <p>Diff against upstream: <a href="https://github.com/apache/texera/compare/main...bobbai00:texera:feat/self-contained-engine">apache/texera main…feat/self-contained-engine</a>.</p>
+    </section>
+
+    <section id="main-branch">
+      <h2><span class="num">03</span>The main branch</h2>
+      <p><code>feat/self-contained-engine</code> at <code>3d84565a5</code>: 58 commits and one merge over upstream <code>205fe77c4</code>.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Group</th><th>Commits</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Step 1</td><td class="mono">ffbdabea5 – 5e85a37de (4)</td><td>Output partitioning as a value; UDF datasets resolved when planning; a physical plan saved and read back; every workflow run from its saved plan</td></tr>
+          <tr><td>Step 2</td><td class="mono">1b1635e25 – 55c14da26 (21)</td><td>The plan carries replay, cost hints, settings, links, listings and Python environments, and is stored in the lake. Executions are created at the Dashboard and started on the unit by id. A paused operator is changed through the Dashboard. The unit has no compile path. The browser and the agent service create, then start. Environments are kept at the Dashboard and installed by the unit</td></tr>
+          <tr><td>Upstream</td><td class="mono">99098417a</td><td>Merge of upstream main <code>021bf51c1</code> (27 commits)</td></tr>
+          <tr><td>Review fixes X1</td><td class="mono">3ec12bad6 – 7943df959 (6)</td><td>The stored plan is format version 1, nothing stored twice; the mount root is out of the plan; a 16 MiB plan limit; replay logs only where the unit keeps them</td></tr>
+          <tr><td>Review fixes X3</td><td class="mono">a2551d262 – e05b2705a (12)</td><td>A created execution has status 6 (Created) and locks nothing; results cleared only once a later run has its own; the create compiles under a deadline; one shape for a refused create</td></tr>
+          <tr><td>Step 3, parts 2-4</td><td class="mono">6f3e16729 – 13296d289 (3)</td><td>Appends with table properties in one commit, tidying under readers; the execution log store; statistics and console as records</td></tr>
+          <tr><td>Review fixes X4</td><td class="mono">7ee293ecf – 2147aeaec (6)</td><td>A refused request is a <code>RequestRefusedEvent</code>, not a failed run; pause, resume and kill name their execution; a worker closes its executor however it stops; console messages stay put</td></tr>
+          <tr><td>Step 3, part 5</td><td class="mono">56654f18b – 3d84565a5 (6)</td><td>The unit writes each run's log through one <code>transitionTo</code>; a finished run stays finished; a run is set up in full or not at all; the unit finds its run's results in memory</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Verified at 3d84565a5</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Scala suites (known non-passes: the REST-catalog spec without a catalog on :8181, the R case without R)</td><td class="result ok">No failure</td></tr>
+          <tr><td>Frontend · agent service</td><td class="result ok">7,292 · 378 pass</td></tr>
+          <tr><td>Single-node, the unit on a network of its own, all six evidence checks</td><td class="result ok">25 of 25</td></tr>
+          <tr><td>Kubernetes on OrbStack</td><td class="result ok">17 of 17</td></tr>
+          <tr><td>Local dev</td><td class="result ok">25 of 25</td></tr>
+          <tr><td>Browser smoke (headless Chromium)</td><td class="result warn">8 of 9, twice</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note risk">
+        <b>Browser case B9 fails.</b>
+        <p>Picking a Python environment in a UDF and pressing Run sends the UDF without the environment's name, and the create answers 400. It passed one commit earlier, and the last commit changed no browser or Dashboard code. The screenshot shows the picker's dropdown still open after the pick, so the test's click may not have registered. Not explained yet. The same feature passes at the API level in all three modes.</p>
+      </div>
+      <ul>
+        <li>Part 5 has not run against a real REST catalog, and its 20 hand-made breaks of <code>transitionTo</code> were never run (scripts in <code>tools/step3/</code>).</li>
+        <li>Smaller open issues are listed in the batch reports: a page opened during Initializing loses earlier install messages; console writers can close mid-commit; the engine's own e-mail is still sent for a state the run did not take; only single-node limits the create's body size.</li>
+      </ul>
+    </section>
+
+    <section id="side-branch">
+      <h2><span class="num">04</span>The plan-shape batch, not merged</h2>
+      <p>Your decision of 17 November: what the compiler resolves belongs in the plan's operator block, at port level where it is about a port. Pieces 1-4 are done on <code>feat/sce-step2-lane</code> and its suites pass there.</p>
+      <ol class="steps">
+        <li>Every output port carries its storage location in the plan; the scheduler uses it and the engine builds none.</li>
+        <li>What an operator reads from outside the run (files with their links, a listing, the CSV column limit) is in the operator's block and handed to the executor beside its descriptor. The hidden descriptor fields are gone, and no log line can print a link's signature.</li>
+        <li>A compile is for editing or for a run; the "unavailable" placeholders are gone.</li>
+        <li>Test fixtures are out of the production code; the link allow-list cannot be widened at run time.</li>
+      </ol>
+      <p>Piece 5 (six small findings) is not started. Merging onto the main branch will conflict in the unit's services that later fixes rewrote. One judgment call to review: a scan's settings still hold the resolved file name, which schema inference and the Python export read. A plan at the listing cap (10,000 files) is about 9 MiB.</p>
+    </section>
+
+    <section id="next">
+      <h2><span class="num">05</span>What is left, in order</h2>
+      <ol class="steps">
+        <li>Merge the plan-shape batch onto the main branch; make the harness follow it; rerun the suites, the three modes and the browser.</li>
+        <li>Explain and fix browser case B9.</li>
+        <li>The plan-shape batch's piece 5.</li>
+        <li>Move the run compile into the workflow-compiling-service: the Dashboard authorizes, inserts the row, asks for the plan and stores it.</li>
+        <li>Part 5's two pending checks: the REST catalog and the 20 breaks.</li>
+        <li>Step 3's remaining 12 parts: statistics and console on a timer, a day-long benchmark, the Dashboard closing runs ("unit lost", "never started") with one e-mail and result expiry, the history showing how a run ended, statistics and export served without the unit, the unit opening no Postgres connection, the run-state columns dropped. Run checkpoints 3A, 3B and 3C in all three modes; their tests are written and pass offline.</li>
+        <li>Before any pull request: a naming pass, a comment-trim pass, a fresh merge of upstream, and commit messages free of this process's vocabulary.</li>
+      </ol>
+      <h3 id="pr-split">A split into four pull requests, for you to decide</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>PR</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">1</td><td>Run every workflow from a stored plan: step 1, the plan's format and store, fixes X1</td></tr>
+          <tr><td class="mono">2</td><td>Create at the Dashboard, start by id, nothing read on the unit to start: the rest of step 2, fixes X3 and X4, the plan-shape batch, the compile move</td></tr>
+          <tr><td class="mono">3</td><td>Record and close executions from the lake: step 3 parts 2-15</td></tr>
+          <tr><td class="mono">4</td><td>Take Postgres off the unit: step 3 parts 16-19</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">The checkpoint fix can go upstream as its own small PR at any time.</p>
+    </section>
+
+    <section id="decisions">
+      <h2><span class="num">06</span>Decisions</h2>
+      <div class="cols">
+        <div class="col">
+          <h3>Made by you</h3>
+          <ul>
+            <li>Postgres leaves the unit completely; no backward compatibility.</li>
+            <li>Amber is a pure engine: a resolved plan in, storage reads and writes, no execution metadata, no service calls during a run.</li>
+            <li>Only the gateway reaches a unit; the Dashboard does not call units; no relay service.</li>
+            <li>Units are not tied to Kubernetes.</li>
+            <li>An execution's state lives in one place; data and metadata stay apart.</li>
+            <li>A namespace per execution comes in step 5.</li>
+            <li>17 Nov: resolved locations in the plan's operator block, at port level.</li>
+            <li>17 Nov: take the cleaner approach; the run compile moves into the compiling service.</li>
+            <li>17 Nov: stop after step 3.</li>
+          </ul>
+        </div>
+        <div class="col">
+          <h3>Still yours to decide</h3>
+          <ul>
+            <li>Step 3's six choices, built to my recommendations: verdicts only in the Postgres row; a six-field closing record; independent of the upstream result service (#9356); statistics every 30 s and one e-mail per run; a new run replaces earlier finished results on the same unit, plus expiry a day after the end; three cut parts stay out.</li>
+            <li>Whether a scan's settings should also stop holding the resolved file name.</li>
+            <li>Whether to propose steps 1-2 before step 3 ends. I recommend yes once the cleanup is verified: upstream moved 27 commits in three days.</li>
+            <li>Whether to file the upstream bugs below as issues.</li>
+            <li>When step 4 resumes: the four questions in its research notes.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="bugs">
+      <h2><span class="num">07</span>Upstream bugs found on the way</h2>
+      <p class="muted">None caused by this branch.</p>
+      <ul>
+        <li><code>PartitionRule.FirstInput</code> follows hash-map order, not port order.</li>
+        <li>The R UDF's setter chain is wrong for more than one worker.</li>
+        <li>Checkpoints: a source worker read its channel's port too early (fixed on <code>fix/checkpoint-on-source-worker</code>); pyamber has no checkpoint handler; JVM workers cannot serialize their result writer threads (since #3295). Replay end to end stays unverified.</li>
+        <li>Helm chart: <code>Chart.lock</code> lists minio where <code>Chart.yaml</code> lists rustfs; Envoy Gateway is always installed; its GatewayClass hangs in Terminating after an uninstall; the release must be named <code>texera</code>; the language-server image is amd64 only.</li>
+        <li>access-control-service logs request headers and tokens at INFO, and has no PATCH handler.</li>
+        <li>The editor: a killed operator still says Running; the result table stays on page 2 after a re-run; a page opened during a run logs a <code>TypeError</code> when it ends.</li>
+      </ul>
+    </section>
+
+    <section id="running">
+      <h2><span class="num">08</span>Running things</h2>
+      <p>The harness's <code>tools/README.md</code> has the test Postgres, the Python environment and every script. The command that verified the main branch:</p>
+      <div class="code"><button class="copy" type="button">Copy</button><pre><code>SN_STACK_OPTS="--isolate-unit" \
+K8S_SCN="a,b,c,d,e,u,k,l1,l6,l8,m,o,f,f2,g,h,i" \
+LD_SCN="a,b,c,d,e,u,j,k,l,m,o,f,f2,g,h,i" \
+  tools/gate.sh 3d84565a5 step3p5 --gate D</code></pre></div>
+      <div class="code"><button class="copy" type="button">Copy</button><pre><code>tools/suite.sh &lt;worktree&gt; &lt;tag&gt; [catalog-db]     # every Scala suite, about 15 minutes
+tools/frontend-check.sh &lt;worktree&gt; &lt;tag&gt;         # frontend tests, format, build
+(cd agent-service &amp;&amp; bun test &amp;&amp; bun run typecheck)
+
+# step 3's checkpoints, once its parts land (3A, 3B, 3C)
+./run-baseline.sh --reset --images sce/&lt;tag&gt; --pg-statement-log --isolate-unit --fast-record -- --gate 3A
+./run-k8s.sh --lock &lt;dir&gt; --images sce/&lt;tag&gt; --source &lt;worktree&gt; --fast-record -- --gate 3A
+./run-localdev.sh --lock &lt;dir&gt; --reset --fast-record -- --gate 3A</code></pre></div>
+    </section>
+
+    <section id="documents">
+      <h2><span class="num">09</span>Where the documents are</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>On <code>sce-e2e-harness</code></th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/HANDOVER.md"><code>docs/HANDOVER.md</code></a></td><td>This handover, as text</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/review-step2/triage.md"><code>docs/review-step2/</code></a></td><td>Two reviews of steps 1-2, the decision on every finding, the browser findings, the reports of batches X1, X3, X4 and P</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/step3-design.md"><code>docs/step3-design.md</code></a></td><td>Step 3's design, revision 2, with a brief per part</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/step3-notes/changes-since-rev2.md"><code>docs/step3-notes/</code></a></td><td>What changed since revision 2 (wins over the design), and the reports of parts 2-5 and of the harness</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/step2-design.md"><code>docs/step2-design.md</code></a></td><td>Step 2's design and its critique</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/docs/step4-design.md"><code>docs/step4-design.md</code></a></td><td>Step 4 research notes, not a design</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/blob/sce-e2e-harness/README.md"><code>README.md</code></a></td><td>The harness: modes, scenarios, checks, gates, and every verification run</td></tr>
+          <tr><td><a href="https://github.com/bobbai00/texera/tree/sce-e2e-harness/tools"><code>tools/</code></a></td><td>The scripts that ran the suites and the gates</td></tr>
+        </tbody>
+      </table></div>
+      <p>Earlier pages: <a href="https://claude.ai/artifact/GEJYPLLbqxit6WBt2ko7Wt">Amber Engine Design</a> and <a href="https://claude.ai/artifact/HWHk9yddF2Hb1fVtGLjeRQ">Amber Engine Plan</a>. In Linear, TEX-425 and TEX-426 carry the same status as this page.</p>
+    </section>
+
+    <section id="machine">
+      <h2><span class="num">10</span>This machine</h2>
+      <ul>
+        <li>Your <code>texera-single-node</code> stack is stopped: <code>docker compose -p texera-single-node start</code>.</li>
+        <li>Worktrees in <code>~/Desktop/projects/texera-worktrees</code>: <code>self-contained-engine</code>, <code>sce-step2-lane</code>, <code>sce-step3-lane</code>, <code>sce-imgbuild</code>, <code>sce-localdev-src</code>, <code>sce-step0-proofs</code>, <code>sce-e2e</code>, <code>sce-e2e-step3</code>.</li>
+        <li>Test images <code>sce/texera-*:step2x</code> and <code>:step3p5</code>; Docker volumes <code>sce_*</code> and <code>e2e-localdev_*</code>; the test Postgres <code>texera-tripwire-pg</code> on 127.0.0.1:5432.</li>
+        <li>OrbStack's Kubernetes holds none of the harness's namespaces; the Gateway API and Envoy Gateway CRDs stay installed.</li>
+      </ul>
+    </section>
+
+    <footer>Written at the end of the session on 17 November 2026. The text version on the harness branch is the one to update as work continues.</footer>
+  </main>
+</div>
+
+<script>
+document.querySelectorAll('.code').forEach(function (block) {
+  var button = block.querySelector('button.copy');
+  var code = block.querySelector('code');
+  function say(text) { button.textContent = text; setTimeout(function () { button.textContent = 'Copy'; }, 1600); }
+  function selectIt() {
+    var range = document.createRange();
+    range.selectNodeContents(code);
+    var selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    say('Selected');
+  }
+  button.addEventListener('click', function () {
+    var text = code.innerText;
+    try {
+      navigator.clipboard.writeText(text).then(function () { say('Copied'); }, selectIt);
+    } catch (e) { selectIt(); }
+  });
+});
+</script>

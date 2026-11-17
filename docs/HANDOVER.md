@@ -1,7 +1,8 @@
 # Self-contained Amber engine: handover
 
 State on 2026-11-17, when work stopped. Nothing is merged upstream or opened as a pull request.
-Everything is on branches of the fork `github.com/bobbai00/texera`, which is public.
+Everything is on branches of the fork `github.com/bobbai00/texera`, which is public. The same
+handover as a page: https://claude.ai/artifact/1uo7RCdbfrnUpTVFLzvhwG (private to its owner).
 
 ## 1. The goal and where it stands
 
