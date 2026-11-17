@@ -34,7 +34,7 @@ import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, Physica
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
-import org.apache.texera.common.compiler.{RunBindings, WorkflowCompiler}
+import org.apache.texera.common.compiler.{CompileFor, WorkflowCompiler}
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
@@ -114,7 +114,7 @@ object OperatorUpdates {
   *                          operator builds it itself ([[LogicalOp.runtimeReconfiguration]])
   */
 class OperatorUpdates(
-    bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
+    bindingsFor: Integer => CompileFor.Run = PlanToRun.bindingsFor,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     appendUpdate: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.appendUpdate,
     reconfigure: OperatorUpdates.Reconfigure = (current, changed, workflowId, executionId) =>
@@ -397,8 +397,7 @@ class OperatorUpdates(
     * the database not answering, is thrown as it is.
     */
   private def boundFor(uid: Integer, running: ExecutionPlan, op: PhysicalOp): PhysicalOp = {
-    val compiler = new WorkflowCompiler(running.context, bindingsFor(uid))
-    try compiler.bindResources(op)
+    try WorkflowCompiler.bindResources(op, bindingsFor(uid).repositories)
     catch {
       case error: FileNotFoundException => throw new BadRequestException(error.getMessage)
     }

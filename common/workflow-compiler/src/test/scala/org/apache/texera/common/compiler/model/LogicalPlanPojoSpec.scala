@@ -20,11 +20,6 @@
 package org.apache.texera.common.compiler.model
 
 import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.texera.amber.core.storage.{
-  DatasetVersionLister,
-  InputLinker,
-  RepositoryVersionResolver
-}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
@@ -32,10 +27,9 @@ import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
+  CompileFor,
   CompileSettings,
-  PythonEnvironmentResolver,
-  RunBindings,
+  PythonEnvironmentNotResolved,
   WorkflowCompilationFailed,
   WorkflowCompiler
 }
@@ -224,15 +218,15 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
       try {
         new WorkflowCompiler(
           new WorkflowContext(),
-          RunBindings(
+          CompileFor.Run(
             files = TestOperators.fixtureFileResolver,
-            inputLinker = InputLinker.Unavailable,
-            lister = DatasetVersionLister.Unavailable,
-            repositories = RepositoryVersionResolver.Unavailable,
             settings = CompileSettings.Default,
-            environments = PythonEnvironmentResolver.Unavailable
+            inputLinker = TestOperators.fixtureInputLinker,
+            lister = TestOperators.fixtureDatasetVersionLister,
+            repositories = TestOperators.fixtureRepositoryResolver,
+            environments = name => throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
           )
-        ).compile(pojo, CompilationErrorHandling.Strict)
+        ).compile(pojo)
         Right(())
       } catch { case failure: Throwable => Left(failure) }
     val cyclic = plan(List(op("a"), op("b")), List(link("a", "b"), link("b", "a")))

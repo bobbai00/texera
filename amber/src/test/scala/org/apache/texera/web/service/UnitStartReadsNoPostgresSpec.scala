@@ -29,7 +29,7 @@ import org.apache.texera.amber.operator.filter.{
 }
 import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
-import org.apache.texera.common.compiler.RunBindings
+import org.apache.texera.common.compiler.CompileFor
 import org.apache.texera.dao.jooq.generated.tables.daos.{DatasetDao, DatasetVersionDao}
 import org.apache.texera.dao.jooq.generated.tables.pojos.{Dataset, DatasetVersion}
 
@@ -87,7 +87,7 @@ class UnitStartReadsNoPostgresSpec
     * The fixtures' bindings, and the dataset's file: resolved for the creator from the dataset's
     * rows, as the deployment resolves it, and linked to the fixture file that holds its bytes.
     */
-  override protected def bindings: RunBindings = {
+  override protected def bindings: CompileFor.Run = {
     val fixtures = TestUtils.fixtureBindings
     fixtures.copy(
       files = fileName =>

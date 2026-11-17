@@ -71,8 +71,8 @@ class InputBinderSpec extends AnyFlatSpec {
     LogicalLink(from.operatorIdentifier, PortIdentity(), to.operatorIdentifier, PortIdentity())
 
   /**
-    * What the operators of `plan` read, as an [[InputBinder]] finds it: for a plan made to run
-    * when `run` gives what links its files and lists its dataset versions.
+    * What the operators of `plan` read, as an [[InputBinder]] finds it: for a run when `run`
+    * gives what links its files and lists its dataset versions, and for editing otherwise.
     */
   private def inputsOf(
       plan: LogicalPlan,
@@ -80,8 +80,21 @@ class InputBinderSpec extends AnyFlatSpec {
       settings: CompileSettings = CompileSettings.Default,
       run: Option[(InputLinker, DatasetVersionLister)] = None,
       errors: ArrayBuffer[(OperatorIdentity, Throwable)] = ArrayBuffer.empty
-  ): Map[OperatorIdentity, OperatorInputs] =
-    new InputBinder(files, settings, run, errors).inputsOf(plan)
+  ): Map[OperatorIdentity, OperatorInputs] = {
+    val purpose = run match {
+      case Some((linker, lister)) =>
+        CompileFor.Run(
+          files,
+          settings,
+          linker,
+          lister,
+          repositories = versionPath => fail(s"asked to pin $versionPath"),
+          environments = name => fail(s"asked to resolve the environment $name")
+        )
+      case None => CompileFor.Editing(files, settings)
+    }
+    new InputBinder(purpose, errors).inputsOf(plan)
+  }
 
   private def allowing(maxListedFiles: Int): CompileSettings =
     CompileSettings.Default.copy(maxListedFiles = maxListedFiles)

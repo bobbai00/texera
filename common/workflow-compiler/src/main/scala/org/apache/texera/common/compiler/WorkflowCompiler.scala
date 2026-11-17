@@ -24,6 +24,7 @@ import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.{LazyLogging, Logger}
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.common.compiler.WorkflowCompiler.{
+  bindResources,
   collectOutputSchemaFromPhysicalPlan,
   convertErrorListToWorkflowFatalErrorMap,
   normalizeStateReferences,
@@ -35,6 +36,7 @@ import org.apache.texera.amber.core.state.StateReferencing.{
   literalReferences,
   noLoopVariableReferences
 }
+import org.apache.texera.amber.core.storage.RepositoryVersionResolver
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{
@@ -193,6 +195,30 @@ object WorkflowCompiler {
   private def formatReferences(references: Map[String, String]): String =
     references.toSeq.sorted.map { case (pointer, name) => s"$pointer -> $$$name" }.mkString(", ")
 
+  /**
+    * Pins the datasets and models `op` names, as a compile for a run does for every operator:
+    * its executor names each version by the repository commit behind it, which it lists as what
+    * to mount, and it no longer holds a binding. An operator that names none is returned as it
+    * is.
+    *
+    * This is the only place a binding is forced. A paused execution's edited operator goes
+    * through it too, so it is bound the way the rest of its plan was.
+    *
+    * @param repositories pins the versions, for the plan's user
+    * @throws org.apache.commons.vfs2.FileNotFoundException if a version does not exist, or the
+    *                                                       plan's user cannot read it
+    */
+  def bindResources(op: PhysicalOp, repositories: RepositoryVersionResolver): PhysicalOp =
+    op.resourceBinding.fold(op) { binding =>
+      val bound = binding.bind(repositories)
+      op.copy(
+        opExecInitInfo = bound.opExecInitInfo,
+        repositoryMounts =
+          Option.when(bound.mountLocators.nonEmpty)(RepositoryMounts(bound.mountLocators)),
+        resourceBinding = None
+      )
+    }
+
   private def collectOutputSchemaFromPhysicalPlan(
       physicalPlan: PhysicalPlan,
       errorList: ArrayBuffer[(OperatorIdentity, Throwable)]
@@ -237,74 +263,41 @@ case class WorkflowCompilationResult(
 )
 
 /**
-  * The single workflow compiler shared in-process by both compilation call sites:
-  * workflow-compiling-service (editing path, [[CompilationErrorHandling.Lenient]] — accumulate
-  * per-operator errors so the UI can render them, `physicalPlan = None` when any exist) and
-  * amber (execution path, [[CompilationErrorHandling.Strict]] — fail before a run, with every
-  * operator's error, as a [[WorkflowCompilationFailed]]).
+  * The single workflow compiler shared in-process by both compilation call sites: the
+  * workflow-compiling-service, which compiles a workflow while it is edited, and amber, which
+  * compiles it to make the plan of a run. What a compile is for ([[CompileFor]]) decides what
+  * becomes of the errors of the workflow's operators and what is looked up for the plan.
   *
   * This module depends only on WorkflowOperator, so neither service leaks its HTTP stack into
   * the other; the engine `Workflow` wrapper stays in amber as a thin adapter over
   * [[WorkflowCompilationResult]]. `outputPortsNeedingStorage` is always computed — the
   * editing-path caller simply ignores it — keeping both paths on one code path.
   *
-  * Only a Strict compile makes a plan to run, so only it links the files its scan sources read,
-  * lists the dataset versions its File Listers name and links the files listed, resolves the
-  * Python environments operators name and pins the datasets and models they name (see
-  * [[bindResources]]): each is a lookup, of the storage or the database, and the editing path
-  * compiles on every edit. Every compile, in either mode, gives each operator the site's
-  * settings it is compiled under.
-  *
-  * @param context  the workflow and execution the compiler makes plans for: their ids stamp
-  *                 every operator. Public, so what saves a plan to run saves it for the run the
-  *                 compiler made it for.
-  * @param bindings what the plans are bound to, for the user and the deployment they are made
-  *                 for. A compile that makes no plan to run is given
-  *                 [[RunBindings.forEditing]]'s.
+  * @param context the workflow and execution the compiler makes plans for: their ids stamp
+  *                every operator
+  * @param purpose what the plans are compiled for
   */
-class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) extends LazyLogging {
-
-  /**
-    * Pins the datasets and models `op` names, as a Strict compile does for every operator: its
-    * executor names each version by the repository commit behind it, which it lists as what to
-    * mount, and it no longer holds a binding. An operator that names none is returned as it is.
-    *
-    * This is the only place a binding is forced. A paused execution's edited operator goes
-    * through it too, so it is bound the way the rest of its plan was.
-    *
-    * @throws org.apache.commons.vfs2.FileNotFoundException if a version does not exist, or the
-    *                                                       plan's user cannot read it
-    */
-  def bindResources(op: PhysicalOp): PhysicalOp =
-    op.resourceBinding.fold(op) { binding =>
-      val bound = binding.bind(bindings.repositories)
-      op.copy(
-        opExecInitInfo = bound.opExecInitInfo,
-        repositoryMounts =
-          Option.when(bound.mountLocators.nonEmpty)(RepositoryMounts(bound.mountLocators)),
-        resourceBinding = None
-      )
-    }
+class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends LazyLogging {
 
   /**
     * Pins what the operators of `plan` name, as [[bindResources]] does, each operator by itself,
     * so that every operator's binding error is found. An operator's own error -- a version that
-    * does not exist or that the plan's user may not read, or no resolver to pin it with -- leaves
-    * it as it was, and is appended to `errors`. Any other failure, such as the database not
-    * answering, is no error of the operator's, and is thrown as it is.
+    * does not exist or that the plan's user may not read -- leaves it as it was, and is appended
+    * to `errors`. Any other failure, such as the database not answering, is no error of the
+    * operator's, and is thrown as it is.
     */
   private def bindPlanResources(
       plan: PhysicalPlan,
+      repositories: RepositoryVersionResolver,
       errors: ArrayBuffer[(OperatorIdentity, Throwable)]
   ): PhysicalPlan =
     plan.operators
       .filter(_.resourceBinding.isDefined)
       .foldLeft(plan) { (boundPlan, op) =>
-        Try(bindResources(op)) match {
+        Try(bindResources(op, repositories)) match {
           case Success(bound) => boundPlan.setOperator(bound)
-          // what bindResources throws for the operator itself
-          case Failure(error @ (_: FileNotFoundException | _: IllegalStateException)) =>
-            errors.append((op.id.logicalOpId, error))
+          case Failure(notFound: FileNotFoundException) =>
+            errors.append((op.id.logicalOpId, notFound))
             boundPlan
           case Failure(other) => throw other
         }
@@ -324,13 +317,14 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     */
   private def bindPlanEnvironments(
       plan: PhysicalPlan,
+      environments: PythonEnvironmentResolver,
       errors: ArrayBuffer[(OperatorIdentity, Throwable)]
   ): PhysicalPlan = {
     val resolved = mutable.Map.empty[String, Try[PythonEnvironment]]
     plan.operators.foldLeft(plan) { (boundPlan, op) =>
       op.pythonEnvironment match {
         case PythonEnvironmentRef.Named(name) =>
-          resolved.getOrElseUpdate(name, Try(bindings.environments.resolve(name))) match {
+          resolved.getOrElseUpdate(name, Try(environments.resolve(name))) match {
             case Success(environment) =>
               boundPlan.setOperator(
                 op.copy(
@@ -380,7 +374,7 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     }
 
   /**
-    * Fails a Strict compile with `errors`: each operator's first, listed in the order of
+    * Fails a compile for a run with `errors`: each operator's first, listed in the order of
     * `logicalPlan`, an operator before those downstream of it, so that the cause of a chain of
     * errors comes first. The error of the operator listed first is the failure's cause, so that
     * a log of the failure shows where that error was thrown.
@@ -526,39 +520,28 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     * errors (if any).
     *
     * @param logicalPlanPojo the POJO parsed from the workflow string provided by the user
-    * @param errorHandling   Lenient (editing-time: return every operator's errors) or Strict
-    *                        (pre-execution: throw them)
     * @return WorkflowCompilationResult, containing the physical plan, output schemas per op, errors
     *         per op, and the output ports that need storage
-    * @throws WorkflowCompilationFailed if the compile is Strict and an operator has an error: with
-    *                                   each such operator's first error, upstream operators first.
-    *                                   A failure that is no operator's error, such as the database
-    *                                   or the storage not answering while a file is resolved or
-    *                                   linked, or a version is listed or pinned, is thrown as it
-    *                                   is, in either mode.
+    * @throws WorkflowCompilationFailed if the compile is for a run and an operator has an error:
+    *                                   with each such operator's first error, upstream operators
+    *                                   first. A failure that is no operator's error, such as the
+    *                                   database or the storage not answering, is thrown as it is,
+    *                                   whatever the compile is for.
     */
-  def compile(
-      logicalPlanPojo: LogicalPlanPojo,
-      errorHandling: CompilationErrorHandling = CompilationErrorHandling.Lenient
-  ): WorkflowCompilationResult = {
+  def compile(logicalPlanPojo: LogicalPlanPojo): WorkflowCompilationResult = {
     // Every step below appends an operator's error here and goes on with the other operators, so
-    // that a compile finds them all: Lenient returns them, Strict throws them together.
+    // that a compile finds them all: for editing it returns them, for a run it throws them
+    // together.
     val errors = new ArrayBuffer[(OperatorIdentity, Throwable)]()
 
     // 1. convert the pojo to logical plan
     val logicalPlan: LogicalPlan = LogicalPlan(logicalPlanPojo)
 
     // 2. find what each operator reads from outside the run: the file of each scan source,
-    // resolved, and the site's settings it is read under; and, for a plan made to run, which
-    // only a Strict compile makes, the link to that file, the listing of each File Lister's
-    // dataset version, and the links to the files listed upstream of each File Scan From Input
-    val makesPlanToRun = errorHandling == CompilationErrorHandling.Strict
-    val inputs = new InputBinder(
-      bindings.files,
-      bindings.settings,
-      Option.when(makesPlanToRun)((bindings.inputLinker, bindings.lister)),
-      errors
-    ).inputsOf(logicalPlan)
+    // resolved, and the site's settings it is read under; and, for a run, the link to that
+    // file, the listing of each File Lister's dataset version, and the links to the files
+    // listed upstream of each File Scan From Input
+    val inputs = new InputBinder(purpose, errors).inputsOf(logicalPlan)
 
     // 3. expand the logical plan to the physical plan, and get the output ports that need storage
     val (expandedPlan, outputPortsNeedingStorage) =
@@ -571,11 +554,11 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     // otherwise be launched and only fail at runtime).
     val opIdToOutputSchema = collectOutputSchemaFromPhysicalPlan(expandedPlan, errors)
 
-    val physicalPlan = errorHandling match {
-      case CompilationErrorHandling.Lenient =>
+    val physicalPlan = purpose match {
+      case _: CompileFor.Editing =>
         // The editing path leaves the bindings alone.
         expandedPlan
-      case CompilationErrorHandling.Strict =>
+      case run: CompileFor.Run =>
         if (errors.nonEmpty) failWith(logicalPlan, errors)
         // 5. a plan made to run resolves the Python environments its operators name, pins
         // their datasets and models and names where its output ports are stored, last, once the
@@ -583,7 +566,11 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
         // repositories to mount and the locations to write to, never a name to look up, a
         // binding or a location to make up.
         val boundPlan = locateOutputPorts(
-          bindPlanResources(bindPlanEnvironments(expandedPlan, errors), errors),
+          bindPlanResources(
+            bindPlanEnvironments(expandedPlan, run.environments, errors),
+            run.repositories,
+            errors
+          ),
           errors
         )
         if (errors.nonEmpty) failWith(logicalPlan, errors)

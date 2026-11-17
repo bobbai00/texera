@@ -33,15 +33,3 @@ trait RepositoryVersionResolver {
     */
   def resolve(versionPath: String): (String, String)
 }
-
-object RepositoryVersionResolver {
-
-  /**
-    * Pins nothing. For a compile that makes no plan to run, which never asks; a plan made to run
-    * with it fails on the first version it needs rather than resolving one unchecked.
-    */
-  val Unavailable: RepositoryVersionResolver = versionPath =>
-    throw new IllegalStateException(
-      s"No resolver for dataset and model versions was given, so $versionPath cannot be resolved."
-    )
-}

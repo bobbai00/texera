@@ -21,12 +21,7 @@ package org.apache.texera.common.compiler
 
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.executor.{FileListing, InputFile, OperatorInputs}
-import org.apache.texera.amber.core.storage.{
-  DatasetVersionLister,
-  InputLinker,
-  ListedFile,
-  ScanFileResolver
-}
+import org.apache.texera.amber.core.storage.ListedFile
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
@@ -43,15 +38,15 @@ import scala.collection.mutable.ArrayBuffer
   *
   *  - A scan source reads the file it names. The name is resolved to the URI of a file the
   *    plan's user may read, which is set on the operator (`setResolvedFileName`), where its
-  *    schema is read from. For a plan made to run, the file is then linked.
+  *    schema is read from. For a run, the file is then linked.
   *  - A CSV scan reads its file under the site's column limit.
-  *  - A File Lister outputs the files of the dataset version it names. For a plan made to run,
-  *    the version is listed, as the plan's user may read it.
+  *  - A File Lister outputs the files of the dataset version it names. For a run, the version
+  *    is listed, as the plan's user may read it.
   *  - A File Scan From Input reads the files its input tuples name, and the names arrive only
   *    while the plan runs, when nothing resolves a name any more. So it reads only what the
   *    File Listers upstream of it list, through any path of operators, and one with no File
-  *    Lister upstream is an error, in every compile. For a plan made to run, it is linked to
-  *    the files listed upstream of it, from where the listings say they are kept.
+  *    Lister upstream is an error, whatever the compile is for. For a run, it is linked to the
+  *    files listed upstream of it, from where the listings say they are kept.
   *
   * What an operator reads comes from here alone: the only links in a plan are to files this
   * found for the plan's user.
@@ -64,17 +59,21 @@ import scala.collection.mutable.ArrayBuffer
   * Any other failure, such as the database or the storage not answering, is no error of an
   * operator's, and is thrown as it is.
   *
-  * @param files    resolves the file names of scan sources, as the plan's user may read them
-  * @param settings the site's settings the plan is compiled under
-  * @param run      links files and lists dataset versions for a plan made to run; None for a
-  *                 compile that makes no plan to run, which links and lists nothing
+  * @param purpose what the workflow is compiled for: only for a run are files linked and dataset
+  *                versions listed
   */
 private[compiler] class InputBinder(
-    files: ScanFileResolver,
-    settings: CompileSettings,
-    run: Option[(InputLinker, DatasetVersionLister)],
+    purpose: CompileFor,
     errors: ArrayBuffer[(OperatorIdentity, Throwable)]
 ) {
+
+  private val settings = purpose.settings
+
+  // What links files and lists dataset versions; None unless the plan is made to run.
+  private val forRun: Option[CompileFor.Run] = purpose match {
+    case run: CompileFor.Run   => Some(run)
+    case _: CompileFor.Editing => None
+  }
 
   /** What each operator of `plan` reads; an operator that reads nothing is left out. */
   def inputsOf(plan: LogicalPlan): Map[OperatorIdentity, OperatorInputs] = {
@@ -109,8 +108,8 @@ private[compiler] class InputBinder(
     )
 
   /**
-    * Resolves the file `scan` names and sets it on the scan; for a plan made to run, the file
-    * linked under its resolved name, which is the name the scan's executor knows it by.
+    * Resolves the file `scan` names and sets it on the scan; for a run, the file linked under
+    * its resolved name, which is the name the scan's executor knows it by.
     */
   private def linkTo(scan: ScanSourceOpDesc): Option[InputFile] =
     scan.fileName match {
@@ -126,12 +125,11 @@ private[compiler] class InputBinder(
         None
       case Some(name) =>
         try {
-          val file = files.resolve(name)
+          val file = purpose.files.resolve(name)
           scan.setResolvedFileName(file)
-          run.map {
-            case (linker, _) =>
-              val link = linker.link(file)
-              InputFile(scan.fileName.get, link.url, link.expiresAtMs)
+          forRun.map { run =>
+            val link = run.inputLinker.link(file)
+            InputFile(scan.fileName.get, link.url, link.expiresAtMs)
           }
         } catch {
           case notFound: FileNotFoundException =>
@@ -141,8 +139,8 @@ private[compiler] class InputBinder(
     }
 
   /**
-    * The files `fileScan` reads, linked for a plan made to run: those the File Listers upstream
-    * of it list. A file two of them list is one file.
+    * The files `fileScan` reads, linked for a run: those the File Listers upstream of it list.
+    * A file two of them list is one file.
     */
   private def readBy(
       fileScan: FileScanOpDesc,
@@ -166,21 +164,20 @@ private[compiler] class InputBinder(
           s"most ${settings.maxListedFiles}."
       )
     } else {
-      OperatorInputs(files = run.toSeq.flatMap {
-        case (linker, _) =>
-          listed
-            .map { file =>
-              val link = linker.linkListed(file)
-              InputFile(file.logicalPath, link.url, link.expiresAtMs)
-            }
-            .sortBy(_.name)
+      OperatorInputs(files = forRun.toSeq.flatMap { run =>
+        listed
+          .map { file =>
+            val link = run.inputLinker.linkListed(file)
+            InputFile(file.logicalPath, link.url, link.expiresAtMs)
+          }
+          .sortBy(_.name)
       })
     }
   }
 
   /**
-    * The files of the dataset version `fileLister` names, as a plan made to run lists them: None
-    * for a compile that makes no plan to run, or when the operator has an error of its own.
+    * The files of the dataset version `fileLister` names, as a run lists them: None for a
+    * compile that makes no plan to run, or when the operator has an error of its own.
     */
   private def listingOf(fileLister: FileListerSourceOpDesc): Option[Seq[ListedFile]] = {
     def refuse(why: String, cause: Throwable = null): Option[Seq[ListedFile]] = {
@@ -195,26 +192,25 @@ private[compiler] class InputBinder(
             "panel."
         )
       case Some(versionPath) =>
-        run.flatMap {
-          case (_, lister) =>
-            try {
-              // One file more than may be listed is asked for, to tell a version that holds more.
-              val listing =
-                lister.list(versionPath, if (maxFiles < Int.MaxValue) maxFiles + 1 else maxFiles)
-              if (listing.size <= maxFiles) Some(listing)
-              else
-                refuse(
-                  s"Dataset version $versionPath holds more files than the $maxFiles a " +
-                    s"${fileLister.operatorInfo.userFriendlyName} can list."
-                )
-            } catch {
-              case notFound: FileNotFoundException =>
-                refuse(
-                  s"Dataset version $versionPath was not found: it does not exist, or you do " +
-                    "not have access to it.",
-                  notFound
-                )
-            }
+        forRun.flatMap { run =>
+          try {
+            // One file more than may be listed is asked for, to tell a version that holds more.
+            val listing =
+              run.lister.list(versionPath, if (maxFiles < Int.MaxValue) maxFiles + 1 else maxFiles)
+            if (listing.size <= maxFiles) Some(listing)
+            else
+              refuse(
+                s"Dataset version $versionPath holds more files than the $maxFiles a " +
+                  s"${fileLister.operatorInfo.userFriendlyName} can list."
+              )
+          } catch {
+            case notFound: FileNotFoundException =>
+              refuse(
+                s"Dataset version $versionPath was not found: it does not exist, or you do " +
+                  "not have access to it.",
+                notFound
+              )
+          }
         }
     }
   }

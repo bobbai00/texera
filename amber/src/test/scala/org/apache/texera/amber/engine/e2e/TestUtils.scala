@@ -78,10 +78,9 @@ import org.apache.texera.amber.core.storage.ExecutionResultUris.getResultUriByLo
 import org.apache.texera.web.service.{ExecutionResultService, PlanToRun, WorkflowExecutionService}
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
+  CompileFor,
   CompileSettings,
   PythonEnvironmentNotResolved,
-  RunBindings,
   WorkflowCompiler
 }
 import org.scalatest.Assertions
@@ -117,12 +116,12 @@ object TestUtils {
     * site's settings are the defaults; and a UDF's Python environment is the fixture's, the only
     * one there is.
     */
-  val fixtureBindings: RunBindings = RunBindings(
+  val fixtureBindings: CompileFor.Run = CompileFor.Run(
     files = TestOperators.fixtureFileResolver,
+    settings = CompileSettings.Default,
     inputLinker = TestOperators.fixtureInputLinker,
     lister = TestOperators.fixtureDatasetVersionLister,
     repositories = TestOperators.fixtureRepositoryResolver,
-    settings = CompileSettings.Default,
     environments = name =>
       if (name == fixtureEnvironment.name) fixtureEnvironment
       else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
@@ -149,10 +148,9 @@ object TestUtils {
       context: WorkflowContext,
       fromSavedPlan: Boolean = true
   ): Workflow = {
-    val workflowCompiler = new WorkflowCompiler(context, fixtureBindings)
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
     if (fromSavedPlan) {
-      val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan)
+      val savedPlan = PlanToRun.make(context, fixtureBindings, logicalPlan)
       val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints
@@ -161,11 +159,11 @@ object TestUtils {
         WorkflowExecutionService.mountedUnder(readBack.plan, Some(fixtureUnitMountRoot))
       )
     } else {
-      // The compile PlanToRun.make makes a run's plan with, but not saved: strict, so an error
-      // throws rather than leaving no physical plan.
+      // The compile PlanToRun.make makes a run's plan with, but not saved: for a run, so an
+      // error throws rather than leaving no physical plan.
       Workflow.fromCompilationResult(
         context,
-        workflowCompiler.compile(logicalPlan, CompilationErrorHandling.Strict)
+        new WorkflowCompiler(context, fixtureBindings).compile(logicalPlan)
       )
     }
   }

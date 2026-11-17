@@ -258,23 +258,6 @@ class LakeFSInputLinkerSpec
     hits shouldBe empty
   }
 
-  "The linker of a compile that makes no plan to run" should "link no file, resolved or listed" in {
-    val resolved = intercept[IllegalStateException] {
-      InputLinker.Unavailable.link(new URI(s"dataset:///dataset-12/$commit/people.csv"))
-    }
-    val listed = intercept[IllegalStateException] {
-      InputLinker.Unavailable.linkListed(
-        ListedFile("/dataset/ada@texera.io/letters/v1/a.txt", "s3://texera-dataset/k/a")
-      )
-    }
-
-    resolved.getMessage shouldBe "No linker for input files was given, so " +
-      s"dataset:///dataset-12/$commit/people.csv cannot be linked."
-    listed.getMessage shouldBe "No linker for input files was given, so " +
-      "/dataset/ada@texera.io/letters/v1/a.txt cannot be linked."
-    hits shouldBe empty
-  }
-
   "The deployment's linker" should
     "sign for the endpoint, with the keys and for the lifetime the deployment is set up with" in {
     val link = LakeFSInputLinker.forDeployment.link(

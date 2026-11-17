@@ -378,13 +378,4 @@ class LakeFSDatasetVersionListerSpec
     hits shouldBe empty
   }
 
-  "The lister of a compile that makes no plan to run" should "list no version" in {
-    val thrown = intercept[IllegalStateException] {
-      DatasetVersionLister.Unavailable.list(lettersPath, atMost = 100)
-    }
-
-    thrown.getMessage shouldBe
-      s"No lister of dataset versions was given, so $lettersPath cannot be listed."
-    hits shouldBe empty
-  }
 }

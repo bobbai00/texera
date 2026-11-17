@@ -47,7 +47,7 @@ import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.LogicalOp
-import org.apache.texera.common.compiler.RunBindings
+import org.apache.texera.common.compiler.CompileFor
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.StatementRecorder.Statement
@@ -138,7 +138,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   private val unitCuid = 9785
 
   /** What the Dashboard binds each plan to. */
-  protected def bindings: RunBindings = TestUtils.fixtureBindings
+  protected def bindings: CompileFor.Run = TestUtils.fixtureBindings
 
   private var recorder: StatementRecorder = _
   private var configuredLakefsEndpoint: String = _

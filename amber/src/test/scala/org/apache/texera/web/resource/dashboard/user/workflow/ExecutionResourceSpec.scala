@@ -72,7 +72,7 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.RunBindings
+import org.apache.texera.common.compiler.CompileFor
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.{MockTexeraDB, SiteSettings, WorkflowExecutionStatus}
@@ -442,7 +442,7 @@ class ExecutionResourceSpec
       warehouses: Boolean = false,
       val hints: RecordingHints = new RecordingHints(None),
       failWrite: Option[RuntimeException] = None,
-      bindings: RunBindings => RunBindings = _ => TestUtils.fixtureBindings,
+      bindings: CompileFor.Run => CompileFor.Run = _ => TestUtils.fixtureBindings,
       background: Executor = _.run(),
       compiles: ExecutorService = compilePool,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
@@ -1573,7 +1573,7 @@ class ExecutionResourceSpec
     // the server's failure, and not an error of the workflow for its user to fix.
     val databaseDown = new DataAccessException("the database does not answer")
     val storageDown = new java.io.IOException("the storage does not answer")
-    Seq[(RunBindings => RunBindings, Exception)](
+    Seq[(CompileFor.Run => CompileFor.Run, Exception)](
       (_ => TestUtils.fixtureBindings.copy(files = _ => throw databaseDown), databaseDown),
       (
         _ => TestUtils.fixtureBindings.copy(inputLinker = linkerOf(_ => throw storageDown)),

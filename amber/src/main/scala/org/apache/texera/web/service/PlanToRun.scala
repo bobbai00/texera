@@ -33,12 +33,7 @@ import org.apache.texera.amber.core.workflow.{
 }
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
-  CompileSettings,
-  RunBindings,
-  WorkflowCompiler
-}
+import org.apache.texera.common.compiler.{CompileFor, CompileSettings, WorkflowCompiler}
 import org.apache.texera.web.service.execution.UserEnvironmentResolver
 
 import java.net.URI
@@ -74,31 +69,32 @@ object PlanToRun {
     * through, the site's settings as they stand now, and the Python environments that user
     * keeps.
     */
-  def bindingsFor(uid: Integer): RunBindings =
-    RunBindings(
+  def bindingsFor(uid: Integer): CompileFor.Run =
+    CompileFor.Run(
       files = FileResolver.forUser(uid),
+      settings = CompileSettings.fromSiteSettings(),
       inputLinker = LakeFSInputLinker.forDeployment,
       lister = LakeFSDatasetVersionLister.forUser(uid),
       repositories = FileResolver.repositoryVersionResolverForUser(uid),
-      settings = CompileSettings.fromSiteSettings(),
       environments = new UserEnvironmentResolver(uid)
     )
 
   /**
-    * Makes, from `logicalPlan`, the plan to run for the run `compiler` was made for, and saves it.
+    * Makes, from `logicalPlan`, the plan to run for `run`, and saves it.
     *
-    * The run is the compiler's context: its ids stamp every operator, and the plan is saved with
-    * its settings, warehouse and cost hints. The compile is Strict: a workflow with errors fails
-    * here, with each operator's first error, and nothing is saved. It links the files the
-    * operators read, lists the dataset versions File Listers name, resolves the Python
-    * environments and pins the datasets and models the operators name, and finds the output
-    * ports whose results are stored, which are saved with the settings. The run's context is
-    * left as it is; the engine takes the settings and cost hints from the saved plan. The plan
-    * saved replays `replay` and writes its replay log to `replayLog`.
+    * The run's ids stamp every operator, and the plan is saved with its settings, warehouse and
+    * cost hints. A workflow with errors fails here, with each operator's first error, and
+    * nothing is saved. The compile links the files the operators read, lists the dataset
+    * versions File Listers name, resolves the Python environments and pins the datasets and
+    * models the operators name, and finds the output ports whose results are stored, which are
+    * saved with the settings. The run's context is left as it is; the engine takes the settings
+    * and cost hints from the saved plan. The plan saved replays `replay` and writes its replay
+    * log to `replayLog`.
     *
-    * @param compiler  the run's compiler, bound for the run's user ([[bindingsFor]]): it resolves
-    *                  files, datasets, models and Python environments as that user may, and
-    *                  links the files
+    * @param run       the run the plan is made for
+    * @param bindings  what the plan is bound to, for the run's user ([[bindingsFor]]): files,
+    *                  datasets, models and Python environments are resolved as that user may,
+    *                  and the files linked
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
     * @return the physical plan to run, its settings and what else the run needs (an
@@ -117,12 +113,12 @@ object PlanToRun {
     *                                  or replays up to a blank interaction
     */
   def make(
-      compiler: WorkflowCompiler,
+      run: WorkflowContext,
+      bindings: CompileFor.Run,
       logicalPlan: LogicalPlanPojo,
       replay: Option[ReplaySource] = None,
       replayLog: Option[URI] = None
   ): String = {
-    val run = compiler.context
     // Checked first, in the words of the editor's settings; the codec refuses such a plan too.
     settingsProblem(run.workflowSettings).foreach(problem =>
       throw new IllegalArgumentException(problem)
@@ -137,7 +133,7 @@ object PlanToRun {
         run.warehouse,
         run.costHints
       )
-    val result = compiler.compile(logicalPlan, CompilationErrorHandling.Strict)
+    val result = new WorkflowCompiler(run, bindings).compile(logicalPlan)
     val compiled = Workflow.fromCompilationResult(savedUnder, result)
     PhysicalPlanCodec.toJson(
       PhysicalPlanCodec.encode(

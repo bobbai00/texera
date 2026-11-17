@@ -73,7 +73,7 @@ import org.apache.texera.amber.operator.udf.python.PythonUDFOpDescV2
 import org.apache.texera.amber.tags.IntegrationTest
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.common.compiler.{PythonEnvironmentNotResolved, WorkflowCompiler}
+import org.apache.texera.common.compiler.PythonEnvironmentNotResolved
 import org.apache.texera.common.config.{PythonUtils, UdfConfig}
 import org.apache.texera.web.service.{
   ExecutionConsoleService,
@@ -237,17 +237,14 @@ class PythonEnvironmentIntegrationSpec
     /** The UDF, as the run's errors and consoles name it. */
     val udfId: String = udf.operatorIdentifier.id
 
-    private val compiler = new WorkflowCompiler(
-      workflowContext(specId),
-      fixtureBindings.copy(environments =
-        name =>
-          if (name == environment.name) environment
-          else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
-      )
-    )
     private val savedPlan = PlanToRun
       .make(
-        compiler,
+        workflowContext(specId),
+        fixtureBindings.copy(environments =
+          name =>
+            if (name == environment.name) environment
+            else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
+        ),
         LogicalPlanPojo(
           List(text, udf),
           List(
