@@ -46,6 +46,10 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "lib"))
+
+from record_env import fast_record_env, record_timing  # noqa: E402
+
 GEN_DIR = HERE / "generated"
 CHART_DIR = GEN_DIR / "chart"
 DEPS_CACHE = GEN_DIR / "deps-cache"
@@ -384,8 +388,31 @@ def env_names(workload: dict, docs: list[dict]) -> set[str]:
     return names
 
 
+def record_options(fast_record: bool) -> dict:
+    """What --fast-record asks for, as MANIFEST.json's `options` records it. Both lists go into
+    `texeraEnvVars`, which reaches every Texera service: the webserver (the Dashboard service)
+    reads its own, and the managing service forwards the unit's commit interval to the unit
+    pods it creates (step 3's sub-part 6 on)."""
+    unit_env = fast_record_env("unit") if fast_record else {}
+    dashboard_env = fast_record_env("dashboard") if fast_record else {}
+    return {"fast_record": fast_record, "unit_env": unit_env, "dashboard_env": dashboard_env,
+            "record_timing": record_timing(unit_env, dashboard_env)}
+
+
+def missing_record_env(docs: list[dict], registry: str, tag: str, options: dict) -> list[str]:
+    """The --fast-record variables that the rendered chart does not give the service that
+    reads them: the webserver its own, the managing service the unit's (to forward)."""
+    missing = []
+    for image, wanted in (("texera-dashboard-service", options["dashboard_env"]),
+                          ("texera-workflow-computing-unit-managing-service", options["unit_env"])):
+        workload = workload_with_image(docs, f"{registry}/{image}:{tag}")
+        have = env_names(workload, docs) if workload else set()
+        missing += [f"{name} ({image})" for name in wanted if name not in have]
+    return missing
+
+
 def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile: str,
-             workarounds: bool, metrics_server: bool = True) -> dict:
+             workarounds: bool, metrics_server: bool = True, fast_record: bool = False) -> dict:
     GEN_DIR.mkdir(parents=True, exist_ok=True)
     chart_src = _copy_chart(source)
     deps = _resolve_dependencies()
@@ -411,6 +438,9 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
     _set_env(env, "KUBERNETES_IMAGE_PULL_POLICY", pull_policy)
     # agent-service is not deployed (below), so the workspace must not offer the copilot.
     _set_env(env, "GUI_WORKFLOW_WORKSPACE_COPILOT_ENABLED", "false")
+    options = record_options(fast_record)
+    for name, value in {**options["unit_env"], **options["dashboard_env"]}.items():
+        _set_env(env, name, value)
 
     s3_endpoint = (base_values.get("storage") or {}).get("s3", {}).get("endpoint") \
         or f"http://{RELEASE}-rustfs-svc:9000"
@@ -464,6 +494,10 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
         })
         docs = render()
     values_files.append(VALUES_FILE)
+    not_given = missing_record_env(docs, registry, tag, options)
+    if not_given:
+        die("--fast-record: the rendered chart does not hand these to the service that reads them "
+            "(texeraEnvVars no longer reaches it?): " + ", ".join(not_given))
 
     # Server-side apply (Helm 4's default) rejects a container listing an env name twice.
     duplicates = {}
@@ -518,6 +552,7 @@ def generate(source: Path, registry: str, tag: str, ns: str, port: int, profile:
         "unit_namespace": unit_namespace(ns),
         "values_profile": profile,
         "values_files": [str(v) for v in values_files],
+        "options": options,
         "images": {
             "registry": registry,
             "tag": tag,
@@ -1201,7 +1236,8 @@ def apply_post_run(report: dict, post: dict) -> None:
 
 def cmd_generate(a) -> None:
     reg, tag = parse_images(a.images)
-    m = generate(a.source, reg, tag, a.namespace, a.port, a.profile, not a.no_workarounds)
+    m = generate(a.source, reg, tag, a.namespace, a.port, a.profile, not a.no_workarounds,
+                 fast_record=a.fast_record)
     src = m["source_git"]
     log(f"generated {GEN_DIR.relative_to(HERE.parent.parent)} from {m['chart_source']} @ "
         f"{src.get('head', '')[:10]}{' (dirty)' if src.get('dirty') else ''}")
@@ -1214,10 +1250,11 @@ def cmd_up(a) -> None:
     ns, port = a.namespace, a.port
     facts = preflight(ns, port)
     m = generate(a.source, reg, tag, ns, port, a.profile, not a.no_workarounds,
-                 metrics_server=facts["metrics_server"])
+                 metrics_server=facts["metrics_server"], fast_record=a.fast_record)
     log(f"chart {m['chart_source']} @ {m['source_git'].get('head', '')[:10]}; images {reg}/texera-*:{tag} "
         f"(pull {m['images']['pull_policy']}); workarounds: "
-        f"{', '.join(w['name'] for w in m['workarounds']) or 'none'}")
+        f"{', '.join(w['name'] for w in m['workarounds']) or 'none'}"
+        + ("; fast record" if a.fast_record else ""))
     m["crds"] = check_crds(a.allow_crd_drift)
     log(f"CRDs: {m['crds']['same']} of the chart's {m['crds']['chart_crds']} are in the cluster as the chart "
         f"has them (Gateway API bundle {', '.join(m['crds']['chart_gateway_api_bundle']) or '-'}), "
@@ -1553,6 +1590,10 @@ def main() -> None:
                             "(the chart's single-node profile, default) or only values.yaml")
         p.add_argument("--no-workarounds", action="store_true",
                        help="deploy without the harness's workarounds for chart bugs")
+        p.add_argument("--fast-record", action="store_true",
+                       help="step 3's timers shortened, as Helm values (texeraEnvVars): the unit commits "
+                            "every 2 s; the Dashboard closes every 2 s, loses a unit after 12 s, an "
+                            "unstarted execution after 15 s, and expires results after 20 s")
 
     p = sub.add_parser("generate", help="write stack/k8s/generated/ (chart copy, values, render)")
     gen_args(p)

@@ -142,6 +142,23 @@ class ArgsTest(unittest.TestCase):
         a = parse("--evidence", "--gate", "A", "--legacy-env")  # single-node: untouched
         self.assertEqual((a.unit_kind, a.evidence, a.stack_manifest), ("local", "all", None))
 
+    def test_a_step_3_gate_is_not_single_node_only(self):
+        """A step-3 gate names what Kubernetes mode runs (design H6); step 2's gates gate on
+        the statement log, which only the single-node stack has."""
+        portable = frozenset({"3A"})
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--base", default="http://127.0.0.1:30080")
+        ap.add_argument("--gate", default=None)
+        ap.add_argument("--evidence", default=None)
+        k8s_unit.add_arguments(ap)
+        with mock.patch.dict("os.environ", {}, clear=False):
+            a = ap.parse_args(["--target", "k8s", "--gate", "3A"])
+            k8s_unit.resolve_args(a, portable_gates=portable)  # accepted
+            for refused in (["--gate", "D"], ["--gate", "3A", "--evidence", "I"]):
+                with self.assertRaises(SystemExit) as cm:
+                    k8s_unit.resolve_args(ap.parse_args(["--target", "k8s", *refused]), portable_gates=portable)
+                self.assertIn(refused[-2], str(cm.exception))
+
     def test_k8s_mode_reads_its_own_manifest_and_cuts_the_driver_off_docker(self):
         with mock.patch.dict("os.environ", {}, clear=False) as env:
             env.pop("DOCKER_HOST", None)

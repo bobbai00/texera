@@ -30,7 +30,12 @@ default, all recorded in MANIFEST.json):
     request the unit sends through the gateway shows up too;
   * --with-replay-log   the Dashboard and the unit write replay logs under the
     shared result volume;
-  * --unit-env KEY=VAL  extra environment for the unit (repeatable).
+  * --unit-env KEY=VAL  extra environment for the unit (repeatable);
+  * --dashboard-env KEY=VAL  the same for the Dashboard service;
+  * --fast-record       step 3's timers shortened (lib/record_env.py): the unit
+    commits an execution's record every 2 s, the Dashboard closes executions
+    every 2 s, declares a unit lost after 12 s and an execution never started
+    after 15 s, and expires results 20 s after a run ended.
 
 Commands: generate | up | down | reset | status | logs. See --help.
 """
@@ -54,6 +59,10 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+from record_env import fast_record_env, record_timing  # noqa: E402
+
 GEN_DIR = HERE / "generated"
 DEFAULT_SOURCE = Path("/Users/jiadongb/Desktop/projects/texera-worktrees/self-contained-engine")
 
@@ -271,37 +280,58 @@ def _rewrite_ports(ports: list, bind: str) -> list:
 _REWRITTEN_KEYS = {"container_name", "networks", "depends_on", "ports", "volumes", "healthcheck"}
 
 
+def _env_items(items: list[str] | None, flag: str) -> dict[str, str]:
+    """`KEY=VALUE` items of a repeatable option, in order."""
+    env: dict[str, str] = {}
+    for item in items or []:
+        key, sep, value = item.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            die(f"{flag} takes KEY=VALUE, got '{item}'")
+        env[key] = value
+    return env
+
+
 class StackOptions:
     """The evidence options of `generate` (see the module doc)."""
 
     def __init__(self, pg_statement_log: bool = False, isolate_unit: bool = False,
-                 with_replay_log: bool = False, unit_env: list[str] | None = None):
+                 with_replay_log: bool = False, unit_env: list[str] | None = None,
+                 fast_record: bool = False, dashboard_env: list[str] | None = None):
         self.pg_statement_log = pg_statement_log
         self.isolate_unit = isolate_unit
         self.with_replay_log = with_replay_log
-        self.unit_env: dict[str, str] = {}
-        for item in unit_env or []:
-            key, sep, value = item.partition("=")
-            if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                die(f"--unit-env takes KEY=VALUE, got '{item}'")
-            self.unit_env[key] = value
+        self.fast_record = fast_record
+        self.unit_env = _env_items(unit_env, "--unit-env")
+        self.dashboard_env = _env_items(dashboard_env, "--dashboard-env")
 
     def unit_environment(self) -> dict[str, str]:
-        """What the unit gets on top of the source's environment, in order."""
+        """What the unit gets on top of the source's environment, in order: --unit-env
+        wins over what another option sets."""
         env: dict[str, str] = {}
         if self.with_replay_log:
             env[REPLAY_LOG_ENV] = REPLAY_LOG_URI
         if self.pg_statement_log and CLEANUP_ENV not in self.unit_env:
             env[CLEANUP_ENV] = CLEANUP_SECONDS_WITH_STATEMENT_LOG
+        if self.fast_record:
+            env.update(fast_record_env("unit"))
         env.update(self.unit_env)
         return env
 
-    def describe(self) -> dict:
-        def shown(key: str, value: str) -> str:
-            if _SECRET_KEY.search(key):
-                return f"<set, {len(value)} chars>"
-            return value
+    def dashboard_environment(self) -> dict[str, str]:
+        """The same for the Dashboard service; --dashboard-env wins."""
+        env: dict[str, str] = {}
+        if self.with_replay_log:
+            env[REPLAY_LOG_ENV] = REPLAY_LOG_URI
+        if self.fast_record:
+            env.update(fast_record_env("dashboard"))
+        env.update(self.dashboard_env)
+        return env
 
+    def describe(self) -> dict:
+        def shown(env: dict[str, str]) -> dict[str, str]:
+            return {k: f"<set, {len(v)} chars>" if _SECRET_KEY.search(k) else v for k, v in env.items()}
+
+        unit_env, dashboard_env = self.unit_environment(), self.dashboard_environment()
         return {
             "pg_statement_log": self.pg_statement_log,
             "pg_log_line_prefix": PG_LOG_LINE_PREFIX if self.pg_statement_log else None,
@@ -309,8 +339,11 @@ class StackOptions:
             "unit_network": UNIT_NETWORK if self.isolate_unit else None,
             "gateway_access_log": GATEWAY_LOG_FORMAT if self.isolate_unit else None,
             "with_replay_log": self.with_replay_log,
-            "unit_env": {k: shown(k, v) for k, v in self.unit_environment().items()},
-            "dashboard_env": ({REPLAY_LOG_ENV: REPLAY_LOG_URI} if self.with_replay_log else {}),
+            "fast_record": self.fast_record,
+            # the step-3 timers the two services were given (the driver's deadlines follow them)
+            "record_timing": record_timing(unit_env, dashboard_env),
+            "unit_env": shown(unit_env),
+            "dashboard_env": shown(dashboard_env),
         }
 
 
@@ -415,7 +448,8 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
     dropped = {name for name, svc in services.items() if svc.get("profiles")}
     if not with_optional:
         dropped |= OPTIONAL_SERVICES & set(services)
-    for needed in [UNIT_SERVICE, POSTGRES_SERVICE] + ([DASHBOARD_SERVICE] if options.with_replay_log else []):
+    dashboard_env = options.dashboard_environment()
+    for needed in [UNIT_SERVICE, POSTGRES_SERVICE] + ([DASHBOARD_SERVICE] if dashboard_env else []):
         if needed not in services or needed in dropped:
             die(f"the source compose has no service '{needed}', which the options need")
     if options.pg_statement_log and services[POSTGRES_SERVICE].get("command") is not None:
@@ -436,9 +470,9 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
     unit_env = options.unit_environment()
     if unit_env:
         edits.setdefault(UNIT_SERVICE, {})["environment"] = _with_env(services[UNIT_SERVICE], unit_env)
-    if options.with_replay_log:
+    if dashboard_env:
         edits.setdefault(DASHBOARD_SERVICE, {})["environment"] = _with_env(
-            services[DASHBOARD_SERVICE], {REPLAY_LOG_ENV: REPLAY_LOG_URI})
+            services[DASHBOARD_SERVICE], dashboard_env)
     for name, svc in services.items():
         if name in dropped:
             continue
@@ -780,7 +814,8 @@ def wait_http(url: str, timeout: int) -> None:
 
 def options_from_args(a) -> StackOptions:
     return StackOptions(pg_statement_log=a.pg_statement_log, isolate_unit=a.isolate_unit,
-                        with_replay_log=a.with_replay_log, unit_env=a.unit_env)
+                        with_replay_log=a.with_replay_log, unit_env=a.unit_env,
+                        fast_record=a.fast_record, dashboard_env=a.dashboard_env)
 
 
 def describe_options(opts: dict) -> str:
@@ -791,8 +826,11 @@ def describe_options(opts: dict) -> str:
         parts.append(f"unit isolated on {opts.get('unit_network')}")
     if opts.get("with_replay_log"):
         parts.append("replay logs")
-    if opts.get("unit_env"):
-        parts.append("unit env " + ", ".join(f"{k}={v}" for k, v in opts["unit_env"].items()))
+    if opts.get("fast_record"):
+        parts.append("fast record")
+    for label, key in (("unit env", "unit_env"), ("dashboard env", "dashboard_env")):
+        if opts.get(key):
+            parts.append(f"{label} " + ", ".join(f"{k}={v}" for k, v in opts[key].items()))
     return "; ".join(parts) or "none"
 
 
@@ -834,7 +872,8 @@ def cmd_up(a) -> None:
         manifest = load_manifest()
         if a.images:
             die("--images needs a regenerate; drop --no-generate")
-        if a.pg_statement_log or a.isolate_unit or a.with_replay_log or a.unit_env:
+        if (a.pg_statement_log or a.isolate_unit or a.with_replay_log or a.unit_env or a.fast_record
+                or a.dashboard_env):
             die("the stack options need a regenerate; drop --no-generate")
     else:
         cmd_generate(a)
@@ -964,6 +1003,12 @@ def main() -> None:
                        help=f"{REPLAY_LOG_ENV}={REPLAY_LOG_URI} for the Dashboard and the unit")
         p.add_argument("--unit-env", action="append", default=[], metavar="KEY=VAL",
                        help="extra environment for the unit (repeatable)")
+        p.add_argument("--dashboard-env", action="append", default=[], metavar="KEY=VAL",
+                       help="extra environment for the Dashboard service (repeatable)")
+        p.add_argument("--fast-record", action="store_true",
+                       help="step 3's timers shortened: the unit commits every 2 s; the Dashboard closes "
+                            "every 2 s, loses a unit after 12 s, an unstarted execution after 15 s, and "
+                            "expires results after 20 s")
 
     p = sub.add_parser("generate", help="write stack/generated/ from the source worktree")
     gen_args(p)

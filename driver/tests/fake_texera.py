@@ -20,6 +20,14 @@ the last socket of its (workflow, unit) closes; `cleanup_s` later the unit clean
 it up. With a `statement_sink` it reports the Postgres statements the design's
 services would run (Dashboard: the INSERT at create; unit: the run-state writes and
 the idle cleanup; a refused start: nothing), for evidence tests.
+
+`step` chooses the product it models: "2" (the default: the end of step 2), or step
+3 at one of its harness gates. At "3A" (the step-3 design's sub-parts 2 to 7) every
+run started by id has a recorder (fake_record.py) that writes its log, statistics and
+console into the fake lake (fake_lake.py), and the statistics route reads the lake.
+The fake engine also sleeps what a UDF's `time.sleep()` asks for, scaled by
+`sleep_scale` (0 unless a test sets it), prints what its `print(f"...")` prints, and
+fails a run whose UDF raises as its module is loaded, as the real engine does.
 """
 
 from __future__ import annotations
@@ -38,6 +46,10 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from fake_lake import FakeLake
+from fake_record import NAMESPACES, Recorder, table_name
+from record_timing import RecordTiming
+
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 TUPLE_DELAY_S = 0.004
@@ -45,6 +57,18 @@ TUPLE_DELAY_S = 0.004
 REPLAY_DELAY_S = 0.1
 STATUS_CODES = {"Uninitialized": 0, "Initializing": 0, "Running": 1, "Paused": 2, "Completed": 3,
                 "Failed": 4, "Killed": 5}
+#: the products the fake models, in order (see the module doc)
+STEPS = ("2", "3A")
+#: the states the execution log holds, by the name a socket is told (design D2, D6)
+LOGGED_STATES = {"Initializing": "READY", "Running": "RUNNING", "Paused": "PAUSED",
+                 "Completed": "COMPLETED", "Failed": "FAILED", "Killed": "KILLED"}
+DEFAULT_WAREHOUSE = "texera"
+#: a slow operator's statistics reach its sockets at least this often
+STATS_EVERY_S = 0.2
+_PRINT = re.compile(r'print\(f"((?:[^"\\]|\\.)*)"\)')
+_SLEEP = re.compile(r"time\.sleep\(([0-9.]+)\)")
+#: a raise at module level: the worker cannot load the UDF
+_RAISE_ON_LOAD = re.compile(r"^raise \w+\((['\"])(.*?)\1\)", re.M)
 
 
 def make_token(uid: int, role: str, email: str) -> str:
@@ -134,9 +158,19 @@ def _csv_rows(name: str) -> list[dict]:
 class Run:
     """One execution the fake engine runs."""
 
-    def __init__(self, fake: "FakeTexera", eid: int, plan: dict, sessions: list):
+    def __init__(self, fake: "FakeTexera", eid: int, plan: dict, sessions: list, named: bool = False):
         self.fake, self.eid, self.plan = fake, eid, plan
         self.sessions = sessions
+        #: a run started by its id tells its sessions which execution it is (step 2's
+        #: sub-part 14); one the old unit created itself does not
+        self.named = named
+        #: step 3: what writes this run's record into the lake
+        self.recorder: Recorder | None = None
+        #: why the run ends when it completes (the agent's path gives one)
+        self.end_reason: str | None = None
+        self.out_counts: dict[str, int] = {}
+        #: what each Aggregate holds until its input ends
+        self.held_rows: dict[str, list[dict]] = {}
         self.state = "Uninitialized"
         self.paused = threading.Event()
         self.killed = threading.Event()
@@ -164,12 +198,16 @@ class Run:
         """What a socket that opens on the workflow while this run is held receives."""
         out = [self.last_stats] if self.last_stats else []
         out += self.console_log
-        out.append({"type": "WorkflowStateEvent", "state": self.state})
+        out.append(self.state_event())
         if self.errors:
             out.append({"type": "WorkflowErrorEvent", "fatalErrors": list(self.errors)})
         return out
 
-    def set_state(self, state: str) -> None:
+    def state_event(self) -> dict:
+        named = {"executionId": self.eid} if self.named else {}
+        return {"type": "WorkflowStateEvent", "state": self.state, **named}
+
+    def set_state(self, state: str, reason: str | None = None, errors: tuple | list = ()) -> None:
         self.state = state
         code = STATUS_CODES.get(state)
         if code is not None and state != "Uninitialized":
@@ -186,7 +224,9 @@ class Run:
                                   f"$1 = '{self.eid}', $2 = '{op}-out-0', $3 = 'vfs:///result/{op}'")
             if state in ("Completed", "Failed", "Killed"):
                 self.fake.on_terminal(self)
-        self.emit({"type": "WorkflowStateEvent", "state": state})
+        if self.recorder is not None and state in LOGGED_STATES:
+            self.recorder.state(LOGGED_STATES[state], reason, errors)
+        self.emit(self.state_event())
 
     def sink(self) -> str:
         view = self.plan.get("opsToViewResult") or []
@@ -221,6 +261,13 @@ class Run:
         if t == "PythonUDFV2":
             code = op["code"]
             out = dict(row)
+            said = _PRINT.search(code)
+            if said:
+                self.console(op_id, "PRINT", re.sub(r"\{tuple_\['(\w+)'\]\}", lambda m: str(row[m.group(1)]),
+                                                    said.group(1)))
+            slept = _SLEEP.search(code)
+            if slept and self.fake.sleep_scale:
+                self.killed.wait(float(slept.group(1)) * self.fake.sleep_scale)
             m = re.search(r'tuple_\["tag"\] = "([^"]+)"', code)
             if m:
                 out["tag"] = m.group(1)
@@ -243,6 +290,52 @@ class Run:
             path.insert(0, self.upstream(path[0])[0])
         return path[0], path[1:]
 
+    def push(self, ops: list[str], rows: list[dict]) -> list[dict]:
+        """`rows` through the operators `ops` in order; an Aggregate keeps what reaches it
+        until its input ends (finish)."""
+        for op_id in ops:
+            if self.ops[op_id]["operatorType"] == "Aggregate":
+                self.held_rows.setdefault(op_id, []).extend(rows)
+                return []
+            rows = [out for r in rows for out in self.apply(op_id, r)]
+            self.out_counts[op_id] += len(rows)
+        return rows
+
+    def finish(self, ops: list[str]) -> list[dict]:
+        """The input has ended: each Aggregate emits its groups to what follows it."""
+        out: list[dict] = []
+        for i, op_id in enumerate(ops):
+            if self.ops[op_id]["operatorType"] == "Aggregate":
+                groups = self.aggregate(op_id, self.held_rows.pop(op_id, []))
+                self.out_counts[op_id] += len(groups)
+                out = self.push(ops[i + 1:], groups)
+        return out
+
+    def aggregate(self, op_id: str, rows: list[dict]) -> list[dict]:
+        op = self.ops[op_id]
+        groups: dict[tuple, dict] = {}
+        for row in rows:
+            key = tuple(row[k] for k in op["groupByKeys"])
+            group = groups.setdefault(key, dict(zip(op["groupByKeys"], key)))
+            for agg in op["aggregations"]:
+                name = agg["result attribute"]
+                if agg["aggFunction"] == "sum":
+                    group[name] = group.get(name, 0.0) + float(row[agg["attribute"]])
+                elif agg["aggFunction"] == "count":
+                    group[name] = group.get(name, 0) + 1
+                else:
+                    raise ValueError(f"fake engine cannot aggregate with {agg['aggFunction']}")
+        return list(groups.values())
+
+    def report(self, state: str = "Running") -> None:
+        """The operators' statistics: to the sessions, and to the run's record."""
+        self.emit({"type": "OperatorStatisticsUpdateEvent", "operatorStatistics": {
+            op: {"operatorState": state, "aggregatedInputRowCount": 0,
+                 "aggregatedOutputRowCount": n, "numWorkers": 1} for op, n in self.out_counts.items()}})
+        if self.recorder is not None:
+            self.recorder.statistics({op: {"output": n, "state": state.upper()}
+                                      for op, n in self.out_counts.items()})
+
     def run(self) -> None:
         src, rest = self.chain()
         try:
@@ -250,39 +343,42 @@ class Run:
         except Exception as e:  # noqa: BLE001
             self.fail(str(e))
             return
-        out_counts = {op: 0 for op in [src] + rest}
-        out_counts[src] = len(rows)
+        self.out_counts = {op: 0 for op in [src] + rest}
+        self.out_counts[src] = len(rows)
+        self.fake.store_outputs(self)
         self.set_state("Running")
+        reported = time.monotonic()
         for i, row in enumerate(rows):
             while self.paused.is_set() and not self.killed.is_set():
                 time.sleep(0.005)
             if self.killed.is_set():
                 return
-            current = [row]
-            for op_id in rest:
-                nxt = []
-                for r in current:
-                    nxt.extend(self.apply(op_id, r))
-                current = nxt
-                out_counts[op_id] += len(current)
-            self.rows_out.extend(current)
-            if i % 10 == 9 or i == len(rows) - 1:
-                self.emit({"type": "OperatorStatisticsUpdateEvent", "operatorStatistics": {
-                    op: {"operatorState": "Running", "aggregatedInputRowCount": 0,
-                         "aggregatedOutputRowCount": n, "numWorkers": 1} for op, n in out_counts.items()}})
+            self.rows_out.extend(self.push(rest, [row]))
+            if self.killed.is_set():
+                return
+            if i % 10 == 9 or i == len(rows) - 1 or time.monotonic() - reported >= STATS_EVERY_S:
+                self.report()
+                reported = time.monotonic()
             time.sleep(TUPLE_DELAY_S)
-        self.set_state("Completed")
+        aggregates = any(self.ops[op]["operatorType"] == "Aggregate" for op in rest)
+        if aggregates or self.recorder is not None:
+            self.rows_out.extend(self.finish(rest))
+            self.report("Completed")  # the engine sends its last statistics before COMPLETED
+        self.fake.store_results(self)
+        self.set_state("Completed", reason=self.end_reason)
 
     def fail(self, message: str, op: str = "") -> None:
-        self.set_state("Failed")
-        self.emit({"type": "WorkflowErrorEvent", "fatalErrors": [
-            {"type": {"name": "EXECUTION_FAILURE"}, "message": message, "details": "", "operatorId": op,
-             "workerId": ""}]})
+        error = {"type": {"name": "EXECUTION_FAILURE"}, "message": message, "details": "", "operatorId": op,
+                 "workerId": ""}
+        self.set_state("Failed", errors=[error])
+        self.emit({"type": "WorkflowErrorEvent", "fatalErrors": [error]})
 
     def console(self, op: str, msg_type: str, title: str, message: str = "") -> None:
         self.emit({"type": "ConsoleUpdateEvent", "operatorId": op, "messages": [
             {"workerId": "", "timestamp": {"seconds": int(time.time()), "nanos": 0},
              "msgType": {"name": msg_type}, "source": "unit", "title": title, "message": message}]})
+        if self.recorder is not None:
+            self.recorder.console(op, msg_type, title, message, source="unit")
 
     def install_environments(self) -> bool:
         """Section 4 Environment install, as the console and the fatal error show it."""
@@ -302,23 +398,36 @@ class Run:
             if bad:
                 tail = f"ERROR: No matching distribution found for {bad[0]}"
                 self.console(op_id, "ERROR", f"Python environment '{name}' could not be installed", tail)
-                self.set_state("Failed")
-                self.emit({"type": "WorkflowErrorEvent", "fatalErrors": [
-                    {"type": {"name": "EXECUTION_FAILURE"},
-                     "message": f"Python environment '{name}' could not be installed: {tail}",
-                     "details": tail, "operatorId": op_id, "workerId": ""}]})
+                error = {"type": {"name": "EXECUTION_FAILURE"},
+                         "message": f"Python environment '{name}' could not be installed: {tail}",
+                         "details": tail, "operatorId": op_id, "workerId": ""}
+                self.set_state("Failed", errors=[error])
+                self.emit({"type": "WorkflowErrorEvent", "fatalErrors": [error]})
                 return False
             self.fake.installed_envs[key] = {"requirements": lines, "name": name}
             self.console(op_id, "PRINT", f"Python environment '{name}' is ready (0.1 s)", "\n".join(lines))
         return True
 
+    def load_executors(self) -> bool:
+        """A UDF whose module raises as it is loaded cannot be initialized: the engine
+        reports the Python error as a fatal error and the run fails before it runs.
+        (A raise in process_tuple only pauses its worker; the run stays Running.)"""
+        for op_id, op in self.ops.items():
+            raised = _RAISE_ON_LOAD.search(op.get("code") or "") if op["operatorType"] == "PythonUDFV2" else None
+            if raised:
+                self.fail(f"java.lang.Throwable: {raised.group(2)}", op_id)
+                return False
+        return True
+
     def start(self) -> None:
+        self.fake.start_record(self)
         self.set_state("Initializing")
 
         def go():
             if self.fake.executions[self.eid].get("plan_uri") and not self.install_environments():
                 return
-            self.run()
+            if self.load_executors():
+                self.run()
         self.thread = threading.Thread(target=go, daemon=True)
         self.thread.start()
 
@@ -342,7 +451,7 @@ class Run:
     def kill(self) -> None:
         self.killed.set()
         self.paused.clear()
-        self.set_state("Killed")
+        self.set_state("Killed", reason="killed by the user")
 
     def results(self, op_id: str) -> tuple[list[dict], list[dict]]:
         rows = self.rows_out if op_id == self.sink() else []
@@ -354,8 +463,17 @@ class Run:
 
 
 class FakeTexera:
-    def __init__(self, *, warehouses: bool = True, replay_log: bool = False):
+    def __init__(self, *, warehouses: bool = True, replay_log: bool = False, step: str = "2",
+                 timing: RecordTiming | None = None):
         self.lock = threading.RLock()
+        self.step = step
+        #: step 3's timers, as the stack would set them (tests give short ones)
+        self.timing = timing or RecordTiming()
+        self.lake = FakeLake()
+        #: how the product misbehaves, for the tests of checks that must fail (fake_record.FAULTS)
+        self.faults: set[str] = set()
+        #: how much of a UDF's time.sleep() the fake engine sleeps
+        self.sleep_scale = 0.0
         self.users: dict[int, dict] = {1: {"uid": 1, "name": "texera", "email": "texera@texera.io",
                                            "password": "texera", "role": "ADMIN", "comment": ""}}
         self.workflows: dict[int, dict] = {}
@@ -383,6 +501,79 @@ class FakeTexera:
         self.access_sink = None
         self.server: ThreadingHTTPServer | None = None
 
+    def at(self, step: str) -> bool:
+        """Whether the product modelled has reached `step`."""
+        return STEPS.index(self.step) >= STEPS.index(step)
+
+    # ------------------------------------------------------------ the lake
+
+    def warehouse_of(self, e: dict) -> str:
+        return f"user-{e['uid']}-{e['whid']}" if e.get("whid") is not None else DEFAULT_WAREHOUSE
+
+    def execution_table(self, eid: int, kind: str):
+        """One of an execution's own tables (plan, log, statistics, console), or None."""
+        e = self.executions[eid]
+        return self.lake.table(self.warehouse_of(e), NAMESPACES[kind], table_name(e["wid"], eid, kind))
+
+    def write_plan(self, eid: int) -> None:
+        """Create writes the execution's plan table; its one row is the plan."""
+        e = self.executions[eid]
+        self.lake.create(self.warehouse_of(e), NAMESPACES["plan"], table_name(e["wid"], eid, "plan")) \
+            .append([{"plan": json.dumps(e["plan"])}])
+
+    def claim_start(self, eid: int) -> None:
+        """The one start of an execution: the `started` tag on its plan table."""
+        self.executions[eid]["started"] = True
+        self.execution_table(eid, "plan").tag("started")
+
+    def start_record(self, run: "Run") -> None:
+        """Step 3: a run started by id gets its recorder right after the claim (design 4.1)."""
+        e = self.executions[run.eid]
+        if self.at("3A") and e.get("plan_uri"):
+            run.recorder = Recorder(self.lake, self.warehouse_of(e), e["wid"], run.eid,
+                                    interval_s=self.timing.commit_interval_s, faults=self.faults)
+
+    def port_tables(self, run: "Run") -> dict[str, tuple[str, str]]:
+        """kind -> (URI, table name) of the result and the state table of the run's stored
+        port: its sink's first output port."""
+        e = self.executions[run.eid]
+        port = f"(logicalOpId={run.sink()},layerName=main,portId=0,isInternal=false,isInput=false)"
+        base = f"wid/{e['wid']}/eid/{run.eid}/globalportid/{port}"
+        wh = f"wh/{self.warehouse_of(e)}/" if e.get("whid") is not None else ""
+        return {kind: (f"vfs:///{wh}{base}/{kind}", f"{base}/{kind}".replace("/", "_"))
+                for kind in ("result", "state")}
+
+    def store_outputs(self, run: "Run") -> None:
+        """The engine makes the result table of the run's stored port, and a state table
+        beside it, and tells the recorder of the port."""
+        e = self.executions[run.eid]
+        if not e.get("plan_uri"):
+            return
+        tables = self.port_tables(run)
+        for kind, (_uri, name) in tables.items():
+            self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
+        if run.recorder is not None:
+            port = tables["result"][0].split("/globalportid/")[1].rsplit("/", 1)[0]
+            run.recorder.output(port, tables["result"][0], "SET_SNAPSHOT")
+
+    def clear_results(self, eid: int) -> None:
+        """Drop an execution's result and state tables and, with them, its console table."""
+        e = self.executions[eid]
+        warehouse, prefix = self.warehouse_of(e), f"wid_{e['wid']}_eid_{eid}_"
+        for kind in ("result", "state"):
+            for name in self.lake.names(warehouse, NAMESPACES[kind]):
+                if name.startswith(prefix):
+                    self.lake.drop(warehouse, NAMESPACES[kind], name)
+        self.lake.drop(warehouse, NAMESPACES["console"], table_name(e["wid"], eid, "console"))
+
+    def store_results(self, run: "Run") -> None:
+        """The port ended: its rows are committed to its result table."""
+        e = self.executions[run.eid]
+        table = self.lake.table(self.warehouse_of(e), NAMESPACES["result"], self.port_tables(run)["result"][1]) \
+            if e.get("plan_uri") else None
+        if table is not None and run.rows_out:
+            table.append(list(run.rows_out))
+
     # -------------------------------------------------------- statements
 
     def sql(self, who: str, sql: str, params: str | None = None) -> None:
@@ -402,6 +593,7 @@ class FakeTexera:
                 return  # somebody opened the workflow again
             if key is not None:
                 self.held.pop(key, None)
+            self.clear_results(eid)  # the unit clears the storage of the run it lets go of
             for table in ("operator_port_executions", "operator_executions"):
                 self.sql("unit", f"delete from {table} where {table}.workflow_execution_id = $1", f"$1 = '{eid}'")
             self.sql("unit", "select workflow_executions.runtime_stats_uri from workflow_executions "
@@ -441,8 +633,10 @@ class FakeTexera:
                 parts = urllib.parse.urlsplit(self.path)
                 body = self._body() if method in ("POST", "PUT") else None
                 token = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
-                fake.rest_log.append({"method": method, "path": parts.path, "body": body, "token": token})
-                status, out = fake.route(method, parts.path, urllib.parse.parse_qs(parts.query), body, token)
+                query = urllib.parse.parse_qs(parts.query)
+                fake.rest_log.append({"method": method, "path": parts.path, "query": query, "body": body,
+                                      "token": token})
+                status, out = fake.route(method, parts.path, query, body, token)
                 self._reply(status, out)
                 if fake.access_sink is not None:
                     fake.access_sink(method, parts.path, status)
@@ -480,6 +674,8 @@ class FakeTexera:
     def stop(self) -> None:
         for run in self.runs.values():
             run.killed.set()
+            if run.recorder is not None:
+                run.recorder.kill()
         if self.server:
             self.server.shutdown()
             self.server.server_close()
@@ -571,6 +767,9 @@ class FakeTexera:
             m = re.fullmatch(r"/api/executions/(\d+)/updates", path)
             if m and method == "POST":
                 return self.post_update(uid, int(m.group(1)), body)
+            m = re.fullmatch(r"/api/executions/(\d+)/stats/(\d+)", path)
+            if m and method == "GET" and self.at("3A"):
+                return self.statistics(uid, int(m.group(1)), int(m.group(2)))
             m = re.fullmatch(r"/api/executions/(\d+)/latest", path)
             if m:
                 eids = [e for e, x in self.executions.items() if x["wid"] == int(m.group(1))]
@@ -647,7 +846,31 @@ class FakeTexera:
             self.sql("dashboard", "update workflow_executions set status = $1 where workflow_executions.eid = $2",
                      f"$1 = '4', $2 = '{eid}'")
             return 400, {"eid": eid, "operatorErrors": errors, "errors": []}
+        self.write_plan(eid)
+        # step 2, D8: a new execution replaces the results of the finished earlier ones of
+        # its workflow on its unit
+        for earlier, x in self.executions.items():
+            if earlier < eid and (x["wid"], x["cuid"]) == (wid, cuid) and x["status"] in (3, 4, 5):
+                self.clear_results(earlier)
         return 201, {"eid": eid, "wid": wid, "computingUnitId": cuid, "planUri": self.executions[eid]["plan_uri"]}
+
+    def statistics(self, uid: int, wid: int, eid: int):
+        """GET /api/executions/{wid}/stats/{eid}, from step 3's sub-part 6 on: the rows of
+        the execution's statistics table in the lake, times as epoch milliseconds."""
+        if self.workflows.get(wid, {}).get("owner") != uid:
+            return self.err(401, "HTTP 401 Unauthorized")
+        e = self.executions.get(eid)
+        if e is None or e["wid"] != wid:
+            return self.err(500, "No runtime statistics URI found for the given execution ID.")
+        table = self.execution_table(eid, "statistics")
+        with self.lake.lock:
+            rows = list(table.rows) if table is not None else []
+        return 200, [{"operatorId": r["operatorId"], "timestamp": r["timeMs"],
+                      "inputTupleCount": r["inputTupleCnt"], "inputTupleSize": r["inputTupleSize"],
+                      "outputTupleCount": r["outputTupleCnt"], "outputTupleSize": r["outputTupleSize"],
+                      "dataProcessingTime": r["dataProcessingTime"],
+                      "controlProcessingTime": r["controlProcessingTime"], "idleTime": r["idleTime"],
+                      "numWorkers": r["numWorkers"], "status": r["status"]} for r in rows]
 
     def compile_errors(self, uid: int, plan: dict) -> dict:
         ops = {o["operatorID"]: o for o in plan["operators"]}
@@ -720,15 +943,19 @@ class FakeTexera:
         if refused:
             return 200, {"success": False, "state": "Error", "operators": {}, "errors": [refused]}
         e = self.executions[eid]
-        e["started"] = True
-        run = Run(self, eid, e["plan"], [])
+        self.claim_start(eid)
+        run = Run(self, eid, e["plan"], [], named=True)
         self.runs[eid] = run
         target = (body.get("targetOperatorIds") or [None])[0]
         if target:
             run.plan = dict(e["plan"], opsToViewResult=[target])
             run.ops = {o["operatorID"]: dict(o) for o in e["plan"]["operators"]}
+            run.end_reason = "stopped once its target operators finished"  # design D5
+        self.start_record(run)
         run.set_state("Initializing")  # READY, then the run
         run.run()
+        if run.recorder is not None:  # the agent's path waits for the record before it reads it
+            run.recorder.await_idle(5)
         rows, _ = run.results(run.sink())
         return 200, {"success": run.state == "Completed", "state": run.state,
                      "operators": {run.sink(): {"state": "Completed", "inputTuples": 0, "outputTuples": len(rows),
@@ -753,7 +980,7 @@ class FakeTexera:
             sessions = self.sessions_by_key.setdefault(key, [])
         # the open sequence of the real unit: the handshake hack, the replay of the
         # held run (a little later), then ClusterStatusUpdateEvent
-        conn.send({"type": "WorkflowStateEvent", "state": "Uninitialized"})
+        conn.send({"type": "WorkflowStateEvent", "state": "Uninitialized", "executionId": None})
         held = self.held.get(key)
         if held is not None:
             time.sleep(self.replay_delay_s)
@@ -783,8 +1010,8 @@ class FakeTexera:
                                  "operatorId": "", "workerId": ""}]})
                             continue
                         e = self.executions[msg["executionId"]]
-                        e["started"] = True
-                        current = Run(self, msg["executionId"], e["plan"], sessions)
+                        self.claim_start(msg["executionId"])
+                        current = Run(self, msg["executionId"], e["plan"], sessions, named=True)
                         self.runs[current.eid] = current
                         self.held[key] = current
                         current.start()

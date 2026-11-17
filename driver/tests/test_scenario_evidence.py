@@ -67,19 +67,25 @@ class StackDocker(FakeDocker):
         return super()._call(args)
 
 
-class ScenarioEvidence(ScenarioCase):
+class EvidenceCase(ScenarioCase):
+    """A scenario case whose scenarios run with evidence, as e2e.py runs them."""
+
+    #: the fake `docker` of the stack, and what the evidence is asked for beyond its defaults
+    docker_class = StackDocker
+    evidence_options: dict = {}
+
     def setUp(self):
         super().setUp()
         quiet = e2e.log
         e2e.log = lambda m: None
         self.addCleanup(setattr, e2e, "log", quiet)
-        self.docker = StackDocker(self.fake)
+        self.docker = self.docker_class(self.fake)
         self.fake.statement_sink = self.docker.statement
         self.fake.access_sink = self.docker.access
         self.fake.cleanup_s = 0.3
         self.messages: list[str] = []
         self.ev = ev.Evidence(run_id="t", runner=self.docker, log=self.messages.append,
-                              cleanup_wait_s=8.0, quiet_s=0.4)
+                              cleanup_wait_s=8.0, quiet_s=0.4, **self.evidence_options)
         self.ev.preflight()
         self.ctx.evidence = self.ev
         self.ctx.transport.phase_hook = self.ev.on_phase
@@ -95,6 +101,8 @@ class ScenarioEvidence(ScenarioCase):
     def gated(self, rec) -> set[str]:
         return {c.name.split(":")[0].removeprefix("evidence ") for c in rec.checks if c.name.startswith("evidence ")}
 
+
+class ScenarioEvidence(EvidenceCase):
     def test_l8_second_start_on_a_replayed_run(self):
         rec = self.run_ev("l8")
         self.assertEqual(set("ABCDEF"), self.gated(rec))

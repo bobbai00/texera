@@ -43,6 +43,7 @@ from typing import Callable
 import requests
 
 import k8s_unit
+from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Lake, host_fetch
 from workflow import Workflow
 
 TARGET = "localdev"
@@ -67,7 +68,7 @@ def local_unit_uri(base: str) -> str:
     return f"{parts.scheme}://{parts.hostname}{port}/wsapi"
 
 
-def resolve_args(a: argparse.Namespace) -> None:
+def resolve_args(a: argparse.Namespace, portable_gates: frozenset = frozenset()) -> None:
     if not wanted(a):
         return
     if getattr(a, "unit_kind", None) == "kubernetes":
@@ -77,13 +78,22 @@ def resolve_args(a: argparse.Namespace) -> None:
         a.base = manifest.get("frontend_url") or DEV_SERVER
     if a.unit_uri == SINGLE_NODE_UNIT_URI and not os.environ.get("SCE_UNIT_URI"):
         a.unit_uri = local_unit_uri(a.base)
-    used = [(flag, why) for attr, (flag, why) in k8s_unit.SINGLE_NODE_OPTIONS.items() if getattr(a, attr, None)]
+    used = k8s_unit.single_node_options_used(a, portable_gates)
     if used:
         raise SystemExit("local-dev mode does not support " + "; ".join(f"{f} ({w})" for f, w in used)
                          + ". Use the single-node stack (run-baseline.sh) for them.")
     if hasattr(a, "stack_manifest") and a.stack_manifest is None:
         a.stack_manifest = MANIFEST
     k8s_unit.guard_docker()
+
+
+def lake() -> Lake:
+    """The lake's catalog, asked from this host: the stack publishes Lakekeeper on a local
+    port, and the services' own environment (in the manifest) names it."""
+    env = json.loads(MANIFEST.read_text()).get("service_env") or {}
+    uri = env.get("STORAGE_ICEBERG_CATALOG_REST_URI", DEFAULT_CATALOG_URI).rstrip("/")
+    return Lake(Catalog(host_fetch(uri)), env.get("STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME",
+                                                  DEFAULT_WAREHOUSE), env)
 
 
 def exec_prefix() -> Callable[[bool], list[str]]:

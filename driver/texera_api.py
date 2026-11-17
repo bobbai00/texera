@@ -29,6 +29,14 @@ Step 2 (design section 3), not on the published images:
   POST /api/executions                       dashboard-service  3.4 -> 201 {eid,wid,computingUnitId,planUri}
   POST /api/executions/{eid}/updates         dashboard-service  3.5 {operator} -> 200 {updateId,operatorId}
   GET/POST /api/environments, PUT/DELETE /api/environments/{veid}   dashboard-service 3.8
+
+Step 3 (its design, section 3.5). The product is being built against that design, so
+each answer is read in one place here (the classes below) and the scenarios use their
+fields: a name the product chooses differently is one line to change.
+  GET  /api/executions/{wid}/stats/{eid}[?cuid]  dashboard-service  -> [{operatorId, timestamp (epoch ms),
+                                             inputTupleCount, outputTupleCount, numWorkers, status, ...}]
+                                             read from the lake from sub-part 6 on; until sub-part 16 a
+                                             Kubernetes gateway routes it to the unit `cuid` names
 """
 
 from __future__ import annotations
@@ -38,6 +46,8 @@ import json
 import time
 import urllib.parse
 from typing import Any, Callable
+
+from dataclasses import dataclass
 
 import requests
 import websocket  # websocket-client
@@ -52,6 +62,28 @@ class TexeraApiError(RuntimeError):
         self.status = status
         self.body = body
         super().__init__(f"{method} {url} -> HTTP {status}: {body[:600]}")
+
+
+@dataclass
+class StatisticsRow:
+    """One stored sample of an operator's statistics. The field names are the ones the
+    server sends today (WorkflowRuntimeStatistics), which the design keeps; counts are
+    cumulative."""
+
+    operator_id: str
+    #: epoch milliseconds (design D7); kept as sent, so a scenario can check the type
+    time_ms: Any
+    input_count: int
+    output_count: int
+    num_workers: int
+    status: int
+
+    @classmethod
+    def of(cls, row: dict) -> "StatisticsRow":
+        return cls(operator_id=str(row.get("operatorId")), time_ms=row.get("timestamp"),
+                   input_count=int(row.get("inputTupleCount") or 0),
+                   output_count=int(row.get("outputTupleCount") or 0),
+                   num_workers=int(row.get("numWorkers") or 0), status=int(row.get("status") or 0))
 
 
 class TexeraApi:
@@ -374,6 +406,15 @@ class TexeraApi:
         """POST /api/executions/{eid}/updates (design 3.5); the raw response."""
         return self.request("POST", f"/api/executions/{eid}/updates", json={"operator": operator},
                             expect=None, timeout=max(self.timeout, 130))
+
+    # ------------------------------------------------- step 3: the stored record
+
+    def execution_statistics(self, wid: int, eid: int, cuid: int | None = None) -> list[StatisticsRow]:
+        """The stored statistics of an execution, oldest first. `cuid`, as the browser
+        sends it until the Dashboard serves statistics by execution alone (step 3's
+        sub-part 16): a Kubernetes gateway routes the request to that unit."""
+        query = f"?cuid={cuid}" if cuid is not None else ""
+        return [StatisticsRow.of(r) for r in self.get_json(f"/api/executions/{wid}/stats/{eid}{query}") or []]
 
     # ------------------------------------------------------------ environments
 

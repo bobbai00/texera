@@ -11,7 +11,10 @@ selected scenario creates its own workflow, runs it through the transport
 
 With --evidence the driver also reads the stack's Postgres statement log and the
 unit's network around every scenario and evaluates the step-2 Checks A-F
-(evidence.py); --negative-control expects A, D and F to fail (the old unit).
+(evidence.py); --negative-control expects A, D and F to fail (the old unit). A
+step-3 gate (--gate 3A) adds the scenarios and the checks of the record a run
+leaves in the lake; its waits follow the timers the stack was started with
+(record_timing.py).
 
 Prints PASS/FAIL per scenario and writes a JSON report. Exit code 0 only when
 every selected scenario passes (1 = a scenario failed, 2 = setup failed).
@@ -34,8 +37,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from evidence import (CHECKS, Evidence, EvidenceUnavailable, evaluate, parse_checks,  # noqa: E402
-                      read_env_file)
+from evidence import (ALL_CHECKS, Evidence, EvidenceUnavailable, docker_runner, evaluate,  # noqa: E402
+                      parse_checks, read_env_file)
+from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Lake, docker_fetch  # noqa: E402
+from record_timing import RecordTiming  # noqa: E402
 from scenarios import (GROUPS, NEEDS_OTHER_USER, NEEDS_UNIT2, SCENARIOS, Check, Ctx,  # noqa: E402
                        OtherUser, resolve, run_scenario)
 from texera_api import TexeraApi  # noqa: E402
@@ -55,15 +60,24 @@ OTHER_PASSWORD = "sce-e2e-other-password"
 
 # The harness gates of the step 2 design (section 5): transport, scenarios and the
 # evidence checks that gate. The stack options each gate expects are in the README.
+STEP2_LAST = "a,b,c,d,e,u,j,k,l,m,o,f,f2,g,h,i"
 GATES = {
     "A": {"transport": "ws", "scenarios": "a,b,c,d,e,u,g0", "evidence": "E", "legacy_env": True},
     "B": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,g0", "evidence": "C,E,F",
           "legacy_env": True},
     "C": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,f,f2,g0", "evidence": "all",
           "legacy_env": True},
-    "D": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,f,f2,g,h,i", "evidence": "all",
-          "legacy_env": False},
+    "D": {"transport": "create-ws", "scenarios": STEP2_LAST, "evidence": "all", "legacy_env": False},
+    # Step 3 (its design, sections 5 and 7). `scenarios` and `evidence` are the single-node
+    # stack's; `other_modes` is what Kubernetes and local-dev run (H6), where the evidence
+    # of the statement log does not exist.
+    "3A": {"transport": "create-ws", "scenarios": STEP2_LAST + ",p", "other_modes": "a,b,c,d,e,u,p",
+           "evidence": "A,B,C,D,E,F,I", "legacy_env": False, "level": "A"},
 }
+#: the gates that also run in Kubernetes and local-dev mode
+PORTABLE_GATES = frozenset(g for g, v in GATES.items() if "other_modes" in v)
+#: how far a product is taken to be when no gate says: the whole of step 3
+FINISHED_LEVEL = "C"
 
 _T0 = time.monotonic()
 
@@ -86,15 +100,16 @@ def main() -> int:
     ap.add_argument("--transport", default=None, choices=sorted(TRANSPORTS),
                     help="how runs are started/watched (default $SCE_TRANSPORT or ws; "
                          "create-ws from step 2's PR B on)")
-    ap.add_argument("--gate", choices=sorted(GATES),
-                    help="a step-2 PR gate: sets the transport, scenarios and gating evidence checks "
-                         "(explicit flags win): " + "; ".join(
+    ap.add_argument("--gate", choices=list(GATES),
+                    help="a harness gate of step 2 (A-D) or step 3 (3A): sets the transport, scenarios "
+                         "and gating evidence checks (explicit flags win): " + "; ".join(
                              f"{g}: {v['transport']} {v['scenarios']} checks {v['evidence']}"
                              for g, v in GATES.items()))
     ap.add_argument("--evidence", nargs="?", const="all", default=None, metavar="CHECKS",
                     help="evaluate Checks A-F from the stack's Postgres statement log and the "
-                         "unit's network; the listed checks gate (default all), the others are "
-                         "reported. Needs a stack started with --pg-statement-log")
+                         "unit's network; the listed checks gate (default all six), the others are "
+                         "reported. A step-3 check (I) is evaluated only when listed. Needs a stack "
+                         "started with --pg-statement-log")
     ap.add_argument("--negative-control", action="store_true",
                     help="the old unit: Checks A, D and F must FAIL (the scenario's own checks are "
                          "only reported)")
@@ -120,8 +135,10 @@ def main() -> int:
                     help="log in, print the user's token and exit (for --unit-env USER_JWT_TOKEN=...)")
     k8s_unit.add_arguments(ap)  # Kubernetes mode: --target k8s, --unit-kind, --k8s-unit-*
     a = ap.parse_args()
-    k8s_unit.resolve_args(a)  # Kubernetes mode: unit kind and the gateway port-forward as --base
-    localdev_unit.resolve_args(a)  # local-dev mode: the dev server as --base, the frontend's local unit URI
+    # Kubernetes mode: unit kind and the gateway port-forward as --base
+    k8s_unit.resolve_args(a, portable_gates=PORTABLE_GATES)
+    # local-dev mode: the dev server as --base, the frontend's local unit URI
+    localdev_unit.resolve_args(a, portable_gates=PORTABLE_GATES)
 
     if a.list:
         for k, (name, title, _) in SCENARIOS.items():
@@ -139,15 +156,19 @@ def main() -> int:
         raise SystemExit(f"unknown transport {transport_name}; known: {', '.join(TRANSPORTS)}")
     a.transport = transport_name
     legacy_env = a.legacy_env or bool(gate.get("legacy_env"))
-    keys = resolve(a.scenario or ([gate["scenarios"]] if gate else []), transport_name, legacy_env)
+    single_node = a.target == "single-node"
+    gate_scenarios = gate.get("scenarios" if single_node else "other_modes")
+    keys = resolve(a.scenario or ([gate_scenarios] if gate else []), transport_name, legacy_env)
     k8s_unit.check_selection(a, keys, transport_name)  # Kubernetes mode: refuse single-node-only scenarios
     localdev_unit.check_selection(a, keys, transport_name)  # local-dev mode: the same for the unit container
-    evidence_spec = a.evidence if a.evidence is not None else gate.get("evidence")
+    # the statement log and its checks exist on the single-node stack only
+    evidence_spec = a.evidence if a.evidence is not None else (gate.get("evidence") if single_node else None)
     required = parse_checks(evidence_spec)
     use_evidence = evidence_spec is not None or a.negative_control
     manifest_path = a.stack_manifest or (STACK_GENERATED / "MANIFEST.json")
     stack_manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     with_replay_log = a.with_replay_log or bool((stack_manifest.get("options") or {}).get("with_replay_log"))
+    timing = RecordTiming.from_manifest(stack_manifest)
     started = dt.datetime.now(dt.timezone.utc)
     run_id = started.strftime("%m%d-%H%M%S")
     report_path = a.report or REPORTS / f"e2e-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -164,7 +185,7 @@ def main() -> int:
                      if use_evidence else None),
         "host": platform.node(),
         "scenarios_selected": keys,
-        "setup": {},
+        "setup": {"record_timing": timing.describe()},
         "scenarios": [],
     }
     if a.stack_manifest and a.stack_manifest.exists():
@@ -235,10 +256,11 @@ def main() -> int:
         report["transport"] = transport.describe()
 
         containers = stack_manifest.get("containers") or {}
+        stack_env = read_env_file(STACK_GENERATED / ".env") if single_node else {}
         if use_evidence:
             evidence = Evidence(run_id=run_id.replace("-", ""), required=required,
                                 negative_control=a.negative_control, containers=containers,
-                                env=read_env_file(STACK_GENERATED / ".env"), log=log)
+                                env=stack_env, log=log)
             info = evidence.preflight()
             evidence.warehouse_name = wh_name
             transport.phase_hook = evidence.on_phase
@@ -254,7 +276,9 @@ def main() -> int:
                                                 "sce-workflow-runtime-coordinator-service"),
                   with_replay_log=with_replay_log, other=other, unit2_cuid=unit2, unit_uri=a.unit_uri,
                   unit_exec_prefix=(k8s_unit.exec_prefix(cuid) if k8s_unit.wanted(a)
-                                    else localdev_unit.exec_prefix() if localdev_unit.wanted(a) else None))
+                                    else localdev_unit.exec_prefix() if localdev_unit.wanted(a) else None),
+                  timing=timing, lake=_lake(a, containers, stack_env),
+                  level=gate.get("level") if gate else FINISHED_LEVEL)
         setup_ok = True
     except Exception as e:  # noqa: BLE001
         report["setup"]["error"] = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
@@ -352,6 +376,18 @@ def harness_git(root: Path = HERE.parent) -> dict:
     return {"head": head, "dirty": bool(changes), "changes": changes[:30]}
 
 
+def _lake(a, containers: dict, stack_env: dict) -> Lake:
+    """The lake's catalog, asked from where this mode's stack can reach Lakekeeper."""
+    if k8s_unit.wanted(a):
+        return k8s_unit.lake()
+    if localdev_unit.wanted(a):
+        return localdev_unit.lake()
+    uri = stack_env.get("STORAGE_ICEBERG_CATALOG_REST_URI", DEFAULT_CATALOG_URI).rstrip("/")
+    dashboard = containers.get("dashboard-service", "sce-dashboard-service")
+    return Lake(Catalog(docker_fetch(docker_runner, dashboard, uri)),
+                stack_env.get("STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME", DEFAULT_WAREHOUSE), stack_env)
+
+
 def _lakekeeper_name(status: dict | None, whid: int | None, uid: int) -> str | None:
     """The Lakekeeper name of warehouse `whid`: /api/warehouse/status gives it on
     newer Dashboards; older ones (the published images) do not, and the name is
@@ -380,7 +416,7 @@ def _apply_evidence(evidence: Evidence, rec, waited, api: TexeraApi, negative: b
     for name, ok, detail in gates:
         rec.checks.append(Check(name, ok, detail[:2000]))
         log(f"  [{'ok' if ok else 'FAIL'}] {name}{'' if ok else ' -- ' + detail[:400]}")
-    for key in CHECKS:
+    for key in ALL_CHECKS:
         if key in info and key not in evidence.required and not (negative and key in ("A", "D", "F")):
             r = info[key]
             log(f"  [info] Check {key}: {'pass' if r['ok'] else ('n/a' if r['ok'] is None else 'fail')} "

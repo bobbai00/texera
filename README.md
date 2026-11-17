@@ -18,6 +18,9 @@ images/build.sh <worktree> step1     # branch images sce/texera-*:step1 (thin la
 ./run-negative-control.sh            # published images: Checks A, D and F must fail
 .venv/bin/python -m unittest discover -s driver/tests   # offline: transports and scenarios vs a fake
 
+# step 3 (a run's record lives in the lake; see "Step 3" under the driver)
+./run-baseline.sh --reset --images sce/<tag> --pg-statement-log --isolate-unit --fast-record -- --gate 3A
+
 # the real editor in headless Chromium (see "Browser smoke" below); images built with --frontend
 ./run-browser-smoke.sh --lock <scratchpad>/sce/stack.lock --reset --images sce/<tag> --source <worktree>
 
@@ -40,8 +43,9 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `stack/generated/` | Output: `docker-compose.yml`, `.env`, `nginx.conf`, `sql/`, `MANIFEST.json`. Regenerated on every `up` |
 | `images/build.sh` | Builds branch images from a worktree (`sbt dist`, optional frontend), as thin layers on the published images |
 | `build/<tag>/` | Scratch build contexts and `BUILD-MANIFEST.json` (outside any repo) |
-| `driver/` | The e2e driver: `e2e.py` (CLI), `transport.py` (start, watch and control a run), `texera_api.py` (REST setup), `workflow.py` (plan builders), `scenarios.py`, `evidence.py` (the step-2 Checks A-F), `data/*.csv` |
-| `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
+| `driver/` | The e2e driver: `e2e.py` (CLI), `transport.py` (start, watch and control a run), `texera_api.py` (REST calls), `workflow.py` (plan builders), `scenarios.py`, `evidence.py` (the step-2 Checks A-F and the step-3 checks), `lake.py` (an execution's tables as Lakekeeper shows them), `record_timing.py` (step 3's timers, as the stack was started), `data/*.csv` |
+| `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the designs' protocols, at step 2 or at a step-3 gate), `fake_record.py` and `fake_lake.py` (its recorder and its lake), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack), `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_lake.py`, `test_stack_options.py` |
+| `lib/` | What the harness's programs share: `venv.sh` (the Python venv), `record_env.py` (the timers `--fast-record` sets) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
 | `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B8, with the page's requests and websocket frames recorded |
@@ -56,6 +60,7 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 ```
 stack/sce-stack.sh [--source <worktree>] up [--images <registry>/<tag>] [--timeout S] [--with-optional] [--bind IP]
                    [--pg-statement-log] [--isolate-unit] [--with-replay-log] [--unit-env KEY=VAL ...]
+                   [--fast-record] [--dashboard-env KEY=VAL ...]
 stack/sce-stack.sh down       # stop and remove containers and the network; keep the volumes
 stack/sce-stack.sh reset      # down, then delete only the sce_* volumes
 stack/sce-stack.sh status [--json]
@@ -72,10 +77,10 @@ Environment knobs:
 | `SCE_UP_TIMEOUT` | Seconds `up` waits; default 900 |
 | `SCE_PULL` | `missing` (default), `never` or `always`. The default never re-pulls an image that is already present, so the "published" baseline stays the locally pulled one |
 
-Options for the step-2 evidence checks (design section 7 H2). Each is off by
-default, the generator's round-trip check verifies exactly the edit it makes, and
-`MANIFEST.json` records them under `options` (values of keys that look like
-secrets are masked):
+Options for the evidence checks (section 7 H2 of the step-2 and of the step-3
+design). Each is off by default, the generator's round-trip check verifies exactly
+the edit it makes, and `MANIFEST.json` records them under `options` (values of keys
+that look like secrets are masked):
 
 | Option | Effect |
 |---|---|
@@ -83,6 +88,8 @@ secrets are masked):
 | `--isolate-unit` | A second network, `sce-unit-net` (not `internal`: pip needs the package index). The unit is attached only to it; Postgres, Lakekeeper, RustFS and nginx (and agent-service when kept) are on both networks with all their aliases. The unit cannot resolve `file-service`, `texera-lakefs`, `dashboard-service` or `access-control-service`. A network check after generation proves the attachments. It also turns nginx's access log on (`options.gateway_access_log`): the source's one `access_log off;` becomes `sce-access $remote_addr "$request_method $uri" $status` on stdout (`$uri` has no query string, so no websocket token is logged), because the isolated unit still reaches nginx, which proxies file-service and the Dashboard. The generator refuses a source without exactly one `access_log off;` |
 | `--with-replay-log` | `FAULT_TOLERANCE_LOG_STORAGE_URI=file:///amber/user-resources/recovery-logs/` for dashboard-service and the unit (both mount `workflow_result_data` there); after the stack is healthy `up` creates that directory owned by uid 1001, since Docker creates the volume as root's |
 | `--unit-env KEY=VAL` | Extra unit environment, repeatable (for example `USER_JWT_TOKEN=...` for the negative control) |
+| `--dashboard-env KEY=VAL` | Extra environment for the Dashboard service, repeatable |
+| `--fast-record` | Step 3's timers shortened (`lib/record_env.py`), so a scenario sees a commit, a verdict or an expiry in seconds. The unit gets `STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS=2000`. The Dashboard service gets `EXECUTION_CLOSING_INTERVAL_SECONDS=2`, `EXECUTION_CLOSING_LOST_AFTER_SECONDS=12`, `EXECUTION_CLOSING_NEVER_STARTED_AFTER_SECONDS=15`, `RESULT_CLEANUP_TTL_IN_SECONDS=20` and `RESULT_CLEANUP_COLLECTION_CHECK_INTERVAL_IN_SECONDS=5`. A value given with `--unit-env` or `--dashboard-env` wins. The manifest's `options.record_timing` holds the timers the two services were given, and the driver's waits and deadlines follow it (a timer it does not name keeps the product's default: 30 s, 30 s, 180 s, 600 s, a day, a day) |
 
 - `--source` is the worktree whose `bin/single-node/` (compose, `.env`, nginx) and
   `sql/*.sql` are copied. It defaults to `$SCE_SOURCE`, or else
@@ -182,7 +189,7 @@ Do not run `build.sh` while another sbt is using the same worktree.
 
 ```
 driver/run.sh [--base http://localhost:8080] [--scenario a,c | --scenario d ...] [--report path.json]
-              [--transport ws|create-ws] [--gate A|B|C|D] [--evidence [CHECKS]] [--negative-control]
+              [--transport ws|create-ws] [--gate A|B|C|D|3A] [--evidence [CHECKS]] [--negative-control]
               [--legacy-env] [--with-replay-log] [--timeout 300]
               [--unit-uri http://workflow-runtime-coordinator-service:8085] [--list] [--print-token]
 ```
@@ -224,10 +231,12 @@ window. Exit codes:
 
 Selection: no `--scenario` runs the baseline a, b, c, d, e, u (plus g0 with
 `--legacy-env`) on either transport, as before. `--scenario all` is the same on `ws`
-and every scenario on `create-ws`. `l` is the group l1-l10. A `create-ws`-only
-scenario selected on `ws` fails at once with that message.
+and every scenario of step 2 on `create-ws`; a step-3 scenario runs when it is named
+or when its gate selects it. `l` is the group l1-l10. A `create-ws`-only scenario
+selected on `ws` fails at once with that message.
 
-`--gate X` picks a step-2 PR gate (design section 5); explicit flags win:
+`--gate X` picks a harness gate of step 2 or of step 3 (section 5 of each design);
+explicit flags win:
 
 | Gate | Transport | Scenarios | Gating evidence | Stack options |
 |---|---|---|---|---|
@@ -235,6 +244,20 @@ scenario selected on `ws` fails at once with that message.
 | B | `create-ws` | a-e, u, j, k, l1-l10, m, o, g0 | C, E, F | `--pg-statement-log`; images built with `--frontend` |
 | C | `create-ws` | B + f, f2 | A-F | `--pg-statement-log --isolate-unit`; then `./run-negative-control.sh` once |
 | D | `create-ws` | a-e, u, j, k, l, m, o, f, f2, g, h, i (g0 retired) | A-F | as C |
+| 3A | `create-ws` | D + p | A-F, I | `--pg-statement-log --isolate-unit --fast-record` |
+
+A step-3 gate also runs in Kubernetes and in local-dev mode, where it selects what
+that mode runs (3A: a-e, u, p) and no evidence: the statement log exists on the
+single-node stack only. Gate 3A is step 2's last gate plus p, so Check D still gates
+and the stack needs `--isolate-unit`, as for gate D (the step-3 design's one-line
+command leaves the option out).
+
+A step-3 gate also tells the scenarios how far the product is (its letter, A to C),
+because step 3 lands in parts and a scenario asks a later part's routes only once
+they exist. Without a gate the driver takes the product to be the whole of step 3;
+to run one scenario against an earlier part, name the gate too
+(`--gate 3A --scenario p`). Until gate 3C a statistics request names the unit
+(`?cuid=`), as the browser's does: in Kubernetes the gateway still routes it there.
 
 Add `--with-replay-log` for m's replay run once the engine's global checkpoint works
 (see the verification table below); without it m runs its two refusals only.
@@ -279,6 +302,16 @@ at all, whatever it names (design D33).
 | g | `environment-install` | D | precondition as g0; the install root is the unit's `UDF_PYTHON_ENVIRONMENTS_ROOT` (else `/tmp/texera-python-environments`); an earlier install whose marker lists `tabulate==0.9.0` (a `--keep` stack, a rerun) is removed first, since reuse is decided by the marker; environment `sce-env-<hex>` = `{tabulate: ==0.9.0}` through `/api/environments`; the UDF outputs `tabulate.__version__`; run twice, each on its own workflow (installs are keyed by requirements and engine, not by workflow, and run 2 then gets no replay of run 1's console) | run 1: console "Installing Python environment" then "is ready" with `tabulate==0.9.0`, Running only after "ready", row 0.9.0, status 3; run 2: "reused", no "Installing", start-to-Running shorter; exactly one directory under the root whose `texera-environment.json` (read whole by the unit's python3) lists these requirements |
 | h | `environment-broken` | D | environment `{sce-e2e-nonexistent-<hex>: ==1.0.0}`; the root's entries (without `*.lock`) listed before and after | Failed (waited with fail-fast off); never Running; the fatal error has "could not be installed" and "No matching distribution found"; the UDF emitted 0 rows; status 4; no new entry under the root |
 | i | `environment-missing` | D | the UDF names `sce-missing-<hex>` | create 400; the UDF's error names the environment; that row is 4; no unit statement for it |
+
+Step 3 (design section 7 H3): the record a run leaves in the lake. These scenarios
+wait on the unit's commit timer, so they need a stack started with `--fast-record`
+and refuse to run on one that was not; every wait is a multiple of the stack's
+timers. The "slow run" is `numbers.csv` → a Python UDF that prints one line and
+sleeps 0.1 s per tuple (about 30 s).
+
+| Key | Name | From gate | What it does | Checks |
+|---|---|---|---|---|
+| p | `record-in-lake` | 3A | the slow run, paused and resumed once | while it runs: the log's label, read from Lakekeeper after each state change, names RUNNING, PAUSED, RUNNING at rising `seq`, and the log table holds one row per `seq` up to the label's, five at the least (READY, an output row, RUNNING, PAUSED, RUNNING); the statistics endpoint returns rows, their count grows between two reads 2.5 commit intervals (5 s) apart, and each row names an operator and a time in epoch milliseconds; the console table has a snapshot with rows; after: the label names COMPLETED at a higher `seq`; status 3; Check I |
 
 ### The transport seam (`driver/transport.py`)
 
@@ -413,6 +446,28 @@ evaluated and reported as `info`.
 | E | Lakekeeper's REST API, from the dashboard container (`GET /catalog/v1/config?warehouse=<w>` for the prefix, then the table `wid_<wid>_eid_<eid>_plan` in namespace `execution-plan` or `STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE`) has a ref named `started`. The warehouse comes from the `planUri`, else texera's (`lakekeeperWarehouseName`, or `user-<uid>-<whid>` on Dashboards that do not report it), else the default |
 | F | every statement from the unit's addresses in the scenario has `app=texera-computing-unit` (none at all passes; app-named unit statements from none of the known addresses make F not evaluable: the addresses are stale) |
 
+Step 3's checks (its design, section 7 H4) are evaluated only when a gate or
+`--evidence` names them, so a step-2 gate reads and reports exactly what it did.
+
+| Check | Holds when |
+|---|---|
+| I | for every run of the scenario that was started and has ended, read from Lakekeeper as Check E reads the plan table (`driver/lake.py`): the execution log's label names the ending the socket reported; the log holds exactly as many rows as the label's `seq` (more: a row landed twice, or a `seq` was skipped and another repeated; fewer: the label is ahead of its rows, or a `seq` was skipped); and the end tidy has run: the log holds one data file and one snapshot, the statistics table too (a run that never reached Running may have none of either), the console table too when the run printed, and no row when it did not. A catalog that cannot be read makes I not evaluable |
+
+- **When a record is judged.** A state's row and label reach the lake a moment after
+  the state reaches the socket, and the end tidy after that, so a record is read
+  until nothing is wrong with it, for at most 15 s (`RECORD_SETTLE_S`). The scenario
+  runner has the records judged before it closes the scenario's sockets: until step
+  3's sub-part 14 the unit clears a run's results and its console table once nobody
+  watches it, and after it the Dashboard expires them. A console table that is gone
+  together with the execution's result tables is therefore reported as not judged
+  (the agent's run in scenario o has no socket to hold it); one that is gone while
+  they are still there fails.
+- **What the catalog shows.** `lake.py` reads a table's properties, refs and
+  snapshots and the totals in the current snapshot's summary (`total-records`,
+  `total-data-files`, `total-files-size`) from Lakekeeper's REST API. It opens no data
+  file, so the rows' `seq` values themselves are not read: gate 3A's "one row per
+  `seq`" is the row count against the label's `seq`.
+
 Before each scenario that follows one which sent a start to the unit, the driver
 waits (at most 15 s, recorded as `cleanup_wait`) until: the unit's cleanup
 `DELETE FROM operator_executions WHERE workflow_execution_id = $1` of every eid the
@@ -447,7 +502,7 @@ deployment files and DDL are the ones the stack uses.
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 96 tests (55 single-node, 25 Kubernetes mode, 16 local-dev mode), about 55 s
+.venv/bin/python -m unittest discover -s driver/tests -v     # 166 tests (55 of step 2 and 48 of step 3 on the single-node stack, 27 Kubernetes mode, 36 local-dev mode), about 2 minutes
 ```
 
 - `test_evidence.py` (21): the log parser (parameters, continuation lines,
@@ -482,9 +537,45 @@ deployment files and DDL are the ones the stack uses.
   mark; o's repeat is silent; a refusal path that reads Postgres fails the silence
   check; and the start rule before this fix fails l8's Check A (the review's case).
 
+- `test_step3_scenarios.py` (7): the step-3 scenarios through the real driver code
+  against the fake at a step-3 gate, with the stack's timers a tenth of
+  `--fast-record`'s. p passes at gate 3A, refuses a stack without `--fast-record`, and
+  fails on the check that names it when statistics, or console output, reach the lake
+  only at the end, and when the recorder skips a `seq`. Also what gate 3A selects in
+  each mode, and that `--scenario all` and step 2's gates select what they did.
+- `test_step3_evidence.py` (22): Check I alone, against a fake `docker` whose catalog
+  is the fake lake and a recorder that writes into it: a whole record passes; a label
+  ahead of its rows, a gap in `seq`, a row that landed twice, several data files
+  after the end, an ending the log does not have, a missing log, console rows of a
+  run that printed nothing and a console table gone while the results are still
+  there each fail for that reason; a record is read until the end tidy has landed; a
+  run that never ran needs no statistics; a stopped unit's tables are not counted
+  but its label is; an unreadable catalog is not a verdict; step 2's checks and
+  `--evidence all` are what they were. Then scenarios and evidence together at gate
+  3A: p passes A-F and I; l8, o, h and g leave whole records; and each recorder
+  fault fails Check I, and only it, on scenario f.
+- `test_lake.py` (8): what `lake.py` reads from the catalog's answers: a tidied
+  table, a table nothing was written to ("no snapshot" as a missing key, null or
+  -1), a missing table against an outage, a summary without totals, namespaces from
+  the services' settings, a name that needs percent-encoding, a listing over several
+  pages.
+- `test_stack_options.py` (11): `--fast-record` and `--dashboard-env` in the
+  single-node generator (against a small source tree written by the test), the Helm
+  values and the refusal of a chart that does not hand the timers over, local-dev's
+  exports, and the timers the driver reads back from a manifest.
+
 `fake_texera.py` models the design, not Texera: a scenario that passes against it
 drives the design's protocol and judges its answers as the design says; it proves
-nothing about a branch.
+nothing about a branch. `step` chooses the product it models: the end of step 2
+(the default), or step 3 at a gate. At gate 3A every run started by id has a
+recorder (`fake_record.py`) with a thread of its own, as in the design: a state's row
+and label land a moment after the state reaches the socket; statistics and console
+output land on the commit timer; the end tidy leaves one data file and one snapshot
+per table; and the unit still clears a run's results and console table once nobody
+watches it. The fake engine sleeps what a UDF's `time.sleep()` asks for (scaled),
+prints what its `print(f"...")` prints, aggregates, and fails a run whose UDF raises
+as its module is loaded. `faults` makes the recorder misbehave in one named way at a
+time, for the tests that show a check failing.
 
 ## What is verified against a real stack, and what is not yet
 
@@ -521,19 +612,39 @@ Verified against a real stack (reports under `reports/`):
 | Gate C as a whole (`--isolate-unit -- --gate C`): gate B's scenarios plus f and f2, all six checks gating, the unit on a network of its own | `sce/texera-*:step2c` (sce-imgbuild `8a9e6988e`, built with `--frontend`; `--source sce-imgbuild`) | Single-node, from empty volumes: 22 of 23 PASS in the first run (harness `0f45a44`, `reports/baseline-20261117T082900Z.json`). f failed its content check alone, a mistake of the harness: it compared a result cell, which shows 100 characters, with the whole file. With f fixed (`e6a10a8`), f and f2 PASS on the same images from empty volumes (13 and 9 checks, `reports/baseline-20261117T084352Z.json`). The checks, first passing with the unit isolated; on scenario a: A, 0 of 4 unit statements offend (the unit starts a run with writes of run state only); B, 0 of 5; C, the row inserted by `texera-dashboard`; D, `getent` resolves neither `file-service` nor `texera-lakefs`, none of 17 unit log lines names one, the gateway served the unit 0 of 2 requests; E, `started` on the plan table; F, 13 statements from the unit's address, all `texera-computing-unit`. Browser smoke B1-B8 PASS (`reports/browser-smoke-20261117T083314Z/report.json`). Kubernetes (`create-ws`, a-e, u, k, l1, l6, l8, f, f2): all PASS but f's content check in the first run, and f after the fix (`reports/k8s-20261117T083646Z.json`, `reports/k8s-20261117T084455Z.json`). Local-dev, the same twelve with the fixed f: all PASS (`reports/localdev-20261117T084149Z.json`) |
 | Gate D as a whole (`--isolate-unit -- --gate D`): a-e, u, j, k, l1-l10, m (its refusals), o, f, f2, g, h, i, all six checks gating, the unit on a network of its own; step 2's last gate | `sce/texera-*:step2d` (sce-imgbuild `d7700d580`, the end of step 2 before upstream is merged in; built with `--frontend`; `--source sce-imgbuild`) | Single-node, from empty volumes: all 25 PASS (harness `b41688a`, `reports/baseline-20261117T091102Z.json`). First real-stack runs of g, h and i. g: the unit's python3 cannot import tabulate; run 1's console says "Installing Python environment '...' (1 package)", then "is ready (2.2 s)" with `tabulate==0.9.0`, and Running comes only after it; the row says 0.9.0; run 2, on another workflow, says "reused" and reaches Running in 0.9 s against 3.0 s; one install directory, whose marker lists the requirement. h: Initializing, then Failed, never Running; the fatal error is "Python environment '...' could not be installed: Could not find a version that satisfies the requirement ... No matching distribution found ..."; no directory left. i: create 400 with the UDF's error naming the environment, the row FAILED, no unit statement. Browser smoke B1-B8 PASS (`reports/browser-smoke-20261117T091416Z/report.json`). Kubernetes (`create-ws`; a-e, u, k, l1, l6, l8, m, o, f, f2, g, h, i; what g, h and o run on the unit goes through `kubectl exec`): all 17 PASS (`reports/k8s-20261117T091758Z.json`). Local-dev (`create-ws`, the 25 of the gate; what g, h and o run on the unit runs on the host): all 25 PASS (`reports/localdev-20261117T092238Z.json`) |
 
-Written and tested offline only (`driver/tests/`), to be validated when the PRs land:
+Written and tested offline only (`driver/tests/`), to be validated when the PRs land.
+Step 3's product is being built against its design while this is written, so its
+rows also name what the harness had to assume (see "Step 3: what is assumed"):
 
 | Part | Lands with | Offline test |
 |---|---|---|
+| Gate 3A as a whole: p, Check I, `--fast-record` in the three stacks, the catalog read from each mode's stack | step 3's sub-parts 2-7 | `test_step3_scenarios.py`, `test_step3_evidence.py`, `test_lake.py`, `test_stack_options.py` |
 | D failing on a gateway request from the unit, F not evaluable with stale addresses, a negative control reported "inconclusive", gate D | PR C-D | `test_evidence.py`, `test_scenario_evidence.py` |
 | m's replay run after the checkpoint: its interactions, the replay's create and start | PR B, and an engine whose global checkpoint works | `test_scenarios.py` (`ReplayScenario`) |
+
+### Step 3: what is assumed
+
+The harness for step 3 was written from the step-3 design (`docs/step3-design.md`,
+sections 3 and 7) before the product. Each thing it takes from the design rather
+than from the product's code is kept in one place, so that following the product is
+a one-line change:
+
+| Assumed | From the design | Where |
+|---|---|---|
+| The lake's layout: namespaces `execution-log`, `workflow-runtime-statistics`, `operator-console-messages`, `operator-port-result`, `operator-port-state` (or the services' `STORAGE_ICEBERG_TABLE_*_NAMESPACE`), tables `wid_<wid>_eid_<eid>_executionlog`, `..._runtimestatistics`, `..._consolemessages` | 3.1, 3.7 | `EXECUTION_TABLES`, `PORT_TABLES` in `driver/lake.py` |
+| The label's six properties, `texera.execution.state`, `.state-seq`, `.state-time-ms`, `.reason`, `.beat-ms`, `.beat-every-ms` | 3.2 | `LABEL_*` in `driver/lake.py` |
+| Lakekeeper carries `total-records`, `total-data-files` and `total-files-size` in the summary of the snapshot a tidy leaves | 1b | `_table_state` in `driver/lake.py` |
+| The states the log holds, by the name a socket is told: READY for "Initializing"; Pausing and Resuming not logged | D2, D6 | `LOGGED_STATES` in `driver/evidence.py` |
+| The statistics route keeps today's field names (`operatorId`, `timestamp`, `inputTupleCount`, `outputTupleCount`, `numWorkers`, `status`), `timestamp` in epoch milliseconds | 3.5 | `StatisticsRow.of` in `driver/texera_api.py` |
+| The timers' settings and what `--fast-record` gives them | 3.7, 7 H2 | `TIMERS`, `FAST_RECORD` in `lib/record_env.py`; the product's defaults in `driver/record_timing.py` |
+| In Kubernetes, `texeraEnvVars` reaches the webserver and the managing service, and the managing service forwards `STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS` to unit pods | 7 H2, 8 | `record_options`, `missing_record_env` in `stack/k8s/k8s_stack.py` |
 
 ## `run-baseline.sh`
 
 ```
 ./run-baseline.sh [--reset] [--keep] [--images <registry>/<tag>] [--source <worktree>] [--label text]
                   [--pg-statement-log] [--isolate-unit] [--with-replay-log] [--unit-env KEY=VAL ...]
-                  [-- <driver args>]
+                  [--fast-record] [--dashboard-env KEY=VAL ...] [-- <driver args>]
 ```
 
 `up` (published images by default, with the stack options given), then wait until
@@ -814,9 +925,10 @@ only calls it.
 
 What needs the single-node stack is refused before any setup, with the reason:
 
-- `--evidence`, `--negative-control`, `--gate` and `--legacy-env`. They read the
+- `--evidence`, `--negative-control`, a step-2 `--gate` and `--legacy-env`. They read the
   single-node Postgres log and `docker exec` into its fixed container names, which on
-  this machine belong to another run's stack.
+  this machine belong to another run's stack. A step-3 gate is accepted: it selects
+  what this mode runs (`--gate 3A`: a-e, u, p), without that evidence.
 - Scenario g0, which uses the legacy environment endpoints of the single-node unit.
 - l4 and l9, which create local units at `--unit-uri`.
 - On `create-ws`, the scenarios that need the second user (j, l2, l3, l5, l7, l10): the
@@ -826,6 +938,13 @@ What g, h and o run where the unit runs (the tabulate precondition, the environm
 unit's own `/run` endpoint) runs in the unit's pod: `kubectl exec` into the engine's container of
 the pod labelled `type=computing-unit,cuid=<cuid>` in the units' namespace
 (`k8s_unit.exec_prefix`).
+
+The step-3 scenarios read the lake's catalog from the webserver's pod (`kubectl exec
+deploy/texera-webserver -- curl`, against the `STORAGE_ICEBERG_CATALOG_REST_URI` that pod
+itself is configured with), and their waits follow the manifest's
+`options.record_timing`: deploy with `--fast-record`, which puts the timers into
+`texeraEnvVars`. `up` refuses a chart whose rendered webserver does not get its timers, or
+whose managing service does not get the unit's to forward.
 
 `--stack-manifest` defaults to `stack/k8s/generated/MANIFEST.json`, not the single-node
 one. As a second guard, the driver sets `DOCKER_HOST` to a socket that does not exist.
@@ -862,7 +981,7 @@ the seconds to Running and to answering, the gateway probe, the refusal probes
 ```
 ./run-k8s.sh --lock <dir> | --no-lock  [--images <registry>/<tag>] [--source <worktree>] [--port N]
              [--keep] [--label text] [--time-limit MIN] [--no-workarounds] [--forward relay|kubectl]
-             [--allow-crd-drift] [-- <driver args>]
+             [--allow-crd-drift] [--fast-record] [-- <driver args>]
 ```
 
 The run goes like this:
@@ -1264,8 +1383,9 @@ Setup does the same:
 The scenarios then select that unit by cuid, as in single-node. The report gains `target` and
 `setup.localdev`: the dev server page, the types offered, the request, the unit, and the probe.
 
-Refused up front, as in Kubernetes mode: `--evidence`, `--negative-control`, `--gate` and
-`--legacy-env` (they read the single-node Postgres log and `docker exec` into its containers),
+Refused up front, as in Kubernetes mode: `--evidence`, `--negative-control`, a step-2
+`--gate` and `--legacy-env` (they read the single-node Postgres log and `docker exec` into its
+containers; a step-3 gate selects what this mode runs, without that evidence),
 scenario g0 (the legacy environment endpoints of the single-node unit), and `--unit-kind
 kubernetes`. `DOCKER_HOST` points at a socket that does not exist, so nothing the driver runs in
 this mode can reach a container. What g, h and o run where the unit runs (the tabulate
@@ -1273,12 +1393,17 @@ precondition, the environment files, the unit's own `/run` endpoint) runs on thi
 unit is a process: with the engine's Python first on `PATH`, so `python3` is the interpreter the
 unit starts its workers with (`localdev_unit.exec_prefix`).
 
+The step-3 scenarios read the lake's catalog with `curl` on this host (the stack publishes
+Lakekeeper on 18181, and the manifest's `service_env` names it), and their waits follow the
+manifest's `options.record_timing`: start the stack with `--fast-record`, which exports the
+unit's timer before the unit's JVM starts and the Dashboard's before `texera-web` starts.
+
 ### `run-localdev.sh`
 
 ```
 ./run-localdev.sh --lock <dir> | --no-lock  [--source <worktree>] [--reset] [--keep] [--label text]
                   [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [--strict-schema]
-                  [--allow-stale-dists] [-- <driver args>]
+                  [--allow-stale-dists] [--fast-record] [-- <driver args>]
 ```
 
 1. Takes the lock (waiting while another run holds it). The owner file names the run. Starts

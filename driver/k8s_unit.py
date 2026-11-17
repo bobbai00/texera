@@ -44,6 +44,7 @@ from typing import Any, Callable
 
 import websocket  # websocket-client
 
+from lake import DEFAULT_WAREHOUSE, Catalog, Lake, pod_fetch
 from scenarios import NEEDS_OTHER_USER
 from workflow import Workflow
 
@@ -59,7 +60,8 @@ NO_DOCKER = "unix:///nonexistent/sce-e2e-kubernetes-mode-has-no-docker-container
 SINGLE_NODE_OPTIONS = {
     "evidence": ("--evidence", "reads the single-node Postgres log and `docker exec`s into its containers"),
     "negative_control": ("--negative-control", "the evidence checks on the single-node stack"),
-    "gate": ("--gate", "a step-2 gate gates on the evidence checks"),
+    "gate": ("--gate", "a step-2 gate gates on the evidence checks; the step-3 gates name what the "
+                       "other modes run"),
     "legacy_env": ("--legacy-env", "g0 `docker exec`s into the single-node unit container"),
 }
 #: scenarios that need the single-node stack whatever the transport
@@ -101,7 +103,14 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
     g.add_argument("--keep-unit", action="store_true", help="leave the Kubernetes unit running at the end")
 
 
-def resolve_args(a: argparse.Namespace) -> None:
+def single_node_options_used(a: argparse.Namespace, portable_gates: frozenset = frozenset()) -> list[tuple]:
+    """The (flag, why) of every option given that needs the single-node stack. A gate in
+    `portable_gates` is not one: it says what this mode runs."""
+    return [(flag, why) for attr, (flag, why) in SINGLE_NODE_OPTIONS.items()
+            if getattr(a, attr, None) and not (attr == "gate" and a.gate in portable_gates)]
+
+
+def resolve_args(a: argparse.Namespace, portable_gates: frozenset = frozenset()) -> None:
     if a.unit_kind is None:
         a.unit_kind = "kubernetes" if a.target == "k8s" else "local"
     if a.target == "k8s" and a.base == SINGLE_NODE_BASE and not os.environ.get("SCE_BASE"):
@@ -109,7 +118,7 @@ def resolve_args(a: argparse.Namespace) -> None:
         a.base = manifest.get("gateway_url") or "http://127.0.0.1:30080"
     if a.unit_kind != "kubernetes":
         return
-    used = [(flag, why) for attr, (flag, why) in SINGLE_NODE_OPTIONS.items() if getattr(a, attr, None)]
+    used = single_node_options_used(a, portable_gates)
     if used:
         raise SystemExit("Kubernetes mode does not support " + "; ".join(f"{f} ({w})" for f, w in used)
                          + ". Use the single-node stack (run-baseline.sh) for them.")
@@ -140,6 +149,14 @@ def check_selection(a: argparse.Namespace, keys: list[str], transport: str) -> N
 
 def wanted(a: argparse.Namespace) -> bool:
     return a.unit_kind == "kubernetes"
+
+
+def lake() -> Lake:
+    """The lake's catalog, asked from the webserver's pod: the Dashboard service runs there,
+    with Lakekeeper's address in its environment (the chart's webserver Deployment sets it)."""
+    manifest = json.loads(K8S_MANIFEST.read_text())
+    kubectl = ["kubectl", "--context", manifest["context"], "-n", manifest["namespace"]]
+    return Lake(Catalog(pod_fetch(kubectl, f"deploy/{manifest['release']}-webserver")), DEFAULT_WAREHOUSE)
 
 
 def exec_prefix(cuid: int) -> Callable[[bool], list[str]]:

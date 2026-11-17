@@ -64,6 +64,10 @@ import yaml
 
 HERE = Path(__file__).resolve().parent            # stack/localdev
 HARNESS = HERE.parents[1]
+sys.path.insert(0, str(HARNESS / "lib"))
+
+from record_env import fast_record_env, record_timing  # noqa: E402
+
 GEN_DIR = HERE / "generated"
 MANIFEST = GEN_DIR / "MANIFEST.json"
 STATE_DIR = HARNESS / ".state" / "localdev"
@@ -125,6 +129,9 @@ DEFAULT_HEAPS = {
     "texera-web": "1g",
 }
 SBT_HEAP = os.environ.get("SCE_LOCALDEV_SBT_HEAP", "3g")
+# local-dev's names of the two services step 3's timers belong to
+UNIT_SERVICE = "computing-unit-master"
+DASHBOARD_SERVICE = "texera-web"
 FRONTEND = "frontend"
 FRONTEND_PORT = 4200
 FRONTEND_URL = f"http://localhost:{FRONTEND_PORT}"
@@ -1504,6 +1511,23 @@ def service_env(m: dict, py: Path) -> dict[str, str]:
     return env
 
 
+def record_options(fast_record: bool) -> dict:
+    """What --fast-record asks for, as MANIFEST.json's `options` records it: exports for the
+    unit's JVM and for the Dashboard's, set before each starts."""
+    unit_env = fast_record_env("unit") if fast_record else {}
+    dashboard_env = fast_record_env("dashboard") if fast_record else {}
+    return {"fast_record": fast_record, "unit_env": unit_env, "dashboard_env": dashboard_env,
+            "record_timing": record_timing(unit_env, dashboard_env)}
+
+
+def launch_env(m: dict, svc: dict, base: dict[str, str]) -> dict[str, str]:
+    """The environment one JVM service starts with: local-dev's (`base`), its heap, and the
+    exports the stack options add for the unit and for the Dashboard."""
+    options = m.get("options") or {}
+    extra = {UNIT_SERVICE: options.get("unit_env"), DASHBOARD_SERVICE: options.get("dashboard_env")}
+    return dict(base, JAVA_OPTS=svc["java_opts"], **(extra.get(svc["name"]) or {}))
+
+
 def ready(svc: dict) -> tuple[bool, str]:
     port = svc["local_dev_port"]
     if not port_open(port):
@@ -1655,6 +1679,7 @@ def cmd_up(a) -> None:
             f"the UDF Python differs from amber/requirements.txt: {'; '.join(m['python']['requirements_mismatches'])}")
     heaps = parse_heaps(a.heap)
     m["heaps"] = heaps
+    m["options"] = record_options(a.fast_record)
     m["frontend_heap_mb"] = frontend_heap(a.source, a.frontend_heap)
     check_ports_free(m)  # before anything is written or started
     # dists that do not match the source are refused before anything starts (missing ones are
@@ -1717,9 +1742,8 @@ def cmd_up(a) -> None:
         svc.update(zip=str(zip_path), zip_provenance=provenance[str(zip_path)],
                    dist=str(dist), launcher_path=str(launcher),
                    java_opts=f"-Xmx{heaps[svc['name']]} -XX:+ExitOnOutOfMemoryError")
-        senv = dict(env, JAVA_OPTS=svc["java_opts"])
-        procs[svc["name"]] = start_process(svc["name"], [str(launcher)], a.source / svc["cwd"], senv,
-                                           logs / f"{svc['name']}.log")
+        procs[svc["name"]] = start_process(svc["name"], [str(launcher)], a.source / svc["cwd"],
+                                           launch_env(m, svc, env), logs / f"{svc['name']}.log")
         log(f"started {svc['name']} (pid {procs[svc['name']].pid}, cwd {svc['cwd']}, {svc['java_opts']})")
     write_json(MANIFEST, m)
     pending = {s["name"]: s for s in m["services"]}
@@ -2070,6 +2094,10 @@ def main() -> None:
     schema_args(p)
     p.add_argument("--allow-stale-dists", action="store_true",
                    help="run dist zips that do not match the source (recorded as warnings) instead of refusing")
+    p.add_argument("--fast-record", action="store_true",
+                   help="step 3's timers shortened, as exports before the unit's and the Dashboard's JVM "
+                        "start: the unit commits every 2 s; the Dashboard closes every 2 s, loses a unit "
+                        "after 12 s, an unstarted execution after 15 s, and expires results after 20 s")
     p.add_argument("--python", help="interpreter for Python UDF workers (UDF_PYTHON_PATH); default "
                                     "$SCE_LOCALDEV_PYTHON, .state/localdev/py311, or the step-1 py311 venv")
     p.add_argument("--heap", action="append", default=[], metavar="NAME=SIZE",

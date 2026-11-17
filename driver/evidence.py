@@ -40,6 +40,15 @@ With --negative-control (published images, the old unit) A, D and F must fail, e
 for its own reason (A on a unit SELECT/WITH, D on the unit's log naming
 file-service or texera-lakefs while neither resolves, F on unnamed statements from
 the unit's address); another failure is reported as "control inconclusive".
+
+Step 3 (its design, section 7 H4) adds checks about the record a run leaves in the
+lake. They are evaluated only when asked for (a step-3 gate, or --evidence naming
+them), so a step-2 gate reads and reports exactly what it did:
+
+  I  for every run that was started and has ended: the execution log's label names
+     the ending; the log holds one row per seq up to the label's; and the log, the
+     statistics and the console table hold one data file and one snapshot each (the
+     end tidy). Read from the catalog (lake.py), as Check E reads the plan table
 """
 
 from __future__ import annotations
@@ -54,6 +63,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
 
+from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Label, Lake, TableState, docker_fetch
+
 UNIT_APP = "texera-computing-unit"
 DASHBOARD_APP = "texera-dashboard"
 EXECUTION_DB = "texera_db"
@@ -62,7 +73,11 @@ STATUS_STARTED = frozenset({1, 4, 5})   # RUNNING, or an early FAILED / KILLED
 STATUS_TERMINAL = frozenset({3, 4, 5})  # COMPLETED, FAILED, KILLED
 D_HOSTS = ("file-service", "texera-lakefs")
 D_PATTERNS = ("file-service", "texera-lakefs", ":9092", ":8000/api/v1")
+#: step 2's checks: what `--evidence` means without a list
 CHECKS = ("A", "B", "C", "D", "E", "F")
+#: step 3's checks: evaluated only when a gate or `--evidence` names them
+STEP3_CHECKS = ("I",)
+ALL_CHECKS = CHECKS + STEP3_CHECKS
 NEGATIVE_CONTROLS = ("A", "D", "F")
 CHECK_TITLES = {
     "A": "the unit only writes run state while starting (no SELECT/WITH; INSERT/UPDATE on the "
@@ -72,6 +87,7 @@ CHECK_TITLES = {
     "D": "the unit reaches neither file-service nor LakeFS",
     "E": "the execution's plan table carries the `started` tag",
     "F": "every statement from the unit's addresses carries app=texera-computing-unit",
+    "I": "the record of every ended run is whole and tidied in the lake",
 }
 CONTROL_REASONS = {
     "A": "the old unit SELECTs while starting",
@@ -93,6 +109,15 @@ DEFAULT_PLAN_NAMESPACE = "execution-plan"
 CLEANUP_WAIT_S = 15.0
 #: the unit counts as settled after this long without a statement of its own
 QUIET_S = 1.0
+#: Check I: a run's row and label land a moment after its state, and the end tidy after
+#: that; its tables are read until they are settled, for at most this long
+RECORD_SETTLE_S = 15.0
+RECORD_POLL_S = 0.5
+#: the states the execution log holds, by the name a socket is told (design D2; READY
+#: reaches a socket as "Initializing", and Pausing and Resuming are not logged, D6)
+LOGGED_STATES = {"Initializing": "READY", "Running": "RUNNING", "Paused": "PAUSED",
+                 "Completed": "COMPLETED", "Failed": "FAILED", "Killed": "KILLED"}
+END_STATES = ("Completed", "Failed", "Killed")
 #: the gateway's access log line (stack/sce_stack.py writes it with --isolate-unit);
 #: $uri carries no query string, so no token reaches the log
 GATEWAY_ACCESS = re.compile(r'sce-access (?P<addr>\S+) "(?P<method>[A-Z]+) (?P<uri>[^"]*)" (?P<status>\d{3})')
@@ -472,6 +497,8 @@ class RunRecord:
     #: len(handle.state_log) when the start was about to be sent
     state_index: int | None = None
     started: bool | None = None  # set explicitly by callers without a handle (REST runs)
+    #: the state the run ended in, for a caller without a handle ("Completed", ...)
+    final_state: str | None = None
 
     def has_started(self) -> bool:
         """The unit accepted this start: a state other than the handshake's arrived on
@@ -487,6 +514,27 @@ class RunRecord:
         except Exception:  # noqa: BLE001
             return False
         return any(s != "Uninitialized" for _, s in log[self.state_index or 0:])
+
+    def states(self) -> list[str]:
+        """What the unit reported on the run's socket after its start was sent."""
+        if self.handle is None:
+            return [self.final_state] if self.final_state else []
+        try:
+            return [s for _, s in list(self.handle.state_log)[self.state_index or 0:]]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def ended_state(self) -> str | None:
+        """The state the run ended in, or None while the driver has not seen it end."""
+        states = self.states()
+        return states[-1] if states and states[-1] in END_STATES else None
+
+    def printed(self) -> bool:
+        """Whether the run sent console output (which the recorder then stored)."""
+        try:
+            return self.handle is not None and bool(self.handle.console())
+        except Exception:  # noqa: BLE001
+            return False
 
     def to_json(self) -> dict:
         return {"wid": self.wid, "cuid": self.cuid, "eid": self.eid, "plan_uri": self.plan_uri,
@@ -511,9 +559,10 @@ class Evidence:
     def __init__(self, *, run_id: str, required: Iterable[str] = CHECKS, negative_control: bool = False,
                  containers: dict[str, str] | None = None, env: dict[str, str] | None = None,
                  log: Callable[[str], None] = print, runner: Runner = docker_runner,
-                 cleanup_wait_s: float = CLEANUP_WAIT_S, quiet_s: float = QUIET_S):
+                 cleanup_wait_s: float = CLEANUP_WAIT_S, quiet_s: float = QUIET_S,
+                 record_settle_s: float = RECORD_SETTLE_S):
         self.run_id = run_id
-        self.required = [c for c in CHECKS if c in set(required)]
+        self.required = [c for c in ALL_CHECKS if c in set(required)]
         self.negative_control = negative_control
         c = dict(DEFAULT_CONTAINERS)
         c.update(containers or {})
@@ -522,11 +571,13 @@ class Evidence:
         self.dashboard_container = c["dashboard-service"]
         self.gateway_container = c["nginx"]
         self.env = env or {}
-        self.catalog_uri = self.env.get("STORAGE_ICEBERG_CATALOG_REST_URI",
-                                        "http://texera-lakekeeper:8181/catalog").rstrip("/")
-        self.default_warehouse = self.env.get("STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME", "texera")
+        self.catalog_uri = self.env.get("STORAGE_ICEBERG_CATALOG_REST_URI", DEFAULT_CATALOG_URI).rstrip("/")
+        self.default_warehouse = self.env.get("STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME", DEFAULT_WAREHOUSE)
         self._log = log
         self._run = runner
+        self.catalog = Catalog(docker_fetch(runner, self.dashboard_container, self.catalog_uri))
+        self.lake = Lake(self.catalog, self.default_warehouse, self.env)
+        self.record_settle_s = record_settle_s
         self.cleanup_wait_s = cleanup_wait_s
         self.quiet_s = quiet_s
         self.pg = PgLog()
@@ -546,6 +597,10 @@ class Evidence:
         self._previous_ended_at: float | None = None  # monotonic time of its end mark
         self._expect_no_unit: list[tuple[int, str, bool]] = []
         self._expect_silent: list[tuple[int, str, str, str]] = []
+        #: Check I: the verdict on each ended run's record, by eid, once it is judged
+        self._records: dict[int, dict] = {}
+        #: eid -> why its tables were left as they were (its unit was stopped or lost)
+        self._untidied: dict[int, str] = {}
         self.allowed_status_zero: dict[int, str] = {}
         self.warehouse_name: str | None = None
         self.info: dict[str, Any] = {}
@@ -607,6 +662,7 @@ class Evidence:
         self.isolated = set(nets) == {"sce-unit-net"}
         self.unit_env = dict(e.split("=", 1) for e in json.loads(env_json or "[]") if "=" in e)
         self.plan_namespace = self.unit_env.get(PLAN_NAMESPACE_ENV) or DEFAULT_PLAN_NAMESPACE
+        self.lake = Lake(self.catalog, self.default_warehouse, {**self.env, **self.unit_env})
         cleanup = self.unit_env.get(CLEANUP_ENV)
         self.info = {
             "postgres_container": self.pg_container,
@@ -645,6 +701,8 @@ class Evidence:
         self.runs = []
         self._expect_no_unit = []
         self._expect_silent = []
+        self._records = {}
+        self._untidied = {}
         self._begin_mark = self.mark(key, "begin")
         return waited
 
@@ -795,6 +853,11 @@ class Evidence:
     def allow_status_zero(self, eid: int, why: str) -> None:
         self.allowed_status_zero[eid] = why
 
+    def allow_untidied(self, eid: int, why: str) -> None:
+        """Check I does not count the data files and snapshots of this execution's tables:
+        a unit that was stopped or lost does not finish its last tidy."""
+        self._untidied[eid] = why
+
     # ------------------------------------------------------------ attribution
 
     def is_unit(self, st: Stmt) -> bool:
@@ -815,7 +878,122 @@ class Evidence:
                 return st
         return None
 
+    # ------------------------------------------------------- Check I: the record
+
+    def settle_records(self) -> None:
+        """Judge now the record of every run of this scenario that has ended and is not
+        judged yet. The scenario runner calls it while the scenario's sockets are still
+        open, so the unit still holds its runs; a scenario calls it before it does
+        something that changes a finished run's tables (it takes the unit down while an
+        end tidy may still run, or waits for results to expire)."""
+        if "I" not in self.required:
+            return
+        for run in self.runs:
+            if (run.start_mark and run.eid is not None and run.eid not in self._records
+                    and run.has_started() and run.ended_state()):
+                self._records[run.eid] = self._judge_record(run)
+
+    def _judge_record(self, run: RunRecord) -> dict:
+        """Read the run's log, statistics and console table until nothing is wrong with
+        them, for at most `record_settle_s`: the ending's row and the end tidy land a
+        moment after the state reached the socket."""
+        t0 = time.monotonic()
+        while True:
+            problems, facts = self._record_problems(run)
+            waited = time.monotonic() - t0
+            if not problems or waited >= self.record_settle_s:
+                return {"eid": run.eid, "ok": None if facts.get("unreadable") else not problems,
+                        "problems": problems, "waited_s": round(waited, 1), **facts}
+            time.sleep(min(RECORD_POLL_S, self.record_settle_s / 10))
+
+    def _record_problems(self, run: RunRecord) -> tuple[list[str], dict]:
+        """What is wrong with the record of a run that ended, and what was read."""
+        warehouse = self.warehouse_of(run)
+        tables = {kind: self.lake.table(warehouse, run.wid, run.eid, kind)
+                  for kind in ("log", "statistics", "console")}
+        facts: dict[str, Any] = {"tables": {kind: t.describe() for kind, t in tables.items()}}
+        unreadable = [t.describe() for t in tables.values() if t.error]
+        if unreadable:
+            return unreadable, {**facts, "unreadable": True}
+        log = tables["log"]
+        if not log.exists:
+            return [f"no execution log ({log.where})"], facts
+        label, want = Label.of(log), LOGGED_STATES[run.ended_state()]
+        facts["label"] = {"state": label.state, "state_seq": label.state_seq, "reason": label.reason}
+        problems = []
+        if label.state != want:
+            problems.append(f"the log's label says {label.state}, the run ended {want}")
+        if label.state_seq != log.records:
+            ahead = (label.state_seq or 0) > (log.records or 0)
+            problems.append(
+                f"the label names seq {label.state_seq} and the log holds {log.records} row(s): "
+                + ("the label is ahead of its rows, or a seq was skipped" if ahead else
+                   "more rows than seq (a row landed twice, which a retried append may; or a seq "
+                   "was skipped and another repeated)"))
+        if run.eid in self._untidied:
+            facts["untidied"] = self._untidied[run.eid]
+            return problems, facts
+        # a run that never ran (its environment could not be installed) may have no statistics
+        ran = "Running" in run.states() or run.handle is None
+        problems += self._untidy(log, "the log", written=True)
+        problems += self._untidy(tables["statistics"], "the statistics table", written=True if ran else None)
+        problems += self._console_problems(run, tables["console"], warehouse, facts)
+        return problems, facts
+
+    @staticmethod
+    def _untidy(table: TableState, what: str, written: bool | None) -> list[str]:
+        """Why `table` is not as the end tidy leaves it. `written` True: something was
+        written to it, so it holds one data file and one snapshot. False: nothing was, so
+        it holds no row. None: the driver cannot tell, so either."""
+        if not table.exists:
+            return [f"{what} is missing ({table.where})"]
+        if written is False:
+            return [f"{what} holds {table.records} row(s) of a run that wrote none"] if table.records else []
+        counts = (table.data_files, table.snapshots)
+        if counts == (1, 1) or (written is None and counts == (0, 0)):
+            return []
+        return [f"{what} holds {table.data_files} data file(s) and {table.snapshots} snapshot(s), "
+                f"not one of each"]
+
+    def _console_problems(self, run: RunRecord, console: TableState, warehouse: str, facts: dict) -> list[str]:
+        """The console table goes when the execution's results go: with the unit's idle
+        clean-up until step 3's sub-part 14, with the Dashboard's expiry after it (D31).
+        One that is gone together with the results can no longer be judged; one that is
+        gone while they are still there is missing."""
+        if console.exists:
+            return self._untidy(console, "the console table", written=run.printed())
+        results, why = self.lake.port_tables(warehouse, run.wid, run.eid, "result")
+        if results == []:
+            facts["console"] = "not judged: it is gone, and so are the execution's results (cleared or expired)"
+            return []
+        return [f"the console table is missing ({console.where}) while "
+                + (f"{len(results)} result table(s) of the execution are still there" if results
+                   else f"its results cannot be listed: {why}")]
+
+    def _check_i(self, started: list[RunRecord]) -> CheckResult:
+        self.settle_records()
+        verdicts = [self._records[r.eid] for r in started if r.eid in self._records]
+        if not verdicts:
+            return CheckResult("I", True, "no run of this scenario was started and has ended", {"vacuous": True})
+
+        def line(v: dict) -> str:
+            if v["problems"]:
+                return f"execution {v['eid']}: " + "; ".join(v["problems"]) + f" (after {v['waited_s']} s)"
+            label = v.get("label") or {}
+            return (f"execution {v['eid']}: {label.get('state')} at seq {label.get('state_seq')}, "
+                    + ("tables left as they were: " + v["untidied"] if v.get("untidied")
+                       else "one data file and one snapshot per table written to"))
+
+        ok: bool | None = all(v["ok"] for v in verdicts)
+        if any(v["ok"] is None for v in verdicts):
+            ok = None
+        return CheckResult("I", ok, "; ".join(line(v) for v in verdicts)[:1500], {"records": verdicts})
+
     # ------------------------------------------------------------- the checks
+
+    def _evaluated(self) -> list[str]:
+        """The checks a scenario's end evaluates: step 2's always, step 3's when required."""
+        return [c for c in ALL_CHECKS if c in CHECKS or c in self.required]
 
     def end_scenario(self, resolve_eid: Callable[[RunRecord], int | None] | None = None) -> dict:
         """Mark the end, read the log and evaluate every check for this scenario.
@@ -838,7 +1016,7 @@ class Evidence:
         results: dict[str, CheckResult] = {}
         report: dict[str, Any] = {"runs": [r.to_json() for r in self.runs], "windows": []}
         if begin is None or end is None:
-            for c in CHECKS:
+            for c in self._evaluated():
                 results[c] = CheckResult(c, None, "the scenario's begin/end marks are not in the log")
             return {"checks": results, "report": report}
 
@@ -913,6 +1091,8 @@ class Evidence:
 
         results["D"] = self._check_d(started)
         results["E"] = self._check_e(started)
+        if "I" in self.required:
+            results["I"] = self._check_i(started)
 
         from_unit_addr = [s for s in scen if s.host in self.unit_hosts]
         unnamed = [s for s in from_unit_addr if s.app != UNIT_APP]
@@ -1016,28 +1196,15 @@ class Evidence:
             return m.group(1) if m else self.default_warehouse
         return self.warehouse_name or self.default_warehouse
 
-    def _catalog_get(self, path: str) -> tuple[int, Any]:
-        url = f"{self.catalog_uri}{path}"
-        p = self._docker("exec", self.dashboard_container, "curl", "-s", "-w", "\n%{http_code}", url)
-        if p.returncode != 0:
-            return 0, p.stdout[:300]
-        body, _, code = p.stdout.rpartition("\n")
-        try:
-            return int(code), json.loads(body) if body.strip() else None
-        except ValueError:
-            return int(code) if code.isdigit() else 0, body[:300]
-
     def plan_table_refs(self, warehouse: str, wid: int, eid: int) -> tuple[dict | None, str]:
-        code, cfg = self._catalog_get(f"/v1/config?warehouse={warehouse}")
-        if code != 200 or not isinstance(cfg, dict):
-            return None, f"catalog config for warehouse {warehouse}: HTTP {code} {str(cfg)[:200]}"
-        prefix = (cfg.get("overrides") or {}).get("prefix") or (cfg.get("defaults") or {}).get("prefix")
-        base = f"/v1/{prefix}" if prefix else "/v1"
+        base, why = self.catalog.base(warehouse)
+        if base is None:
+            return None, why
         table = f"wid_{wid}_eid_{eid}_plan"
-        code, body = self._catalog_get(f"{base}/namespaces/{self.plan_namespace}/tables/{table}")
+        code, body = self.catalog.get(f"{base}/namespaces/{self.plan_namespace}/tables/{table}")
         if code == 200 and isinstance(body, dict):
             return (body.get("metadata") or {}).get("refs") or {}, f"{warehouse}.{self.plan_namespace}.{table}"
-        code_ns, ns = self._catalog_get(f"{base}/namespaces")
+        code_ns, ns = self.catalog.get(f"{base}/namespaces")
         names = [".".join(n) for n in (ns or {}).get("namespaces", [])] if isinstance(ns, dict) else ns
         return None, (f"{warehouse}.{self.plan_namespace}.{table}: HTTP {code} "
                       f"{(body or {}).get('error', {}).get('message', '') if isinstance(body, dict) else body}; "
@@ -1106,7 +1273,7 @@ def evaluate(results: dict[str, CheckResult], required: Sequence[str],
     "control inconclusive" and fails the gate."""
     gates: list[tuple[str, bool, str]] = []
     info: dict[str, Any] = {}
-    for key in CHECKS:
+    for key in ALL_CHECKS:
         r = results.get(key)
         if r is None:
             continue
@@ -1128,15 +1295,16 @@ def evaluate(results: dict[str, CheckResult], required: Sequence[str],
 
 
 def parse_checks(spec: str | None) -> list[str]:
+    """The checks a spec names; `all` (or nothing) is step 2's six."""
     if spec is None:
         return []
     items = [s.strip().upper() for s in spec.replace(" ", ",").split(",") if s.strip()]
     if items in (["ALL"], []):
         return list(CHECKS)
-    bad = [c for c in items if c not in CHECKS]
+    bad = [c for c in items if c not in ALL_CHECKS]
     if bad:
-        raise SystemExit(f"--evidence takes checks among {','.join(CHECKS)}; got {','.join(bad)}")
-    return [c for c in CHECKS if c in items]
+        raise SystemExit(f"--evidence takes checks among {','.join(ALL_CHECKS)}; got {','.join(bad)}")
+    return [c for c in ALL_CHECKS if c in items]
 
 
 def read_env_file(path) -> dict[str, str]:

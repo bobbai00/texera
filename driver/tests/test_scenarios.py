@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scenarios  # noqa: E402
 from fake_texera import FakeTexera  # noqa: E402
+from lake import Catalog, Lake  # noqa: E402
 from scenarios import Ctx, OtherUser, run_scenario  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
 from transport import CreateStartTransport, WebSocketTransport  # noqa: E402
@@ -80,12 +81,17 @@ class FakeUnitExec:
 class ScenarioCase(unittest.TestCase):
     transport_name = "create-ws"
     replay_log = False
+    #: the product the fake models, the step-3 timers it and the driver run on, and how
+    #: far the driver takes the product to be (Ctx.level)
+    step = "2"
+    timing = None
+    level = None
 
     def setUp(self):
         self._settle = scenarios.REFUSAL_SETTLE_S
         scenarios.REFUSAL_SETTLE_S = 0.5  # the fake answers at once
         self.addCleanup(setattr, scenarios, "REFUSAL_SETTLE_S", self._settle)
-        self.fake = FakeTexera(warehouses=True, replay_log=self.replay_log)
+        self.fake = FakeTexera(warehouses=True, replay_log=self.replay_log, step=self.step, timing=self.timing)
         base = self.fake.start()
         api = TexeraApi(base)
         api.login("texera", "texera")
@@ -104,7 +110,8 @@ class ScenarioCase(unittest.TestCase):
                        dataset={"version_path": VERSION_PATH}, warehouse_name=f"user-1-{whid}",
                        with_replay_log=self.replay_log,
                        other=OtherUser(other_api, o_cuid, o_whid, f"user-{other_api.uid}-{o_whid}"),
-                       unit2_cuid=unit2, unit_uri=URI)
+                       unit2_cuid=unit2, unit_uri=URI, timing=self.timing,
+                       lake=Lake(Catalog(self.fake.lake.fetch)), level=self.level)
         self.unit = FakeUnitExec(self.fake, base)
         self.ctx.unit_exec = self.unit
 

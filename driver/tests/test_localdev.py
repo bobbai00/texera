@@ -144,6 +144,20 @@ class DriverArgsTest(unittest.TestCase):
             parse("--target", "localdev", "--unit-kind", "kubernetes")
         self.assertIn("local", str(cm.exception))
 
+    def test_a_step_3_gate_runs_here_and_a_step_2_gate_does_not(self):
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--base", default="http://localhost:4200")
+        ap.add_argument("--unit-uri", default="http://localhost:4200/wsapi")
+        ap.add_argument("--gate", default=None)
+        k8s_unit.add_arguments(ap)
+        with mock.patch.dict("os.environ", {}, clear=False):
+            localdev_unit.resolve_args(ap.parse_args(["--target", "localdev", "--gate", "3A"]),
+                                       portable_gates=frozenset({"3A"}))
+            with self.assertRaises(SystemExit) as cm:
+                localdev_unit.resolve_args(ap.parse_args(["--target", "localdev", "--gate", "D"]),
+                                           portable_gates=frozenset({"3A"}))
+        self.assertIn("--gate", str(cm.exception))
+
     def test_refuses_the_unit_container_scenarios(self):
         with mock.patch.dict("os.environ", {}, clear=False):
             a = parse("--target", "localdev")

@@ -8,7 +8,7 @@
 #
 #   ./run-localdev.sh --lock <dir> [--source <worktree>] [--reset] [--keep] [--label <text>]
 #                     [--time-limit MIN] [--python PY] [--heap NAME=SIZE ...] [--strict-schema]
-#                     [--allow-stale-dists] [-- <driver args>]
+#                     [--allow-stale-dists] [--fast-record] [-- <driver args>]
 #   ./run-localdev.sh --no-lock ...
 #
 #   --lock        the stack lock: a directory taken with mkdir (waiting while another run holds
@@ -27,10 +27,11 @@
 #   --keep        leave the stack running afterwards (default: down, volumes kept). The lock stays
 #                 held with it: `stack/localdev-stack.sh down`, then removing the lock, is the
 #                 caller's job (the shared rule: within 45 minutes of taking it)
-#   --python, --heap, --strict-schema, --allow-stale-dists   passed to `localdev-stack.sh up`
-#                 (see its --help). --strict-schema stops the run where `bin/local-dev.sh up` stops
-#                 when local-dev's schema step fails (exit 3); without it the run goes on and the
-#                 report lists the deviation (summary.local_dev_deviations)
+#   --python, --heap, --strict-schema, --allow-stale-dists, --fast-record
+#                 passed to `localdev-stack.sh up` (see its --help). --strict-schema stops the run
+#                 where `bin/local-dev.sh up` stops when local-dev's schema step fails (exit 3);
+#                 without it the run goes on and the report lists the deviation
+#                 (summary.local_dev_deviations). The step-3 scenarios need --fast-record
 #   anything after `--` goes to driver/e2e.py (e.g. -- --scenario a,d)
 #
 # Writes reports/localdev-<UTC time>.json and reports/localdev-<UTC time>-logs/ (every service's
@@ -56,9 +57,9 @@ while [[ $# -gt 0 ]]; do
         --time-limit) limit_min="$2"; shift ;;
         --python) up_args+=(--python "$2"); shift ;;
         --heap) up_args+=(--heap "$2"); shift ;;
-        --strict-schema|--allow-stale-dists) up_args+=("$1") ;;
+        --strict-schema|--allow-stale-dists|--fast-record) up_args+=("$1") ;;
         --) shift; driver_args=("$@"); break ;;
-        -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1 (see --help)" >&2; exit 64 ;;
     esac
     shift

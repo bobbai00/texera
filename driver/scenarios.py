@@ -21,7 +21,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from texera_api import TexeraApi
+from lake import Label, Lake, TableState
+from record_timing import RecordTiming
+from texera_api import StatisticsRow, TexeraApi
 from transport import (CreateRefused, RunFailed, RunHandle, RunTimeout, Transport, UpdateRefused,
                        console_type, response_body)
 from workflow import (Workflow, aggregate, csv_scan, file_lister, file_scan_from_input, filter_op,
@@ -115,7 +117,8 @@ class Ctx:
                  unit_container: str = "sce-workflow-runtime-coordinator-service",
                  with_replay_log: bool = False, other: OtherUser | None = None,
                  unit2_cuid: int | None = None, unit_uri: str = "",
-                 unit_exec_prefix: Callable[[bool], list[str]] | None = None):
+                 unit_exec_prefix: Callable[[bool], list[str]] | None = None,
+                 timing: RecordTiming | None = None, lake: Lake | None = None, level: str | None = None):
         self.api, self.transport = api, transport
         self.run_id, self.cuid, self.whid = run_id, cuid, whid
         self.paths, self.timeout, self.log = paths, timeout, log
@@ -137,6 +140,12 @@ class Ctx:
         self.other = other
         self.unit2_cuid = unit2_cuid
         self.unit_uri = unit_uri
+        # Step 3: the timers the stack was started with, the lake's catalog, and how far
+        # the product under test is: the letter of the last step-3 gate it has passed
+        # (A, B or C), None for a product of step 2.
+        self.timing = timing or RecordTiming()
+        self.lake = lake
+        self.level = level
         self.created_wids: list[int] = []
         self.hex = uuid.uuid4().hex[:8]
 
@@ -240,6 +249,32 @@ class Ctx:
         self.log(f"  unit settled ({why}): {out}")
         self.rec.notes.append(f"unit settled before {why}: {out}")
 
+    def at_least(self, level: str) -> bool:
+        """Whether the product under test has what step 3's gate `level` brings."""
+        return self.level is not None and self.level >= level
+
+    def statistics(self, wid: int, eid: int) -> list[StatisticsRow]:
+        """An execution's stored statistics. Until gate 3C the request names the unit, as
+        the browser's does: in Kubernetes the gateway still routes it there."""
+        return self.api.execution_statistics(wid, eid, cuid=None if self.at_least("C") else self.cuid)
+
+    def lake_table(self, kind: str, wid: int, eid: int) -> TableState:
+        """One of an execution's own tables (`plan`, `log`, `statistics`, `console`) as the
+        catalog shows it, in the warehouse this driver's runs use."""
+        if self.lake is None:
+            raise RuntimeError("this scenario reads the lake's catalog, which this driver was not given")
+        return self.lake.table(self.warehouse_name, wid, eid, kind)
+
+    def settle_records(self) -> None:
+        """With Check I: judge now the record of every run of this scenario that has
+        ended, before something changes its tables (see Evidence.settle_records)."""
+        if self.evidence is None:
+            return
+        try:
+            self.evidence.settle_records()
+        except Exception as e:  # noqa: BLE001 -- Check I then reports what it can still read
+            self.log(f"  the records could not be judged now: {type(e).__name__}: {e}")
+
     def unit_exec(self, *cmd: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess:
         """Run `cmd` where the unit runs (stdout and stderr merged): in its container on the
         single-node stack, in its pod in Kubernetes mode, on this host in local-dev mode."""
@@ -313,6 +348,19 @@ def diff_rows(actual: list[dict], expected: list[dict], ordered: bool) -> str:
     if missing or unmatched:
         return f"missing {missing[:5]}; unexpected {unmatched[:5]}"
     return ""
+
+
+def poll(probe: Callable[[], Any], accept: Callable[[Any], bool], timeout: float,
+         every: float = 0.5) -> tuple[Any, float]:
+    """Ask `probe` every `every` seconds until `accept` takes its answer or `timeout`
+    seconds passed; (the last answer, the seconds waited)."""
+    t0 = time.monotonic()
+    while True:
+        answer = probe()
+        waited = time.monotonic() - t0
+        if accept(answer) or waited >= timeout:
+            return answer, waited
+        time.sleep(min(every, max(0.0, timeout - waited)))
 
 
 def run_to_completion(ctx: Ctx, wf: Workflow, sink: str) -> tuple[RunHandle, dict]:
@@ -1220,6 +1268,7 @@ def scenario_o(ctx: Ctx) -> None:
     ok = isinstance(result, dict) and result.get("success") is True
     if record is not None:
         record.started = ok
+        record.final_state = result.get("state") if isinstance(result, dict) else None
     ctx.check("the unit's run answers success with state Completed",
               code == 200 and ok and result.get("state") == "Completed",
               f"HTTP {code}: {str(result)[:500]}")
@@ -1467,6 +1516,128 @@ def scenario_i(ctx: Ctx) -> None:
         ctx.expect_no_unit_statement(eid, "a create refused for a missing environment never reaches the unit")
 
 
+# ===================================================================== step 3
+# Scenarios of the step 3 design (section 7 H3): the record a run leaves in the lake.
+# They wait on the unit's commit timer, so they need a stack started with
+# --fast-record; every wait below is a multiple of the stack's timers (ctx.timing).
+
+SLOW_RUN_SLEEP_S = 0.1
+UDF_SLOW_PRINT = f'''from pytexera import *
+import time
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        print(f"sce-e2e slow run: {{tuple_['n']}}")
+        time.sleep({SLOW_RUN_SLEEP_S})
+        yield tuple_
+'''
+#: a state's row and label reach the lake a moment after the state reaches the socket
+LABEL_WAIT_S = 10.0
+#: the first commit of statistics or console output comes within this many commit intervals
+FIRST_COMMIT_INTERVALS = 3
+#: p reads the stored statistics twice, this many commit intervals apart (5 s with --fast-record)
+STATS_GROWTH_INTERVALS = 2.5
+
+
+def _need_fast_record(ctx: Ctx) -> None:
+    if not ctx.timing.fast:
+        raise RuntimeError(f"scenario {ctx.rec.key} waits on step 3's timers, which take minutes to a day "
+                           f"with the product's defaults; start the stack with --fast-record "
+                           f"(this stack: {ctx.timing.describe()})")
+
+
+def _slow_run(ctx: Ctx, key: str) -> tuple[RunHandle, str]:
+    """The step-3 scenarios' slow run, started and Running: numbers.csv -> a Python UDF
+    that prints one line and sleeps 0.1 s per tuple (about 30 s). Returns the handle and
+    the UDF's id."""
+    wf = ctx.workflow(key)
+    scan = wf.add("numbers", "CSVFileScan", csv_scan(ctx.paths["numbers.csv"]), n_in=0)
+    udf = wf.add("slow-print", "PythonUDFV2", python_udf(UDF_SLOW_PRINT))
+    wf.link(scan, udf)
+    handle = ctx.start(wf, view=[udf])
+    handle.wait_for_state("Running", timeout=ctx.timeout)
+    return handle, udf
+
+
+def _wait_label(ctx: Ctx, wid: int, eid: int, state: str, after_seq: int = 0) -> Label:
+    """The label of the execution's log once it names `state` at a seq above `after_seq`
+    (or as it is after LABEL_WAIT_S)."""
+    label, _ = poll(lambda: Label.of(ctx.lake_table("log", wid, eid)),
+                    lambda l: l.state == state and (l.state_seq or 0) > after_seq, LABEL_WAIT_S, 0.25)
+    return label
+
+
+def _check_log_while_running(ctx: Ctx, wid: int, eid: int, labels: list[Label]) -> None:
+    """Before the Dashboard serves the log: the label, read after each state change,
+    names RUNNING, PAUSED and RUNNING at rising seq, and the table holds a row per seq:
+    READY, an output row, RUNNING, PAUSED, RUNNING at the least."""
+    seen = [(l.state, l.state_seq) for l in labels]
+    seqs = [l.state_seq or 0 for l in labels]
+    ctx.check("while it runs the log's label names RUNNING, PAUSED, RUNNING at rising seq",
+              [l.state for l in labels] == ["RUNNING", "PAUSED", "RUNNING"] and seqs == sorted(set(seqs))
+              and seqs[0] >= 2, f"label after each state change: {seen}")
+    log = ctx.lake_table("log", wid, eid)
+    ctx.check("the log holds one row per seq up to the label's: READY, an output row, RUNNING, PAUSED, "
+              "RUNNING at the least", log.records == labels[-1].state_seq and (log.records or 0) >= 5,
+              f"{log.describe()}; label {seen[-1]}")
+
+
+def _check_statistics_grow(ctx: Ctx, handle: RunHandle, wid: int, eid: int, udf: str) -> None:
+    commit = ctx.timing.commit_interval_s
+    first, _ = poll(lambda: ctx.statistics(wid, eid), bool, FIRST_COMMIT_INTERVALS * commit, ctx.timing.poll_s)
+    ctx.check("the statistics endpoint returns rows before the run ends",
+              bool(first) and handle.last_state == "Running", f"{len(first)} row(s); state {handle.last_state}")
+    gap = STATS_GROWTH_INTERVALS * commit
+    time.sleep(gap)
+    second = ctx.statistics(wid, eid)
+    ctx.check(f"their count grows between two reads {gap:g} s apart, the run still going",
+              len(second) > len(first) and handle.last_state == "Running",
+              f"{len(first)} then {len(second)} row(s); state {handle.last_state}")
+    times = [r.time_ms for r in second]
+    ctx.check("the stored rows are per operator, with times in epoch milliseconds",
+              udf in {r.operator_id for r in second}
+              and all(isinstance(t, (int, float)) and not isinstance(t, bool) and 1e12 < t < 1e13 for t in times),
+              f"operators {sorted({r.operator_id for r in second})}; times {times[:3]}")
+
+
+def _check_console_stored(ctx: Ctx, handle: RunHandle, wid: int, eid: int) -> None:
+    table, _ = poll(lambda: ctx.lake_table("console", wid, eid), lambda t: bool(t.records),
+                    FIRST_COMMIT_INTERVALS * ctx.timing.commit_interval_s, ctx.timing.poll_s)
+    ctx.check("console lines are stored before the run ends (the console table has a snapshot with rows)",
+              table.snapshots >= 1 and bool(table.records) and handle.last_state == "Running",
+              f"{table.describe()}; state {handle.last_state}")
+
+
+def scenario_p(ctx: Ctx) -> None:
+    """A slow run, paused and resumed once. While it runs, its log, statistics and console
+    output are in the lake; after it, the log's newest state is COMPLETED. Check I then
+    judges the whole record."""
+    _need_create_ws(ctx)
+    _need_fast_record(ctx)
+    handle, udf = _slow_run(ctx, "p-record-in-lake")
+    wid, eid = ctx.rec.wid, handle.eid
+    handle.wait_until(lambda: handle.output_rows(udf) >= 3, ctx.timeout, "the UDF to emit 3 rows")
+    running = _wait_label(ctx, wid, eid, "RUNNING")
+    handle.pause()
+    handle.wait_for_state("Paused", timeout=120)
+    paused = _wait_label(ctx, wid, eid, "PAUSED")
+    handle.resume()
+    handle.wait_for_state("Running", timeout=120)
+    resumed = _wait_label(ctx, wid, eid, "RUNNING", after_seq=paused.state_seq or 0)
+    _check_log_while_running(ctx, wid, eid, [running, paused, resumed])
+    _check_statistics_grow(ctx, handle, wid, eid, udf)
+    _check_console_stored(ctx, handle, wid, eid)
+    done = handle.wait_for_state("Completed", timeout=ctx.timeout)
+    ctx.check("the run completes", done == "Completed", f"states {handle.states}")
+    ended = _wait_label(ctx, wid, eid, "COMPLETED")
+    ctx.check("after the run the log's newest state is COMPLETED, at the highest seq",
+              ended.state == "COMPLETED" and (ended.state_seq or 0) > (resumed.state_seq or 0),
+              f"label {(ended.state, ended.state_seq)}, {(resumed.state, resumed.state_seq)} while it ran")
+    ctx.persisted_status(STATUS_COMPLETED, eid=eid)
+
+
 SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], None]]] = {
     "a": ("scan-filter-project-aggregate",
           "CSV scan -> Filter -> Projection -> Aggregate; exact grouped rows", scenario_a),
@@ -1507,13 +1678,18 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], None]]] = {
     "h": ("environment-broken", "an environment pip cannot install: the run fails with pip's message",
           scenario_h),
     "i": ("environment-missing", "a UDF naming an environment the user lacks: create 400", scenario_i),
+    # step 3 (design section 7 H3)
+    "p": ("record-in-lake", "a slow run, paused and resumed: its log, statistics and console are in the "
+                            "lake while it runs", scenario_p),
 }
 
 #: the scenarios run when none is selected (both transports): today's baseline
 BASELINE = ["a", "b", "c", "d", "e", "u"]
 #: scenarios that run only on create-ws (the Dashboard creates executions)
 CREATE_WS_ONLY = {"k", "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", "l10", "m", "o",
-                  "f", "f2", "g", "h", "i"}
+                  "f", "f2", "g", "h", "i", "p"}
+#: step 3's scenarios: named, or selected by a step-3 gate; `all` stays what it was
+STEP3 = {"p"}
 #: group keys
 GROUPS = {"l": [f"l{i}" for i in range(1, 11)]}
 #: what each scenario needs from the driver's setup
@@ -1523,8 +1699,9 @@ NEEDS_UNIT2 = {"l9"}
 
 def applicable(transport: str, legacy_env: bool) -> list[str]:
     """`--scenario all`: on ws the baseline as before (j runs on ws when named); on
-    create-ws every scenario. g0 only with --legacy-env."""
-    keys = list(SCENARIOS) if transport == "create-ws" else BASELINE + ["g0"]
+    create-ws every scenario of step 2 (step 3's are named, or come with their gate).
+    g0 only with --legacy-env."""
+    keys = [k for k in SCENARIOS if k not in STEP3] if transport == "create-ws" else BASELINE + ["g0"]
     return [k for k in keys if k != "g0" or legacy_env]
 
 
@@ -1578,6 +1755,9 @@ def run_scenario(ctx: Ctx, key: str) -> ScenarioRecord:
             final = h.ensure_stopped()
             if rec.outcome != "PASS" and final:
                 ctx.log(f"  run of workflow {h.wid} left in state {final}")
+        # Check I reads the records of the scenario's runs while its sockets are open: the
+        # unit lets go of a run, and of its console table, once nobody watches it.
+        ctx.settle_records()
         rec.duration_s = time.monotonic() - t0
         if ctx.handles:
             rec.run = ctx.handles[-1].summary()
