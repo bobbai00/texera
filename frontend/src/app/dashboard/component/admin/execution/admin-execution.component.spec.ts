@@ -263,6 +263,7 @@ describe("AdminExecutionComponent methods (#6550)", () => {
     });
 
     it("getStatusColor maps the remaining statuses", () => {
+      expect(component.getStatusColor("CREATED")).toBe("steelblue");
       expect(component.getStatusColor("READY")).toBe("lightgreen");
       expect(component.getStatusColor("PAUSED")).toBe("purple");
       expect(component.getStatusColor("FAILED")).toBe("gray");
@@ -678,6 +679,16 @@ describe("AdminExecutionComponent template rendering", () => {
     expect(isDisabled("history")).toBe(false);
   });
 
+  it("greys out kill, pause and resume for an execution that was created and not started", () => {
+    // No unit runs it: a kill sent for its workflow would end whichever run the unit still holds.
+    renderRows([makeExecution({ executionStatus: "CREATED", workflowId: 46 })]);
+
+    expect(isDisabled("stop")).toBe(true);
+    expect(isDisabled("pause")).toBe(true);
+    expect(isDisabled("redo")).toBe(true);
+    expect(isDisabled("history")).toBe(false);
+  });
+
   it("paints each row's status cell with that status's colour", () => {
     // The colour is the only cue for a row's state, and getStatusColor's own unit tests say
     // nothing about which value the template feeds it. Two rows with different statuses, so a
@@ -740,10 +751,10 @@ describe("AdminExecutionComponent template rendering", () => {
     // A label that does not match its value filters for a status other than the one clicked.
     expect(filters.map(entry => entry.text)).toEqual(filters.map(entry => entry.value));
     // Every status the table can colour has to be filterable; "UNKNOWN" is offered as well.
-    for (const status of ["READY", "RUNNING", "PAUSED", "COMPLETED", "FAILED", "KILLED", "JUST COMPLETED"]) {
+    for (const status of ["CREATED", "READY", "RUNNING", "PAUSED", "COMPLETED", "FAILED", "KILLED", "JUST COMPLETED"]) {
       expect(filters.map(entry => entry.value)).toContain(status);
     }
-    expect(filters).toHaveLength(8);
+    expect(filters).toHaveLength(9);
   });
 
   it("opens the execution history for the row's workflow", () => {
@@ -773,6 +784,23 @@ describe("AdminExecutionComponent template rendering", () => {
 
       const cells = cellsOf(0);
       expect(cells[4]).toBe("00:00:05");
+      expect(cells[5]).toBe("Not Available");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads Not Available for the time used and the end time of an execution that was created and not started", () => {
+    // No unit has recorded anything of it, so it has no end time (0) and, unlike a row that is
+    // READY, no clock that runs: the time since it was created is not time used.
+    const now = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      renderRows([makeExecution({ executionStatus: "CREATED", startTime: now - 5_000, endTime: 0 })]);
+
+      const cells = cellsOf(0);
+      expect(cells[4]).toBe("Not Available");
       expect(cells[5]).toBe("Not Available");
     } finally {
       vi.useRealTimers();

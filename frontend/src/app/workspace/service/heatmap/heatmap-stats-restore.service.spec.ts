@@ -227,6 +227,19 @@ describe("HeatmapStatsRestoreService", () => {
     expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 5, 11);
   });
 
+  it("passes over an execution that was created and not started", () => {
+    executionsService.retrieveWorkflowExecutions.mockReturnValue(
+      of([
+        makeExecution({ eId: 6, cuId: 12, startingTime: 6_000, status: 6 }), // newest, Created
+        makeExecution({ eId: 4, cuId: 10, startingTime: 4_000, status: 4 }), // Failed
+      ])
+    );
+
+    service.restoreLatestRunStatistics().subscribe();
+
+    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 4, 10);
+  });
+
   // The error path is pinned via an explicit { error, complete } observer. RxJS 7 reports an
   // unhandled error asynchronously instead of rethrowing from subscribe(), so a not.toThrow()
   // assertion would pass with catchError deleted.

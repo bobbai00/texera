@@ -27,7 +27,13 @@ package org.apache.texera.dao
   */
 object WorkflowExecutionStatus {
 
-  /** A computing unit is setting the execution's run up. */
+  /**
+    * The Dashboard service created the execution, and no computing unit has started it. It may
+    * never be started: nothing that asks for runs in progress counts it.
+    */
+  val Created: Short = 6
+
+  /** A computing unit has started the execution and is setting its run up. */
   val Initializing: Short = 0
   val Running: Short = 1
   val Paused: Short = 2
@@ -40,4 +46,10 @@ object WorkflowExecutionStatus {
 
   /** The codes of an execution that has ended. */
   val Ended: Set[Short] = Set(Completed, Failed, Killed)
+
+  /**
+    * The codes of an execution that no computing unit is running: one that has ended, or that
+    * none has started. Any other code, [[Unknown]] included, may be of a run in progress.
+    */
+  val NotRunning: Set[Short] = Ended + Created
 }

@@ -21,7 +21,11 @@ import { Injectable } from "@angular/core";
 import { EMPTY, Observable, defer } from "rxjs";
 import { catchError, map, switchMap, takeUntil, tap } from "rxjs/operators";
 import { WorkflowExecutionsService } from "../../../dashboard/service/user/workflow-executions/workflow-executions.service";
-import { EXECUTION_STATUS_CODE, WorkflowExecutionsEntry } from "../../../dashboard/type/workflow-executions-entry";
+import {
+  CREATED_EXECUTION_STATUS,
+  EXECUTION_STATUS_CODE,
+  WorkflowExecutionsEntry,
+} from "../../../dashboard/type/workflow-executions-entry";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 import { WorkflowStatusService } from "../workflow-status/workflow-status.service";
 import { ExecuteWorkflowService } from "../execute-workflow/execute-workflow.service";
@@ -107,15 +111,17 @@ export class HeatmapStatsRestoreService {
   /**
    * The run to restore: the most recent completed execution, or — when no run
    * ever completed — the most recent one overall, so a partially executed
-   * workflow still shows the statistics it produced.
+   * workflow still shows the statistics it produced. An execution that was
+   * created and not started is no run: it produced none.
    */
   private pickLatestRun(executions: ReadonlyArray<WorkflowExecutionsEntry>): WorkflowExecutionsEntry | undefined {
     const latestOf = (entries: ReadonlyArray<WorkflowExecutionsEntry>) =>
       entries.length === 0
         ? undefined
         : entries.reduce((latest, entry) => (entry.startingTime > latest.startingTime ? entry : latest));
-    const completed = executions.filter(e => EXECUTION_STATUS_CODE[e.status] === ExecutionState.Completed);
-    return latestOf(completed) ?? latestOf(executions);
+    const runs = executions.filter(e => e.status !== CREATED_EXECUTION_STATUS);
+    const completed = runs.filter(e => EXECUTION_STATUS_CODE[e.status] === ExecutionState.Completed);
+    return latestOf(completed) ?? latestOf(runs);
   }
 
   private isExecuting(): boolean {

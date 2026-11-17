@@ -57,9 +57,10 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     * to run on computing unit `computingUnitId`, and returns its id: the row the Dashboard inserts
     * when it creates an execution, before the execution's plan is made.
     *
-    * The row is at status 0 (Initializing), set here rather than left to the column's default,
-    * which is 1 (Running): no unit runs the execution yet. Its starting time is now. An empty
-    * `executionName` keeps the column's default name.
+    * The row's status is Created, set here rather than left to the column's default, which is
+    * Running: no unit has started the execution, and the unit that does records it as
+    * Initializing. Its starting time is now. An empty `executionName` keeps the column's default
+    * name.
     *
     * @param environmentVersion what the row keeps as the version of the engine that asked for it
     * @param warehouseId        the user_warehouse the execution writes into; None for the shared
@@ -79,7 +80,7 @@ object ExecutionsMetadataPersistService extends LazyLogging {
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, uid)
       .set(WORKFLOW_EXECUTIONS.CUID, computingUnitId)
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Initializing))
+      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
       .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)

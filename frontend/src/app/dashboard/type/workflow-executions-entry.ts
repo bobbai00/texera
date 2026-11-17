@@ -36,6 +36,13 @@ export interface WorkflowExecutionsEntry {
   logLocation: string;
 }
 
+/**
+ * The status of an execution that the Dashboard service created and no computing unit has started. It is not
+ * a state of a run, so it is no ExecutionState: such an execution may never be started, and nothing that asks
+ * for runs counts it.
+ */
+export const CREATED_EXECUTION_STATUS = 6;
+
 export const EXECUTION_STATUS_CODE: Record<number, string> = {
   0: ExecutionState.Initializing,
   1: ExecutionState.Running,
@@ -43,4 +50,5 @@ export const EXECUTION_STATUS_CODE: Record<number, string> = {
   3: ExecutionState.Completed,
   4: ExecutionState.Failed,
   5: ExecutionState.Killed,
+  [CREATED_EXECUTION_STATUS]: "Created",
 };

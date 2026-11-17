@@ -301,7 +301,7 @@ class ComputingUnitIdleCleanupSpec
       WorkflowComputingUnitTerminationReasonEnum.GARBAGE_COLLECTED
   }
 
-  it should "keep units whose latest execution is in any non-terminal state running" in {
+  it should "keep units whose latest execution may still be running" in {
     // 0/1/2 are UNINITIALIZED-or-READY, RUNNING and PAUSED; -1 is what maptoStatusCode collapses
     // PAUSING, RESUMING, UNKNOWN and TERMINATED to. None of them may be read as idle.
     val units = Seq[Short](0, 1, 2, -1).map { status =>
@@ -350,6 +350,39 @@ class ComputingUnitIdleCleanupSpec
     }
   }
 
+  it should "garbage collect a unit whose only open execution was created and never started" in {
+    // 6 is CREATED: the Dashboard service made the execution and no unit started it. It may
+    // never be started, so it does not hold its unit for good.
+    val stale = insertComputingUnit("stale-created-only")
+    insertExecution(stale, status = 6, startingMinutesBefore = 180)
+    val k8s = stubKubernetesClient()
+
+    val terminated = ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
+      idleTimeoutMinutes,
+      now,
+      k8s
+    )
+
+    terminated.map(_.cuid) shouldBe List(stale.getCuid)
+    verify(k8s).deletePod(stale.getCuid)
+  }
+
+  it should "keep a unit an execution was created for within the timeout" in {
+    // The execution may be started any moment: its creation counts as activity.
+    val unit = insertComputingUnit("fresh-created")
+    insertExecution(unit, status = 6, startingMinutesBefore = 5)
+    val k8s = stubKubernetesClient()
+
+    ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
+      idleTimeoutMinutes,
+      now,
+      k8s
+    ) shouldBe empty
+
+    verify(k8s, never()).deletePod(anyInt())
+    workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
+  }
+
   it should "omit an empty owner name from terminated unit info" in {
     val user = userDao.fetchOneByUid(testUserId)
     user.setName("")
@@ -384,6 +417,26 @@ class ComputingUnitIdleCleanupSpec
 
     // The user starts a workflow on the unit after the scan listed it as idle.
     insertExecution(unit, status = 1, startingMinutesBefore = 0)
+
+    val k8s = stubKubernetesClient()
+    ComputingUnitManagingResource.terminateIdleKubernetesComputingUnitCandidate(
+      candidate,
+      cutoff,
+      now,
+      k8s
+    ) shouldBe None
+
+    verifyNoInteractions(k8s)
+    workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
+  }
+
+  it should "leave a unit alone when an execution is created for it after the scan" in {
+    // Not a run in progress, so the status half of the guard does not fire -- only the time the
+    // execution was created places it at or after the cutoff.
+    val unit = insertComputingUnit("raced-execution-created")
+    val (candidate, cutoff) = scanCandidate(unit)
+
+    insertExecution(unit, status = 6, startingMinutesBefore = 0)
 
     val k8s = stubKubernetesClient()
     ComputingUnitManagingResource.terminateIdleKubernetesComputingUnitCandidate(

@@ -229,6 +229,7 @@ class AdminExecutionResourceSpec
     AdminExecutionResource.mapToName(3) shouldBe "COMPLETED"
     AdminExecutionResource.mapToName(4) shouldBe "FAILED"
     AdminExecutionResource.mapToName(5) shouldBe "KILLED"
+    AdminExecutionResource.mapToName(6) shouldBe "CREATED"
     AdminExecutionResource.mapToName(99) shouldBe "UNKNOWN"
   }
 
@@ -236,6 +237,7 @@ class AdminExecutionResourceSpec
     Seq("READY", "RUNNING", "PAUSED", "COMPLETED", "FAILED", "KILLED").zipWithIndex.foreach {
       case (name, code) => AdminExecutionResource.mapToStatus(name) shouldBe code
     }
+    AdminExecutionResource.mapToStatus("CREATED") shouldBe 6
     AdminExecutionResource.mapToStatus("NOT_A_STATUS") shouldBe -1
   }
 
@@ -265,6 +267,14 @@ class AdminExecutionResourceSpec
     row.executionName shouldBe "completed-run"
     row.executionStatus shouldBe "COMPLETED"
     row.access shouldBe true
+  }
+
+  it should "name an execution that was created and not started, and filter by that name" in {
+    seedExecution(status = 6.toByte, name = "created-run")
+
+    list().map(_.executionStatus) shouldBe List("CREATED")
+    list(filter = filterOf("CREATED")).map(_.executionName) shouldBe List("created-run")
+    list(filter = filterOf("READY", "RUNNING")) shouldBe empty
   }
 
   it should "report access = false when the current user has no WORKFLOW_USER_ACCESS row" in {

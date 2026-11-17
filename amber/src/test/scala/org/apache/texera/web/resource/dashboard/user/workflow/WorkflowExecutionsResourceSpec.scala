@@ -40,7 +40,7 @@ import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
+import org.apache.texera.dao.{MockTexeraDB, StatementRecorder, WorkflowExecutionStatus}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -448,6 +448,18 @@ class WorkflowExecutionsResourceSpec
     val result = WorkflowExecutionsResource.getLatestExecutionID(testWorkflowWid, unitA.getCuid)
     assert(result.isDefined)
     assert(result.get == math.max(a.getEid, b.getEid))
+  }
+
+  it should "pass over an execution that was created and not started" in {
+    val unit = insertComputingUnit()
+    val started = insertExecution(cuid = unit.getCuid)
+    insertExecution(cuid = unit.getCuid, status = WorkflowExecutionStatus.Created.toByte)
+
+    assert(
+      WorkflowExecutionsResource
+        .getLatestExecutionID(testWorkflowWid, unit.getCuid)
+        .contains(started.getEid)
+    )
   }
 
   // ─── new: getExpiredExecutionsWithResultOrLog ─────────────────────────────
@@ -1162,6 +1174,26 @@ class WorkflowExecutionsResourceSpec
     // `last_update_time` is populated, so a null here would mean position 9 never reached
     // `completionTime` — i.e. the mapping had silently become name-based.
     assert(entry.completionTime != null)
+  }
+
+  // The editor asks for these two states to decide whether to lock a workflow that is opened.
+  it should "leave a created execution out of the running and initializing ones" in {
+    grantReadAccess()
+    val initializing = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    val running = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    insertExecution(status = WorkflowExecutionStatus.Created.toByte)
+
+    val inProgress = resource.retrieveExecutionsOfWorkflow(
+      testWorkflowWid,
+      session(testUser),
+      "running,initializing"
+    )
+
+    assert(inProgress.map(_.eId).toSet == Set(initializing.getEid, running.getEid))
+    // It is still part of the workflow's history.
+    assert(
+      resource.retrieveExecutionsOfWorkflow(testWorkflowWid, session(testUser), null).size == 3
+    )
   }
 
   it should "reject an invalid status filter with a BadRequestException" in {

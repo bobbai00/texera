@@ -19,7 +19,11 @@
 
 import { AfterViewInit, Component, Inject, OnInit, Optional } from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
-import { EXECUTION_STATUS_CODE, WorkflowExecutionsEntry } from "../../../../type/workflow-executions-entry";
+import {
+  CREATED_EXECUTION_STATUS,
+  EXECUTION_STATUS_CODE,
+  WorkflowExecutionsEntry,
+} from "../../../../type/workflow-executions-entry";
 import { WorkflowExecutionsService } from "../../../../service/user/workflow-executions/workflow-executions.service";
 import { ExecutionState } from "../../../../../workspace/types/execute-workflow.interface";
 import { NotificationService } from "../../../../../common/service/notification/notification.service";
@@ -180,6 +184,7 @@ export class WorkflowExecutionHistoryComponent implements OnInit, AfterViewInit 
     ["status", ["status"]],
   ]);
   public statusMapping: Map<string, number> = new Map([
+    ["created", CREATED_EXECUTION_STATUS],
     ["initializing", 0],
     ["running", 1],
     ["paused", 2],
@@ -348,6 +353,8 @@ export class WorkflowExecutionHistoryComponent implements OnInit, AfterViewInit 
         return [ExecutionState.Failed.toString(), "exclamation-circle", "gray"];
       case 5:
         return [ExecutionState.Killed.toString(), "minus-circle", "red"];
+      case CREATED_EXECUTION_STATUS:
+        return [EXECUTION_STATUS_CODE[CREATED_EXECUTION_STATUS], "clock-circle", "steelblue"];
     }
     return ["", "question-circle", "gray"];
   }
@@ -751,7 +758,9 @@ export class WorkflowExecutionHistoryComponent implements OnInit, AfterViewInit 
     rows.forEach(execution => {
       tracker++;
 
-      let processTime = execution.completionTime - execution.startingTime;
+      // An execution that was created and not started has no completion time: it took no time.
+      let processTime =
+        execution.status === CREATED_EXECUTION_STATUS ? 0 : execution.completionTime - execution.startingTime;
       processTime = processTime / 60000;
       totProcessTime += processTime;
       if (tracker === 1) {

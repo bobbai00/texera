@@ -58,6 +58,7 @@ object AdminExecutionResource {
 
   /** The names the admin page shows and filters by, for each status an execution's row keeps. */
   private val statusNames: Seq[(Short, String)] = Seq(
+    WorkflowExecutionStatus.Created -> "CREATED",
     WorkflowExecutionStatus.Initializing -> "READY",
     WorkflowExecutionStatus.Running -> "RUNNING",
     WorkflowExecutionStatus.Paused -> "PAUSED",

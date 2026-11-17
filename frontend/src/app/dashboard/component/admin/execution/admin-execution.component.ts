@@ -239,6 +239,8 @@ export class AdminExecutionComponent implements OnInit, OnDestroy {
    */
   getStatusColor(status: string): string {
     switch (status) {
+      case "CREATED":
+        return "steelblue";
       case "READY":
         return "lightgreen";
       case "RUNNING":

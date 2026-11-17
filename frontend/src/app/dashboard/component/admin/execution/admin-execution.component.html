@@ -71,6 +71,7 @@
       <th
         nzShowFilter
         [nzFilters]="[
+          { text: 'CREATED', value: 'CREATED' },
           { text: 'READY', value: 'READY' },
           { text: 'RUNNING', value: 'RUNNING'},
           { text: 'PAUSED', value: 'PAUSED'},
@@ -132,7 +133,8 @@
         <button
           type="button"
           (click)="killExecution(execution.workflowId)"
-          [disabled]="execution.executionStatus === 'COMPLETED' ||
+          [disabled]="execution.executionStatus === 'CREATED' ||
+                        execution.executionStatus === 'COMPLETED' ||
                         execution.executionStatus === 'JUST COMPLETED' ||
                         execution.executionStatus === 'FAILED' ||
                         execution.executionStatus === 'KILLED'"

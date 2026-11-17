@@ -26,7 +26,7 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Workflow
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
-import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder}
+import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
@@ -186,7 +186,7 @@ class ExecutionsMetadataPersistServiceSpec
   // -- insertCreatedExecution -------------------------------------------------
 
   "insertCreatedExecution" should
-    "record an execution at status 0, not the column's default 1, and starting now" in {
+    "record an execution as Created, not the column's default, Running, and starting now" in {
     val before = System.currentTimeMillis()
     val id = ExecutionsMetadataPersistService.insertCreatedExecution(
       WorkflowIdentity(testWid.toLong),
@@ -199,7 +199,7 @@ class ExecutionsMetadataPersistServiceSpec
     val after = System.currentTimeMillis()
 
     val stored = workflowExecutionsDao.fetchOneByEid(id.id.toInt)
-    stored.getStatus shouldBe 0.toByte
+    stored.getStatus shouldBe WorkflowExecutionStatus.Created
     stored.getStartingTime.getTime should (be >= (before - 1000) and be <= (after + 1000))
     stored.getVid shouldBe seededVid
     stored.getUid shouldBe testUid

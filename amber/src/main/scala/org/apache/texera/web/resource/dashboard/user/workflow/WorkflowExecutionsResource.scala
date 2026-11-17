@@ -36,7 +36,7 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.util.WorkflowAccess
 import org.apache.texera.auth.{JwtParser, SessionUser}
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
@@ -115,10 +115,8 @@ object WorkflowExecutionsResource {
   }
 
   /**
-    * This function retrieves the latest execution id of a workflow
-    *
-    * @param wid workflow id
-    * @return Integer
+    * The latest execution of workflow `wid` that computing unit `cuid` was asked to run. An
+    * execution that was created and not started is passed over: the unit holds nothing of it.
     */
   def getLatestExecutionID(wid: Integer, cuid: Integer): Option[Integer] = {
     val executions = context
@@ -126,7 +124,12 @@ object WorkflowExecutionsResource {
       .from(WORKFLOW_EXECUTIONS)
       .join(WORKFLOW_VERSION)
       .on(WORKFLOW_EXECUTIONS.VID.eq(WORKFLOW_VERSION.VID))
-      .where(WORKFLOW_VERSION.WID.eq(wid).and(WORKFLOW_EXECUTIONS.CUID.eq(cuid)))
+      .where(
+        WORKFLOW_VERSION.WID
+          .eq(wid)
+          .and(WORKFLOW_EXECUTIONS.CUID.eq(cuid))
+          .and(WORKFLOW_EXECUTIONS.STATUS.ne(Short.box(WorkflowExecutionStatus.Created)))
+      )
       .fetchInto(classOf[Integer])
       .asScala
       .toList

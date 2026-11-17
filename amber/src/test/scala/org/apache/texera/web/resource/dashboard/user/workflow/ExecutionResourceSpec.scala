@@ -69,7 +69,7 @@ import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.dao.{MockTexeraDB, SiteSettings}
+import org.apache.texera.dao.{MockTexeraDB, SiteSettings, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
   DATASET_USER_ACCESS,
@@ -654,7 +654,7 @@ class ExecutionResourceSpec
   // --- created ---
 
   "ExecutionResource.create" should
-    "record the execution at status 0, write its plan for the creator and answer 201" in {
+    "record the execution as Created, write its plan for the creator and answer 201" in {
     val creator = new FixtureCreator()
     val sent = request()
     val sentPlan = asSent(sent.logicalPlan)
@@ -669,8 +669,9 @@ class ExecutionResourceSpec
       s"vfs:///wid/$testWid/eid/${execution.eid}/plan"
 
     val stored = row(execution.eid)
-    // Explicitly 0 (Initializing): the column's default, 1, would read as Running.
-    stored.getStatus shouldBe 0.toByte
+    // Created, which no reader takes for a run in progress: the column's default is Running, and
+    // Initializing is what the unit records once it has started the execution.
+    stored.getStatus shouldBe WorkflowExecutionStatus.Created
     stored.getStartingTime.getTime should be >= (before - 1000)
     stored.getUid shouldBe creatorUid
     stored.getCuid shouldBe unitCuid

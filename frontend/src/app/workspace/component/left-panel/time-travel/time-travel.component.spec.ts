@@ -135,6 +135,20 @@ describe("TimeTravelComponent", () => {
         expect(executionsService.retrieveWorkflowExecutions).toHaveBeenCalledWith(1);
         expect(result.map(e => e.eId)).toEqual([1]);
       });
+
+      it("leaves out an execution that was created and not started, which has written no log", () => {
+        vi.spyOn(executionsService, "retrieveWorkflowExecutions").mockReturnValue(
+          of([
+            { ...makeExecution(1, "s3://log"), status: 3 },
+            { ...makeExecution(2, "s3://log"), status: 6 },
+          ])
+        );
+
+        let result: WorkflowExecutionsEntry[] = [];
+        component.retrieveLoggedExecutions(1).subscribe(r => (result = r));
+
+        expect(result.map(e => e.eId)).toEqual([1]);
+      });
     });
 
     describe("retrieveInteractionHistory", () => {

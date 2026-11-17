@@ -97,7 +97,7 @@ object ExecutionCreator extends ExecutionCreator {
   *  1. The user must be able to read the workflow and run workflows on the unit (403, also for a
   *     unit that does not exist), and the unit must not be terminated (409).
   *  1. The warehouse the run writes into and the replay log it replays are checked (400).
-  *  1. The execution's row is inserted, at status 0, with where it writes its replay log when
+  *  1. The execution's row is inserted, as Created, with where it writes its replay log when
   *     replay logs are kept. No row is left by a request refused before this.
   *  1. The workflow is compiled for the user, Strict, under the site's settings as they stand and
   *     with the cost hints of their newest completed run of it, and the plan made
@@ -191,8 +191,8 @@ class ExecutionCreator extends LazyLogging {
       s"Execution ${eid.id} of workflow ${checked.wid} is created for user $uid on computing " +
         s"unit ${checked.computingUnitId}."
     )
-    // From here the row exists: whatever fails marks it FAILED, so it does not stay at
-    // Initializing although no unit will ever start it.
+    // From here the row exists: whatever fails marks it FAILED, so it does not stay Created
+    // although no unit can ever start it.
     failingTheExecution(eid) {
       val replayLog = replayLogRoot.map { root =>
         val location = root.resolve(s"${checked.wid}/${eid.id}/")

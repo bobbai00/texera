@@ -20,7 +20,10 @@
 import { Component, OnDestroy, OnInit } from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
-import { WorkflowExecutionsEntry } from "../../../../dashboard/type/workflow-executions-entry";
+import {
+  CREATED_EXECUTION_STATUS,
+  WorkflowExecutionsEntry,
+} from "../../../../dashboard/type/workflow-executions-entry";
 import { ExecuteWorkflowService } from "../../../service/execute-workflow/execute-workflow.service";
 import { WorkflowVersionService } from "../../../../dashboard/service/user/workflow-version/workflow-version.service";
 import {
@@ -117,10 +120,17 @@ export class TimeTravelComponent implements OnInit, OnDestroy {
     return this.http.get<string[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/interactions/${eid}`);
   }
 
+  /**
+   * The executions of the workflow that kept a replay log. An execution that was created and not started has
+   * a place for its log and no log in it, so it is left out.
+   */
   public retrieveLoggedExecutions(wid: number): Observable<WorkflowExecutionsEntry[]> {
     return this.workflowExecutionsService.retrieveWorkflowExecutions(wid).pipe(
       map(executionList =>
         executionList.filter(execution => {
+          if (execution.status === CREATED_EXECUTION_STATUS) {
+            return false;
+          }
           return execution.logLocation ? execution.logLocation.length > 0 : false;
         })
       )

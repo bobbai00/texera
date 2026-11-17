@@ -92,14 +92,19 @@ object ComputingUnitManagingResource {
   )
 
   /**
-    * The statuses of an execution that has ended ([[WorkflowExecutionStatus.Ended]]). The sweep
-    * treats every other status as an execution still in flight. That direction matters: PAUSING,
-    * RESUMING, UNKNOWN and TERMINATED are all recorded as [[WorkflowExecutionStatus.Unknown]], so
-    * enumerating the statuses of a run in flight instead would leave a paused-or-resuming
-    * execution looking idle and get its computing unit deleted out from under its owner.
+    * The statuses of an execution that no unit is running
+    * ([[WorkflowExecutionStatus.NotRunning]]): one that has ended, or that the Dashboard service
+    * created and no unit has started, which may never be started. The sweep treats every other
+    * status as an execution still in flight. That direction matters: PAUSING, RESUMING, UNKNOWN
+    * and TERMINATED are all recorded as [[WorkflowExecutionStatus.Unknown]], so enumerating the
+    * statuses of a run in flight instead would leave a paused-or-resuming execution looking idle
+    * and get its computing unit deleted out from under its owner.
     *
-    * Known limitation: a status that is not an ended one is trusted without a time bound, so a
-    * row that never ends keeps its computing unit off this sweep indefinitely -- not for one more
+    * An execution that is not running still counts as activity at the time it was created or
+    * last updated, so a unit is not terminated between the create of an execution and its start.
+    *
+    * Known limitation: a status of a run in flight is trusted without a time bound, so a row
+    * that never ends keeps its computing unit off this sweep indefinitely -- not for one more
     * sweep, but permanently. Two ways in:
     *   - a row left stuck at RUNNING -- a coordinator that died in place, an OOM inside the
     *     container -- because nothing ever rewrites it;
@@ -116,8 +121,8 @@ object ComputingUnitManagingResource {
     * someone calls a listing endpoint, and it keys off a vanished pod rather than a stale
     * execution row. Tracked as a follow-up in apache/texera#8618.
     */
-  private[resource] val endedExecutionStatuses: Seq[java.lang.Short] =
-    WorkflowExecutionStatus.Ended.toSeq.map(Short.box)
+  private[resource] val notRunningExecutionStatuses: Seq[java.lang.Short] =
+    WorkflowExecutionStatus.NotRunning.toSeq.map(Short.box)
 
   private[resource] def lastComputingUnitActivityTime(
       unit: WorkflowComputingUnit,
@@ -178,7 +183,7 @@ object ComputingUnitManagingResource {
     val latestUpdateTime = max(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME)
     val latestStartTime = max(WORKFLOW_EXECUTIONS.STARTING_TIME)
     val hasActiveExecution =
-      boolOr(WORKFLOW_EXECUTIONS.STATUS.notIn(endedExecutionStatuses: _*))
+      boolOr(WORKFLOW_EXECUTIONS.STATUS.notIn(notRunningExecutionStatuses: _*))
 
     withTransaction(context) { ctx =>
       ctx
@@ -228,8 +233,8 @@ object ComputingUnitManagingResource {
   }
 
   /**
-    * Every execution row that would have kept `cuid` out of the scan's result: one that is not in
-    * a terminal state, or one whose activity lands at or after `cutoff`. Re-asserted inside the
+    * Every execution row that would have kept `cuid` out of the scan's result: one that may be
+    * running, or one whose activity lands at or after `cutoff`. Re-asserted inside the
     * terminating UPDATE so a run started between the scan and the update takes the unit off the
     * table -- the scan reads every candidate before terminating any of them, so that window is as
     * wide as the whole sweep, not an instant.
@@ -243,7 +248,7 @@ object ComputingUnitManagingResource {
             .eq(cuid)
             .and(
               WORKFLOW_EXECUTIONS.STATUS
-                .notIn(endedExecutionStatuses: _*)
+                .notIn(notRunningExecutionStatuses: _*)
                 .or(WORKFLOW_EXECUTIONS.STARTING_TIME.ge(cutoff))
                 .or(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME.ge(cutoff))
             )

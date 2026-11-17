@@ -73,7 +73,7 @@ import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
   OPERATOR_PORT_EXECUTIONS,
@@ -1289,7 +1289,7 @@ class SyncExecutionResourceSpec
     resource.asked shouldBe empty
     service.started shouldBe empty
     ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
-    statusOf(eid) shouldBe 0
+    statusOf(eid) shouldBe WorkflowExecutionStatus.Created
 
     resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser()).success shouldBe
       true

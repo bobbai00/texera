@@ -279,6 +279,17 @@ describe("WorkflowExecutionHistoryComponent", () => {
       expect(buckets["1~2"]).toBe(1.5); // avg(1, 2)
       expect(buckets["19~20"]).toBe(19.5); // avg(19, 20)
     });
+
+    it("counts no time for an execution that was created and not started, which has no completion time", async () => {
+      await setup();
+      const rows = [
+        makeEntry({ eId: 1, startingTime: 1794873600000, completionTime: 1794873720000 }),
+        // As the Dashboard lists it: no unit has recorded anything of it.
+        makeEntry({ eId: 2, status: 6, startingTime: 1794873600000, completionTime: null as unknown as number }),
+      ];
+
+      expect(component.getBarChartProcessTimeData(rows)).toEqual({ "1~1": 2, "2~2": 0 });
+    });
   });
 
   describe("getExecutionStatus", () => {
@@ -293,6 +304,7 @@ describe("WorkflowExecutionHistoryComponent", () => {
       expect(component.getExecutionStatus(3)).toEqual(["Completed", "check-circle", "green"]);
       expect(component.getExecutionStatus(4)).toEqual(["Failed", "exclamation-circle", "gray"]);
       expect(component.getExecutionStatus(5)).toEqual(["Killed", "minus-circle", "red"]);
+      expect(component.getExecutionStatus(6)).toEqual(["Created", "clock-circle", "steelblue"]);
     });
 
     it("falls back to a question-circle for unknown codes", () => {
@@ -601,6 +613,15 @@ describe("WorkflowExecutionHistoryComponent", () => {
       expect(component.workflowExecutionsDisplayedList).toEqual([entries[0]]);
     });
 
+    it("translates status:created into the code of an execution that was created and not started", () => {
+      const searchSpy = vi.spyOn(component.fuse, "search").mockReturnValue(fuseResults());
+      component.executionSearchValue = "status:created";
+
+      component.searchExecution();
+
+      expect(searchSpy).toHaveBeenCalledWith({ $and: [{ $path: ["status"], $val: "6" }] });
+    });
+
     it("combines multiple conditions into one $and query", () => {
       const searchSpy = vi.spyOn(component.fuse, "search").mockReturnValue(fuseResults());
       component.executionSearchValue = "user:alice status:completed";
@@ -649,6 +670,30 @@ describe("WorkflowExecutionHistoryComponent", () => {
       component.searchExecution();
 
       expect(notificationService.error).toHaveBeenCalledWith("Status sleeping is not available to execution");
+    });
+  });
+
+  describe("an execution that was created and not started", () => {
+    beforeEach(async () => {
+      await setup({ entries: [makeEntry({ eId: 7, name: "never started", status: 6 }), ...makeDefaultEntries()] });
+    });
+
+    it("is counted under its own name in the status chart", () => {
+      const statusPie = generatePieChart.mock.calls.find(
+        call => call[2] === WorkflowExecutionHistoryComponent.STATUS_PIE_CHART_ID
+      );
+
+      expect(statusPie?.[0]).toEqual([
+        ["Created", 1],
+        ["Running", 1],
+        ["Completed", 2],
+      ]);
+    });
+
+    it("is suggested by its status in the search box", () => {
+      component.searchInputOnChange("status:cre");
+
+      expect(component.filteredExecutionInfo).toEqual(["status:created"]);
     });
   });
 
@@ -822,7 +867,7 @@ describe("WorkflowExecutionHistoryComponent", () => {
       expect(help).toContain("We support the following search criteria");
       expect(help).toContain("executionName");
       expect(help).toContain("user:John");
-      expect(help).toContain("status:initializing/running/paused/completed/failed/killed");
+      expect(help).toContain("status:created/initializing/running/paused/completed/failed/killed");
       expect(help).toContain("using double quotes to enclose the name is");
       expect(help).toContain('Example: "Untitled Execution" user:John');
 
