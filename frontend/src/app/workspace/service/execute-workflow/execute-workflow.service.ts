@@ -18,7 +18,17 @@
  */
 
 import { Inject, Injectable, DOCUMENT } from "@angular/core";
-import { BehaviorSubject, interval, Observable, Subject, Subscription, switchMap, tap, timer } from "rxjs";
+import {
+  BehaviorSubject,
+  combineLatest,
+  interval,
+  Observable,
+  Subject,
+  Subscription,
+  switchMap,
+  tap,
+  timer,
+} from "rxjs";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 import { WorkflowGraphReadonly } from "../workflow-graph/model/workflow-graph";
 import {
@@ -180,6 +190,20 @@ export class ExecuteWorkflowService {
           if (newState !== undefined) {
             this.updateExecutionState(newState);
           }
+      }
+    });
+
+    // Ends an in-flight run once its unit is gone or Failed and the socket is down; console and results are kept.
+    // A run is in flight from the moment it is asked for: one that has not reached the unit is given up, so
+    // nothing of it is sent there later.
+    combineLatest([
+      computingUnitStatusService.getSelectedComputingUnit(),
+      workflowWebsocketService.getConnectionStatusStream(),
+    ]).subscribe(([unit, connected]) => {
+      const unitLost = unit === null || unit.status === "Failed";
+      const runInFlight = !this.pendingRun.closed || this.isExecutionInFlight(this.currentState.state);
+      if (!connected && unitLost && runInFlight) {
+        this.resetExecutionAndWorkers();
       }
     });
   }
@@ -574,6 +598,26 @@ export class ExecuteWorkflowService {
     this.anchorDuration(0, false);
   }
 
+  private isExecutionInFlight(state: ExecutionState): boolean {
+    switch (state) {
+      case ExecutionState.Initializing:
+      case ExecutionState.Running:
+      case ExecutionState.Pausing:
+      case ExecutionState.Paused:
+      case ExecutionState.Resuming:
+      case ExecutionState.Recovering:
+        return true;
+      case ExecutionState.Uninitialized:
+      case ExecutionState.Completed:
+      case ExecutionState.Terminated:
+      case ExecutionState.Failed:
+      case ExecutionState.Killed:
+        return false;
+      default:
+        return exhaustiveGuard(state);
+    }
+  }
+
   private updateExecutionState(stateInfo: ExecutionStateInfo): void {
     if (isEqual(this.currentState, stateInfo)) {
       return;
@@ -593,24 +637,10 @@ export class ExecuteWorkflowService {
    * enables or disables workflow action service based on execution state
    */
   private updateWorkflowActionLock(stateInfo: ExecutionStateInfo): void {
-    switch (stateInfo.state) {
-      case ExecutionState.Completed:
-      case ExecutionState.Terminated:
-      case ExecutionState.Failed:
-      case ExecutionState.Uninitialized:
-      case ExecutionState.Killed:
-        this.workflowActionService.enableWorkflowModification();
-        return;
-      case ExecutionState.Paused:
-      case ExecutionState.Pausing:
-      case ExecutionState.Recovering:
-      case ExecutionState.Resuming:
-      case ExecutionState.Running:
-      case ExecutionState.Initializing:
-        this.workflowActionService.disableWorkflowModification();
-        return;
-      default:
-        return exhaustiveGuard(stateInfo);
+    if (this.isExecutionInFlight(stateInfo.state)) {
+      this.workflowActionService.disableWorkflowModification();
+    } else {
+      this.workflowActionService.enableWorkflowModification();
     }
   }
 

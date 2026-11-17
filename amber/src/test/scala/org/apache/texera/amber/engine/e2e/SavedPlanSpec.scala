@@ -19,22 +19,14 @@
 
 package org.apache.texera.amber.engine.e2e
 
-import org.apache.pekko.actor.{ActorSystem, Props}
-import org.apache.pekko.testkit.{ImplicitSender, TestKit}
-import org.apache.pekko.util.Timeout
-import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithCode}
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{ExecutionMode, PortIdentity, WorkflowSettings}
-import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.e2e.TestUtils.{
   buildFromCompiledAndSavedPlans,
-  cleanupWorkflowExecutionData,
-  initiateTexeraDBForTestCases,
   runAfresh,
   runFromCompiledAndSavedPlans,
-  setUpWorkflowExecutionData,
   workflowContext
 }
 import org.apache.texera.amber.operator.aggregate.AggregationFunction
@@ -60,12 +52,9 @@ import org.apache.texera.amber.operator.udf.java.JavaUDFOpDesc
 import org.apache.texera.amber.operator.union.UnionOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.LogicalLink
-import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, Outcome, Retries}
 
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.duration.DurationInt
 import scala.io.Source
 import scala.util.{Try, Using}
 
@@ -84,39 +73,11 @@ import scala.util.{Try, Using}
   * cannot compile in a JVM sbt runs tests in and so must fail alike from both plans there (see its
   * case); and a join in the materialized execution mode. Python UDFs and a loop are in
   * [[SavedPlanIntegrationSpec]].
+  *
+  * `specId` 7: 1 to 6 are the other e2e and integration specs', and 8 is
+  * SavedPlanIntegrationSpec's.
   */
-class SavedPlanSpec
-    extends TestKit(ActorSystem("SavedPlanSpec", AmberRuntime.pekkoConfig))
-    with ImplicitSender
-    with AnyFlatSpecLike
-    with Matchers
-    with BeforeAndAfterAll
-    with BeforeAndAfterEach
-    with Retries {
-
-  // As in the other e2e specs: a run that does not observe COMPLETED in CI is retried once.
-  override def withFixture(test: NoArgTest): Outcome =
-    withRetry { super.withFixture(test) }
-
-  implicit val timeout: Timeout = Timeout(5.seconds)
-
-  // 1 to 6 are the other e2e and integration specs'; 8 is SavedPlanIntegrationSpec's.
-  private val specId = 7
-
-  override protected def beforeEach(): Unit = setUpWorkflowExecutionData(specId)
-
-  override protected def afterEach(): Unit = cleanupWorkflowExecutionData(specId)
-
-  override def beforeAll(): Unit = {
-    system.actorOf(Props[SingleNodeListener](), "cluster-info")
-    // as in the other e2e specs: load the JDBC driver explicitly, which CI occasionally misses
-    Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
-  }
-
-  override def afterAll(): Unit = {
-    TestKit.shutdownActorSystem(system)
-  }
+class SavedPlanSpec extends RetryingDatabaseE2ESpec("SavedPlanSpec", specId = 7) with Matchers {
 
   /** Runs the workflow from its compiled plan and from its saved plan; see the class comment. */
   private def runBothWays(

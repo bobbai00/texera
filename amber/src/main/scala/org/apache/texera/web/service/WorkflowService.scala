@@ -463,7 +463,7 @@ class WorkflowService(
       val fromActorOpt = t match {
         case ex: WorkflowRuntimeException =>
           ex.relatedWorkerId
-        case other =>
+        case _ =>
           None
       }
       val (operatorId, workerId) = getOperatorFromActorIdOpt(fromActorOpt)

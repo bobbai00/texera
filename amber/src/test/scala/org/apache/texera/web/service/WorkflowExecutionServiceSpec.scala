@@ -141,7 +141,6 @@ import java.util.{Comparator, UUID}
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import scala.reflect.ClassTag
 import scala.util.{Try, Using}
 
 /**
@@ -350,27 +349,10 @@ class WorkflowExecutionServiceSpec
   }
 
   /**
-    * Empty-plan client, the shape both `ExecutionRuntimeServiceSpec` and
-    * `ExecutionStatsServiceSpec` use: real enough for the services' constructors, with the
-    * engine-facing callbacks stubbed so nothing is registered against a live coordinator.
+    * The engine a stored run is given: the client the service specs share, whose coordinator
+    * answers nothing unless a test answers it, so a run set up on it never starts.
     */
-  private final class TestAmberClient
-      extends AmberClient(
-        system,
-        new WorkflowContext(),
-        PhysicalPlan(Set.empty, Set.empty),
-        CoordinatorConfig(None, None, None, None),
-        _ => ()
-      ) {
-    var shutdownCount = 0
-
-    override def shutdown(): Unit = {
-      shutdownCount += 1
-      super.shutdown()
-    }
-
-    override def registerCallback[T](callback: T => Unit)(implicit ct: ClassTag[T]): Disposable =
-      Disposable.empty()
+  private final class UnansweredClient extends RecordingExecutionClient(system) {
 
     /** The answer to the last request of each name asked of the engine, for a test to give. */
     val answers: TrieMap[String, Promise[Any]] = TrieMap.empty
@@ -378,8 +360,6 @@ class WorkflowExecutionServiceSpec
     /** The thread that last asked the engine each request. */
     val askedOn: TrieMap[String, Thread] = TrieMap.empty
 
-    // Nothing asked of the engine is answered unless a test answers it, so a run set up on this
-    // client never starts.
     override val coordinatorInterface: CoordinatorServiceFs2Grpc[Future, Unit] =
       Proxy
         .newProxyInstance(
@@ -579,7 +559,7 @@ class WorkflowExecutionServiceSpec
     val service = buildService(store)
     val events = collectEvents(store)
 
-    val client = new TestAmberClient
+    val client = new RecordingExecutionClient(system)
     val wsInput = new WebsocketInput(_ => ())
     // `workflow` is only dereferenced by the reconfiguration diff handler when a
     // reconfiguration actually completes, which is not what this test drives.
@@ -667,7 +647,7 @@ class WorkflowExecutionServiceSpec
 
   /**
     * A run built as a computing unit builds one to start it by id: on the context its plan was
-    * read back with, for this unit. Only the engine is a `TestAmberClient`, so nothing starts.
+    * read back with, for this unit. Only the engine is an `UnansweredClient`, so nothing starts.
     *
     * @param installer installs the plan's Python environments; the unit's own when not given,
     *                  which a plan that names no environment asks nothing of
@@ -680,7 +660,7 @@ class WorkflowExecutionServiceSpec
     var engineWorkflow: Option[EngineWorkflow] = None
     var coordinatorConfig: Option[CoordinatorConfig] = None
     // the engine the run was given; `client` would name the service's own field below
-    var engine: Option[TestAmberClient] = None
+    var engine: Option[UnansweredClient] = None
     val resultService =
       new ExecutionResultService(
         WorkflowIdentity(testWid.longValue()),
@@ -702,7 +682,7 @@ class WorkflowExecutionServiceSpec
       ): AmberClient = {
         engineWorkflow = Some(workflow)
         coordinatorConfig = Some(config)
-        val built = new TestAmberClient
+        val built = new UnansweredClient
         engine = Some(built)
         built
       }

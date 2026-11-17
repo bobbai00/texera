@@ -22,7 +22,8 @@ package org.apache.texera.amber.operator.distinct
 import org.apache.texera.amber.util.PythonTestSupport.{
   NeedsPythonPackages,
   canImport,
-  configuredPython
+  configuredPython,
+  runSource
 }
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
@@ -36,11 +37,6 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-
-import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.util.concurrent.TimeUnit
-import scala.io.Source
 
 class DistinctOpDescSpec extends AnyFlatSpec with Matchers {
 
@@ -164,15 +160,10 @@ class DistinctOpDescSpec extends AnyFlatSpec with Matchers {
          |for v in out1df["v"]:
          |    print("None" if v is pd.NA else repr(float(v)))
          |""".stripMargin
-    val script = Files.createTempFile("distinct-nan-zero-", ".py")
-    script.toFile.deleteOnExit()
-    Files.write(script, driver.getBytes(StandardCharsets.UTF_8))
-    val process = new ProcessBuilder(python, script.toString).redirectErrorStream(true).start()
-    val out = Source.fromInputStream(process.getInputStream, "UTF-8").mkString
-    process.waitFor(120, TimeUnit.SECONDS)
+    val (exitCode, out) = runSource(python, "distinct-nan-zero-", driver)
 
     withClue(s"python said:\n$out\nscript:\n$driver") {
-      process.exitValue() shouldBe 0
+      exitCode shouldBe 0
       out.linesIterator.toList shouldBe engine
     }
   }

@@ -25,7 +25,7 @@ import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, PhysicalPlanCodec}
-import org.apache.texera.amber.operator.LogicalOp
+import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.{RunBindings, WorkflowCompiler}
@@ -105,6 +105,19 @@ class OperatorUpdates extends LazyLogging {
   /** Appends the update row. A seam, so a spec can make the write fail. */
   protected def appendUpdate(planUri: URI, record: PlanRecord): Unit =
     ExecutionPlanStore.appendUpdate(planUri, record)
+
+  /**
+    * Has `current`, an operator of the workflow the execution runs, build the operator it becomes
+    * once changed to `changed`. A seam, so a spec can make it fail in ways no descriptor of the
+    * build does.
+    */
+  protected def reconfigure(
+      current: LogicalOp,
+      changed: LogicalOp,
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity
+  ): Try[(PhysicalOp, Option[StateTransferFunc])] =
+    current.runtimeReconfiguration(workflowId, executionId, current, changed)
 
   /**
     * Stores the change `request` makes to an operator of execution `eid`, for `user`.
@@ -347,10 +360,13 @@ class OperatorUpdates extends LazyLogging {
     if (workflow.refersToLoopVariables(current) || workflow.refersToLoopVariables(changed)) {
       refuse(s"$name refers to loop variables, so it can't be changed while the workflow runs.")
     }
-    // LogicalOp's own runtimeReconfiguration throws rather than answering a Failure, and so does a
-    // descriptor that cannot build its operator from the change.
+    // An operator that offers to be changed while it runs, and overrides nothing to take a
+    // change, is left with LogicalOp's own runtimeReconfiguration, which throws rather than
+    // answering a Failure; so does a descriptor that cannot build its operator from the change.
+    // Either refuses the change, in the failure's words, or by its type when it has none. A fatal
+    // error is thrown as it is.
     val reconfigured =
-      Try(current.runtimeReconfiguration(workflowId, executionId, current, changed)).flatten match {
+      Try(reconfigure(current, changed, workflowId, executionId)).flatten match {
         case Success((op, _)) => op
         case Failure(failure) => refuse(Option(failure.getMessage).getOrElse(failure.toString))
       }

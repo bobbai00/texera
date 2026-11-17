@@ -23,12 +23,9 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.core.read.ListAppender
 import com.twitter.util.{Future, Promise}
-import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.ExecutionStateUpdate
-import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   EmptyRequest,
   TakeGlobalCheckpointRequest
@@ -40,7 +37,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultToleranceConfig
-import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.web.WebsocketInput
 import org.apache.texera.web.model.websocket.request.{
   WorkflowCheckpointRequest,
@@ -61,7 +57,6 @@ import org.slf4j.LoggerFactory
 import java.net.URI
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
-import scala.reflect.ClassTag
 
 class ExecutionRuntimeServiceSpec
     extends TestKit(ActorSystem("ExecutionRuntimeServiceSpec"))
@@ -74,34 +69,6 @@ class ExecutionRuntimeServiceSpec
   override def afterAll(): Unit = {
     try TestKit.shutdownActorSystem(system)
     finally super.afterAll()
-  }
-
-  /** Real empty-plan client for constructor compatibility, with lifecycle collaborators overridden below. */
-  private final class TestAmberClient(
-      override val coordinatorInterface: CoordinatorServiceFs2Grpc[Future, Unit]
-  ) extends AmberClient(
-        system,
-        new WorkflowContext(),
-        PhysicalPlan(Set.empty, Set.empty),
-        CoordinatorConfig(None, None, None, None),
-        _ => ()
-      ) {
-    var shutdownCount = 0
-    var stateCallback: ExecutionStateUpdate => Unit = _
-
-    override def shutdown(): Unit = {
-      shutdownCount += 1
-      super.shutdown()
-    }
-
-    override def registerCallback[T](callback: T => Unit)(implicit ct: ClassTag[T]): Disposable = {
-      if (ct.runtimeClass == classOf[ExecutionStateUpdate]) {
-        stateCallback = callback.asInstanceOf[ExecutionStateUpdate => Unit]
-      }
-      Disposable.empty()
-    }
-
-    def dispose(): Unit = super.shutdown()
   }
 
   /** Records resume wiring while skipping constructor-time client and workflow subscriptions. */
@@ -126,7 +93,7 @@ class ExecutionRuntimeServiceSpec
   }
 
   private final class Fixture(
-      val client: TestAmberClient,
+      val client: RecordingExecutionClient,
       val coordinator: CoordinatorServiceFs2Grpc[Future, Unit],
       val stateStore: ExecutionStateStore,
       val wsInput: WebsocketInput,
@@ -147,7 +114,7 @@ class ExecutionRuntimeServiceSpec
       notification: Option[Notification] = None
   ): Fixture = {
     val coordinator = mock[CoordinatorServiceFs2Grpc[Future, Unit]]
-    val client = new TestAmberClient(coordinator)
+    val client = new RecordingExecutionClient(system, Some(coordinator))
     val stateStore = new ExecutionStateStore
     val errors = ListBuffer.empty[Throwable]
     val wsInput = new WebsocketInput(errors += _)
@@ -256,7 +223,7 @@ class ExecutionRuntimeServiceSpec
   it should "leave a run that completed as completed when a kill follows the engine's report" in {
     val f = fixture()
     try {
-      f.client.stateCallback(ExecutionStateUpdate(COMPLETED))
+      f.client.fire(ExecutionStateUpdate(COMPLETED))
       val completedAt = f.stateStore.statsStore.getState.endTimeStamp
       completedAt should be > 0L
 
@@ -306,8 +273,8 @@ class ExecutionRuntimeServiceSpec
   it should "apply a captured completed callback, stop the client, and stamp the end time" in {
     val f = fixture()
     try {
-      f.client.stateCallback should not be null
-      f.client.stateCallback(ExecutionStateUpdate(COMPLETED))
+      f.client.hasCallback[ExecutionStateUpdate] shouldBe true
+      f.client.fire(ExecutionStateUpdate(COMPLETED))
 
       f.client.shutdownCount shouldBe 1
       f.stateStore.metadataStore.getState.state shouldBe COMPLETED
@@ -333,7 +300,7 @@ class ExecutionRuntimeServiceSpec
     val f = fixture(notification = Some(notification))
     try {
       f.runtime.notification shouldBe Some(notification)
-      f.client.stateCallback(ExecutionStateUpdate(COMPLETED))
+      f.client.fire(ExecutionStateUpdate(COMPLETED))
 
       // The email is sent on the notification service's own thread.
       eventually(timeout(Span(10, Seconds))) {

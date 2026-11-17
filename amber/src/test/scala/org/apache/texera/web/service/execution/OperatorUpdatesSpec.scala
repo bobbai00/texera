@@ -42,6 +42,7 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.core.workflow.{
   CostHints,
   OperatorUpdate,
+  PhysicalOp,
   PhysicalPlanCodec,
   PortIdentity,
   PythonEnvironmentRef,
@@ -57,8 +58,13 @@ import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
-import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.udf.python.{
+  LambdaAttributeUnit,
+  PythonLambdaFunctionOpDesc,
+  PythonUDFOpDescV2,
+  PythonUdfUiParameterInjector
+}
+import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.{PythonEnvironmentResolver, RunBindings}
@@ -113,7 +119,7 @@ import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
-import scala.util.Try
+import scala.util.{Failure, Try}
 
 /**
   * Changing an operator of a paused execution at the Dashboard service, through
@@ -296,9 +302,13 @@ class OperatorUpdatesSpec
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
+  /** What an operator answers when it is asked to build the operator a change makes of it. */
+  private type Reconfiguration = Try[(PhysicalOp, Option[StateTransferFunc])]
+
   /**
     * The updates under test, bound to the fixtures but for `resolver`, `root` and `environments`
-    * (the fixtures', unless a case gives others), and with seams set as the case needs.
+    * (the fixtures', unless a case gives others), and with seams set as the case needs:
+    * `reconfiguration` stands in for the answer of the operator a change is made to.
     * `resolverUsers` records the user each change was bound for: bindings are made for every
     * change that reaches the binding, whether or not it names a dataset or a model.
     */
@@ -307,7 +317,8 @@ class OperatorUpdatesSpec
       warehouses: Boolean = false,
       failAppend: Option[RuntimeException] = None,
       resolver: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
-      environments: PythonEnvironmentResolver = TestUtils.fixtureBindings.environments
+      environments: PythonEnvironmentResolver = TestUtils.fixtureBindings.environments,
+      reconfiguration: Option[() => Reconfiguration] = None
   ) extends OperatorUpdates {
     val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
     override protected def bindingsFor(uid: Integer): RunBindings = {
@@ -324,6 +335,13 @@ class OperatorUpdatesSpec
         case Some(failure) => throw failure
         case None          => super.appendUpdate(planUri, record)
       }
+    override protected def reconfigure(
+        current: LogicalOp,
+        changed: LogicalOp,
+        workflowId: WorkflowIdentity,
+        executionId: ExecutionIdentity
+    ): Reconfiguration =
+      reconfiguration.fold(super.reconfigure(current, changed, workflowId, executionId))(_())
   }
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -410,6 +428,28 @@ class OperatorUpdatesSpec
         limit("limit", 5)
       ),
       List(link("scan", "udf"), link("udf", "limit")),
+      List.empty,
+      List.empty
+    )
+
+  /** A Python Lambda that adds the column `Derived`, worked out by `expression`. */
+  private def lambda(expression: String): PythonLambdaFunctionOpDesc = {
+    val op = named(new PythonLambdaFunctionOpDesc, "lambda")
+    op.lambdaAttributeUnits = List(
+      new LambdaAttributeUnit("Add New Column", expression, "Derived", AttributeType.INTEGER)
+    )
+    op
+  }
+
+  /** A scan of a fixture file, then a Python Lambda on what it reads, then a Limit. */
+  private def lambdaPlan(): LogicalPlanPojo =
+    LogicalPlanPojo(
+      List(
+        named(TestOperators.smallCsvScanOpDesc(), "scan"),
+        lambda("tuple_['Units Sold'] * 2"),
+        limit("limit", 5)
+      ),
+      List(link("scan", "lambda"), link("lambda", "limit")),
       List.empty,
       List.empty
     )
@@ -758,6 +798,49 @@ class OperatorUpdatesSpec
 
     refused(400)(post(execution.eid, named(TestOperators.smallCsvScanOpDesc(), "scan"))) shouldBe
       "operator CSVScanSourceOpDesc does not support reconfiguration"
+    updateRows(execution.planUri) shouldBe empty
+  }
+
+  it should "refuse an operator that offers a change while it runs and has no way to take one" in {
+    // The editor unlocks a Python Lambda for a change (supportReconfiguration), yet the operator
+    // is left with LogicalOp's own runtimeReconfiguration, which throws. The change is refused in
+    // its words, and what was stored earlier in the pause stays.
+    val execution = created(plan = lambdaPlan())
+    val earlier = stored(post(execution.eid, limit("limit", 9)))
+
+    refused(400)(post(execution.eid, lambda("tuple_['Units Sold'] * 3"))) shouldBe
+      "operator PythonLambdaFunctionOpDesc does not support reconfiguration"
+    updateRows(execution.planUri).map(_.entryId) shouldBe List(earlier.updateId)
+  }
+
+  it should "refuse a change its operator fails on, in the failure's words or by its type" in {
+    // No descriptor of the build answers a Failure, or throws with no message: an override may.
+    val execution = created()
+    val earlier = stored(post(execution.eid, limit("limit", 9)))
+    val outcomes: Seq[(String, () => Reconfiguration)] = Seq(
+      "this operator takes no change" ->
+        (() => Failure(new RuntimeException("this operator takes no change"))),
+      "this operator blew up while being reconfigured" ->
+        (() => throw new IllegalStateException("this operator blew up while being reconfigured")),
+      "java.lang.IllegalStateException" -> (() => throw new IllegalStateException())
+    )
+
+    outcomes.foreach {
+      case (refusal, outcome) =>
+        val updates = new FixtureUpdates(reconfiguration = Some(outcome))
+        refused(400)(post(execution.eid, limit("limit", 7), updates = updates)) shouldBe refusal
+    }
+    updateRows(execution.planUri).map(_.entryId) shouldBe List(earlier.updateId)
+  }
+
+  it should "throw, as it is, a fatal error of the operator a change is made to" in {
+    // Not the change's refusal: it is thrown on, so the user is not told the change was at fault.
+    val execution = created()
+    val updates =
+      new FixtureUpdates(reconfiguration = Some(() => throw new InterruptedException("stop")))
+
+    an[InterruptedException] should be thrownBy
+      post(execution.eid, limit("limit", 7), updates = updates)
     updateRows(execution.planUri) shouldBe empty
   }
 

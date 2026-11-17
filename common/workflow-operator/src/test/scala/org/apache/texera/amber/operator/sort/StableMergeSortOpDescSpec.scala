@@ -22,7 +22,8 @@ package org.apache.texera.amber.operator.sort
 import org.apache.texera.amber.util.PythonTestSupport.{
   NeedsPythonPackages,
   canImport,
-  configuredPython
+  configuredPython,
+  runSource
 }
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
@@ -34,11 +35,7 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ListBuffer
-import scala.io.Source
 
 class StableMergeSortOpDescSpec extends AnyFlatSpec with Matchers {
 
@@ -125,15 +122,10 @@ class StableMergeSortOpDescSpec extends AnyFlatSpec with Matchers {
          |    print("desc", show(out1df))
          |""".stripMargin
 
-    val script = Files.createTempFile("sort-nan-", ".py")
-    script.toFile.deleteOnExit()
-    Files.write(script, driver.getBytes(StandardCharsets.UTF_8))
-    val process = new ProcessBuilder(python, script.toString).redirectErrorStream(true).start()
-    val out = Source.fromInputStream(process.getInputStream).mkString
-    process.waitFor(120, TimeUnit.SECONDS)
+    val (exitCode, out) = runSource(python, "sort-nan-", driver)
 
     withClue(s"python said:\n$out\nscript:\n$driver") {
-      process.exitValue() shouldBe 0
+      exitCode shouldBe 0
       val lines = out.trim.linesIterator.toSeq
       lines.head shouldBe "asc ['1.0', '3.0', 'inf', 'nan', 'NULL']"
       lines(1) shouldBe "desc ['nan', 'inf', '3.0', '1.0', 'NULL']"
@@ -188,15 +180,10 @@ class StableMergeSortOpDescSpec extends AnyFlatSpec with Matchers {
          |$calls
          |""".stripMargin
 
-    val script = Files.createTempFile("stable-merge-sort-zero-", ".py")
-    script.toFile.deleteOnExit()
-    Files.write(script, driver.getBytes(StandardCharsets.UTF_8))
-    val process = new ProcessBuilder(python, script.toString).redirectErrorStream(true).start()
-    val out = Source.fromInputStream(process.getInputStream).mkString
-    process.waitFor(120, TimeUnit.SECONDS)
+    val (exitCode, out) = runSource(python, "stable-merge-sort-zero-", driver)
 
     withClue(s"python said:\n$out\nscript:\n$driver") {
-      process.exitValue() shouldBe 0
+      exitCode shouldBe 0
       out.trim.linesIterator.toList shouldBe engine
     }
   }
@@ -226,15 +213,10 @@ class StableMergeSortOpDescSpec extends AnyFlatSpec with Matchers {
          |print(list(out1df["_texera_null_x"]), list(out1df["_texera_nan_x"]))
          |""".stripMargin
 
-    val script = Files.createTempFile("sort-helper-name-", ".py")
-    script.toFile.deleteOnExit()
-    Files.write(script, driver.getBytes(StandardCharsets.UTF_8))
-    val process = new ProcessBuilder(python, script.toString).redirectErrorStream(true).start()
-    val out = Source.fromInputStream(process.getInputStream).mkString
-    process.waitFor(120, TimeUnit.SECONDS)
+    val (exitCode, out) = runSource(python, "sort-helper-name-", driver)
 
     withClue(s"python said:\n$out\nscript:\n$driver") {
-      process.exitValue() shouldBe 0
+      exitCode shouldBe 0
       val lines = out.trim.linesIterator.toSeq
       lines.head shouldBe "['x', '_texera_null_x', '_texera_nan_x']"
       lines(1) shouldBe "['b', 'a'] ['d', 'c']"
@@ -298,15 +280,10 @@ class StableMergeSortOpDescSpec extends AnyFlatSpec with Matchers {
          |    print(show(out1df))
          |""".stripMargin
 
-    val script = Files.createTempFile("sort-utf16-", ".py")
-    script.toFile.deleteOnExit()
-    Files.write(script, driver.getBytes(StandardCharsets.UTF_8))
-    val process = new ProcessBuilder(python, script.toString).redirectErrorStream(true).start()
-    val out = Source.fromInputStream(process.getInputStream).mkString
-    process.waitFor(120, TimeUnit.SECONDS)
+    val (exitCode, out) = runSource(python, "sort-utf16-", driver)
 
     withClue(s"python said:\n$out\nscript:\n$driver") {
-      process.exitValue() shouldBe 0
+      exitCode shouldBe 0
       val lines = out.trim.linesIterator.toSeq
       engine(SortPreference.ASC) shouldBe "61 1F600 FF01 FFFF NULL"
       lines.head shouldBe engine(SortPreference.ASC)

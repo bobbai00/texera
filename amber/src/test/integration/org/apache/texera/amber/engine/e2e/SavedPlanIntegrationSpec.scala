@@ -20,21 +20,10 @@
 package org.apache.texera.amber.engine.e2e
 
 import com.twitter.util.Duration
-import org.apache.pekko.actor.{ActorSystem, Props}
-import org.apache.pekko.testkit.{ImplicitSender, TestKit}
-import org.apache.pekko.util.Timeout
-import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Tuple}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{ExecutionMode, PortIdentity, WorkflowSettings}
-import org.apache.texera.amber.engine.common.AmberRuntime
-import org.apache.texera.amber.engine.e2e.TestUtils.{
-  cleanupWorkflowExecutionData,
-  initiateTexeraDBForTestCases,
-  runFromCompiledAndSavedPlans,
-  setUpWorkflowExecutionData,
-  workflowContext
-}
+import org.apache.texera.amber.engine.e2e.TestUtils.{runFromCompiledAndSavedPlans, workflowContext}
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.python.{
@@ -46,12 +35,9 @@ import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.tags.IntegrationTest
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.config.{PythonUtils, UdfConfig}
-import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, Outcome, Retries}
 
 import java.nio.file.{Files, Paths}
-import scala.concurrent.duration.DurationInt
 import scala.io.Source
 import scala.util.{Try, Using}
 
@@ -63,40 +49,13 @@ import scala.util.{Try, Using}
   *
   * Tagged @IntegrationTest because it spawns Python workers; routed to the `amber-integration` CI
   * job.
+  *
+  * `specId` 8: 1 to 6 are the other e2e and integration specs', and 7 is SavedPlanSpec's.
   */
 @IntegrationTest
 class SavedPlanIntegrationSpec
-    extends TestKit(ActorSystem("SavedPlanIntegrationSpec", AmberRuntime.pekkoConfig))
-    with ImplicitSender
-    with AnyFlatSpecLike
-    with Matchers
-    with BeforeAndAfterAll
-    with BeforeAndAfterEach
-    with Retries {
-
-  // As in the other e2e specs: a run that does not observe COMPLETED in CI is retried once.
-  override def withFixture(test: NoArgTest): Outcome =
-    withRetry { super.withFixture(test) }
-
-  implicit val timeout: Timeout = Timeout(5.seconds)
-
-  // 1 to 6 are the other e2e and integration specs', 7 is SavedPlanSpec's.
-  private val specId = 8
-
-  override protected def beforeEach(): Unit = setUpWorkflowExecutionData(specId)
-
-  override protected def afterEach(): Unit = cleanupWorkflowExecutionData(specId)
-
-  override def beforeAll(): Unit = {
-    system.actorOf(Props[SingleNodeListener](), "cluster-info")
-    // as in the other e2e specs: load the JDBC driver explicitly, which CI occasionally misses
-    Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
-  }
-
-  override def afterAll(): Unit = {
-    TestKit.shutdownActorSystem(system)
-  }
+    extends RetryingDatabaseE2ESpec("SavedPlanIntegrationSpec", specId = 8)
+    with Matchers {
 
   /**
     * Runs the workflow from its compiled plan and from its saved plan; see [[SavedPlanSpec]]. A
