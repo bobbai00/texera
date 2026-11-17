@@ -84,10 +84,7 @@ object PhysicalPlanRoundTrip extends Assertions {
     )
   }
 
-  /**
-    * Fails unless `read` has the ids, settings, warehouse and cost hints of `original`, and no
-    * unit.
-    */
+  /** Fails unless `read` has the ids, settings, warehouse and cost hints of `original`. */
   def assertSameContext(original: WorkflowContext, read: WorkflowContext): Unit = {
     assert(read.workflowId == original.workflowId)
     assert(read.executionId == original.executionId)
@@ -99,7 +96,6 @@ object PhysicalPlanRoundTrip extends Assertions {
     )
     assert(read.warehouse == original.warehouse)
     assert(read.costHints == original.costHints)
-    assert(read.cuid.isEmpty, "a saved plan does not choose the computing unit it runs on")
   }
 
   /**

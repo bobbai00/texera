@@ -446,6 +446,60 @@ class ExecutionConsoleServiceSpec
     }
   }
 
+  "a message of the computing unit's own" should
+    "be filed under the operator it is for, from the unit and no worker" in {
+    // What the unit did for an operator before any worker of it ran, such as installing its
+    // Python environment.
+    withFixture { f =>
+      val batches = ListBuffer.empty[Iterable[TexeraWebSocketEvent]]
+      val sub = f.stateStore.consoleStore.getWebsocketEventObservable
+        .subscribe((batch: Iterable[TexeraWebSocketEvent]) => batches += batch)
+
+      try {
+        f.service.addUnitMessage(
+          "udf1",
+          ConsoleMessageType.PRINT,
+          "Installing Python environment 'ml' (1 package)",
+          "tabulate==0.9.0"
+        )
+        f.service.addUnitMessage(
+          "udf1",
+          ConsoleMessageType.ERROR,
+          "Python environment 'ml' could not be installed"
+        )
+      } finally sub.dispose()
+
+      val stored = f.stateStore.consoleStore.getState.operatorConsole("udf1").consoleMessages
+      stored.map(message => (message.msgType, message.title, message.message)) shouldBe Seq(
+        (
+          ConsoleMessageType.PRINT,
+          "Installing Python environment 'ml' (1 package)",
+          "tabulate==0.9.0"
+        ),
+        (ConsoleMessageType.ERROR, "Python environment 'ml' could not be installed", "")
+      )
+      stored.map(_.source).distinct shouldBe Seq("computing unit")
+      stored.map(_.workerId).distinct shouldBe Seq("")
+      stored.foreach(_.timestamp.seconds should be > 0L)
+      // Every session on the workflow is sent each, as it is sent a worker's.
+      batches.flatMap(
+        _.collect { case e: ConsoleUpdateEvent => (e.operatorId, e.messages) }
+      ) shouldBe
+        Seq(("udf1", Seq(stored.head)), ("udf1", Seq(stored(1))))
+    }
+  }
+
+  it should "be cut to the display length as a worker's message is" in {
+    withFixture { f =>
+      val long = "c" * (f.service.consoleMessageDisplayLength + 50)
+
+      f.service.addUnitMessage("udf1", ConsoleMessageType.PRINT, long)
+
+      val stored = f.stateStore.consoleStore.getState.operatorConsole("udf1").consoleMessages
+      stored.map(_.title.length) shouldBe Seq(f.service.consoleMessageDisplayLength)
+    }
+  }
+
   "unsubscribeAll" should "shutdown consoleWriterThread" in {
     withFixture { f =>
       f.client.consoleCallback(message(title = "test"))

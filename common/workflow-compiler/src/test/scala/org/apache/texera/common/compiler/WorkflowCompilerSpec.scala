@@ -49,6 +49,9 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalPlanRoundTrip,
   PlanInput,
   PortIdentity,
+  PreferCoordinator,
+  PythonEnvironment,
+  PythonEnvironmentRef,
   RepositoryMounts,
   SchemaNotAvailableException,
   WorkflowContext
@@ -114,7 +117,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver,
       settings: CompileSettings = CompileSettings.Default,
       inputLinker: InputLinker = TestOperators.fixtureInputLinker,
-      lister: DatasetVersionLister = TestOperators.fixtureDatasetVersionLister
+      lister: DatasetVersionLister = TestOperators.fixtureDatasetVersionLister,
+      environments: PythonEnvironmentResolver = PythonEnvironmentResolver.Unavailable
   ): WorkflowCompiler =
     new WorkflowCompiler(
       newContext(),
@@ -124,7 +128,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         lister = lister,
         repositories = TestOperators.fixtureRepositoryResolver,
         mountRoot = Some(TestOperators.fixtureMountRoot),
-        settings = settings
+        settings = settings,
+        environments = environments
       )
     )
 
@@ -1196,7 +1201,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         lister = TestOperators.fixtureDatasetVersionLister,
         repositories = resolver,
         mountRoot = mountRoot,
-        settings = CompileSettings.Default
+        settings = CompileSettings.Default,
+        environments = PythonEnvironmentResolver.Unavailable
       )
     )
 
@@ -1509,7 +1515,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   }
 
   "RunBindings.forEditing" should
-    "bind a compile to the files and settings it is given, and to no link, listing, dataset or model" in {
+    "bind a compile to the files and settings it is given, and to no link, listing, dataset, model or environment" in {
     val settings = CompileSettings.Default.copy(csvParserMaxColumns = 77)
 
     val bindings = RunBindings.forEditing(TestOperators.fixtureFileResolver, settings)
@@ -1520,6 +1526,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(bindings.lister eq DatasetVersionLister.Unavailable)
     assert(bindings.repositories eq RepositoryVersionResolver.Unavailable)
     assert(bindings.mountRoot.isEmpty)
+    assert(bindings.environments eq PythonEnvironmentResolver.Unavailable)
     // A plan made to run with them, which lists a dataset version, fails rather than run with
     // no listing: with a failure of the compile's own, as no File Lister is at fault.
     val unlisted = intercept[IllegalStateException] {
@@ -1546,6 +1553,229 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       source
     )
     assert(message.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), message)
+    // A plan made to run with them, whose UDF names an environment, fails rather than run the
+    // UDF in another: with a failure of the compile's own, as no UDF is at fault.
+    val unresolved = intercept[IllegalStateException] {
+      new WorkflowCompiler(newContext(), bindings).compile(
+        pojo(List(udfIn("ml")), List.empty),
+        CompilationErrorHandling.Strict
+      )
+    }
+    assert(
+      unresolved.getMessage ==
+        "No resolver for Python environments was given, so 'ml' cannot be resolved."
+    )
+  }
+
+  // -------------------- Python environments --------------------
+
+  // A plan made to run (Strict) resolves the environment each UDF names to what its user keeps
+  // under that name, and carries it; the editing path (Lenient) leaves the name. These tests
+  // stand in for the user's environments with the two below.
+
+  private val mlEnvironment = PythonEnvironment("ml", Seq("numpy>=2.1.0", "tabulate==0.9.0"))
+  private val plotsEnvironment = PythonEnvironment("plots", Seq("tabulate==0.9.0"))
+
+  /**
+    * The user's environments, `ml` and `plots`, recording every name it is asked for. `legacy`
+    * holds a package pip may not read, as a row saved before packages were checked may.
+    */
+  private class RecordingEnvironments extends PythonEnvironmentResolver {
+    val asked: mutable.ArrayBuffer[String] = mutable.ArrayBuffer.empty
+    override def resolve(name: String): PythonEnvironment = {
+      asked += name
+      name match {
+        case "ml"    => mlEnvironment
+        case "plots" => plotsEnvironment
+        case "legacy" =>
+          throw PythonEnvironmentNotResolved.notInstallable(
+            name,
+            "Package \"pkg[extra]\" is not valid: it contains '['."
+          )
+        case other => throw PythonEnvironmentNotResolved.noSuchEnvironment(other)
+      }
+    }
+  }
+
+  /** A source UDF that asks to run in the environment `name`. */
+  private def udfIn(name: String, workers: Int = 1): PythonUDFSourceOpDescV2 = {
+    val udf = new PythonUDFSourceOpDescV2
+    udf.code = sourceUdfCode
+    udf.columns = List(new Attribute("a", AttributeType.INTEGER))
+    udf.workers = workers
+    udf.defaultEnv = false
+    udf.envName = name
+    udf
+  }
+
+  /** A UDF, for downstream of a source, that asks to run in the environment `name`. */
+  private def tupleUdfIn(name: String, workers: Int = 1): PythonUDFOpDescV2 = {
+    val udf = new PythonUDFOpDescV2
+    udf.code = tupleUdfCode
+    udf.retainInputColumns = true
+    udf.workers = workers
+    udf.defaultEnv = false
+    udf.envName = name
+    udf
+  }
+
+  private def environmentOf(result: WorkflowCompilationResult, op: LogicalOp) =
+    physicalOpOf(result, op).pythonEnvironment
+
+  "WorkflowCompiler in strict mode" should
+    "resolve the environment each UDF names for the plan's user, asking for each name once" in {
+    val environments = new RecordingEnvironments
+    val source = udfIn("ml")
+    val downstream = tupleUdfIn("  ml ", workers = 3)
+    val other = tupleUdfIn("plots")
+    val plain = new PythonUDFOpDescV2
+    plain.code = tupleUdfCode
+    plain.retainInputColumns = true
+
+    val result = newCompiler(environments = environments).compile(
+      pojo(
+        List(source, downstream, other, plain),
+        chain(source, downstream, other, plain)
+      ),
+      CompilationErrorHandling.Strict
+    )
+
+    assert(environmentOf(result, source) == PythonEnvironmentRef.Resolved(mlEnvironment))
+    assert(environmentOf(result, downstream) == PythonEnvironmentRef.Resolved(mlEnvironment))
+    assert(environmentOf(result, other) == PythonEnvironmentRef.Resolved(plotsEnvironment))
+    // An operator that asks for none runs in the engine's own, and nothing is asked for it.
+    assert(environmentOf(result, plain) == PythonEnvironmentRef.EngineDefault)
+    assert(environments.asked.sorted == List("ml", "plots"))
+    // An environment is installed on the coordinator's node alone, so its operators' workers
+    // run there, whatever the operator preferred; any other operator keeps its preference.
+    assert(physicalOpOf(result, source).locationPreference.contains(PreferCoordinator))
+    val parallel = physicalOpOf(result, downstream)
+    assert(parallel.locationPreference.contains(PreferCoordinator))
+    assert(parallel.parallelizable && parallel.suggestedWorkerNum.contains(3))
+    assert(physicalOpOf(result, plain).locationPreference.isEmpty)
+    // The plan is saved with what each environment holds.
+    val saved = assertSavable(result)
+    assert(saved.contains("\"tabulate==0.9.0\"") && saved.contains(mlEnvironment.digest))
+  }
+
+  it should "report an environment its user does not have as the error of each UDF naming it" in {
+    val environments = new RecordingEnvironments
+    val source = udfIn("ml")
+    val missing = tupleUdfIn("someone-elses")
+    val alsoMissing = tupleUdfIn("someone-elses")
+
+    val failure = strictFailure(
+      pojo(List(source, missing, alsoMissing), chain(source, missing, alsoMissing)),
+      newCompiler(environments = environments)
+    )
+
+    assert(
+      failure.operatorErrors.keys.toList == List(missing, alsoMissing).map(_.operatorIdentifier)
+    )
+    failure.operatorErrors.foreach {
+      case (op, error) =>
+        assert(error.`type` == COMPILATION_ERROR)
+        assert(error.operatorId == op.id)
+        assert(
+          error.message == s"${classOf[PythonEnvironmentNotResolved].getName}: You have no " +
+            "Python environment named 'someone-elses'."
+        )
+    }
+    assert(failure.getCause.isInstanceOf[PythonEnvironmentNotResolved], failure.getCause)
+    assert(failure.getMessage == messageListing(failure, 2, List(missing, alsoMissing)))
+    // Asked once, although two operators name it.
+    assert(environments.asked.sorted == List("ml", "someone-elses"))
+  }
+
+  it should "report an environment whose packages pip may not read on the UDF, with the package" in {
+    val udf = udfIn("legacy")
+
+    val message = onlyErrorOf(
+      strictFailure(
+        pojo(List(udf), List.empty),
+        newCompiler(environments = new RecordingEnvironments)
+      ),
+      udf
+    )
+
+    assert(
+      message == s"${classOf[PythonEnvironmentNotResolved].getName}: Python environment " +
+        "'legacy' cannot be installed: Package \"pkg[extra]\" is not valid: it contains '['."
+    )
+  }
+
+  it should "resolve no environment for a plan that fails otherwise" in {
+    // Resolving is a database lookup per name, so a plan that could not run costs none.
+    val environments = new RecordingEnvironments
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val badProjection = projectOp(List("DoesNotExist"))
+    val downstream = tupleUdfIn("missing")
+
+    val failure = strictFailure(
+      pojo(List(csv, badProjection, downstream), chain(csv, badProjection, downstream)),
+      newCompiler(environments = environments)
+    )
+
+    assert(environments.asked.isEmpty)
+    val udfError = failure.operatorErrors(downstream.operatorIdentifier).message
+    assert(!udfError.contains("missing"), udfError)
+  }
+
+  it should "report a missing environment and a refused dataset together, each on its UDF" in {
+    val refusing = new RecordingResolver(refused = Set(datasetVersionPath))
+    val source = udfIn("missing")
+    val downstream = resourceTupleUdf()
+    val compiler = new WorkflowCompiler(
+      newContext(),
+      RunBindings(
+        files = TestOperators.fixtureFileResolver,
+        inputLinker = TestOperators.fixtureInputLinker,
+        lister = TestOperators.fixtureDatasetVersionLister,
+        repositories = refusing,
+        mountRoot = Some(planMountRoot),
+        settings = CompileSettings.Default,
+        environments = new RecordingEnvironments
+      )
+    )
+
+    val failure = strictFailure(resourcePlan(source, downstream), compiler)
+
+    assert(failure.operatorErrors.keys.toList == List(source, downstream).map(_.operatorIdentifier))
+    assert(failure.operatorErrors(source.operatorIdentifier).message.contains("'missing'"))
+    assert(
+      failure
+        .operatorErrors(downstream.operatorIdentifier)
+        .message
+        .startsWith(classOf[FileNotFoundException].getName)
+    )
+  }
+
+  it should "throw, as it is, a failure to resolve an environment that is no error of the UDF's" in {
+    // An environment its user does not have, or one pip may not read, is the error of the UDF
+    // naming it. A database that does not answer is not.
+    val fault = new RuntimeException("the database did not answer")
+
+    val thrown = intercept[RuntimeException] {
+      newCompiler(environments = _ => throw fault)
+        .compile(pojo(List(udfIn("ml")), List.empty), CompilationErrorHandling.Strict)
+    }
+
+    assert(thrown eq fault, s"expected the resolver's own failure, got: $thrown")
+  }
+
+  "WorkflowCompiler" should
+    "leave the environment a UDF names to the plan made to run, asking its resolver nothing" in {
+    // The editing path compiles on every edit; even a name its user has no environment for is
+    // no error there.
+    val environments = new RecordingEnvironments
+    val udf = udfIn("someone-elses", workers = 2)
+
+    val result = newCompiler(environments = environments).compile(pojo(List(udf), List.empty))
+
+    assert(environments.asked.isEmpty)
+    assert(result.operatorIdToError.isEmpty, s"unexpected errors: ${result.operatorIdToError}")
+    assert(environmentOf(result, udf) == PythonEnvironmentRef.Named("someone-elses"))
+    assert(physicalOpOf(result, udf).locationPreference.isEmpty)
   }
 
   // -------------------- the site's settings --------------------

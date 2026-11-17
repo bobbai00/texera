@@ -36,6 +36,7 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalPlan,
   PhysicalPlanCodec,
   PortIdentity,
+  PythonEnvironment,
   WorkflowContext,
   WorkflowSettings
 }
@@ -79,6 +80,7 @@ import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{
   CompilationErrorHandling,
   CompileSettings,
+  PythonEnvironmentNotResolved,
   RunBindings,
   WorkflowCompiler
 }
@@ -102,12 +104,16 @@ object TestUtils {
       workflowSettings = workflowSettings
     )
 
+  /** The one Python environment the user of the fixtures keeps, under the name `ml`. */
+  val fixtureEnvironment: PythonEnvironment = PythonEnvironment("ml", Seq("tabulate==0.9.0"))
+
   /**
     * What a plan compiled in a spec is bound to: its scan sources read fixture files on the local
     * disk, through links to the fixture server, as a run reads a dataset's files through links
     * to the object store; its File Listers list the fixture dataset version, whose files are
     * read through such links too; a UDF's datasets and models are the fixture versions, read
-    * under the fixture mount root; and the site's settings are the defaults.
+    * under the fixture mount root; the site's settings are the defaults; and a UDF's Python
+    * environment is the fixture's, the only one there is.
     */
   val fixtureBindings: RunBindings = RunBindings(
     files = TestOperators.fixtureFileResolver,
@@ -115,7 +121,10 @@ object TestUtils {
     lister = TestOperators.fixtureDatasetVersionLister,
     repositories = TestOperators.fixtureRepositoryResolver,
     mountRoot = Some(TestOperators.fixtureMountRoot),
-    settings = CompileSettings.Default
+    settings = CompileSettings.Default,
+    environments = name =>
+      if (name == fixtureEnvironment.name) fixtureEnvironment
+      else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
   )
 
   /**

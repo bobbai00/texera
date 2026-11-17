@@ -1,5 +1,5 @@
 {
-  "formatVersion": 2,
+  "formatVersion": 3,
   "workflowId": {
     "id": "7"
   },
@@ -71,8 +71,7 @@
       ],
       "isOneToManyOp": false,
       "requiresMaterializedExecution": false,
-      "isLoopStart": false,
-      "pveName": ""
+      "isLoopStart": false
     }
   ],
   "links": [],

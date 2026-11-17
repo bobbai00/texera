@@ -39,4 +39,13 @@ class UdfConfigSpec extends AnyFlatSpec with Matchers {
       UdfConfig.pythonLogStreamHandlerLevel shouldBe "INFO"
     )
   }
+
+  it should "resolve where Python environments are installed, and how long an install may take" in {
+    ifUnset("UDF_PYTHON_ENVIRONMENTS_ROOT")(
+      UdfConfig.pythonEnvironmentsRoot shouldBe "/tmp/texera-python-environments"
+    )
+    ifUnset("UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES")(
+      UdfConfig.pythonEnvironmentInstallTimeoutMinutes shouldBe 30
+    )
+  }
 }

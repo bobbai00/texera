@@ -39,6 +39,7 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.{
   CompilationErrorHandling,
   CompileSettings,
+  PythonEnvironmentResolver,
   RunBindings,
   WorkflowCompilationFailed,
   WorkflowCompiler
@@ -234,7 +235,8 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
             lister = DatasetVersionLister.Unavailable,
             repositories = RepositoryVersionResolver.Unavailable,
             mountRoot = Some(TestOperators.fixtureMountRoot),
-            settings = CompileSettings.Default
+            settings = CompileSettings.Default,
+            environments = PythonEnvironmentResolver.Unavailable
           )
         ).compile(pojo, CompilationErrorHandling.Strict)
         Right(())

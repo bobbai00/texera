@@ -21,6 +21,7 @@ package org.apache.texera.amber.operator.udf.python.source
 
 import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
+import org.apache.texera.amber.core.workflow.PythonEnvironmentRef
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.udf.UdfDescriptorSpecSupport
 import org.apache.texera.amber.operator.udf.python.{
@@ -95,12 +96,19 @@ class PythonUDFSourceOpDescV2Spec extends AnyFlatSpec with UdfDescriptorSpecSupp
       "Virtual Environment name is required when not using the default Python environment."
   }
 
-  it should "carry the trimmed virtual-environment name when the default env is disabled" in {
+  it should "name the trimmed virtual environment when the default env is disabled" in {
     val d = new PythonUDFSourceOpDescV2
     d.code = "yield"
     d.defaultEnv = false
     d.envName = "  my-venv  "
-    buildPhysicalOp(d).pveName shouldBe "my-venv"
+    buildPhysicalOp(d).pythonEnvironment shouldBe PythonEnvironmentRef.Named("my-venv")
+  }
+
+  it should "run in the engine's own environment by default, whatever name is left in the field" in {
+    val d = new PythonUDFSourceOpDescV2
+    d.code = "yield"
+    d.envName = "my-venv"
+    buildPhysicalOp(d).pythonEnvironment shouldBe PythonEnvironmentRef.EngineDefault
   }
 
   it should "mark the op parallelizable with the requested worker count when workers > 1" in {

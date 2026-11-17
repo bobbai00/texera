@@ -126,12 +126,10 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       warehouse: Option[String] = None,
       costHints: Option[CostHints] = None
   ): WorkflowContext =
-    // The computing unit is not saved: a plan does not choose the unit it runs on.
     new WorkflowContext(
       workflowId,
       executionId,
       settings,
-      cuid = Some(3),
       warehouse = warehouse,
       costHints = costHints
     )
@@ -150,6 +148,10 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     outputs = Seq(OutputPort(PortIdentity(0), "rows") -> everyType)
   )
 
+  // What the plan's user keeps under a name of more than ASCII: only its lines are pip's to read.
+  private val fullEnvironment =
+    PythonEnvironment("ml ünï", Seq("numpy>=2.1.0", "tabulate==0.9.0", "typing-extensions"))
+
   private val udf = withPorts(
     operator("udf", executor = OpExecWithCode("print('héllo')\nyield {'k': 1}\n", "python")).copy(
       locationPreference = Some(RoundRobinPreference),
@@ -158,7 +160,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         PartitionRule.Fixed(new RangePartition(List("k", "Value"), Long.MinValue, Long.MaxValue)),
       isOneToManyOp = true,
       suggestedWorkerNum = Some(3),
-      pveName = "py311",
+      pythonEnvironment = PythonEnvironmentRef.Resolved(fullEnvironment),
       repositoryMounts =
         Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:d4t4", "model-1:m0d3l")))
     ),
@@ -328,18 +330,43 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
-  it should "save and read back a worker count, PVE and mounts, or none of them" in {
+  it should "save and read back a worker count, a Python environment and mounts, or none of them" in {
     Seq(
       operator("op"),
       // proto3 would leave a 0 out; an optional field keeps it apart from "no worker count"
       operator("op").withSuggestedWorkerNum(0),
-      operator("op").withSuggestedWorkerNum(16).withPveName("py-3.12 ünï"),
+      operator("op")
+        .withSuggestedWorkerNum(16)
+        .withPythonEnvironment(PythonEnvironmentRef.Resolved(fullEnvironment)),
+      // an environment that installs nothing is still one, apart from the engine's own
+      operator("op").withPythonEnvironment(
+        PythonEnvironmentRef.Resolved(PythonEnvironment("bare", Seq.empty))
+      ),
       operator("op").copy(repositoryMounts = Some(RepositoryMounts("/m", Set("r:c"))))
     ).foreach { op =>
       withClue(s"$op: ") {
         assertRoundTrips(contextOf(), planOf(Seq(op), Nil))
       }
     }
+  }
+
+  it should "read an operator's Python environment back as it was saved, or the engine's own" in {
+    val read = PhysicalPlanCodec.decode(save(fullContext, fullPlan)).plan
+    assert(
+      read.getOperator(udf.id).pythonEnvironment == PythonEnvironmentRef.Resolved(fullEnvironment)
+    )
+    assert(read.getOperator(scan.id).pythonEnvironment == PythonEnvironmentRef.EngineDefault)
+    // Saved with the digest of its lines, which a unit installs it under.
+    val stored = save(fullContext, fullPlan).operators.find(_.id.contains(udf.id)).get
+    assert(
+      stored.pythonEnvironment.contains(
+        StoredPythonEnvironment(
+          "ml ünï",
+          Seq("numpy>=2.1.0", "tabulate==0.9.0", "typing-extensions"),
+          PythonRequirements.digest(fullEnvironment.requirements)
+        )
+      )
+    )
   }
 
   it should "save and read back each port's schema, a column of every attribute type included" in {
@@ -653,7 +680,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "requiresMaterializedExecution",
         "isLoopStart",
         "suggestedWorkerNum",
-        "pveName",
+        "pythonEnvironment",
         "repositoryMounts"
       ),
       leftOut = Map(
@@ -675,7 +702,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         .filterNot(field => field.isSynthetic || Modifier.isStatic(field.getModifiers))
         .map(_.getName),
       saved = Set("workflowId", "executionId", "workflowSettings", "warehouse", "costHints"),
-      leftOut = Map("cuid" -> "the computing unit the plan runs on, which it does not choose")
+      leftOut = Map.empty
     )
   }
 
@@ -720,7 +747,8 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "requiresMaterializedExecution" -> keptRunning,
         "isLoopStart" -> keptRunning,
         "suggestedWorkerNum" -> keptRunning,
-        "pveName" -> "a worker's interpreter is fixed when it starts; the running operator's stays",
+        "pythonEnvironment" ->
+          "a worker's interpreter is fixed when it starts; the running operator's stays",
         "resourceBinding" -> "an operator made to run holds none, and saving one is refused"
       )
     )
@@ -728,7 +756,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   // ----- the format, pinned -----
 
-  // Two small plans in format version 2, one for each execution mode, that use every name the
+  // Two small plans in format version 3, one for each execution mode, that use every name the
   // format has between them (a case below checks it): the first sets every field, the second
   // none it may leave out. And a change to an operator that sets every field. Their JSON is
   // checked in: a change to what the codec writes for them fails here, and a change to the
@@ -763,7 +791,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       partitionRequirement = List(Some(HashPartition(List("id"))), None),
       outputPartitionRule = PartitionRule.Fixed(UnknownPartition()),
       suggestedWorkerNum = Some(2),
-      pveName = "py311",
+      pythonEnvironment = PythonEnvironmentRef.Resolved(
+        PythonEnvironment("ml", Seq("numpy>=2.1.0", "tabulate==0.9.0"))
+      ),
       repositoryMounts =
         Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:d4t4", "model-2:m0d3l")))
     ),
@@ -851,13 +881,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   )
 
   private val goldenPlans: Seq[(String, ExecutionPlan)] = Seq(
-    "physical-plan-v2.json" -> goldenExecutionPlan,
-    "physical-plan-v2-materialized.json" ->
+    "physical-plan-v3.json" -> goldenExecutionPlan,
+    "physical-plan-v3-materialized.json" ->
       ExecutionPlan(goldenMaterializedContext, planOf(Seq(goldenSource), Nil))
   )
 
   // The UDF's code changed while the run is paused; it reads the same datasets and models.
-  private val goldenUpdateFile = "operator-update-v2.json"
+  private val goldenUpdateFile = "operator-update-v3.json"
   private val goldenUpdateId = "update-1"
   private val goldenChangedUdf =
     goldenUdf.copy(opExecInitInfo = OpExecWithCode("yield tuple_  # changed", "python"))
@@ -876,7 +906,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       finally stream.close()
     }
 
-  it should "write each golden plan and change in format version 2 exactly as its golden file has it" in {
+  it should "write each golden plan and change in format version 3 exactly as its golden file has it" in {
     val written = goldenPlans.map {
       case (file, plan) => file -> PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(plan))
     } :+ goldenUpdateFile -> PhysicalPlanCodec.updateToJson(
@@ -897,7 +927,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   }
 
-  it should "read each golden file in format version 2 back to its plan or change" in {
+  it should "read each golden file in format version 3 back to its plan or change" in {
     goldenPlans.foreach {
       case (file, plan) =>
         withClue(s"$file: ") {
@@ -940,6 +970,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     walk(StoredOperatorUpdate.scalaDescriptor)
     assert(fields.contains("opExecWithCode") && values.contains("SINGLE_SNAPSHOT"))
     assert(fields.contains("expiresAtMs") && fields.contains("updateId"))
+    assert(fields.contains("requirements") && fields.contains("digest"))
 
     val unused = fields.toSeq.filterNot(name => text.contains(s""""$name": """)) ++
       values.toSeq.filterNot(name => text.contains(s""""$name""""))
@@ -983,6 +1014,18 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertRefused(
       save(fullContext, fullPlanWithUdf(_.withResourceBinding(Some(binding))))
     )("udf-main", "never resolved")
+  }
+
+  it should "refuse to save an operator that names a Python environment no plan resolved" in {
+    assertRefused(
+      save(
+        fullContext,
+        fullPlanWithUdf(_.withPythonEnvironment(PythonEnvironmentRef.Named("ml")))
+      )
+    )(
+      "Operator udf-main names the Python environment 'ml', which was never resolved: only a " +
+        "plan made to run can be saved."
+    )
   }
 
   it should "refuse to save an operator of another workflow or execution" in {
@@ -1055,7 +1098,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "scan-main[0] -> udf-main[1]",
       "listed 0 times on the input port 1 of operator udf-main"
     )
-    val twin = fullPlan.operators.find(_.id == udf.id).get.withPveName("another")
+    val twin = fullPlan.operators.find(_.id == udf.id).get.withSuggestedWorkerNum(9)
     assertRefused(
       save(fullContext, fullPlan.copy(operators = fullPlan.operators + twin))
     )("2 operators udf-main")
@@ -1231,9 +1274,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   }
 
   it should "refuse a plan in another format version, naming both versions" in {
-    assertUnreadable(valid.copy(formatVersion = 1))("format version 1", "reads version 2")
-    assertUnreadable(valid.copy(formatVersion = 3))("format version 3", "reads version 2")
-    assertUnreadable(valid.copy(formatVersion = 0))("names no format version", "reads version 2")
+    assertUnreadable(valid.copy(formatVersion = 2))("format version 2", "reads version 3")
+    assertUnreadable(valid.copy(formatVersion = 4))("format version 4", "reads version 3")
+    assertUnreadable(valid.copy(formatVersion = 0))("names no format version", "reads version 3")
   }
 
   it should "refuse a plan that names no workflow or execution, or has no settings" in {
@@ -1459,6 +1502,54 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   }
 
+  it should "refuse a Python environment pip may not read, or one saved under another digest" in {
+    def environment(f: StoredPythonEnvironment => StoredPythonEnvironment): StoredPhysicalPlan =
+      withStoredOp(udf.id)(op => op.withPythonEnvironment(f(op.getPythonEnvironment)))
+    // What a line may not be, each an option, a URL or more than one bound to pip.
+    Seq(
+      "--index-url=https://example.com/simple",
+      "-r /etc/passwd",
+      "pkg @ https://example.com/pkg.whl",
+      "pkg[extra]",
+      "pkg>=1,<2",
+      ""
+    ).foreach { line =>
+      withClue(s"[$line]: ") {
+        assertUnreadable(environment(_.withRequirements(Seq(line))))(
+          "Operator udf-main cannot run in the environment it names: Python environment " +
+            "'ml ünï' cannot be installed: "
+        )
+      }
+    }
+    assertUnreadable(environment(_.withRequirements(Seq("Tabulate==0.9.0"))))(
+      "udf-main cannot run in the environment it names",
+      "is not in canonical form; expected \"tabulate==0.9.0\""
+    )
+    assertUnreadable(environment(_.withRequirements(Seq("tabulate==0.9.0", "numpy>=2.1.0"))))(
+      "udf-main cannot run in the environment it names",
+      "are not sorted, each once: tabulate==0.9.0, numpy>=2.1.0"
+    )
+    assertUnreadable(environment(_.withRequirements(Seq("numpy>=2.1.0", "numpy>=2.1.0"))))(
+      "are not sorted, each once: numpy>=2.1.0, numpy>=2.1.0"
+    )
+    assertUnreadable(environment(_.withName(" ")))(
+      "udf-main cannot run in the environment it names: A Python environment needs a name."
+    )
+    // The digest names the lines saved with it: of other lines, cut short or left out, it is
+    // another's.
+    val digest = fullEnvironment.digest
+    Seq(PythonRequirements.digest(Seq("tabulate==0.9.0")), digest.take(63), "").foreach { other =>
+      assertUnreadable(environment(_.withDigest(other)))(
+        s"The Python environment 'ml ünï' of operator udf-main is saved under the digest " +
+          s"'$other', but its requirements have the digest $digest."
+      )
+    }
+    assertUnreadable(environment(_.withRequirements(Seq("tabulate==0.9.0"))))(
+      s"is saved under the digest '$digest'",
+      s"have the digest ${PythonRequirements.digest(Seq("tabulate==0.9.0"))}"
+    )
+  }
+
   it should "refuse a replay of no execution, from a log at no absolute URI, or up to no interaction" in {
     assertUnreadable(valid.update(_.replay.sourceExecutionId := 0L))(
       "replays the log of execution 0, but an execution's id is at least 1"
@@ -1578,7 +1669,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "write every field out, a port 0 and every default value included" in {
     val written = compact(parse(validJson))
     Seq(
-      "\"formatVersion\":2",
+      "\"formatVersion\":3",
       // proto3 JSON would leave out a PortIdentity at its default, so port 0 would not show
       "\"fromPortId\":{\"id\":0,\"internal\":false}",
       "\"port\":{\"id\":{\"id\":0,\"internal\":false},\"displayName\":\"\"," +
@@ -1590,9 +1681,10 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "{\"noRequirement\":{}}",
       "\"inputPorts\":[]",
       "\"isLoopStart\":false",
-      "\"pveName\":\"\"",
       "\"warehouse\":\"lake-wh\"",
       "\"suggestedWorkerNum\":3",
+      "\"pythonEnvironment\":{\"name\":\"ml ünï\",\"requirements\":[\"numpy>=2.1.0\"," +
+        "\"tabulate==0.9.0\",\"typing-extensions\"],\"digest\":\"" + fullEnvironment.digest + "\"}",
       "\"replay\":{\"sourceExecutionId\":\"40\",\"logLocation\":\"file:///var/texera/logs/7/40/\"," +
         "\"interaction\":\"interaction-3\"}",
       "\"replayLogLocation\":\"hdfs://namenode:8020/texera/logs/7/42/\"",
@@ -1611,6 +1703,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "warehouse",
       "suggestedWorkerNum",
       "repositoryMounts",
+      "pythonEnvironment",
       "replay",
       "replayLogLocation",
       "costHints"
@@ -1635,8 +1728,15 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   it should "refuse JSON with a field the format does not have, at any depth" in {
     assertRefused(PhysicalPlanCodec.fromJson(editedJson(validJson) {
-      case ("pveName", name) => Some("pveNames" -> name)
-    }))("pveNames")
+      case ("isLoopStart", flag) => Some("isLoopStarts" -> flag)
+    }))("isLoopStarts")
+    assertRefused(PhysicalPlanCodec.fromJson(editedJson(validJson) {
+      case ("digest", digest) => Some("sha256" -> digest)
+    }))("sha256")
+    // An environment by its name on one unit, as the formats before this one saved it.
+    assertRefused(PhysicalPlanCodec.fromJson(editedJson(validJson) {
+      case ("pythonEnvironment", _) => Some("pveName" -> JString("ml"))
+    }))("pveName")
     assertRefused(PhysicalPlanCodec.fromJson(editedJson(validJson) {
       case ("toPortId", port) => Some("toPort" -> port)
     }))("toPort")
@@ -1659,10 +1759,12 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   }
 
   it should "refuse a field given twice in one object" in {
-    val repeated =
-      validJson.replaceFirst("\"pveName\": \"\"", "\"pveName\": \"\", \"pveName\": \"x\"")
+    val repeated = validJson.replaceFirst(
+      "\"isLoopStart\": false",
+      "\"isLoopStart\": false, \"isLoopStart\": true"
+    )
     assert(repeated != validJson)
-    assertRefused(PhysicalPlanCodec.fromJson(repeated))("not JSON", "Duplicate field 'pveName'")
+    assertRefused(PhysicalPlanCodec.fromJson(repeated))("not JSON", "Duplicate field 'isLoopStart'")
     // the version too, which is read before anything else
     assertRefused(PhysicalPlanCodec.fromJson("{\"formatVersion\": 1, " + validJson.drop(1)))(
       "Duplicate field 'formatVersion'"
@@ -1671,34 +1773,44 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   it should "refuse JSON in another format version before looking at its fields" in {
     val laterVersion = editedJson(validJson) {
-      case ("formatVersion", _) => Some("formatVersion" -> JInt(3))
-      case ("pveName", name)    => Some("aFieldOfVersion3" -> name)
+      case ("formatVersion", _)  => Some("formatVersion" -> JInt(4))
+      case ("isLoopStart", flag) => Some("aFieldOfVersion4" -> flag)
     }
-    assertRefused(PhysicalPlanCodec.fromJson(laterVersion))("format version 3", "reads version 2")
-    Seq(JString("3") -> "\"3\"", JString("2") -> "\"2\"", JDouble(2.0) -> "2.0").foreach {
+    assertRefused(PhysicalPlanCodec.fromJson(laterVersion))("format version 4", "reads version 3")
+    Seq(JString("4") -> "\"4\"", JString("3") -> "\"3\"", JDouble(3.0) -> "3.0").foreach {
       case (version, written) =>
         val json = editedJson(validJson) {
           case ("formatVersion", _) => Some("formatVersion" -> version)
         }
         assertRefused(PhysicalPlanCodec.fromJson(json))(
           s"format version is $written, not a whole number",
-          "reads version 2"
+          "reads version 3"
         )
     }
     val noVersion = editedJson(validJson) { case ("formatVersion", _) => None }
     assertRefused(PhysicalPlanCodec.fromJson(noVersion))("names no format version")
   }
 
-  it should "refuse a plan saved in format version 1, which has none of version 2's fields" in {
-    val version1 = editedJson(validJson) {
-      case ("formatVersion", _)                         => Some("formatVersion" -> JInt(1))
-      case (field, _) if version2Fields.contains(field) => None
+  it should "refuse a plan saved in format version 1 or 2, whose fields are not this version's" in {
+    // Both named an operator's environment by its name on one unit, where this version saves
+    // what the environment holds.
+    def earlier(version: Int): PartialFunction[(String, JValue), Option[(String, JValue)]] = {
+      case ("formatVersion", _)     => Some("formatVersion" -> JInt(version))
+      case ("pythonEnvironment", _) => Some("pveName" -> JString("ml"))
     }
+    val version2 = editedJson(validJson)(earlier(2))
+    val version1 = editedJson(validJson)(earlier(1).orElse {
+      case (field, _) if version2Fields.contains(field) => None
+    })
+    assert(version2.contains("\"pveName\"") && !version2.contains("\"pythonEnvironment\""))
     assert(version2Fields.forall(field => !version1.contains(s""""$field"""")))
-    assert(
-      refusal(PhysicalPlanCodec.fromJson(version1)) ==
-        "The plan is in format version 1, but this reader reads version 2."
-    )
+    Seq(1 -> version1, 2 -> version2).foreach {
+      case (version, json) =>
+        assert(
+          refusal(PhysicalPlanCodec.fromJson(json)) ==
+            s"The plan is in format version $version, but this reader reads version 3."
+        )
+    }
   }
 
   // The fields format version 2 added to a plan.
@@ -1828,6 +1940,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         opExecInitInfo = OpExecWithClassName("org.example.FilterOpExec", """{"value":"é"}"""),
         repositoryMounts = None
       ),
+      // A change saves no environment: the operator as changed still asks for its own by name.
+      "an operator that asks for its environment by name" ->
+        changedUdf.withPythonEnvironment(PythonEnvironmentRef.Named("ml ünï")),
       "an executor with empty strings" -> udf.copy(opExecInitInfo = OpExecWithCode("", "")),
       "an operator of an internal layer" -> localAgg
     ).foreach {
@@ -1856,7 +1971,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
           "repositoryMounts"
         )
     )
-    assert(fields("formatVersion") == JInt(2))
+    assert(fields("formatVersion") == JInt(3))
     assert(compact(fields("opId")) == """{"logicalOpId":{"id":"udf"},"layerName":"main"}""")
     // no port, link, schema or partitioning of the running operator
     Seq("inputPorts", "outputPorts", "links", "schema", "partitionRequirement").foreach { field =>
@@ -1900,11 +2015,11 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertRefused(PhysicalPlanCodec.decodeUpdate(stored))(expected: _*)
 
   it should "refuse a change in another format version, of no execution or operator, under a blank id, with no executor, or with mounts RepositoryMounts refuses" in {
-    assertUpdateUnreadable(validUpdate.withFormatVersion(1))(
-      "The operator update is in format version 1, but this reader reads version 2."
+    assertUpdateUnreadable(validUpdate.withFormatVersion(2))(
+      "The operator update is in format version 2, but this reader reads version 3."
     )
     assertUpdateUnreadable(validUpdate.withFormatVersion(0))(
-      "The operator update names no format version; this reader reads version 2."
+      "The operator update names no format version; this reader reads version 3."
     )
     assertUpdateUnreadable(validUpdate.clearExecutionId)("The operator update names no execution.")
     assertUpdateUnreadable(validUpdate.clearOpId)("The operator update names no operator.")
@@ -1958,16 +2073,16 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
     // another version, or none, before anything else
     refused(editedJson(json) {
-      case ("formatVersion", _) => Some("formatVersion" -> JInt(3))
-      case ("updateId", id)     => Some("aFieldOfVersion3" -> id)
-    })("The operator update is in format version 3, but this reader reads version 2.")
-    refused(editedJson(json) { case ("formatVersion", _) => Some("formatVersion" -> JInt(1)) })(
-      "The operator update is in format version 1, but this reader reads version 2."
+      case ("formatVersion", _) => Some("formatVersion" -> JInt(4))
+      case ("updateId", id)     => Some("aFieldOfVersion4" -> id)
+    })("The operator update is in format version 4, but this reader reads version 3.")
+    refused(editedJson(json) { case ("formatVersion", _) => Some("formatVersion" -> JInt(2)) })(
+      "The operator update is in format version 2, but this reader reads version 3."
     )
     refused(editedJson(json) {
-      case ("formatVersion", _) => Some("formatVersion" -> JString("2"))
+      case ("formatVersion", _) => Some("formatVersion" -> JString("3"))
     })(
-      "The operator update's format version is \"2\", not a whole number"
+      "The operator update's format version is \"3\", not a whole number"
     )
     refused(editedJson(json) { case ("formatVersion", _) => None })(
       "The operator update names no format version"

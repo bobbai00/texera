@@ -25,6 +25,7 @@ import org.apache.texera.amber.core.workflow.{
   HashPartition,
   PartitionRule,
   PortIdentity,
+  PythonEnvironmentRef,
   UnknownPartition
 }
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
@@ -174,11 +175,17 @@ class PythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptorSpecSupport {
     physical.opExecInitInfo shouldBe OpExecWithCode("yield t", "python")
   }
 
-  it should "carry the trimmed virtual-environment name when the default env is disabled" in {
+  it should "name the trimmed virtual environment when the default env is disabled" in {
     val d = new PythonUDFOpDescV2
     d.defaultEnv = false
     d.envName = "  myenv  "
-    buildPhysicalOp(d).pveName shouldBe "myenv"
+    buildPhysicalOp(d).pythonEnvironment shouldBe PythonEnvironmentRef.Named("myenv")
+  }
+
+  it should "run in the engine's own environment by default, whatever name is left in the field" in {
+    val d = new PythonUDFOpDescV2
+    d.envName = "myenv"
+    buildPhysicalOp(d).pythonEnvironment shouldBe PythonEnvironmentRef.EngineDefault
   }
 
   it should "map each custom input port's partitionRequirement into the physical op" in {

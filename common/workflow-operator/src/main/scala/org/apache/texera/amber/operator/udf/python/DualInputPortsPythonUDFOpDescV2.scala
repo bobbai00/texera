@@ -108,15 +108,15 @@ class DualInputPortsPythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParamete
   ): PhysicalOp = {
     Preconditions.checkArgument(workers >= 1, "Need at least 1 worker.", Array())
 
-    val pveName =
-      if (defaultEnv) ""
+    val pythonEnvironment =
+      if (defaultEnv) PythonEnvironmentRef.EngineDefault
       else {
         val trimmed = envName.trim
         if (trimmed.isEmpty)
           throw new RuntimeException(
             "Virtual Environment name is required when not using the default Python environment."
           )
-        trimmed
+        PythonEnvironmentRef.Named(trimmed)
       }
     val codeWithParameters = injectUiParameters(code)
 
@@ -167,7 +167,7 @@ class DualInputPortsPythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParamete
           Map(operatorInfo.outputPorts.head.id -> outputSchema)
         })
       )
-      .withPveName(pveName)
+      .withPythonEnvironment(pythonEnvironment)
       .withResourceBinding(resourceBinding(code))
   }
 

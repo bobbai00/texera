@@ -44,6 +44,9 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalPlan,
   PlanInput,
   PortIdentity,
+  PreferCoordinator,
+  PythonEnvironment,
+  PythonEnvironmentRef,
   RepositoryMounts,
   WorkflowContext
 }
@@ -249,10 +252,11 @@ case class WorkflowCompilationResult(
   * editing-path caller simply ignores it — keeping both paths on one code path.
   *
   * Only a Strict compile makes a plan to run, so only it links the files its scan sources read,
-  * lists the dataset versions its File Listers name and links the files listed, and pins the
-  * datasets and models operators name (see [[bindResources]]): each is a lookup, of the storage
-  * or the database, and the editing path compiles on every edit. Every compile, in either mode,
-  * gives each operator the site's settings it is compiled under.
+  * lists the dataset versions its File Listers name and links the files listed, resolves the
+  * Python environments operators name and pins the datasets and models they name (see
+  * [[bindResources]]): each is a lookup, of the storage or the database, and the editing path
+  * compiles on every edit. Every compile, in either mode, gives each operator the site's
+  * settings it is compiled under.
   *
   * @param context  the workflow and execution the compiler makes plans for: their ids stamp
   *                 every operator. Public, so what saves a plan to run saves it for the run the
@@ -318,6 +322,44 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
           case Failure(other) => throw other
         }
       }
+
+  /**
+    * Resolves the Python environments the operators of `plan` name: each operator that asks for
+    * one by name carries what the plan's user keeps under that name, and prefers the
+    * coordinator's node, the one node of a computing unit that installs environments. A name is
+    * resolved once, however many operators ask for it, so the plan holds one environment under
+    * it.
+    *
+    * An environment the plan's user does not have, or has with packages pip may not read, is the
+    * error of every operator that names it: each is left as it was, and its error appended to
+    * `errors`. Any other failure, such as the database not answering, is no error of an
+    * operator's, and is thrown as it is.
+    */
+  private def bindPlanEnvironments(
+      plan: PhysicalPlan,
+      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
+  ): PhysicalPlan = {
+    val resolved = mutable.Map.empty[String, Try[PythonEnvironment]]
+    plan.operators.foldLeft(plan) { (boundPlan, op) =>
+      op.pythonEnvironment match {
+        case PythonEnvironmentRef.Named(name) =>
+          resolved.getOrElseUpdate(name, Try(bindings.environments.resolve(name))) match {
+            case Success(environment) =>
+              boundPlan.setOperator(
+                op.copy(
+                  pythonEnvironment = PythonEnvironmentRef.Resolved(environment),
+                  locationPreference = Some(PreferCoordinator)
+                )
+              )
+            case Failure(error: PythonEnvironmentNotResolved) =>
+              errors.append((op.id.logicalOpId, error))
+              boundPlan
+            case Failure(other) => throw other
+          }
+        case _ => boundPlan
+      }
+    }
+  }
 
   /**
     * Fails a Strict compile with `errors`: each operator's first, listed in the order of
@@ -521,10 +563,11 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
         expandedPlan
       case CompilationErrorHandling.Strict =>
         if (errors.nonEmpty) failWith(logicalPlan, errors)
-        // 6. a plan made to run pins the datasets and models its operators name, last, once the
-        // plan is otherwise valid: the engine is handed the final code and the repositories to
-        // mount, never a binding.
-        val boundPlan = bindPlanResources(expandedPlan, errors)
+        // 6. a plan made to run resolves the Python environments its operators name and pins
+        // their datasets and models, last, once the plan is otherwise valid: the engine is handed
+        // what to install, the final code and the repositories to mount, never a name to look up
+        // or a binding.
+        val boundPlan = bindPlanResources(bindPlanEnvironments(expandedPlan, errors), errors)
         if (errors.nonEmpty) failWith(logicalPlan, errors)
         boundPlan
     }

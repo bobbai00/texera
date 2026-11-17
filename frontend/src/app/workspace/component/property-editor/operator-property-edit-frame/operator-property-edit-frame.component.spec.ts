@@ -3087,7 +3087,7 @@ describe("OperatorPropertyEditFrameComponent", () => {
   //
   // The branch only runs for a Python UDF operator and the mock metadata has
   // none, so the dynamic schema is stubbed rather than adding a fixture operator
-  // type. Both collaborators emit synchronously, so nothing here waits on a
+  // type. The stubbed list emits synchronously, so nothing here waits on a
   // timer or reaches a backend.
   // ──────────────────────────────────────────────────────────────────────────
   describe("Python UDF environment loading", () => {
@@ -3112,19 +3112,23 @@ describe("OperatorPropertyEditFrameComponent", () => {
         operatorVersion: "udf-1",
       }) as any;
 
-    /** Points the frame at a Python UDF operator and returns the stubbed collaborators. */
-    function selectUdfOperator(opts: { unit?: unknown; pves?: unknown; predicate?: typeof mockScanPredicate } = {}): {
-      fetchPVEs: ReturnType<typeof vi.fn>;
+    /**
+     * Points the frame at a Python UDF operator and returns the stubbed collaborators. The user
+     * keeps `environments` at the Dashboard: two, unless a case gives others.
+     */
+    function selectUdfOperator(opts: { environments?: unknown; predicate?: typeof mockScanPredicate } = {}): {
+      listUserPves: ReturnType<typeof vi.fn>;
       notificationError: ReturnType<typeof vi.fn>;
     } {
       const predicate = opts.predicate ?? mockScanPredicate;
       vi.spyOn(TestBed.inject(DynamicSchemaService), "getDynamicSchema").mockReturnValue(udfSchema());
-      // `undefined` means "not specified", so an explicit `null` still reaches the component.
-      const unit = opts.unit === undefined ? { computingUnit: { cuid: 7 } } : opts.unit;
-      vi.spyOn(TestBed.inject(ComputingUnitStatusService), "getSelectedComputingUnit").mockReturnValue(of(unit) as any);
-      const fetchPVEs = vi
-        .spyOn(TestBed.inject(WorkflowPveService), "fetchPVEs")
-        .mockReturnValue((opts.pves ?? of([{ pveName: "env-a" }, { pveName: "env-b" }])) as any);
+      const listUserPves = vi.spyOn(TestBed.inject(WorkflowPveService), "listUserPves").mockReturnValue(
+        (opts.environments ??
+          of([
+            { veid: 1, name: "env-a", packages: {} },
+            { veid: 2, name: "env-b", packages: { tabulate: "==0.9.0" } },
+          ])) as any
+      );
       const notificationError = vi
         .spyOn(TestBed.inject(NotificationService), "error")
         .mockImplementation(() => undefined as any);
@@ -3134,7 +3138,7 @@ describe("OperatorPropertyEditFrameComponent", () => {
         currentOperatorId: new SimpleChange(undefined, predicate.operatorID, true),
       });
       fixture.detectChanges();
-      return { fetchPVEs: fetchPVEs as any, notificationError: notificationError as any };
+      return { listUserPves: listUserPves as any, notificationError: notificationError as any };
     }
 
     const envField = () => component.formlyFields?.[0]?.fieldGroup?.find(f => f.key === "envName");
@@ -3155,10 +3159,10 @@ describe("OperatorPropertyEditFrameComponent", () => {
       expect(component.formData.defaultEnv).toBe(false);
     });
 
-    it("fetches the selected unit's environments and binds them as envName options", () => {
-      const { fetchPVEs } = selectUdfOperator();
+    it("lists the environments the user keeps at the Dashboard as envName options, by name", () => {
+      const { listUserPves } = selectUdfOperator();
 
-      expect(fetchPVEs).toHaveBeenCalledWith(7);
+      expect(listUserPves).toHaveBeenCalled();
       expect((envField()?.props as any).options).toEqual([
         { value: "env-a", label: "env-a" },
         { value: "env-b", label: "env-b" },
@@ -3167,23 +3171,30 @@ describe("OperatorPropertyEditFrameComponent", () => {
       expect((envField()?.expressions as any).hide).toBe("!!field.parent.model.defaultEnv");
     });
 
-    it("skips the fetch when the emitted unit carries no cuid", () => {
-      const { fetchPVEs } = selectUdfOperator({ unit: { computingUnit: {} } });
+    it("lists them without looking at the computing unit that is selected, or whether one is", () => {
+      // The environments are the user's, not a unit's.
+      const selectedUnit = vi
+        .spyOn(TestBed.inject(ComputingUnitStatusService), "getSelectedComputingUnit")
+        .mockReturnValue(of(null) as any);
 
-      expect(fetchPVEs).not.toHaveBeenCalled();
-      // The other arm supplies an empty list, so the field binds with no options.
-      expect((envField()?.props as any).options).toEqual([]);
+      selectUdfOperator();
+
+      expect(selectedUnit).not.toHaveBeenCalled();
+      expect((envField()?.props as any).options).toEqual([
+        { value: "env-a", label: "env-a" },
+        { value: "env-b", label: "env-b" },
+      ]);
     });
 
-    it("skips the fetch when no computing unit is selected", () => {
-      const { fetchPVEs } = selectUdfOperator({ unit: null });
+    it("binds no option for a user who keeps no environment", () => {
+      selectUdfOperator({ environments: of([]) });
 
-      expect(fetchPVEs).not.toHaveBeenCalled();
       expect((envField()?.props as any).options).toEqual([]);
+      expect((envField()?.expressions as any).hide).toBe("!!field.parent.model.defaultEnv");
     });
 
     it("reports an Error failure and still binds the form with no environments", () => {
-      const { notificationError } = selectUdfOperator({ pves: throwError(() => new Error("pve down")) });
+      const { notificationError } = selectUdfOperator({ environments: throwError(() => new Error("pve down")) });
 
       expect(notificationError).toHaveBeenCalledWith("Could not load Python virtual environments: pve down");
       expect((envField()?.props as any).options).toEqual([]);
@@ -3192,7 +3203,7 @@ describe("OperatorPropertyEditFrameComponent", () => {
     });
 
     it("stringifies a non-Error failure", () => {
-      const { notificationError } = selectUdfOperator({ pves: throwError(() => "plain string failure") });
+      const { notificationError } = selectUdfOperator({ environments: throwError(() => "plain string failure") });
 
       expect(notificationError).toHaveBeenCalledWith(
         "Could not load Python virtual environments: plain string failure"

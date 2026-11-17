@@ -73,6 +73,8 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   private val uid = 9752
   private val cuid = 9753
   private val ownWarehouse = s"user-$uid-3"
+  // A format this unit does not read yet: the one after its own.
+  private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
 
   private def planUri(
       workflow: Long = wid,
@@ -268,8 +270,6 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     plan.context.executionId shouldBe ExecutionIdentity(eid)
     plan.context.workflowSettings.dataTransferBatchSize shouldBe 77
     plan.context.warehouse shouldBe None
-    // A plan does not choose its unit: the context read back names none.
-    plan.context.cuid shouldBe None
     plan.plan.operators.map(_.id) shouldBe Set(
       PhysicalOpIdentity(OperatorIdentity("lines"), "main")
     )
@@ -287,7 +287,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "refuse a row in a format it does not read, without reading its plan" in {
-    Seq(1, 3).foreach { version =>
+    Seq(PhysicalPlanCodec.FormatVersion - 1, nextFormat).foreach { version =>
       withClue(s"format $version: ") {
         checkRecord(record(body = "not a plan", formatVersion = version)) shouldBe
           Left(s"unknown plan format $version; this unit reads ${PhysicalPlanCodec.FormatVersion}")
@@ -306,9 +306,10 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "check the row's format, then its creator, then its unit" in {
-    val everythingWrong = record(formatVersion = 3, createdBy = uid + 1, computingUnitId = cuid + 1)
+    val everythingWrong =
+      record(formatVersion = nextFormat, createdBy = uid + 1, computingUnitId = cuid + 1)
     checkRecord(everythingWrong) shouldBe
-      Left(s"unknown plan format 3; this unit reads ${PhysicalPlanCodec.FormatVersion}")
+      Left(s"unknown plan format $nextFormat; this unit reads ${PhysicalPlanCodec.FormatVersion}")
     checkRecord(everythingWrong.copy(formatVersion = PhysicalPlanCodec.FormatVersion)) shouldBe
       Left(s"only the user who created execution $eid may start it")
     checkRecord(
@@ -321,10 +322,15 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     checkRecord(record(body = "not a plan")).left.getOrElse(fail("read")) should
       startWith("The plan is not JSON")
     // A row that says it is in this format, holding a plan in another.
-    val formatOne = savedPlan().replaceFirst("\"formatVersion\": 2", "\"formatVersion\": 1")
+    val formatOne = savedPlan().replaceFirst(
+      s""""formatVersion": ${PhysicalPlanCodec.FormatVersion}""",
+      """"formatVersion": 1"""
+    )
     formatOne should not be savedPlan()
-    checkRecord(record(body = formatOne)) shouldBe
-      Left("The plan is in format version 1, but this reader reads version 2.")
+    checkRecord(record(body = formatOne)) shouldBe Left(
+      "The plan is in format version 1, but this reader reads version " +
+        s"${PhysicalPlanCodec.FormatVersion}."
+    )
   }
 
   it should "refuse a plan of another workflow, execution or warehouse than the table it is in" in {

@@ -40,6 +40,7 @@ import org.apache.texera.common.compiler.{
   RunBindings,
   WorkflowCompiler
 }
+import org.apache.texera.web.service.execution.UserEnvironmentResolver
 
 import java.net.URI
 
@@ -79,8 +80,8 @@ object PlanToRun {
   /**
     * What a plan made to run for user `uid` is bound to: the files, datasets and models that
     * user may read, links to those files that this deployment's computing units can read them
-    * through, the directory the units mount datasets and models under, and the site's settings
-    * as they stand now.
+    * through, the directory the units mount datasets and models under, the site's settings as
+    * they stand now, and the Python environments that user keeps.
     */
   def bindingsFor(uid: Integer): RunBindings =
     RunBindings(
@@ -89,7 +90,8 @@ object PlanToRun {
       lister = LakeFSDatasetVersionLister.forUser(uid),
       repositories = FileResolver.repositoryVersionResolverForUser(uid),
       mountRoot = RepositoryMountManager.mountRoot,
-      settings = CompileSettings.fromSiteSettings()
+      settings = CompileSettings.fromSiteSettings(),
+      environments = new UserEnvironmentResolver(uid)
     )
 
   /**
@@ -98,17 +100,17 @@ object PlanToRun {
     * The run is the compiler's context: its ids stamp every operator, and the plan is saved with
     * its settings, warehouse and cost hints. The compile is Strict: a workflow with errors fails
     * here, with each operator's first error, and nothing is saved. It links the files the
-    * operators read, lists the dataset versions File Listers name and pins the datasets and
-    * models the operators name, and finds the output ports whose results are stored, which are
-    * saved with the settings. The run's context is left as it is; the engine takes the settings
-    * and cost hints from the saved plan. The plan saved replays `replay`, writes its replay log
-    * to `replayLog`, and lists the files it reads through links as its inputs, with when each
-    * link expires.
+    * operators read, lists the dataset versions File Listers name, resolves the Python
+    * environments and pins the datasets and models the operators name, and finds the output
+    * ports whose results are stored, which are saved with the settings. The run's context is
+    * left as it is; the engine takes the settings and cost hints from the saved plan. The plan
+    * saved replays `replay`, writes its replay log to `replayLog`, and lists the files it reads
+    * through links as its inputs, with when each link expires.
     *
     * @param compiler  the run's compiler, bound for the run's user ([[bindingsFor]]): it resolves
-    *                  files, datasets and models as that user may, links the files, and writes
-    *                  code against the root the deployment's computing units mount datasets and
-    *                  models under
+    *                  files, datasets, models and Python environments as that user may, links
+    *                  the files, and writes code against the root the deployment's computing
+    *                  units mount datasets and models under
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors
@@ -132,14 +134,13 @@ object PlanToRun {
     settingsProblem(run.workflowSettings).foreach(problem =>
       throw new IllegalArgumentException(problem)
     )
-    // The context the plan is saved under: the run's, but for its computing unit, which a plan
-    // does not choose. The compile adds the ports whose results are stored to its settings.
+    // The context the plan is saved under: a copy of the run's, as the compile adds the ports
+    // whose results are stored to its settings.
     val savedUnder =
       new WorkflowContext(
         run.workflowId,
         run.executionId,
         run.workflowSettings,
-        None,
         run.warehouse,
         run.costHints
       )

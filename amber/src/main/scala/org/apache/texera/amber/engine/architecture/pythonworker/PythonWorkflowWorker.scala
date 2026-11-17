@@ -21,7 +21,7 @@ package org.apache.texera.amber.engine.architecture.pythonworker
 
 import org.apache.pekko.actor.Props
 import com.twitter.util.Promise
-import org.apache.texera.common.config.{PythonUtils, StorageConfig, UdfConfig}
+import org.apache.texera.common.config.{StorageConfig, UdfConfig}
 import org.apache.texera.amber.core.virtualidentity.ChannelIdentity
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.NetworkAck
@@ -29,6 +29,7 @@ import org.apache.texera.amber.engine.architecture.messaginglayer.{
   NetworkInputGateway,
   NetworkOutputGateway
 }
+import org.apache.texera.amber.engine.architecture.pythonworker.environment.PythonEnvironmentInstaller
 import org.apache.texera.amber.engine.architecture.pythonworker.WorkerBatchInternalQueue.{
   DataElement,
   EmbeddedControlMessageElement
@@ -43,7 +44,6 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
-import org.apache.texera.web.resource.pythonvirtualenvironment.PveManager
 import java.util.Base64
 import java.util.concurrent.{ExecutorService, Executors}
 import scala.sys.process.{BasicIO, Process}
@@ -232,18 +232,14 @@ class PythonWorkflowWorker(
     clientThreadExecutor.submit(pythonProxyClient)
   }
 
-  // Returns the Python executable path for the selected PVE,
-  // or falls back to the default Python binary.
-  private def choosePythonBin(): String = {
-    val fallback = PythonUtils.getPythonExecutable
-    val pveName = workerConfig.pveName.trim
+  // Where this unit keeps the Python environments it installed. A seam, so a test names another
+  // place.
+  protected def environments: PythonEnvironmentInstaller = PythonEnvironmentInstaller.forThisUnit
 
-    workerConfig.cuid
-      .filter(_ => pveName.nonEmpty)
-      .flatMap(cuid => PveManager.getPythonBin(cuid, pveName))
-      .map(_.toString)
-      .getOrElse(fallback)
-  }
+  // The interpreter of the environment this worker's operator runs in. The worker fails to start
+  // if that environment is not installed here: it runs in no other.
+  private def choosePythonBin(): String =
+    environments.interpreterFor(workerConfig.pythonEnvironment)
 
   private def startPythonProcess(): Unit = {
     val udfEntryScriptPath: String =

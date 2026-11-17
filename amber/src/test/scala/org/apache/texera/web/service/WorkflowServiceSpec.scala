@@ -856,8 +856,7 @@ class WorkflowServiceSpec
     started.executionStateStore.metadataStore.getState.executionId shouldBe
       ExecutionIdentity(startedEid.toLong)
     // It was started from the plan read back from the lake, the row and the table, under the
-    // context the plan was read back with: its ids and settings, and the unit the start was
-    // asked of, without which a UDF's environment would fall back to the engine's interpreter.
+    // context the plan was read back with: its ids and settings.
     service.started should have size 1
     val (executionPlan, record, startedFrom) = service.started.head
     startedFrom shouldBe planUri
@@ -865,7 +864,6 @@ class WorkflowServiceSpec
     executionPlan.plan.operators.map(_.id) shouldBe
       Set(PhysicalOpIdentity(OperatorIdentity("lines"), "main"))
     started.workflowContext should be theSameInstanceAs executionPlan.context
-    started.workflowContext.cuid shouldBe Some(storedCuid)
     started.workflowContext.executionId shouldBe ExecutionIdentity(startedEid.toLong)
     started.workflowContext.workflowSettings.dataTransferBatchSize shouldBe 64
 
@@ -1038,19 +1036,25 @@ class WorkflowServiceSpec
     errors.head.message should include("the worker lost its input")
   }
 
-  it should "run on the unit the start was asked of, not the one the workflow's service was made for" in {
+  it should "start a run for the unit the start was asked of, not the one the workflow's service was made for" in {
     // The first session of a workflow makes its service, for that session's unit, and every later
     // session of the workflow shares it, on whichever unit (#7676).
     val planUri = storePlanOf(askedUnitEid)
     val service = new StoredStartService(serviceCuid = testCuid)
     service.computingUnitId shouldBe testCuid
 
-    val started = service
-      .startStoredExecution(askedUnitEid, planUri, executingUser, storedCuid, startUri)
-      .getOrElse(fail("the start was refused"))
+    val (answer, logged) = linesLoggedBy("org.apache.texera.web") {
+      service.startStoredExecution(askedUnitEid, planUri, executingUser, storedCuid, startUri)
+    }
 
-    started.workflowContext.cuid shouldBe Some(storedCuid)
-    service.started.map(_._1.context.cuid) shouldBe Seq(Some(storedCuid))
+    // The plan row was made for the unit asked, so the start is not refused for the service's.
+    answer.isRight shouldBe true
+    service.started.map(_._2.computingUnitId) shouldBe Seq(storedCuid)
+    logged.count(
+      _.contains(
+        s"Execution $askedUnitEid of workflow $testWid starts on computing unit $storedCuid"
+      )
+    ) shouldBe 1
   }
 
   it should "publish a run that fails before it is published, so its sessions see why" in {

@@ -190,9 +190,10 @@ class WorkflowService(
   var executionService: BehaviorSubject[WorkflowExecutionService] = BehaviorSubject.create()
 
   // Held while a start sets up a new run, from before it claims the execution until the new run
-  // is started or has failed, and while a run is superseded. So two starts never set up runs at
+  // is set up or has failed, and while a run is superseded. So two starts never set up runs at
   // once, and a run is never superseded halfway through its setup, which would leave an engine
-  // that no service holds.
+  // that no service holds. It is not held while a run that is set up waits for its Python
+  // environments: such a run can be superseded, and then never starts its engine.
   private val runLock = new ReentrantLock()
 
   val resultService: ExecutionResultService =
@@ -339,8 +340,8 @@ class WorkflowService(
     * ([[WorkflowService.checkStoredStart]]). Under the lock a new run is set up under (`runLock`),
     * the execution is claimed for its one start (a second start is refused, however it comes),
     * and the run this service holds is superseded. The run is built on the plan read back, under
-    * the context it was read back with, given the unit the start was checked for, published to
-    * the workflow's sessions, and started ([[WorkflowExecutionService.startStored]]).
+    * the context it was read back with, published to the workflow's sessions, and started
+    * ([[WorkflowExecutionService.startStored]]).
     *
     * A start refused before its claim writes nothing, leaves the run this service holds as it is,
     * and is answered only to the caller. Once the execution is claimed, what fails is the run's
@@ -363,7 +364,7 @@ class WorkflowService(
         .setAttribute(SpanAttrs.ExecutionId, Long.box(start.executionId))
         .startSpan()
       val scope = span.makeCurrent()
-      // Until the new run is started or has failed: no other request supersedes it meanwhile.
+      // Until the new run is set up or has failed: no other request supersedes it meanwhile.
       runLock.lock()
       try {
         claimForStart(start.executionId, start.planUri).flatMap { _ =>
@@ -415,11 +416,6 @@ class WorkflowService(
     var built: Option[WorkflowExecutionService] = None
     var published = false
     try {
-      // Until sub-part 20 removes the per-unit Python environments: a UDF finds its environment
-      // on the unit its run's context names, and a plan read back names none, so without this a
-      // UDF's environment would fall back to the engine's interpreter, silently. This is the unit
-      // the start was asked of and checked for, which the plan row was made for.
-      context.cuid = Some(start.cuid)
       org.apache.texera.web.observability.WorkflowMetricsRecorder.onStart(executionId)
       val execution = storedRun(context, executionStateStore, errorHandler)
       built = Some(execution)

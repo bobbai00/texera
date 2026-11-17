@@ -24,7 +24,12 @@ import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{OutputPort, PhysicalOp, SchemaPropagationFunc}
+import org.apache.texera.amber.core.workflow.{
+  OutputPort,
+  PhysicalOp,
+  PythonEnvironmentRef,
+  SchemaPropagationFunc
+}
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.operator.source.SourceOperatorDescriptor
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterSupport
@@ -84,15 +89,15 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor with PythonUdfUiP
   ): PhysicalOp = {
     require(workers >= 1, "Need at least 1 worker.")
 
-    val pveName =
-      if (defaultEnv) ""
+    val pythonEnvironment =
+      if (defaultEnv) PythonEnvironmentRef.EngineDefault
       else {
         val trimmed = envName.trim
         if (trimmed.isEmpty)
           throw new RuntimeException(
             "Virtual Environment name is required when not using the default Python environment."
           )
-        trimmed
+        PythonEnvironmentRef.Named(trimmed)
       }
     val codeWithParameters = injectUiParameters(code)
 
@@ -110,7 +115,7 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor with PythonUdfUiP
         SchemaPropagationFunc(_ => Map(operatorInfo.outputPorts.head.id -> sourceSchema()))
       )
       .withLocationPreference(Option.empty)
-      .withPveName(pveName)
+      .withPythonEnvironment(pythonEnvironment)
       .withResourceBinding(resourceBinding(code))
 
     if (workers > 1) {

@@ -1214,14 +1214,13 @@ class SyncExecutionResourceSpec
 
     // The workflow is the one the plan table belongs to, on the unit the request names.
     resource.asked shouldBe Seq((WorkflowIdentity(testWid.toLong), testCuid))
-    // Started from its plan in the lake, claimed for that start, on the unit asked.
+    // Started from its plan in the lake, claimed for that start.
     val planUri = new URI(execution.planUri)
     ExecutionPlanStore.isStarted(planUri) shouldBe true
     service.started should have size 1
     val (executionPlan, startedFrom) = service.started.head
     startedFrom shouldBe planUri
     executionPlan.context.executionId shouldBe ExecutionIdentity(execution.eid)
-    executionPlan.context.cuid shouldBe Some(testCuid)
     service.computingUnitId shouldBe fixtureCuid
     // Answered as the run ended, for the target asked about.
     result.success shouldBe true

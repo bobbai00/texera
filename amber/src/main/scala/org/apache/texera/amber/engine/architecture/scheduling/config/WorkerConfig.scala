@@ -21,15 +21,12 @@ package org.apache.texera.amber.engine.architecture.scheduling.config
 
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.PhysicalOp
+import org.apache.texera.amber.core.workflow.{PhysicalOp, PythonEnvironmentRef}
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.service.util.LargeBinaryManager
 
 case object WorkerConfig {
-  def generateWorkerConfigs(
-      physicalOp: PhysicalOp,
-      cuid: Option[Int] = None
-  ): List[WorkerConfig] = {
+  def generateWorkerConfigs(physicalOp: PhysicalOp): List[WorkerConfig] = {
     val workerCount = if (physicalOp.parallelizable) {
       physicalOp.suggestedWorkerNum match {
         // Keep suggested number of workers
@@ -45,8 +42,7 @@ case object WorkerConfig {
     (0 until workerCount).toList.map(idx =>
       WorkerConfig(
         VirtualIdentityUtils.createWorkerIdentity(physicalOp.workflowId, physicalOp.id, idx),
-        pveName = physicalOp.pveName,
-        cuid = cuid,
+        pythonEnvironment = physicalOp.pythonEnvironment,
         largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id)
       )
     )
@@ -55,8 +51,8 @@ case object WorkerConfig {
 
 case class WorkerConfig(
     workerId: ActorVirtualIdentity,
-    pveName: String = "",
-    cuid: Option[Int] = None,
+    // The Python environment a Python worker runs in: its operator's.
+    pythonEnvironment: PythonEnvironmentRef = PythonEnvironmentRef.EngineDefault,
     // Coordinator-named, execution-scoped base URI under which this worker's large binaries
     // live; create() appends a unique suffix. Empty when large binaries are unconfigured.
     largeBinaryBaseUri: String = ""

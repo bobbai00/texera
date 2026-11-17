@@ -140,6 +140,21 @@ class AmberClientSpec
   }
 
   // ---------------------------------------------------------------------------
+  // isActive
+  // ---------------------------------------------------------------------------
+
+  "isActive" should "hold until the client is shut down, and not after" in {
+    val client = newClient()
+    try client.isActive shouldBe true
+    finally client.shutdown()
+
+    client.isActive shouldBe false
+    // Shutting down twice is shutting down once.
+    client.shutdown()
+    client.isActive shouldBe false
+  }
+
+  // ---------------------------------------------------------------------------
   // shutdown
   // ---------------------------------------------------------------------------
 

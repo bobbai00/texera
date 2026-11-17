@@ -156,15 +156,15 @@ class PythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParameterSupport {
         .withParallelizable(false)
     }
 
-    val pveName =
-      if (defaultEnv) ""
+    val pythonEnvironment =
+      if (defaultEnv) PythonEnvironmentRef.EngineDefault
       else {
         val trimmed = envName.trim
         if (trimmed.isEmpty)
           throw new RuntimeException(
             "Virtual Environment name is required when not using the default Python environment."
           )
-        trimmed
+        PythonEnvironmentRef.Named(trimmed)
       }
 
     physicalOp
@@ -174,7 +174,7 @@ class PythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParameterSupport {
       .withPartitionRequirement(partitionRequirement)
       .withIsOneToManyOp(true)
       .withPropagateSchema(SchemaPropagationFunc(propagateSchema))
-      .withPveName(pveName)
+      .withPythonEnvironment(pythonEnvironment)
       .withResourceBinding(resourceBinding(code))
   }
 

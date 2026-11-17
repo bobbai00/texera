@@ -50,6 +50,9 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalPlanCodec,
   PlanInput,
   PortIdentity,
+  PreferCoordinator,
+  PythonEnvironment,
+  PythonEnvironmentRef,
   ReplaySource,
   WorkflowSettings
 }
@@ -74,6 +77,7 @@ import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
   SITE_SETTINGS,
   USER_WAREHOUSE,
+  VIRTUAL_ENVIRONMENTS,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_OF_USER,
   WORKFLOW_USER_ACCESS,
@@ -114,6 +118,7 @@ import org.apache.texera.web.model.http.response.execution.{
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
+import org.jooq.JSONB
 import org.jooq.exception.DataAccessException
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
@@ -873,6 +878,148 @@ class ExecutionResourceSpec
         .where(DATASET_USER_ACCESS.DID.eq(Integer.valueOf(notesDid)))
         .execute()
     }
+  }
+
+  // --- Python environments ---
+
+  /** Saves `packages`, a JSON object, as user `uid`'s environment `name`. */
+  private def saveEnvironment(uid: Int, name: String, packages: String): Unit =
+    getDSLContext
+      .insertInto(VIRTUAL_ENVIRONMENTS)
+      .set(VIRTUAL_ENVIRONMENTS.UID, Integer.valueOf(uid))
+      .set(VIRTUAL_ENVIRONMENTS.NAME, name)
+      .set(VIRTUAL_ENVIRONMENTS.PACKAGES, JSONB.valueOf(packages))
+      .execute()
+
+  /** A text source, then a Python UDF, `udf`, that asks to run in the environment `name`. */
+  private def udfPlanIn(name: String): LogicalPlanPojo = {
+    val text = named(new TextInputSourceOpDesc(), "text")
+    text.textInput = "one\ntwo"
+    val udf = named(TestOperators.pythonOpDesc(), "udf")
+    udf.defaultEnv = false
+    udf.envName = name
+    LogicalPlanPojo(List(text, udf), List(link("text", "udf")), List.empty, List.empty)
+  }
+
+  /**
+    * A creator bound to the fixtures, but for the environments, which are resolved as the
+    * deployment resolves them for its user: from the rows the user keeps.
+    */
+  private def creatorOfOwnEnvironments(): FixtureCreator =
+    new FixtureCreator(
+      bindings = forUser => TestUtils.fixtureBindings.copy(environments = forUser.environments)
+    )
+
+  /** The environment the stored plan of `execution` gives its operator `udf`. */
+  private def environmentOf(execution: CreateExecutionResponse): PythonEnvironmentRef =
+    storedPlan(execution)._2.plan
+      .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
+      .pythonEnvironment
+
+  it should "resolve the Python environment a UDF names to its creator's own, and store what it holds in the plan" in {
+    // Two users keep an environment under one name, each their own packages.
+    saveEnvironment(
+      creatorUid,
+      "shared-name",
+      """{"Tabulate": "==0.9.0", "typing_extensions": ""}"""
+    )
+    saveEnvironment(readerUid, "shared-name", """{"requests": ">=2.0"}""")
+    val creator = creatorOfOwnEnvironments()
+
+    val execution = created(post(request(plan = udfPlanIn("shared-name")), creator = creator))
+
+    // The creator's, as canonical lines: what the unit that runs the plan installs.
+    val creators = PythonEnvironment("shared-name", Seq("tabulate==0.9.0", "typing-extensions"))
+    environmentOf(execution) shouldBe PythonEnvironmentRef.Resolved(creators)
+    val (record, plan) = storedPlan(execution)
+    record.body should include(s""""digest": "${creators.digest}"""")
+    // Its workers run where the unit installs environments.
+    plan.plan
+      .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
+      .locationPreference shouldBe Some(PreferCoordinator)
+    // The logical plan beside it is the workflow as its user wrote it: the name alone.
+    val logical = logicalOperators(record).find(_.get("operatorID").asText() == "udf").get
+    logical.get("envName").asText() shouldBe "shared-name"
+    record.logical should not include "tabulate"
+    // The reader, who may run the workflow on a unit of their own, gets their own environment
+    // of that name.
+    val readers = created(
+      post(request(plan = udfPlanIn("shared-name"), cuid = readerCuid), readerUid, creator)
+    )
+    environmentOf(readers) shouldBe
+      PythonEnvironmentRef.Resolved(PythonEnvironment("shared-name", Seq("requests>=2.0")))
+    creator.resolvedFor.toList shouldBe List(
+      Integer.valueOf(creatorUid),
+      Integer.valueOf(readerUid)
+    )
+  }
+
+  it should "refuse an environment its creator does not keep as the UDF's error, another user's included" in {
+    saveEnvironment(strangerUid, "strangers-own", """{"tabulate": "==0.9.0"}""")
+
+    Seq("strangers-own", "kept-by-nobody").foreach { name =>
+      withClue(s"$name: ") {
+        val failure = compileFailure(
+          post(request(plan = udfPlanIn(name)), creator = creatorOfOwnEnvironments())
+        )
+
+        failure.operatorErrors.keySet shouldBe Set("udf")
+        val error = failure.operatorErrors("udf")
+        error.`type` shouldBe COMPILATION_ERROR
+        error.operatorId shouldBe "udf"
+        error.message shouldBe "org.apache.texera.common.compiler.PythonEnvironmentNotResolved: " +
+          s"You have no Python environment named '$name'."
+        // No plan is made to run in another environment, or in none.
+        row(failure.eid).getStatus shouldBe 4.toByte
+        a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+          ExecutionPlanStore.planUri(
+            WorkflowIdentity(testWid),
+            ExecutionIdentity(failure.eid),
+            None
+          )
+        )
+      }
+    }
+  }
+
+  it should "refuse an environment saved with packages pip may not read as the UDF's error" in {
+    // Rows saved before packages were checked, or written by hand.
+    saveEnvironment(creatorUid, "with-an-extra", """{"tabulate": "==0.9.0", "pkg[extra]": ""}""")
+    saveEnvironment(creatorUid, "with-an-option", """{"--index-url=https://example.com": ""}""")
+    saveEnvironment(creatorUid, "not-an-object", """["tabulate==0.9.0"]""")
+
+    def errorOf(name: String): String =
+      compileFailure(post(request(plan = udfPlanIn(name)), creator = creatorOfOwnEnvironments()))
+        .operatorErrors("udf")
+        .message
+
+    errorOf("with-an-extra") should endWith(
+      "Python environment 'with-an-extra' cannot be installed: Package \"pkg[extra]\" is not " +
+        "valid: it contains '['."
+    )
+    errorOf("with-an-option") should endWith(
+      "Python environment 'with-an-option' cannot be installed: Package " +
+        "\"--index-url=https://example.com\" is not valid: it starts with '-'."
+    )
+    errorOf("not-an-object") should endWith(
+      "Python environment 'not-an-object' cannot be installed: its packages are not stored as " +
+        "names with version bounds."
+    )
+  }
+
+  it should "answer 500, not the UDF's error, when an environment cannot be resolved for a reason not the workflow's" in {
+    val databaseDown = new DataAccessException("the database does not answer")
+    val creator = new FixtureCreator(
+      bindings = _ => TestUtils.fixtureBindings.copy(environments = _ => throw databaseDown)
+    )
+
+    val failure = intercept[InternalServerErrorException] {
+      post(request(plan = udfPlanIn("ml")), creator = creator)
+    }
+
+    failure.getResponse.getStatus shouldBe 500
+    failure.getCause shouldBe databaseDown
+    row(newestEid.toLong).getStatus shouldBe 4.toByte
   }
 
   it should "keep nothing a request sent for what a compile sets, in the plan or beside it" in {

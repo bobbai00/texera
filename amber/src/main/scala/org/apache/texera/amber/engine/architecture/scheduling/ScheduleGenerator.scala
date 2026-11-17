@@ -38,8 +38,7 @@ abstract class ScheduleGenerator(
     new DefaultResourceAllocator(
       physicalPlan,
       executionClusterInfo,
-      workflowContext.workflowSettings,
-      cuid = workflowContext.cuid
+      workflowContext.workflowSettings
     )
 
   def generate(): (Schedule, PhysicalPlan)

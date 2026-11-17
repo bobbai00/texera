@@ -1,5 +1,5 @@
 {
-  "formatVersion": 2,
+  "formatVersion": 3,
   "workflowId": {
     "id": "7"
   },
@@ -162,8 +162,7 @@
       ],
       "isOneToManyOp": false,
       "requiresMaterializedExecution": false,
-      "isLoopStart": false,
-      "pveName": ""
+      "isLoopStart": false
     },
     {
       "id": {
@@ -383,13 +382,20 @@
       "requiresMaterializedExecution": false,
       "isLoopStart": false,
       "suggestedWorkerNum": 2,
-      "pveName": "py311",
       "repositoryMounts": {
         "root": "/mnt/texera-mounts",
         "locators": [
           "dataset-1:d4t4",
           "model-2:m0d3l"
         ]
+      },
+      "pythonEnvironment": {
+        "name": "ml",
+        "requirements": [
+          "numpy>=2.1.0",
+          "tabulate==0.9.0"
+        ],
+        "digest": "63d5344d2e7258c65f5f266fb9660178c99854a25c2b961911754453176d835e"
       }
     },
     {
@@ -583,8 +589,7 @@
       ],
       "isOneToManyOp": true,
       "requiresMaterializedExecution": true,
-      "isLoopStart": true,
-      "pveName": ""
+      "isLoopStart": true
     }
   ],
   "links": [

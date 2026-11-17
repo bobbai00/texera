@@ -361,8 +361,12 @@ class OperatorUpdates extends LazyLogging {
       )
     }
     // An update gives the running operator a new executor and what its code reads; its workers keep
-    // the interpreter they run in, so a change of environment would never take effect.
-    if (reconfigured.pveName != runningOp.pveName) {
+    // the interpreter they run in, so a change of environment would never take effect. The running
+    // operator's environment is as the plan resolved it, whatever its user keeps under its name
+    // now: only asking for another is a change of it.
+    if (
+      reconfigured.pythonEnvironment.environmentName != runningOp.pythonEnvironment.environmentName
+    ) {
       refuse("the operator's Python environment cannot change while the run is paused")
     }
     reconfigured

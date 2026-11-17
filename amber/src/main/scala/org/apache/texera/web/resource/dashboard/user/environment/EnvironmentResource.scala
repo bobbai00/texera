@@ -36,7 +36,7 @@ import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
 import scala.jdk.CollectionConverters._
-import scala.util.{Success, Try}
+import scala.util.{Failure, Success, Try}
 
 object EnvironmentResource {
 
@@ -48,6 +48,19 @@ object EnvironmentResource {
 
   private val mapper: ObjectMapper = new ObjectMapper().registerModule(DefaultScalaModule)
   private val packagesType = new TypeReference[java.util.Map[String, String]] {}
+
+  /**
+    * The packages a row holds in `stored`, each name mapped to its version spec: none for a row
+    * with no value. A failure for a value that is not a JSON object of strings, as a row written
+    * by hand, or by an older release, may hold.
+    */
+  def packagesOf(stored: JSONB): Try[Map[String, String]] =
+    Option(stored).fold[Try[Map[String, String]]](Success(Map.empty)) { json =>
+      Try(mapper.readValue(json.data(), packagesType)).flatMap { packages =>
+        if (packages == null) Failure(new IllegalArgumentException("The packages are null."))
+        else Success(packages.asScala.toMap)
+      }
+    }
 }
 
 /**
@@ -177,15 +190,12 @@ class EnvironmentResource extends LazyLogging {
   // A row is listed as stored. One whose packages are not a JSON object of strings (written by
   // hand, or by an older release) is listed with none rather than failing the caller's list.
   private def packagesOf(record: VirtualEnvironmentsRecord): Map[String, String] =
-    Option(record.getPackages).map(json => Try(mapper.readValue(json.data(), packagesType))) match {
-      case None                                        => Map.empty
-      case Some(Success(packages)) if packages != null => packages.asScala.toMap
-      case Some(_) =>
-        logger.warn(
-          s"Environment ${record.getVeid} holds packages that are not a JSON object of strings; " +
-            "listing it with none."
-        )
-        Map.empty
+    EnvironmentResource.packagesOf(record.getPackages).getOrElse {
+      logger.warn(
+        s"Environment ${record.getVeid} holds packages that are not a JSON object of strings; " +
+          "listing it with none."
+      )
+      Map.empty
     }
 
   private def packagesJson(packages: Map[String, String]): JSONB =

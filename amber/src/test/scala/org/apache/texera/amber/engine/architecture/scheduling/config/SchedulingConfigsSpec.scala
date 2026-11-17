@@ -323,4 +323,19 @@ class SchedulingConfigsSpec extends AnyFlatSpec {
     assert(expected.contains(s"objects/${eid.id}/"))
     assert(configs.forall(_.largeBinaryBaseUri == expected))
   }
+
+  it should "give every worker the Python environment of its operator" in {
+    val environment =
+      PythonEnvironmentRef.Resolved(PythonEnvironment("ml", Seq("tabulate==0.9.0")))
+    val op = physicalOp(parallelizable = true, suggested = Some(3))
+
+    val inEnvironment = WorkerConfig.generateWorkerConfigs(op.withPythonEnvironment(environment))
+    assert(inEnvironment.map(_.pythonEnvironment) == List.fill(3)(environment))
+    // An operator that asks for none runs its workers in the engine's own.
+    assert(
+      WorkerConfig.generateWorkerConfigs(op).map(_.pythonEnvironment) ==
+        List.fill(3)(PythonEnvironmentRef.EngineDefault)
+    )
+    assert(WorkerConfig(actor("w")).pythonEnvironment == PythonEnvironmentRef.EngineDefault)
+  }
 }

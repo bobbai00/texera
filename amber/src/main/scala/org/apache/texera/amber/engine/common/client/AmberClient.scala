@@ -60,7 +60,7 @@ class AmberClient(
   private val clientActor = system.actorOf(Props(new ClientActor))
   private implicit val timeout: Timeout = Timeout(1.minute)
   private val registeredObservables = new mutable.HashMap[Class[_], Observable[_]]()
-  @volatile private var isActive = true
+  @volatile private var active = true
 
   Await.result(
     clientActor ? InitializeRequest(
@@ -71,9 +71,12 @@ class AmberClient(
     10.seconds
   )
 
+  /** Whether the client still reaches its engine: true until it is shut down. */
+  def isActive: Boolean = active
+
   def shutdown(): Unit = {
-    if (isActive) {
-      isActive = false
+    if (active) {
+      active = false
       clientActor ! PoisonPill
     }
   }

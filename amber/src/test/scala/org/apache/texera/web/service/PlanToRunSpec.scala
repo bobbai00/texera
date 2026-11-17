@@ -43,6 +43,7 @@ import org.apache.texera.common.compiler.{
   WorkflowCompilationFailed,
   WorkflowCompiler
 }
+import org.apache.texera.web.service.execution.UserEnvironmentResolver
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -58,7 +59,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
         dataTransferBatchSize = 77,
         executionMode = ExecutionMode.MATERIALIZED
       ),
-      cuid = Some(33),
       warehouse = Some("warehouse-34")
     )
 
@@ -97,6 +97,11 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     PlanToRun.bindingsFor(7).lister shouldBe a[LakeFSDatasetVersionLister]
   }
 
+  it should "bind a plan to the Python environments its user keeps at the Dashboard" in {
+    // That it is the plan's user whose environments are found is `ExecutionResourceSpec`'s.
+    PlanToRun.bindingsFor(7).environments shouldBe a[UserEnvironmentResolver]
+  }
+
   "PlanToRun.make" should
     "save the plan its compile makes for its compiler's run, with the ports whose results are stored" in {
     val operators = searches(1)
@@ -124,8 +129,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
       newContext().workflowSettings.copy(outputPortsNeedingStorage = storedPorts)
     planContext.warehouse shouldBe context.warehouse
     planContext.costHints shouldBe None
-    // A plan does not choose the computing unit it runs on.
-    planContext.cuid shouldBe None
     TestUtils.assertReadBackFrom(compiled.physicalPlan, executionPlan.plan)
     // Given no replay or replay log, the plan replays nothing and writes no replay log.
     executionPlan.replay shouldBe None
@@ -181,7 +184,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     context.executionId shouldBe untouched.executionId
     context.workflowSettings shouldBe untouched.workflowSettings
     context.workflowSettings.outputPortsNeedingStorage shouldBe empty
-    context.cuid shouldBe untouched.cuid
     context.warehouse shouldBe untouched.warehouse
     context.costHints shouldBe untouched.costHints
   }

@@ -28,6 +28,9 @@ object UdfConfig {
   // Python specifics
   val pythonPath: String = conf.getString("python.path")
   val pythonLogStreamHandlerLevel: String = conf.getString("python.log.streamHandler.level")
+  val pythonEnvironmentsRoot: String = conf.getString("python.environments.root")
+  val pythonEnvironmentInstallTimeoutMinutes: Int =
+    conf.getInt("python.environments.install-timeout-minutes")
 
   // R specifics
   val rPath: String = conf.getString("r.path")

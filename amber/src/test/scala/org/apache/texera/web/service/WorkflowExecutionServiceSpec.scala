@@ -25,8 +25,14 @@ import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
-import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
+import org.apache.texera.amber.core.storage.model.VirtualDocument
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionPlanStore,
+  PlanRecord,
+  VFSURIFactory
+}
+import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -40,12 +46,16 @@ import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
   GlobalPortIdentity,
   InputFile,
+  InputPort,
   OutputPort,
+  PhysicalLink,
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
   PlanInput,
   PortIdentity,
+  PythonEnvironment,
+  PythonEnvironmentRef,
   ReplaySource,
   RepositoryMounts,
   ResourceBinding,
@@ -57,6 +67,15 @@ import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{
   CoordinatorConfig,
   Workflow => EngineWorkflow
+}
+import org.apache.texera.amber.engine.architecture.pythonworker.environment.{
+  FakePython,
+  ProcessOutcome,
+  PythonEnvironmentInstaller
+}
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
+  ConsoleMessage,
+  ConsoleMessageType
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.StartWorkflowResponse
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
@@ -73,8 +92,10 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   FaultToleranceConfig,
   StateRestoreConfig
 }
+import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   UserDao,
@@ -97,23 +118,31 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowStateEvent
 }
 import org.apache.texera.common.config.EnvironmentalVariable
-import org.apache.texera.web.model.websocket.request.WorkflowCheckpointRequest
+import org.apache.texera.web.model.websocket.request.{
+  WorkflowCheckpointRequest,
+  WorkflowKillRequest
+}
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.BeforeAndAfterAll
+import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.time.{Millis, Seconds, Span}
 
 import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
-import java.nio.file.Paths
+import java.nio.file.{Files, Path, Paths}
 import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
-import java.util.UUID
+import java.util.concurrent.{CountDownLatch, ExecutorService, Executors, TimeUnit}
+import java.util.{Comparator, UUID}
+import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
+import scala.util.{Try, Using}
 
 /**
   * Regression guard for the consolidated init-error reporting path (#5921):
@@ -145,7 +174,9 @@ import scala.reflect.ClassTag
   *     every service is built around the plan, and nothing starts. They read nothing from the
   *     lake but the changes one case stores in the fixture execution's plan table, in the catalog
   *     the build's tests use (the Postgres JDBC catalog in CI). What a real engine does with the
-  *     plan is exercised by the integration suites.
+  *     plan is exercised by the integration suites. The runs of plans that name Python
+  *     environments install them on a `FakePython`, under a directory of this suite's: no
+  *     interpreter and no pip runs, and the consoles those runs write are cleared after the suite.
   *
   * Known, pre-existing: `ExecutionStatsService` never shuts down its private
   * `metricsPersistThread` (it does not override `unsubscribeAll`), so every test
@@ -176,7 +207,12 @@ class WorkflowExecutionServiceSpec
     with AnyFlatSpecLike
     with Matchers
     with BeforeAndAfterAll
+    with Eventually
     with MockTexeraDB {
+
+  // For what the threads that install environments are about to do.
+  implicit override val patienceConfig: PatienceConfig =
+    PatienceConfig(timeout = Span(10, Seconds), interval = Span(20, Millis))
 
   // Distinct from every other suite's ids: the statistics URI is derived from wid/eid and
   // `createDocument` truncates whatever table already sits at it (ExecutionStatsServiceSpec
@@ -263,8 +299,14 @@ class WorkflowExecutionServiceSpec
 
   override protected def afterAll(): Unit = {
     try {
-      // The plan table one case below writes, in the catalog the build's tests share.
+      // The plan table one case below writes, in the catalog the build's tests share, and the
+      // consoles of the operators whose environments were installed.
       ExecutionPlanStore.drop(storedPlanTable)
+      writtenConsoles.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
+      installerThreads.shutdownNow()
+      Using.resource(Files.walk(environmentsScratch)) { paths =>
+        paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.deleteIfExists(path))
+      }
       TestKit.shutdownActorSystem(system)
     } finally {
       closeConnectionPool()
@@ -331,7 +373,10 @@ class WorkflowExecutionServiceSpec
       Disposable.empty()
 
     /** The answer to the last request of each name asked of the engine, for a test to give. */
-    val answers: mutable.Map[String, Promise[Any]] = mutable.Map.empty
+    val answers: TrieMap[String, Promise[Any]] = TrieMap.empty
+
+    /** The thread that last asked the engine each request. */
+    val askedOn: TrieMap[String, Thread] = TrieMap.empty
 
     // Nothing asked of the engine is answered unless a test answers it, so a run set up on this
     // client never starts.
@@ -348,6 +393,7 @@ class WorkflowExecutionServiceSpec
                 case "toString" => "UnansweredCoordinatorInterface"
                 case request =>
                   val answer = Promise[Any]()
+                  askedOn(request) = Thread.currentThread()
                   answers(request) = answer
                   answer
               }
@@ -622,8 +668,14 @@ class WorkflowExecutionServiceSpec
   /**
     * A run built as a computing unit builds one to start it by id: on the context its plan was
     * read back with, for this unit. Only the engine is a `TestAmberClient`, so nothing starts.
+    *
+    * @param installer installs the plan's Python environments; the unit's own when not given,
+    *                  which a plan that names no environment asks nothing of
     */
-  private final class StoredRun(executionPlan: ExecutionPlan) {
+  private final class StoredRun(
+      executionPlan: ExecutionPlan,
+      installer: Option[PythonEnvironmentInstaller] = None
+  ) {
     val errors: ListBuffer[Throwable] = ListBuffer.empty
     var engineWorkflow: Option[EngineWorkflow] = None
     var coordinatorConfig: Option[CoordinatorConfig] = None
@@ -654,6 +706,8 @@ class WorkflowExecutionServiceSpec
         engine = Some(built)
         built
       }
+      override protected def environmentInstaller: PythonEnvironmentInstaller =
+        installer.getOrElse(super.environmentInstaller)
     }
 
     def close(): Unit = {
@@ -679,12 +733,9 @@ class WorkflowExecutionServiceSpec
       notification = notification
     )
 
-  /** `executionPlan` read back from its plan row, as a unit reads it, given the unit's id. */
-  private def readBack(executionPlan: ExecutionPlan): ExecutionPlan = {
-    val plan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planRowOf(executionPlan).body))
-    plan.context.cuid = Some(testCuid)
-    plan
-  }
+  /** `executionPlan` read back from its plan row, as a unit reads it. */
+  private def readBack(executionPlan: ExecutionPlan): ExecutionPlan =
+    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planRowOf(executionPlan).body))
 
   /** The plan table of the fixture execution, in the default warehouse. */
   private val storedPlanTable =
@@ -710,14 +761,13 @@ class WorkflowExecutionServiceSpec
       run.errors shouldBe empty
 
       // The engine is handed the plan as it was handed to the run, under its context: the one it
-      // was read back with, naming this unit. Read back, not compiled: no operator keeps a schema
-      // function a compile gave it, which the saved text does not hold.
+      // was read back with. Read back, not compiled: no operator keeps a schema function a
+      // compile gave it, which the saved text does not hold.
       val engineWorkflow = run.engineWorkflow.getOrElse(fail("the engine was handed no workflow"))
       engineWorkflow.physicalPlan should be theSameInstanceAs executionPlan.plan
       engineWorkflow.physicalPlan.operators.map(_.propagateSchema) shouldBe
         Set(PhysicalPlanCodec.ReadBackSchemaPropagation)
       engineWorkflow.context should be theSameInstanceAs executionPlan.context
-      engineWorkflow.context.cuid shouldBe Some(testCuid)
       // Every service is built around that same workflow.
       run.service.workflow should be theSameInstanceAs engineWorkflow
       // The run replays what the plan replays, and writes its replay log where the plan says.
@@ -907,6 +957,323 @@ class WorkflowExecutionServiceSpec
     } finally run.close()
   }
 
+  // ----- the plan's Python environments -----
+
+  private val environmentsScratch: Path =
+    Files.createTempDirectory("workflow-execution-service-spec")
+  private val installerThreads: ExecutorService = Executors.newCachedThreadPool()
+
+  /** The console tables the runs below write for their operators, cleared after the suite. */
+  private val writtenConsoles = ListBuffer.empty[URI]
+
+  private val ml = PythonEnvironment("ml", Seq("tabulate==0.9.0"))
+
+  /** A unit's installer on `python`, under a root of its own, on threads that are not a test's. */
+  private def installerOn(python: FakePython): PythonEnvironmentInstaller =
+    python.installer(Files.createTempDirectory(environmentsScratch, "root"), installerThreads)
+
+  private def consoleUriOf(operator: String): URI =
+    VFSURIFactory.createConsoleMessagesURI(
+      WorkflowIdentity(testWid.longValue()),
+      ExecutionIdentity(testEid.longValue()),
+      OperatorIdentity(operator)
+    )
+
+  /**
+    * A plan of the fixture execution in which `<name>-first` feeds `<name>-second`, both running
+    * in `environment`. The names are a case's own: an execution's operators each have one console.
+    */
+  private def environmentPlan(
+      name: String,
+      environment: PythonEnvironmentRef = PythonEnvironmentRef.Resolved(ml)
+  ): ExecutionPlan = {
+    val (workflowId, executionId) =
+      (WorkflowIdentity(testWid.longValue()), ExecutionIdentity(testEid.longValue()))
+    val lines = Schema().add("line", AttributeType.STRING)
+    val firstId = PhysicalOpIdentity(OperatorIdentity(s"$name-first"), "main")
+    val secondId = PhysicalOpIdentity(OperatorIdentity(s"$name-second"), "main")
+    val link = PhysicalLink(firstId, PortIdentity(), secondId, PortIdentity())
+    val first = PhysicalOp
+      .sourcePhysicalOp(firstId, workflowId, executionId, OpExecWithClassName("unused"))
+      .copy(
+        outputPorts = Map(PortIdentity() -> (OutputPort(), List(link), Right(lines))),
+        pythonEnvironment = environment
+      )
+    val second = PhysicalOp
+      .oneToOnePhysicalOp(secondId, workflowId, executionId, OpExecWithClassName("unused"))
+      .copy(
+        inputPorts = Map(PortIdentity() -> (InputPort(), List(link), Right(lines))),
+        outputPorts = Map(PortIdentity() -> (OutputPort(), List.empty, Right(lines))),
+        pythonEnvironment = environment
+      )
+    writtenConsoles ++= Seq(firstId, secondId).map(id => consoleUriOf(id.logicalOpId.id))
+    ExecutionPlan(
+      new WorkflowContext(
+        workflowId,
+        executionId,
+        WorkflowSettings(
+          dataTransferBatchSize = 50,
+          executionMode = ExecutionMode.PIPELINED,
+          outputPortsNeedingStorage = Set(GlobalPortIdentity(secondId, PortIdentity()))
+        )
+      ),
+      PhysicalPlan(Set(first, second), Set(link))
+    )
+  }
+
+  /** What the run's console of `operator` was told, in order. */
+  private def consoleOf(run: StoredRun, operator: String): Seq[ConsoleMessage] =
+    run.store.consoleStore.getState.operatorConsole.get(operator).toSeq.flatMap(_.consoleMessages)
+
+  private def titlesOn(run: StoredRun, operator: String): Seq[String] =
+    consoleOf(run, operator).map(_.title)
+
+  /** The titles the lake keeps of `operator`'s console in the fixture execution. */
+  private def titlesInLake(operator: String): Seq[String] =
+    DocumentFactory
+      .openDocument(consoleUriOf(operator))
+      ._1
+      .asInstanceOf[VirtualDocument[Tuple]]
+      .get()
+      .map(row => ConsoleMessage.fromAscii(row.getField[String](0)).title)
+      .toList
+
+  private def startWorkflowAsked(run: StoredRun): Boolean =
+    run.engine.getOrElse(fail("no engine")).answers.contains("startWorkflow")
+
+  /** The status the fixture execution's row holds. */
+  private def executionStatus(): Int =
+    getDSLContext
+      .select(WORKFLOW_EXECUTIONS.STATUS)
+      .from(WORKFLOW_EXECUTIONS)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(testEid))
+      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
+      .intValue()
+
+  it should "install its plan's Python environment before its engine starts, off the thread that asks" in {
+    val python = new FakePython()
+    val held = python.holdPipInstalls()
+    val executionPlan = readBack(environmentPlan("installs"))
+    val run = new StoredRun(executionPlan, Some(installerOn(python)))
+    try {
+      // The start returns while pip is still at work, on a thread of the installer's: the run is
+      // set up and READY, its engine built and not started.
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      held.awaitBegun() shouldBe true
+      run.store.metadataStore.getState.state shouldBe READY
+      startWorkflowAsked(run) shouldBe false
+      python.runs.map(_.thread) should not contain Thread.currentThread()
+      eventually(
+        titlesOn(run, "installs-first") shouldBe
+          Seq("Installing Python environment 'ml' (1 package)")
+      )
+
+      held.letGo()
+
+      // Once the environment is ready the engine is asked to start, on that thread too.
+      eventually(startWorkflowAsked(run) shouldBe true)
+      run.engine.get.askedOn("startWorkflow") should not be Thread.currentThread()
+      Seq("installs-first", "installs-second").foreach { operator =>
+        val told = consoleOf(run, operator)
+        told.map(_.title).head shouldBe "Installing Python environment 'ml' (1 package)"
+        told should have size 2
+        told(1).title should startWith("Python environment 'ml' is ready (")
+        told(1).message should include("tabulate==0.9.0")
+        told(1).message should include("Successfully installed tabulate==0.9.0")
+      }
+      run.errors shouldBe empty
+      run.store.metadataStore.getState.fatalErrors shouldBe empty
+      run.store.metadataStore.getState.state shouldBe READY
+    } finally run.close()
+  }
+
+  it should "start a run whose environment is installed already, telling its operators so" in {
+    val python = new FakePython()
+    val installer = installerOn(python)
+    installer.ensure(ml, _ => ()).get(30, TimeUnit.SECONDS)
+    val executionPlan = readBack(environmentPlan("reuses"))
+    val run = new StoredRun(executionPlan, Some(installer))
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+
+      eventually(startWorkflowAsked(run) shouldBe true)
+      Seq("reuses-first", "reuses-second").foreach { operator =>
+        titlesOn(run, operator) shouldBe Seq("Python environment 'ml' reused")
+      }
+      python.pipInstalls should have size 1
+      run.errors shouldBe empty
+    } finally run.close()
+  }
+
+  it should "fail a run whose environment cannot be installed, before its engine starts, with pip's words" in {
+    val python = new FakePython()
+    val pipSaid = Seq(
+      "Collecting tabulate==0.9.0",
+      "ERROR: Could not find a version that satisfies the requirement tabulate==0.9.0 (from " +
+        "versions: none)",
+      "ERROR: No matching distribution found for tabulate==0.9.0"
+    )
+    python.pipInstall = _ => ProcessOutcome(Some(1), pipSaid)
+    val executionPlan = readBack(environmentPlan("fails"))
+    val run = new StoredRun(executionPlan, Some(installerOn(python)))
+    try {
+      val before = System.currentTimeMillis()
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      eventually(titlesOn(run, "fails-second") should have size 2)
+      val after = System.currentTimeMillis()
+
+      // The run ends FAILED, when the install did, and its row says so. Its one error is pip's,
+      // of the first operator that runs in the environment.
+      val state = run.store.metadataStore.getState
+      state.state shouldBe FAILED
+      run.store.statsStore.getState.endTimeStamp should (be >= before and be <= after)
+      executionStatus() shouldBe Utils.maptoStatusCode(FAILED).toInt
+      state.fatalErrors should have size 1
+      val error = state.fatalErrors.head
+      error.`type` shouldBe EXECUTION_FAILURE
+      error.message shouldBe
+        "Python environment 'ml' could not be installed: Could not find a version that " +
+          "satisfies the requirement tabulate==0.9.0 (from versions: none) No matching " +
+          "distribution found for tabulate==0.9.0"
+      error.details shouldBe pipSaid.mkString("\n")
+      error.operatorId shouldBe "fails-first"
+      error.workerId shouldBe ""
+      // Its engine, built, was shut down without being asked to start. The workflow's own
+      // failure is no failure of the unit's: the error handler is not asked.
+      startWorkflowAsked(run) shouldBe false
+      run.engine.get.shutdownCount shouldBe 1
+      run.errors shouldBe empty
+      // Every operator of the environment is told, on its console, after the install it was
+      // told of; and the lake keeps what it was told, although no engine reports the run's end.
+      Seq("fails-first", "fails-second").foreach { operator =>
+        val told = consoleOf(run, operator)
+        told.map(message => (message.msgType, message.title)) shouldBe Seq(
+          (ConsoleMessageType.PRINT, "Installing Python environment 'ml' (1 package)"),
+          (ConsoleMessageType.ERROR, "Python environment 'ml' could not be installed")
+        )
+        told(1).message shouldBe pipSaid.mkString("\n")
+        told(1).source shouldBe "computing unit"
+        told(1).workerId shouldBe ""
+        eventually(titlesInLake(operator) shouldBe told.map(_.title))
+      }
+    } finally run.close()
+  }
+
+  it should "leave a run that is killed while its environment installs as it ended, and let the install go on" in {
+    val python = new FakePython()
+    val held = python.holdPipInstalls()
+    val installer = installerOn(python)
+    val executionPlan = readBack(environmentPlan("killed"))
+    val run = new StoredRun(executionPlan, Some(installer))
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      held.awaitBegun() shouldBe true
+      eventually(titlesOn(run, "killed-first") should have size 1)
+
+      // Stop, while pip is at work.
+      run.service.wsInput.onNext(WorkflowKillRequest(), None)
+      run.store.metadataStore.getState.state shouldBe KILLED
+      held.letGo()
+
+      // The install is the unit's, and goes on to its end.
+      eventually(installer.interpreterFor(PythonEnvironmentRef.Resolved(ml)) should not be empty)
+      // The run stays as it was killed: its engine is never asked to start, nothing of the
+      // install is its failure, and its consoles are told nothing more.
+      Thread.sleep(300)
+      run.store.metadataStore.getState.state shouldBe KILLED
+      run.store.metadataStore.getState.fatalErrors shouldBe empty
+      startWorkflowAsked(run) shouldBe false
+      run.errors shouldBe empty
+      titlesOn(run, "killed-first") shouldBe Seq("Installing Python environment 'ml' (1 package)")
+    } finally run.close()
+
+    // The next run of the plan finds the environment installed, and starts.
+    val nextPlan = readBack(environmentPlan("after-kill"))
+    val next = new StoredRun(nextPlan, Some(installer))
+    try {
+      next.service.startStored(nextPlan, planRowOf(nextPlan), storedPlanTable) shouldBe None
+      eventually(startWorkflowAsked(next) shouldBe true)
+      titlesOn(next, "after-kill-first") shouldBe Seq("Python environment 'ml' reused")
+      python.pipInstalls should have size 1
+    } finally next.close()
+  }
+
+  it should "leave a run whose environment fails to install after it was killed as it was killed" in {
+    val python = new FakePython()
+    val begun = new CountDownLatch(1)
+    val release = new CountDownLatch(1)
+    python.pipInstall = _ => {
+      begun.countDown()
+      release.await(30, TimeUnit.SECONDS)
+      ProcessOutcome(Some(1), Seq("ERROR: No matching distribution found for tabulate==0.9.0"))
+    }
+    val installer = installerOn(python)
+    val executionPlan = readBack(environmentPlan("killed-then-failed"))
+    val run = new StoredRun(executionPlan, Some(installer))
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      begun.await(30, TimeUnit.SECONDS) shouldBe true
+      eventually(titlesOn(run, "killed-then-failed-first") should have size 1)
+      run.service.wsInput.onNext(WorkflowKillRequest(), None)
+      release.countDown()
+
+      // The install fails once the run no longer waits for it: nothing of it reaches the run.
+      Thread.sleep(300)
+      run.store.metadataStore.getState.state shouldBe KILLED
+      run.store.metadataStore.getState.fatalErrors shouldBe empty
+      titlesOn(run, "killed-then-failed-first") should have size 1
+      run.errors shouldBe empty
+    } finally run.close()
+  }
+
+  it should "start nothing for a run that is let go of while its environment installs" in {
+    val python = new FakePython()
+    val held = python.holdPipInstalls()
+    val installer = installerOn(python)
+    val executionPlan = readBack(environmentPlan("superseded"))
+    val run = new StoredRun(executionPlan, Some(installer))
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      held.awaitBegun() shouldBe true
+
+      // As the start of the workflow's next run lets go of it.
+      run.service.unsubscribeAll()
+      held.letGo()
+
+      eventually(installer.interpreterFor(PythonEnvironmentRef.Resolved(ml)) should not be empty)
+      Thread.sleep(300)
+      startWorkflowAsked(run) shouldBe false
+      run.errors shouldBe empty
+      run.store.metadataStore.getState.fatalErrors shouldBe empty
+    } finally run.close()
+  }
+
+  it should "refuse a plan that names an environment no plan resolved, before it builds the engine" in {
+    // No saved plan holds one: this plan was not read back.
+    val python = new FakePython()
+    val executionPlan = environmentPlan("named", PythonEnvironmentRef.Named("ml"))
+    val run = new StoredRun(executionPlan, Some(installerOn(python)))
+    try {
+      val failure = run.service
+        .startStored(executionPlan, planRowOf(readBack(storedSourcePlan())), storedPlanTable)
+        .getOrElse(fail("the run started"))
+
+      failure shouldBe an[IllegalStateException]
+      failure.getMessage shouldBe
+        "Operator named-first names the Python environment 'ml', which was never resolved: " +
+          "only a plan made to run can run it."
+      run.errors shouldBe Seq(failure)
+      run.engineWorkflow shouldBe None
+      python.runs shouldBe empty
+    } finally run.close()
+  }
+
   "WorkflowExecutionService.coordinatorConfigOf" should
     "start the coordinator replaying the plan's replay log, and writing its own where the plan says" in {
     val config = WorkflowExecutionService.coordinatorConfigOf(
@@ -976,6 +1343,29 @@ class WorkflowExecutionServiceSpec
       WorkflowExecutionService.requireRunnableUnder(plan, None)
     nowhere.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
     nowhere.getMessage should include(datasetLocator)
+  }
+
+  it should "refuse a plan with an operator that names a Python environment no plan resolved" in {
+    val plan = PhysicalPlan(
+      Set(
+        sourceOp("resolved-udf")
+          .withPythonEnvironment(PythonEnvironmentRef.Resolved(ml)),
+        sourceOp("named-udf").withPythonEnvironment(PythonEnvironmentRef.Named("ml"))
+      ),
+      Set.empty
+    )
+    val failure = the[IllegalStateException] thrownBy
+      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
+    failure.getMessage should include("named-udf")
+    failure.getMessage should include("'ml', which was never resolved")
+    // An environment a plan resolved is one the unit installs.
+    noException should be thrownBy WorkflowExecutionService.requireRunnableUnder(
+      PhysicalPlan(
+        Set(sourceOp("resolved-udf").withPythonEnvironment(PythonEnvironmentRef.Resolved(ml))),
+        Set.empty
+      ),
+      Some(unitMountRoot)
+    )
   }
 
   it should "refuse a plan with an operator left to bind, without binding it" in {

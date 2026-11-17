@@ -874,6 +874,8 @@ class WorkflowWebsocketResourceSpec
   private val storedCuid = 9745
   private val secondCuid = 9746
   private val firstCreatedEid = 974000
+  // A format this unit does not read yet: the one after its own.
+  private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
 
   /** Every plan and runtime-statistics table the start cases make, dropped after the suite. */
   private val madePlans = ArrayBuffer.empty[URI]
@@ -1232,10 +1234,9 @@ class WorkflowWebsocketResourceSpec
       logLines.filter(_.contains(accessToken)) shouldBe empty
       logLines.filter(_.contains("access-token")) shouldBe empty
       // The engine is handed the plan the Dashboard stored, under the context it was read back
-      // with, naming the socket's unit.
+      // with.
       service.engines should have size 1
       val engine = service.engines.head
-      engine.context.cuid shouldBe Some(storedCuid)
       service.computingUnitId shouldBe secondCuid
       engine.context.executionId shouldBe ExecutionIdentity(execution.eid)
       val stored = PhysicalPlanCodec
@@ -1254,7 +1255,7 @@ class WorkflowWebsocketResourceSpec
     val unknownFormatUri = new URI(unknownFormat.planUri)
     ExecutionPlanStore.writePlan(
       unknownFormatUri,
-      ExecutionPlanStore.readPlan(unknownFormatUri).copy(formatVersion = 3)
+      ExecutionPlanStore.readPlan(unknownFormatUri).copy(formatVersion = nextFormat)
     )
     val noPlanUri = ExecutionPlanStore
       .planUri(WorkflowIdentity(storedWid), ExecutionIdentity(firstCreatedEid - 1L), None)
@@ -1407,7 +1408,7 @@ class WorkflowWebsocketResourceSpec
         PrivilegeEnum.WRITE,
         storedCuid,
         startFrame(unknownFormat.eid, unknownFormat.planUri),
-        s"unknown plan format 3; this unit reads ${PhysicalPlanCodec.FormatVersion}"
+        s"unknown plan format $nextFormat; this unit reads ${PhysicalPlanCodec.FormatVersion}"
       ),
       (
         "another user",

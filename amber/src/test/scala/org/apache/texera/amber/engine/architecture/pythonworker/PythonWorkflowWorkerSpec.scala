@@ -20,12 +20,16 @@
 package org.apache.texera.amber.engine.architecture.pythonworker
 
 import com.twitter.util.Promise
-import org.apache.commons.lang3.SystemUtils
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit}
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
+import org.apache.texera.amber.core.workflow.{PythonEnvironment, PythonEnvironmentRef}
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.{NetworkAck, NetworkMessage}
+import org.apache.texera.amber.engine.architecture.pythonworker.environment.{
+  FakePython,
+  PythonEnvironmentInstaller
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   AsyncRPCContext,
   ControlInvocation,
@@ -35,13 +39,14 @@ import org.apache.texera.amber.engine.common.ambermessage.WorkflowFIFOMessage
 import org.apache.texera.amber.engine.common.ambermessage.WorkflowMessage.getInMemSize
 import org.apache.texera.amber.engine.architecture.scheduling.config.WorkerConfig
 import org.apache.texera.amber.engine.common.AmberRuntime
-import org.apache.texera.common.config.{PythonUtils, UdfConfig}
+import org.apache.texera.common.config.UdfConfig
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 
-import java.nio.file.{Files, Path, Paths}
-import java.util.concurrent.ExecutorService
+import java.lang.reflect.InvocationTargetException
+import java.nio.file.{Files, Path}
+import java.util.concurrent.{ExecutorService, TimeUnit}
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.duration._
 import scala.util.Using
@@ -63,8 +68,11 @@ import scala.sys.process.Process
   * `pythonProxyClient`: that client blocks in its own constructor on `Await.result(promise)`, so a
   * worker whose proxy server never started would otherwise hang the moment `postStop` ran.
   *
-  * Out of scope, deliberately: `startPythonProcess`, which runs a real interpreter, and
-  * `startProxyServer`, which retries a socket bind until it succeeds.
+  * The worker's unit keeps its Python environments where a [[FakePython]]'s installer does, under
+  * a directory of this suite's: no interpreter and no pip runs.
+  *
+  * Out of scope, deliberately: a `startPythonProcess` that gets as far as running a real
+  * interpreter, and `startProxyServer`, which retries a socket bind until it succeeds.
   */
 class PythonWorkflowWorkerSpec
     extends TestKit(ActorSystem("PythonWorkflowWorkerSpec", AmberRuntime.pekkoConfig))
@@ -73,12 +81,21 @@ class PythonWorkflowWorkerSpec
     with Matchers
     with BeforeAndAfterAll {
 
-  /** A cuid no other suite writes under, so the venv fixtures cannot collide. */
-  private val FixtureCuid = 987654
-  private val VenvRoot: Path = Paths.get("/tmp/texera-pve/venvs")
+  /** Where the unit of the workers below installs its environments. */
+  private val environmentsRoot: Path = Files.createTempDirectory("python-workflow-worker-spec")
+  private val python = new FakePython()
+  private val unitEnvironments: PythonEnvironmentInstaller =
+    python.installer(environmentsRoot, FakePython.SameThread)
+
+  /** An environment installed on the unit, and one that is not. */
+  private val installed = PythonEnvironment("installed", Seq("tabulate==0.9.0"))
+  private val absent = PythonEnvironment("absent", Seq("requests"))
+
+  override def beforeAll(): Unit =
+    unitEnvironments.ensure(installed, _ => ()).get(30, TimeUnit.SECONDS)
 
   override def afterAll(): Unit = {
-    deleteRecursively(VenvRoot.resolve(FixtureCuid.toString))
+    deleteRecursively(environmentsRoot)
     TestKit.shutdownActorSystem(system)
   }
 
@@ -86,6 +103,7 @@ class PythonWorkflowWorkerSpec
   private class InertPythonWorkflowWorker(config: WorkerConfig)
       extends PythonWorkflowWorker(config) {
     override def initState(): Unit = ()
+    override protected def environments: PythonEnvironmentInstaller = unitEnvironments
   }
 
   /** Stands in for the OS process the worker would have spawned. */
@@ -102,8 +120,10 @@ class PythonWorkflowWorkerSpec
   private def newWorker(config: WorkerConfig): TestActorRef[InertPythonWorkflowWorker] =
     TestActorRef[InertPythonWorkflowWorker](new InertPythonWorkflowWorker(config))
 
-  private def config(pveName: String = "", cuid: Option[Int] = None): WorkerConfig =
-    WorkerConfig(ActorVirtualIdentity("python-worker-spec"), pveName = pveName, cuid = cuid)
+  private def config(
+      environment: PythonEnvironmentRef = PythonEnvironmentRef.EngineDefault
+  ): WorkerConfig =
+    WorkerConfig(ActorVirtualIdentity("python-worker-spec"), pythonEnvironment = environment)
 
   private def readPrivate[T](actor: PythonWorkflowWorker, name: String): T = {
     val method = classOf[PythonWorkflowWorker].getDeclaredMethod(name)
@@ -114,6 +134,10 @@ class PythonWorkflowWorkerSpec
   private def chosenPythonBin(actor: PythonWorkflowWorker): String =
     readPrivate[String](actor, "choosePythonBin")
 
+  /** What a private member of the worker, called by reflection, failed with. */
+  private def failureOf(call: => Any): Throwable =
+    intercept[InvocationTargetException](call).getCause
+
   /** Releases the port the proxy client's constructor blocks on. */
   private def openPort(actor: PythonWorkflowWorker, port: Int = 65535): Unit =
     readPrivate[Promise[Int]](actor, "portNumberPromise").setValue(port)
@@ -123,13 +147,6 @@ class PythonWorkflowWorkerSpec
       classOf[PythonWorkflowWorker].getDeclaredMethod("pythonServerProcess_$eq", classOf[Process])
     setter.setAccessible(true)
     setter.invoke(actor, process)
-  }
-
-  /** The interpreter PveManager resolves for (cuid, name); POSIX and Windows differ. */
-  private def venvPython(cuid: Int, pveName: String): Path = {
-    val venv = VenvRoot.resolve(cuid.toString).resolve(pveName).resolve("pve")
-    if (SystemUtils.IS_OS_WINDOWS) venv.resolve("Scripts").resolve("python.exe")
-    else venv.resolve("bin").resolve("python")
   }
 
   private def deleteRecursively(path: Path): Unit = {
@@ -182,38 +199,54 @@ class PythonWorkflowWorkerSpec
     worker.underlyingActor.RENVPath shouldBe worker.underlyingActor.RENVPath.trim
   }
 
-  it should "fall back to the default interpreter when the worker has no computing unit" in {
-    val worker = newWorker(config(pveName = "myenv", cuid = None))
+  it should "run the engine's interpreter when its operator asks for no environment" in {
+    val worker = newWorker(config())
 
-    chosenPythonBin(worker.underlyingActor) shouldBe PythonUtils.getPythonExecutable
+    chosenPythonBin(worker.underlyingActor) shouldBe python.executable
   }
 
-  it should "fall back to the default interpreter when the environment name is blank" in {
-    // The name is trimmed before the emptiness check, so whitespace alone must not select a venv.
-    val worker = newWorker(config(pveName = "   ", cuid = Some(FixtureCuid)))
+  it should "run the interpreter of its operator's environment, as the unit installed it" in {
+    val worker = newWorker(config(PythonEnvironmentRef.Resolved(installed)))
 
-    chosenPythonBin(worker.underlyingActor) shouldBe PythonUtils.getPythonExecutable
+    val interpreter = chosenPythonBin(worker.underlyingActor)
+
+    interpreter shouldBe
+      unitEnvironments.interpreterFor(PythonEnvironmentRef.Resolved(installed))
+    interpreter should not be python.executable
+    Files.isExecutable(Path.of(interpreter)) shouldBe true
+    Path.of(interpreter).startsWith(environmentsRoot) shouldBe true
   }
 
-  it should "fall back to the default interpreter when the environment has no interpreter on disk" in {
-    val worker = newWorker(config(pveName = "absent-env", cuid = Some(FixtureCuid)))
+  it should "fail, rather than run another interpreter, when its operator's environment is not installed on the unit" in {
+    val worker = newWorker(config(PythonEnvironmentRef.Resolved(absent)))
 
-    chosenPythonBin(worker.underlyingActor) shouldBe PythonUtils.getPythonExecutable
+    val failure = failureOf(chosenPythonBin(worker.underlyingActor))
+
+    failure shouldBe an[IllegalStateException]
+    failure.getMessage shouldBe
+      "Python environment 'absent' is not installed on this computing unit."
   }
 
-  it should "select the virtual environment's interpreter when one exists" in {
-    val pveName = "present-env"
-    val python = venvPython(FixtureCuid, pveName)
-    Files.createDirectories(python.getParent)
-    Files.deleteIfExists(python)
-    Files.createFile(python)
-    python.toFile.setExecutable(true)
-    // A filesystem that ignores the executable bit (or a root user) would make the assertion
-    // vacuous rather than failing, so skip instead of pretending to have covered the branch.
-    assume(Files.isExecutable(python), "the fixture interpreter is not executable here")
-    val worker = newWorker(config(pveName = pveName, cuid = Some(FixtureCuid)))
+  it should "fail for an environment that was never resolved, by whatever name" in {
+    // Not even the name of an environment the unit holds picks its interpreter: only a plan made
+    // to run says what an operator runs in.
+    val worker = newWorker(config(PythonEnvironmentRef.Named(installed.name)))
 
-    chosenPythonBin(worker.underlyingActor) shouldBe python.toAbsolutePath.normalize().toString
+    val failure = failureOf(chosenPythonBin(worker.underlyingActor))
+
+    failure shouldBe an[IllegalStateException]
+    failure.getMessage should include("Python environment 'installed' was never resolved")
+  }
+
+  it should "start no process when it has no interpreter to run" in {
+    val worker = newWorker(config(PythonEnvironmentRef.Resolved(absent)))
+    val actor = worker.underlyingActor
+
+    val failure = failureOf(readPrivate[Unit](actor, "startPythonProcess"))
+
+    failure.getMessage shouldBe
+      "Python environment 'absent' is not installed on this computing unit."
+    readPrivate[Process](actor, "pythonServerProcess") shouldBe null
   }
 
   it should "close the proxy client, stop both executors and destroy the process on shutdown" in {

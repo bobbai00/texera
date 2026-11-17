@@ -108,11 +108,13 @@ object ExecutionCreator extends ExecutionCreator {
   *  1. The workflow is compiled for the user, Strict, under the site's settings as they stand and
   *     with the cost hints of their newest completed run of it, and the plan made
   *     ([[PlanToRun.make]]): each file a scan source reads is one the user may read, and the plan
-  *     carries a link to it for the computing unit to read it through. A workflow that does not
-  *     compile, a scan of a file the user may not read among them, marks the row FAILED and is
-  *     answered with each operator's error (400). A plan that cannot be made for another reason,
-  *     such as the database or the storage not answering while a file is resolved or linked,
-  *     marks the row FAILED too (500).
+  *     carries a link to it for the computing unit to read it through; each Python environment
+  *     an operator names is one the user keeps, and the plan carries its packages for the unit
+  *     to install. A workflow that does not compile, a scan of a file the user may not read or
+  *     an operator in an environment the user does not have among them, marks the row FAILED and
+  *     is answered with each operator's error (400). A plan that cannot be made for another
+  *     reason, such as the database or the storage not answering while a file is resolved or
+  *     linked, marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
   *     from (as JSON that parses back to it, without what a compile sets,
   *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A write that
@@ -201,13 +203,7 @@ class ExecutionCreator extends LazyLogging {
         ExecutionsMetadataPersistService.updateLogLocation(eid, location.toString)
         location
       }
-      val context = new WorkflowContext(
-        wid,
-        eid,
-        checked.settings,
-        Some(checked.computingUnitId),
-        warehouse
-      )
+      val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
       // How long each operator took in the user's newest completed run of the workflow, for the
       // scheduler's cost model: saved with the plan, which the engine takes them from.
       context.costHints = costHintsLoader.load(checked.wid, uid)

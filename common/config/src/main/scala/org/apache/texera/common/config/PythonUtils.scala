@@ -18,8 +18,9 @@
 
 package org.apache.texera.common.config
 
-// Util function used by PveManager and PythonWorkflowWorker
 object PythonUtils {
+
+  /** The command that runs the engine's Python interpreter: the configured path, else python3. */
   def getPythonExecutable: String = {
     val pythonPath = UdfConfig.pythonPath.trim
     if (pythonPath.isEmpty) "python3" else pythonPath

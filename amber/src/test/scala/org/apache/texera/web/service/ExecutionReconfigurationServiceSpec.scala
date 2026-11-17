@@ -140,6 +140,8 @@ class ExecutionReconfigurationServiceSpec
 
   /** The user who created that execution. */
   private val creatorUid = 9233
+  // A format this unit does not read yet: the one after its own.
+  private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
 
   private def mkPhysicalOp(name: String): PhysicalOp =
     PhysicalOp(
@@ -497,11 +499,11 @@ class ExecutionReconfigurationServiceSpec
           isValid = false,
           "only the user who created execution 9232 may change its operators"
         ),
-      storeChange(changedLimit, formatVersion = 3) ->
+      storeChange(changedLimit, formatVersion = nextFormat) ->
         ModifyLogicResponse(
           "",
           isValid = false,
-          s"unknown update format 3; this unit reads ${PhysicalPlanCodec.FormatVersion}"
+          s"unknown update format $nextFormat; this unit reads ${PhysicalPlanCodec.FormatVersion}"
         ),
       namedOtherwise ->
         ModifyLogicResponse(

@@ -169,6 +169,7 @@ object PhysicalOp {
     "propagateSchema", // function type, so ignore it
     "locationPreference", // ignore it for the deserialization
     "partitionRequirement", // ignore it for deserialization
+    "pythonEnvironment", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
     "resourceBinding" // function type, so ignore it; see ResourceBinding
   )
 )
@@ -216,8 +217,9 @@ case class PhysicalOp(
     isLoopStart: Boolean = false,
     // hint for number of workers
     suggestedWorkerNum: Option[Int] = None,
-    // name of the PVE to execute within
-    pveName: String = "",
+    // the Python environment the operator's workers run in; one the operator asks for by name is
+    // resolved by the compile that makes a plan to run (see PythonEnvironmentRef)
+    pythonEnvironment: PythonEnvironmentRef = PythonEnvironmentRef.EngineDefault,
     // the repositories opExecInitInfo's code reads, and the directory it reads them under:
     // fixed when the plan was made, and mounted by the engine before the operator runs
     repositoryMounts: Option[RepositoryMounts] = None,
@@ -245,6 +247,21 @@ case class PhysicalOp(
         s"Operator ${id.logicalOpId.id} names datasets or models that were never resolved: " +
           "only a plan made to run can run it."
       )
+    }
+
+  /**
+    * Fails if this operator names a Python environment that no plan resolved. The engine checks
+    * this before it runs an operator: it installs only what a plan made to run says to, and never
+    * looks an environment up by its name.
+    */
+  def requireEnvironmentResolved(): Unit =
+    pythonEnvironment match {
+      case PythonEnvironmentRef.Named(name) =>
+        throw new IllegalStateException(
+          s"Operator ${id.logicalOpId.id} names the Python environment '$name', which was never " +
+            "resolved: only a plan made to run can run it."
+        )
+      case _ =>
     }
 
   /**
@@ -410,8 +427,11 @@ case class PhysicalOp(
     this.copy(propagateSchema = func)
   }
 
-  def withPveName(name: String): PhysicalOp = {
-    this.copy(pveName = name)
+  /**
+    * creates a copy that runs in the given Python environment
+    */
+  def withPythonEnvironment(environment: PythonEnvironmentRef): PhysicalOp = {
+    this.copy(pythonEnvironment = environment)
   }
 
   def withResourceBinding(binding: Option[ResourceBinding]): PhysicalOp = {

@@ -30,8 +30,8 @@ import java.nio.file.Path
 
 /**
   * What a compile binds a plan to, on behalf of the user and the deployment the plan is made
-  * for: the files, datasets and models its operators name, and the site's settings. A plan made
-  * to run carries what these resolve to.
+  * for: the files, datasets, models and Python environments its operators name, and the site's
+  * settings. A plan made to run carries what these resolve to.
   *
   * @param files        resolves the file names of scan sources to URIs, as the plan's user may
   *                     read them.
@@ -50,6 +50,8 @@ import java.nio.file.Path
   *                     nothing is mounted: a plan made to run that reads a dataset or model
   *                     then fails.
   * @param settings     the site's settings the plan is compiled under.
+  * @param environments resolves the Python environments operators name to what the plan's user
+  *                     keeps under those names. Only a compile that makes a plan to run asks it.
   */
 final case class RunBindings(
     files: ScanFileResolver,
@@ -57,7 +59,8 @@ final case class RunBindings(
     lister: DatasetVersionLister,
     repositories: RepositoryVersionResolver,
     mountRoot: Option[Path],
-    settings: CompileSettings
+    settings: CompileSettings,
+    environments: PythonEnvironmentResolver
 )
 
 object RunBindings {
@@ -65,8 +68,9 @@ object RunBindings {
   /**
     * The bindings of a compile that makes no plan to run, as the editor's is: it resolves files
     * and applies the site's settings, links no file ([[InputLinker.Unavailable]]), lists no
-    * dataset version ([[DatasetVersionLister.Unavailable]]) and pins no dataset or model version
-    * ([[RepositoryVersionResolver.Unavailable]], and no mount root).
+    * dataset version ([[DatasetVersionLister.Unavailable]]), pins no dataset or model version
+    * ([[RepositoryVersionResolver.Unavailable]], and no mount root) and resolves no Python
+    * environment ([[PythonEnvironmentResolver.Unavailable]]).
     */
   def forEditing(files: ScanFileResolver, settings: CompileSettings): RunBindings =
     RunBindings(
@@ -75,6 +79,7 @@ object RunBindings {
       lister = DatasetVersionLister.Unavailable,
       repositories = RepositoryVersionResolver.Unavailable,
       mountRoot = None,
-      settings = settings
+      settings = settings,
+      environments = PythonEnvironmentResolver.Unavailable
     )
 }

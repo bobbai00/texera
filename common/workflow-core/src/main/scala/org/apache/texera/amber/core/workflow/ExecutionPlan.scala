@@ -33,9 +33,7 @@ import java.net.URI
   * and what else the run needs that the plan does not hold. [[PhysicalPlanCodec]] saves it and
   * reads it back.
   *
-  * @param context   the run's ids, settings, warehouse and cost hints. A plan does not choose the
-  *                  computing unit it runs on: the unit is not saved, and a context read back
-  *                  names none.
+  * @param context   the run's ids, settings, warehouse and cost hints
   * @param plan      the physical plan, made to run
   * @param replay    where the run replays from; None when it replays nothing
   * @param replayLog where the run writes its replay log, an absolute URI; None when it writes none

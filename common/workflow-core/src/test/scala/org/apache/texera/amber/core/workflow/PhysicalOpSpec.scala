@@ -161,7 +161,7 @@ class PhysicalOpSpec extends AnyFlatSpec {
   // ----- with-builders -----
 
   "PhysicalOp with-builders" should
-    "copy the partition requirement, output partition rule, one-to-many flag, and pve name" in {
+    "copy the partition requirement, output partition rule and one-to-many flag" in {
     val required = List(Some(HashPartition(List("k"))), None)
     assert(newOp("a").withPartitionRequirement(required).partitionRequirement == required)
     val rule = PartitionRule.Fixed(HashPartition(List("x")))
@@ -172,8 +172,42 @@ class PhysicalOpSpec extends AnyFlatSpec {
     )
     assert(newOp("a").withIsOneToManyOp(true).isOneToManyOp)
     assert(!newOp("a").isOneToManyOp)
-    assert(newOp("a").pveName == "")
-    assert(newOp("a").withPveName("my-pve").pveName == "my-pve")
+  }
+
+  // ----- the Python environment -----
+
+  private val environment = PythonEnvironment("ml", Seq("tabulate==0.9.0"))
+
+  "PhysicalOp" should "run in the engine's own Python environment by default" in {
+    assert(newOp("a").pythonEnvironment == PythonEnvironmentRef.EngineDefault)
+    newOp("a").requireEnvironmentResolved()
+  }
+
+  "PhysicalOp.withPythonEnvironment" should "copy the environment the operator runs in" in {
+    val op = newOp("a")
+    val named = op.withPythonEnvironment(PythonEnvironmentRef.Named("ml"))
+    assert(named.pythonEnvironment == PythonEnvironmentRef.Named("ml"))
+    val resolved = named.withPythonEnvironment(PythonEnvironmentRef.Resolved(environment))
+    assert(resolved.pythonEnvironment == PythonEnvironmentRef.Resolved(environment))
+    // Nothing else of the operator changes.
+    assert(resolved.withPythonEnvironment(PythonEnvironmentRef.EngineDefault) == op)
+  }
+
+  "PhysicalOp.requireEnvironmentResolved" should
+    "refuse an operator that names an environment no plan resolved" in {
+    val op = newOp("named-udf").withPythonEnvironment(PythonEnvironmentRef.Named("ml"))
+    val failure = intercept[IllegalStateException](op.requireEnvironmentResolved())
+    assert(
+      failure.getMessage ==
+        "Operator named-udf names the Python environment 'ml', which was never resolved: only a " +
+          "plan made to run can run it."
+    )
+  }
+
+  it should "accept an operator whose environment a plan resolved" in {
+    newOp("a")
+      .withPythonEnvironment(PythonEnvironmentRef.Resolved(environment))
+      .requireEnvironmentResolved()
   }
 
   // ----- datasets and models -----
@@ -315,5 +349,20 @@ class PhysicalOpSpec extends AnyFlatSpec {
     )
     assert(!json.has("resourceBinding"), s"the binding is in $json")
     assert(binding.forced == 0)
+  }
+
+  it should "leave the Python environment out, whichever it is" in {
+    Seq(
+      PythonEnvironmentRef.EngineDefault,
+      PythonEnvironmentRef.Named("ml"),
+      PythonEnvironmentRef.Resolved(environment)
+    ).foreach { ref =>
+      val json =
+        objectMapper.readTree(
+          objectMapper.writeValueAsString(newOp("a").withPythonEnvironment(ref))
+        )
+      assert(json.has("parallelizable"))
+      assert(!json.has("pythonEnvironment"), s"$ref is in $json")
+    }
   }
 }

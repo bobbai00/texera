@@ -25,6 +25,7 @@ import org.apache.texera.amber.core.workflow.{
   HashPartition,
   PartitionRule,
   PortIdentity,
+  PythonEnvironmentRef,
   UnknownPartition
 }
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
@@ -64,7 +65,7 @@ class DualInputPortsPythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptor
     physical.opExecInitInfo shouldBe OpExecWithCode("yield t", "python")
     physical.parallelizable shouldBe false
     physical.suggestedWorkerNum shouldBe None
-    physical.pveName shouldBe ""
+    physical.pythonEnvironment shouldBe PythonEnvironmentRef.EngineDefault
     physical.inputPorts.keySet shouldBe d.operatorInfo.inputPorts.map(_.id).toSet
     physical.outputPorts.keySet shouldBe d.operatorInfo.outputPorts.map(_.id).toSet
     physical.outputPartitionRule shouldBe PartitionRule.Fixed(UnknownPartition())
@@ -109,11 +110,17 @@ class DualInputPortsPythonUDFOpDescV2Spec extends AnyFlatSpec with UdfDescriptor
       "Virtual Environment name is required when not using the default Python environment."
   }
 
-  it should "trim and carry a custom virtual-environment name" in {
+  it should "name the trimmed virtual environment when the default env is disabled" in {
     val d = new DualInputPortsPythonUDFOpDescV2
     d.defaultEnv = false
     d.envName = "  myenv  "
-    buildPhysicalOp(d).pveName shouldBe "myenv"
+    buildPhysicalOp(d).pythonEnvironment shouldBe PythonEnvironmentRef.Named("myenv")
+  }
+
+  it should "run in the engine's own environment by default, whatever name is left in the field" in {
+    val d = new DualInputPortsPythonUDFOpDescV2
+    d.envName = "myenv"
+    buildPhysicalOp(d).pythonEnvironment shouldBe PythonEnvironmentRef.EngineDefault
   }
 
   "DualInputPortsPythonUDFOpDescV2 schema propagation" should

@@ -82,9 +82,7 @@ import { NzPopoverDirective } from "ng-zorro-antd/popover";
 import { NzFormDirective } from "ng-zorro-antd/form";
 import { NzWaveDirective } from "ng-zorro-antd/core/wave";
 import { WorkflowPveService } from "../../../service/virtual-environment/virtual-environment.service";
-import { ComputingUnitStatusService } from "../../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
-import { of } from "rxjs";
-import { map, switchMap, take } from "rxjs/operators";
+import { map } from "rxjs/operators";
 import { UiUdfParametersSyncService } from "../../../service/code-editor/ui-udf-parameters-sync.service";
 
 Quill.register("modules/cursors", QuillCursors);
@@ -531,7 +529,6 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
     private workflowStatusSerivce: WorkflowStatusService,
     private config: GuiConfigService,
     private workflowPveService: WorkflowPveService,
-    private computingUnitStatusService: ComputingUnitStatusService,
     private uiUdfParametersSyncService: UiUdfParametersSyncService
   ) {}
 
@@ -693,16 +690,12 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
     const baseSchema = cloneDeep(this.currentOperatorSchema.jsonSchema);
 
     if (isPythonUdf) {
-      this.computingUnitStatusService
-        .getSelectedComputingUnit()
+      // The environments a UDF can name are the ones its user keeps at the Dashboard, whichever
+      // computing unit the workflow runs on.
+      this.workflowPveService
+        .listUserPves()
         .pipe(
-          take(1),
-          switchMap(unit => {
-            const cuid = unit?.computingUnit?.cuid;
-            return cuid !== undefined
-              ? this.workflowPveService.fetchPVEs(cuid).pipe(map(pves => pves.map(p => p.pveName)))
-              : of<string[]>([]);
-          }),
+          map(environments => environments.map(environment => environment.name)),
           untilDestroyed(this)
         )
         .subscribe({

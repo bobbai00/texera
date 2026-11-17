@@ -122,6 +122,12 @@ object ConsoleMessageProcessor {
   }
 }
 
+object ExecutionConsoleService {
+
+  /** Who a message of the computing unit's own is from, as a console shows it. */
+  val ComputingUnitSource = "computing unit"
+}
+
 class ExecutionConsoleService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
@@ -220,6 +226,47 @@ class ExecutionConsoleService(
       case _ =>
     }
   )
+
+  /**
+    * Adds a message of the computing unit's own to the console of operator `operatorId`: what the
+    * unit did for the operator, and not one of its workers. It is shown, and kept, as a worker's
+    * message is.
+    */
+  def addUnitMessage(
+      operatorId: String,
+      msgType: ConsoleMessageType,
+      title: String,
+      message: String = ""
+  ): Unit =
+    stateStore.consoleStore.updateState { consoleStore =>
+      addConsoleMessage(
+        consoleStore,
+        operatorId,
+        ConsoleMessage(
+          workerId = "",
+          timestamp = Timestamp(Instant.now),
+          msgType = msgType,
+          source = ExecutionConsoleService.ComputingUnitSource,
+          title = title,
+          message = message
+        )
+      )
+    }
+
+  /**
+    * Commits the messages added so far, for a run whose engine will report no end: one that
+    * failed before its engine started. No message is added after this.
+    */
+  def commitMessages(): Unit =
+    consoleWriterThread.execute(() => {
+      consoleMessageOpIdToWriterMap.values.foreach { writer =>
+        try writer.close()
+        catch {
+          case e: Exception => logger.error("Failed to close console message writer", e)
+        }
+      }
+      consoleMessageOpIdToWriterMap.clear()
+    })
 
   override def unsubscribeAll(): Unit = {
     consoleMessageOpIdToWriterMap.values.foreach { writer =>

@@ -70,10 +70,10 @@ import scala.util.control.NonFatal
   * the plan holds in no order, by their operators' ids and the inputs' names, so a plan is saved
   * as the same text every time.
   *
-  * Only a plan made to run can be saved: no operator still holds a resource binding, every port
-  * has its schema, and the links form no cycle. A plan read back can be run but not compiled
-  * again: each port keeps its schema, but no operator keeps the function that derived it
-  * ([[ReadBackSchemaPropagation]] takes its place).
+  * Only a plan made to run can be saved: no operator still holds a resource binding or names a
+  * Python environment that was never resolved, every port has its schema, and the links form no
+  * cycle. A plan read back can be run but not compiled again: each port keeps its schema, but no
+  * operator keeps the function that derived it ([[ReadBackSchemaPropagation]] takes its place).
   *
   * A change to an operator is saved as a [[StoredOperatorUpdate]], in the same format version:
   * only what the engine applies to the running operator, its executor and what its code reads.
@@ -85,7 +85,7 @@ import scala.util.control.NonFatal
 object PhysicalPlanCodec {
 
   /** The version of the format this codec writes, and the only one it reads. */
-  val FormatVersion: Int = 2
+  val FormatVersion: Int = 3
 
   /**
     * The schema propagation function of every operator read back. A saved plan holds each port's
@@ -167,13 +167,13 @@ object PhysicalPlanCodec {
   private val SavedUpdate = Saved("operator update", "saved operator update", StoredOperatorUpdate)
 
   /**
-    * Saves `plan`. The ids, settings, warehouse and cost hints come from its context; the
-    * computing unit does not, since a plan does not choose the unit it runs on. Its cost hints
-    * are saved in the order of their operators' ids, and its inputs in the order of their
+    * Saves `plan`. The ids, settings, warehouse and cost hints come from its context. Its cost
+    * hints are saved in the order of their operators' ids, and its inputs in the order of their
     * operators' ids, then their names.
     *
     * @throws IllegalArgumentException if the physical plan is not one made to run under the
-    *                                  context: an operator still holds a resource binding, has no
+    *                                  context: an operator still holds a resource binding, names
+    *                                  a Python environment that was never resolved, has no
     *                                  executor, belongs to another workflow or execution, or has
     *                                  a port with no schema; its links and ports disagree, its
     *                                  links form a cycle, or a port depends on one its operator
@@ -204,7 +204,7 @@ object PhysicalPlanCodec {
 
   /**
     * Reads a saved plan back, with the context it runs under: the plan's ids, settings,
-    * warehouse and cost hints, and no computing unit.
+    * warehouse and cost hints.
     *
     * The plan is for running, not for compiling again. Each port has the schema the compile gave
     * it, but each operator's `propagateSchema` is [[ReadBackSchemaPropagation]], since the
@@ -214,16 +214,19 @@ object PhysicalPlanCodec {
     *
     * @throws IllegalArgumentException if the plan is in another format version, leaves out
     *                                  something it must have, holds a value this version does
-    *                                  not know, or is not a plan [[encode]] saves. Of what the
-    *                                  run needs besides the physical plan, that is: a replay or
-    *                                  cost hints from an execution whose id is below 1; a replay
-    *                                  up to a blank interaction; a log not at an absolute URI;
-    *                                  cost hints for an operator with no id, or with a cost that
-    *                                  is not a finite number of seconds, at least 0; cost hints
-    *                                  or inputs out of order, or given twice; or an input of an
-    *                                  operator the plan does not have, with no name or source, or
-    *                                  of a file whose link expires at the epoch or before, or
-    *                                  whose size is below 0
+    *                                  not know, or is not a plan [[encode]] saves. Of an
+    *                                  operator's Python environment, that is: a blank name,
+    *                                  requirements that are not canonical lines, sorted, each
+    *                                  once, or a digest that is not theirs. Of what the run
+    *                                  needs besides the physical plan: a replay or cost hints
+    *                                  from an execution whose id is below 1; a replay up to a
+    *                                  blank interaction; a log not at an absolute URI; cost hints
+    *                                  for an operator with no id, or with a cost that is not a
+    *                                  finite number of seconds, at least 0; cost hints or inputs
+    *                                  out of order, or given twice; or an input of an operator
+    *                                  the plan does not have, with no name or source, or of a
+    *                                  file whose link expires at the epoch or before, or whose
+    *                                  size is below 0
     */
   def decode(stored: StoredPhysicalPlan): ExecutionPlan = {
     requireVersion(SavedPlan, stored.formatVersion)
@@ -240,7 +243,6 @@ object PhysicalPlanCodec {
         workflowId,
         executionId,
         settings,
-        cuid = None,
         warehouse = stored.warehouse,
         costHints = stored.costHints.map(decodeCostHints)
       ),
@@ -349,6 +351,14 @@ object PhysicalPlanCodec {
           "to run can be saved."
       )
     }
+    op.pythonEnvironment match {
+      case PythonEnvironmentRef.Named(environment) =>
+        refuse(
+          s"Operator $name names the Python environment '$environment', which was never " +
+            "resolved: only a plan made to run can be saved."
+        )
+      case _ =>
+    }
     if (op.workflowId != context.workflowId) {
       refuse(
         s"Operator $name belongs to workflow ${op.workflowId.id}, but the plan is saved for " +
@@ -427,8 +437,15 @@ object PhysicalPlanCodec {
       requiresMaterializedExecution = op.requiresMaterializedExecution,
       isLoopStart = op.isLoopStart,
       suggestedWorkerNum = op.suggestedWorkerNum,
-      pveName = op.pveName,
-      repositoryMounts = op.repositoryMounts.map(encodeMounts)
+      repositoryMounts = op.repositoryMounts.map(encodeMounts),
+      // a name never resolved is not saved: requireRunnableUnder refused the plan
+      pythonEnvironment = op.pythonEnvironment match {
+        case PythonEnvironmentRef.Resolved(environment) =>
+          Some(
+            StoredPythonEnvironment(environment.name, environment.requirements, environment.digest)
+          )
+        case _ => None
+      }
     )
 
   private def encodeMounts(mounts: RepositoryMounts): StoredRepositoryMounts =
@@ -579,9 +596,33 @@ object PhysicalPlanCodec {
       requiresMaterializedExecution = stored.requiresMaterializedExecution,
       isLoopStart = stored.isLoopStart,
       suggestedWorkerNum = stored.suggestedWorkerNum,
-      pveName = stored.pveName,
+      pythonEnvironment = stored.pythonEnvironment
+        .map(decodeEnvironment(name))
+        .getOrElse(PythonEnvironmentRef.EngineDefault),
       repositoryMounts = stored.repositoryMounts.map(decodeMounts(name))
     )
+  }
+
+  /**
+    * The environment operator `operator` runs in, as [[PythonEnvironment]] takes it: only what
+    * pip may read, under the digest of its requirements.
+    */
+  private def decodeEnvironment(
+      operator: String
+  )(stored: StoredPythonEnvironment): PythonEnvironmentRef = {
+    val environment =
+      try PythonEnvironment(stored.name, stored.requirements)
+      catch {
+        case e: IllegalArgumentException =>
+          refuse(s"Operator $operator cannot run in the environment it names: ${e.getMessage}", e)
+      }
+    if (stored.digest != environment.digest) {
+      refuse(
+        s"The Python environment '${environment.name}' of operator $operator is saved under the " +
+          s"digest '${stored.digest}', but its requirements have the digest ${environment.digest}."
+      )
+    }
+    PythonEnvironmentRef.Resolved(environment)
   }
 
   /** The mounts of operator `operator`, as [[RepositoryMounts]] takes them. */

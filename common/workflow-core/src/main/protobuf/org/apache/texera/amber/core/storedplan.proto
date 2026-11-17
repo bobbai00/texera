@@ -116,9 +116,13 @@ message StoredPhysicalOp {
   bool isLoopStart = 11;
   // How many workers to run. Absent: the engine's default.
   optional int32 suggestedWorkerNum = 12;
-  string pveName = 13;
+  // Format versions 1 and 2 named a Python environment here, by its name on one computing unit.
+  reserved 13;
+  reserved "pveName";
   // The datasets and models the operator's code reads. Absent: none.
   StoredRepositoryMounts repositoryMounts = 14;
+  // The Python environment the operator's workers run in. Absent: the engine's own interpreter.
+  StoredPythonEnvironment pythonEnvironment = 15;
 }
 
 message StoredPartitionRequirement {
@@ -204,6 +208,18 @@ message StoredRepositoryMounts {
   string root = 1;
   // Each repository once, as "<repositoryName>:<commitHash>".
   repeated string locators = 2;
+}
+
+// A Python environment: the packages a computing unit installs, beside the engine's own, for the
+// workers of the operators that run in it.
+message StoredPythonEnvironment {
+  // What the plan's user calls the environment, which the operator asked for it by; not blank.
+  string name = 1;
+  // The packages, as canonical requirement lines ("tabulate==0.9.0"): a package name in its
+  // normalized form, then nothing or ==, >= or <= and a version. Sorted, each once.
+  repeated string requirements = 2;
+  // Names the package list: the lowercase hex SHA-256 of the lines joined by "\n".
+  string digest = 3;
 }
 
 // An earlier execution's replay log, read up to one interaction.
