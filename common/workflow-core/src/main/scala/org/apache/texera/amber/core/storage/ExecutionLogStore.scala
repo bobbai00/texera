@@ -29,27 +29,23 @@ import org.apache.texera.amber.core.storage.result.iceberg.{
   IcebergTidy
 }
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.GlobalPortIdentity
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 
 import java.net.URI
 
 /**
-  * One row of an execution's log: a change of the run's state, or one of its stored output
-  * ports. Made with [[ExecutionLogEntry.state]] or [[ExecutionLogEntry.output]].
+  * One row of an execution's log: a change of the run's state. Made with
+  * [[ExecutionLogEntry.state]].
   *
   * @param seq    1, 2, 3, … in the order the engine made the rows.
   * @param timeMs when the engine made the row, in epoch milliseconds on its unit's clock.
-  * @param kind   [[ExecutionLogStore.StateKind]] or [[ExecutionLogStore.OutputKind]].
-  * @param state  on a state row, the state the run changed to, one of
-  *               [[ExecutionLogStore.States]]; None on an output row.
-  * @param detail JSON. On a state row, why the state changed:
+  * @param kind   [[ExecutionLogStore.StateKind]], the one kind of row a log holds.
+  * @param state  the state the run changed to, one of [[ExecutionLogStore.States]].
+  * @param detail JSON that says why the state changed:
   *               `{"reason": "…", "errors": [{"type", "timeMs", "message", "details",
   *               "operatorId", "workerId"}]}` with either key or both, and None when the row
-  *               says neither. On an output row, `{"portId", "uri", "outputMode"}`.
+  *               says neither.
   */
 final case class ExecutionLogEntry(
     seq: Long,
@@ -61,17 +57,9 @@ final case class ExecutionLogEntry(
 
   /**
     * Why the state changed, in at most [[ExecutionLogStore.MaxReasonLength]] characters: the
-    * reason a state row gives, else the message of its first error. None when it gives
-    * neither, and on an output row.
+    * reason the row gives, else the message of its first error. None when it gives neither.
     */
-  def reason: Option[String] =
-    if (kind == ExecutionLogStore.StateKind) detail.flatMap(ExecutionLogDetail.reason)
-    else None
-
-  /** The stored output port an output row records; None on a state row. */
-  def output: Option[ExecutionOutput] =
-    if (kind == ExecutionLogStore.OutputKind) detail.map(ExecutionLogDetail.output)
-    else None
+  def reason: Option[String] = detail.flatMap(ExecutionLogDetail.reason)
 }
 
 object ExecutionLogEntry {
@@ -89,32 +77,14 @@ object ExecutionLogEntry {
       timeMs,
       ExecutionLogStore.StateKind,
       Some(state),
-      ExecutionLogDetail.ofState(reason.filter(_.nonEmpty), errors)
-    )
-
-  /** The row of a stored output port. */
-  def output(seq: Long, timeMs: Long, output: ExecutionOutput): ExecutionLogEntry =
-    ExecutionLogEntry(
-      seq,
-      timeMs,
-      ExecutionLogStore.OutputKind,
-      None,
-      Some(ExecutionLogDetail.ofOutput(output))
+      ExecutionLogDetail.of(reason.filter(_.nonEmpty), errors)
     )
 }
 
 /**
-  * A stored output port of an execution, as its log records it.
-  *
-  * @param uri        the port's result table.
-  * @param outputMode the name of the port's `OutputPort.OutputMode`.
-  */
-final case class ExecutionOutput(port: GlobalPortIdentity, uri: URI, outputMode: String)
-
-/**
   * The newest state of an execution, as the properties of its log table repeat it.
   *
-  * @param state       the state of the newest state row; None before the first one.
+  * @param state       the state of the newest row; None before the first one.
   * @param stateSeq    that row's `seq`; 0 before the first one.
   * @param stateTimeMs that row's `timeMs`; 0 before the first one.
   * @param reason      that row's [[ExecutionLogEntry.reason]].
@@ -138,7 +108,7 @@ final case class ExecutionLabel(
 /** The JSON of a log row's `detail`. */
 private object ExecutionLogDetail {
 
-  def ofState(reason: Option[String], errors: Seq[WorkflowFatalError]): Option[String] =
+  def of(reason: Option[String], errors: Seq[WorkflowFatalError]): Option[String] =
     Option.when(reason.nonEmpty || errors.nonEmpty) {
       val detail = objectMapper.createObjectNode()
       reason.foreach(detail.put("reason", _))
@@ -158,29 +128,11 @@ private object ExecutionLogDetail {
       objectMapper.writeValueAsString(detail)
     }
 
-  def ofOutput(output: ExecutionOutput): String =
-    objectMapper.writeValueAsString(
-      objectMapper
-        .createObjectNode()
-        .put("portId", output.port.serializeAsString)
-        .put("uri", output.uri.toString)
-        .put("outputMode", output.outputMode)
-    )
-
   def reason(detail: String): Option[String] = {
     val node = objectMapper.readTree(detail)
     text(node.path("reason"))
       .orElse(text(node.path("errors").path(0).path("message")))
       .map(cut)
-  }
-
-  def output(detail: String): ExecutionOutput = {
-    val node = objectMapper.readTree(detail)
-    ExecutionOutput(
-      GlobalPortIdentitySerde.deserializeFromString(node.path("portId").asText()),
-      URI.create(node.path("uri").asText()),
-      node.path("outputMode").asText()
-    )
   }
 
   private def text(node: JsonNode): Option[String] = Option(node.textValue()).filter(_.nonEmpty)
@@ -200,11 +152,11 @@ private object ExecutionLogDetail {
   * `storage.iceberg.table.execution-log-namespace`, table `wid_<wid>_eid_<eid>_executionlog`).
   *
   * The engine that runs the execution is the table's one writer. It appends a row for every
-  * change of the run's state and for every stored output port (see [[ExecutionLogEntry]]), and
-  * the commit that appends a state row also sets the label: table properties that repeat the
-  * newest state (see [[ExecutionLabel]]). So the state is read with one load of the table, and
-  * no reader sees a label without its row. Between its appends the engine refreshes one of the
-  * properties, the beat, which shows that it is alive.
+  * change of the run's state (see [[ExecutionLogEntry]]), and the commit that appends a row also
+  * sets the label: table properties that repeat the newest state (see [[ExecutionLabel]]). So
+  * the state is read with one load of the table, and no reader sees a label without its row.
+  * Between its appends the engine refreshes one of the properties, the beat, which shows that it
+  * is alive.
   *
   * Every method takes only a URI [[logUri]] could have built, and refuses any other. To a read,
   * a table that is not there is an answer, None or Nil; to a write it is a
@@ -214,9 +166,8 @@ private object ExecutionLogDetail {
 object ExecutionLogStore {
 
   val StateKind = "state"
-  val OutputKind = "output"
 
-  /** The states a log records, as the `state` of its state rows. */
+  /** The states a log records, as the `state` of its rows. */
   val States: Seq[String] = Seq("READY", "RUNNING", "PAUSED", "COMPLETED", "FAILED", "KILLED")
 
   /** The states an execution ends in. */
@@ -253,7 +204,7 @@ object ExecutionLogStore {
 
   /**
     * Appends `entries`, whose `seq` rises, in one commit. The same commit sets the beat to
-    * `nowMs` and, when `entries` holds a state row, the label's state to the last one.
+    * `nowMs` and the label's state to the last of them.
     *
     * An append that fails may have landed all the same, when the catalog's answer was lost.
     * Appending the entries again is safe: [[read]] returns one row per `seq`.
@@ -270,19 +221,18 @@ object ExecutionLogStore {
     )
     entries.foreach(requireLogRow)
     val table = existingTable(uri)
-    val state = entries.findLast(_.kind == StateKind).map { entry =>
-      Map(
-        StateProperty -> entry.state.get,
-        StateSeqProperty -> entry.seq.toString,
-        StateTimeProperty -> entry.timeMs.toString,
-        ReasonProperty -> entry.reason.getOrElse("")
-      )
-    }
+    val newest = entries.last
     IcebergAppender.append(
       table,
       entries.map(toRecord(table, _)),
-      s"${entries.head.kind}_${entries.head.seq}",
-      state.getOrElse(Map.empty) + (BeatProperty -> nowMs.toString)
+      s"${StateKind}_${entries.head.seq}",
+      Map(
+        StateProperty -> newest.state.get,
+        StateSeqProperty -> newest.seq.toString,
+        StateTimeProperty -> newest.timeMs.toString,
+        ReasonProperty -> newest.reason.getOrElse(""),
+        BeatProperty -> nowMs.toString
+      )
     )
   }
 
@@ -334,9 +284,6 @@ object ExecutionLogStore {
       .getOrElse(Nil)
   }
 
-  /** The stored output ports the log records, each once; Nil when the table does not exist. */
-  def outputs(uri: URI): Seq[ExecutionOutput] = read(uri).flatMap(_.output).distinctBy(_.port)
-
   /**
     * Tidies the table (see [[IcebergTidy.tidy]]). For the table's writer alone, between its
     * appends, and with `atEnd` once it has appended its last row.
@@ -367,13 +314,9 @@ object ExecutionLogStore {
 
   private def requireLogRow(entry: ExecutionLogEntry): Unit =
     require(
-      entry.kind match {
-        case StateKind  => entry.state.exists(States.contains)
-        case OutputKind => entry.state.isEmpty && entry.detail.nonEmpty
-        case _          => false
-      },
-      s"row ${entry.seq} is neither a state row with one of the states ${States.mkString(", ")} " +
-        s"nor an output row: its kind is '${entry.kind}' and its state ${entry.state}"
+      entry.kind == StateKind && entry.state.exists(States.contains),
+      s"row ${entry.seq} is not a state row with one of the states ${States.mkString(", ")}: " +
+        s"its kind is '${entry.kind}' and its state ${entry.state}"
     )
 
   private def existingTable(uri: URI): Table =

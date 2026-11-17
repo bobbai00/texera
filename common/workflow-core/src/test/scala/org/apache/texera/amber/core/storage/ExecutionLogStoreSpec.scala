@@ -24,13 +24,7 @@ import org.apache.iceberg.Table
 import org.apache.iceberg.exceptions.ServiceUnavailableException
 import org.apache.texera.amber.core.storage.ExecutionLogStore._
 import org.apache.texera.amber.core.storage.result.iceberg.IcebergTidy
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  PhysicalOpIdentity,
-  WorkflowIdentity
-}
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.common.tags.NonParallelTest
@@ -74,24 +68,6 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
       reason: Option[String] = None,
       errors: Seq[WorkflowFatalError] = Nil
   ): ExecutionLogEntry = ExecutionLogEntry.state(seq, timeOf(seq), state, reason, errors)
-
-  private def outputOf(operator: String): ExecutionOutput = {
-    val port = GlobalPortIdentity(
-      PhysicalOpIdentity(OperatorIdentity(operator), "main"),
-      PortIdentity(0),
-      input = false
-    )
-    ExecutionOutput(
-      port,
-      VFSURIFactory.resultURI(
-        VFSURIFactory.createPortBaseURI(workflowId, ExecutionIdentity(345), port, Some(warehouse))
-      ),
-      "SET_SNAPSHOT"
-    )
-  }
-
-  private def outputRow(seq: Long, operator: String): ExecutionLogEntry =
-    ExecutionLogEntry.output(seq, timeOf(seq), outputOf(operator))
 
   private def error(message: String): WorkflowFatalError =
     WorkflowFatalError(
@@ -146,7 +122,6 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     stateRow(3, "PAUSED").reason shouldBe None
     // An error without a message says nothing.
     stateRow(4, "FAILED", errors = Seq(error(""))).reason shouldBe None
-    outputRow(5, "Filter-operator-1").reason shouldBe None
   }
 
   it should "keep at most 500 characters, and never half of a character" in {
@@ -157,24 +132,6 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     stateRow(4, "FAILED", errors = Seq(error("x" * 499 + "😀"))).reason shouldBe Some("x" * 499)
     stateRow(5, "FAILED", errors = Seq(error("x" * 498 + "😀"))).reason shouldBe
       Some("x" * 498 + "😀")
-  }
-
-  "ExecutionLogEntry.output" should "record a stored output port, and read it back" in {
-    val output = outputOf("Filter-operator-1")
-    val entry = ExecutionLogEntry.output(2, timeOf(2), output)
-
-    entry shouldBe ExecutionLogEntry(
-      2,
-      timeOf(2),
-      OutputKind,
-      None,
-      Some(
-        """{"portId":"(logicalOpId=Filter-operator-1,layerName=main,portId=0,isInternal=false,""" +
-          s"""isInput=false)","uri":"${output.uri}","outputMode":"SET_SNAPSHOT"}"""
-      )
-    )
-    entry.output shouldBe Some(output)
-    stateRow(1, "READY").output shouldBe None
   }
 
   // ---------------------------------------------------------------------------
@@ -198,13 +155,12 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     label(uri) shouldBe Some(ExecutionLabel(None, 0, 0, None, createdAtMs, beatEveryMs))
     label(uri).get.ended shouldBe false
     read(uri) shouldBe empty
-    outputs(uri) shouldBe empty
     snapshotCount(uri) shouldBe 0
   }
 
   it should "replace a stale table at the same execution, with its rows and its label" in {
     val uri = createdLog()
-    appendEach(uri, stateRow(1, "READY"), outputRow(2, "Filter-operator-1"), stateRow(3, "FAILED"))
+    appendEach(uri, stateRow(1, "READY"), stateRow(2, "RUNNING"), stateRow(3, "FAILED"))
 
     create(uri, createdAtMs + 5000, beatEveryMs = 1000)
 
@@ -226,33 +182,22 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     read(uri) shouldBe Seq(stateRow(1, "READY"))
   }
 
-  it should "append several rows in one commit, and label the last state row among them" in {
+  it should "append several rows in one commit, and label the last of them" in {
     val uri = createdLog()
     append(uri, Seq(stateRow(1, "READY")), timeOf(1))
     val snapshotsBefore = snapshotCount(uri)
 
     val rows = Seq(
-      outputRow(2, "Filter-operator-1"),
-      stateRow(3, "RUNNING"),
-      stateRow(4, "PAUSED"),
-      outputRow(5, "Sort-operator-2")
+      stateRow(2, "RUNNING"),
+      stateRow(3, "PAUSED", reason = Some("paused by the user")),
+      stateRow(4, "RUNNING")
     )
     append(uri, rows, nowMs = timeOf(5))
 
     snapshotCount(uri) shouldBe snapshotsBefore + 1
     label(uri) shouldBe
-      Some(ExecutionLabel(Some("PAUSED"), 4, timeOf(4), None, timeOf(5), beatEveryMs))
+      Some(ExecutionLabel(Some("RUNNING"), 4, timeOf(4), None, timeOf(5), beatEveryMs))
     read(uri) shouldBe stateRow(1, "READY") +: rows
-  }
-
-  it should "leave the label's state alone and move its beat when it appends no state row" in {
-    val uri = createdLog()
-    append(uri, Seq(stateRow(1, "RUNNING", reason = Some("resumed"))), timeOf(1))
-
-    append(uri, Seq(outputRow(2, "Filter-operator-1")), nowMs = timeOf(2))
-
-    label(uri) shouldBe
-      Some(ExecutionLabel(Some("RUNNING"), 1, timeOf(1), Some("resumed"), timeOf(2), beatEveryMs))
   }
 
   it should "follow every change of state, and forget the reason of the state before" in {
@@ -303,13 +248,11 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
       Nil,
       // The seq of the rows of one append rises.
       Seq(stateRow(3, "RUNNING"), stateRow(2, "PAUSED")),
-      Seq(stateRow(2, "RUNNING"), outputRow(2, "Filter-operator-1")),
-      // A state row has one of the six states, and an output row none.
+      Seq(stateRow(2, "RUNNING"), stateRow(2, "PAUSED")),
+      // A row is a state row, with one of the six states.
       Seq(stateRow(2, "PAUSING")),
       Seq(stateRow(2, "running")),
       Seq(stateRow(2, "RUNNING").copy(state = None)),
-      Seq(outputRow(2, "Filter-operator-1").copy(state = Some("RUNNING"))),
-      Seq(outputRow(2, "Filter-operator-1").copy(detail = None)),
       Seq(stateRow(2, "RUNNING").copy(kind = "beat"))
     )
     refused.foreach { entries =>
@@ -373,7 +316,7 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
   }
 
   // ---------------------------------------------------------------------------
-  // read / outputs
+  // read
   // ---------------------------------------------------------------------------
 
   "read" should "return every row as it was appended, by seq" in {
@@ -382,8 +325,8 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
       "java.lang.RuntimeException: Grüße 日本語 😀\n" + "\tat a.b.C.d(C.scala:1)\n" * 20000
     val rows = Seq(
       stateRow(1, "READY"),
-      outputRow(2, "Filter-operator-1"),
-      stateRow(3, "RUNNING"),
+      stateRow(2, "RUNNING"),
+      stateRow(3, "PAUSED", reason = Some("paused by the user")),
       stateRow(4, "FAILED", errors = Seq(error("boom").copy(details = stackTrace)))
     )
     append(uri, rows.take(1), timeOf(1))
@@ -396,14 +339,13 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
 
   it should "return one row per seq when an append landed twice" in {
     val uri = createdLog()
-    val first = Seq(stateRow(1, "READY"), outputRow(2, "Filter-operator-1"))
+    val first = Seq(stateRow(1, "READY"), stateRow(2, "RUNNING"))
     // The first try's answer was lost, so the same rows are appended again, with a row more.
     append(uri, first, timeOf(2))
-    append(uri, first :+ stateRow(3, "RUNNING"), timeOf(3))
-    append(uri, Seq(stateRow(4, "COMPLETED")), timeOf(4))
+    append(uri, first :+ stateRow(3, "PAUSED"), timeOf(3))
+    append(uri, Seq(stateRow(4, "KILLED")), timeOf(4))
 
-    read(uri) shouldBe first ++ Seq(stateRow(3, "RUNNING"), stateRow(4, "COMPLETED"))
-    outputs(uri) shouldBe Seq(outputOf("Filter-operator-1"))
+    read(uri) shouldBe first ++ Seq(stateRow(3, "PAUSED"), stateRow(4, "KILLED"))
     snapshotCount(uri) shouldBe 3
   }
 
@@ -421,21 +363,6 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
       }
     ) shouldBe rows
     plans shouldBe 2
-  }
-
-  "outputs" should "be the stored output ports of the log, in the order they were recorded, each once" in {
-    val uri = createdLog()
-    appendEach(
-      uri,
-      stateRow(1, "READY"),
-      outputRow(2, "Sort-operator-2"),
-      outputRow(3, "Filter-operator-1"),
-      stateRow(4, "RUNNING"),
-      // The engine was told of the port again.
-      outputRow(5, "Sort-operator-2")
-    )
-
-    outputs(uri) shouldBe Seq(outputOf("Sort-operator-2"), outputOf("Filter-operator-1"))
   }
 
   // ---------------------------------------------------------------------------
@@ -492,7 +419,6 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     val uri = freshLogUri()
     label(uri) shouldBe None
     read(uri) shouldBe empty
-    outputs(uri) shouldBe empty
   }
 
   "A write" should "fail with NoSuchExecutionTableException where there is no table, and create none" in {
@@ -513,13 +439,12 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
 
   "Every operation" should "pass on a catalog failure, not take it for a missing log" in {
     val uri = createdLog(Some(warehouse))
-    appendEach(uri, stateRow(1, "READY"), outputRow(2, "Filter-operator-1"))
+    appendEach(uri, stateRow(1, "READY"), stateRow(2, "RUNNING"))
     val labelBefore = label(uri)
     val operations: Seq[(String, () => Any)] = Seq(
       "label" -> (() => label(uri)),
       "read" -> (() => read(uri)),
-      "outputs" -> (() => outputs(uri)),
-      "append" -> (() => append(uri, Seq(stateRow(3, "RUNNING")), timeOf(3))),
+      "append" -> (() => append(uri, Seq(stateRow(3, "PAUSED")), timeOf(3))),
       "beat" -> (() => beat(uri, timeOf(3))),
       "tidy" -> (() => tidy(uri, atEnd = true)),
       "drop" -> (() => drop(uri))
@@ -534,7 +459,7 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     }
     // The log is as it was.
     label(uri) shouldBe labelBefore
-    read(uri) shouldBe Seq(stateRow(1, "READY"), outputRow(2, "Filter-operator-1"))
+    read(uri) shouldBe Seq(stateRow(1, "READY"), stateRow(2, "RUNNING"))
   }
 
   it should "read and write a log whose URI names a warehouse, also when the URI comes as text" in {
@@ -563,7 +488,6 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
       "beat" -> (uri => beat(uri, timeOf(1))),
       "label" -> (uri => label(uri)),
       "read" -> (uri => read(uri)),
-      "outputs" -> (uri => outputs(uri)),
       "tidy" -> (uri => tidy(uri, atEnd = true)),
       "drop" -> (uri => drop(uri))
     )

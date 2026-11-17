@@ -37,7 +37,7 @@ object VFSResourceType extends Enumeration {
   val STATE: Value = Value("state")
   // An execution's stored plan, the updates to its paused operators and its start claim.
   val PLAN: Value = Value("plan")
-  // An execution's log: the changes of its state and its stored output ports.
+  // An execution's log: the changes of its state.
   val EXECUTION_LOG: Value = Value("executionLog")
 }
 
