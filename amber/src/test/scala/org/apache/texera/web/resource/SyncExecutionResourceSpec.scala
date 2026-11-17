@@ -1071,7 +1071,8 @@ class SyncExecutionResourceSpec
         bindingsFor = _ => TestUtils.fixtureBindings,
         replayLogRoot = None,
         warehousesEnabled = false,
-        costHints = NoHints
+        costHints = NoHints,
+        background = _.run()
       )
 
   private def syncUser(uid: Int = testUid): SessionUser = {

@@ -295,7 +295,8 @@ class OperatorUpdatesSpec
         bindingsFor = _ => TestUtils.fixtureBindings,
         replayLogRoot = None,
         warehousesEnabled = warehouses,
-        costHints = NoHints
+        costHints = NoHints,
+        background = _.run()
       )
 
   private object NoHints extends CostHintsLoader(1) {

@@ -52,6 +52,8 @@ import org.apache.texera.web.service.{
 }
 
 import java.net.URI
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{Executor, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
 import javax.ws.rs.core.Response
 import javax.ws.rs.{
   BadRequestException,
@@ -66,6 +68,28 @@ object ExecutionCreator {
 
   /** The longest text the execution's row keeps as its name, and as its engine version. */
   val MaxColumnLength = 128
+
+  /**
+    * A pool of at most `threads` daemon threads named after `name`, which queues the work they
+    * are all busy with and lets go of a thread that has had none for a minute.
+    */
+  private def daemonThreads(name: String, threads: Int): ThreadPoolExecutor = {
+    val count = new AtomicInteger()
+    val pool = new ThreadPoolExecutor(
+      threads,
+      threads,
+      1,
+      TimeUnit.MINUTES,
+      new LinkedBlockingQueue[Runnable](),
+      (task: Runnable) => {
+        val thread = new Thread(task, s"$name-${count.incrementAndGet()}")
+        thread.setDaemon(true)
+        thread
+      }
+    )
+    pool.allowCoreThreadTimeOut(true)
+    pool
+  }
 
   /** What a create is made of, once its request is checked. */
   private case class CheckedRequest(
@@ -113,8 +137,9 @@ object ExecutionCreator {
   *     from (as JSON that parses back to it, without what a compile sets,
   *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A plan larger
   *     than the table keeps marks the row FAILED (400); so does a write that fails (500).
-  *  1. The results of the workflow's earlier executions on the unit that have ended are cleared:
-  *     the new execution replaces them. A run that may still be running is left alone.
+  *  1. Off the request's thread, the results of the workflow's ended executions on the unit that
+  *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
+  *     new execution replaces none until a unit runs it.
   *
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
@@ -125,13 +150,15 @@ object ExecutionCreator {
   * @param costHints         finds the cost hints a plan is saved with
   * @param writePlan         writes the plan row, and the logical plan it was compiled from, to
   *                          the plan table at a URI
+  * @param background        runs what a create leaves to be done after it has answered
   */
 class ExecutionCreator(
     bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
     replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     costHints: CostHintsLoader = new CostHintsLoader(),
-    writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan
+    writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan,
+    background: Executor = ExecutionCreator.daemonThreads("execution-clearing", threads = 1)
 ) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, ExecutionNotCreated, MaxColumnLength}
 
@@ -246,7 +273,9 @@ class ExecutionCreator(
                 failure
               )
           }
-          ExecutionResources.clearFinishedExecutions(wid, checked.computingUnitId, eid)
+          background.execute(() =>
+            ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
+          )
           Right(
             CreateExecutionResponse(eid.id, checked.wid, checked.computingUnitId, planUri.toString)
           )

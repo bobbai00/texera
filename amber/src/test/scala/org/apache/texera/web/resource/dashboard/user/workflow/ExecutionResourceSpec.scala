@@ -128,6 +128,7 @@ import java.lang.reflect.Proxy
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.sql.Timestamp
+import java.util.concurrent.Executor
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{BadRequestException, InternalServerErrorException, WebApplicationException}
 import scala.collection.mutable
@@ -169,6 +170,8 @@ class ExecutionResourceSpec
   private val terminatedCuid = 9623
   private val otherUnitCuid = 9624
   private val strangerCuid = 9625
+  private val clearingCuid = 9626
+  private val sharedCuid = 9627
   private val unknownCuid = 9699
 
   /**
@@ -254,7 +257,9 @@ class ExecutionResourceSpec
       (readerCuid, readerUid, false),
       (terminatedCuid, creatorUid, true),
       (otherUnitCuid, creatorUid, false),
-      (strangerCuid, strangerUid, false)
+      (strangerCuid, strangerUid, false),
+      (clearingCuid, creatorUid, false),
+      (sharedCuid, creatorUid, false)
     ).foreach {
       case (cuid, owner, terminated) =>
         val unit = new WorkflowComputingUnit
@@ -268,12 +273,15 @@ class ExecutionResourceSpec
         unit.setResource("{}")
         new WorkflowComputingUnitDao(cfg).insert(unit)
     }
-    getDSLContext
-      .insertInto(COMPUTING_UNIT_USER_ACCESS)
-      .set(COMPUTING_UNIT_USER_ACCESS.CUID, Integer.valueOf(unitCuid))
-      .set(COMPUTING_UNIT_USER_ACCESS.UID, Integer.valueOf(readerUid))
-      .set(COMPUTING_UNIT_USER_ACCESS.PRIVILEGE, PrivilegeEnum.READ)
-      .execute()
+    Seq(unitCuid -> PrivilegeEnum.READ, sharedCuid -> PrivilegeEnum.WRITE).foreach {
+      case (cuid, privilege) =>
+        getDSLContext
+          .insertInto(COMPUTING_UNIT_USER_ACCESS)
+          .set(COMPUTING_UNIT_USER_ACCESS.CUID, Integer.valueOf(cuid))
+          .set(COMPUTING_UNIT_USER_ACCESS.UID, Integer.valueOf(readerUid))
+          .set(COMPUTING_UNIT_USER_ACCESS.PRIVILEGE, privilege)
+          .execute()
+    }
 
     val notes = new Dataset
     notes.setDid(notesDid)
@@ -335,7 +343,8 @@ class ExecutionResourceSpec
       wid: Int,
       cuid: Int,
       status: Short,
-      logLocation: Option[String] = None
+      logLocation: Option[String] = None,
+      uid: Int = creatorUid
   ): Unit = {
     val vid = getDSLContext
       .select(WORKFLOW_VERSION.VID)
@@ -346,13 +355,20 @@ class ExecutionResourceSpec
       .insertInto(WORKFLOW_EXECUTIONS)
       .set(WORKFLOW_EXECUTIONS.EID, Integer.valueOf(eid))
       .set(WORKFLOW_EXECUTIONS.VID, vid)
-      .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(creatorUid))
+      .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(uid))
       .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(cuid))
       .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation.orNull)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .execute()
   }
+
+  private def setStatus(eid: Long, status: Short): Unit =
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
+      .execute()
 
   /** Gives execution `eid` of `wid` a console table, registered as an operator's console. */
   private def withConsole(wid: Int, eid: Int): URI = {
@@ -403,7 +419,8 @@ class ExecutionResourceSpec
   /**
     * The creator under test, bound to the fixture files, links and versions in place of a
     * user's, and set up as the case needs. `resolvedFor` records the user each plan was
-    * bound for. The site's settings stay the ones the database holds.
+    * bound for. The site's settings stay the ones the database holds, and what a create leaves
+    * for after its answer is done before it returns, unless a case says otherwise.
     *
     * @param bindings what a plan is bound to, given what the deployment binds it to for its
     *                 user; the fixtures', unless a case gives another
@@ -414,6 +431,7 @@ class ExecutionResourceSpec
       val hints: RecordingHints = new RecordingHints(None),
       failWrite: Option[RuntimeException] = None,
       bindings: RunBindings => RunBindings = _ => TestUtils.fixtureBindings,
+      background: Executor = _.run(),
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
   ) extends ExecutionCreator(
         bindingsFor = uid => {
@@ -428,7 +446,8 @@ class ExecutionResourceSpec
           failWrite match {
             case Some(failure) => throw failure
             case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
-          }
+          },
+        background = background
       )
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -1510,9 +1529,12 @@ class ExecutionResourceSpec
   }
 
   it should "answer 500 and record the execution FAILED when its plan cannot be made for a reason not the workflow's" in {
-    // An ended run of the workflow on the unit, whose results a new execution would replace.
+    // An ended run of the workflow on the unit that a later one replaced: a create that goes
+    // through clears its results.
     insertExecution(961921, testWid, unitCuid, status = 3)
+    insertExecution(961923, testWid, unitCuid, status = 1)
     val console = withConsole(testWid, 961921)
+    withConsole(testWid, 961923)
     val databaseDown = new RuntimeException("db down")
     val before = executionCount
 
@@ -1530,7 +1552,7 @@ class ExecutionResourceSpec
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
     )
-    // Nothing replaced it, so the earlier run keeps its results.
+    // A create that fails clears nothing.
     consolesOf(961921) shouldBe 1
     hasTable(console) shouldBe true
   }
@@ -1570,40 +1592,79 @@ class ExecutionResourceSpec
 
   // --- clearing earlier runs ---
 
-  it should "clear the workflow's ended runs on the unit, but not when its workflow does not compile" in {
-    insertExecution(961911, testWid, unitCuid, status = 3) // completed: replaced
-    insertExecution(961912, testWid, unitCuid, status = 1) // still running
+  it should "leave the results of the unit's last run alone until a later execution has run" in {
+    insertExecution(961911, testWid, clearingCuid, status = 3) // what the unit ran last
     insertExecution(961913, testWid, otherUnitCuid, status = 3) // another unit's
-    insertExecution(961914, otherWid, unitCuid, status = 3) // another workflow's
-    // Created after the new one, as by a create that overtook a slow one: not the new one's to
-    // replace.
-    insertExecution(969001, testWid, unitCuid, status = 3)
-    val consoles = Seq(
-      961911 -> withConsole(testWid, 961911),
-      961912 -> withConsole(testWid, 961912),
-      961913 -> withConsole(testWid, 961913),
-      961914 -> withConsole(otherWid, 961914),
-      969001 -> withConsole(testWid, 969001)
-    ).toMap
+    insertExecution(961914, otherWid, clearingCuid, status = 3) // another workflow's
+    val consoles = mutable.Map(
+      961911L -> withConsole(testWid, 961911),
+      961913L -> withConsole(testWid, 961913),
+      961914L -> withConsole(otherWid, 961914)
+    )
+    def kept(eids: Long*): Unit =
+      eids.foreach { eid =>
+        withClue(s"execution $eid: ") {
+          consolesOf(eid.toInt) shouldBe 1
+          hasTable(consoles(eid)) shouldBe true
+        }
+      }
 
-    // A workflow that does not compile leaves the previous results on screen.
-    compileFailure(post(request(plan = brokenPlan())))
-    consoles.foreach {
-      case (eid, console) =>
-        consolesOf(eid) shouldBe 1
-        hasTable(console) shouldBe true
-    }
+    // A workflow that does not compile, then two executions that are created and not started,
+    // as a reload or a Stop during the create leaves them: the unit still shows its last run.
+    compileFailure(post(request(plan = brokenPlan(), cuid = clearingCuid)))
+    val abandoned = created(post(request(cuid = clearingCuid)))
+    val started = created(post(request(cuid = clearingCuid)))
+    row(abandoned.eid).getStatus shouldBe WorkflowExecutionStatus.Created
+    kept(961911, 961913, 961914)
 
-    created(post(request()))
+    // The unit starts the second, whose run writes its first console message.
+    setStatus(started.eid, WorkflowExecutionStatus.Running)
+    consoles += started.eid -> withConsole(testWid, started.eid.toInt)
+    created(post(request(cuid = clearingCuid)))
 
     consolesOf(961911) shouldBe 0
     hasTable(consoles(961911)) shouldBe false
-    Seq(961912, 961913, 961914, 969001).foreach { eid =>
-      consolesOf(eid) shouldBe 1
-      hasTable(consoles(eid)) shouldBe true
-    }
+    kept(961913, 961914, started.eid)
     // Cleared, not deleted: the execution stays in the history as it ended.
     row(961911).getStatus shouldBe 3.toByte
+  }
+
+  it should "clear what a run replaced once it has answered, not while the request waits" in {
+    insertExecution(961941, testWid, clearingCuid, status = 3)
+    insertExecution(961942, testWid, clearingCuid, status = 1)
+    val replaced = withConsole(testWid, 961941)
+    withConsole(testWid, 961942)
+    val left = mutable.ListBuffer.empty[Runnable]
+
+    created(
+      post(request(cuid = clearingCuid), creator = new FixtureCreator(background = left += _))
+    )
+
+    consolesOf(961941) shouldBe 1
+    hasTable(replaced) shouldBe true
+    left should have size 1
+
+    left.foreach(_.run())
+
+    consolesOf(961941) shouldBe 0
+    hasTable(replaced) shouldBe false
+  }
+
+  it should "clear what a run of another user replaced on a unit they share" in {
+    // The creator's last run on a unit the reader may also run workflows on, and the reader's
+    // run after it.
+    insertExecution(961931, testWid, sharedCuid, status = 3)
+    insertExecution(961932, testWid, sharedCuid, status = 1, uid = readerUid)
+    val creators = withConsole(testWid, 961931)
+    val readers = withConsole(testWid, 961932)
+
+    val execution = created(post(request(cuid = sharedCuid), uid = readerUid))
+
+    row(execution.eid).getUid shouldBe readerUid
+    consolesOf(961931) shouldBe 0
+    hasTable(creators) shouldBe false
+    consolesOf(961932) shouldBe 1
+    hasTable(readers) shouldBe true
   }
 
   // --- refused: rights ---

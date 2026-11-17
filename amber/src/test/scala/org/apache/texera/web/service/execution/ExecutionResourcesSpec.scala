@@ -113,6 +113,7 @@ class ExecutionResourcesSpec
   private val clearedUnit = 9441
   private val otherUnit = 9442
   private val idleUnit = 9443
+  private val replacedUnit = 9444
 
   /** The result and console tables the clearing cases make, dropped after the suite. */
   private val madeTables = mutable.ListBuffer.empty[URI]
@@ -160,7 +161,7 @@ class ExecutionResourcesSpec
     insertExecution(warehouseEid, testWid, whid = Some(warehouse.getWhid))
     insertExecution(otherWorkflowEid, otherWid, whid = None)
 
-    Seq(clearedUnit, otherUnit, idleUnit).foreach { cuid =>
+    Seq(clearedUnit, otherUnit, idleUnit, replacedUnit).foreach { cuid =>
       val unit = new WorkflowComputingUnit
       unit.setCuid(cuid)
       unit.setUid(testUid)
@@ -438,9 +439,9 @@ class ExecutionResourcesSpec
     }
   }
 
-  "ExecutionResources.clearFinishedExecutions" should
-    "clear the ended executions of the workflow on the unit before the new one, and only those" in {
-    // Ended, on the unit, holding results: a new execution replaces them.
+  "ExecutionResources.clearReplacedExecutions" should
+    "clear the ended executions of the workflow on the unit that a later one has replaced, and only those" in {
+    // Ended, on the unit, holding results, and older than an execution that holds some.
     insertExecution(943111, testWid, None, Some(clearedUnit), status = 3) // COMPLETED
     insertExecution(943112, testWid, None, Some(clearedUnit), status = 4) // FAILED
     insertExecution(943113, testWid, None, Some(clearedUnit), status = 5) // KILLED
@@ -448,11 +449,14 @@ class ExecutionResourcesSpec
     insertExecution(943114, testWid, None, Some(clearedUnit), status = 1) // RUNNING
     insertExecution(943115, testWid, None, Some(clearedUnit), status = 2) // PAUSED
     insertExecution(943116, testWid, None, Some(clearedUnit), status = 0) // Initializing
-    // Another unit's, another workflow's, the new execution itself, and one created after it.
+    // Another unit's and another workflow's.
     insertExecution(943117, testWid, None, Some(otherUnit), status = 3)
     insertExecution(943118, otherWid, None, Some(clearedUnit), status = 3)
+    // The latest that holds results: what the unit ran last, and still shows.
     insertExecution(943119, testWid, None, Some(clearedUnit), status = 3)
-    insertExecution(943121, testWid, None, Some(clearedUnit), status = 3)
+    // Later still, with nothing of their own: created and not started, and failed at its create.
+    insertExecution(943121, testWid, None, Some(clearedUnit), status = 6)
+    insertExecution(943122, testWid, None, Some(clearedUnit), status = 4)
     val consoles = Map(
       943111 -> withConsole(testWid, 943111),
       943113 -> withConsole(testWid, 943113),
@@ -461,32 +465,27 @@ class ExecutionResourcesSpec
       943116 -> withConsole(testWid, 943116),
       943117 -> withConsole(testWid, 943117),
       943118 -> withConsole(otherWid, 943118),
-      943119 -> withConsole(testWid, 943119),
-      943121 -> withConsole(testWid, 943121)
+      943119 -> withConsole(testWid, 943119)
     )
     val result = withResult(testWid, 943112)
-    // Ended before the new execution, on the unit, with nothing left to clear: passed over, and
-    // so not among the executions logged as cleared below.
+    // Ended, on the unit, replaced, with nothing left to clear: passed over, and so not among
+    // the executions logged as cleared below.
     insertExecution(943110, testWid, None, Some(clearedUnit), status = 3)
 
     val logged = loggedWhile {
-      ExecutionResources.clearFinishedExecutions(
-        WorkflowIdentity(testWid.toLong),
-        clearedUnit,
-        ExecutionIdentity(943119L)
-      )
+      ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), clearedUnit)
     }
 
     Seq(943111, 943112, 943113).foreach(eid => registered(eid) shouldBe 0)
     Seq(consoles(943111), result, consoles(943113)).foreach(uri => hasTable(uri) shouldBe false)
-    Seq(943114, 943115, 943116, 943117, 943118, 943119, 943121).foreach { eid =>
+    Seq(943114, 943115, 943116, 943117, 943118, 943119).foreach { eid =>
       registered(eid) shouldBe 1
       hasTable(consoles(eid)) shouldBe true
     }
     logged.map(_.getFormattedMessage).filter(_.startsWith("Cleared")) shouldBe
       Seq(943111, 943112, 943113).map(eid =>
-        s"Cleared the results of execution $eid, as execution 943119 of workflow $testWid on " +
-          s"computing unit $clearedUnit replaces it."
+        s"Cleared the results of execution $eid, which a later execution of workflow $testWid " +
+          s"on computing unit $clearedUnit replaced."
       )
     // The executions themselves stay, in the states they ended in.
     getDSLContext
@@ -500,9 +499,34 @@ class ExecutionResourcesSpec
       .toList shouldBe List((943111, 3), (943112, 4), (943113, 5))
   }
 
+  it should "keep what the unit ran last until a later execution holds results of its own" in {
+    insertExecution(943151, testWid, None, Some(replacedUnit), status = 3)
+    val shown = withConsole(testWid, 943151)
+    // Created and never started, failed at its create, and started but with nothing to show yet.
+    insertExecution(943152, testWid, None, Some(replacedUnit), status = 6)
+    insertExecution(943153, testWid, None, Some(replacedUnit), status = 4)
+    insertExecution(943154, testWid, None, Some(replacedUnit), status = 0)
+
+    ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), replacedUnit)
+
+    registered(943151) shouldBe 1
+    hasTable(shown) shouldBe true
+
+    // The run of the last one writes its first console message.
+    val running = withConsole(testWid, 943154)
+
+    ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), replacedUnit)
+
+    registered(943151) shouldBe 0
+    hasTable(shown) shouldBe false
+    registered(943154) shouldBe 1
+    hasTable(running) shouldBe true
+  }
+
   it should "log an execution that cannot be cleared, and go on to the next" in {
     insertExecution(943131, otherWid, None, Some(otherUnit), status = 3)
     insertExecution(943132, otherWid, None, Some(otherUnit), status = 3)
+    insertExecution(943133, otherWid, None, Some(otherUnit), status = 1)
     // A console location that is not a URI: clearing 943131 fails before it deletes anything.
     getDSLContext
       .insertInto(OPERATOR_EXECUTIONS)
@@ -511,12 +535,12 @@ class ExecutionResourcesSpec
       .set(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI, "not a uri")
       .execute()
     val console = withConsole(otherWid, 943132)
+    withConsole(otherWid, 943133)
 
     val logged = loggedWhile {
-      noException should be thrownBy ExecutionResources.clearFinishedExecutions(
+      noException should be thrownBy ExecutionResources.clearReplacedExecutions(
         WorkflowIdentity(otherWid.toLong),
-        otherUnit,
-        ExecutionIdentity(943133L)
+        otherUnit
       )
     }
 
@@ -531,15 +555,14 @@ class ExecutionResourcesSpec
 
   it should "clear nothing, and say so, when the executions cannot be listed" in {
     val logged = loggedWhile {
-      noException should be thrownBy ExecutionResources.clearFinishedExecutions(
+      noException should be thrownBy ExecutionResources.clearReplacedExecutions(
         WorkflowIdentity(Int.MaxValue.toLong + 1),
-        clearedUnit,
-        ExecutionIdentity(1L)
+        clearedUnit
       )
     }
 
     logged.filter(_.getLevel == Level.WARN).map(_.getFormattedMessage) shouldBe Seq(
-      s"The ended executions of workflow ${Int.MaxValue.toLong + 1} on computing unit " +
+      s"The replaced executions of workflow ${Int.MaxValue.toLong + 1} on computing unit " +
         s"$clearedUnit could not be listed, so their results are kept."
     )
   }
@@ -548,11 +571,7 @@ class ExecutionResourcesSpec
     insertExecution(943141, testWid, None, Some(idleUnit), status = 4)
 
     val statements = recorder.record {
-      ExecutionResources.clearFinishedExecutions(
-        WorkflowIdentity(testWid.toLong),
-        idleUnit,
-        ExecutionIdentity(943142L)
-      )
+      ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), idleUnit)
     }
 
     // 943141 holds nothing to clear, so the listing is all that is sent.

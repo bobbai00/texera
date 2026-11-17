@@ -39,6 +39,7 @@ import org.apache.texera.dao.jooq.generated.Tables.{
 }
 import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.jooq.{Condition, Field}
 import org.jooq.impl.DSL
 
 import java.net.URI
@@ -49,7 +50,7 @@ import scala.util.control.NonFatal
   * What an execution keeps outside its row: the warehouse it writes into, which is checked when
   * it is created ([[resolveLakekeeperWarehouseName]]); its plan table, found from its row and
   * dropped with it; and what it produced, which is cleared when a later execution of its workflow
-  * on its unit replaces it ([[clearFinishedExecutions]]) or its unit is done with it.
+  * on its unit replaces it ([[clearReplacedExecutions]]) or its unit is done with it.
   */
 object ExecutionResources extends LazyLogging {
 
@@ -225,37 +226,39 @@ object ExecutionResources extends LazyLogging {
   }
 
   /**
-    * Clears the results of the executions of workflow `wid` on computing unit `cuid` created
-    * before `replacedBy` that have ended (completed, failed or killed) and still hold results or
-    * console messages: what the new execution `replacedBy` replaces. An execution that may still
-    * run, whatever its state, is left alone, and so are the workflow's runs on any other unit and
-    * any execution created after `replacedBy`, which a slow create must not clear.
+    * Clears what the executions of workflow `wid` on computing unit `cuid` produced that a later
+    * execution has replaced: those that have ended (completed, failed or killed), still hold
+    * results or console messages, and are older than an execution of the workflow on the unit
+    * that holds some of its own.
+    *
+    * A unit writes those as it runs an execution, so nothing is cleared for an execution that
+    * was only created: the execution the unit ran last, whose results it still shows, keeps them
+    * until a later one has results in their place. The status does not tell as much, since an
+    * execution that failed at its create is recorded like one that failed on its unit. An
+    * execution that may still run, whatever its state, is left alone, and so are the workflow's
+    * runs on any other unit.
     *
     * Each is cleared by [[clearExecutionResources]]. Nothing here is thrown: an execution that
     * cannot be cleared, or a database that cannot list them, is logged, and keeps its results.
     */
-  def clearFinishedExecutions(
-      wid: WorkflowIdentity,
-      cuid: Int,
-      replacedBy: ExecutionIdentity
-  ): Unit = {
-    val ended =
-      try finishedExecutionsWithResults(wid, cuid, replacedBy)
+  def clearReplacedExecutions(wid: WorkflowIdentity, cuid: Int): Unit = {
+    val replaced =
+      try replacedExecutions(wid, cuid)
       catch {
         case NonFatal(failure) =>
           logger.warn(
-            s"The ended executions of workflow ${wid.id} on computing unit $cuid could not be " +
-              "listed, so their results are kept.",
+            s"The replaced executions of workflow ${wid.id} on computing unit $cuid could not " +
+              "be listed, so their results are kept.",
             failure
           )
           Seq.empty
       }
-    ended.foreach { eid =>
+    replaced.foreach { eid =>
       try {
         clearExecutionResources(eid)
         logger.info(
-          s"Cleared the results of execution ${eid.id}, as execution ${replacedBy.id} of " +
-            s"workflow ${wid.id} on computing unit $cuid replaces it."
+          s"Cleared the results of execution ${eid.id}, which a later execution of workflow " +
+            s"${wid.id} on computing unit $cuid replaced."
         )
       } catch {
         case NonFatal(failure) =>
@@ -265,43 +268,43 @@ object ExecutionResources extends LazyLogging {
   }
 
   /**
-    * The executions [[clearFinishedExecutions]] clears, oldest first, in one SELECT: those of
-    * `wid` (through its versions) on `cuid` with an id below `replacedBy`'s that have ended and
-    * have a row in `operator_port_executions` or `operator_executions`.
+    * The executions [[clearReplacedExecutions]] clears, oldest first, in one SELECT: those of
+    * `wid` (through its versions) on `cuid` that have ended, have a row in
+    * `operator_port_executions` or `operator_executions`, and have a lower id than another
+    * execution of `wid` on `cuid` with such a row.
     */
-  private def finishedExecutionsWithResults(
-      wid: WorkflowIdentity,
-      cuid: Int,
-      replacedBy: ExecutionIdentity
-  ): Seq[ExecutionIdentity] = {
-    val context = SqlServer.getInstance().createDSLContext()
-    context
+  private def replacedExecutions(wid: WorkflowIdentity, cuid: Int): Seq[ExecutionIdentity] = {
+    val workflowId = Integer.valueOf(Math.toIntExact(wid.id))
+    val later = WORKFLOW_EXECUTIONS.as("later")
+    val laterVersion = WORKFLOW_VERSION.as("later_version")
+    SqlServer
+      .getInstance()
+      .createDSLContext()
       .select(WORKFLOW_EXECUTIONS.EID)
       .from(WORKFLOW_EXECUTIONS)
       .join(WORKFLOW_VERSION)
       .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
       .where(
         WORKFLOW_VERSION.WID
-          .eq(Integer.valueOf(Math.toIntExact(wid.id)))
+          .eq(workflowId)
           .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
           .and(WORKFLOW_EXECUTIONS.STATUS.in(WorkflowExecutionStatus.Ended.map(Short.box).asJava))
-          .and(WORKFLOW_EXECUTIONS.EID.lt(Integer.valueOf(Math.toIntExact(replacedBy.id))))
+          .and(holdsResults(WORKFLOW_EXECUTIONS.EID))
           .and(
-            DSL
-              .exists(
-                DSL
-                  .selectOne()
-                  .from(OPERATOR_PORT_EXECUTIONS)
-                  .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(WORKFLOW_EXECUTIONS.EID))
-              )
-              .or(
-                DSL.exists(
-                  DSL
-                    .selectOne()
-                    .from(OPERATOR_EXECUTIONS)
-                    .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(WORKFLOW_EXECUTIONS.EID))
+            DSL.exists(
+              DSL
+                .selectOne()
+                .from(later)
+                .join(laterVersion)
+                .on(laterVersion.VID.eq(later.VID))
+                .where(
+                  laterVersion.WID
+                    .eq(workflowId)
+                    .and(later.CUID.eq(Integer.valueOf(cuid)))
+                    .and(later.EID.gt(WORKFLOW_EXECUTIONS.EID))
+                    .and(holdsResults(later.EID))
                 )
-              )
+            )
           )
       )
       .orderBy(WORKFLOW_EXECUTIONS.EID)
@@ -310,4 +313,22 @@ object ExecutionResources extends LazyLogging {
       .map(row => ExecutionIdentity(row.value1().longValue()))
       .toSeq
   }
+
+  /** Whether the execution whose id is `eid` has a result or a console registered. */
+  private def holdsResults(eid: Field[Integer]): Condition =
+    DSL
+      .exists(
+        DSL
+          .selectOne()
+          .from(OPERATOR_PORT_EXECUTIONS)
+          .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid))
+      )
+      .or(
+        DSL.exists(
+          DSL
+            .selectOne()
+            .from(OPERATOR_EXECUTIONS)
+            .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid))
+        )
+      )
 }

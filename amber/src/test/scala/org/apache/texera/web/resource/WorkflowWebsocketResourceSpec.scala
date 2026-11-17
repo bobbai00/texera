@@ -954,7 +954,8 @@ class WorkflowWebsocketResourceSpec
         bindingsFor = _ => TestUtils.fixtureBindings,
         replayLogRoot = None,
         warehousesEnabled = false,
-        costHints = NoHints
+        costHints = NoHints,
+        background = _.run()
       )
 
   /** The Dashboard's store of a change to a paused operator, with the fixture bindings. */

@@ -225,7 +225,8 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         bindingsFor = _ => bindings,
         replayLogRoot = None,
         warehousesEnabled = false,
-        costHints = NoHints
+        costHints = NoHints,
+        background = _.run()
       )
 
   /**
