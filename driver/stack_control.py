@@ -29,6 +29,7 @@ prints one JSON document for the driver.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -48,6 +49,10 @@ DEFAULT_CONTAINERS = {
     "workflow-runtime-coordinator-service": "sce-workflow-runtime-coordinator-service",
     "nginx": "sce-texera-nginx",
 }
+#: Docker's CLI takes DOCKER_HOST over any context. In Kubernetes and local-dev mode the
+#: driver points its own at this socket, which does not exist: every `docker` call the
+#: driver makes fails at once, so nothing it runs can reach another stack's containers.
+NO_DOCKER = "unix:///nonexistent/sce-e2e-kubernetes-mode-has-no-docker-containers.sock"
 #: `docker stop` gives the unit this long to stop by itself (design H1)
 STOP_GRACE_S = 20
 #: how long a restarted unit may take to become healthy
@@ -174,10 +179,17 @@ class SingleNodeControl(StackControl):
         return sorted(a for a in found if a)
 
 
+def stack_script_env() -> dict[str, str]:
+    """The environment a stack script runs in: the driver's, without the driver's own guard
+    against Docker. The script reaches its own stack's containers (local-dev's Postgres is
+    one), as it does when it is run by hand."""
+    return {k: v for k, v in os.environ.items() if (k, v) != ("DOCKER_HOST", NO_DOCKER)}
+
+
 def run_stack_script(script: Path, *args: str, timeout: float = 300) -> object:
     """Run a stack script's subcommand and read the one JSON document it prints."""
     p = subprocess.run([str(script), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                       timeout=timeout)
+                       timeout=timeout, env=stack_script_env())
     if p.returncode != 0:
         raise StackControlError(f"{script.name} {' '.join(args)}: exit {p.returncode}: "
                                 f"{(p.stderr or p.stdout).strip()[-400:]}")

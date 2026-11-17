@@ -13,11 +13,18 @@ It follows the design's steps, with their limits:
   * so a lost unit's execution reads Running until then (4.6), and one whose run just
     ended reads its ending from the label while its row is still open;
   * an execution that is lost ended at its unit's last beat, not when the job noticed;
-  * create closes the earlier executions of its workflow on its unit whose label shows
-    an ending, then expires the closed ones; a pass by age expires the rest (D31);
-  * an expiry drops the result and state tables the log names (found by name when
-    there is no log) and the console table, keeps the plan, the log and the statistics,
-    and counts what is left into `stored_bytes`.
+  * an open execution whose label names no state reads Created: no unit has started it;
+  * the job's expiry, at most once per check interval: a closed execution's results go
+    when they are older than the TTL, or when a later execution of its workflow on its
+    unit has started (its label names a state). A create alone expires nothing;
+  * an expiry drops the execution's result and state tables, found by their names, and
+    the console table, keeps the plan, the log and the statistics (D31), and counts
+    what is left into `stored_bytes`.
+
+The last three follow docs/step3-notes/changes-since-rev2.md (sections 2 to 4), where it
+differs from the design's revision 2: the log names no stored port, a created execution
+has a status of its own, and results are replaced by a later run that started, not by
+the next create.
 
 `faults` (FAULTS below, the fake's set) makes it misbehave in the ways the scenarios and
 Check K exist to catch; the tests turn them on one at a time.
@@ -38,7 +45,7 @@ REASON_UNIT_TERMINATED = "unit terminated"
 REASON_NEVER_STARTED = "never started"
 REASON_COMPILE_ERROR = "compile error: "
 REASON_CHARS = 500
-STATUS_NAMES = {0: "READY", 1: "RUNNING", 2: "PAUSED", 3: "COMPLETED", 4: "FAILED", 5: "KILLED"}
+STATUS_NAMES = {0: "READY", 1: "RUNNING", 2: "PAUSED", 3: "COMPLETED", 4: "FAILED", 5: "KILLED", 6: "CREATED"}
 #: an expiry keeps these tables of an execution and drops the rest (D31)
 KEPT = ("plan", "log", "statistics")
 
@@ -55,8 +62,11 @@ FAULTS = {
     "expiry-keeps-results": "an expiry marks the execution expired and drops nothing",
     "expiry-drops-record": "an expiry drops the plan, the log and the statistics too",
     "stored-bytes-unchanged": "an expiry leaves stored_bytes as it was",
-    "no-expiry-by-age": "results never expire by age, only at the next create",
-    "expiry-too-early": "the pass by age expires every closed execution, whatever its age",
+    "no-expiry-by-age": "results never expire by age, only when a later run replaces them",
+    "expiry-too-early": "the expiry takes every closed execution's results, whatever their age",
+    "no-replacement": "a later run that started replaces nothing: results expire by age only",
+    "replaced-at-create": "a create expires the closed earlier executions of its workflow on its unit at once, "
+                          "started or not (the design's revision 2)",
 }
 
 
@@ -108,22 +118,13 @@ class Closing:
         return [first[seq] for seq in sorted(first)]
 
     def stored_port_tables(self, eid: int) -> list[tuple[str, str]]:
-        """(namespace, table) of every result and state table of the execution. They are
-        the ones its log's `output` rows name; an execution without a log has them found
-        by name (design 4.4), and so has one whose ports are named in its plan instead.
-        The only reader of the `output` rows on the fake Dashboard."""
+        """(namespace, table) of every result and state table of the execution, found by
+        their names: the Dashboard knows where a port of the execution is stored without
+        its log, and a port that was not stored has no table."""
         e = self.fake.executions[eid]
-        warehouse = self.fake.warehouse_of(e)
-        if self.fake.execution_table(eid, "log") is None or not self.fake.log_names_stored_ports:
-            prefix = f"wid_{e['wid']}_eid_{eid}_"
-            return [(NAMESPACES[kind], name) for kind in ("result", "state")
-                    for name in self.fake.lake.names(warehouse, NAMESPACES[kind]) if name.startswith(prefix)]
-        found = []
-        for row in self.rows(eid):
-            if row["kind"] == "output":
-                base = json.loads(row["detail"])["uri"].split("/wid/", 1)[1].rsplit("/", 1)[0]
-                found += [(NAMESPACES[kind], f"wid/{base}/{kind}".replace("/", "_")) for kind in ("result", "state")]
-        return found
+        warehouse, prefix = self.fake.warehouse_of(e), f"wid_{e['wid']}_eid_{eid}_"
+        return [(NAMESPACES[kind], name) for kind in ("result", "state")
+                for name in self.fake.lake.names(warehouse, NAMESPACES[kind]) if name.startswith(prefix)]
 
     def _size(self, eid: int, kinds=("plan", "log", "statistics", "console"), ports: bool = True) -> int:
         """The bytes of the execution's tables, as the catalog's summaries count them; a
@@ -183,7 +184,7 @@ class Closing:
             with self.fake.lock:
                 self.tick()
                 if time.monotonic() >= next_expiry:
-                    self.expire_by_age()
+                    self.expire_pass()
                     next_expiry = time.monotonic() + timing.expiry_check_interval_s
 
     def tick(self) -> None:
@@ -264,37 +265,53 @@ class Closing:
         if with_replay_log:
             e["log"] = None
 
-    def expire_replaced(self, wid: int, cuid: int, replaced_by: int) -> None:
-        """What create does for the earlier executions of its workflow on its unit: close
-        the ones whose run has just ended, then expire the closed ones."""
-        earlier = [eid for eid, e in sorted(self.fake.executions.items())
-                   if eid < replaced_by and (e["wid"], e["cuid"]) == (wid, cuid) and e.get("plan_uri")]
-        for eid in earlier:
-            if self.fake.executions[eid]["ended_at"] is None:
-                self.close_if_ended(eid)
-            if self.fake.executions[eid]["ended_at"] is not None:
-                self.expire(eid)
-
-    def expire_by_age(self) -> None:
-        if "no-expiry-by-age" in self.faults:
+    def expire_pass(self) -> None:
+        """The expiry's look at every closed execution that still has its results: they go
+        when they are older than the TTL (and its replay log with them), or when a later
+        run has replaced them. A lake that cannot be read decides nothing."""
+        if self.fake.lake.unreadable:
             return
         ttl_ms = 0 if "expiry-too-early" in self.faults else self.fake.timing.result_ttl_s * 1000
         for eid, e in sorted(self.fake.executions.items()):
-            if e.get("plan_uri") and e["ended_at"] is not None and e["ended_at"] < now_ms() - ttl_ms:
-                self.expire(eid, with_replay_log=True)
+            if not e.get("plan_uri") or e["ended_at"] is None or e["results_expired_at"] is not None:
+                continue
+            aged = e["ended_at"] < now_ms() - ttl_ms and "no-expiry-by-age" not in self.faults
+            if aged or self.replaced(eid):
+                self.expire(eid, with_replay_log=aged)
+
+    def has_started(self, eid: int) -> bool:
+        """Whether a unit has started the execution: its log's label names a state."""
+        label = self.label(eid)
+        return bool(label and label["state"])
+
+    def replaced(self, eid: int) -> bool:
+        """Whether a later execution of the workflow on the unit has started. One that was
+        only created replaces nothing: the results the unit ran last stay until a run has
+        some in their place."""
+        if "no-replacement" in self.faults:
+            return False
+        e = self.fake.executions[eid]
+        return any(later > eid and (x["wid"], x["cuid"]) == (e["wid"], e["cuid"]) and self.has_started(later)
+                   for later, x in self.fake.executions.items())
+
+    def expire_at_create(self, wid: int, cuid: int, created: int) -> None:
+        """The fault `replaced-at-create`: what the design's revision 2 had a create do."""
+        for eid, e in sorted(self.fake.executions.items()):
+            if eid < created and (e["wid"], e["cuid"]) == (wid, cuid) and e["ended_at"] is not None:
+                self.expire(eid)
 
     # ------------------------------------------------- what the routes answer
 
     def status(self, eid: int) -> int:
         """Design D21: the outcome of a closed execution; for an open one its label's
-        state, 0 without a log, -1 when the lake cannot be read."""
+        state, Created while its label names none, -1 when the lake cannot be read."""
         e = self.fake.executions[eid]
         if e["ended_at"] is not None:
             return e["outcome"]
         if self.fake.lake.unreadable:
             return -1
         label = self.label(eid)
-        return STATE_CODES.get(label["state"], 0) if label and label["state"] else 0
+        return STATE_CODES.get(label["state"], 0) if label and label["state"] else self.fake.created_status
 
     def completion_ms(self, eid: int) -> int | None:
         """D21: `ended_at` when closed; while open the time of the newest state change, never

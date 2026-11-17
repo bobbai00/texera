@@ -7,7 +7,8 @@ instant a state reaches its socket may still see the state before. In order:
 
   * a state change is one commit: the row and the label together (D3); then the
     statistics sample and the console buffer are stored;
-  * a stored output port is one row;
+  * the log holds state changes only: a stored port's location is in the plan
+    (docs/step3-notes/changes-since-rev2.md, section 2), not in an `output` row;
   * a tick, every commit interval: the beat first (a property, no snapshot), then
     one statistics row per operator whose numbers changed since its last stored row
     (D10), then the buffered console rows, then a tidy of a table that reached 50
@@ -50,6 +51,7 @@ REASON_CHARS = 500
 FAULTS = {
     "row-lost": "the ending's row never lands, though its label does (a label ahead of its rows)",
     "seq-gap": "the recorder skips a seq (the second row is numbered 3)",
+    "output-rows": "the log also holds an `output` row per stored port, as in the design's revision 2",
     "no-end-tidy": "the end tidy merges nothing (several data files and snapshots stay)",
     "statistics-at-end-only": "statistics are stored when the run ends, not on the timer",
     "console-at-end-only": "console output is stored when the run ends, not on the timer",
@@ -68,8 +70,6 @@ class Recorder:
         self.faults = faults
         #: how long one commit to the lake takes
         self.commit_delay_s = commit_delay_s
-        #: the stored ports this recorder was told of (the unit's own reads use them, D34)
-        self.outputs: list[dict] = []
         self.ended = False
         self._seq = 0
         self._last_state: str | None = None
@@ -106,13 +106,10 @@ class Recorder:
         self._submit(lambda: self._write_state(row, label, final_tidy))
 
     def output(self, port_id: str, uri: str, mode: str) -> None:
-        """The engine made the result table of a stored output port. Told twice, recorded once."""
+        """The fault `output-rows`: a row for a stored output port, which the log no longer holds."""
         with self._lock:
-            if any(o["portId"] == port_id for o in self.outputs):
-                return
-            told = {"portId": port_id, "uri": uri, "outputMode": mode}
-            self.outputs.append(told)
             seq = self._next_seq()
+        told = {"portId": port_id, "uri": uri, "outputMode": mode}
         row = {"seq": seq, "timeMs": now_ms(), "kind": "output", "state": None, "detail": json.dumps(told)}
         self._submit(lambda: self._append("log", [row], {LABEL + "beat-ms": str(now_ms())}))
 

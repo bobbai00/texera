@@ -65,6 +65,21 @@ class RecordTiming:
         return self.never_started_after_s + 2 * self.closing_interval_s
 
     @property
+    def replaced_verdict_s(self) -> float:
+        """An ended execution's results are gone within this long of the start of a later
+        execution of its workflow on its unit. The closing job's expiry replaces them once
+        the later one's label shows that it has started
+        (docs/step3-notes/changes-since-rev2.md, section 4): that label is written within a
+        commit interval, the expiry looks every check interval, the job ticks in between."""
+        return self.commit_interval_s + self.expiry_check_interval_s + 2 * self.closing_interval_s
+
+    @property
+    def expired_verdict_s(self) -> float:
+        """Results that nothing replaces are gone within this long of their run's end: the
+        TTL, one look of the expiry and two ticks of the closing job (design H3)."""
+        return self.result_ttl_s + self.expiry_check_interval_s + 2 * self.closing_interval_s
+
+    @property
     def poll_s(self) -> float:
         """How often a scenario looks while it waits for the closing job."""
         return min(0.5, self.closing_interval_s / 4)

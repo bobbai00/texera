@@ -1720,7 +1720,8 @@ def main() -> None:
     p = sub.add_parser("follow-units", help="stream every unit pod's log into a directory")
     p.add_argument("dir", type=Path)
     p = sub.add_parser("post-run", help="after a driver run: the unit's pod is gone, the driver's refusal "
-                                        "probes were ext-authz's; folded into the report (exit 4 on a failure)")
+                                        "probes were ext-authz's, no marked request for stored output went "
+                                        "to a unit; folded into the report (exit 4 on a failure)")
     p.add_argument("report", type=Path)
     p.add_argument("--wait", type=float, default=90, help="seconds to wait for unit pods to go")
     p.add_argument("--unit-kept", action="store_true", help="the driver ran with --keep-unit")

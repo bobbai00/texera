@@ -12,6 +12,7 @@ step-2 scenarios, a pass here says the driver follows the design, not that a bra
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import time
 import unittest
@@ -155,10 +156,15 @@ class RecordInLake(Step3Case):
 
     def test_p_fails_on_a_gap_in_seq(self):
         self.fake.faults.add("seq-gap")
-        rec = self.fails_on("p", "the log holds one row per seq")
+        rec = self.fails_on("p", "the log holds one row per state change")
         detail = next(c.detail for c in rec.checks if not c.ok)
-        self.assertIn("5 row(s)", detail)  # READY, the output, RUNNING, PAUSED, RUNNING ...
-        self.assertIn("('RUNNING', 6)", detail)  # ... numbered up to 6
+        self.assertIn("4 row(s)", detail)  # READY, RUNNING, PAUSED, RUNNING ...
+        self.assertIn("('RUNNING', 5)", detail)  # ... numbered up to 5
+
+    def test_p_fails_when_the_log_holds_a_row_that_is_no_state_change(self):
+        """The design's revision 2 had the log name each stored port; it no longer does."""
+        rec = self.fails_on("p", "the log holds one row per state change", fault="output-rows")
+        self.assertIn("5 row(s)", next(c.detail for c in rec.checks if not c.ok))
 
 
 class Step3BCase(Step3Case):
@@ -180,27 +186,21 @@ class RecordServedByTheDashboard(Step3BCase):
 
     def test_p_reads_the_log_from_the_dashboard(self):
         rec = self.run_key("p")
-        self.assertEqual(12, len(rec.checks), self.names(rec))
-        self.assertIn("/log names the stored output port: its id, its result table (of this execution) and "
-                      "its output mode", self.names(rec))
+        self.assertEqual(11, len(rec.checks), self.names(rec))
         logs = [r for r in self.fake.rest_log if r["path"] == f"/api/executions/{rec.eid}/log"]
         self.assertEqual(2, len(logs))  # while it runs, and after
+        # the log holds the run's five state changes and nothing else
+        self.assertEqual(["state"] * 5, [r["kind"] for r in self.fake.closing.rows(rec.eid)])
+
+    WHILE_IT_RUNS = "while it runs /log shows READY, RUNNING, PAUSED, RUNNING and nothing else"
 
     def test_p_fails_on_a_gap_in_seq(self):
-        rec = self.fails_on("p", "while it runs /log shows READY, RUNNING, PAUSED, RUNNING, with seq rising by one",
-                            "after the run /log's last row is COMPLETED", fault="seq-gap")
-        self.assertIn("seq [1, 3, 4, 5, 6]", self.detail(rec, "while it runs /log"))
+        rec = self.fails_on("p", self.WHILE_IT_RUNS, "after the run /log's last row is COMPLETED", fault="seq-gap")
+        self.assertIn("seq [1, 3, 4, 5]", self.detail(rec, self.WHILE_IT_RUNS))
 
-    def test_p_asks_nothing_of_output_rows_once_the_plan_names_the_ports(self):
-        """The one switch for a log without `output` rows (the owner may move the stored
-        ports' locations into the plan): with it off, p does not look for them."""
-        self.addCleanup(setattr, scenarios, "LOG_NAMES_STORED_PORTS", texera_api.LOG_NAMES_STORED_PORTS)
-        scenarios.LOG_NAMES_STORED_PORTS = False
-        self.fake.log_names_stored_ports = False
-        rec = self.run_key("p")
-        self.assertEqual(11, len(rec.checks), self.names(rec))
-        self.assertFalse(any("stored output port" in name for name in self.names(rec)))
-        self.assertEqual(["state"] * 5, [r["kind"] for r in self.fake.closing.rows(rec.eid)])
+    def test_p_fails_when_the_log_holds_a_row_that_is_no_state_change(self):
+        rec = self.fails_on("p", self.WHILE_IT_RUNS, fault="output-rows")
+        self.assertIn("states ['READY', None, 'RUNNING', 'PAUSED', 'RUNNING']", self.detail(rec, self.WHILE_IT_RUNS))
 
     def test_j_waits_for_the_closing_record_before_its_late_change(self):
         rec = self.run_key("j")
@@ -325,7 +325,7 @@ class NeverStarted(Step3BCase):
     def test_r(self):
         rec = self.run_key("r")
         verdict = rec.facts["never_started_verdict"]
-        self.assertEqual({0}, {r["status"] for r in verdict["readings"][:-1]})
+        self.assertEqual({6}, {r["status"] for r in verdict["readings"][:-1]})  # Created until it is closed
         self.assertGreaterEqual(verdict["readings"][-1]["t"], self.timing.never_started_after_s)
         self.assertTrue(self.fake.executions[rec.eid]["started"])  # the Dashboard took the start
         self.assertFalse(self.fake.runs)  # and nothing ever ran
@@ -334,7 +334,12 @@ class NeverStarted(Step3BCase):
         rec = self.fails_on("r", "the history turns status 4", "/state says closed", "the plan table has",
                             "a start after that: the starting socket", "a start after that: never Running",
                             "a start after that: the row stays 4", fault="never-started-never-closed")
-        self.assertIn("'status': 0", self.detail(rec, "the history turns status 4"))
+        self.assertIn("'status': 6", self.detail(rec, "the history turns status 4"))
+
+    def test_r_fails_when_an_unstarted_execution_reads_as_one_that_is_starting(self):
+        """Before step 2's review a created execution read Initializing, which locked its editor."""
+        rec = self.fails_on("r", "until then the history reads status 6", fault="created-reads-initializing")
+        self.assertIn("'status': 0", self.detail(rec, "until then the history reads status 6"))
 
     def test_r_fails_on_a_verdict_that_comes_too_early(self):
         self.fails_on("r", "... and not before it is older than never-started-after",
@@ -360,25 +365,43 @@ class PoliteStop(Step3BCase):
         self.assertIn("'status': 1", self.detail(rec, "the history turns status 4"))
 
 
+#: t's waits are a few scheduling delays away from the TTL at a tenth of --fast-record's
+#: timers (as they are a few seconds away on a stack), so its tests get a longer one
+EXPIRY_TIMING = dataclasses.replace(FAST, result_ttl_s=3.0)
+
+
 class Expiry(Step3BCase):
-    AFTER = ("first execution, after the second create", "second execution, after the TTL")
+    timing = EXPIRY_TIMING
+    AFTER = ("first execution, replaced", "second execution, after the TTL")
+    REPLACED = "first execution: the second, once started, replaces its results"
+    AGED = "second execution: a third that is created and never started replaces nothing"
 
     def test_t(self):
         rec = self.run_key("t")
-        first, second = sorted(e for e, x in self.fake.executions.items() if x["wid"] == rec.wid)
+        first, second, third = sorted(e for e, x in self.fake.executions.items() if x["wid"] == rec.wid)
         self.assertEqual(second, rec.eid)
+        ages = []
         for eid in (first, second):
             row = self.fake.executions[eid]
-            self.assertIsNotNone(row["results_expired_at"])
             self.assertEqual(3, row["outcome"])
-        # no third execution was created: the second one's results went by age
-        creates = [r for r in self.fake.rest_log if (r["method"], r["path"]) == ("POST", "/api/executions")]
-        self.assertEqual(2, len(creates))
+            ages.append((row["results_expired_at"] - row["ended_at"]) / 1000)
+        ttl = self.timing.result_ttl_s
+        self.assertLess(ages[0], ttl)  # the second run replaced the first one's results
+        self.assertGreaterEqual(ages[1], ttl)  # the second one's went by age ...
+        self.assertNotIn(third, self.fake.runs)  # ... for nothing ever started the third
 
     def test_t_fails_when_results_outlive_their_expiry(self):
-        self.fails_on("t", f"{self.AFTER[0]}: its result and state tables are gone",
-                      "second execution: its results expire by age",
+        self.fails_on("t", self.REPLACED, f"{self.AFTER[0]}: its result and state tables are gone", self.AGED,
                       f"{self.AFTER[1]}: its result and state tables are gone", fault="expiry-keeps-results")
+
+    def test_t_fails_when_a_later_run_replaces_nothing(self):
+        self.fails_on("t", self.REPLACED, f"{self.AFTER[0]}: its result and state tables are gone",
+                      f"{self.AFTER[0]}: storedBytes fell", fault="no-replacement")
+
+    def test_t_fails_when_a_create_alone_replaces_results(self):
+        """The design's revision 2: the next create expired them, started or not."""
+        rec = self.fails_on("t", self.AGED, fault="replaced-at-create")
+        self.assertRegex(self.detail(rec, self.AGED), r"result tables 0 at [01]\.\d s after the run ended")
 
     def test_t_fails_when_the_expiry_takes_the_record_too(self):
         self.fails_on("t", *[f"{after}: its plan, log and statistics are still there" for after in self.AFTER],
@@ -390,15 +413,14 @@ class Expiry(Step3BCase):
         self.assertRegex(self.detail(rec, f"{self.AFTER[0]}: storedBytes fell"), r"storedBytes (\d+) -> \1;")
 
     def test_t_fails_when_results_never_expire_by_age(self):
-        self.fails_on("t", "second execution: its results expire by age",
-                      f"{self.AFTER[1]}: its result and state tables are gone", f"{self.AFTER[1]}: storedBytes fell",
-                      fault="no-expiry-by-age")
+        self.fails_on("t", self.AGED, f"{self.AFTER[1]}: its result and state tables are gone",
+                      f"{self.AFTER[1]}: storedBytes fell", fault="no-expiry-by-age")
 
     def test_t_fails_when_results_expire_before_the_ttl(self):
-        """The pass by age runs every expiry interval, so what else fails depends on when."""
+        """The expiry looks every check interval, so what else fails depends on when."""
         self.fake.faults.add("expiry-too-early")
         rec = run_scenario(self.ctx, "t")
-        expired = next(c for c in rec.checks if c.name.startswith("second execution: its results expire by age"))
+        expired = next(c for c in rec.checks if c.name.startswith(self.AGED))
         self.assertFalse(expired.ok)
         self.assertRegex(expired.detail, r"result tables 0 at [01]\.\d s after the run ended")
 
@@ -482,11 +504,11 @@ class StoredReadsWithoutTheUnit(Step3CCase):
 
 
 class RecordByExecutionAtGate3C(Step3CCase):
-    """p and t at gate 3C: the console route, and an export of results that have expired."""
+    """p at gate 3C: the console route."""
 
     def test_p_reads_the_console_route_while_the_run_goes_and_after(self):
         rec = self.run_key("p")
-        self.assertEqual(14, len(rec.checks), self.names(rec))
+        self.assertEqual(13, len(rec.checks), self.names(rec))
         self.assertIn("after the run the console route returns all 300 lines in 2 page(s), seq rising by one",
                       self.names(rec))
         pages = [r["query"] for r in self.fake.rest_log if r["path"].endswith("/console") and "afterSeq" in r["query"]]
@@ -496,6 +518,12 @@ class RecordByExecutionAtGate3C(Step3CCase):
         self.fails_on("p", "console lines are stored before the run ends",
                       "the console route returns the UDF's stored lines before the run ends",
                       fault="console-at-end-only")
+
+
+class ExpiryAtGate3C(Step3CCase):
+    """t at gate 3C: an export of results that have expired."""
+
+    timing = EXPIRY_TIMING
 
     def test_t_asks_for_an_export_of_expired_results(self):
         rec = self.run_key("t")

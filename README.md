@@ -339,11 +339,11 @@ earlier (`--gate`).
 
 | Key | Name | From gate | What it does | Checks |
 |---|---|---|---|---|
-| p | `record-in-lake` | 3A | the slow run, paused and resumed once | while it runs: the log's label, read from Lakekeeper after each state change, names RUNNING, PAUSED, RUNNING at rising `seq`; at gate 3A the log table holds one row per `seq` up to the label's, five at the least (READY, an output row, RUNNING, PAUSED, RUNNING); from gate 3B `GET /api/executions/{eid}/log` shows READY, RUNNING, PAUSED, RUNNING with `seq` 1, 2, 3, ..., names the stored output port (its id, its result table, its output mode) and has no `closing`; the statistics endpoint returns rows, their count grows between two reads 2.5 commit intervals (5 s) apart, and each row names an operator and a time in epoch milliseconds; the console table has a snapshot with rows; after: the label names COMPLETED at a higher `seq` (from 3B: `/log`'s last row is COMPLETED); from gate 3C `GET /api/executions/{eid}/console` returns the UDF's stored lines while the run goes and, after it, all 300 in two pages (`afterSeq`, `more`), `seq` 1 to 300; status 3; Check I |
+| p | `record-in-lake` | 3A | the slow run, paused and resumed once | while it runs: the log's label, read from Lakekeeper after each state change, names RUNNING, PAUSED, RUNNING at rising `seq`; at gate 3A the log table holds one row per state change, 4 by then (READY, RUNNING, PAUSED, RUNNING), the label's `seq`; from gate 3B `GET /api/executions/{eid}/log` shows READY, RUNNING, PAUSED, RUNNING and nothing else, with `seq` 1 to 4, and has no `closing`; the statistics endpoint returns rows, their count grows between two reads 2.5 commit intervals (5 s) apart, and each row names an operator and a time in epoch milliseconds; the console table has a snapshot with rows; after: the label names COMPLETED at a higher `seq` (from 3B: `/log`'s last row is COMPLETED); from gate 3C `GET /api/executions/{eid}/console` returns the UDF's stored lines while the run goes and, after it, all 300 in two pages (`afterSeq`, `more`), `seq` 1 to 300; status 3; Check I |
 | q | `unit-lost` | 3B | the slow run; once it is Running and has statistics and console rows in the lake, `kill_unit()`. Twice: the unit left down until the verdict, and `start_unit()` right after the kill. Where a listing of the units makes the platform notice a unit that is gone (Kubernetes), a third pass lists them once after the kill | each pass: the history entry, read every poll interval, says status 1 with a `completionTime` that is a time until it turns 4, "unit lost", within lost-after + 3 closing intervals of the kill (18 s), and not before lost-after less a commit and a closing interval (third pass: within 2 closing intervals of the listing); right after the kill, with the unit gone, the statistics rows read before it read back unchanged and the console table kept its rows (later the console table goes with the results, which expire by age, counted from the unit's last beat); once it is closed, `/state` says `open: false`, 4, "unit lost"; `/log` has no ending row and a `closing` with the verdict; its statistics table still holds its rows; `completionTime` is the last beat: not before the last state change, not after the kill. After the second pass: a new socket on the workflow is told "Uninitialized", naming no execution; scenario a passes on the unit that is back; both lost executions' history entries are as they were closed. The readings are in the report (`facts.lost_verdicts`) |
-| r | `never-started` | 3B | create, and no start | the history says status 0 until it turns 4, "never started", within never-started-after + 2 closing intervals of the create (19 s), and not before never-started-after; `/state` closed, 4, "never started"; the plan table has `started`; a start is then refused "already started" (as l5-l10 check a refusal), the row stays 4 |
+| r | `never-started` | 3B | create, and no start | the history says status 6, Created, until it turns 4, "never started", within never-started-after + 2 closing intervals of the create (19 s), and not before never-started-after; `/state` closed, 4, "never started"; the plan table has `started`; a start is then refused "already started" (as l5-l10 check a refusal), the row stays 4 |
 | s | `polite-stop` | 3B | the slow run; `stop_unit()` | the history turns 4 with reason "the computing unit was stopped" within 2 closing intervals of the stop (the status comes from the log's label at once; the reason with the closing record, a tick later); `/log` ends with a FAILED row carrying that reason |
-| t | `expiry` | 3B | scenario a's workflow, run twice as one workflow; the second execution is created before the TTL has passed | first execution: closed Completed, with result, state and console tables in the lake and a size on the quota page; after the second create its result, state and console tables are gone, its plan, log and statistics are there, `/state` still says Completed, and `storedBytes` fell to exactly what the catalog says the plan, the log and the statistics hold. Second execution: the same once its results are gone by age, within TTL + one expiry pass + 2 closing intervals of its end and not before the TTL, with no third create. From gate 3C an export of either then answers 410, "the results of execution N have expired" |
+| t | `expiry` | 3B | scenario a's workflow as one workflow, three executions: the first runs to its end and is closed; the second is created and started at once; the third is created once the second is closed, and never started | first execution: closed Completed, with result, state and console tables in the lake and a size on the quota page; once the second has started, its result tables are gone within a commit interval + one expiry pass + 2 closing intervals of that start (11 s), at an age under the TTL, so it is the later run that replaced them; then its state and console tables are gone too, its plan, log and statistics are there, `/state` still says Completed, and `storedBytes` fell to exactly what the catalog says the plan, the log and the statistics hold. Second execution: its results stay although a third execution was created (a create alone replaces nothing) and go by age, within TTL + one expiry pass + 2 closing intervals of its end (29 s) and not before the TTL; then the same as for the first. From gate 3C an export of either then answers 410, "the results of execution N have expired" |
 | w | `history-outcomes` | 3B | d, k, a, and a UDF whose module raises as it is loaded (a raise in `process_tuple` only pauses the worker), each as a part with its own checks | once the four are closed, the history says 5 "killed by the user"; 4 "compile error: ..." naming the column; 3 with no reason; 4 with the raised message; the admin's list has the same status and reason for each workflow's newest execution; d's log is READY, RUNNING, PAUSED, RUNNING, KILLED, the last row with the reason |
 | v | `stored-reads-without-unit` | 3C | e, then a (each as a part with its own checks; a is the quicker one and runs last); the scenario's sockets are closed; `stop_unit()` | with the unit down (a new socket to it is refused): the console route returns e's 10 lines, all `PRINT`, of its UDF; a local CSV export of a's aggregate (`POST /api/executions/result/export/local`, a form with the request and the user's token, the request naming `executionId`) gives the columns `department, total_salary, n` and exactly the 4 groups; the Filter's newest stored statistics row reports 8 output rows; both executions' `/state` say closed, Completed; a's `/log` is READY, RUNNING, COMPLETED with its closing record. The statistics and the export request carry a `sce-probe` mark, which Kubernetes mode's `post-run` looks up in Envoy's access log. The unit is started again at the end |
 
@@ -352,8 +352,9 @@ What changes for the scenarios of step 2 (design H3):
 - j, from gate 3B: the Dashboard refuses a change by the closing record, which its
   job writes a tick after the run ended, so j waits until `/state` says closed before
   its late change (409).
-- l5, l6, l9, l10 leave an execution that was never started. From gate 3B Check K
-  expects each closed as failed, "never started".
+- l5, l6, l9, l10 leave an execution that was never started. At a step-3 gate its
+  row reads status 6, Created, not 0 (step 3 is built on step 2 with its review
+  fixes); from gate 3B Check K expects each closed as failed, "never started".
 - From gate 3B the driver no longer waits for the unit's cleanup `DELETE` between
   scenarios (the unit deletes nothing when it lets go of a run); it waits the unit's
   cleanup delay plus 0.5 s, and until the unit is quiet.
@@ -368,6 +369,15 @@ e first and a last and stops the unit at once, and each of its checks says how o
 results were when it read them; a unit that takes most of `docker stop`'s 20 s to stop
 leaves v too little time, and the cure is a longer TTL for that stack
 (`--dashboard-env RESULT_CLEANUP_TTL_IN_SECONDS=60`; t follows the stack's timers).
+t needs its first execution's results replaced while they are younger than the TTL:
+closing it, starting the second and the expiry's next look take 16 s of the 20 at
+the most, and the same cure applies where they take longer.
+
+Three things here are not the design's revision 2 but what was decided after it
+(`docs/step3-notes/changes-since-rev2.md`): the log holds state changes only (p, Check
+I), a created execution reads Created until a unit starts it (r, l5 to l10), and an
+ended execution's results are replaced once a later one has started, by the closing
+job's expiry, not by the next create (t).
 
 ### The stack's control (`driver/stack_control.py`)
 
@@ -387,7 +397,8 @@ Each stack subcommand prints one JSON document. `pg_activity()` is `pg_stat_acti
 client backends but the asking one: `{pid, application_name, client_addr, datname,
 state}` (`lib/pg_activity.py`). In Kubernetes and local-dev the driver's own
 `DOCKER_HOST` still points at a socket that does not exist; the stack scripts are what
-reach the cluster or the processes.
+reach the cluster or the processes, and the control runs them without that guard
+(`stack_script_env`): local-dev's `pg-activity` asks Docker for its own stack's Postgres.
 
 ### The transport seam (`driver/transport.py`)
 
@@ -540,9 +551,9 @@ F stay; F passes trivially once the unit sends nothing.
 |---|---|
 | G | no statement at all comes from the unit between the scenario's begin and end marks: by its name or from one of its addresses, on any database, a setting or transaction control included (the step-2 checks skip those), a failed one too. After the last scenario a second part looks at the whole log: none since the unit's container started (`docker inspect`'s `State.StartedAt` at the preflight, against the time docker stamped each log line, so a line of an earlier container that had the unit's address does not count) |
 | H | `pg_stat_activity`'s client backends, asked through the stack's control right before the scenario's begin mark and right before its end mark, hold no connection named `texera-computing-unit` and none from one of the unit's addresses. Postgres that cannot be asked makes H not evaluable |
-| I | for every run of the scenario that was started and has ended, read from Lakekeeper as Check E reads the plan table (`driver/lake.py`): the execution log's label names the ending the socket reported; the log holds exactly as many rows as the label's `seq` (more: a row landed twice, or a `seq` was skipped and another repeated; fewer: the label is ahead of its rows, or a `seq` was skipped); and the end tidy has run: the log holds one data file and one snapshot, the statistics table too (a run that never reached Running may have none of either), the console table too when the run printed, and no row when it did not. From gate 3B the rows are read as well, from `GET /api/executions/{eid}/log`: their `seq` are 1, 2, 3, ..., and their states are the ones the run's socket was told, in order (READY for "Initializing"; Pausing and Resuming are not logged; a state told twice is one row). A run whose unit a scenario took down (q, s) is judged by the last state its unit recorded (RUNNING where it was killed, FAILED where it was stopped), its log may hold more than its socket heard, and its files are not counted: a unit that was lost or stopped does not finish its last tidy. A catalog that cannot be read makes I not evaluable |
+| I | for every run of the scenario that was started and has ended, read from Lakekeeper as Check E reads the plan table (`driver/lake.py`): the execution log's label names the ending the socket reported; the log holds exactly as many rows as the label's `seq` (more: a row landed twice, or a `seq` was skipped and another repeated; fewer: the label is ahead of its rows, or a `seq` was skipped); and the end tidy has run: the log holds one data file and one snapshot, the statistics table too (a run that never reached Running may have none of either), the console table too when the run printed, and no row when it did not. From gate 3B the rows are read as well, from `GET /api/executions/{eid}/log`: their `seq` are 1, 2, 3, ..., each is a state change (the log holds nothing else), and their states are the ones the run's socket was told, in order (READY for "Initializing"; Pausing and Resuming are not logged; a state told twice is one row). A run whose unit a scenario took down (q, s) is judged by the last state its unit recorded (RUNNING where it was killed, FAILED where it was stopped), its log may hold more than its socket heard, and its files are not counted: a unit that was lost or stopped does not finish its last tidy. A catalog that cannot be read makes I not evaluable |
 | J | on a stack started with `--unit-no-postgres` (the preflight refuses any other when J gates): at the scenario's end `getent hosts texera-postgres` in the unit finds nothing (the host is the stack's `STORAGE_JDBC_URL`'s), and `docker inspect` says the unit is healthy. That every scenario passes there is what the scenarios' own checks say |
-| K | after the last scenario, read from Postgres (`outcome`, `outcome_reason`, `ended_at` of the run's workflows' executions) every poll interval: every execution has its closing record within lost-after + 3 closing intervals of the last scenario's end (18 s); one that a scenario left unstarted on purpose (l5, l6, l9, l10) within never-started-after + 2 closing intervals (19 s), since it is closed only once it is that old, and as failed, "never started". K takes the place of the final "no row is left at status 0" |
+| K | after the last scenario, read from Postgres (`outcome`, `outcome_reason`, `ended_at` of the run's workflows' executions) every poll interval: every execution has its closing record within lost-after + 3 closing intervals of the last scenario's end (18 s); one that a scenario left unstarted on purpose (l5, l6, l9, l10, t's third) within never-started-after + 2 closing intervals (19 s), since it is closed only once it is that old, and as failed, "never started". K takes the place of the final "no row is left at status 0" |
 
 - **When a record is judged.** A state's row and label reach the lake a moment after
   the state reaches the socket, and the end tidy after that, so a record is read
@@ -621,7 +632,7 @@ did not.
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 310 tests (55 of step 2 and 176 of step 3 on the single-node stack, 37 Kubernetes mode, 42 local-dev mode), about 5 minutes
+.venv/bin/python -m unittest discover -s driver/tests -v     # 325 tests (55 of step 2 and 191 of step 3 on the single-node stack, 37 Kubernetes mode, 42 local-dev mode), about 6 minutes
 ```
 
 - `test_evidence.py` (21): the log parser (parameters, continuation lines,
@@ -635,7 +646,7 @@ did not.
   not evaluable with stale addresses; D failing on a gateway request from the unit
   and not evaluable without the gateway log; each negative control "inconclusive"
   when it fails for another reason.
-- `test_transport.py` (20): both transports against `fake_texera.py`: the create
+- `test_transport.py` (21): both transports against `fake_texera.py`: the create
   body of 3.4, the start by id as the first command, `CreateRefused`, the update then
   `OperatorUpdateRequest`, `UpdateRefused` (409 after the end), a refused second
   start that is not killed, a start as another user, the unchanged
@@ -645,7 +656,8 @@ did not.
   stays in `replayed`, the views stay empty; the quiet-period fallback without
   `ClusterStatusUpdateEvent`; a replayed fatal error does not fail a wait; a socket
   that only joined learns the execution's id from the replayed state). And step 3's
-  calls against the fake at gate 3B: an execution's state and log, the 403 for
+  calls against the fake at gate 3B: an execution's state and log (state changes
+  and nothing else; a row of another kind has no state), the 403 for
   another user and for an execution that does not exist, the quota sizes, and the
   admin's list read page by page; and at gate 3C: stored console output page by
   page, and an export as the browser sends it (a form with the request and the
@@ -662,15 +674,16 @@ did not.
   mark; o's repeat is silent; a refusal path that reads Postgres fails the silence
   check; and the start rule before this fix fails l8's Check A (the review's case).
 
-- `test_step3_scenarios.py` (54): the step-3 scenarios through the real driver code
+- `test_step3_scenarios.py` (58): the step-3 scenarios through the real driver code
   against the fake at a step-3 gate, with the stack's timers a tenth of
   `--fast-record`'s. Each scenario passes against the product as the design has it,
   and fails on the checks that name the fault when the fake is given one (the faults
   are listed in `fake_record.py`, `fake_closing.py` and `fake_texera.py`):
   - p at gate 3A: refuses a stack without `--fast-record`; fails when statistics, or
     console output, reach the lake only at the end, and when the recorder skips a
-    `seq`. At gate 3B it reads `/log`, where the gap shows as `seq [1, 3, 4, 5, 6]`;
-    with the one switch for a log without `output` rows off, it asks nothing of them.
+    `seq`. At gate 3B it reads `/log`, where the gap shows as `seq [1, 3, 4, 5]`. At
+    both it fails when the log also holds an `output` row, as the design's revision 2
+    had it.
   - q: both passes, with the readings inside their bounds and no listing of the
     units; fails when a lost unit is never closed (the history stays at 1), when the
     verdict comes at the first tick, when the execution is closed as of the verdict
@@ -678,12 +691,15 @@ did not.
     a reading the gateway did not answer is no verdict. In the fake's Kubernetes
     flavour: a third pass, each pass on a unit of its own, one listing, which stamps
     every unit whose pod is gone.
-  - r: fails when the execution is never closed, closed too early, or closed without
-    its start being taken (it can then still be started).
+  - r: fails when the execution is never closed, closed too early, closed without
+    its start being taken (it can then still be started), or reads Initializing
+    while nobody has started it.
   - s: fails when the stop records nothing (the execution then waits for the beat).
-  - t: fails when an expiry keeps the results, takes the plan, the log and the
-    statistics too, leaves `storedBytes` as it was, never comes by age, or comes
-    before the TTL.
+  - t: fails when a later run that started replaces nothing, when a create alone
+    replaces (the design's revision 2), when an expiry keeps the results, takes the
+    plan, the log and the statistics too, leaves `storedBytes` as it was, never comes
+    by age, or comes before the TTL. Its tests run with a TTL of 3 s, not 2: at a
+    tenth of `--fast-record` its waits are a few scheduling delays from the TTL.
   - w: fails on the six checks of a reason when the closing record gives none.
   - j at gate 3B waits for the closing record, and fails when the row stays open.
   - v: every read is made while the unit is down, its statistics and export requests
@@ -700,7 +716,7 @@ did not.
   Also what gates 3A, 3B and 3C select in each mode, that `--scenario all` and step
   2's gates select what they did, and that a run without a step-3 gate and without a
   step-3 scenario is taken as a run of step 2.
-- `test_step3_evidence.py` (68): Check I alone, against a fake `docker` whose catalog
+- `test_step3_evidence.py` (70): Check I alone, against a fake `docker` whose catalog
   is the fake lake and a recorder that writes into it: a whole record passes; a label
   ahead of its rows, a gap in `seq`, a row that landed twice, several data files
   after the end, an ending the log does not have, a missing log, console rows of a
@@ -710,7 +726,8 @@ did not.
   but its label is, and a lost unit's label is the state the kill found; an
   unreadable catalog is not a verdict; step 2's checks and `--evidence all` are what
   they were. Check I's reading of the log's rows (gate 3B): a gap in `seq` is named,
-  so is a state the socket was told and the log lacks, and a route that fails; a
+  so is a row that is no state change, a state the socket was told and the log
+  lacks, and a route that fails; a
   unit taken down may have recorded more than its socket heard, but not something
   else; a run without a socket has only its `seq` read. Check K alone, against a
   Postgres that answers the closing records a test gives it: closed executions
@@ -754,11 +771,21 @@ did not.
   `--negative-control 3`, then the stack with `--unit-no-postgres --expect-unit-down`;
   its exit code when the unit came up, when the driver's controls failed and when
   the stack did not come up; `--step 3` without `--images` is refused.
-- `test_stack_control.py` (14): the single-node control against a fake `docker`
+- `test_e2e_main.py` (7): the driver's own `main`, from its command line to its
+  report, on the fake stack (the fake Texera at a step, a fake `docker` for the
+  evidence, the fake lake, the fake stack's control): gate 3C on a stack whose unit
+  has no Postgres (C to K gate, with both final checks) and on one with Postgres
+  beside the unit (J is left out); gate 3B ends with Check K and closes what a
+  refused start left; a unit that still writes to Postgres fails gate 3C in the
+  scenario and in the look at the whole log; step 3's negative control passes on
+  the product of step 2's end and fails on the product of step 3; a run without a
+  step-3 gate asks step 2's product for none of step 3's routes.
+- `test_stack_control.py` (15): the single-node control against a fake `docker`
   (`kill`, `stop -t 20`, `start` and the wait for healthy, nginx restarted only when
   the unit came back at another address, Postgres asked who is connected, the unit's
   environment names, a `docker` that refuses), the parsing of `pg_stat_activity`'s
-  rows, and how a stack script's one JSON document is read. The Kubernetes control
+  rows, how a stack script's one JSON document is read, and that the script does not
+  inherit the driver's guard against Docker. The Kubernetes control
   is in `test_k8s_unit.py` (the unit that comes back is created without listing the
   units; every unit a run made is terminated) and the stack's subcommands in
   `test_k8s_stack.py`, with `post-run`'s verdict on the requests v marked (through
@@ -771,10 +798,12 @@ drives the design's protocol and judges its answers as the design says; it prove
 nothing about a branch. `step` chooses the product it models: the end of step 2
 (the default), or step 3 at a gate. At gate 3A every run started by id has a
 recorder (`fake_record.py`) with a thread of its own, as in the design: a state's row
-and label land a moment after the state reaches the socket; statistics and console
+and label land a moment after the state reaches the socket (the log holds state
+changes only); statistics and console
 output land on the commit timer; the end tidy leaves one data file and one snapshot
 per table; and the unit still clears a run's results and console table once nobody
-watches it. The fake engine sleeps what a UDF's `time.sleep()` asks for (scaled),
+watches it. From gate 3A on a created execution reads Created until its unit's first
+write. The fake engine sleeps what a UDF's `time.sleep()` asks for (scaled),
 prints what its `print(f"...")` prints, aggregates, and fails a run whose UDF raises
 as its module is loaded.
 
@@ -786,7 +815,9 @@ is full; an execution whose run just ended reads its ending from the label while
 row is still open, and its reason only once the row is closed; a change to an ended
 execution is refused only from then on; an unstarted execution is closed once it is
 old enough, its start taken first; a lost execution ended at its unit's last beat;
-create closes the earlier executions that have just ended before it expires them;
+the job's expiry, on its own timer, takes an ended execution's results when they are
+older than the TTL or when a later execution of the workflow on the unit has
+started, and a create alone expires nothing;
 and the unit deletes nothing. The unit can be taken down and brought back
 (`fake_stack.py` is the stack's control over it): killed, it stops where it is and
 what it had buffered is lost; stopped politely, it first ends its runs as FAILED and
@@ -853,9 +884,11 @@ rows also name what the harness had to assume (see "Step 3: what is assumed"):
 ### Step 3: what is assumed
 
 The harness for step 3 was written from the step-3 design (`docs/step3-design.md`,
-sections 3 and 7) before the product. Each thing it takes from the design rather
-than from the product's code is kept in one place, so that following the product is
-a one-line change:
+sections 3 and 7) before the product, and from the two notes that say where the
+product differs from it (`docs/step3-notes/`: the report of sub-parts 2 to 4, and what
+changed since revision 2). Each thing it takes from them rather than from the
+product's code is kept in one place, so that following the product is a one-line
+change:
 
 | Assumed | From the design | Where |
 |---|---|---|
@@ -868,7 +901,9 @@ a one-line change:
 | In Kubernetes, `texeraEnvVars` reaches the webserver and the managing service, and the managing service forwards `STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS` to unit pods | 7 H2, 8 | `record_options`, `missing_record_env` in `stack/k8s/k8s_stack.py` |
 | `GET /api/executions/{eid}/state` answers `{status, open, reason, timeMs}` | 3.5 | `ExecutionState.of` in `driver/texera_api.py` |
 | `GET /api/executions/{eid}/log` answers `{entries[{seq, timeMs, kind, state, reason?, errors?}], closing{outcome, reason, endedAtMs} or null}` | 3.5 | `LogEntry.of`, `ExecutionLog.of` in `driver/texera_api.py` |
-| The log names each stored output port in an `output` row (`portId`, `uri`, `outputMode`). The owner may have the ports' locations written into the plan instead, and the log would then hold state rows only: one switch says which, and one function reads those rows | 3.2 | `LOG_NAMES_STORED_PORTS`, `ExecutionLog.stored_ports` in `driver/texera_api.py` (the only check that uses them is `_check_stored_ports` in `driver/scenarios.py`) |
+| The log holds state changes only: a stored port's location is in the plan, so the design's `output` rows are gone. A row that names no `kind` is taken to be a state change | changes since revision 2, 2 | `LogEntry.of`, `ExecutionLog.states` in `driver/texera_api.py`; `Evidence._log_problems` in `driver/evidence.py` |
+| An execution that was created and that no unit has started reads status 6, Created, also once its status comes from the label (a label that names no state); the closing job still closes it "never started" | changes since revision 2, 3 | `STATUS_CREATED`, `Ctx.unstarted_status` in `driver/scenarios.py` |
+| An ended execution's results are replaced by the closing job's expiry once a later execution of its workflow on its unit has started (its label names a state), so within a commit interval + one expiry pass + 2 closing intervals of that start; a create alone replaces nothing | changes since revision 2, 4 | `replaced_verdict_s`, `expired_verdict_s` in `driver/record_timing.py`; `scenario_t` in `driver/scenarios.py` |
 | A history entry carries `reason`, and a `completionTime` that is never null | 3.5, D21 | `history_reason`, `history_completion_ms` in `driver/texera_api.py` |
 | The admin's list says why an execution ended in a field named `reason` (the design says the list shows reasons, not the field's name), beside today's `workflowId`, `executionId`, `executionStatus` | 3.5, 6 | `AdminExecution.of` in `driver/texera_api.py` |
 | The quota route answers `[{eid, storedBytes, ...}]` | 3.5 | `TexeraApi.quota_sizes` |

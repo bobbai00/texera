@@ -51,7 +51,7 @@ import websocket  # websocket-client
 
 from lake import DEFAULT_WAREHOUSE, Catalog, Lake, pod_fetch
 from scenarios import NEEDS_OTHER_USER
-from stack_control import StackControl, StackControlError, run_stack_script
+from stack_control import NO_DOCKER, StackControl, StackControlError, run_stack_script
 from workflow import Workflow
 
 K8S_STACK = Path(__file__).resolve().parent.parent / "stack" / "k8s-stack.sh"
@@ -60,8 +60,6 @@ SINGLE_NODE_BASE = "http://localhost:8080"  # e2e.py's --base default
 UNIT_PREFIX = "sce-e2e-k8s"
 TERMINAL_UNIT_STATES = {"Failed", "Unknown"}
 UNIT_CONTAINER = "computing-unit-master"  # the engine's container in a unit pod
-# Docker's CLI takes DOCKER_HOST over any context: every `docker` call fails at once.
-NO_DOCKER = "unix:///nonexistent/sce-e2e-kubernetes-mode-has-no-docker-containers.sock"
 
 #: driver options that read or exec into the single-node stack's containers
 SINGLE_NODE_OPTIONS = {

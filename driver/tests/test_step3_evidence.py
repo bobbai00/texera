@@ -99,12 +99,13 @@ class RecordCheckCase(unittest.TestCase):
 
     def record(self, states=("READY", "RUNNING", "COMPLETED"), *, eid=None, faults=(), prints=0,
                statistics=True, final_tidy=True) -> Recorder:
-        """What the unit's recorder leaves in the lake for a run through `states`."""
+        """What the unit's recorder leaves in the lake for a run through `states`. With the
+        fault `output-rows` it also logs the run's stored port, before RUNNING."""
         eid = eid or self.eid
         self.lake.create(WAREHOUSE, NAMESPACES["result"], f"wid_5_eid_{eid}_globalportid_(port)_result")
         r = Recorder(self.lake, WAREHOUSE, 5, eid, interval_s=30, faults=set(faults), commit_delay_s=0)
         for state in states:
-            if state == "RUNNING":
+            if state == "RUNNING" and "output-rows" in faults:
                 r.output("(port)", "vfs:///result", "SET_SNAPSHOT")
             if state in ("COMPLETED", "FAILED", "KILLED"):
                 if statistics:
@@ -125,7 +126,7 @@ class RecordCheckTest(RecordCheckCase):
         self.record(prints=2)
         r = self.check_i()
         self.assertTrue(r.ok, r.detail)
-        self.assertIn("execution 90: COMPLETED at seq 4", r.detail)
+        self.assertIn("execution 90: COMPLETED at seq 3", r.detail)
         gates, _ = ev.evaluate({"I": r}, ["I"], negative_control=False)
         self.assertEqual([True], [ok for _, ok, _ in gates])
 
@@ -134,14 +135,14 @@ class RecordCheckTest(RecordCheckCase):
         self.record(faults=["row-lost"])
         r = self.check_i()
         self.assertIs(False, r.ok)
-        self.assertIn("the label names seq 4 and the log holds 3 row(s): the label is ahead of its rows", r.detail)
+        self.assertIn("the label names seq 3 and the log holds 2 row(s): the label is ahead of its rows", r.detail)
 
     def test_a_gap_in_seq_fails(self):
         self.start(SocketHandle(COMPLETED))
         self.record(faults=["seq-gap"])
         r = self.check_i()
         self.assertIs(False, r.ok)
-        self.assertIn("the label names seq 5 and the log holds 4 row(s)", r.detail)
+        self.assertIn("the label names seq 4 and the log holds 3 row(s)", r.detail)
         self.assertIn("a seq was skipped", r.detail)
 
     def test_a_row_that_landed_twice_fails(self):
@@ -159,7 +160,7 @@ class RecordCheckTest(RecordCheckCase):
         self.record(faults=["no-end-tidy"])
         r = self.check_i()
         self.assertIs(False, r.ok)
-        self.assertIn("the log holds 4 data file(s)", r.detail)
+        self.assertIn("the log holds 3 data file(s)", r.detail)
         self.assertIn("not one of each", r.detail)
 
     def test_an_ending_the_log_does_not_have_fails(self):
@@ -234,7 +235,7 @@ class RecordCheckTest(RecordCheckCase):
         self.ev.record_left_as_is(90, "FAILED", "its unit was stopped under it")
         r = self.check_i()
         self.assertTrue(r.ok, r.detail)
-        self.assertIn("execution 90: FAILED at seq 4, tables left as they were: its unit was stopped under it",
+        self.assertIn("execution 90: FAILED at seq 3, tables left as they were: its unit was stopped under it",
                       r.detail)
 
         self.ev.begin_scenario("b")
@@ -252,7 +253,7 @@ class RecordCheckTest(RecordCheckCase):
         self.ev.record_left_as_is(90, "RUNNING", "its unit was killed under it")
         r = self.check_i()
         self.assertTrue(r.ok, r.detail)
-        self.assertIn("RUNNING at seq 3, tables left as they were: its unit was killed under it", r.detail)
+        self.assertIn("RUNNING at seq 2, tables left as they were: its unit was killed under it", r.detail)
 
         self.ev.begin_scenario("b")  # ... and a label ahead of its rows is still caught there
         self.start(SocketHandle(("Initializing", "Running")), eid=91)
@@ -328,7 +329,7 @@ class LogRowsTest(RecordCheckCase):
         self.record(states=("READY", "RUNNING", "PAUSED", "RUNNING", "COMPLETED"))
         r = self.check_i()
         self.assertTrue(r.ok, r.detail)
-        self.assertEqual({"seq": [1, 2, 3, 4, 5, 6], "states": ["READY", "RUNNING", "PAUSED", "RUNNING", "COMPLETED"]},
+        self.assertEqual({"seq": [1, 2, 3, 4, 5], "states": ["READY", "RUNNING", "PAUSED", "RUNNING", "COMPLETED"]},
                          r.data["records"][0]["log"])
 
     def test_a_gap_in_seq_is_named(self):
@@ -336,7 +337,15 @@ class LogRowsTest(RecordCheckCase):
         self.record(faults=["seq-gap"])
         r = self.check_i()
         self.assertIs(False, r.ok)
-        self.assertIn("the log's seq are [1, 3, 4, 5], not 1 to 4", r.detail)
+        self.assertIn("the log's seq are [1, 3, 4], not 1 to 3", r.detail)
+
+    def test_a_row_that_is_no_state_change_is_named(self):
+        """The log holds state changes only: a stored port's location is in the plan."""
+        self.start(SocketHandle(COMPLETED))
+        self.record(faults=["output-rows"])
+        r = self.check_i()
+        self.assertIs(False, r.ok)
+        self.assertIn("execution 90: the log holds rows that are no state changes: seq 2 (output) (after", r.detail)
 
     def test_a_state_the_socket_was_told_and_the_log_lacks_fails(self):
         self.start(SocketHandle(("Initializing", "Running", "Paused", "Running", "Completed")))
@@ -693,17 +702,17 @@ class RecordEvidence(EvidenceCase):
     def test_p_passes_step_2s_checks_and_check_i(self):
         rec = self.run_ev("p")
         self.assertEqual(set("ABCDEFI"), self.gated(rec))
-        # READY, the output, RUNNING, PAUSED, RUNNING, COMPLETED
-        self.assertIn("COMPLETED at seq 6", self.record_check(rec).detail)
+        # READY, RUNNING, PAUSED, RUNNING, COMPLETED
+        self.assertIn("COMPLETED at seq 5", self.record_check(rec).detail)
 
     def test_every_kind_of_run_leaves_a_whole_record(self):
         """A refused second start (two records of one execution), the agent's run (no
         socket), a run that fails before it runs, and a run that prints while it installs."""
         details = {key: self.record_check(self.run_ev(key)).detail for key in ("l8", "o", "h", "g")}
-        self.assertIn("COMPLETED at seq 4", details["l8"])  # READY, the output, RUNNING, COMPLETED
-        self.assertIn("COMPLETED at seq 4", details["o"])
+        self.assertIn("COMPLETED at seq 3", details["l8"])  # READY, RUNNING, COMPLETED
+        self.assertIn("COMPLETED at seq 3", details["o"])
         self.assertIn("FAILED at seq 2", details["h"])
-        self.assertEqual(2, details["g"].count("COMPLETED at seq 4"))  # both runs
+        self.assertEqual(2, details["g"].count("COMPLETED at seq 3"))  # both runs
 
     def test_a_label_ahead_of_its_rows_fails_check_i(self):
         self.fake.faults.add("row-lost")
@@ -767,10 +776,10 @@ class ClosingEvidence(EvidenceCase):
         lost = self.run_ev("q")
         self.assertEqual(set("ABCDEFI"), self.gated(lost))
         detail = self.record_check(lost).detail
-        self.assertEqual(2, detail.count("RUNNING at seq 3, tables left as they were: its unit was killed under it"))
+        self.assertEqual(2, detail.count("RUNNING at seq 2, tables left as they were: its unit was killed under it"))
         self.assertEqual(1, detail.count("COMPLETED at seq"))  # a's run on the unit that is back
         stopped = self.run_ev("s")
-        self.assertIn("FAILED at seq 4, tables left as they were: its unit was stopped under it",
+        self.assertIn("FAILED at seq 3, tables left as they were: its unit was stopped under it",
                       self.record_check(stopped).detail)
         self.assertTrue(self.ev.final_check(self.ctx.created_wids)["ok"])
 
@@ -803,7 +812,13 @@ class ClosingEvidence(EvidenceCase):
         self.fake.faults.add("seq-gap")
         rec = self.run_ev("f", expect="FAIL")
         self.assertEqual(["evidence I"], [c.name.split(":")[0] for c in rec.checks if not c.ok])
-        self.assertIn("the log's seq are [1, 3, 4, 5], not 1 to 4", self.record_check(rec).detail)
+        self.assertIn("the log's seq are [1, 3, 4], not 1 to 3", self.record_check(rec).detail)
+
+    def test_a_row_that_is_no_state_change_fails_check_i_by_the_log(self):
+        self.fake.faults.add("output-rows")
+        rec = self.run_ev("f", expect="FAIL")
+        self.assertEqual(["evidence I"], [c.name.split(":")[0] for c in rec.checks if not c.ok])
+        self.assertIn("the log holds rows that are no state changes: seq 2 (output)", self.record_check(rec).detail)
 
 
 class OffPostgresEvidence(EvidenceCase):

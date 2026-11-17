@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -162,6 +163,15 @@ class StackScriptTest(unittest.TestCase):
     def test_a_script_that_prints_no_json_is_an_error(self):
         with self.assertRaisesRegex(StackControlError, "printed no JSON: done"):
             run_stack_script(self.script("echo done\n"), "unit-kill")
+
+    def test_a_stack_script_does_not_inherit_the_drivers_guard_against_docker(self):
+        """In Kubernetes and local-dev mode the driver's own DOCKER_HOST is a socket that
+        does not exist; local-dev's pg-activity runs `docker exec` into its Postgres."""
+        script = self.script('printf \'{"docker_host": "%s"}\\n\' "${DOCKER_HOST-unset}"\n')
+        with mock.patch.dict("os.environ", {"DOCKER_HOST": stack_control.NO_DOCKER}):
+            self.assertEqual({"docker_host": "unset"}, run_stack_script(script, "pg-activity"))
+        with mock.patch.dict("os.environ", {"DOCKER_HOST": "unix:///the/users/own.sock"}):  # not the guard: kept
+            self.assertEqual({"docker_host": "unix:///the/users/own.sock"}, run_stack_script(script, "pg-activity"))
 
 
 if __name__ == "__main__":

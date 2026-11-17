@@ -21,8 +21,12 @@ it up. With a `statement_sink` it reports the Postgres statements the design's
 services would run (Dashboard: the INSERT at create; unit: the run-state writes and
 the idle cleanup; a refused start: nothing), for evidence tests.
 
-`step` chooses the product it models: "2" (the default: the end of step 2), or step
-3 at one of its harness gates. At "3A" (the step-3 design's sub-parts 2 to 7) every
+`step` chooses the product it models: "2" (the default: step 2 as gates A to D were run
+on it), or step 3 at one of its harness gates. Step 3 is built on step 2 with its review
+fixes (docs/review-step2/x3-report.md), so from "3A" on a created execution has a status
+of its own, Created, until its unit's first write, and a create clears an ended
+execution's results only once a later execution of the workflow on the unit has results
+of its own. At "3A" (the step-3 design's sub-parts 2 to 7) every
 run started by id has a recorder (fake_record.py) that writes its log, statistics and
 console into the fake lake (fake_lake.py), and the statistics route reads the lake.
 The fake engine also sleeps what a UDF's `time.sleep()` asks for, scaled by
@@ -31,8 +35,10 @@ fails a run whose UDF raises as its module is loaded, as the real engine does.
 
 At "3B" (sub-parts 9 and 11 to 15) the Dashboard closes executions (fake_closing.py: the
 closing record, its timer job, the expiry, the state and log routes, reasons in the
-history and the admin's list, sizes on the quota page), and the unit deletes nothing
-when it lets go of a run. The unit still writes its status to Postgres.
+history and the admin's list, sizes on the quota page), a create clears nothing (the
+job's expiry replaces an ended execution's results once a later one has started), and
+the unit deletes nothing when it lets go of a run. The unit still writes its status to
+Postgres.
 
 The unit can be taken down and brought back (`take_unit_down`, `bring_unit_up`), as a
 stack's control does it. Killed, it stops where it is: its sockets drop, its runs and
@@ -80,12 +86,15 @@ TUPLE_DELAY_S = 0.004
 REPLAY_DELAY_S = 0.1
 STATUS_CODES = {"Uninitialized": 0, "Initializing": 0, "Running": 1, "Paused": 2, "Completed": 3,
                 "Failed": 4, "Killed": 5}
+#: an execution that was created and that no unit has started, from "3A" on
+STATUS_CREATED = 6
 #: the products the fake models, in order (see the module doc)
 STEPS = ("2", "3A", "3B", "3C")
 #: the unit's own faults, and those of the routes that serve stored output, for the tests
 #: of checks that must fail (the recorder's are in fake_record.FAULTS, the closing
 #: Dashboard's in fake_closing.FAULTS)
 FAULTS = {
+    "created-reads-initializing": "an execution nobody started reads Initializing (0), as before step 2's review",
     "stop-unrecorded": "a unit that is stopped politely records nothing: its runs end as if it was killed",
     "unit-statement": "the unit still writes its run's status to Postgres",
     "unit-pool": "the unit still opens its pool: two idle connections",
@@ -279,9 +288,9 @@ class Run:
         self.emit(self.state_event())
 
     def write_status(self, state: str, code: int) -> None:
-        """What the unit writes to Postgres for a state, until step 3's sub-part 17."""
-        if state != "Initializing":
-            self.fake.executions[self.eid]["status"] = code
+        """What the unit writes to Postgres for a state, until step 3's sub-part 17. Its
+        first write, READY at Initializing, is what takes a row from Created to 0."""
+        self.fake.executions[self.eid]["status"] = code
         # step 2's design D26: one write-only UPDATE by eid per state change (READY at Initializing)
         self.fake.sql("unit", "update workflow_executions set status = $1, last_update_time = $2 "
                               "where workflow_executions.eid = $3",
@@ -566,9 +575,6 @@ class FakeTexera:
         self.kubernetes = False
         self.pods_gone: set[int] = set()
         self.unit_address = UNIT_ADDRESS
-        #: design 3.2: the log names each stored output port in an `output` row. Off: the
-        #: ports' locations are in the plan (the owner's variant), and the log has state rows only
-        self.log_names_stored_ports = True
         #: how much of a UDF's time.sleep() the fake engine sleeps
         self.sleep_scale = 0.0
         self.users: dict[int, dict] = {1: {"uid": 1, "name": "texera", "email": "texera@texera.io",
@@ -601,6 +607,11 @@ class FakeTexera:
     def at(self, step: str) -> bool:
         """Whether the product modelled has reached `step`."""
         return STEPS.index(self.step) >= STEPS.index(step)
+
+    @property
+    def created_status(self) -> int:
+        """The status of an execution from its creation until a unit starts it."""
+        return STATUS_CREATED if self.at("3A") and "created-reads-initializing" not in self.faults else 0
 
     # ------------------------------------------------------------ the lake
 
@@ -642,14 +653,14 @@ class FakeTexera:
 
     def store_outputs(self, run: "Run") -> None:
         """The engine makes the result table of the run's stored port, and a state table
-        beside it, and tells the recorder of the port."""
+        beside it, where the plan says. The log is told nothing of it."""
         e = self.executions[run.eid]
         if not e.get("plan_uri"):
             return
         tables = self.port_tables(run)
         for kind, (_uri, name) in tables.items():
             self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
-        if run.recorder is not None and self.log_names_stored_ports:
+        if run.recorder is not None and "output-rows" in self.faults:
             port = tables["result"][0].split("/globalportid/")[1].rsplit("/", 1)[0]
             run.recorder.output(port, tables["result"][0], "SET_SNAPSHOT")
 
@@ -662,6 +673,26 @@ class FakeTexera:
                 if name.startswith(prefix):
                     self.lake.drop(warehouse, NAMESPACES[kind], name)
         self.lake.drop(warehouse, NAMESPACES["console"], table_name(e["wid"], eid, "console"))
+
+    def holds_results(self, eid: int) -> bool:
+        """Whether a unit wrote a result or console output for the execution (and nothing cleared it)."""
+        e = self.executions[eid]
+        warehouse, prefix = self.warehouse_of(e), f"wid_{e['wid']}_eid_{eid}_"
+        return (self.execution_table(eid, "console") is not None
+                or any(name.startswith(prefix) for name in self.lake.names(warehouse, NAMESPACES["result"])))
+
+    def clear_at_create(self, wid: int, cuid: int, created: int) -> None:
+        """What a create clears until "3B". Step 2 as gates A to D ran on it (D8): the
+        results of every ended earlier execution of the workflow on the unit. With step
+        2's review fix D2, which "3A" is built on: only those of an ended execution that
+        a later one has replaced with results of its own, so an execution that is only
+        created clears nothing."""
+        same = {eid: x for eid, x in self.executions.items() if (x["wid"], x["cuid"]) == (wid, cuid)}
+        for eid, x in sorted(same.items()):
+            replaced = eid < created if not self.at("3A") else (
+                self.holds_results(eid) and any(later > eid and self.holds_results(later) for later in same))
+            if x["status"] in (3, 4, 5) and replaced:
+                self.clear_results(eid)
 
     def store_results(self, run: "Run") -> None:
         """The port ended: its rows are committed to its result table."""
@@ -1028,14 +1059,14 @@ class FakeTexera:
                 return self.err(400, "the replay source is of another workflow or has no log")
         eid = self.next["eid"]
         self.next["eid"] += 1
-        self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": uid, "whid": whid, "status": 0,
+        self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": uid, "whid": whid, "status": self.created_status,
                                 "name": body.get("executionName", ""), "plan": body["logicalPlan"],
                                 "started": False, "log": (f"file:///logs/{wid}/{eid}/" if self.replay_log else None),
                                 "targets": body.get("targetOperatorIds") or [], "updates": {},
                                 "plan_uri": self.plan_uri(uid, whid, wid, eid), **Closing.new_row()}
         self.sql("dashboard", "insert into workflow_executions (vid, uid, cuid, whid, status) values "
                               "($1, $2, $3, $4, $5) returning eid",
-                 f"$1 = '1', $2 = '{uid}', $3 = '{cuid}', $4 = '{whid}', $5 = '0'")
+                 f"$1 = '1', $2 = '{uid}', $3 = '{cuid}', $4 = '{whid}', $5 = '{self.created_status}'")
         errors = self.compile_errors(uid, body["logicalPlan"])
         if errors:
             self.executions[eid]["status"] = 4
@@ -1047,15 +1078,11 @@ class FakeTexera:
                                    never_started=True)
             return 400, {"eid": eid, "operatorErrors": errors, "errors": []}
         self.write_plan(eid)
-        # step 2, D8: a new execution replaces the results of the finished earlier ones of
-        # its workflow on its unit. From 3B on the Dashboard's expiry does it, by the
-        # closing record (step 3, D31).
-        if self.at("3B"):
-            self.closing.expire_replaced(wid, cuid, eid)
-        else:
-            for earlier, x in self.executions.items():
-                if earlier < eid and (x["wid"], x["cuid"]) == (wid, cuid) and x["status"] in (3, 4, 5):
-                    self.clear_results(earlier)
+        # From "3B" on a create clears nothing: the closing job's expiry replaces results.
+        if not self.at("3B"):
+            self.clear_at_create(wid, cuid, eid)
+        elif "replaced-at-create" in self.faults:
+            self.closing.expire_at_create(wid, cuid, eid)
         return 201, {"eid": eid, "wid": wid, "computingUnitId": cuid, "planUri": self.executions[eid]["plan_uri"]}
 
     def statistics_reach_the_unit(self, query: dict) -> bool:

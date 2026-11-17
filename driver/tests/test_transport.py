@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fake_texera import FakeTexera  # noqa: E402
 from record_timing import RecordTiming  # noqa: E402
-from texera_api import TexeraApi, TexeraApiError  # noqa: E402
+from texera_api import ExecutionLog, TexeraApi, TexeraApiError  # noqa: E402
 from transport import (CreateRefused, CreateStartTransport, UpdateRefused,  # noqa: E402
                        WebSocketTransport)
 from workflow import Workflow, csv_scan, python_udf, text_input  # noqa: E402
@@ -335,14 +335,17 @@ class RecordApiTest(RecordApiCase):
         self.assertEqual((3, False, None), (state.status, state.open, state.reason))
         self.assertGreater(state.time_ms, 1_700_000_000_000)
         log = self.api.execution_log(h.eid)
-        self.assertEqual(["READY", "RUNNING", "COMPLETED"], [e.state for e in log.state_rows])
+        self.assertEqual(["READY", "RUNNING", "COMPLETED"], log.states)  # state changes, and nothing else
         self.assertTrue(log.whole)
         self.assertEqual((True, 3, None, state.time_ms), (log.closed, log.outcome, log.reason, log.ended_at_ms))
-        # the one place that reads the log's rows of stored output ports
-        (port,) = log.stored_ports()
-        self.assertEqual({"seq", "portId", "uri", "outputMode"}, set(port))
-        self.assertEqual((2, "SET_SNAPSHOT"), (port["seq"], port["outputMode"]))
-        self.assertTrue(port["uri"].endswith("/result") and f"/eid/{h.eid}/" in port["uri"], port)
+
+    def test_a_row_of_the_log_that_is_no_state_change_has_no_state(self):
+        log = ExecutionLog.of({"eid": 1, "closing": None, "entries": [
+            {"seq": 1, "timeMs": 5, "state": "READY"},  # a row that names no kind is a state change
+            {"seq": 2, "timeMs": 6, "kind": "output", "portId": "p"},
+            {"seq": 3, "timeMs": 7, "kind": "state", "state": "RUNNING"}]})
+        self.assertEqual(["READY", None, "RUNNING"], log.states)
+        self.assertEqual(["state", "output", "state"], [e.kind for e in log.entries])
 
     def test_another_user_may_not_read_them(self):
         h = self.run_once()

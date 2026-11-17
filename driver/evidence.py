@@ -1114,16 +1114,19 @@ class Evidence:
 
     def _log_problems(self, run: RunRecord, cut_short: bool, facts: dict) -> list[str]:
         """What is wrong with the log's rows as the Dashboard serves them: they are numbered
-        1, 2, 3, ..., and their states are the ones the run's socket was told, in order. A
-        run whose unit was taken down (`cut_short`) may have recorded more than its socket
-        heard of."""
+        1, 2, 3, ..., each is a change of state (the log holds nothing else), and their
+        states are the ones the run's socket was told, in order. A run whose unit was taken
+        down (`cut_short`) may have recorded more than its socket heard of."""
         try:
             log = self._read_log(run.eid)
         except Exception as e:  # noqa: BLE001 -- a route that fails is a finding, not a crash
             return [f"GET /api/executions/{run.eid}/log failed: {type(e).__name__}: {str(e)[:200]}"]
-        logged = [e.state for e in log.state_rows]
+        logged = [e.state for e in log.entries if e.kind == "state"]
         facts["log"] = {"seq": log.seqs, "states": logged}
         problems = [] if log.whole else [f"the log's seq are {log.seqs}, not 1 to {len(log.seqs)}"]
+        others = [f"seq {e.seq} ({e.kind})" for e in log.entries if e.kind != "state"]
+        if others:
+            problems.append(f"the log holds rows that are no state changes: {', '.join(others)}")
         if run.handle is not None:
             told = logged_states(run.states())
             if (logged[:len(told)] if cut_short else logged) != told:

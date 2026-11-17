@@ -26,16 +26,19 @@ import requests
 
 from lake import Label, Lake, TableState
 from record_timing import RecordTiming
-from texera_api import (LOG_NAMES_STORED_PORTS, REASON_COMPILE_ERROR, REASON_KILLED_BY_USER,
-                        REASON_NEVER_STARTED, REASON_UNIT_LOST, REASON_UNIT_STOPPED, ExecutionLog,
-                        ExecutionState, StatisticsRow, TexeraApi, TexeraApiError, history_completion_ms,
-                        history_reason)
+from texera_api import (REASON_COMPILE_ERROR, REASON_KILLED_BY_USER, REASON_NEVER_STARTED, REASON_UNIT_LOST,
+                        REASON_UNIT_STOPPED, ExecutionState, StatisticsRow, TexeraApi, TexeraApiError,
+                        history_completion_ms, history_reason)
 from transport import (CreateRefused, RunFailed, RunHandle, RunTimeout, Transport, UpdateRefused,
                        console_type, response_body)
 from workflow import (Workflow, aggregate, csv_scan, file_lister, file_scan_from_input, filter_op,
                       hash_join, projection, python_udf, sort_op, text_input)
 
 STATUS_READY, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED, STATUS_KILLED = 0, 1, 3, 4, 5
+#: an execution that was created and that no unit has started (review fix D1 of step 2,
+#: docs/review-step2/x3-report.md: the Dashboard inserts the row as Created, and the unit's
+#: first write makes it 0)
+STATUS_CREATED = 6
 #: udf.python.environments.root's default (design 3.9)
 DEFAULT_ENVIRONMENTS_ROOT = "/tmp/texera-python-environments"
 #: run by the unit's python3 with the root as argv[1]: one JSON line, every entry but *.lock
@@ -273,6 +276,15 @@ class Ctx:
     def at_least(self, level: str) -> bool:
         """Whether the product under test has what step 3's gate `level` brings."""
         return self.level is not None and self.level >= level
+
+    @property
+    def unstarted_status(self) -> int:
+        """What the history reads for an execution nobody started. Step 3 is built on step
+        2 with its review fixes, where such an execution is Created (and stays so once the
+        status comes from the label: an open execution whose label has no state,
+        docs/step3-notes/changes-since-rev2.md section 3). The images of step 2 that gates
+        A to D were run on say 0; this is the one place to change when theirs say Created."""
+        return STATUS_CREATED if self.level is not None else STATUS_READY
 
     def statistics(self, wid: int, eid: int) -> list[StatisticsRow]:
         """An execution's stored statistics. Until gate 3C the request names the unit, as
@@ -994,14 +1006,15 @@ REFUSAL_SETTLE_S = 3.0
 
 def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: int, eid: int,
                    plan_uri: str, socket_cuid: int | None = None, token: str | None = None,
-                   row_status: int = STATUS_READY) -> None:
+                   row_status: int | None = None) -> None:
     """Start `eid` on a socket that must be refused: the error reaches that socket
     only (a session of the creator on the same workflow sees none), nothing runs,
-    the row stays as it was (`row_status`: 0 for an execution nobody started), and
-    the unit runs no statement at all from the start until after the refusal (D33).
-    `expect`: the refusal's message contains one of these (the design's
-    StoredExecutionStart messages)."""
+    the row stays as it was (`row_status`; when not given, what an execution nobody
+    started reads), and the unit runs no statement at all from the start until after
+    the refusal (D33). `expect`: the refusal's message contains one of these (the
+    design's StoredExecutionStart messages)."""
     expect = (expect,) if isinstance(expect, str) else expect
+    row_status = ctx.unstarted_status if row_status is None else row_status
     watcher = ctx.transport.open_socket(wid, ctx.cuid)
     ctx.handles.append(watcher)
     handle = ctx.transport.start_existing(wid=wid, cuid=socket_cuid or ctx.cuid, eid=eid,
@@ -1691,23 +1704,11 @@ def _wait_label(ctx: Ctx, wid: int, eid: int, state: str, after_seq: int = 0) ->
     return label
 
 
-def _check_stored_ports(ctx: Ctx, wid: int, eid: int, log: ExecutionLog) -> None:
-    """What a log says of its run's stored output ports. With the flag off (the ports'
-    locations are in the plan), the log says nothing of them and nothing is asked."""
-    if not LOG_NAMES_STORED_PORTS:
-        return
-    ports = log.stored_ports()
-    ctx.check("/log names the stored output port: its id, its result table (of this execution) and its "
-              "output mode",
-              bool(ports) and all(p["portId"] and p["outputMode"] and f"/wid/{wid}/eid/{eid}/" in str(p["uri"])
-                                  and str(p["uri"]).endswith("/result") for p in ports), f"{ports}")
-
-
 def _check_log_while_running(ctx: Ctx, wid: int, eid: int, labels: list[Label]) -> None:
     """The label, read after each state change, names RUNNING, PAUSED and RUNNING at rising
-    seq. From gate 3B on the Dashboard serves the log: READY, RUNNING, PAUSED, RUNNING, seq
-    rising by one, and no closing record. Before that the row count is all the catalog
-    shows: one row per seq."""
+    seq. From gate 3B on the Dashboard serves the log: READY, RUNNING, PAUSED, RUNNING and
+    nothing else (the log holds state changes only), seq rising by one, and no closing
+    record. Before that the row count is all the catalog shows: one row per state change."""
     seen = [(l.state, l.state_seq) for l in labels]
     seqs = [l.state_seq or 0 for l in labels]
     ctx.check("while it runs the log's label names RUNNING, PAUSED, RUNNING at rising seq",
@@ -1715,17 +1716,14 @@ def _check_log_while_running(ctx: Ctx, wid: int, eid: int, labels: list[Label]) 
               and seqs[0] >= 2, f"label after each state change: {seen}")
     if not ctx.at_least("B"):
         table = ctx.lake_table("log", wid, eid)
-        fewest = 4 + (1 if LOG_NAMES_STORED_PORTS else 0)
-        ctx.check(f"the log holds one row per seq up to the label's, {fewest} at the least: READY, RUNNING, "
-                  f"PAUSED, RUNNING" + (" and the stored output port" if LOG_NAMES_STORED_PORTS else ""),
-                  table.records == labels[-1].state_seq and (table.records or 0) >= fewest,
-                  f"{table.describe()}; label {seen[-1]}")
+        ctx.check("the log holds one row per state change, 4 by now (READY, RUNNING, PAUSED, RUNNING), "
+                  "the label's seq",
+                  table.records == labels[-1].state_seq == 4, f"{table.describe()}; label {seen[-1]}")
         return
     log = ctx.api.execution_log(eid)
-    states = [e.state for e in log.state_rows]
-    ctx.check("while it runs /log shows READY, RUNNING, PAUSED, RUNNING, with seq rising by one",
-              states == ["READY", "RUNNING", "PAUSED", "RUNNING"] and log.whole, f"states {states}; seq {log.seqs}")
-    _check_stored_ports(ctx, wid, eid, log)
+    ctx.check("while it runs /log shows READY, RUNNING, PAUSED, RUNNING and nothing else, with seq rising by one",
+              log.states == ["READY", "RUNNING", "PAUSED", "RUNNING"] and log.whole,
+              f"states {log.states}; seq {log.seqs}")
     ctx.check("/log has no closing record while the execution is open", not log.closed,
               f"closing: outcome {log.outcome}, reason {log.reason}")
 
@@ -1949,11 +1947,11 @@ def _check_lost_record(ctx: Ctx, label: str, wid: int, eid: int, before: dict, k
     ctx.check(f"{label}: /state says closed, status 4, \"{REASON_UNIT_LOST}\"",
               (state.open, state.status, state.reason) == (False, STATUS_FAILED, REASON_UNIT_LOST), f"{state}")
     log = ctx.api.execution_log(eid)
-    last = log.state_rows[-1] if log.state_rows else None
+    last = log.entries[-1] if log.entries else None
     ctx.check(f"{label}: /log has no ending row, and a closing record with the verdict",
               last is not None and last.state not in LOGGED_ENDINGS and log.closed
               and (log.outcome, log.reason) == (STATUS_FAILED, REASON_UNIT_LOST),
-              f"last state row {last}; closing: outcome {log.outcome}, reason {log.reason}")
+              f"last row {last}; closing: outcome {log.outcome}, reason {log.reason}")
     statistics = ctx.lake_table("statistics", wid, eid)
     ctx.check(f"{label}: its statistics are still in the lake once it is closed",
               (statistics.records or 0) >= before["statistics"],
@@ -2122,8 +2120,9 @@ def scenario_r(ctx: Ctx) -> None:
     ctx.rec.facts["never_started_verdict"] = {"eid": eid, "deadline_s": deadline, "readings": seen}
     verdict = seen[-1] if seen[-1]["status"] == STATUS_FAILED else None
     before = _before_verdict(seen, verdict)
-    ctx.check("until then the history reads status 0",
-              bool(before) and all(s["status"] == STATUS_READY for s in before), f"{before[:2]} ... {before[-1:]}")
+    ctx.check(f"until then the history reads status {ctx.unstarted_status}: created, and not started",
+              bool(before) and all(s["status"] == ctx.unstarted_status for s in before),
+              f"{before[:2]} ... {before[-1:]}")
     ctx.check(f"the history turns status 4, \"{REASON_NEVER_STARTED}\", within never-started-after + 2 closing "
               f"intervals ({deadline:g} s) of the create",
               verdict is not None and verdict["t"] <= deadline and verdict["reason"] == REASON_NEVER_STARTED,
@@ -2212,44 +2211,61 @@ def _check_expired(ctx: Ctx, label: str, wid: int, eid: int, size_before: int | 
                   f"HTTP {answer.status_code}: {answer.text[:300]}")
 
 
+def _results_gone(ctx: Ctx, wid: int, eid: int, within_s: float) -> int | None:
+    """How many result tables the execution has left, once it has none or `within_s` passed."""
+    tables, _ = poll(lambda: _dropped_tables(ctx, wid, eid), lambda t: t["result"] == 0, within_s, ctx.timing.poll_s)
+    return tables["result"]
+
+
 def scenario_t(ctx: Ctx) -> None:
-    """Scenario a's workflow, run twice as one workflow. The second create replaces the
-    first execution's results; the second execution's results expire by age, with no
-    third create. Either way the plan, the log and the statistics stay."""
+    """Scenario a's workflow as one workflow, three executions. The first one's results go
+    once the second has started: a later run replaces them. The second one's results stay
+    while the third is created and never started, and go by age. Either way the plan, the
+    log and the statistics stay. (What replaces results is not the design's revision 2,
+    where the next create did: docs/step3-notes/changes-since-rev2.md, section 4.)"""
     _need_create_ws(ctx)
     _need_fast_record(ctx)
     _need_level(ctx, "B")
     timing = ctx.timing
     wf, ops, expected, _passed = _workflow_a(ctx, "t-expiry")
-    wid = ctx.create_workflow(wf)
+    wid, sink = ctx.create_workflow(wf), ops["aggregate"]
 
-    first, res = run_to_completion(ctx, wf, ops["aggregate"], wid=wid)
+    first, res = run_to_completion(ctx, wf, sink, wid=wid)
     first_ended = time.monotonic()
     _check_groups(ctx, res, expected)
     size = _closed_with_results(ctx, "first execution", wid, first.eid)
     ctx.settle_records()
-    created = _created(ctx, wf, [ops["aggregate"]], wid)
-    age = time.monotonic() - first_ended
-    _check_expired(ctx, "first execution, after the second create", wid, first.eid, size, ops["aggregate"])
-    ctx.check("... and it was the create that replaced them: their age was under the TTL",
-              age < timing.result_ttl_s, f"{age:.1f} s after the run ended; the TTL is {timing.result_ttl_s:g} s")
-
+    created = _created(ctx, wf, [sink], wid)
     second = ctx.transport.start_existing(wid=wid, cuid=ctx.cuid, eid=created["eid"], plan_uri=created["planUri"])
     ctx.handles.append(second)
+    started = time.monotonic()
+    left = _results_gone(ctx, wid, first.eid, timing.replaced_verdict_s)
+    now = time.monotonic()
+    ctx.check(f"first execution: the second, once started, replaces its results: they are gone within a commit "
+              f"interval + one expiry pass + 2 closing intervals ({timing.replaced_verdict_s:g} s) of that start, "
+              f"at an age under the TTL (it was not their age)",
+              left == 0 and now - first_ended < timing.result_ttl_s,
+              f"result tables {left} at {now - started:.1f} s after the start, {now - first_ended:.1f} s after "
+              f"the first run ended; the TTL is {timing.result_ttl_s:g} s")
+    _check_expired(ctx, "first execution, replaced", wid, first.eid, size, sink)
+
     done = second.wait_for_state("Completed", timeout=ctx.timeout)
     second_ended = time.monotonic()
     ctx.check("second execution: completes", done == "Completed", f"states {second.states}")
     size = _closed_with_results(ctx, "second execution", wid, second.eid)
     ctx.settle_records()
-    deadline = timing.result_ttl_s + timing.expiry_check_interval_s + 2 * timing.closing_interval_s
-    tables, _ = poll(lambda: _dropped_tables(ctx, wid, second.eid), lambda t: t["result"] == 0,
-                     deadline - (time.monotonic() - second_ended), timing.poll_s)
+    third = _created(ctx, wf, [sink], wid)["eid"]
+    ctx.allow_status_zero(third, "t: created and left unstarted on purpose")
+    deadline = timing.expired_verdict_s
+    left = _results_gone(ctx, wid, second.eid, deadline - (time.monotonic() - second_ended))
     gone_after = time.monotonic() - second_ended
-    ctx.check(f"second execution: its results expire by age, without a third create: within the TTL + one expiry "
-              f"pass + 2 closing intervals ({deadline:g} s) of its end, and not before the TTL",
-              tables["result"] == 0 and timing.result_ttl_s - 1 <= gone_after,
-              f"result tables {tables['result']} at {gone_after:.1f} s after the run ended")
-    _check_expired(ctx, "second execution, after the TTL", wid, second.eid, size, ops["aggregate"])
+    ctx.check(f"second execution: a third that is created and never started replaces nothing, and its results "
+              f"expire by age: within the TTL + one expiry pass + 2 closing intervals ({deadline:g} s) of its "
+              f"end, and not before the TTL",
+              left == 0 and timing.result_ttl_s - 1 <= gone_after,
+              f"result tables {left} at {gone_after:.1f} s after the run ended; execution {third} was created "
+              f"and not started")
+    _check_expired(ctx, "second execution, after the TTL", wid, second.eid, size, sink)
     ctx.rec.eid = second.eid
 
 
@@ -2323,12 +2339,12 @@ def scenario_w(ctx: Ctx) -> None:
                   listed is not None and (listed.eid, listed.status_name) == (eid, name) and reason_ok(listed.reason),
                   f"{listed}")
     killed = runs["d"][1]
-    rows = ctx.api.execution_log(killed).state_rows if killed is not None else []
-    states = [e.state for e in rows]
+    log = ctx.api.execution_log(killed) if killed is not None else None
+    last = log.entries[-1] if log and log.entries else None
     ctx.check("d's log is READY, RUNNING, PAUSED, RUNNING, KILLED, the kill by the user",
-              states == ["READY", "RUNNING", "PAUSED", "RUNNING", "KILLED"]
-              and rows[-1].reason == REASON_KILLED_BY_USER,
-              f"states {states}; last reason {rows[-1].reason if rows else None}")
+              log is not None and log.states == ["READY", "RUNNING", "PAUSED", "RUNNING", "KILLED"]
+              and last.reason == REASON_KILLED_BY_USER,
+              f"states {log.states if log else None}; last reason {last.reason if last else None}")
 
 
 # ------------------------------------------ v: stored reads without the unit
@@ -2410,7 +2426,7 @@ def _check_stored_reads(ctx: Ctx, printed: dict, e_eid: int, e_ended: float, gro
         ctx.check(f"state: {key}'s execution is closed, Completed",
                   state is not None and (state.open, state.status) == (False, STATUS_COMPLETED), why or f"{state}")
     log, why = _answer(lambda: ctx.api.execution_log(a_eid))
-    states = [entry.state for entry in log.state_rows] if log else []
+    states = log.states if log else []
     ctx.check("log: a's log reads READY, RUNNING, COMPLETED, seq rising by one, with its closing record",
               states == ["READY", "RUNNING", "COMPLETED"] and log.whole and log.outcome == STATUS_COMPLETED,
               why or f"states {states}; seq {log.seqs}; closing outcome {log.outcome}")
@@ -2489,7 +2505,7 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
           scenario_r),
     "s": ("polite-stop", "the unit is stopped under a slow run: it records \"the computing unit was stopped\"",
           scenario_s),
-    "t": ("expiry", "results go at the next create and by age; the plan, the log and the statistics stay",
+    "t": ("expiry", "results go once a later run has started, and by age; the plan, the log and the statistics stay",
           scenario_t),
     "w": ("history-outcomes", "the history and the admin's list say how runs ended, and why", scenario_w),
     "v": ("stored-reads-without-unit", "with the unit down the Dashboard serves statistics, console output, "

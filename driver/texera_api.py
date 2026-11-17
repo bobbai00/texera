@@ -61,7 +61,7 @@ import time
 import urllib.parse
 from typing import Any, Callable, Iterable
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import requests
 import websocket  # websocket-client
@@ -127,7 +127,10 @@ class ExecutionState:
 
 @dataclass
 class LogEntry:
-    """One row of an execution's log. A `state` row is a change of state, with why."""
+    """One row of an execution's log: a change of state, with why. The log holds nothing
+    else (docs/step3-notes/changes-since-rev2.md, section 2: a stored port's location is
+    in the plan, so the design's `output` rows are gone); a row of another kind is a
+    finding of Check I. A row that names no kind is taken to be a state change."""
 
     seq: int
     time_ms: int | None
@@ -135,21 +138,11 @@ class LogEntry:
     state: str | None = None
     reason: str | None = None
     errors: tuple = ()
-    #: the row as the route sent it
-    row: dict = field(default_factory=dict, repr=False)
 
     @classmethod
     def of(cls, row: dict) -> "LogEntry":
-        return cls(seq=int(row.get("seq", 0)), time_ms=row.get("timeMs"), kind=str(row.get("kind")),
-                   state=row.get("state"), reason=row.get("reason"), errors=tuple(row.get("errors") or ()),
-                   row=row)
-
-
-#: Design 3.2: the log names every stored output port in an `output` row of its own, written
-#: before the run is RUNNING. The owner may have the ports' locations written into the plan
-#: instead; the log then holds state rows only. This flag and `ExecutionLog.stored_ports` are
-#: the only places in the driver that know of those rows.
-LOG_NAMES_STORED_PORTS = True
+        return cls(seq=int(row.get("seq", 0)), time_ms=row.get("timeMs"), kind=str(row.get("kind") or "state"),
+                   state=row.get("state"), reason=row.get("reason"), errors=tuple(row.get("errors") or ()))
 
 
 @dataclass
@@ -171,14 +164,9 @@ class ExecutionLog:
                    ended_at_ms=(closing or {}).get("endedAtMs"))
 
     @property
-    def state_rows(self) -> list[LogEntry]:
-        return [e for e in self.entries if e.kind == "state"]
-
-    def stored_ports(self) -> list[dict]:
-        """The stored output ports the log names, one per `output` row: its seq, the port's
-        id, its result table's URI and its output mode."""
-        return [{"seq": e.seq, **{k: e.row.get(k) for k in ("portId", "uri", "outputMode")}}
-                for e in self.entries if e.kind == "output"]
+    def states(self) -> list[str | None]:
+        """The state each row changes to, in the rows' order (None: no state change)."""
+        return [e.state if e.kind == "state" else None for e in self.entries]
 
     @property
     def seqs(self) -> list[int]:
