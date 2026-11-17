@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.json
 
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.operator.source.scan.FileDecodingMethod
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -53,7 +53,7 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
     desc.offset = offset
     new JSONLScanSourceOpExec(
       objectMapper.writeValueAsString(desc),
-      TestOperators.inputsOf(desc),
+      FixtureInputs.inputsOf(desc),
       idx,
       workerCount
     )

@@ -202,7 +202,8 @@ class WorkerSpec
         ),
         isSource = false,
         loopStartPortUris = Map.empty,
-        inputs = OperatorInputs.defaultInstance
+        inputs = OperatorInputs.defaultInstance,
+        inputLinkEndpoints = Seq.empty
       ),
       AsyncRPCContext(COORDINATOR, identifier1),
       4

@@ -22,6 +22,7 @@ package org.apache.texera.amber.engine.architecture.worker.managers
 import org.apache.texera.amber.core.executor.{
   ExecutorInputs,
   FileListing,
+  InputFile,
   OpExecInitInfo,
   OpExecWithClassName,
   OpExecWithCode,
@@ -58,14 +59,16 @@ class SerializationManagerSpec extends AnyFlatSpec {
   private def mkRequest(
       info: OpExecInitInfo,
       totalWorkers: Int = 1,
-      inputs: OperatorInputs = OperatorInputs.defaultInstance
+      inputs: OperatorInputs = OperatorInputs.defaultInstance,
+      inputLinkEndpoints: Seq[String] = Seq.empty
   ): InitializeExecutorRequest =
     InitializeExecutorRequest(
       totalWorkerCount = totalWorkers,
       opExecInitInfo = info,
       isSource = false,
       loopStartPortUris = Map.empty,
-      inputs = inputs
+      inputs = inputs,
+      inputLinkEndpoints = inputLinkEndpoints
     )
 
   "SerializationManager.restoreExecutorState" should
@@ -104,10 +107,12 @@ class SerializationManagerSpec extends AnyFlatSpec {
   it should "hand the executor it restores what its operator reads, as it was initialized" in {
     val mgr = new SerializationManager(workerActorId)
     val listing = Seq("/dataset/ada@texera.io/letters/v1/b.txt")
+    val file = InputFile("b.txt", "http://texera-rustfs:9000/texera-dataset/b", Long.MaxValue)
     mgr.setOpInitialization(
       mkRequest(
         OpExecWithClassName(classOf[SerializationManagerSpec.ReadingExec].getName, "described"),
-        inputs = OperatorInputs(listing = Some(FileListing(listing)))
+        inputs = OperatorInputs(files = Seq(file), listing = Some(FileListing(listing))),
+        inputLinkEndpoints = Seq("http://texera-rustfs:9000")
       )
     )
 
@@ -116,6 +121,8 @@ class SerializationManagerSpec extends AnyFlatSpec {
     val restored = executor.asInstanceOf[SerializationManagerSpec.ReadingExec]
     assert(restored.desc == "described")
     assert(restored.inputs.listing.contains(listing))
+    // The link leads to an endpoint the initialization named, so the executor may follow it.
+    restored.inputs.open("b.txt").close()
   }
 
   it should "throw UnsupportedOperationException on OpExecInitInfo.Empty (unsupported variant)" in {

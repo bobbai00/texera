@@ -22,10 +22,7 @@ package org.apache.texera.amber.engine.e2e
 import com.twitter.util.{Await, Duration, Promise}
 import com.typesafe.scalalogging.Logger
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.engine.architecture.coordinator.{
-  CoordinatorConfig,
-  ExecutionStateUpdate
-}
+import org.apache.texera.amber.engine.architecture.coordinator.ExecutionStateUpdate
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
   COMPLETED,
@@ -51,7 +48,7 @@ class PauseSpec extends RetryingDatabaseE2ESpec("PauseSpec", specId = 2) {
         system,
         workflow.context,
         workflow.physicalPlan,
-        CoordinatorConfig.default,
+        TestUtils.readingFixtureLinks(),
         error => {}
       )
     val completion = Promise[Unit]()

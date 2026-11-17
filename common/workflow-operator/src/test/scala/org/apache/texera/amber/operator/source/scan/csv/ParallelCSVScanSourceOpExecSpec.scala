@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.csv
 
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 
@@ -49,7 +49,7 @@ class ParallelCSVScanSourceOpExecSpec extends AnyFlatSpec {
     desc.setResolvedFileName(new java.net.URI(uri))
     new ParallelCSVScanSourceOpExec(
       objectMapper.writeValueAsString(desc),
-      TestOperators.inputsOf(desc),
+      FixtureInputs.inputsOf(desc),
       idx,
       workerCount
     )

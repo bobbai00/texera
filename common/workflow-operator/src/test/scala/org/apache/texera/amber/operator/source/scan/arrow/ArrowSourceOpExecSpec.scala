@@ -23,7 +23,7 @@ import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.ipc.ArrowFileWriter
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -76,7 +76,7 @@ class ArrowSourceOpExecSpec extends AnyFlatSpec with Matchers {
     desc.fileName = Some(file.toURI.toString)
     desc.offset = offset
     desc.limit = limit
-    new ArrowSourceOpExec(objectMapper.writeValueAsString(desc), TestOperators.inputsOf(desc))
+    new ArrowSourceOpExec(objectMapper.writeValueAsString(desc), FixtureInputs.inputsOf(desc))
   }
 
   private def values(exec: ArrowSourceOpExec): List[String] =

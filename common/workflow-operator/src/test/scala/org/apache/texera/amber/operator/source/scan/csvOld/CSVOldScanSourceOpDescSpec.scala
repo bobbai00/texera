@@ -28,7 +28,7 @@ import org.apache.texera.amber.util.PythonTestSupport.{
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.AttributeType
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.amber.operator.metadata.OperatorGroupConstants
 import org.apache.texera.amber.operator.source.scan.FileDecodingMethod
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -134,7 +134,7 @@ class CSVOldScanSourceOpDescSpec extends AnyFlatSpec with Matchers {
     d.offset = Some(10)
 
     val exec =
-      new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(d), TestOperators.inputsOf(d))
+      new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(d), FixtureInputs.inputsOf(d))
     exec.open()
     val engineRows =
       try exec.produceTuple().toList
@@ -171,7 +171,7 @@ class CSVOldScanSourceOpDescSpec extends AnyFlatSpec with Matchers {
     d.sourceSchema().getAttribute("w").getType shouldBe AttributeType.DOUBLE
 
     val exec =
-      new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(d), TestOperators.inputsOf(d))
+      new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(d), FixtureInputs.inputsOf(d))
     exec.open()
     val engineText =
       try exec.produceTuple().map(_.getFields.head.toString).toList

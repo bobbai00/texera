@@ -28,7 +28,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
 import org.apache.texera.amber.engine.architecture.worker.DataProcessorRPCHandlerInitializer
 import org.apache.texera.amber.util.VirtualIdentityUtils
-import org.apache.texera.common.config.StorageConfig
 
 trait InitializeExecutorHandler {
   this: DataProcessorRPCHandlerInitializer =>
@@ -46,7 +45,7 @@ trait InitializeExecutorHandler {
         )
       )
     cachedTotalWorkerCount = req.totalWorkerCount
-    executorInputs = new ExecutorInputs(req.inputs, StorageConfig.inputLinksAllowedEndpoints)
+    executorInputs = new ExecutorInputs(req.inputs, req.inputLinkEndpoints)
     setupExecutor(req.opExecInitInfo, workerIdx, cachedTotalWorkerCount)
     EmptyReturn()
   }

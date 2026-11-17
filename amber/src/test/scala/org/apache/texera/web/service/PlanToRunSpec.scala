@@ -35,7 +35,7 @@ import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.compiler.{WorkflowCompilationFailed, WorkflowCompiler}
 import org.apache.texera.web.service.execution.UserEnvironmentResolver
@@ -128,7 +128,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     executionPlan.replayLog shouldBe None
     // The file its scan reads is the one file the plan reads through a link: the scan's own.
     val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
-    val link = TestOperators.fixtureInputLinker.link(scanned)
+    val link = FixtureInputs.linker.link(scanned)
     executionPlan.plan.operators.flatMap(op => op.inputs.files.map(op.id.logicalOpId -> _)) shouldBe
       Set(
         operators.head.operatorIdentifier ->

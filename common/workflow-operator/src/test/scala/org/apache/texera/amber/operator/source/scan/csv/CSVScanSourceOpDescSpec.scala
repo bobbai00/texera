@@ -39,7 +39,12 @@ import org.apache.texera.amber.core.workflow.WorkflowContext.{
   DEFAULT_EXECUTION_ID,
   DEFAULT_WORKFLOW_ID
 }
-import org.apache.texera.amber.operator.{LogicalOp, StandaloneCodeGenerator, TestOperators}
+import org.apache.texera.amber.operator.{
+  FixtureInputs,
+  LogicalOp,
+  StandaloneCodeGenerator,
+  TestOperators
+}
 import org.apache.texera.amber.operator.metadata.OperatorMetadataGenerator
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csvOld.CSVOldScanSourceOpDesc
@@ -341,7 +346,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
     val exec = new ParallelCSVScanSourceOpExec(
       objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc),
-      TestOperators.inputsOf(parallelCsvScanSourceOpDesc)
+      FixtureInputs.inputsOf(parallelCsvScanSourceOpDesc)
     )
     exec.open()
     val rows =
@@ -367,7 +372,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
     val exec = new ParallelCSVScanSourceOpExec(
       objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc),
-      TestOperators.inputsOf(parallelCsvScanSourceOpDesc)
+      FixtureInputs.inputsOf(parallelCsvScanSourceOpDesc)
     )
     exec.open()
     val rows =
@@ -407,7 +412,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
     val exec = new ParallelCSVScanSourceOpExec(
       objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc),
-      TestOperators.inputsOf(parallelCsvScanSourceOpDesc)
+      FixtureInputs.inputsOf(parallelCsvScanSourceOpDesc)
     )
     exec.open()
     val rowsRead =
@@ -736,7 +741,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
     val exec = new CSVScanSourceOpExec(
       objectMapper.writeValueAsString(csvScanSourceOpDesc),
-      TestOperators.inputsOf(csvScanSourceOpDesc)
+      FixtureInputs.inputsOf(csvScanSourceOpDesc)
     )
     exec.open()
     val engineRows =
@@ -802,7 +807,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
         assert(desc.sourceSchema().getAttribute("w").getType == AttributeType.DOUBLE)
         assert(desc.sourceSchema().getAttribute("u").getType == AttributeType.DOUBLE)
 
-        val engine = exec(objectMapper.writeValueAsString(desc), TestOperators.inputsOf(desc))
+        val engine = exec(objectMapper.writeValueAsString(desc), FixtureInputs.inputsOf(desc))
         engine.open()
         val engineRows =
           try engine.produceTuple().map(_.getFields.toSeq).toList

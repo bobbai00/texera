@@ -24,7 +24,7 @@ import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.{
   CompileFor,
@@ -221,8 +221,8 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
           CompileFor.Run(
             files = TestOperators.fixtureFileResolver,
             settings = CompileSettings.Default,
-            inputLinker = TestOperators.fixtureInputLinker,
-            lister = TestOperators.fixtureDatasetVersionLister,
+            inputLinker = FixtureInputs.linker,
+            lister = FixtureInputs.lister,
             repositories = TestOperators.fixtureRepositoryResolver,
             environments = name => throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
           )

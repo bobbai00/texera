@@ -23,7 +23,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, SchemaEnforceable, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.source.scan.{FileAttributeType, FileDecodingMethod}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.BeforeAndAfter
@@ -83,7 +83,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
         objectMapper.writeValueAsString(fileScanSourceOpDesc),
-        TestOperators.inputsOf(fileScanSourceOpDesc)
+        FixtureInputs.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -107,7 +107,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
         objectMapper.writeValueAsString(fileScanSourceOpDesc),
-        TestOperators.inputsOf(fileScanSourceOpDesc)
+        FixtureInputs.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -134,7 +134,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
         objectMapper.writeValueAsString(fileScanSourceOpDesc),
-        TestOperators.inputsOf(fileScanSourceOpDesc)
+        FixtureInputs.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -157,7 +157,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
         objectMapper.writeValueAsString(fileScanSourceOpDesc),
-        TestOperators.inputsOf(fileScanSourceOpDesc)
+        FixtureInputs.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -185,7 +185,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
         objectMapper.writeValueAsString(fileScanSourceOpDesc),
-        TestOperators.inputsOf(fileScanSourceOpDesc)
+        FixtureInputs.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -215,7 +215,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
         objectMapper.writeValueAsString(fileScanSourceOpDesc),
-        TestOperators.inputsOf(fileScanSourceOpDesc)
+        FixtureInputs.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -259,7 +259,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
       val fileScanSourceOpExec =
         new FileScanSourceOpExec(
           objectMapper.writeValueAsString(fileScanSourceOpDesc),
-          TestOperators.inputsOf(fileScanSourceOpDesc)
+          FixtureInputs.inputsOf(fileScanSourceOpDesc)
         )
       fileScanSourceOpExec.open()
       val processedTuple: Iterator[Tuple] = fileScanSourceOpExec
@@ -332,7 +332,7 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
       val exec =
         new FileScanSourceOpExec(
           objectMapper.writeValueAsString(desc),
-          TestOperators.inputsOf(desc)
+          FixtureInputs.inputsOf(desc)
         )
       exec.open()
       assert(exec.produceTuple().toList.map(_.getFields.head) == List("line1", "line2"))

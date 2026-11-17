@@ -25,7 +25,6 @@ import org.apache.texera.amber.core.storage.model.LinkDocument.{
   Endpoint,
   ReadTimeoutMs
 }
-import org.apache.texera.common.config.StorageConfig
 
 import java.io.{File, IOException, InputStream}
 import java.net.{HttpURLConnection, URI, URL}
@@ -98,11 +97,8 @@ object LinkDocument {
   * @param allowedEndpoints the object-store endpoints a link may point at
   * @throws IllegalArgumentException if the link does not point at one of `allowedEndpoints`
   */
-class LinkDocument(
-    link: InputLink,
-    name: String,
-    allowedEndpoints: Seq[String] = StorageConfig.inputLinksAllowedEndpoints
-) extends ReadonlyVirtualDocument[Nothing]
+class LinkDocument(link: InputLink, name: String, allowedEndpoints: Seq[String])
+    extends ReadonlyVirtualDocument[Nothing]
     with AutoCloseable {
 
   private val (endpoint: Endpoint, location: URL) = {

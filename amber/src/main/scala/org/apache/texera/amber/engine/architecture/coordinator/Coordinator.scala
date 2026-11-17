@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.architecture.coordinator
 import org.apache.pekko.actor.SupervisorStrategy.Stop
 import org.apache.pekko.actor.{AllForOneStrategy, Props, SupervisorStrategy}
 import org.apache.texera.web.model.websocket.response.RegionUpdateEvent
-import org.apache.texera.common.config.ApplicationConfig
+import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
 import org.apache.texera.amber.core.virtualidentity.ChannelIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.NetworkAck
@@ -66,7 +66,10 @@ final case class CoordinatorConfig(
     statusUpdateIntervalMs: Option[Long],
     runtimeStatisticsPersistenceIntervalMs: Option[Long],
     stateRestoreConfOpt: Option[StateRestoreConfig],
-    faultToleranceConfOpt: Option[FaultToleranceConfig]
+    faultToleranceConfOpt: Option[FaultToleranceConfig],
+    // The object-store endpoints the run's workers read input links from: a plan's link that
+    // points anywhere else is refused. This computing unit's, unless a caller gives others.
+    inputLinkEndpoints: Seq[String] = StorageConfig.inputLinksAllowedEndpoints
 )
 
 object Coordinator {

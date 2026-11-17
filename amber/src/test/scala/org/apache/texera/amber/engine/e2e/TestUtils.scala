@@ -58,7 +58,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   PAUSED
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
@@ -119,13 +119,23 @@ object TestUtils {
   val fixtureBindings: CompileFor.Run = CompileFor.Run(
     files = TestOperators.fixtureFileResolver,
     settings = CompileSettings.Default,
-    inputLinker = TestOperators.fixtureInputLinker,
-    lister = TestOperators.fixtureDatasetVersionLister,
+    inputLinker = FixtureInputs.linker,
+    lister = FixtureInputs.lister,
     repositories = TestOperators.fixtureRepositoryResolver,
     environments = name =>
       if (name == fixtureEnvironment.name) fixtureEnvironment
       else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
   )
+
+  /**
+    * `config`, the configuration of a run's coordinator, for a spec whose plan is bound to the
+    * fixtures: its workers read links from the fixture server, where `fixtureBindings` links
+    * files, as a computing unit's read them from its object store.
+    */
+  def readingFixtureLinks(
+      config: CoordinatorConfig = CoordinatorConfig.default
+  ): CoordinatorConfig =
+    config.copy(inputLinkEndpoints = FixtureInputs.linkEndpoints)
 
   /** The directory the computing unit of a spec mounts datasets and models under. */
   val fixtureUnitMountRoot: Path = Paths.get("/mnt/texera-mounts")
@@ -277,7 +287,7 @@ object TestUtils {
       system,
       workflow.context,
       workflow.physicalPlan,
-      CoordinatorConfig.default,
+      readingFixtureLinks(),
       e => completion.updateIfEmpty(Throw(e))
     )
     try {
@@ -547,7 +557,7 @@ object TestUtils {
       system,
       workflow.context,
       workflow.physicalPlan,
-      CoordinatorConfig.default,
+      readingFixtureLinks(),
       error => {}
     )
     // Timeout for control-command acks (start/pause/reconfigure/resume).

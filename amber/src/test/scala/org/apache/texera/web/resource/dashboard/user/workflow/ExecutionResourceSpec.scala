@@ -69,7 +69,7 @@ import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.CompileFor
@@ -1035,12 +1035,12 @@ class ExecutionResourceSpec
   }
 
   it should "list each File Lister's dataset version and link the files listed, in the plan it stores and nowhere else" in {
-    val files = TestOperators.fixtureDatasetFiles.map {
-      case (file, _) => s"${TestOperators.fixtureDatasetVersionPath}/$file"
+    val files = FixtureInputs.datasetFiles.map {
+      case (file, _) => s"${FixtureInputs.datasetVersionPath}/$file"
     }
 
     val execution =
-      created(post(request(plan = listedPlan(TestOperators.fixtureDatasetVersionPath))))
+      created(post(request(plan = listedPlan(FixtureInputs.datasetVersionPath))))
     val (_, plan) = storedPlan(execution)
 
     // The File Lister is given the version's listing to output, and the File Scan From Input a
@@ -1053,7 +1053,7 @@ class ExecutionResourceSpec
     // Neither is in a descriptor. The logical plan kept beside the plan is the workflow as its
     // user wrote it: the dataset version by its path, and neither what it lists nor a link.
     Seq(descriptorOf(plan, "lister").toString, logicalPlanOf(execution)).foreach { written =>
-      written should include(TestOperators.fixtureDatasetVersionPath)
+      written should include(FixtureInputs.datasetVersionPath)
       written should not include "http://127.0.0.1:"
       files.foreach(file => written should not include file)
     }
@@ -1108,7 +1108,7 @@ class ExecutionResourceSpec
   it should "refuse a File Scan From Input that no File Lister is upstream of, as its error" in {
     // The file's path typed by hand, where a File Lister would list it.
     val names = named(new TextInputSourceOpDesc(), "names")
-    names.textInput = s"${TestOperators.fixtureDatasetVersionPath}/line_numbers.txt"
+    names.textInput = s"${FixtureInputs.datasetVersionPath}/line_numbers.txt"
     val plan = LogicalPlanPojo(
       List(names, named(new FileScanOpDesc(), "scan")),
       List(link("names", "scan")),

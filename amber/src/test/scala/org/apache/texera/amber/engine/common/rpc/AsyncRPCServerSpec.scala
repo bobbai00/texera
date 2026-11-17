@@ -213,7 +213,8 @@ class AsyncRPCServerSpec extends AnyFlatSpec with Matchers {
             86400000L
           )
         )
-      )
+      ),
+      inputLinkEndpoints = Seq("http://texera-rustfs:9000")
     )
     withCapturedLogs(actorId, Level.DEBUG) { events =>
       val (server, handler, _) = newFixture(actorId)

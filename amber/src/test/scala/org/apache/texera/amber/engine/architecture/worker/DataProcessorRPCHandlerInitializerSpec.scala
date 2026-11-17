@@ -22,6 +22,7 @@ package org.apache.texera.amber.engine.architecture.worker
 import org.apache.texera.amber.core.executor.{
   ExecutorInputs,
   FileListing,
+  InputFile,
   OpExecInitInfo,
   OperatorExecutor,
   OperatorInputs,
@@ -147,25 +148,43 @@ class DataProcessorRPCHandlerInitializerSpec extends AnyFlatSpec {
 
   behavior of "DataProcessorRPCHandlerInitializer.initializeExecutor"
 
-  it should "hand the executor what its operator reads, and so the executor that takes its place" in {
-    val initializer = newInitializer()
-    val context = AsyncRPCContext(COORDINATOR, workerId)
-    val listing = Seq("/dataset/ada@texera.io/letters/v1/b.txt")
+  private val context = AsyncRPCContext(COORDINATOR, workerId)
+  private val listing = Seq("/dataset/ada@texera.io/letters/v1/b.txt")
 
+  /**
+    * A worker whose operator reads the listing above and the file `b.txt`, kept at
+    * texera-rustfs, and may read links from `linkEndpoints`: its handlers, and the executor
+    * they built.
+    */
+  private def initialized(
+      linkEndpoints: Seq[String]
+  ): (DataProcessorRPCHandlerInitializer, ReadingExec) = {
+    val initializer = newInitializer()
     initializer.initializeExecutor(
       InitializeExecutorRequest(
         totalWorkerCount = 1,
         opExecInitInfo = OpExecWithClassName(classOf[ReadingExec].getName, "as-planned"),
         isSource = true,
         loopStartPortUris = Map.empty,
-        inputs = OperatorInputs(listing = Some(FileListing(listing)))
+        inputs = OperatorInputs(
+          files = Seq(
+            InputFile("b.txt", "http://texera-rustfs:9000/texera-dataset/b", Long.MaxValue)
+          ),
+          listing = Some(FileListing(listing))
+        ),
+        inputLinkEndpoints = linkEndpoints
       ),
       context
     )
+    (initializer, initializer.dp.executor.asInstanceOf[ReadingExec])
+  }
 
-    val planned = initializer.dp.executor.asInstanceOf[ReadingExec]
+  it should "hand the executor what its operator reads, and so the executor that takes its place" in {
+    val (initializer, planned) = initialized(linkEndpoints = Seq("http://texera-rustfs:9000"))
+
     assert(planned.desc == "as-planned")
     assert(planned.inputs.listing.contains(listing))
+    planned.inputs.open("b.txt").close()
 
     // A change to the operator while its run is paused brings a new descriptor and nothing
     // else: the operator goes on reading what its plan says.
@@ -180,6 +199,21 @@ class DataProcessorRPCHandlerInitializerSpec extends AnyFlatSpec {
     val changed = initializer.dp.executor.asInstanceOf[ReadingExec]
     assert(changed.desc == "as-changed")
     assert(changed.inputs.listing.contains(listing))
+    changed.inputs.open("b.txt").close()
+  }
+
+  it should "let the executor follow a link only to the endpoints its request names" in {
+    val (_, elsewhere) = initialized(linkEndpoints = Seq("http://another-store:9000"))
+    val (_, nowhere) = initialized(linkEndpoints = Seq.empty)
+
+    Seq(elsewhere, nowhere).foreach { executor =>
+      val refused = intercept[IllegalArgumentException](executor.inputs.open("b.txt"))
+      assert(
+        refused.getMessage.startsWith(
+          "Refusing to read b.txt: its link points at http://texera-rustfs:9000"
+        )
+      )
+    }
   }
 }
 

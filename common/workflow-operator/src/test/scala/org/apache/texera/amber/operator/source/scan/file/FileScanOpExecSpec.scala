@@ -29,7 +29,7 @@ import org.apache.texera.amber.core.executor.{
 import org.apache.texera.amber.core.storage.InputLink
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.source.scan.FileAttributeType
 import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder}
 import org.jooq.ConnectionProvider
@@ -75,7 +75,7 @@ class FileScanOpExecSpec
 
   /** A link to the bytes of the local file at `path`, as a plan made to run carries one. */
   private def linkTo(path: String): InputLink =
-    TestOperators.fixtureInputLinker.link(TestOperators.localFileUri(path))
+    FixtureInputs.linker.link(TestOperators.localFileUri(path))
 
   /** The links of a plan whose File Listers listed the two files above. */
   private def listed: Map[String, InputLink] =
@@ -94,7 +94,7 @@ class FileScanOpExecSpec
   ): OperatorExecutor = {
     val descriptor = new FileScanOpDesc
     configure(descriptor)
-    val inputs = TestOperators.executorInputs(
+    val inputs = FixtureInputs.executorInputs(
       OperatorInputs(files = links.toSeq.sortBy(_._1).map {
         case (name, link) => InputFile(name, link.url, link.expiresAtMs)
       })

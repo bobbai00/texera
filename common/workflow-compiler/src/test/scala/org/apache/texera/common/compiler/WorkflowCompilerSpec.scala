@@ -79,6 +79,7 @@ import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdf
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
 import org.apache.texera.amber.operator.union.UnionOpDesc
 import org.apache.texera.amber.operator.{
+  FixtureInputs,
   LogicalOp,
   PortDescription,
   PythonOperatorDescriptor,
@@ -129,8 +130,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   private def runCompiler(
       fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver,
       settings: CompileSettings = CompileSettings.Default,
-      inputLinker: InputLinker = TestOperators.fixtureInputLinker,
-      lister: DatasetVersionLister = TestOperators.fixtureDatasetVersionLister,
+      inputLinker: InputLinker = FixtureInputs.linker,
+      lister: DatasetVersionLister = FixtureInputs.lister,
       repositories: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
       environments: PythonEnvironmentResolver = name =>
         throw PythonEnvironmentNotResolved.noSuchEnvironment(name),
@@ -1816,7 +1817,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     val keyword = TestOperators.keywordSearchOpDesc("Region", "Asia")
     val made = scala.collection.mutable.ArrayBuffer.empty[(java.net.URI, InputLink)]
     val linker = linkerOf { file =>
-      val link = TestOperators.fixtureInputLinker.link(file)
+      val link = FixtureInputs.linker.link(file)
       made += file -> link
       link
     }
@@ -1933,7 +1934,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   // File Listers here list the fixture dataset version unless a case gives another lister.
 
   private def fileListerOp(
-      versionPath: String = TestOperators.fixtureDatasetVersionPath
+      versionPath: String = FixtureInputs.datasetVersionPath
   ): FileListerSourceOpDesc = {
     val op = new FileListerSourceOpDesc()
     op.datasetVersionPath = versionPath
@@ -1941,8 +1942,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   }
 
   /** The files of the fixture dataset version, by their logical paths, as it lists them. */
-  private val fixtureFiles: List[String] = TestOperators.fixtureDatasetFiles.map {
-    case (file, _) => s"${TestOperators.fixtureDatasetVersionPath}/$file"
+  private val fixtureFiles: List[String] = FixtureInputs.datasetFiles.map {
+    case (file, _) => s"${FixtureInputs.datasetVersionPath}/$file"
   }.toList
 
   /** The listing the plan of `result` gives the executor of `fileLister`. */
@@ -2174,7 +2175,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
     assert(
       onlyErrorOf(failure, lister) == "java.lang.IllegalArgumentException: Dataset version " +
-        s"${TestOperators.fixtureDatasetVersionPath} holds more files than the 1 a File Lister " +
+        s"${FixtureInputs.datasetVersionPath} holds more files than the 1 a File Lister " +
         "can list."
     )
     // At the two it holds, the same plan compiles; and the editing compile lists nothing to
@@ -2489,7 +2490,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     ExecFactory.newExecFromJavaClassName(
       className,
       descString,
-      inputs = TestOperators.executorInputs(inputsOf(result, op))
+      inputs = FixtureInputs.executorInputs(inputsOf(result, op))
     )
   }
 

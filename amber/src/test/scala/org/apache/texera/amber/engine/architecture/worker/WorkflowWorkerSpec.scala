@@ -120,7 +120,8 @@ class WorkflowWorkerSpec
         ),
         isSource = false,
         loopStartPortUris = Map.empty,
-        inputs = OperatorInputs.defaultInstance
+        inputs = OperatorInputs.defaultInstance,
+        inputLinkEndpoints = Seq.empty
       )
     )
 

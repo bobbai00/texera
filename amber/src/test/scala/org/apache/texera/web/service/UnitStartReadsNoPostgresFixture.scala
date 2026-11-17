@@ -256,7 +256,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
             system,
             workflow.context,
             workflow.physicalPlan,
-            coordinatorConfig,
+            TestUtils.readingFixtureLinks(coordinatorConfig),
             onError
           )
       }

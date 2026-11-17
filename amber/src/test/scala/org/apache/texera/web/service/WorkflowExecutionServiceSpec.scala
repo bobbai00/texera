@@ -97,6 +97,7 @@ import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
@@ -1292,9 +1293,13 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "start the coordinator of a plan that replays nothing and writes no replay log as this unit's" in {
-    WorkflowExecutionService.coordinatorConfigOf(
+    val config = WorkflowExecutionService.coordinatorConfigOf(
       ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
-    ) shouldBe CoordinatorConfig.default
+    )
+
+    config shouldBe CoordinatorConfig.default
+    // Its workers read links from the endpoints this unit is set up with, and from no other.
+    config.inputLinkEndpoints shouldBe StorageConfig.inputLinksAllowedEndpoints
   }
 
   "WorkflowExecutionService.mountedUnder" should

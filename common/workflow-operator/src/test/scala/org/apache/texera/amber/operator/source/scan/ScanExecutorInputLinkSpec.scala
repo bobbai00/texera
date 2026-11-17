@@ -33,7 +33,7 @@ import org.apache.texera.amber.core.executor.{
 import org.apache.texera.amber.core.storage.InputLink
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.operator.source.scan.arrow.ArrowSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.{
   CSVScanSourceOpDesc,
@@ -90,7 +90,7 @@ class ScanExecutorInputLinkSpec
       s"dataset:///dataset-12/97fd4c2a755b69b7c66d322eab40b7e5c2ad5d10/${file.getFileName}"
 
     /** A link to the file's bytes, as a plan made to run carries one. */
-    def link: InputLink = TestOperators.fixtureInputLinker.link(file.toUri)
+    def link: InputLink = FixtureInputs.linker.link(file.toUri)
 
     /** The scan's descriptor, of the dataset's file. */
     def descriptor: ScanSourceOpDesc = {
@@ -104,7 +104,7 @@ class ScanExecutorInputLinkSpec
       * it names: for a CSV scan, the column limit too.
       */
     def inputs(links: (String, InputLink)*): ExecutorInputs =
-      TestOperators.executorInputs(
+      FixtureInputs.executorInputs(
         OperatorInputs(
           files = links.map { case (name, link) => InputFile(name, link.url, link.expiresAtMs) },
           csvParserMaxColumns = Option.when(newDescriptor().isInstanceOf[CSVScanSourceOpDesc])(

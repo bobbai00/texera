@@ -21,7 +21,7 @@ package org.apache.texera.amber.operator.source.scan.csv
 
 import com.univocity.parsers.common.{ParsingContext, TextParsingException}
 import com.univocity.parsers.csv.{CsvParser, CsvParserSettings}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
@@ -201,7 +201,7 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     desc.setResolvedFileName(URI.create(path.toUri.toString))
     new CSVScanSourceOpExec(
       objectMapper.writeValueAsString(desc),
-      TestOperators.inputsOf(desc, maxColumns)
+      FixtureInputs.inputsOf(desc, maxColumns)
     )
   }
 
