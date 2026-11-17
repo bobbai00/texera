@@ -373,36 +373,3 @@
     outline: none;
   }
 }
-
-::ng-deep .error {
-  color: red;
-  font-weight: bold;
-}
-
-::ng-deep .warning {
-  color: #d4a000;
-  font-weight: bold;
-}
-
-::ng-deep .success {
-  color: green;
-  font-weight: bold;
-}
-
-::ng-deep .pip-exit.ok {
-  color: green;
-  font-weight: bold;
-}
-
-::ng-deep .pip-exit.err {
-  color: red;
-  font-weight: bold;
-}
-
-.env-unsynced-note {
-  margin-left: 0.5em;
-  font-size: 0.8em;
-  font-style: italic;
-  font-weight: normal;
-  color: rgba(0, 0, 0, 0.45);
-}

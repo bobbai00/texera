@@ -55,7 +55,6 @@ import org.apache.texera.web.resource.dashboard.user.workflow.{
   ExecutionResource,
   WorkflowExecutionsResource
 }
-import org.apache.texera.web.resource.pythonvirtualenvironment.{PveResource, PveWebsocketResource}
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
   SyncExecutionResult,
@@ -551,14 +550,14 @@ class ComputingUnitMasterSpec
     bootstrap.getConfigurationSourceProvider shouldBe a[SubstitutingSourceProvider]
   }
 
-  it should "register the websocket bundle for both websocket endpoints" in {
+  it should "register the websocket bundle for the workflow websocket, the unit's only endpoint" in {
     val bootstrap = new Bootstrap[Configuration](master)
 
     master.initialize(bootstrap)
 
     // Bootstrap exposes no accessor for the bundles it was given, and WebsocketBundle keeps
-    // its endpoints as ServerEndpointConfigs, so both have to be read reflectively; the
-    // endpoint classes themselves come back off the public ServerEndpointConfig API.
+    // its endpoints as ServerEndpointConfigs, so both have to be read reflectively; each
+    // endpoint's class and path come back off the public ServerEndpointConfig API.
     val bundlesField = classOf[Bootstrap[_]].getDeclaredField("bundles")
     bundlesField.setAccessible(true)
     val websocketBundles = bundlesField
@@ -570,15 +569,13 @@ class ComputingUnitMasterSpec
 
     val configsField = classOf[WebsocketBundle].getDeclaredField("endpointConfigs")
     configsField.setAccessible(true)
-    val endpointClasses = configsField
+    val endpoints = configsField
       .get(websocketBundles.head)
       .asInstanceOf[java.util.Collection[javax.websocket.server.ServerEndpointConfig]]
       .asScala
-      .map(_.getEndpointClass)
-    endpointClasses should contain theSameElementsAs Seq(
-      classOf[WorkflowWebsocketResource],
-      classOf[PveWebsocketResource]
-    )
+      .toSeq
+    endpoints.map(_.getEndpointClass) shouldBe Seq(classOf[WorkflowWebsocketResource])
+    endpoints.map(_.getPath) shouldBe Seq("/wsapi/workflow-websocket")
   }
 
   it should "register the Scala module on the bootstrap object mapper" in {
@@ -637,7 +634,6 @@ class ComputingUnitMasterSpec
 
   it should "register the master's Jersey resource classes" in {
     ranEnvironment.jersey.getResourceConfig.getClasses.asScala should contain allOf (
-      classOf[PveResource],
       classOf[WorkflowExecutionsResource],
       classOf[SyncExecutionResource],
       classOf[SessionHandler],
@@ -664,6 +660,16 @@ class ComputingUnitMasterSpec
     jersey.statusOf("GET", "/execution/12/run") shouldBe 405
     // A workflow to compile and run on a unit, by the workflow's and the unit's ids: not served.
     jersey.statusOf("POST", "/execution/12/3/run") shouldBe 404
+  }
+
+  it should "serve no Python environment route: a run's environments come in its plan" in {
+    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+
+    jersey.statusOf("GET", "/pve/pves") shouldBe 404
+    jersey.statusOf("GET", "/pve/system") shouldBe 404
+    jersey.statusOf("DELETE", "/pve/pves/3") shouldBe 404
+    // The environments a user keeps are the Dashboard's to serve.
+    jersey.statusOf("GET", "/environments") shouldBe 404
   }
 
   it should "install the JWT auth feature and the session-user value factory" in {

@@ -285,9 +285,8 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
       Option(mappings.getMatch("/wsapi/collab")).map(_.getPathSpec.getDeclaration) shouldBe Some(
         "/wsapi/collab"
       )
-      // The other two @ServerEndpoint classes belong to other entry points; wiring one of them
-      // here would leave collaborative editing unreachable.
-      mappings.getMatch("/wsapi/pve") shouldBe null
+      // The other @ServerEndpoint class belongs to the computing unit; wiring it here would
+      // leave collaborative editing unreachable.
       mappings.getMatch("/wsapi/workflow-websocket") shouldBe null
     } finally serverContainer.stop()
   }

@@ -63,8 +63,8 @@ class PythonRequirementsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "refuse a name that is only dots or starts with '.', '_' or '-'" in {
-    // A unit names a directory after the environment: "." and ".." would leave the unit's own
-    // directory, and a leading '-' reads as an option.
+    // Written into a path, "." and ".." name another directory; written into a command line, a
+    // leading '-' reads as an option.
     for (name <- Seq(".", "..", ".x", "../escape", "-x", "--index-url", "_x", ".env-1.0"))
       validateName(name) shouldBe Left(
         s"""Environment name "$name" is not valid: use 1 to 128 letters, digits, '.', '_' or '-', """ +

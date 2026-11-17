@@ -56,8 +56,6 @@ import org.apache.texera.web.service.ExecutionsMetadataPersistService
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
-import org.apache.texera.web.resource.pythonvirtualenvironment.PveResource
-import org.apache.texera.web.resource.pythonvirtualenvironment.PveWebsocketResource
 
 import java.net.URI
 import java.time.Duration
@@ -128,12 +126,7 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       )
     )
     // add websocket bundle
-    bootstrap.addBundle(
-      new WebsocketBundle(
-        classOf[WorkflowWebsocketResource],
-        classOf[PveWebsocketResource]
-      )
-    )
+    bootstrap.addBundle(new WebsocketBundle(classOf[WorkflowWebsocketResource]))
     // register the Scala module on Dropwizard's mapper: Jersey reads the unit's request bodies
     // and writes its answers (SyncExecutionResource) with it
     bootstrap.getObjectMapper.registerModule(DefaultScalaModule)
@@ -164,8 +157,6 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     // register SessionHandler
     environment.jersey.register(classOf[SessionHandler])
     environment.servlets.setSessionHandler(new SessionHandler)
-
-    environment.jersey.register(classOf[PveResource])
 
     setupJwtAuth(environment)
 

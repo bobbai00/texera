@@ -58,9 +58,9 @@ object PythonRequirements {
     * `name` if it can name an environment: a letter or digit, then up to 127 letters, digits,
     * '.', '_' or '-'.
     *
-    * A computing unit names a directory after the environment, so a name is never '.' or '..',
-    * and never starts like an option. The name is checked as given; a caller that accepts
-    * surrounding spaces trims them first.
+    * So a name is never '.' or '..', and never starts like an option: it is safe to write into a
+    * path or a command line. The name is checked as given; a caller that accepts surrounding
+    * spaces trims them first.
     */
   def validateName(name: String): Either[String, String] =
     if (name == null || name.isEmpty) Left("An environment needs a name.")

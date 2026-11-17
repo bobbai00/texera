@@ -46,11 +46,6 @@ object AccessControlResource extends LazyLogging {
   private val wsapiWorkflowWebsocket: Regex = """.*/wsapi/workflow-websocket.*""".r
   private val apiExecutionsStats: Regex = """.*/api/executions/[0-9]+/stats/[0-9]+.*""".r
   private val apiExecutionsResultExport: Regex = """.*/api/executions/result/export.*""".r
-  private val pveRoute: Regex = """^/?(?:auth/)?(?:api/|wsapi/)?pve(?:/.*)?$""".r
-  // Path patterns whose cuid lives in the URL path rather than the query string.
-  private val pvePvesCuidPath: Regex = """^/?(?:auth/)?(?:api/|wsapi/)?pve/pves/([0-9]+)$""".r
-  private val pvePackagesCuidPath: Regex =
-    """^/?(?:auth/)?(?:api/|wsapi/)?pve/([0-9]+)/[^/]+/packages/.+$""".r
   // Per-user JupyterLab. The uid is in the path because a browser cannot attach Texera
   // credentials to the requests Jupyter's own scripts make, so it is the only place the
   // owner can be read from.
@@ -81,8 +76,7 @@ object AccessControlResource extends LazyLogging {
 
     path match {
       case jupyterPath(uid) => routeToJupyter(uid)
-      case wsapiWorkflowWebsocket() | apiExecutionsStats() | apiExecutionsResultExport() |
-          pveRoute() =>
+      case wsapiWorkflowWebsocket() | apiExecutionsStats() | apiExecutionsResultExport() =>
         checkComputingUnitAccess(uriInfo, headers, bodyOpt)
       case _ =>
         logger.warn(s"No authorization logic for path: $path. Denying access.")
@@ -152,14 +146,7 @@ object AccessControlResource extends LazyLogging {
       qToken.orElse(hToken).orElse(bToken).getOrElse("")
     }
     logger.info(s"token extracted from request $token")
-
-    val cuid = queryParams.get("cuid").filter(_.nonEmpty).getOrElse {
-      uriInfo.getPath match {
-        case pvePvesCuidPath(c)     => c
-        case pvePackagesCuidPath(c) => c
-        case _                      => ""
-      }
-    }
+    val cuid = queryParams.getOrElse("cuid", "")
     val cuidInt =
       try {
         cuid.toInt

@@ -18,19 +18,8 @@
 
 import { Injectable } from "@angular/core";
 import { Observable } from "rxjs";
-import { map } from "rxjs/operators";
-import { HttpClient, HttpParams } from "@angular/common/http";
-import { AuthService } from "../../../common/service/user/auth.service";
+import { HttpClient } from "@angular/common/http";
 import { AppSettings } from "../../../common/app-setting";
-
-export interface PackageResponse {
-  system: string[];
-}
-
-export interface PvePackageResponse {
-  pveName: string;
-  userPackages: string[];
-}
 
 export interface UserPveRecord {
   veid: number;
@@ -41,8 +30,7 @@ export interface UserPveRecord {
 /**
  * The rule for an environment's name, the Dashboard's own (PythonRequirements.validateName in
  * common/workflow-core): a letter or digit, then up to 127 letters, digits, '.', '_' or '-'. The
- * Environments page checks it before saving a name, and the computing unit panel before building
- * one, so every name the Dashboard keeps can be built on a unit.
+ * Environments page checks it before it asks the Dashboard to save a name.
  */
 export const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -55,8 +43,7 @@ export class WorkflowPveService {
   constructor(private http: HttpClient) {}
 
   // The environments a user keeps belong to the user, not to a computing unit, so the Dashboard
-  // stores and checks them at /environments. The /pve calls further down act on one unit's own
-  // disk and go to that unit.
+  // stores and checks them at /environments.
   savePve(name: string, packages: Record<string, string>): Observable<UserPveRecord> {
     return this.http.post<UserPveRecord>(`${AppSettings.getApiEndpoint()}/environments`, { name, packages });
   }
@@ -71,63 +58,5 @@ export class WorkflowPveService {
 
   deleteUserPve(veid: number): Observable<void> {
     return this.http.delete<void>(`${AppSettings.getApiEndpoint()}/environments/${veid}`);
-  }
-
-  getAccessToken(): string | null {
-    const token = AuthService.getAccessToken();
-    return token && token.trim().length > 0 ? token : null;
-  }
-
-  private buildBaseParams(): HttpParams {
-    let params = new HttpParams();
-    const token = this.getAccessToken();
-    if (token) {
-      params = params.set("access-token", token);
-    }
-    return params;
-  }
-
-  getSystemPackages(cuid: number): Observable<PackageResponse> {
-    const params = this.buildBaseParams().set("cuid", cuid.toString());
-    return this.http.get<PackageResponse>(`${AppSettings.getApiEndpoint()}/pve/system`, { params });
-  }
-
-  fetchPVEs(cuid: number): Observable<PvePackageResponse[]> {
-    const params = this.buildBaseParams().set("cuid", cuid.toString());
-    return this.http.get<PvePackageResponse[]>(`${AppSettings.getApiEndpoint()}/pve/pves`, { params });
-  }
-
-  getUserPackages(cuid: number, pveName: string): Observable<string[]> {
-    return this.fetchPVEs(cuid).pipe(map(pves => pves.find(pve => pve.pveName === pveName)?.userPackages ?? []));
-  }
-
-  deleteEnvironments(cuid: number) {
-    return this.http.delete(`${AppSettings.getApiEndpoint()}/pve/pves/${cuid}`);
-  }
-
-  deletePackage(cuid: number, pveName: string, packageName: string) {
-    const params = this.buildBaseParams();
-
-    return this.http.delete<string[]>(
-      `${AppSettings.getApiEndpoint()}/pve/${cuid}/${encodeURIComponent(pveName)}/packages/${encodeURIComponent(packageName)}`,
-      { params }
-    );
-  }
-
-  getPveWebSocketUrl(cuid: number, pveName: string, action: string, packages: string[] = []): string {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const query = encodeURIComponent(JSON.stringify(packages));
-
-    const token = this.getAccessToken();
-    const tokenParam = token ? `&access-token=${encodeURIComponent(token)}` : "";
-
-    return (
-      `${protocol}//${window.location.host}/wsapi/pve` +
-      `?packages=${query}` +
-      `&cuid=${cuid}` +
-      `&pveName=${encodeURIComponent(pveName)}` +
-      `&action=${action}` +
-      tokenParam
-    );
   }
 }

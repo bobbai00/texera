@@ -69,7 +69,6 @@ import { PanelResizeService } from "../../service/workflow-result/panel-resize/p
 import { WorkflowComputingUnitManagingService } from "../../../common/service/computing-unit/workflow-computing-unit/workflow-computing-unit-managing.service";
 import { WorkflowExecutionsService } from "../../../dashboard/service/user/workflow-executions/workflow-executions.service";
 import { ComputingUnitActionsService } from "../../../common/service/computing-unit/computing-unit-actions/computing-unit-actions.service";
-import { WorkflowPveService } from "../../service/virtual-environment/virtual-environment.service";
 import { NzModalService } from "ng-zorro-antd/modal";
 import { ExecutionState } from "../../types/execute-workflow.interface";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
@@ -103,7 +102,7 @@ describe("WorkflowFormComponent (rendered template)", () => {
     // wrapper -- rendered and covered.
     TestBed.overrideComponent(FormlyForm, { set: { template: "" } });
     // Blank the computing-unit selector's own template (a child, not the page): its real markup
-    // needs a modal/executions/PVE service chain out of scope here. Blanking the child -- rather
+    // needs a modal/executions service chain out of scope here. Blanking the child -- rather
     // than overriding the page's imports, which would JIT-recompile the page and drop its
     // host-binding coverage -- keeps the run bar around it rendered and the page fully covered.
     TestBed.overrideComponent(ComputingUnitSelectionComponent, { set: { template: "" } });
@@ -261,7 +260,6 @@ describe("WorkflowFormComponent (rendered template)", () => {
         { provide: WorkflowComputingUnitManagingService, useValue: { getComputingUnitLimitOptions: () => EMPTY } },
         { provide: WorkflowExecutionsService, useValue: {} },
         { provide: ComputingUnitActionsService, useValue: {} },
-        { provide: WorkflowPveService, useValue: {} },
         { provide: NzModalService, useValue: {} },
         { provide: WorkflowConsoleService, useValue: { clearConsoleMessages: vi.fn() } },
         {

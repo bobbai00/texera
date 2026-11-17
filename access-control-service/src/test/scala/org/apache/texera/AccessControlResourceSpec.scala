@@ -58,6 +58,9 @@ class AccessControlResourceSpec
   private val testURI: String = "http://localhost:8080/"
   private val testPath: String = "/api/executions/1/stats/1"
 
+  // The route a browser posts its export form to, with the user's token in the form.
+  private val testExportPath: String = "/api/executions/result/export/local"
+
   // The host:port the managing service records for a computing unit when it
   // creates the pod. The access-control-service routes to this recorded URI.
   private val testRecordedUri: String =
@@ -345,7 +348,7 @@ class AccessControlResourceSpec
     // testCUNoAccess exists, is owned by testUser2, and has a recorded URI — so the
     // routing check would happily let this through. The only thing that can refuse it
     // is the PrivilegeEnum.NONE guard.
-    val (uri, headers) = mockRequest("/pve/system", Some(testCUNoAccess.getCuid.toString))
+    val (uri, headers) = mockRequest(testPath, Some(testCUNoAccess.getCuid.toString))
     val response = new AccessControlResource().authorizeGet(uri, headers)
 
     response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
@@ -410,66 +413,48 @@ class AccessControlResourceSpec
     (mockUriInfo, mockHttpHeaders)
   }
 
-  it should "return OK for /pve/system with cuid as query parameter" in {
-    val (uri, headers) = mockRequest("/pve/system", Some(testCU.getCuid.toString))
-    val response = new AccessControlResource().authorizeGet(uri, headers)
+  // The form Jersey actually hands to the resource: UriInfo.getPath returns the path relative to
+  // the base URI, so a check for /auth/api/executions/... arrives as "auth/api/executions/..." —
+  // no leading slash, and with the "auth/" segment still attached.
+  it should "return OK for the gateway-relative form of each computing unit route" in {
+    for (
+      path <- Seq(
+        "auth/wsapi/workflow-websocket",
+        "auth/api/executions/1/stats/1",
+        "auth/api/executions/result/export/local"
+      )
+    ) withClue(path) {
+      val (uri, headers) = mockRequest(path, Some(testCU.getCuid.toString))
+      val response = new AccessControlResource().authorizeGet(uri, headers)
 
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
+      response.getStatus shouldBe Response.Status.OK.getStatusCode
+      response.getHeaderString("Host") shouldBe testRecordedUri
+    }
   }
 
-  // The three path shapes below use the form Jersey actually hands to the resource:
-  // UriInfo.getPath returns the path relative to the base URI, so a check for
-  // /auth/api/pve/... arrives as "auth/api/pve/..." — no leading slash, and with the
-  // "auth/" and "api/" segments still attached. That is exactly what the optional
-  // `^/?(?:auth/)?(?:api/|wsapi/)?` prefix groups on each pve regex exist to absorb.
-  it should "return OK for the gateway-relative form of a pve route" in {
-    val (uri, headers) = mockRequest("auth/api/pve/system", Some(testCU.getCuid.toString))
-    val response = new AccessControlResource().authorizeGet(uri, headers)
+  it should "return FORBIDDEN for a request that names no computing unit" in {
+    // Envoy forwards `?cuid=` verbatim when the client sends the parameter with no value.
+    for (cuid <- Seq(None, Some(""))) withClue(cuid) {
+      val (uri, headers) = mockRequest(testPath, cuid)
+      val response = new AccessControlResource().authorizeGet(uri, headers)
 
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
+      response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
+    }
   }
 
-  it should "return OK for pve/pves/{cuid} (cuid extracted from path)" in {
-    val (uri, headers) = mockRequest(s"auth/api/pve/pves/${testCU.getCuid}", None)
-    val response = new AccessControlResource().authorizeDelete(uri, headers)
+  it should "return FORBIDDEN for a path it has no rule for, whatever access the user has" in {
+    // Among them the Python environment paths, which no computing unit serves.
+    for (path <- Seq("/random/garbage", "/pve/system", s"/pve/pves/${testCU.getCuid}"))
+      withClue(path) {
+        val (uri, headers) = mockRequest(path, Some(testCU.getCuid.toString))
+        val response = new AccessControlResource().authorizeGet(uri, headers)
 
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
-  }
-
-  it should "return OK for pve/{cuid}/{pveName}/packages/{packageName} (cuid extracted from path)" in {
-    val (uri, headers) =
-      mockRequest(s"auth/api/pve/${testCU.getCuid}/myenv/packages/numpy", None)
-    val response = new AccessControlResource().authorizeDelete(uri, headers)
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
-  }
-
-  it should "return FORBIDDEN for a PVE path with no cuid in query or path" in {
-    val (uri, headers) = mockRequest("/pve/no-cuid-anywhere", None)
-    val response = new AccessControlResource().authorizeGet(uri, headers)
-
-    response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
-  }
-
-  it should "return FORBIDDEN for a non-PVE / non-whitelisted path" in {
-    val (uri, headers) = mockRequest("/random/garbage", Some(testCU.getCuid.toString))
-    val response = new AccessControlResource().authorizeGet(uri, headers)
-
-    response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
-  }
-
-  it should "return OK for a PUT request when user has access" in {
-    val (uri, headers) = mockRequest("/pve/system", Some(testCU.getCuid.toString))
-    val response = new AccessControlResource().authorizePut(uri, headers, """{"name":"env"}""")
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
+        response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
+      }
   }
 
   it should "report the privilege and the recorded URI of the requested computing unit" in {
-    val (uri, headers) = mockRequest("/pve/system", Some(testCUReadOnly.getCuid.toString))
+    val (uri, headers) = mockRequest(testPath, Some(testCUReadOnly.getCuid.toString))
     val response = new AccessControlResource().authorizeGet(uri, headers)
 
     // testUser1 holds READ (not WRITE) on this unit, and this unit's recorded URI
@@ -488,7 +473,7 @@ class AccessControlResourceSpec
     // READ on that same unit. Answering for the wrong user is therefore visible in
     // both the privilege header and the forwarded identity headers.
     val (uri, headers) = mockRequest(
-      "/pve/system",
+      testPath,
       Some(testCUReadOnly.getCuid.toString),
       authorizationHeader = Some("Bearer " + token2)
     )
@@ -501,30 +486,6 @@ class AccessControlResourceSpec
     response.getHeaderString(HeaderField.UserId) shouldBe testUser2.getUid.toString
     response.getHeaderString(HeaderField.UserName) shouldBe testUser2.getName
     response.getHeaderString(HeaderField.UserEmail) shouldBe testUser2.getEmail
-  }
-
-  it should "fall back to the cuid in the path when the cuid query parameter is empty" in {
-    // Envoy forwards `?cuid=` verbatim when the client sends the parameter with no
-    // value; an empty parameter must not shadow the cuid embedded in the path.
-    val (uri, headers) = mockRequest(s"/pve/pves/${testCUReadOnly.getCuid}", Some(""))
-    val response = new AccessControlResource().authorizeDelete(uri, headers)
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testReadOnlyRecordedUri
-  }
-
-  it should "prefer the cuid query parameter over the cuid embedded in the path" in {
-    // Path says unit 5 (READ, its own host), query says unit 2 (WRITE, another host):
-    // both headers show which one the resolution actually used.
-    val (uri, headers) =
-      mockRequest(s"/pve/pves/${testCUReadOnly.getCuid}", Some(testCU.getCuid.toString))
-    val response = new AccessControlResource().authorizeDelete(uri, headers)
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString(
-      HeaderField.UserComputingUnitAccess
-    ) shouldBe PrivilegeEnum.WRITE.toString
-    response.getHeaderString("Host") shouldBe testRecordedUri
   }
 
   it should "authorize the /wsapi/workflow-websocket route using the access-token query parameter" in {
@@ -552,7 +513,7 @@ class AccessControlResourceSpec
 
   it should "ignore an empty access-token query parameter and fall back to the Authorization header" in {
     val (uri, headers) = mockRequest(
-      "/pve/system",
+      testPath,
       Some(testCU.getCuid.toString),
       accessTokenQueryParam = Some("")
     )
@@ -565,7 +526,7 @@ class AccessControlResourceSpec
     // RFC 7235 makes the auth scheme case-insensitive, so a client sending "bearer"
     // must not be turned away.
     val (uri, headers) = mockRequest(
-      "/pve/system",
+      testPath,
       Some(testCU.getCuid.toString),
       authorizationHeader = Some("bearer " + token)
     )
@@ -584,7 +545,7 @@ class AccessControlResourceSpec
     // scheme-less value can carry *leading* whitespace this far, and leading
     // whitespace corrupts the signing input.)
     val (uri, headers) = mockRequest(
-      "/pve/system",
+      testPath,
       Some(testCU.getCuid.toString),
       authorizationHeader = Some("  " + token + "  ")
     )
@@ -637,7 +598,7 @@ class AccessControlResourceSpec
       s" $value "
 
   private def bodyOnlyRequest(cuid: Int): (UriInfo, HttpHeaders) =
-    mockRequest("/pve/system", Some(cuid.toString), authorizationHeader = None)
+    mockRequest(testExportPath, Some(cuid.toString), authorizationHeader = None)
 
   it should "read the token out of an x-www-form-urlencoded body" in {
     // A single `token=<value>` pair — the shape a form encoder produces for a one-field
@@ -716,7 +677,7 @@ class AccessControlResourceSpec
     // Header and body carry *different* valid identities. testUser2 owns this unit, so
     // either choice returns 200; only the forwarded identity reveals which token was
     // used to authenticate.
-    val (uri, headers) = mockRequest("/pve/system", Some(testCU.getCuid.toString))
+    val (uri, headers) = mockRequest(testExportPath, Some(testCU.getCuid.toString))
     val response =
       new AccessControlResource().authorizePost(uri, headers, s"token=$token2")
 
@@ -728,7 +689,7 @@ class AccessControlResourceSpec
     // "Bearer " with nothing after it leaves an empty token; it must be discarded so
     // the next source in the chain still gets a chance.
     val (uri, headers) = mockRequest(
-      "/pve/system",
+      testExportPath,
       Some(testCU.getCuid.toString),
       authorizationHeader = Some("Bearer ")
     )
@@ -759,6 +720,20 @@ class AccessControlResourceSpec
 
     response.getStatus shouldBe Response.Status.OK.getStatusCode
     response.getHeaderString("Host") should startWith("jupyter-1.")
+  }
+
+  it should "route what Jupyter saves and deletes, sent as PUT and DELETE, like what it reads" in {
+    val (uri, headers) =
+      mockRequest("/jupyter/1/api/contents/work/notebook.ipynb", None, authorizationHeader = None)
+    val resource = new AccessControlResource()
+
+    val saved = resource.authorizePut(uri, headers, """{"type":"notebook"}""")
+    val deleted = resource.authorizeDelete(uri, headers)
+
+    saved.getStatus shouldBe Response.Status.OK.getStatusCode
+    saved.getHeaderString("Host") should startWith("jupyter-1.")
+    deleted.getStatus shouldBe Response.Status.OK.getStatusCode
+    deleted.getHeaderString("Host") should startWith("jupyter-1.")
   }
 
   it should "refuse a Jupyter request for a user with none registered" in {
