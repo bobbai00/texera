@@ -44,7 +44,7 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
-| `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B8, with the page's requests and websocket frames recorded |
+| `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B9, with the page's requests and websocket frames recorded |
 | `run-browser-smoke.sh` | The browser smoke end to end: lock, `up`, the smoke, API scenario a on the same stack, `down` |
 | `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), its schema step, the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv` |
 | `driver/localdev_unit.py` | The driver's local-dev mode (`--target localdev`): the dev server as `--base`, local-dev's local unit |
@@ -547,8 +547,17 @@ starts from empty volumes.
 The scenarios above speak the protocol themselves. The browser smoke drives the page
 a user sees: Playwright's headless Chromium opens a workflow in the editor of a
 running stack, presses Run, Pause, Resume and Stop, changes a paused operator in the
-property editor and reads the result table. It needs images whose frontend creates an
-execution and then starts it (`images/build.sh --frontend`, step 2's PR B on).
+property editor, opens an operator's result beside the operator and reads its table,
+and reads the console. It needs images whose frontend creates an execution and then
+starts it (`images/build.sh --frontend`, step 2's PR B on).
+
+The cases follow the editor as it is from the merge of upstream's `main` on (`step2m`):
+the bottom panel holds the console alone (upstream `04bce08d7`, #9060), an operator's
+result opens in a window beside the operator (#9063), and errors are console messages.
+On older images B1, B2, B4, B5, B7 and B8 fail where they read a result or an error:
+those frontends have a Result and a Static Error tab in the bottom panel instead (the
+smoke read them there up to harness `104e51e`). B9 also needs the unit that installs a
+run's environments and keeps none of its own (step 2's PR D and `55c14da26`).
 
 ```
 ./run-browser-smoke.sh --images sce/<tag> [--source <worktree>] [--reset] [--keep] [--lock <dir>]
@@ -563,8 +572,8 @@ same stack, and `down` (with `--keep` the stack and the lock stay). It writes
 `reports/browser-smoke-<UTC time>/`: `report.json`, one screenshot or more per case and
 `api-scenarios.json`. Exit code: the smoke's (0, 1 a case failed, 2 setup failed), 3 the
 stack did not come up, 4 the smoke passed and an API scenario failed. A whole run takes
-about two minutes. `playwright` is in `requirements.txt`; the script installs its
-Chromium build on first use (`python -m playwright install chromium`).
+about five minutes, three of them the nine cases. `playwright` is in `requirements.txt`;
+the script installs its Chromium build on first use (`python -m playwright install chromium`).
 
 **Setup and sign-in.** Setup is the driver's (`texera_api.py`, `workflow.py`): the
 dataset, the warehouse, the local unit, and one workflow per case stored in UI format.
@@ -574,33 +583,45 @@ frontend remembers for the workflow (localStorage `computing-unit-of-workflow-<w
 `ComputingUnitSelectionComponent`). Both are set by an init script before the page's
 own code runs; the warehouse is the one the page preselects (the user's first). Every
 case gets a fresh browser context; B8's second tab is a second page of its case's context.
+B9's environment is not part of the setup: the case makes it in the page.
 
 **Cases.** Expected rows are computed from the CSV files, as in the scenarios.
 
 | Key | What the page does | Checks |
 |---|---|---|
-| B1 | CSV scan → Filter `age > 30` → Aggregate by `dept`; Run | create 201 with the workflow, unit and warehouse in its body; `WorkflowStartRequest{executionId, planUri}` of that answer, sent after it; run button Run again, every operator on the canvas `Completed`; the Aggregate's result table shows the 4 expected rows; status 3 |
-| B2 | A Projection of `sce_no_such_column`. First as the page is: once the editor's own compile (`POST /api/compile`) has answered, the run button says `Invalid Workflow` and is disabled, so for this workflow the create's 400 is reachable only before that answer. Then with the editor's compile request held back (not faked: let through unchanged later): Run, Run again, the compile let through, the Projection's attribute picked in the property editor (`name`), Run | 400 with `operatorErrors` naming the column; run button Run again and enabled; nothing sent on the websocket; the result panel's Static Error tab shows the Projection's error; the second Run a second 400 with another eid; both rows 4; after the fix 201, the start, Completed, the 10 names over 2 pages; exactly one `WorkflowStartRequest` on the page |
+| B1 | CSV scan → Filter `age > 30` → Aggregate by `dept`; Run; a double-click on the Aggregate | create 201 with the workflow, unit and warehouse in its body; `WorkflowStartRequest{executionId, planUri}` of that answer, sent after it; run button Run again, every operator on the canvas `Completed`; the result window that opens beside the Aggregate shows the 4 expected rows; status 3 |
+| B2 | A Projection of `sce_no_such_column`. First as the page is: once the editor's own compile (`POST /api/compile`) has answered, the run button says `Invalid Workflow` and is disabled, so for this workflow the create's 400 is reachable only before that answer. Then with the editor's compile request held back (not faked: let through unchanged later): Run, the Projection selected and the console opened, Run again, the compile let through, the Projection's attribute picked in the property editor (`name`), Run, "pin result" in the Projection's right-click menu | 400 with `operatorErrors` naming the column; run button Run again and enabled; nothing sent on the websocket; the console, narrowed to the Projection, shows its error: a message of type ERROR naming the column; the second Run a second 400 with another eid; both rows 4; after the fix 201, the start, Completed, the 10 names over the 2 pages of the Projection's result window; exactly one `WorkflowStartRequest` on the page |
 | B3 | `numbers.csv` → a Python UDF sleeping 0.2 s per tuple; Run, Pause, 3 s, Resume, Stop | run button Run, Pause, Resume, Pause, Run (Pausing and Resuming between); the UDF's box says `Paused`, then `Running`; states from the unit Running, Paused, Running, Killed, never Completed; frames `WorkflowStartRequest`, `WorkflowPauseRequest`, `WorkflowResumeRequest`, `WorkflowKillRequest`, once each, in order; status 5 |
-| B4 | `numbers.csv` → a UDF tagging `"v" + str(VERSION)`, 0.1 s per tuple, `VERSION = 1` as its last line; Run, Pause; in the property editor Unlock for Logic Change, Edit code content, in the code editor a click behind the last line, End, Backspace, `2`; close; Confirm Change; Resume | `POST /api/executions/{eid}/updates` 200 with `{updateId, operatorId}`, its body the UDF with `VERSION = 2`; `OperatorUpdateRequest{executionId, updateId}`; `ModifyLogicResponse.isValid`; the toast "reconfiguration registered"; Completed; `ModifyLogicCompletedEvent`; the result table's first page `v1`, its last page `v2`; all 300 rows read back over a second socket (the driver's transport): every `v1` before every `v2`; status 3 |
-| B5 | `people.csv` → a UDF stamping its rows with the time its module was loaded; Run, read the table, Run again, read the table | each run: 201, the start with its own eid and planUri, Completed, one stamp on all 10 people; two executions with two plans; the second stamp is later (the first run's rows are gone from the table); two start frames |
+| B4 | `numbers.csv` → a UDF tagging `"v" + str(VERSION)`, 0.1 s per tuple, `VERSION = 1` as its last line; Run, Pause; in the property editor Unlock for Logic Change, Edit code content, in the code editor a click behind the last line, End, Backspace, `2`; close; Confirm Change; Resume; a double-click on the UDF | `POST /api/executions/{eid}/updates` 200 with `{updateId, operatorId}`, its body the UDF with `VERSION = 2`; `OperatorUpdateRequest{executionId, updateId}`; `ModifyLogicResponse.isValid`; the toast "reconfiguration registered"; Completed; `ModifyLogicCompletedEvent`; the UDF's result window opens on its first page, `v1`, and its last page is `v2`; all 300 rows read back over a second socket (the driver's transport): every `v1` before every `v2`; status 3 |
+| B5 | `people.csv` → a UDF stamping its rows with the time its module was loaded; Run, a double-click on the UDF, read the table, Run again, read the table in the window, which was left open | each run: 201, the start with its own eid and planUri, Completed, one stamp on all 10 people; two executions with two plans; the window was still open when the second run ended, and its stamp is later (the first run's rows are gone from the table); two start frames |
 | B6 (extra) | Run with the create's answer kept from the page (the request reaches the Dashboard; only the 201 is delivered late, as on a slow network); Stop while the button says Submitting; then Run again | the Dashboard created the execution; Stop is offered while Submitting; after Stop the run button is Run; no frame at all for the run that was given up, also after its 201 arrives (the page had dropped the request); the second Run: 201, its start, Completed; the only start frame is the second run's |
 | B7 | B4's workflow: Run, Pause; then the page is loaded again (the browser's reload: the page's code starts from nothing and holds no answer of its own create); then B4's change, Confirm Change, Resume | after the reload: run button Resume, stop enabled; the reloaded page's socket was sent `WorkflowStateEvent{state: Paused, executionId}` of the run's eid; no `POST /api/executions*` and no `WorkflowStartRequest` since the reload; then B4's checks, on that eid: the update's path, 200, `OperatorUpdateRequest{executionId, updateId}`, the rows, status 3 |
 | B8 | B4's workflow: Run, Pause in one page; the workflow opened in a second tab (a second page of the same browser context); B4's change, Confirm Change and Resume in that tab | in the second tab: the three checks B7 makes after its reload, then B4's checks on the tab's own requests and frames; the first page sent no update and no `WorkflowResumeRequest`, and shows the run Completed |
+| B9 | A Python environment as a user has one now that a unit keeps none: scenario g in the page. First g's precondition, and g's removal of an install of `tabulate==0.9.0` that a kept stack still holds (both run in the unit's container). On the Dashboard: the sidebar's Environments, Create Environment, the name `sce-browser-env-<hex>`, one package row (`tabulate`, `==`, `0.9.0`), Save. In the editor: Text Input → a UDF that outputs `tabulate.__version__`, saved in the engine's own environment; the UDF selected, Default Python Environment unchecked, the environment picked in the Virtual Environment list; the console opened; Run; the console's ready message opened; a double-click on the UDF; the computing-unit menu opened | the unit's own `python3` cannot import tabulate; `POST /api/environments` 201, its body `{name, packages: {tabulate: ==0.9.0}}`, its answer the row; the page's toast and list have the environment, and so has `GET /api/environments`; the Virtual Environment list has it, and shows it picked; create 201 whose UDF carries `defaultEnv: false` and the `envName`; the start; while the run button said Submitting the UDF's console said "Installing Python environment '<name>' (1 package)", then "Python environment '<name>' is ready (N s)"; Completed; with the run ended the console shows both, in that order, and the ready message, opened, lists `tabulate==0.9.0`; the UDF's result window shows `0.9.0`; status 3; in the computing-unit menu no unit's row has a `+` (it was the Python Environment action), and none of the menu's texts and tooltips names an environment |
 
 Every case also checks that the page never sent `WorkflowExecuteRequest` or
 `ModifyLogicRequest` and that the page raised no uncaught error.
 
+In B9 everything a user does is done in the page: the environment is made on the
+Environments page (six steps) and picked in the property editor. The driver's API saves
+the workflow, as in every case, and reads the environment back. What B9 knows of the
+unit it reads as scenario g does, with `docker exec` into the unit's container
+(`UnitChecks`, scenarios.py's `Ctx` with the case's record), so B9 runs on the
+single-node stack only.
+
 **Evidence.** For each page the report holds (`cases[].pages[]`): every request to
-`/api/executions*` with its status and a short view of the bodies
-(`network.executions_requests`); every websocket the page opened and, for the workflow
-websocket, every frame it sent, whole and timed (`network.websockets[].sent`, heartbeats
-counted in `sent_types`), the states the unit reported, each with the execution it named
-(`states[].executionId`), and the `WorkflowErrorEvent`,
-`ModifyLogicResponse` and `ModifyLogicCompletedEvent` it sent; every HTTP answer of 400
-and up; the run button's text, as it changed (`run_button_timeline`); toasts; console
-errors and uncaught page errors. `summary` adds the frames of all pages by type and
-`old_requests_sent`. The access token is cut out of everything written.
+`/api/executions*` and `/api/environments*` with its status and a short view of the
+bodies (`network.executions_requests`, `network.environments_requests`); every websocket
+the page opened and, for the workflow websocket, every frame it sent, whole and timed
+(`network.websockets[].sent`, heartbeats counted in `sent_types`), the states the unit
+reported, each with the execution it named (`states[].executionId`), and the
+`WorkflowErrorEvent`, `ModifyLogicResponse` and `ModifyLogicCompletedEvent` it sent;
+every HTTP answer of 400 and up; the run button's text, as it changed
+(`run_button_timeline`); what the console showed while it was open, as it changed, with
+the run button's text at that moment (`console_timeline`); toasts; console errors and
+uncaught page errors. `summary` adds the frames of all pages by type,
+`old_requests_sent` and what the pages wrote to `/api/environments*`. The access token
+is cut out of everything written.
 
 **How the page is driven, and what that depends on.**
 
@@ -610,16 +631,46 @@ errors and uncaught page errors. `summary` adds the frames of all pages by type 
   (`[model-id=<operatorID>] .texera-operator-state`). The page has no label for
   Completed or Killed.
 - An operator is selected by a mouse click at its box's coordinates (its own boundary
-  rect lies over the body, so an element click never becomes "actionable").
-- The result table (`#result-container .result-table`) pages over the websocket: a
-  page's number turns at once and its rows arrive a moment later, so a page turn waits
-  for other rows. The page size follows the panel's height (5 rows here). A table that
-  was on page 2 stays on page 2 after a new run.
+  rect lies over the body, so an element click never becomes "actionable"). A
+  double-click and a right-click go to the same place.
+- An operator's result is in a window the page pins beside the operator
+  (`texera-pinned-result-window[data-operator-id=<operatorID>]`). A double-click on the
+  operator opens it (B1, B4, B5, B7, B8, B9), and so does "pin result" in the operator's
+  right-click menu (B2). The window stays until it is closed: over a new run (B5), not
+  over a reload. It is drawn over the property editor and the console where they meet.
+  An operator whose result the run did not keep, or that failed, gets a window with a
+  sentence in place of a table; the smoke quotes it when it misses a table.
+- The window's table (`.result-table`, the component the bottom panel had) pages over
+  the websocket: a page's number turns at once and its rows arrive a moment later, so a
+  page turn waits for other rows. The page size follows the window's height and what
+  the table draws above its rows (6 rows here, 7 for the Projection's one column). A
+  window left open on page 2 over a new run is still on page 2 after it.
 - Rows of an operator with two workers (the Projection) are shown in the workers' order,
   not the file's, so rows are compared in any order.
+- The console is the bottom panel (`#result-container texera-console-frame`). Nothing
+  opens it by itself; the smoke uses its button at the bottom left (`#result-buttons`).
+  With one operator selected it shows that operator's messages under "Showing:
+  <operator>". An error of a compile or of a run is a message of type ERROR (the type is
+  the colour of the message's badge), with its kind as the source tag
+  (`COMPILATION_ERROR`, `EXECUTION_FAILURE`). A message that holds more than its title (a
+  stack trace, an environment's packages and what pip wrote) opens on a click on the
+  title. When a run goes from Initializing to Running the console empties itself until
+  the next message or state, so what a unit said while it installed an environment is
+  not on show while the run is Running; B9 reads those messages before (the timeline) and
+  after, and notes the gap.
 - The code editor is Monaco behind the property editor's "Edit code content" button,
   which exists only after "Unlock for Logic Change". Typing a whole program into it
   would be indented and completed by the editor; the case changes one character.
+- The Environments page is the dashboard's `/user/python-venv`, reached through the
+  sidebar; its form is a modal (`.pve-modal`). A UDF's environment is the property
+  editor's Virtual Environment list (`envName`), which is there only while Default
+  Python Environment is unchecked. Each time a Python UDF is selected the property editor
+  asks `GET /api/environments` and lays its form out again with the answer, so B9 waits
+  for that answer before it touches the form. A long list is drawn in part; the list's
+  search box then narrows it.
+- The computing-unit menu is the editor's unit button (`button.computing-units-dropdown-button`);
+  a unit's actions are the icons of its row, each read with the tooltip a pointer on it
+  brings up (the row's own tooltip, "Ready to use", shows with it).
 - B7's reload is `page.reload()`. The init script runs again in the new document, so the token
   and the unit are where the frontend looks for them, as after a user's reload; the run
   button's texts and the toasts of the earlier load are kept, with a `(page reloaded)` entry
@@ -629,10 +680,16 @@ errors and uncaught page errors. `summary` adds the frames of all pages by type 
   holds their bodies. B8's tab writes its files as `B8-tab-*`.
 - `workflow.py` puts the first operator at x = 80, which in the page is under the
   dashboard's sidebar; the smoke moves its own workflows right and down.
-- Noise that is not the change's: `GET /user/workflow/<wid>` answers 404 with the app
-  (the Dashboard's fallback page), `GET /api/executions/<wid>/latest` 403 for a workflow
-  never run, `/api/agents` 503 and `/forum/api/*` 405 (not in this stack), and the
-  shared-editing socket `/rtc/<id>` retried without end (the stack has no server for it).
+- Noise that is not the change's: `GET /user/workflow/<wid>` (and B9's `/user/workflow`)
+  answers 404 with the app (the Dashboard's fallback page), `GET /api/executions/<wid>/latest`
+  403 for a workflow never run, `/api/agents` 503 and `/forum/api/*` 405 (not in this
+  stack), the shared-editing socket `/rtc/<id>` retried without end and the code editor's
+  `ws://localhost:3000/python-language-server` refused (the stack has no server for
+  either). A page that opens on a run already going (B7's reload, B8's tab) logs one
+  error when the run ends, `TypeError: Cannot read properties of undefined (reading
+  'attr')`: the editor colours a region on a `RegionStateEvent`, and such a page was
+  never sent the run's regions (`getRegionStateStream` in upstream's
+  `workflow-editor.component.ts`; in every B7 and B8 since step2b).
 
 ## Notes and caveats
 
