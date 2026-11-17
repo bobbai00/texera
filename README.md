@@ -18,6 +18,9 @@ images/build.sh <worktree> step1     # branch images sce/texera-*:step1 (thin la
 ./run-negative-control.sh            # published images: Checks A, D and F must fail
 .venv/bin/python -m unittest discover -s driver/tests   # offline: transports and scenarios vs a fake
 
+# the real editor in headless Chromium (see "Browser smoke" below); images built with --frontend
+./run-browser-smoke.sh --lock <scratchpad>/sce/stack.lock --reset --images sce/<tag> --source <worktree>
+
 # local-dev mode (bin/local-dev.sh's way: infra in Docker, JVMs on the host, ng serve's proxy)
 ./run-localdev.sh --lock <scratchpad>/sce/stack.lock --reset   # see "Local-dev mode" below
 ```
@@ -41,6 +44,8 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
+| `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B6, with the page's requests and websocket frames recorded |
+| `run-browser-smoke.sh` | The browser smoke end to end: lock, `up`, the smoke, API scenario a on the same stack, `down` |
 | `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), its schema step, the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv` |
 | `driver/localdev_unit.py` | The driver's local-dev mode (`--target localdev`): the dev server as `--base`, local-dev's local unit |
 | `run-localdev.sh` | Local-dev mode end to end: lock, clean start, `up`, the driver, `post-run`, `down` |
@@ -511,6 +516,7 @@ Verified against a real stack (reports under `reports/`):
 | What a refused start leaves in the lake (not a harness check: Check E looks only at started runs) | step2p11 | a probe on the gate's stack with `Evidence.plan_table_refs`: the plan tables of l5's, l6's (both), l9's and l10's executions hold `main` only; those of a's, l8's and o's hold `main` and `started` |
 | m's replay run on `create-ws` (`--with-replay-log -- --gate B --scenario m`) | step2p11 | still blocked by the engine, as on step2wip: the source run fails right after `WorkflowCheckpointRequest` with `portId has not been set for channel ChannelIdentity(COORDINATOR, Worker:...-CSVFileScan-...-main-0, true)`. `EmbeddedControlMessageManager.isECMAligned` reads the port of the channel the checkpoint came from before it looks at the alignment type, and a source worker gets it on the coordinator's control channel, which has none (`AmberFIFOChannel.getPortId`). Both files are upstream's, untouched by the branch. With a log kept, m's first run completes (`logLocation` set) and both refusals pass. `reports/baseline-20261117T013828Z.json` |
 | m's replay run with the source worker's checkpoint fixed (`--with-replay-log -- --gate B --scenario m,d`) | `sce/texera-*:step2ckpt` (sce-imgbuild `57c64e921`: `b71d84698` plus `fix(amber): take a checkpoint on a source worker`; `--source sce-imgbuild`) | the `portId` failure is gone: the CSV scan's worker prepares and finalizes its checkpoint ("Checkpoint finalized, total size = 5040 bytes" in the last report's run). Two older limits of the engine's checkpoint remain, both upstream's, so the interactions, the replay's create and its start are still unverified. (1) With the Python UDF m had until then, the run completes but lists no interaction: pyamber has no `PrepareCheckpoint` handler (`grpclib` `UNIMPLEMENTED` from `WorkerServiceBase.prepare_checkpoint`), so the coordinator's `propagateEmbeddedControlMessage` fails and records no replay destination (`reports/baseline-20261117T015618Z.json`, harness `24842ed`; d PASS, 17 checks, in the same run). m's checkpointed run therefore has JVM workers only now. (2) With the Java UDF the run fails at the checkpoint: `KryoException: InaccessibleObjectException: Unable to make field ... BuiltinClassLoader.parent accessible`, serialization trace `contextClassLoader (OutputPortStorageWriterThread)`, `outputPortResultWriterThreads (OutputManager)`, `outputManager (DataProcessor)`, from `PrepareCheckpointHandler.serializeWorkerState` (`PrepareCheckpointHandler.scala:61`). The checkpoint serializes the whole `DataProcessor`, and a worker whose output port is stored (here the viewed Java UDF) holds its live writer threads there (`OutputManager.scala:123`, upstream #3295, the same on upstream `main` `205fe77c4`). `reports/baseline-20261117T020500Z.json` |
+| The browser smoke (`run-browser-smoke.sh --reset`): the frontend that creates an execution and then starts it, in headless Chromium 159 | `sce/texera-*:step2f` (sce-imgbuild `f8b43b980`, built with `--frontend`; `--source sce-imgbuild`) | B1-B6 all PASS (10, 17, 13, 15, 15, 11 checks) from empty volumes, harness `6fe524d`; the same six passed in the run before it. The pages made 10 creates (seven 201, two 400 in B2, one dropped by the page in B6) and one update (200), and sent 7 `WorkflowStartRequest`, 2 `WorkflowPauseRequest`, 2 `WorkflowResumeRequest`, 1 `WorkflowKillRequest`, 1 `OperatorUpdateRequest`, 17 `ResultPaginationRequest` and heartbeats: no `WorkflowExecuteRequest`, no `ModifyLogicRequest`, no uncaught page error. B4: 25 rows `v1`, then 275 `v2`. Scenario a on `create-ws` on the same stack afterwards: PASS (8 checks). The unit's log held no `ERROR` line and the Dashboard's only B2's two compile errors (`logs/` beside the report). `reports/browser-smoke-20261117T025740Z/` |
 
 Written and tested offline only (`driver/tests/`), to be validated when the PRs land:
 
@@ -534,6 +540,88 @@ healthy, then `status`, then run the driver. The report goes to
 `reports/baseline-<UTC time>.json` and embeds the stack manifest. Afterwards the
 script runs `down`, keeping the volumes, unless `--keep` is given. `--reset`
 starts from empty volumes.
+
+## Browser smoke: `driver/browser_smoke.py` and `run-browser-smoke.sh`
+
+The scenarios above speak the protocol themselves. The browser smoke drives the page
+a user sees: Playwright's headless Chromium opens a workflow in the editor of a
+running stack, presses Run, Pause, Resume and Stop, changes a paused operator in the
+property editor and reads the result table. It needs images whose frontend creates an
+execution and then starts it (`images/build.sh --frontend`, step 2's PR B on).
+
+```
+./run-browser-smoke.sh --images sce/<tag> [--source <worktree>] [--reset] [--keep] [--lock <dir>]
+                       [--api-scenario a,d | --no-api-scenario] [--label text] [-- <browser_smoke.py args>]
+.venv/bin/python driver/browser_smoke.py [--base http://localhost:8080] [--case B1,B3] [--out <dir>]
+                                         [--headed] [--slow-mo MS] [--timeout 300] [--list]
+```
+
+`run-browser-smoke.sh` takes the stack lock when given `--lock` (otherwise the caller
+holds it), runs `up`, the smoke, then the driver's scenario a on `create-ws` on the
+same stack, and `down` (with `--keep` the stack and the lock stay). It writes
+`reports/browser-smoke-<UTC time>/`: `report.json`, one screenshot or more per case and
+`api-scenarios.json`. Exit code: the smoke's (0, 1 a case failed, 2 setup failed), 3 the
+stack did not come up, 4 the smoke passed and an API scenario failed. A whole run takes
+about two minutes. `playwright` is in `requirements.txt`; the script installs its
+Chromium build on first use (`python -m playwright install chromium`).
+
+**Setup and sign-in.** Setup is the driver's (`texera_api.py`, `workflow.py`): the
+dataset, the warehouse, the local unit, and one workflow per case stored in UI format.
+The page is signed in by putting the driver's token where the frontend keeps it
+(localStorage `access_token`, `AuthService.TOKEN_KEY`), and its unit is the one the
+frontend remembers for the workflow (localStorage `computing-unit-of-workflow-<wid>`,
+`ComputingUnitSelectionComponent`). Both are set by an init script before the page's
+own code runs; the warehouse is the one the page preselects (the user's first). Every
+case gets a fresh browser context.
+
+**Cases.** Expected rows are computed from the CSV files, as in the scenarios.
+
+| Key | What the page does | Checks |
+|---|---|---|
+| B1 | CSV scan → Filter `age > 30` → Aggregate by `dept`; Run | create 201 with the workflow, unit and warehouse in its body; `WorkflowStartRequest{executionId, planUri}` of that answer, sent after it; run button Run again, every operator on the canvas `Completed`; the Aggregate's result table shows the 4 expected rows; status 3 |
+| B2 | A Projection of `sce_no_such_column`. First as the page is: once the editor's own compile (`POST /api/compile`) has answered, the run button says `Invalid Workflow` and is disabled, so for this workflow the create's 400 is reachable only before that answer. Then with the editor's compile request held back (not faked: let through unchanged later): Run, Run again, the compile let through, the Projection's attribute picked in the property editor (`name`), Run | 400 with `operatorErrors` naming the column; run button Run again and enabled; nothing sent on the websocket; the result panel's Static Error tab shows the Projection's error; the second Run a second 400 with another eid; both rows 4; after the fix 201, the start, Completed, the 10 names over 2 pages; exactly one `WorkflowStartRequest` on the page |
+| B3 | `numbers.csv` → a Python UDF sleeping 0.2 s per tuple; Run, Pause, 3 s, Resume, Stop | run button Run, Pause, Resume, Pause, Run (Pausing and Resuming between); the UDF's box says `Paused`, then `Running`; states from the unit Running, Paused, Running, Killed, never Completed; frames `WorkflowStartRequest`, `WorkflowPauseRequest`, `WorkflowResumeRequest`, `WorkflowKillRequest`, once each, in order; status 5 |
+| B4 | `numbers.csv` → a UDF tagging `"v" + str(VERSION)`, 0.1 s per tuple, `VERSION = 1` as its last line; Run, Pause; in the property editor Unlock for Logic Change, Edit code content, in the code editor a click behind the last line, End, Backspace, `2`; close; Confirm Change; Resume | `POST /api/executions/{eid}/updates` 200 with `{updateId, operatorId}`, its body the UDF with `VERSION = 2`; `OperatorUpdateRequest{executionId, updateId}`; `ModifyLogicResponse.isValid`; the toast "reconfiguration registered"; Completed; `ModifyLogicCompletedEvent`; the result table's first page `v1`, its last page `v2`; all 300 rows read back over a second socket (the driver's transport): every `v1` before every `v2`; status 3 |
+| B5 | `people.csv` → a UDF stamping its rows with the time its module was loaded; Run, read the table, Run again, read the table | each run: 201, the start with its own eid and planUri, Completed, one stamp on all 10 people; two executions with two plans; the second stamp is later (the first run's rows are gone from the table); two start frames |
+| B6 (extra) | Run with the create's answer kept from the page (the request reaches the Dashboard; only the 201 is delivered late, as on a slow network); Stop while the button says Submitting; then Run again | the Dashboard created the execution; Stop is offered while Submitting; after Stop the run button is Run; no frame at all for the run that was given up, also after its 201 arrives (the page had dropped the request); the second Run: 201, its start, Completed; the only start frame is the second run's |
+
+Every case also checks that the page never sent `WorkflowExecuteRequest` or
+`ModifyLogicRequest` and that the page raised no uncaught error.
+
+**Evidence.** For each page the report holds (`cases[].pages[]`): every request to
+`/api/executions*` with its status and a short view of the bodies
+(`network.executions_requests`); every websocket the page opened and, for the workflow
+websocket, every frame it sent, whole and timed (`network.websockets[].sent`, heartbeats
+counted in `sent_types`), the states the unit reported and the `WorkflowErrorEvent`,
+`ModifyLogicResponse` and `ModifyLogicCompletedEvent` it sent; every HTTP answer of 400
+and up; the run button's text, as it changed (`run_button_timeline`); toasts; console
+errors and uncaught page errors. `summary` adds the frames of all pages by type and
+`old_requests_sent`. The access token is cut out of everything written.
+
+**How the page is driven, and what that depends on.**
+
+- States are read where the page shows them: the run button's text (`#run-button`:
+  Run, Submitting, Pause, Pausing, Resume, Resuming), the stop button
+  (`button[title^="Stop this run"]`) and each operator's state text on the canvas
+  (`[model-id=<operatorID>] .texera-operator-state`). The page has no label for
+  Completed or Killed.
+- An operator is selected by a mouse click at its box's coordinates (its own boundary
+  rect lies over the body, so an element click never becomes "actionable").
+- The result table (`#result-container .result-table`) pages over the websocket: a
+  page's number turns at once and its rows arrive a moment later, so a page turn waits
+  for other rows. The page size follows the panel's height (5 rows here). A table that
+  was on page 2 stays on page 2 after a new run.
+- Rows of an operator with two workers (the Projection) are shown in the workers' order,
+  not the file's, so rows are compared in any order.
+- The code editor is Monaco behind the property editor's "Edit code content" button,
+  which exists only after "Unlock for Logic Change". Typing a whole program into it
+  would be indented and completed by the editor; the case changes one character.
+- `workflow.py` puts the first operator at x = 80, which in the page is under the
+  dashboard's sidebar; the smoke moves its own workflows right and down.
+- Noise that is not the change's: `GET /user/workflow/<wid>` answers 404 with the app
+  (the Dashboard's fallback page), `GET /api/executions/<wid>/latest` 403 for a workflow
+  never run, `/api/agents` 503 and `/forum/api/*` 405 (not in this stack), and the
+  shared-editing socket `/rtc/<id>` retried without end (the stack has no server for it).
 
 ## Notes and caveats
 
