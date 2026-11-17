@@ -37,6 +37,8 @@ object VFSResourceType extends Enumeration {
   val STATE: Value = Value("state")
   // An execution's stored plan, the updates to its paused operators and its start claim.
   val PLAN: Value = Value("plan")
+  // An execution's log: the changes of its state and its stored output ports.
+  val EXECUTION_LOG: Value = Value("executionLog")
 }
 
 /**
@@ -204,6 +206,23 @@ object VFSURIFactory {
       warehouse: Option[String] = None
   ): URI =
     createNonResultVFSURI(VFSResourceType.PLAN, workflowId, executionId, warehouse = warehouse)
+
+  /**
+    * Create a URI pointing to an execution's log table:
+    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/executionlog`. One table per execution, so the
+    * URI names no operator.
+    */
+  def createExecutionLogURI(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      warehouse: Option[String] = None
+  ): URI =
+    createNonResultVFSURI(
+      VFSResourceType.EXECUTION_LOG,
+      workflowId,
+      executionId,
+      warehouse = warehouse
+    )
 
   /**
     * Create a URI pointing to console messages

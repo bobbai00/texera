@@ -78,4 +78,16 @@ class ResultSchemaSpec extends AnyFlatSpec with Matchers {
       schema.getAttribute(name).getType shouldBe AttributeType.INTEGER
     )
   }
+
+  "ResultSchema.executionLogSchema" should "declare the log table's columns in order" in {
+    val schema = ResultSchema.executionLogSchema
+    schema.getAttributeNames shouldBe List("seq", "timeMs", "kind", "state", "detail")
+    // Times are epoch milliseconds, not timestamps, which Texera stores without a zone.
+    List("seq", "timeMs").foreach(name =>
+      schema.getAttribute(name).getType shouldBe AttributeType.LONG
+    )
+    List("kind", "state", "detail").foreach(name =>
+      schema.getAttribute(name).getType shouldBe AttributeType.STRING
+    )
+  }
 }

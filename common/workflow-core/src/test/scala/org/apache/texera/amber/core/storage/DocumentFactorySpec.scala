@@ -348,6 +348,26 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     }
   }
 
+  it should "keep an execution's log in the log namespace, in a table named after its workflow and execution, with or without a warehouse" in {
+    val logTable = TableIdentifier.of(
+      StorageConfig.icebergTableExecutionLogNamespace,
+      "wid_12_eid_345_executionlog"
+    )
+    Seq(None, Some("wh-test")).foreach { warehouse =>
+      val logUri =
+        VFSURIFactory.createExecutionLogURI(WorkflowIdentity(12), ExecutionIdentity(345), warehouse)
+      val catalog = IcebergCatalogInstance.getInstance(warehouse)
+      if (catalog.tableExists(logTable)) catalog.dropTable(logTable)
+
+      DocumentFactory.createDocument(logUri, ResultSchema.executionLogSchema)
+
+      withClue(s"$logUri: ") {
+        catalog.tableExists(logTable) shouldBe true
+        DocumentFactory.documentExists(logUri) shouldBe true
+      }
+    }
+  }
+
   "icebergTableOf" should "load the table a vfs URI names" in {
     val planUri = VFSURIFactory.createPlanURI(WorkflowIdentity(13), ExecutionIdentity(346))
     DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)

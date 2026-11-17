@@ -59,6 +59,8 @@ object StorageConfig {
     conf.getString("storage.iceberg.table.state-namespace")
   val icebergTablePlanNamespace: String =
     conf.getString("storage.iceberg.table.plan-namespace")
+  val icebergTableExecutionLogNamespace: String =
+    conf.getString("storage.iceberg.table.execution-log-namespace")
   val icebergTableCommitBatchSize: Int =
     conf.getInt("storage.iceberg.table.commit.batch-size")
   val icebergTableCommitIntervalMs: Long =

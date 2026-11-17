@@ -19,12 +19,7 @@
 
 package org.apache.texera.amber.core.storage
 
-import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
-import org.apache.iceberg.catalog.{Catalog, Namespace, TableIdentifier}
 import org.apache.iceberg.exceptions.{CommitFailedException, ServiceUnavailableException}
-import org.apache.iceberg.inmemory.InMemoryFileIO
-import org.apache.iceberg.jdbc.JdbcCatalog
-import org.apache.iceberg.{CatalogProperties, Table}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.tuple.Tuple
@@ -35,7 +30,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
-import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -44,74 +38,16 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Callable, CyclicBarrier, Executors, TimeUnit}
-import scala.jdk.CollectionConverters._
 import scala.util.{Success, Try}
 
 /**
-  * Specs for [[ExecutionPlanStore]] on Iceberg's JDBC catalog, the catalog Texera uses when it
-  * does not run Lakekeeper, over an embedded Postgres of the spec's own: it needs no database
-  * server and leaves nothing behind. Data and metadata files are kept in memory, since what the
-  * store relies on (a commit that refuses a second `started` tag) is the catalog's doing, not the
-  * file system's.
-  *
-  * Tagged [[NonParallelTest]] so `common/workflow-core/build.sbt` gives this suite its own forked
-  * JVM. That is load-bearing: `beforeAll` installs this catalog into the JVM-wide
-  * `IcebergCatalogInstance`, where the module's other suites install a local Hadoop catalog.
+  * Specs for [[ExecutionPlanStore]] on Iceberg's JDBC catalog (see [[EmbeddedJdbcCatalog]]):
+  * the commit that refuses a second `started` tag is the catalog's doing.
   */
 @NonParallelTest
-class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll {
+class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCatalog {
 
-  private val warehouse = "user-1-7"
   private val workflowId = WorkflowIdentity(12)
-
-  private var postgres: EmbeddedPostgres = _
-  private var catalog: JdbcCatalog = _
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    // Loaded explicitly, as IcebergUtil.createPostgresCatalog does, for the same flaky lookup.
-    Class.forName("org.postgresql.Driver")
-    postgres = EmbeddedPostgres.builder().start()
-    catalog = new JdbcCatalog()
-    catalog.initialize(
-      "execution_plan_store_spec",
-      Map(
-        CatalogProperties.WAREHOUSE_LOCATION -> "memory://execution-plan-store-spec",
-        CatalogProperties.FILE_IO_IMPL -> classOf[InMemoryFileIO].getName,
-        CatalogProperties.URI -> postgres.getJdbcUrl("postgres", "postgres"),
-        JdbcCatalog.PROPERTY_PREFIX + "user" -> "postgres",
-        JdbcCatalog.PROPERTY_PREFIX + "password" -> ""
-      ).asJava
-    )
-    // The default warehouse and the one the warehouse-scoped URIs name: two cache entries under
-    // the REST catalog type, the one shared entry under the others.
-    IcebergCatalogInstance.replaceInstance(catalog)
-    IcebergCatalogInstance.replaceInstance(catalog, Some(warehouse))
-  }
-
-  override def afterAll(): Unit =
-    try {
-      Option(catalog).foreach(_.close())
-      Option(postgres).foreach(_.close())
-    } finally super.afterAll()
-
-  /** A catalog that fails every call, the way a REST catalog that cannot answer does. */
-  private object UnavailableCatalog extends Catalog {
-    private def unavailable(): Nothing =
-      throw new ServiceUnavailableException("the catalog is unavailable")
-    override def listTables(namespace: Namespace): java.util.List[TableIdentifier] = unavailable()
-    override def dropTable(identifier: TableIdentifier, purge: Boolean): Boolean = unavailable()
-    override def renameTable(from: TableIdentifier, to: TableIdentifier): Unit = unavailable()
-    override def loadTable(identifier: TableIdentifier): Table = unavailable()
-  }
-
-  /** Runs `body` with [[UnavailableCatalog]] in place of the spec's catalog, then restores it. */
-  private def whileCatalogUnavailable(body: => Unit): Unit = {
-    val warehouses = Seq(None, Some(warehouse))
-    warehouses.foreach(IcebergCatalogInstance.replaceInstance(UnavailableCatalog, _))
-    try body
-    finally warehouses.foreach(IcebergCatalogInstance.replaceInstance(catalog, _))
-  }
 
   // Executions below 100 are left to the specs that name one.
   private val nextExecutionId = new AtomicLong(100)

@@ -77,6 +77,12 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  it should "keep execution logs in the execution-log namespace by default" in {
+    if (sys.env.get("STORAGE_ICEBERG_TABLE_EXECUTION_LOG_NAMESPACE").isEmpty) {
+      StorageConfig.icebergTableExecutionLogNamespace shouldBe "execution-log"
+    }
+  }
+
   it should "commit an execution's statistics and console output every 30 seconds by default" in {
     if (sys.env.get("STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS").isEmpty) {
       StorageConfig.icebergTableCommitIntervalMs shouldBe 30000L

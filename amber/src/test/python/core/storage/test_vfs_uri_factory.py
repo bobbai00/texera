@@ -119,6 +119,7 @@ class TestDecodeUriRoundTrip:
             ("runtimestatistics", VFSResourceType.RUNTIME_STATISTICS),
             ("consolemessages", VFSResourceType.CONSOLE_MESSAGES),
             ("plan", VFSResourceType.PLAN),
+            ("executionlog", VFSResourceType.EXECUTION_LOG),
         ],
     )
     def test_scala_resource_type_wire_format_decodes(self, suffix, resource_type):
@@ -139,6 +140,16 @@ class TestDecodeUriRoundTrip:
             "vfs:///wid/12/eid/345/opid/plan/consolemessages"
         )
         assert components.resource_type == VFSResourceType.CONSOLE_MESSAGES
+
+    def test_execution_log_uri_decodes_with_its_ids_and_no_port(self):
+        # The URI VFSURIFactory.createExecutionLogURI (Scala) writes for an
+        # execution's log.
+        components = VFSURIFactory.decode_uri("vfs:///wid/12/eid/345/executionlog")
+        assert components.resource_type == VFSResourceType.EXECUTION_LOG
+        assert components.workflow_id.id == 12
+        assert components.execution_id.id == 345
+        assert components.global_port_id is None
+        assert components.warehouse is None
 
 
 class TestDecodeUriErrorPaths:
@@ -236,6 +247,15 @@ class TestWarehouseInDecodedUri:
     def test_decodes_a_warehouse_scoped_plan_uri(self):
         components = VFSURIFactory.decode_uri("vfs:///wh/user-1-7/wid/12/eid/345/plan")
         assert components.resource_type == VFSResourceType.PLAN
+        assert components.workflow_id.id == 12
+        assert components.execution_id.id == 345
+        assert components.warehouse == "user-1-7"
+
+    def test_decodes_a_warehouse_scoped_execution_log_uri(self):
+        components = VFSURIFactory.decode_uri(
+            "vfs:///wh/user-1-7/wid/12/eid/345/executionlog"
+        )
+        assert components.resource_type == VFSResourceType.EXECUTION_LOG
         assert components.workflow_id.id == 12
         assert components.execution_id.id == 345
         assert components.warehouse == "user-1-7"

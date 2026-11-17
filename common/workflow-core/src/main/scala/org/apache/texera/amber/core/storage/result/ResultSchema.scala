@@ -52,4 +52,16 @@ object ResultSchema {
     new Attribute("computingUnitId", AttributeType.INTEGER),
     new Attribute("notification", AttributeType.STRING)
   )
+
+  /**
+    * An execution's log table (see `ExecutionLogStore`): one row per change of the run's state
+    * and one per stored output port.
+    */
+  val executionLogSchema: Schema = new Schema(
+    new Attribute("seq", AttributeType.LONG),
+    new Attribute("timeMs", AttributeType.LONG),
+    new Attribute("kind", AttributeType.STRING),
+    new Attribute("state", AttributeType.STRING),
+    new Attribute("detail", AttributeType.STRING)
+  )
 }

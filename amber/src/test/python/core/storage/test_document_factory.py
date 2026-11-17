@@ -134,6 +134,18 @@ def test_plan_uri_has_no_namespace_on_the_python_side(schema):
             operation()
 
 
+def test_execution_log_uri_has_no_namespace_on_the_python_side(schema):
+    # As the plan table: an execution's log is the Scala side's alone.
+    log_uri = "vfs:///wid/12/eid/345/executionlog"
+    for operation in (
+        lambda: DocumentFactory.create_document(log_uri, schema),
+        lambda: DocumentFactory.open_document(log_uri),
+        lambda: DocumentFactory.document_exists(log_uri),
+    ):
+        with pytest.raises(ValueError, match="not supported"):
+            operation()
+
+
 def test_create_document_rejects_non_vfs_scheme(schema):
     # Match the per-site suffix, not the shared "Unsupported URI scheme"
     # prefix: all three entry points raise NotImplementedError with that same

@@ -51,6 +51,7 @@ object DocumentFactory {
       case RUNTIME_STATISTICS => StorageConfig.icebergTableRuntimeStatisticsNamespace
       case STATE              => StorageConfig.icebergTableStateNamespace
       case PLAN               => StorageConfig.icebergTablePlanNamespace
+      case EXECUTION_LOG      => StorageConfig.icebergTableExecutionLogNamespace
       case _ =>
         throw new IllegalArgumentException(s"Resource type $resourceType is not supported")
     }

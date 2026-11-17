@@ -39,6 +39,8 @@ class VFSResourceType(str, Enum):
     # An execution's plan table. Written and read on the Scala side only; listed so
     # both languages decode the same URIs.
     PLAN = "plan"
+    # An execution's log table. As PLAN: the Scala side's alone, listed to decode.
+    EXECUTION_LOG = "executionlog"
 
 
 # See VFSURIFactory._is_valid_warehouse_name.

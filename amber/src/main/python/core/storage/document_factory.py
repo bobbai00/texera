@@ -47,9 +47,9 @@ class DocumentFactory:
     @staticmethod
     def _resolve_namespace(resource_type: VFSResourceType) -> str:
         # Only RESULT and STATE are mapped here: the Python runtime writes those
-        # tables. CONSOLE_MESSAGES, RUNTIME_STATISTICS and PLAN are produced
-        # exclusively from the Scala side (see DocumentFactory.scala), so they are
-        # intentionally absent from this mapping and fall through to the
+        # tables. CONSOLE_MESSAGES, RUNTIME_STATISTICS, PLAN and EXECUTION_LOG are
+        # produced exclusively from the Scala side (see DocumentFactory.scala), so
+        # they are intentionally absent from this mapping and fall through to the
         # unsupported branch.
         match resource_type:
             case VFSResourceType.RESULT:

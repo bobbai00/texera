@@ -127,6 +127,62 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     }
   }
 
+  "VFSURIFactory.createExecutionLogURI" should "name the execution's log table without an operator or a port" in {
+    val uri = VFSURIFactory.createExecutionLogURI(WorkflowIdentity(12L), ExecutionIdentity(345L))
+    assert(uri.toString == "vfs:///wid/12/eid/345/executionlog")
+
+    val components = VFSURIFactory.decodeURI(uri)
+    assert(components.resourceType == VFSResourceType.EXECUTION_LOG)
+    assert(components.workflowId == WorkflowIdentity(12L))
+    assert(components.executionId == ExecutionIdentity(345L))
+    assert(components.globalPortId.isEmpty)
+    assert(components.warehouse.isEmpty)
+  }
+
+  it should "put the warehouse in a leading segment and decode it back" in {
+    val uri = VFSURIFactory.createExecutionLogURI(
+      WorkflowIdentity(12L),
+      ExecutionIdentity(345L),
+      Some("user-1-7")
+    )
+    assert(uri.toString == "vfs:///wh/user-1-7/wid/12/eid/345/executionlog")
+
+    val components = VFSURIFactory.decodeURI(uri)
+    assert(components.resourceType == VFSResourceType.EXECUTION_LOG)
+    assert(components.workflowId == WorkflowIdentity(12L))
+    assert(components.executionId == ExecutionIdentity(345L))
+    assert(components.warehouse.contains("user-1-7"))
+  }
+
+  it should "reject a warehouse name that is not safe as a URI path segment" in {
+    assertThrows[IllegalArgumentException] {
+      VFSURIFactory.createExecutionLogURI(workflowId, executionId, Some("a/b"))
+    }
+  }
+
+  it should "not be taken for another resource type, nor another type's URI for a log" in {
+    val logUri = VFSURIFactory.createExecutionLogURI(workflowId, executionId)
+    assert(VFSURIFactory.decodeURI(logUri).resourceType == VFSResourceType.EXECUTION_LOG)
+
+    val otherTypes = Seq(
+      VFSURIFactory.createPlanURI(workflowId, executionId) -> VFSResourceType.PLAN,
+      VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId) ->
+        VFSResourceType.RUNTIME_STATISTICS,
+      // An operator named "executionlog" still names a console-messages table.
+      VFSURIFactory.createConsoleMessagesURI(
+        workflowId,
+        executionId,
+        OperatorIdentity("executionlog")
+      ) -> VFSResourceType.CONSOLE_MESSAGES
+    )
+    otherTypes.foreach {
+      case (uri, resourceType) =>
+        withClue(s"$uri: ") {
+          assert(VFSURIFactory.decodeURI(uri).resourceType == resourceType)
+        }
+    }
+  }
+
   "A plan URI" should "not be taken for another resource type, nor another type's URI for a plan" in {
     val planUri = VFSURIFactory.createPlanURI(workflowId, executionId)
     assert(VFSURIFactory.decodeURI(planUri).resourceType == VFSResourceType.PLAN)
