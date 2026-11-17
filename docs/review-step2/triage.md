@@ -154,3 +154,39 @@ General rules for every batch
   changes.
 - E28, E29 (test weight and timing), D35 (commit messages): handled when the history is regrouped
   into pull requests, except where a batch touches the test anyway.
+
+## Decisions by the owner on 2026-11-17, and the two batches they add
+
+The owner was asked two questions the reviews raised and answered: "You can pick the cleaner
+approach. For compile, you can use the compiling service." and, on the plan: "the resolved URI
+should be in the operator JSON block ... even at a port level: what's the input port of that URI,
+and what's the output port that the result is written to."
+
+### Batch P: a plan's operator block says what the operator reads and where it writes (after X1; it absorbs X2)
+
+- Every output port of a physical operator carries its storage location in the plan, assigned when
+  the plan is made (from the ids and the warehouse, as `createPortBaseURI` does today on the unit).
+  The scheduler uses the plan's location for every port it stores; nothing on the unit builds a
+  result location. An input port that reads stored data reads its upstream port's location.
+- What an operator reads from outside the run (a scan's file, the files a File Scan From Input may
+  read, a File Lister's listing) is in the operator's block of the plan, with its link, not in the
+  operator's descriptor. The compiler binds it onto the physical operator, the codec stores it
+  there, the engine hands it to the executor beside the descriptor. The descriptor is what the user
+  wrote. `@SetByCompiler`, the per-type clearing, `asSent` and the schema filter for compiler-set
+  properties go. This replaces E3's smaller form.
+- A site setting an executor needs (the CSV column limit) comes from the plan's settings, not from
+  a descriptor field.
+- The plan-level list of inputs goes: it would repeat the operators' inputs.
+- The rest of X2 as listed above: E7, E4, D11, D27, E26, E18/D6, E30 (first item), E10 (one item).
+
+### Batch C: the run compile lives in the compiling service (after P and X3 are put together)
+
+- The workflow-compiling-service gets one endpoint that makes the plan for a run: it compiles
+  strictly and resolves, for the calling user, what the plan names. The Dashboard's create
+  authorizes, inserts the row, asks for the plan with the user's token and a deadline, stores the
+  plan, answers. Operator errors come back as they do now.
+- `amber` (the Dashboard service and the unit) no longer depends on the compiler module. What the
+  change of a paused operator needs moves accordingly.
+- The compiling service gets no new secret unless there is no clean way around it: links can be
+  signed at the Dashboard from the addresses the plan's inputs carry.
+- The three deployment modes follow (routes between services, settings, timeouts).
