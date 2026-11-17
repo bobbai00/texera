@@ -40,7 +40,7 @@
       <ng-template #extraTpl>
         <span
           class="goto-operator-icon"
-          *ngIf="error.operatorId !== 'unknown operator' && operatorId !== error.operatorId"
+          *ngIf="error.operatorId !== '' && error.operatorId !== 'unknown operator' && operatorId !== error.operatorId"
           nz-icon
           nzType="aim"
           title="focus operator"

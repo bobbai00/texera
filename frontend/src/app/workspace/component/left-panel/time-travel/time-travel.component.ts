@@ -30,7 +30,7 @@ import {
 import { HttpClient } from "@angular/common/http";
 import { Observable, timer } from "rxjs";
 import { map } from "rxjs/operators";
-import { ReplayExecutionInfo } from "../../../types/workflow-websocket.interface";
+import { ReplayExecutionInfo } from "../../../service/execute-workflow/execution-api.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { NgIf, NgFor, DatePipe } from "@angular/common";
 import {

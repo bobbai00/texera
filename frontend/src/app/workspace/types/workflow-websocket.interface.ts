@@ -17,13 +17,7 @@
  * under the License.
  */
 
-import {
-  ExecutionState,
-  LogicalOperator,
-  LogicalPlan,
-  OperatorStatsUpdate,
-  WorkflowResultUpdateEvent,
-} from "./execute-workflow.interface";
+import { ExecutionState, OperatorStatsUpdate, WorkflowResultUpdateEvent } from "./execute-workflow.interface";
 import { IndexableObject } from "./result-table.interface";
 import { ConsoleUpdateEvent } from "./workflow-common.interface";
 import { SchemaAttribute } from "./workflow-compiling.interface";
@@ -41,18 +35,19 @@ import { SchemaAttribute } from "./workflow-compiling.interface";
  * 2. value is the payload this request/event needs
  */
 
-export interface WorkflowExecuteRequest
-  extends Readonly<{
-    executionName: string;
-    engineVersion: string;
-    logicalPlan: LogicalPlan;
-  }> {}
+/** Starts an execution the Dashboard service created, from its stored plan. */
+export type WorkflowStartRequest = Readonly<{
+  executionId: number;
+  /** The execution's plan table, as `POST /api/executions` answered it. */
+  planUri: string;
+}>;
 
-export interface ReplayExecutionInfo
-  extends Readonly<{
-    eid: number;
-    interaction: string;
-  }> {}
+/** Applies, when the paused run of an execution resumes, a change to an operator that the Dashboard service stored. */
+export type OperatorUpdateRequest = Readonly<{
+  executionId: number;
+  /** The id `POST /api/executions/{eid}/updates` answered with. */
+  updateId: string;
+}>;
 
 export interface WorkflowFatalError
   extends Readonly<{
@@ -73,10 +68,6 @@ export interface WorkflowErrorEvent
   extends Readonly<{
     fatalErrors: ReadonlyArray<WorkflowFatalError>;
   }> {}
-
-export type ModifyOperatorLogic = Readonly<{
-  operator: LogicalOperator;
-}>;
 
 export type WorkerTuples = Readonly<{
   workerID: string;
@@ -179,11 +170,11 @@ export type WorkflowStateInfo = Readonly<{
 
 export type TexeraWebsocketRequestTypeMap = {
   HeartBeatRequest: {};
-  ModifyLogicRequest: ModifyOperatorLogic;
+  OperatorUpdateRequest: OperatorUpdateRequest;
   ResultPaginationRequest: PaginationRequest;
   RetryRequest: { workers: ReadonlyArray<string> };
   SkipTupleRequest: { workers: ReadonlyArray<string> };
-  WorkflowExecuteRequest: WorkflowExecuteRequest;
+  WorkflowStartRequest: WorkflowStartRequest;
   WorkflowKillRequest: {};
   WorkflowPauseRequest: {};
   WorkflowCheckpointRequest: {};

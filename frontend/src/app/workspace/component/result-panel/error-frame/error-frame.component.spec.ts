@@ -228,6 +228,14 @@ describe("ErrorFrameComponent", () => {
       expect(gotoIcons()).toEqual([]);
     });
 
+    it("offers no jump for a run that was refused before it started", () => {
+      // A start the computing unit refuses, and an execution the Dashboard does not create, name no
+      // operator at all: the jump would look for an operator with an empty id, and throw.
+      render([fatalError({ operatorId: "", type: { name: "EXECUTION_FAILURE" } })]);
+
+      expect(gotoIcons()).toEqual([]);
+    });
+
     it("offers no jump to the operator already being shown", () => {
       // Scoped to op1 and the error is op1's: the shortcut would be a no-op.
       render([fatalError({ operatorId: "op1" })], "op1");

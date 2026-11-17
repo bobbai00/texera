@@ -18,7 +18,7 @@
  */
 
 import { Inject, Injectable, DOCUMENT } from "@angular/core";
-import { BehaviorSubject, interval, Observable, Subject, Subscription } from "rxjs";
+import { BehaviorSubject, interval, Observable, Subject, Subscription, switchMap, tap, timer } from "rxjs";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 import { WorkflowGraphReadonly } from "../workflow-graph/model/workflow-graph";
 import {
@@ -33,7 +33,6 @@ import {
   OperatorCurrentTuples,
   RegionStateEvent,
   RegionUpdateEvent,
-  ReplayExecutionInfo,
   TexeraWebsocketEvent,
   WorkflowFatalError,
 } from "../../types/workflow-websocket.interface";
@@ -45,15 +44,45 @@ import { NotificationService } from "src/app/common/service/notification/notific
 import { exhaustiveGuard } from "../../../common/util/switch";
 import { WorkflowStatusService } from "../workflow-status/workflow-status.service";
 import { intersection } from "../../../common/util/set";
-import { WorkflowSettings } from "../../../common/type/workflow";
 
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { unavailableComputingUnitReason } from "../../../common/util/computing-unit.util";
 import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
+import {
+  compileFailureOf,
+  CreateExecutionRequest,
+  ExecutionApiService,
+  failureMessage,
+  ReplayExecutionInfo,
+} from "./execution-api.service";
 
 // TODO: change this declaration
 export const FORM_DEBOUNCE_TIME_MS = 150;
+
+/**
+ * The errors of a run whose execution the Dashboard service did not create, `error` being how the request
+ * for it failed. For a workflow that does not compile: each operator's error, in the order of the workflow,
+ * then the errors that belong to no operator, as the Dashboard wrote them. For any other failure: its reason,
+ * as one error that belongs to no operator, which is how the computing unit reports a start it refuses.
+ */
+function errorsOfFailedCreate(error: unknown): ReadonlyArray<WorkflowFatalError> {
+  const compileFailure = compileFailureOf(error);
+  if (compileFailure) {
+    return [...Object.values(compileFailure.operatorErrors), ...compileFailure.errors];
+  }
+  const now = Date.now();
+  return [
+    {
+      type: { name: "EXECUTION_FAILURE" },
+      timestamp: { seconds: Math.floor(now / 1000), nanos: (now % 1000) * 1_000_000 },
+      message: failureMessage(error),
+      details: "",
+      operatorId: "",
+      workerId: "",
+    },
+  ];
+}
 
 /**
  * ExecuteWorkflowService sends the current workflow data to the backend
@@ -107,6 +136,19 @@ export class ExecuteWorkflowService {
   private readonly executionDuration = new BehaviorSubject<number>(0);
   private durationTicker?: Subscription;
 
+  /**
+   * The run that was asked for and has not reached the computing unit yet: its wait for the form debounce,
+   * then the creation of its execution at the Dashboard service. Closed once the execution is created or
+   * refused, and when the run is given up before that.
+   */
+  private pendingRun = Subscription.EMPTY;
+  /**
+   * The execution this page last created and asked the computing unit to start: the one a change to an
+   * operator is stored for while its run is paused. The unit names no execution in what it sends, so a run
+   * started elsewhere (another tab, or this page before a reload) is not known here.
+   */
+  private currentExecutionId?: number;
+
   constructor(
     private workflowActionService: WorkflowActionService,
     private workflowWebsocketService: WorkflowWebsocketService,
@@ -115,7 +157,8 @@ export class ExecuteWorkflowService {
     @Inject(DOCUMENT) private document: Document,
     private computingUnitStatusService: ComputingUnitStatusService,
     private warehouseService: WarehouseService,
-    private config: GuiConfigService
+    private config: GuiConfigService,
+    private executionApiService: ExecutionApiService
   ) {
     workflowWebsocketService.websocketEvent().subscribe(event => {
       switch (event.type) {
@@ -259,11 +302,12 @@ export class ExecuteWorkflowService {
   }
 
   /**
-   * Returns whether the request was sent, so a caller that reports on it does not have to
+   * Returns whether the run was asked for, so a caller that reports on it does not have to
    * repeat the refusal conditions. False means this method turned the run down locally --
-   * no computing unit, no warehouse -- and showed its own toast. True only means the request
-   * left the browser: the deployment can still reject it, which arrives on the execution
-   * state stream. Callers that only fire and forget can keep ignoring the result.
+   * no computing unit, no warehouse -- and showed its own toast. True only means the run's
+   * execution is being asked for: the Dashboard service can still refuse to create it, and the
+   * computing unit to start it, which arrives on the execution state stream. Callers that only
+   * fire and forget can keep ignoring the result.
    */
   public executeWorkflowWithEmailNotification(
     executionName: string,
@@ -274,42 +318,101 @@ export class ExecuteWorkflowService {
       this.workflowActionService.getTexeraGraph(),
       targetOperatorId
     );
-    const settings = this.workflowActionService.getWorkflowSettings();
-    if (this.refuseToRunOnUnavailableUnit()) {
-      return false;
-    }
-    if (this.refuseToRunWithoutWarehouse()) {
-      return false;
-    }
-    this.resetExecutionState();
-    this.workflowStatusService.resetStatus();
-    this.sendExecutionRequest(executionName, logicalPlan, settings, emailNotificationEnabled);
-    return true;
+    return this.requestExecution(executionName, logicalPlan, emailNotificationEnabled);
   }
 
-  /** Returns whether the request was sent; see executeWorkflowWithEmailNotification. */
+  /** Returns whether the run was asked for; see executeWorkflowWithEmailNotification. */
   public executeWorkflow(executionName: string, targetOperatorId?: string): boolean {
     return this.executeWorkflowWithEmailNotification(executionName, false, targetOperatorId);
   }
 
   public executeWorkflowWithReplay(replayExecutionInfo: ReplayExecutionInfo): void {
     const logicalPlan = ExecuteWorkflowService.getLogicalPlanRequest(this.workflowActionService.getTexeraGraph());
-    const settings = this.workflowActionService.getWorkflowSettings();
-    if (this.refuseToRunOnUnavailableUnit()) {
-      return;
-    }
-    if (this.refuseToRunWithoutWarehouse()) {
-      return;
-    }
-    this.resetExecutionState();
-    this.workflowStatusService.resetStatus();
-    this.sendExecutionRequest(
+    this.requestExecution(
       `Replay run of ${replayExecutionInfo.eid} to ${replayExecutionInfo.interaction}`,
       logicalPlan,
-      settings,
       false,
       replayExecutionInfo
     );
+  }
+
+  /**
+   * Asks for a run of `logicalPlan` on the selected computing unit, unless the run is turned down here, with
+   * a toast. Every check comes before resetExecutionState(), so a refused click keeps the results on screen.
+   * Returns whether the run was asked for; see executeWorkflowWithEmailNotification.
+   */
+  private requestExecution(
+    executionName: string,
+    logicalPlan: LogicalPlan,
+    emailNotificationEnabled: boolean,
+    replayFromExecution?: ReplayExecutionInfo
+  ): boolean {
+    if (this.refuseToRunOnUnavailableUnit()) {
+      return false;
+    }
+    // An execution is created for a saved workflow, to run on a computing unit. Only a saved workflow has a
+    // unit selected, so whichever of the two is missing, the unit is what to ask for.
+    const wid = this.workflowActionService.getWorkflowMetadata().wid;
+    const computingUnitId = this.computingUnitStatusService.getSelectedComputingUnitValue()?.computingUnit.cuid;
+    if (!wid || computingUnitId === undefined) {
+      this.notificationService.error("Create or select a computing unit before running.");
+      return false;
+    }
+    if (this.refuseToRunWithoutWarehouse()) {
+      return false;
+    }
+    this.resetExecutionState();
+    this.workflowStatusService.resetStatus();
+    this.createThenStart({
+      wid,
+      executionName,
+      engineVersion: version.buildNumber,
+      logicalPlan,
+      workflowSettings: this.workflowActionService.getWorkflowSettings(),
+      emailNotificationEnabled,
+      computingUnitId,
+      // The warehouse this execution writes to (#7817): none while per-user warehouses are disabled.
+      warehouseId: this.warehouseService.getSelectedWarehouseIdValue(),
+      replayFromExecution,
+    });
+
+    // add flag for new execution of workflow
+    // so when next time the result panel is displayed, it will use new data
+    // instead of those stored in the session storage
+    const resultPaginationInfo = sessionGetObject<ResultPaginationInfo>(PAGINATION_INFO_STORAGE_KEY);
+    if (resultPaginationInfo) {
+      sessionSetObject(PAGINATION_INFO_STORAGE_KEY, {
+        ...resultPaginationInfo,
+        newWorkflowExecuted: true,
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Has the Dashboard service create the execution `request` asks for, then asks the computing unit, over
+   * the websocket, to start it from the plan the Dashboard wrote. An execution the Dashboard does not create
+   * fails the run with the errors it reports, and nothing is sent to the unit: the run it holds, and that
+   * run's results, stay as they are.
+   */
+  private createThenStart(request: CreateExecutionRequest): void {
+    // The run asked for last is the one that starts.
+    this.pendingRun.unsubscribe();
+    // wait for the form debounce to complete, then create the execution
+    this.pendingRun = timer(FORM_DEBOUNCE_TIME_MS)
+      .pipe(
+        // The unit reports a run only once it has built it: until then the run shows as starting from here.
+        tap(() => this.updateExecutionState({ state: ExecutionState.Initializing })),
+        switchMap(() => this.executionApiService.create(request))
+      )
+      .subscribe({
+        next: ({ eid, planUri }) => {
+          this.currentExecutionId = eid;
+          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri });
+        },
+        error: (error: unknown) =>
+          this.updateExecutionState({ state: ExecutionState.Failed, errorMessages: errorsOfFailedCreate(error) }),
+      });
   }
 
   /**
@@ -337,8 +440,8 @@ export class ExecuteWorkflowService {
 
   /**
    * While the deployment requires a warehouse (#7817) and none is picked,
-   * refuses with a toast and returns true. Checked at every public entry
-   * point before it resets the previous execution's state — a refused click
+   * refuses with a toast and returns true. Checked for every public entry
+   * point before the previous execution's state is reset — a refused click
    * must not wipe the results already on screen (#7751 adds the backend-side
    * rejection).
    */
@@ -348,54 +451,6 @@ export class ExecuteWorkflowService {
     }
     this.notificationService.error("Create or select a warehouse before running.");
     return true;
-  }
-
-  public sendExecutionRequest(
-    executionName: string,
-    logicalPlan: LogicalPlan,
-    workflowSettings: WorkflowSettings,
-    emailNotificationEnabled: boolean,
-    replayExecutionInfo: ReplayExecutionInfo | undefined = undefined
-  ): void {
-    // Get the current computing unit ID from the status service
-    const selectedUnit = this.computingUnitStatusService.getSelectedComputingUnitValue();
-    const computingUnitId = selectedUnit?.computingUnit.cuid;
-
-    // The warehouse this execution writes to (#7817); undefined serializes away,
-    // which the backend today reads as the shared default storage (#7751
-    // tightens that to a rejection while the feature is enabled).
-    const warehouseId = this.warehouseService.getSelectedWarehouseIdValue();
-
-    // Log a warning if no computing unit is selected
-    if (computingUnitId === undefined) {
-      console.warn("No computing unit selected for workflow execution");
-    }
-
-    const workflowExecuteRequest = {
-      executionName: executionName,
-      engineVersion: version.buildNumber,
-      logicalPlan: logicalPlan,
-      replayFromExecution: replayExecutionInfo,
-      workflowSettings: workflowSettings,
-      emailNotificationEnabled: emailNotificationEnabled,
-      computingUnitId: computingUnitId, // Include the computing unit ID
-      warehouseId: warehouseId,
-    };
-    // wait for the form debounce to complete, then send
-    window.setTimeout(() => {
-      this.workflowWebsocketService.send("WorkflowExecuteRequest", workflowExecuteRequest);
-    }, FORM_DEBOUNCE_TIME_MS);
-
-    // add flag for new execution of workflow
-    // so when next time the result panel is displayed, it will use new data
-    // instead of those stored in the session storage
-    const resultPaginationInfo = sessionGetObject<ResultPaginationInfo>(PAGINATION_INFO_STORAGE_KEY);
-    if (resultPaginationInfo) {
-      sessionSetObject(PAGINATION_INFO_STORAGE_KEY, {
-        ...resultPaginationInfo,
-        newWorkflowExecuted: true,
-      });
-    }
   }
 
   public pauseWorkflow(): void {
@@ -411,6 +466,13 @@ export class ExecuteWorkflowService {
       this.currentState.state === ExecutionState.Completed
     ) {
       throw new Error("cannot kill workflow, the current execution state is " + this.currentState.state);
+    }
+    if (!this.pendingRun.closed) {
+      // The run has not reached the computing unit: it is given up here. A kill sent now would end the run
+      // the unit still holds, the one before it.
+      this.pendingRun.unsubscribe();
+      this.updateExecutionState({ state: ExecutionState.Killed });
+      return;
     }
     this.workflowWebsocketService.send("WorkflowKillRequest", {});
   }
@@ -446,9 +508,19 @@ export class ExecuteWorkflowService {
     this.workflowWebsocketService.send("RetryRequest", { workers });
   }
 
+  /**
+   * Changes operator `operatorID` of the paused run to what the editor holds: the change is stored at the
+   * Dashboard service, then named to the computing unit, which answers with a ModifyLogicResponse and applies
+   * it when the run resumes. A change the Dashboard does not store is reported in a toast, and nothing is sent
+   * to the unit.
+   */
   public modifyOperatorLogic(operatorID: string): void {
     if (this.currentState.state !== ExecutionState.Paused) {
       throw new Error("cannot modify logic, the current execution state is " + this.currentState.state);
+    }
+    const executionId = this.currentExecutionId;
+    if (executionId === undefined) {
+      throw new Error("cannot modify logic, the paused execution was not started from this page");
     }
     const op = this.workflowActionService.getTexeraGraph().getOperator(operatorID);
     const operator: LogicalOperator = {
@@ -456,7 +528,10 @@ export class ExecuteWorkflowService {
       operatorID: op.operatorID,
       operatorType: op.operatorType,
     };
-    this.workflowWebsocketService.send("ModifyLogicRequest", { operator });
+    this.executionApiService.postUpdate(executionId, operator).subscribe({
+      next: ({ updateId }) => this.workflowWebsocketService.send("OperatorUpdateRequest", { executionId, updateId }),
+      error: (error: unknown) => this.notificationService.error(failureMessage(error)),
+    });
   }
 
   public getExecutionStateStream(): Observable<{
@@ -488,6 +563,10 @@ export class ExecuteWorkflowService {
    * executionStateStream so subscribers drop the previous unit's status.
    */
   public resetExecutionAndWorkers(): void {
+    // A run still on its way, and the execution this page started, belong to the session that is reset: the
+    // one must not start in the next session, and the other is not the next session's to change.
+    this.pendingRun.unsubscribe();
+    this.currentExecutionId = undefined;
     this.updateExecutionState({ state: ExecutionState.Uninitialized });
     this.assignedWorkerIds.clear();
     // Leaving the workspace takes this path, not resetExecutionState, so the clock has to be

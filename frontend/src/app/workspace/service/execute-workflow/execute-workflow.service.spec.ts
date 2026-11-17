@@ -21,26 +21,26 @@ import "zone.js/testing";
 
 import { DOCUMENT } from "@angular/core";
 import { ExecutionState, ExecutionStateInfo, LogicalPlan } from "../../types/execute-workflow.interface";
-import { fakeAsync, flush, inject, TestBed, tick } from "@angular/core/testing";
+import { fakeAsync, inject, TestBed, tick } from "@angular/core/testing";
 
 import { ExecuteWorkflowService, FORM_DEBOUNCE_TIME_MS } from "./execute-workflow.service";
 
-import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
+import { DEFAULT_WORKFLOW, WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 import { UndoRedoService } from "../undo-redo/undo-redo.service";
 import { OperatorMetadataService } from "../operator-metadata/operator-metadata.service";
 import { StubOperatorMetadataService } from "../operator-metadata/stub-operator-metadata.service";
 import { JointUIService } from "../joint-ui/joint-ui.service";
-import { of, Subject } from "rxjs";
+import { Subject } from "rxjs";
 import { WorkflowWebsocketService } from "../workflow-websocket/workflow-websocket.service";
 import { WorkflowStatusService } from "../workflow-status/workflow-status.service";
 import { NotificationService } from "../../../common/service/notification/notification.service";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 
 import { mockLogicalPlan_scan_result, mockWorkflowPlan_scan_result } from "./mock-workflow-plan";
-import { HttpClientTestingModule } from "@angular/common/http/testing";
+import { HttpClientTestingModule, HttpTestingController, TestRequest } from "@angular/common/http/testing";
 import { WorkflowUtilService } from "../workflow-graph/util/workflow-util.service";
 
-import { WorkflowSettings } from "src/app/common/type/workflow";
+import { ExecutionMode, WorkflowSettings } from "src/app/common/type/workflow";
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { DashboardWorkflowComputingUnit } from "../../../common/type/workflow-computing-unit";
 import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
@@ -53,16 +53,65 @@ import { commonTestProviders } from "../../../common/testing/test-utils";
 import {
   RegionStateEvent,
   RegionUpdateEvent,
-  ReplayExecutionInfo,
   TexeraWebsocketEvent,
+  WorkflowFatalError,
 } from "../../types/workflow-websocket.interface";
 import { mockScanPredicate } from "../workflow-graph/model/mock-workflow-data";
 import { PAGINATION_INFO_STORAGE_KEY, ResultPaginationInfo } from "../../types/result-table.interface";
 import { sessionGetObject, sessionSetObject } from "../../../common/util/storage";
+import { Version } from "src/environments/version";
+import { CreateExecutionResponse, ReplayExecutionInfo } from "./execution-api.service";
 
 describe("ExecuteWorkflowService", () => {
+  // Where the Dashboard service creates executions, and the workflow and the computing unit the specs run on.
+  const EXECUTIONS_URL = "api/executions";
+  const WID = 12;
+  const CUID = 3;
+
   let service: ExecuteWorkflowService;
+  let httpMock: HttpTestingController;
   let mockDocument: Document;
+
+  /** Selects a computing unit in `status`, or none. */
+  const selectUnit = (status: DashboardWorkflowComputingUnit["status"] | undefined, cuid: number = CUID): void => {
+    vi.spyOn(service["computingUnitStatusService"], "getSelectedComputingUnitValue").mockReturnValue(
+      status === undefined ? null : ({ computingUnit: { cuid }, status } as unknown as DashboardWorkflowComputingUnit)
+    );
+  };
+
+  /** Opens workflow `wid`: none for a workflow that is not saved yet. */
+  const openWorkflow = (wid: number | undefined): void => {
+    TestBed.inject(WorkflowActionService).setWorkflowMetadata({ ...DEFAULT_WORKFLOW, wid });
+  };
+
+  /** The frames the service sends to the computing unit from here on. */
+  const spyOnSocket = () => vi.spyOn(TestBed.inject(WorkflowWebsocketService), "send");
+
+  /** Lets the form debounce pass, and hands back the request for an execution the Dashboard then holds. */
+  const expectCreate = (): TestRequest => {
+    tick(FORM_DEBOUNCE_TIME_MS);
+    return httpMock.expectOne(EXECUTIONS_URL);
+  };
+
+  /** Lets the form debounce pass, and checks that the Dashboard was asked for no execution. */
+  const expectNoCreate = (): void => {
+    tick(FORM_DEBOUNCE_TIME_MS);
+    httpMock.expectNone(EXECUTIONS_URL);
+  };
+
+  /** The Dashboard's answer for execution `eid`, once it is created. */
+  const created = (eid: number): CreateExecutionResponse => ({
+    eid,
+    wid: WID,
+    computingUnitId: CUID,
+    planUri: `vfs:///wid/${WID}/eid/${eid}/plan`,
+  });
+
+  /** Runs the workflow until the computing unit is asked to start execution `eid`. */
+  const startExecution = (eid: number): void => {
+    service.executeWorkflow("run");
+    expectCreate().flush(created(eid), { status: 201, statusText: "Created" });
+  };
 
   beforeEach(() => {
     mockDocument = {
@@ -92,11 +141,19 @@ describe("ExecuteWorkflowService", () => {
     });
 
     service = TestBed.inject(ExecuteWorkflowService);
+    httpMock = TestBed.inject(HttpTestingController);
+    // What a run needs: a saved workflow, open on a computing unit that accepts work.
+    openWorkflow(WID);
+    selectUnit("Running");
   });
 
   afterEach(() => {
-    // sendExecutionRequest reads/writes sessionStorage; keep tests isolated
+    // A spec that mocks the static getLogicalPlanRequest must not hand its plan to the next one.
+    vi.restoreAllMocks();
+    // a run reads/writes sessionStorage; keep tests isolated
     sessionStorage.clear();
+    // Every request for an execution was expected by its spec.
+    httpMock.verify();
   });
 
   // Push an event through the stream the real WorkflowWebsocketService exposes, so the
@@ -258,15 +315,226 @@ describe("ExecuteWorkflowService", () => {
     expect(newLogicalPlan).toEqual(mockLogicalPlan_scan_result);
   });
 
-  it("should msg backend when executing workflow", fakeAsync(() => {
-    const logicalPlan: LogicalPlan = ExecuteWorkflowService.getLogicalPlanRequest(mockWorkflowPlan_scan_result);
-    const wsSendSpy = vi.spyOn((service as any).workflowWebsocketService, "send");
-    const settings = service["workflowActionService"].getWorkflowSettings();
-    service.sendExecutionRequest("", logicalPlan, settings, false, undefined);
-    tick(FORM_DEBOUNCE_TIME_MS + 1);
-    flush();
-    expect(wsSendSpy).toHaveBeenCalledTimes(1);
-  }));
+  // ---- a run: its execution is created at the Dashboard service, then started on the unit -----
+
+  describe("running the workflow", () => {
+    it("creates the execution at the Dashboard, then asks the unit to start it from its plan", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      const states: ExecutionState[] = [];
+      service.getExecutionStateStream().subscribe(event => states.push(event.current.state));
+
+      expect(service.executeWorkflow("run-1")).toBe(true);
+
+      // Nothing leaves the browser until the form debounce has passed.
+      tick(FORM_DEBOUNCE_TIME_MS - 1);
+      httpMock.expectNone(EXECUTIONS_URL);
+      expect(states).toEqual([]);
+
+      tick(1);
+      const create = httpMock.expectOne(EXECUTIONS_URL);
+      expect(create.request.method).toBe("POST");
+      // While the Dashboard creates the execution the run shows as starting, and the unit has heard nothing.
+      expect(states).toEqual([ExecutionState.Initializing]);
+      expect(wsSendSpy).not.toHaveBeenCalled();
+
+      create.flush(created(345), { status: 201, statusText: "Created" });
+
+      expect(wsSendSpy).toHaveBeenCalledTimes(1);
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
+        executionId: 345,
+        planUri: "vfs:///wid/12/eid/345/plan",
+      });
+      // The unit's own "Initializing", once it has built the run, is the state the run already shows.
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Initializing });
+      expect(states).toEqual([ExecutionState.Initializing]);
+    }));
+
+    it("asks for an execution of the open workflow, on the selected unit, as the editor holds it", fakeAsync(() => {
+      vi.spyOn(ExecuteWorkflowService, "getLogicalPlanRequest").mockReturnValue(mockLogicalPlan_scan_result);
+      const settings: WorkflowSettings = { dataTransferBatchSize: 123, executionMode: ExecutionMode.MATERIALIZED };
+      TestBed.inject(WorkflowActionService).setWorkflowSettings(settings);
+      selectUnit("Running", 99);
+
+      service.executeWorkflowWithEmailNotification("exec", true);
+
+      const create = expectCreate();
+      expect(create.request.body).toEqual({
+        wid: WID,
+        executionName: "exec",
+        engineVersion: Version.buildNumber,
+        logicalPlan: mockLogicalPlan_scan_result,
+        workflowSettings: settings,
+        emailNotificationEnabled: true,
+        computingUnitId: 99,
+      });
+      // Neither a warehouse nor a replay was asked for, so neither is written.
+      expect(Object.keys(JSON.parse(create.request.serializeBody() as string)).sort()).toEqual([
+        "computingUnitId",
+        "emailNotificationEnabled",
+        "engineVersion",
+        "executionName",
+        "logicalPlan",
+        "wid",
+        "workflowSettings",
+      ]);
+    }));
+
+    it("starts only the run asked for last, when another is asked for before its execution is created", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+
+      // Asked for twice before the form debounce passes: one execution.
+      service.executeWorkflow("first");
+      tick(FORM_DEBOUNCE_TIME_MS - 1);
+      service.executeWorkflow("second");
+      const second = expectCreate();
+      expect(second.request.body.executionName).toBe("second");
+
+      // Asked for again while the Dashboard creates it: that request is given up.
+      service.executeWorkflow("third");
+      expect(second.cancelled).toBe(true);
+      const third = expectCreate();
+      third.flush(created(7), { status: 201, statusText: "Created" });
+
+      expect(wsSendSpy).toHaveBeenCalledTimes(1);
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
+        executionId: 7,
+        planUri: "vfs:///wid/12/eid/7/plan",
+      });
+    }));
+
+    it("shows a start the unit refuses as the run's failure, and leaves Run usable", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      startExecution(345);
+      const refusal: WorkflowFatalError = {
+        type: { name: "EXECUTION_FAILURE" },
+        timestamp: { seconds: 1700000000, nanos: 0 },
+        message: "execution 345 was already started",
+        details: "",
+        operatorId: "",
+        workerId: "",
+      };
+
+      emitWsEvent({ type: "WorkflowErrorEvent", fatalErrors: [refusal] });
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Failed, errorMessages: [refusal] });
+      expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(true);
+      // Only the start went to the unit.
+      expect(wsSendSpy).toHaveBeenCalledTimes(1);
+    }));
+  });
+
+  // ---- an execution the Dashboard does not create ----------------------------------------------
+
+  describe("an execution the Dashboard does not create", () => {
+    /** A compile error as the Dashboard writes it: with what its protobuf class adds to the fields read here. */
+    const compileError = (operatorId: string, message: string) => ({
+      type: {
+        value: 0,
+        index: 0,
+        name: "COMPILATION_ERROR",
+        compilationError: true,
+        executionFailure: false,
+        unrecognized: false,
+      },
+      timestamp: { seconds: 1794835321, nanos: 239851266, unknownFields: { fields: {} } },
+      message,
+      details: `Stack trace for developers: \n\n${message}`,
+      operatorId,
+      workerId: "",
+    });
+
+    it("fails the run with each operator's compile error, in the order of the workflow", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      const states: ExecutionState[] = [];
+      service.getExecutionStateStream().subscribe(event => states.push(event.current.state));
+      // Ids as the editor gives them, in an order that is not sorted: the scan before the filter that reads it.
+      const scanError = compileError("CSVFileScan-operator-b", "java.lang.RuntimeException: No file selected");
+      const filterError = compileError("Filter-operator-a", "region is not contained in the schema");
+      const generalError = compileError("", "the workflow could not be compiled");
+
+      service.executeWorkflow("run");
+      expectCreate().flush(
+        {
+          eid: 345,
+          operatorErrors: { [scanError.operatorId]: scanError, [filterError.operatorId]: filterError },
+          errors: [generalError],
+        },
+        { status: 400, statusText: "Bad Request" }
+      );
+
+      expect(states).toEqual([ExecutionState.Initializing, ExecutionState.Failed]);
+      // Each as the Dashboard wrote it: the operators' errors first, then those of no operator.
+      expect(service.getErrorMessages()).toEqual([scanError, filterError, generalError]);
+      // Nothing reached the unit: the run it holds, and that run's results, are as they were.
+      expect(wsSendSpy).not.toHaveBeenCalled();
+      // Run is usable again, and so is the editor.
+      expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(true);
+    }));
+
+    // One `it` per answer: it.each does not run its body in the zone fakeAsync needs.
+    const refusals: { status: number; statusText: string; message: string }[] = [
+      { status: 400, statusText: "Bad Request", message: "no warehouse with id 9 owned by this user" },
+      { status: 403, statusText: "Forbidden", message: "You may not run workflows on computing unit 3." },
+      { status: 409, statusText: "Conflict", message: "computing unit 3 is terminated" },
+      {
+        status: 500,
+        statusText: "Server Error",
+        message: "Execution 345 could not be created: its plan could not be written to the lake.",
+      },
+    ];
+    for (const { status, statusText, message } of refusals) {
+      it(`fails the run with the reason the Dashboard gives for answering ${status}`, fakeAsync(() => {
+        const wsSendSpy = spyOnSocket();
+
+        service.executeWorkflow("run");
+        expectCreate().flush({ code: status, message }, { status, statusText });
+
+        // One error that belongs to no operator, as the unit reports a start it refuses.
+        expect(service.getErrorMessages()).toEqual([
+          {
+            type: { name: "EXECUTION_FAILURE" },
+            timestamp: { seconds: expect.any(Number), nanos: expect.any(Number) },
+            message,
+            details: "",
+            operatorId: "",
+            workerId: "",
+          },
+        ]);
+        expect(service.getExecutionState().state).toBe(ExecutionState.Failed);
+        expect(wsSendSpy).not.toHaveBeenCalled();
+      }));
+    }
+
+    it("fails the run with the browser's report of a request that got no answer", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+
+      service.executeWorkflow("run");
+      expectCreate().error(new ProgressEvent("error"), { status: 0, statusText: "Unknown Error" });
+
+      expect(service.getErrorMessages().map(error => error.message)).toEqual([
+        "Http failure response for api/executions: 0 Unknown Error",
+      ]);
+      expect(wsSendSpy).not.toHaveBeenCalled();
+    }));
+
+    it("lets the workflow run again", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      service.executeWorkflow("run");
+      expectCreate().flush(
+        { code: 409, message: "computing unit 3 is terminated" },
+        { status: 409, statusText: "Conflict" }
+      );
+
+      startExecution(346);
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+      expect(wsSendSpy).toHaveBeenCalledTimes(1);
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
+        executionId: 346,
+        planUri: "vfs:///wid/12/eid/346/plan",
+      });
+    }));
+  });
 
   it("it should raise an error when pauseWorkflow() is called without an execution state", () => {
     (service as any).currentState = { state: ExecutionState.Uninitialized };
@@ -286,34 +554,40 @@ describe("ExecuteWorkflowService", () => {
     );
   });
 
-  it("should execute workflow with email notification successfully", () => {
+  it("should execute workflow with email notification successfully", fakeAsync(() => {
     const executionName = "Test Execution";
     const emailNotificationEnabled = true;
     const targetOperatorId = "test-operator-id";
+    const logicalPlan = { operators: [], links: [] } as LogicalPlan;
+    const settings = { dataTransferBatchSize: 7 } as WorkflowSettings;
 
-    const logicalPlanSpy = vi.spyOn(ExecuteWorkflowService, "getLogicalPlanRequest").mockReturnValue({} as LogicalPlan);
-    const settingsSpy = vi
-      .spyOn(service["workflowActionService"], "getWorkflowSettings")
-      .mockReturnValue({} as WorkflowSettings);
+    const logicalPlanSpy = vi.spyOn(ExecuteWorkflowService, "getLogicalPlanRequest").mockReturnValue(logicalPlan);
+    const settingsSpy = vi.spyOn(service["workflowActionService"], "getWorkflowSettings").mockReturnValue(settings);
     const resetExecutionStateSpy = vi.spyOn(service, "resetExecutionState");
     const resetStatusSpy = vi.spyOn(service["workflowStatusService"], "resetStatus");
-    const sendExecutionRequestSpy = vi.spyOn(service, "sendExecutionRequest");
 
-    service.executeWorkflowWithEmailNotification(executionName, emailNotificationEnabled, targetOperatorId);
+    const asked = service.executeWorkflowWithEmailNotification(
+      executionName,
+      emailNotificationEnabled,
+      targetOperatorId
+    );
 
+    expect(asked).toBe(true);
     expect(logicalPlanSpy).toHaveBeenCalledWith(service["workflowActionService"].getTexeraGraph(), targetOperatorId);
     expect(settingsSpy).toHaveBeenCalled();
     expect(resetExecutionStateSpy).toHaveBeenCalled();
     expect(resetStatusSpy).toHaveBeenCalled();
-    expect(sendExecutionRequestSpy).toHaveBeenCalledWith(
-      executionName,
-      expect.any(Object),
-      expect.any(Object),
-      emailNotificationEnabled
+    expect(expectCreate().request.body).toEqual(
+      expect.objectContaining({
+        executionName,
+        logicalPlan,
+        workflowSettings: settings,
+        emailNotificationEnabled,
+      })
     );
-  });
+  }));
 
-  it("should handle failure when executing workflow with email notification", () => {
+  it("should handle failure when executing workflow with email notification", fakeAsync(() => {
     const executionName = "Test Execution";
     const emailNotificationEnabled = true;
     const targetOperatorId = "test-operator-id";
@@ -323,7 +597,6 @@ describe("ExecuteWorkflowService", () => {
     });
     const resetExecutionStateSpy = vi.spyOn(service, "resetExecutionState");
     const resetStatusSpy = vi.spyOn(service["workflowStatusService"], "resetStatus");
-    const sendExecutionRequestSpy = vi.spyOn(service, "sendExecutionRequest");
 
     expect(() => {
       service.executeWorkflowWithEmailNotification(executionName, emailNotificationEnabled, targetOperatorId);
@@ -332,8 +605,8 @@ describe("ExecuteWorkflowService", () => {
     expect(logicalPlanSpy).toHaveBeenCalledWith(service["workflowActionService"].getTexeraGraph(), targetOperatorId);
     expect(resetExecutionStateSpy).not.toHaveBeenCalled();
     expect(resetStatusSpy).not.toHaveBeenCalled();
-    expect(sendExecutionRequestSpy).not.toHaveBeenCalled();
-  });
+    expectNoCreate();
+  }));
 
   // ---- constructor: websocket-event routing --------------------------------------------------
 
@@ -489,11 +762,12 @@ describe("ExecuteWorkflowService", () => {
     expect(delegateSpy).toHaveBeenCalledWith("run-1", false, "op-9");
   });
 
-  it("executeWorkflowWithReplay builds a replay request and forwards the replay info", () => {
-    const logicalPlanSpy = vi.spyOn(ExecuteWorkflowService, "getLogicalPlanRequest").mockReturnValue({} as LogicalPlan);
+  it("executeWorkflowWithReplay asks for an execution that replays the interaction, then starts it", fakeAsync(() => {
+    const logicalPlan = { operators: [], links: [] } as LogicalPlan;
+    const logicalPlanSpy = vi.spyOn(ExecuteWorkflowService, "getLogicalPlanRequest").mockReturnValue(logicalPlan);
     const resetExecutionStateSpy = vi.spyOn(service, "resetExecutionState");
     const resetStatusSpy = vi.spyOn(service["workflowStatusService"], "resetStatus");
-    const sendExecutionRequestSpy = vi.spyOn(service, "sendExecutionRequest").mockImplementation(() => {});
+    const wsSendSpy = spyOnSocket();
     const replayInfo: ReplayExecutionInfo = { eid: 42, interaction: "step-3" };
 
     service.executeWorkflowWithReplay(replayInfo);
@@ -501,33 +775,25 @@ describe("ExecuteWorkflowService", () => {
     expect(logicalPlanSpy).toHaveBeenCalledWith(service["workflowActionService"].getTexeraGraph());
     expect(resetExecutionStateSpy).toHaveBeenCalled();
     expect(resetStatusSpy).toHaveBeenCalled();
-    expect(sendExecutionRequestSpy).toHaveBeenCalledWith(
-      "Replay run of 42 to step-3",
-      expect.any(Object),
-      expect.any(Object),
-      false,
-      replayInfo
+    const create = expectCreate();
+    expect(create.request.body).toEqual(
+      expect.objectContaining({
+        executionName: "Replay run of 42 to step-3",
+        logicalPlan,
+        emailNotificationEnabled: false,
+        replayFromExecution: replayInfo,
+      })
     );
-  });
 
-  // ---- sendExecutionRequest branches ---------------------------------------------------------
+    create.flush(created(43), { status: 201, statusText: "Created" });
 
-  it("sendExecutionRequest includes the selected computing unit id in the request", fakeAsync(() => {
-    vi.spyOn(service["computingUnitStatusService"], "getSelectedComputingUnitValue").mockReturnValue({
-      computingUnit: { cuid: 99 },
-    } as any);
-    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
-    const settings = service["workflowActionService"].getWorkflowSettings();
-
-    service.sendExecutionRequest("exec", {} as LogicalPlan, settings, true, undefined);
-    tick(FORM_DEBOUNCE_TIME_MS + 1);
-    flush();
-
-    expect(wsSendSpy).toHaveBeenCalledWith(
-      "WorkflowExecuteRequest",
-      expect.objectContaining({ computingUnitId: 99, emailNotificationEnabled: true, executionName: "exec" })
-    );
+    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
+      executionId: 43,
+      planUri: "vfs:///wid/12/eid/43/plan",
+    });
   }));
+
+  // ---- refusing a run before it is asked for -------------------------------------------------
 
   it("a refused run leaves the previous execution's state untouched (#7817)", () => {
     TestBed.inject(GuiConfigService).env.warehouseEnabled = true;
@@ -548,18 +814,17 @@ describe("ExecuteWorkflowService", () => {
 
   it("refuses to run without a warehouse while the deployment requires one (#7817)", fakeAsync(() => {
     // Paths that bypass the menu gate (form view, run-up-to, replay) all funnel
-    // through sendExecutionRequest; the shared storage must not catch them.
+    // through this service; the shared storage must not catch them.
     TestBed.inject(GuiConfigService).env.warehouseEnabled = true;
     try {
       TestBed.inject(WarehouseService).selectWarehouse(undefined);
-      const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+      const wsSendSpy = spyOnSocket();
       const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
 
-      service.executeWorkflowWithEmailNotification("exec", false);
-      tick(FORM_DEBOUNCE_TIME_MS + 1);
-      flush();
+      expect(service.executeWorkflowWithEmailNotification("exec", false)).toBe(false);
 
-      expect(wsSendSpy).not.toHaveBeenCalledWith("WorkflowExecuteRequest", expect.anything());
+      expectNoCreate();
+      expect(wsSendSpy).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith("Create or select a warehouse before running.");
     } finally {
       TestBed.inject(GuiConfigService).env.warehouseEnabled = false;
@@ -571,13 +836,6 @@ describe("ExecuteWorkflowService", () => {
   describe("refusing to run on a computing unit that cannot accept work", () => {
     // Run-up-to and Time Travel replay bypass the run buttons and call this service directly,
     // so the service itself must refuse, before it resets the results on screen.
-    const selectUnitWithStatus = (status: DashboardWorkflowComputingUnit["status"]): void => {
-      vi.spyOn(service["computingUnitStatusService"], "getSelectedComputingUnitValue").mockReturnValue({
-        computingUnit: { cuid: 7 },
-        status,
-      } as unknown as DashboardWorkflowComputingUnit);
-    };
-
     const replayInfo: ReplayExecutionInfo = { eid: 42, interaction: "step-3" };
 
     const entryPoints: { name: string; run: () => void }[] = [
@@ -588,64 +846,79 @@ describe("ExecuteWorkflowService", () => {
       { name: "executeWorkflowWithReplay", run: () => service.executeWorkflowWithReplay(replayInfo) },
     ];
 
+    // One `it` per status: it.each does not run its body in the zone fakeAsync needs.
+    const refusedStatuses: { status: DashboardWorkflowComputingUnit["status"]; toast: string }[] = [
+      {
+        status: "Terminating",
+        toast:
+          "The selected computing unit is shutting down. Wait for it to finish, then select or create another one.",
+      },
+      {
+        status: "Failed",
+        toast: "The selected computing unit is unavailable. Select a running unit or create a new one.",
+      },
+      {
+        status: "Unknown",
+        toast: "The selected computing unit is unavailable. Select a running unit or create a new one.",
+      },
+    ];
+
     for (const entryPoint of entryPoints) {
-      it(`${entryPoint.name} refuses a terminating unit and keeps the previous results on screen`, fakeAsync(() => {
-        selectUnitWithStatus("Terminating");
-        const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
-        const resetSpy = vi.spyOn(service, "resetExecutionState");
-        const statusResetSpy = vi.spyOn(TestBed.inject(WorkflowStatusService), "resetStatus");
-        const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
-
-        entryPoint.run();
-        tick(FORM_DEBOUNCE_TIME_MS + 1);
-        flush();
-
-        expect(wsSendSpy).not.toHaveBeenCalledWith("WorkflowExecuteRequest", expect.anything());
-        expect(resetSpy).not.toHaveBeenCalled();
-        expect(statusResetSpy).not.toHaveBeenCalled();
-        expect(errorSpy).toHaveBeenCalledWith(
-          "The selected computing unit is shutting down. Wait for it to finish, then select or create another one."
-        );
-      }));
-
-      it.each(["Failed", "Unknown"] as const)(
-        `${entryPoint.name} refuses a %s unit and keeps the previous results on screen`,
-        status => {
-          selectUnitWithStatus(status);
-          const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+      for (const { status, toast } of refusedStatuses) {
+        it(`${entryPoint.name} refuses a ${status} unit and keeps the previous results on screen`, fakeAsync(() => {
+          selectUnit(status);
+          const wsSendSpy = spyOnSocket();
           const resetSpy = vi.spyOn(service, "resetExecutionState");
           const statusResetSpy = vi.spyOn(TestBed.inject(WorkflowStatusService), "resetStatus");
           const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
 
           entryPoint.run();
 
-          expect(wsSendSpy).not.toHaveBeenCalledWith("WorkflowExecuteRequest", expect.anything());
+          expectNoCreate();
+          expect(wsSendSpy).not.toHaveBeenCalled();
           expect(resetSpy).not.toHaveBeenCalled();
           expect(statusResetSpy).not.toHaveBeenCalled();
-          expect(errorSpy).toHaveBeenCalledWith(
-            "The selected computing unit is unavailable. Select a running unit or create a new one."
-          );
-        }
-      );
+          expect(errorSpy).toHaveBeenCalledWith(toast);
+        }));
+      }
 
-      it.each(["Running", "Pending"] as const)(`${entryPoint.name} still runs on a %s unit`, status => {
-        // Pending is still starting up, so it must not be blocked.
-        selectUnitWithStatus(status);
-        const sendExecutionRequestSpy = vi.spyOn(service, "sendExecutionRequest").mockImplementation(() => {});
+      for (const status of ["Running", "Pending"] as const) {
+        it(`${entryPoint.name} still runs on a ${status} unit`, fakeAsync(() => {
+          // Pending is still starting up, so it must not be blocked.
+          selectUnit(status);
+          const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+          entryPoint.run();
+
+          expect(expectCreate().request.body.computingUnitId).toBe(CUID);
+          expect(errorSpy).not.toHaveBeenCalled();
+        }));
+      }
+
+      it(`${entryPoint.name} refuses to run with no unit selected and keeps the previous results on screen`, fakeAsync(() => {
+        // Nothing to create the execution for. The run buttons lead to a unit instead of running, but
+        // run-up-to, the AI fix and Time Travel replay come straight here.
+        selectUnit(undefined);
+        const wsSendSpy = spyOnSocket();
+        const resetSpy = vi.spyOn(service, "resetExecutionState");
+        const statusResetSpy = vi.spyOn(TestBed.inject(WorkflowStatusService), "resetStatus");
         const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
 
         entryPoint.run();
 
-        expect(sendExecutionRequestSpy).toHaveBeenCalled();
-        expect(errorSpy).not.toHaveBeenCalled();
-      });
+        expectNoCreate();
+        expect(wsSendSpy).not.toHaveBeenCalled();
+        expect(resetSpy).not.toHaveBeenCalled();
+        expect(statusResetSpy).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith("Create or select a computing unit before running.");
+      }));
     }
 
     it("refuses on the unit before the warehouse, since a warehouse cannot rescue a dead unit", () => {
       TestBed.inject(GuiConfigService).env.warehouseEnabled = true;
       try {
         TestBed.inject(WarehouseService).selectWarehouse(undefined);
-        selectUnitWithStatus("Failed");
+        selectUnit("Failed");
         const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
 
         service.executeWorkflowWithEmailNotification("e", false);
@@ -659,44 +932,55 @@ describe("ExecuteWorkflowService", () => {
       }
     });
 
-    it("runs normally when no unit is selected at all, leaving that to the existing warning", () => {
-      // No unit selected is not a terminal state; sendExecutionRequest already warns about it.
-      const sendExecutionRequestSpy = vi.spyOn(service, "sendExecutionRequest").mockImplementation(() => {});
+    it("asks for a unit before a warehouse, and says the run was not asked for", () => {
+      TestBed.inject(GuiConfigService).env.warehouseEnabled = true;
+      try {
+        TestBed.inject(WarehouseService).selectWarehouse(undefined);
+        selectUnit(undefined);
+        const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
 
-      service.executeWorkflowWithEmailNotification("e", false);
+        expect(service.executeWorkflow("e")).toBe(false);
 
-      expect(sendExecutionRequestSpy).toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledWith("Create or select a computing unit before running.");
+      } finally {
+        TestBed.inject(GuiConfigService).env.warehouseEnabled = false;
+      }
     });
+
+    // A workflow gets its id from its first save, and a unit only once it has one: 0 and no id
+    // are both a workflow that is not saved yet.
+    for (const unsaved of [undefined, 0]) {
+      it(`refuses to run a workflow that is not saved yet (id ${unsaved})`, fakeAsync(() => {
+        openWorkflow(unsaved);
+        const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+        expect(service.executeWorkflow("e")).toBe(false);
+
+        expectNoCreate();
+        expect(errorSpy).toHaveBeenCalledWith("Create or select a computing unit before running.");
+      }));
+    }
   });
 
-  it("sendExecutionRequest carries the picked warehouse id, and none when unset (#7817)", fakeAsync(() => {
+  it("asks for the execution in the picked warehouse, and in none when unset (#7817)", fakeAsync(() => {
     const warehouseService = TestBed.inject(WarehouseService);
-    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
-    const settings = service["workflowActionService"].getWorkflowSettings();
 
     warehouseService.selectWarehouse(7);
-    service.sendExecutionRequest("exec", {} as LogicalPlan, settings, false, undefined);
-    tick(FORM_DEBOUNCE_TIME_MS + 1);
-    flush();
-    expect(wsSendSpy).toHaveBeenLastCalledWith("WorkflowExecuteRequest", expect.objectContaining({ warehouseId: 7 }));
+    service.executeWorkflow("exec");
+    expect(expectCreate().request.body.warehouseId).toBe(7);
 
     warehouseService.selectWarehouse(undefined);
-    service.sendExecutionRequest("exec", {} as LogicalPlan, settings, false, undefined);
-    tick(FORM_DEBOUNCE_TIME_MS + 1);
-    flush();
-    expect(wsSendSpy).toHaveBeenLastCalledWith(
-      "WorkflowExecuteRequest",
-      expect.objectContaining({ warehouseId: undefined })
-    );
+    service.executeWorkflow("exec");
+    // Left out of what is written, which the Dashboard reads as the shared default storage.
+    expect(JSON.parse(expectCreate().request.serializeBody() as string)).not.toHaveProperty("warehouseId");
   }));
 
-  it("sendExecutionRequest flags stored pagination info as belonging to a new execution", fakeAsync(() => {
+  it("a run flags stored pagination info as belonging to a new execution", fakeAsync(() => {
     sessionSetObject(PAGINATION_INFO_STORAGE_KEY, { newWorkflowExecuted: false });
-    const settings = service["workflowActionService"].getWorkflowSettings();
 
-    service.sendExecutionRequest("exec", {} as LogicalPlan, settings, false, undefined);
-    tick(FORM_DEBOUNCE_TIME_MS + 1);
-    flush();
+    service.executeWorkflow("exec");
+    expectCreate();
 
     const stored = sessionGetObject<ResultPaginationInfo>(PAGINATION_INFO_STORAGE_KEY);
     expect(stored?.newWorkflowExecuted).toBe(true);
@@ -722,6 +1006,47 @@ describe("ExecuteWorkflowService", () => {
     service.killWorkflow();
     expect(wsSendSpy).toHaveBeenCalledWith("WorkflowKillRequest", {});
   });
+
+  // The menu and the Form View offer to stop a run from the moment it shows as starting. Until its
+  // execution is created the unit still holds the run before it, which a kill would end instead.
+  it("killWorkflow gives up a run whose execution is still being created, and sends the unit nothing", fakeAsync(() => {
+    const wsSendSpy = spyOnSocket();
+    service.executeWorkflow("run");
+    const create = expectCreate();
+
+    service.killWorkflow();
+
+    expect(create.cancelled).toBe(true);
+    expect(service.getExecutionState()).toEqual({ state: ExecutionState.Killed });
+    expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(true);
+    expect(wsSendSpy).not.toHaveBeenCalled();
+  }));
+
+  it("killWorkflow sends the unit a kill once it was asked to start the execution", fakeAsync(() => {
+    const wsSendSpy = spyOnSocket();
+    startExecution(345);
+
+    service.killWorkflow();
+
+    expect(wsSendSpy.mock.calls).toEqual([
+      ["WorkflowStartRequest", { executionId: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
+      ["WorkflowKillRequest", {}],
+    ]);
+    // Killed is the unit's to report.
+    expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+  }));
+
+  it("killWorkflow sends the unit a kill for a run whose execution was not created", fakeAsync(() => {
+    // A run elsewhere on the workflow that this page sees paused, after its own run was refused.
+    const wsSendSpy = spyOnSocket();
+    service.executeWorkflow("run");
+    expectCreate().flush({ code: 403, message: "no" }, { status: 403, statusText: "Forbidden" });
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+
+    service.killWorkflow();
+
+    expect(wsSendSpy.mock.calls).toEqual([["WorkflowKillRequest", {}]]);
+  }));
 
   it("takeGlobalCheckpoint throws when completed and sends a checkpoint request otherwise", () => {
     (service as any).currentState = { state: ExecutionState.Completed };
@@ -764,18 +1089,145 @@ describe("ExecuteWorkflowService", () => {
     expect(wsSendSpy).toHaveBeenCalledWith("RetryRequest", { workers: ["w9"] });
   });
 
-  it("modifyOperatorLogic requires a paused state and sends the operator logic", () => {
-    (service as any).currentState = { state: ExecutionState.Running };
-    expect(() => service.modifyOperatorLogic("1")).toThrowError(
-      "cannot modify logic, the current execution state is Running"
-    );
+  // ---- changing an operator of a paused run ----------------------------------------------------
 
-    (service as any).currentState = { state: ExecutionState.Paused };
-    vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
-    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
-    service.modifyOperatorLogic("1");
-    expect(wsSendSpy).toHaveBeenCalledWith("ModifyLogicRequest", {
-      operator: { operatorID: "1", operatorType: "ScanSource" },
+  describe("modifyOperatorLogic", () => {
+    const UPDATES_URL = `${EXECUTIONS_URL}/345/updates`;
+
+    /** Starts execution 345, which the unit then reports as paused. */
+    const pauseExecution = (): void => {
+      startExecution(345);
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running });
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+      vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
+    };
+
+    it("requires a paused state", fakeAsync(() => {
+      startExecution(345);
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running });
+
+      expect(() => service.modifyOperatorLogic("1")).toThrowError(
+        "cannot modify logic, the current execution state is Running"
+      );
+      httpMock.expectNone(UPDATES_URL);
+    }));
+
+    it("stores the change at the Dashboard, then names it to the unit", fakeAsync(() => {
+      pauseExecution();
+      const wsSendSpy = spyOnSocket();
+
+      service.modifyOperatorLogic("1");
+
+      const update = httpMock.expectOne(UPDATES_URL);
+      expect(update.request.method).toBe("POST");
+      // The operator as the editor holds it, without the ports a plan's operators carry.
+      expect(update.request.body).toEqual({ operator: { operatorID: "1", operatorType: "ScanSource" } });
+      // The unit hears of the change only once it is stored.
+      expect(wsSendSpy).not.toHaveBeenCalled();
+
+      update.flush({ updateId: "update-4f6c", operatorId: "1" });
+
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, updateId: "update-4f6c" }]]);
+    }));
+
+    // One `it` per answer: it.each does not run its body in the zone fakeAsync needs.
+    const refusals: { status: number; statusText: string; message: string }[] = [
+      {
+        status: 400,
+        statusText: "Bad Request",
+        message: "Limit refers to loop variables, so it can't be changed while the workflow runs.",
+      },
+      {
+        status: 403,
+        statusText: "Forbidden",
+        message: "Only the user who created execution 345 may change its operators.",
+      },
+      { status: 409, statusText: "Conflict", message: "execution 345 has ended" },
+      {
+        status: 500,
+        statusText: "Server Error",
+        message: "There was an error processing your request. It has been logged (ID 5f2c1a9be0d34c77).",
+      },
+    ];
+    for (const { status, statusText, message } of refusals) {
+      it(`reports a change the Dashboard answers ${status}, and sends the unit nothing`, fakeAsync(() => {
+        pauseExecution();
+        const wsSendSpy = spyOnSocket();
+        const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+        service.modifyOperatorLogic("1");
+        httpMock.expectOne(UPDATES_URL).flush({ code: status, message }, { status, statusText });
+
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledWith(message);
+        expect(wsSendSpy).not.toHaveBeenCalled();
+        // The run stays paused, for another change or a resume.
+        expect(service.getExecutionState().state).toBe(ExecutionState.Paused);
+      }));
+    }
+
+    it("stores each change for the execution this page started last", fakeAsync(() => {
+      startExecution(345);
+      service.killWorkflow();
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Killed });
+      startExecution(346);
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+      vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
+      const wsSendSpy = spyOnSocket();
+
+      service.modifyOperatorLogic("1");
+      httpMock.expectOne(`${EXECUTIONS_URL}/346/updates`).flush({ updateId: "update-1", operatorId: "1" });
+
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 346, updateId: "update-1" }]]);
+    }));
+
+    // The unit names no execution in what it sends, so a paused run this page did not start (another
+    // tab's, or this page's before a reload) has no execution here to store the change for.
+    it("refuses to change a paused run that this page did not start", () => {
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+      const wsSendSpy = spyOnSocket();
+
+      expect(() => service.modifyOperatorLogic("1")).toThrowError(
+        "cannot modify logic, the paused execution was not started from this page"
+      );
+      expect(wsSendSpy).not.toHaveBeenCalled();
     });
+  });
+
+  // ---- leaving the session a run belongs to ----------------------------------------------------
+
+  describe("resetExecutionAndWorkers", () => {
+    it("gives up a run that is waiting for the form debounce", fakeAsync(() => {
+      service.executeWorkflow("run");
+
+      service.resetExecutionAndWorkers();
+
+      expectNoCreate();
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Uninitialized });
+    }));
+
+    it("gives up a run whose execution is being created, so it does not start in the next session", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      service.executeWorkflow("run");
+      const create = expectCreate();
+
+      service.resetExecutionAndWorkers();
+
+      expect(create.cancelled).toBe(true);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Uninitialized });
+      expect(wsSendSpy).not.toHaveBeenCalled();
+    }));
+
+    it("forgets the execution this page started, which is not the next session's to change", fakeAsync(() => {
+      startExecution(345);
+
+      service.resetExecutionAndWorkers();
+      // The next session's run, which this page did not start, pauses.
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+
+      expect(() => service.modifyOperatorLogic("1")).toThrowError(
+        "cannot modify logic, the paused execution was not started from this page"
+      );
+    }));
   });
 });
