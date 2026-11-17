@@ -148,11 +148,27 @@ class DriverArgsTest(unittest.TestCase):
         with mock.patch.dict("os.environ", {}, clear=False):
             a = parse("--target", "localdev")
         localdev_unit.check_selection(a, ["a", "b", "c", "d", "e", "u", "j"], "ws")
-        for key in ("g0", "g", "h", "o"):
-            with self.assertRaises(SystemExit) as cm:
-                localdev_unit.check_selection(a, ["a", key], "create-ws")
-            self.assertIn(key, str(cm.exception))
+        with self.assertRaises(SystemExit) as cm:
+            localdev_unit.check_selection(a, ["a", "g0"], "create-ws")
+        self.assertIn("g0", str(cm.exception))
+        # what runs a command where the unit runs does so on this host
+        localdev_unit.check_selection(a, ["g", "h", "o"], "create-ws")
         localdev_unit.check_selection(parse(), ["g0", "o"], "create-ws")  # single-node: not ours to refuse
+
+    def test_commands_for_the_unit_run_on_this_host_with_the_engines_python_first(self):
+        with tempfile.TemporaryDirectory() as d:
+            manifest = Path(d) / "MANIFEST.json"
+            manifest.write_text(json.dumps({"python": {"executable": "/venvs/engine/bin/python"}}))
+            with mock.patch.object(localdev_unit, "MANIFEST", manifest):
+                prefix = localdev_unit.exec_prefix()
+            self.assertEqual(prefix(False), ["env", "PATH=/venvs/engine/bin:/usr/bin:/bin"])
+            self.assertEqual(prefix(True), prefix(False))
+            manifest.write_text(json.dumps({"python": {"executable": "/venvs/engine/bin/python"},
+                                            "service_env": {"UDF_PYTHON_ENVIRONMENTS_ROOT": "/envs"}}))
+            with mock.patch.object(localdev_unit, "MANIFEST", manifest):
+                self.assertEqual(localdev_unit.exec_prefix()(False),
+                                 ["env", "PATH=/venvs/engine/bin:/usr/bin:/bin",
+                                  "UDF_PYTHON_ENVIRONMENTS_ROOT=/envs"])
 
 
 class DriverSetupTest(unittest.TestCase):

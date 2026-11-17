@@ -252,7 +252,9 @@ def main() -> int:
                   evidence=evidence, dataset=ds, warehouse_name=wh_name,
                   unit_container=containers.get("workflow-runtime-coordinator-service",
                                                 "sce-workflow-runtime-coordinator-service"),
-                  with_replay_log=with_replay_log, other=other, unit2_cuid=unit2, unit_uri=a.unit_uri)
+                  with_replay_log=with_replay_log, other=other, unit2_cuid=unit2, unit_uri=a.unit_uri,
+                  unit_exec_prefix=(k8s_unit.exec_prefix(cuid) if k8s_unit.wanted(a)
+                                    else localdev_unit.exec_prefix() if localdev_unit.wanted(a) else None))
         setup_ok = True
     except Exception as e:  # noqa: BLE001
         report["setup"]["error"] = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"

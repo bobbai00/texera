@@ -23,9 +23,11 @@ scenarios then select it by cuid exactly like single-node runs select the local 
 
 What only the single-node stack has is refused up front (`resolve_args`, `check_selection`):
 the evidence and the gates read its Postgres log and `docker exec` into its containers,
-and some scenarios exec into its unit container or create local units at --unit-uri. As a
-second guard, the driver's DOCKER_HOST points at a socket that does not exist, so nothing it
-runs in Kubernetes mode can reach a container on this machine's Docker.
+and some scenarios create local units at --unit-uri. As a second guard, the driver's
+DOCKER_HOST points at a socket that does not exist, so nothing it runs in Kubernetes mode
+can reach a container on this machine's Docker. What a scenario runs where the unit runs
+(the environment scenarios, the unit's own /run endpoint) goes into the unit's pod
+(`exec_prefix`).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ import argparse
 import atexit
 import json
 import os
+import subprocess
 import time
 import urllib.parse
 from pathlib import Path
@@ -48,6 +51,7 @@ K8S_MANIFEST = Path(__file__).resolve().parent.parent / "stack" / "k8s" / "gener
 SINGLE_NODE_BASE = "http://localhost:8080"  # e2e.py's --base default
 UNIT_PREFIX = "sce-e2e-k8s"
 TERMINAL_UNIT_STATES = {"Failed", "Unknown"}
+UNIT_CONTAINER = "computing-unit-master"  # the engine's container in a unit pod
 # Docker's CLI takes DOCKER_HOST over any context: every `docker` call fails at once.
 NO_DOCKER = "unix:///nonexistent/sce-e2e-kubernetes-mode-has-no-docker-containers.sock"
 
@@ -60,10 +64,7 @@ SINGLE_NODE_OPTIONS = {
 }
 #: scenarios that need the single-node stack whatever the transport
 SINGLE_NODE_SCENARIOS = {
-    "g0": "`docker exec` into the single-node unit container (the tabulate precondition)",
-    "g": "`docker exec` into the single-node unit container (precondition, environment files)",
-    "h": "`docker exec` into the single-node unit container (environment files)",
-    "o": "`docker exec` into the single-node unit container (the unit's own /run endpoint)",
+    "g0": "the legacy environment endpoints of the single-node unit",
     "l4": "creates a local unit at --unit-uri",
     "l9": "a second local unit at --unit-uri",
 }
@@ -139,6 +140,21 @@ def check_selection(a: argparse.Namespace, keys: list[str], transport: str) -> N
 
 def wanted(a: argparse.Namespace) -> bool:
     return a.unit_kind == "kubernetes"
+
+
+def exec_prefix(cuid: int) -> Callable[[bool], list[str]]:
+    """What runs a command in the unit's pod: `kubectl exec` into the engine's container of
+    the pod the managing service labelled with the unit's id."""
+    manifest = json.loads(K8S_MANIFEST.read_text())
+    kubectl = ["kubectl", "--context", manifest["context"], "-n", manifest["unit_namespace"]]
+    found = subprocess.run([*kubectl, "get", "pods", "-l", f"type=computing-unit,cuid={cuid}", "-o", "name"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+    pods = found.stdout.split()
+    if found.returncode != 0 or len(pods) != 1:
+        raise RuntimeError(f"expected one pod of unit {cuid} in {manifest['unit_namespace']}: "
+                           f"exit {found.returncode}: {found.stdout.strip()[:300]}")
+    return lambda interactive: [*kubectl, "exec", *(["-i"] if interactive else []), pods[0],
+                                "-c", UNIT_CONTAINER, "--"]
 
 
 # ------------------------------------------------------------------ REST calls

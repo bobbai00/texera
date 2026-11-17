@@ -23,9 +23,10 @@ body and default URI, and opens a workflow socket through the proxy until the un
 answers. The scenarios then select that unit by cuid, as in single-node.
 
 What reads or execs into the single-node stack's containers is refused up front (the
-evidence, the gates, g0, g, h and o), and DOCKER_HOST points at a socket that does not
-exist, as in Kubernetes mode, so nothing the driver runs here can reach another stack's
-containers.
+evidence, the gates and g0), and DOCKER_HOST points at a socket that does not exist, as in
+Kubernetes mode, so nothing the driver runs here can reach another stack's containers.
+What a scenario runs where the unit runs (the environment scenarios, the unit's own /run
+endpoint) runs on this host (`exec_prefix`): the unit is a host process here.
 """
 
 from __future__ import annotations
@@ -50,8 +51,8 @@ DEV_SERVER = "http://localhost:4200"
 SINGLE_NODE_BASE = k8s_unit.SINGLE_NODE_BASE  # e2e.py's --base default
 SINGLE_NODE_UNIT_URI = "http://workflow-runtime-coordinator-service:8085"  # e2e.py's --unit-uri default
 
-#: scenarios that `docker exec` into the single-node unit container
-UNIT_CONTAINER_SCENARIOS = {k: v for k, v in k8s_unit.SINGLE_NODE_SCENARIOS.items() if k in ("g0", "g", "h", "o")}
+#: scenarios that need the single-node unit container
+UNIT_CONTAINER_SCENARIOS = {k: v for k, v in k8s_unit.SINGLE_NODE_SCENARIOS.items() if k == "g0"}
 
 
 def wanted(a: argparse.Namespace) -> bool:
@@ -85,8 +86,20 @@ def resolve_args(a: argparse.Namespace) -> None:
     k8s_unit.guard_docker()
 
 
+def exec_prefix() -> Callable[[bool], list[str]]:
+    """What runs a command where local-dev's unit runs: on this host, with the engine's
+    Python first on PATH, so `python3` is the interpreter the unit starts its workers with,
+    and with the unit's own setting of the environments root when the stack gave it one."""
+    manifest = json.loads(MANIFEST.read_text())
+    env = [f"PATH={Path(manifest['python']['executable']).parent}:/usr/bin:/bin"]
+    root = (manifest.get("service_env") or {}).get("UDF_PYTHON_ENVIRONMENTS_ROOT")
+    if root:
+        env.append(f"UDF_PYTHON_ENVIRONMENTS_ROOT={root}")
+    return lambda interactive: ["env", *env]
+
+
 def check_selection(a: argparse.Namespace, keys: list[str], transport: str) -> None:
-    """Refuse, before any setup, the scenarios that exec into the single-node unit container."""
+    """Refuse, before any setup, the scenarios that need the single-node unit container."""
     if not wanted(a):
         return
     bad = {k: why for k, why in UNIT_CONTAINER_SCENARIOS.items() if k in keys}

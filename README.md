@@ -817,10 +817,15 @@ What needs the single-node stack is refused before any setup, with the reason:
 - `--evidence`, `--negative-control`, `--gate` and `--legacy-env`. They read the
   single-node Postgres log and `docker exec` into its fixed container names, which on
   this machine belong to another run's stack.
-- Scenarios g0, g, h and o, which `docker exec` into the single-node unit container.
+- Scenario g0, which uses the legacy environment endpoints of the single-node unit.
 - l4 and l9, which create local units at `--unit-uri`.
 - On `create-ws`, the scenarios that need the second user (j, l2, l3, l5, l7, l10): the
   driver gives that user a local unit. j on `ws` runs.
+
+What g, h and o run where the unit runs (the tabulate precondition, the environment files, the
+unit's own `/run` endpoint) runs in the unit's pod: `kubectl exec` into the engine's container of
+the pod labelled `type=computing-unit,cuid=<cuid>` in the units' namespace
+(`k8s_unit.exec_prefix`).
 
 `--stack-manifest` defaults to `stack/k8s/generated/MANIFEST.json`, not the single-node
 one. As a second guard, the driver sets `DOCKER_HOST` to a socket that does not exist.
@@ -1261,9 +1266,12 @@ The scenarios then select that unit by cuid, as in single-node. The report gains
 
 Refused up front, as in Kubernetes mode: `--evidence`, `--negative-control`, `--gate` and
 `--legacy-env` (they read the single-node Postgres log and `docker exec` into its containers),
-scenarios g0, g, h and o (`docker exec` into the single-node unit container; the unit is a host
-process here), and `--unit-kind kubernetes`. `DOCKER_HOST` points at a socket that does not
-exist, so nothing the driver runs in this mode can reach a container.
+scenario g0 (the legacy environment endpoints of the single-node unit), and `--unit-kind
+kubernetes`. `DOCKER_HOST` points at a socket that does not exist, so nothing the driver runs in
+this mode can reach a container. What g, h and o run where the unit runs (the tabulate
+precondition, the environment files, the unit's own `/run` endpoint) runs on this host, where the
+unit is a process: with the engine's Python first on `PATH`, so `python3` is the interpreter the
+unit starts its workers with (`localdev_unit.exec_prefix`).
 
 ### `run-localdev.sh`
 

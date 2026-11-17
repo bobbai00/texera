@@ -155,9 +155,8 @@ class ArgsTest(unittest.TestCase):
 
     def test_k8s_mode_refuses_scenarios_that_need_the_single_node_stack(self):
         a = parse("--target", "k8s", "--base", "http://127.0.0.1:30080")
-        for keys, transport in ((["a", "g0"], "ws"), (["o"], "create-ws"), (["g", "h"], "create-ws"),
-                                (["l4"], "create-ws"), (["l9"], "create-ws"), (["j"], "create-ws"),
-                                (["l2", "l10"], "create-ws")):
+        for keys, transport in ((["a", "g0"], "ws"), (["l4"], "create-ws"), (["l9"], "create-ws"),
+                                (["j"], "create-ws"), (["l2", "l10"], "create-ws")):
             with self.assertRaises(SystemExit) as cm:
                 k8s_unit.check_selection(a, keys, transport)
             for k in keys:
@@ -166,7 +165,31 @@ class ArgsTest(unittest.TestCase):
         # the baseline, j on ws (no second user there) and the create-ws scenarios on the unit itself
         k8s_unit.check_selection(a, ["a", "b", "c", "d", "e", "u", "j"], "ws")
         k8s_unit.check_selection(a, ["k", "l1", "l6", "l8", "m", "f", "f2", "i"], "create-ws")
+        # what runs a command where the unit runs does so in the unit's pod
+        k8s_unit.check_selection(a, ["g", "h", "o"], "create-ws")
         k8s_unit.check_selection(parse(), ["g0", "o", "l9", "j"], "create-ws")  # single-node: anything
+
+    def test_commands_for_the_unit_run_in_the_pod_labelled_with_its_id(self):
+        with tempfile.TemporaryDirectory() as d:
+            manifest = Path(d) / "MANIFEST.json"
+            manifest.write_text(json.dumps({"context": "ctx", "unit_namespace": "units"}))
+            kubectl = ["kubectl", "--context", "ctx", "-n", "units"]
+            found = mock.Mock(returncode=0, stdout="pod/computing-unit-7\n")
+            with mock.patch.object(k8s_unit, "K8S_MANIFEST", manifest), \
+                    mock.patch("k8s_unit.subprocess.run", return_value=found) as run:
+                prefix = k8s_unit.exec_prefix(7)
+            self.assertEqual(run.call_args.args[0],
+                             [*kubectl, "get", "pods", "-l", "type=computing-unit,cuid=7", "-o", "name"])
+            self.assertEqual(prefix(False), [*kubectl, "exec", "pod/computing-unit-7",
+                                             "-c", "computing-unit-master", "--"])
+            self.assertEqual(prefix(True), [*kubectl, "exec", "-i", "pod/computing-unit-7",
+                                            "-c", "computing-unit-master", "--"])
+            for answer in (mock.Mock(returncode=0, stdout=""), mock.Mock(returncode=1, stdout="refused"),
+                           mock.Mock(returncode=0, stdout="pod/a\npod/b\n")):
+                with mock.patch.object(k8s_unit, "K8S_MANIFEST", manifest), \
+                        mock.patch("k8s_unit.subprocess.run", return_value=answer), \
+                        self.assertRaises(RuntimeError):
+                    k8s_unit.exec_prefix(7)
 
 
 @mock.patch("k8s_unit.time.sleep", lambda s: None)

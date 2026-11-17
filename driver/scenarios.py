@@ -113,7 +113,8 @@ class Ctx:
                  dataset: dict | None = None, warehouse_name: str | None = None,
                  unit_container: str = "sce-workflow-runtime-coordinator-service",
                  with_replay_log: bool = False, other: OtherUser | None = None,
-                 unit2_cuid: int | None = None, unit_uri: str = ""):
+                 unit2_cuid: int | None = None, unit_uri: str = "",
+                 unit_exec_prefix: Callable[[bool], list[str]] | None = None):
         self.api, self.transport = api, transport
         self.run_id, self.cuid, self.whid = run_id, cuid, whid
         self.paths, self.timeout, self.log = paths, timeout, log
@@ -127,6 +128,10 @@ class Ctx:
         self.dataset = dataset or {}
         self.warehouse_name = warehouse_name
         self.unit_container = unit_container
+        # What goes before a command to run it where the unit runs, given whether the command
+        # reads stdin. The single-node stack's is `docker exec` into the unit's container.
+        self.unit_exec_prefix = unit_exec_prefix or (
+            lambda interactive: ["docker", "exec", *(["-i"] if interactive else []), self.unit_container])
         self.with_replay_log = with_replay_log
         self.other = other
         self.unit2_cuid = unit2_cuid
@@ -235,8 +240,9 @@ class Ctx:
         self.rec.notes.append(f"unit settled before {why}: {out}")
 
     def unit_exec(self, *cmd: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess:
-        """`docker exec <unit> <cmd>` (stdout and stderr merged)."""
-        args = ["docker", "exec"] + (["-i"] if stdin is not None else []) + [self.unit_container, *cmd]
+        """Run `cmd` where the unit runs (stdout and stderr merged): in its container on the
+        single-node stack, in its pod in Kubernetes mode, on this host in local-dev mode."""
+        args = [*self.unit_exec_prefix(stdin is not None), *cmd]
         return subprocess.run(args, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, timeout=timeout)
 
