@@ -282,6 +282,12 @@ images run as they always did (j, for one, asks them for none of step 3's routes
 Until gate 3C a statistics request names the unit (`?cuid=`), as the browser's does:
 in Kubernetes the gateway still routes it there.
 
+The driver follows the product as it is after the review fixes of step 2. Gate D,
+step 2's last, applies to those images as it stands. Gate A does not: their unit
+reads no `WorkflowExecuteRequest` (the `ws` transport is for the published images
+now: the baseline and step 2's negative control). Gates B and C apply without g0
+and `--legacy-env`, since the unit serves no environment endpoints any more.
+
 Add `--with-replay-log` for m's replay run once the engine's global checkpoint works
 (see the verification table below); without it m runs its two refusals only.
 
@@ -297,7 +303,7 @@ Column types are checked separately.
 | a | `scan-filter-project-aggregate` | CSV scan → Filter `age > 30` → Projection (`dept AS department`, `salary`) → Aggregate (group by `department`: `sum(salary) AS total_salary`, `count(salary) AS n`) | <ul><li>run reaches Completed with no fatal errors</li><li>columns and types (`string, double, integer`)</li><li>exactly 4 groups with exact sums and counts</li><li>the Filter's statistics report 8 output rows</li><li>the persisted execution status is 3 (Completed)</li></ul> |
 | b | `python-udf-column` | CSV scan → Python UDF V2 that sets `name_upper = name.upper()` and `age_plus_10 = age + 10` | <ul><li>Completed</li><li>all 7 columns and their types</li><li>all 10 rows, every value</li><li>persisted status 3</li></ul> |
 | c | `join-sort` | `depts.csv` (build side) and `people.csv` (probe side) → HashJoin on `dept_id = dept` → Sort `age DESC` (a Python operator) | <ul><li>Completed</li><li>output columns: build side, then probe side minus its key</li><li>the inner join drops `ops` and `fin`, leaving 9 rows</li><li>exact rows in age-descending order</li><li>persisted status 3</li></ul> |
-| d | `pause-resume-kill` | `numbers.csv` (300 rows) → Python UDF sleeping 0.2 s per tuple | <ul><li>Running, then the UDF emits rows</li><li>pause reaches Paused and is still Paused after a 5 s hold (the reported output count stays flat too, but the engine sends no statistics while paused, so that alone proves little)</li><li>resume reaches Running, and rows flow again</li><li>kill reaches Killed</li><li>the state order Running → Paused → Running → Killed, with Pausing and Resuming reported</li><li>never Completed</li><li>no work during the pause: rows emitted after resume ≤ (time from the resume request to Killed ÷ 0.2 s) + 2. A worker that kept running through the hold adds about 25 rows, however long the run took to start</li><li>persisted status 5 (Killed)</li></ul> |
+| d | `pause-resume-kill` | `numbers.csv` (300 rows) → Python UDF sleeping 0.2 s per tuple | <ul><li>Running, then the UDF emits rows</li><li>pause reaches Paused and is still Paused after a 5 s hold (the reported output count stays flat too, but the engine sends no statistics while paused, so that alone proves little)</li><li>on `create-ws`, before the pause: a `WorkflowKillRequest` naming another execution (this one's id + 1,000,000, as a page still showing an earlier run would send it) is answered to its sender with `RequestRefusedEvent{request, executionId, message: "Execution N is not running here."}`, and the run goes on</li><li>resume reaches Running, and rows flow again</li><li>kill reaches Killed</li><li>the state order Running → Paused → Running → Killed, with Pausing and Resuming reported</li><li>never Completed</li><li>no work during the pause: rows emitted after resume ≤ (time from the resume request to Killed ÷ 0.2 s) + 2. A worker that kept running through the hold adds about 25 rows, however long the run took to start</li><li>persisted status 5 (Killed)</li></ul> |
 | e | `console` | CSV scan → Python UDF that `print()`s one line per tuple | <ul><li>Completed with all 10 rows</li><li>all 10 lines arrive as `ConsoleUpdateEvent`s for that operator</li><li>every message type is `PRINT`</li><li>persisted status 3</li></ul> |
 | u | `java-udf-column` | CSV scan → Java UDF adding `name_len` (the unit compiles it with javac) | <ul><li>Completed</li><li>all 6 columns and their types</li><li>every value</li><li>persisted status 3</li></ul> |
 
@@ -310,20 +316,29 @@ repeat) waits for the refusal, then 3 s (`REFUSAL_SETTLE_S`), then the evidence
 marks "settled": from the start's mark to that mark the unit may run no statement
 at all, whatever it names (design D33).
 
+The scenarios follow the product as it is after the review fixes of step 2 (the
+reports X1, X3 and X4 under `docs/review-step2/`), read in its code: what the unit
+refuses it answers to the asking session as a `RequestRefusedEvent`, in sentences
+the scenarios compare whole (`REFUSED_*` in `driver/scenarios.py`); a pause, a
+resume and a kill name their execution; a created execution reads status 6
+(Created) until its unit's first write; the create answers 201 `{eid, planUri}` and
+the update 201; a client that wants a part of a workflow run sends that part.
+Images older than those fixes fail the checks that say so.
+
 | Key | Name | From PR | What it does | Checks |
 |---|---|---|---|---|
 | g0 | `environment-legacy` | A-C (`--legacy-env`) | precondition: the unit's `python3 -c "import tabulate"` fails; environment `sce-env0-<hex>` saved through `/api/pve/db` and built through `/wsapi/pve` (create, which installs amber's requirements, then install `tabulate==0.9.0`); Text Input → UDF with that `envName` outputting `tabulate.__version__` | Completed; the row says `0.9.0`; status 3 |
-| j | `modify-while-paused` | B | `numbers.csv` → UDF tagging `v1`, 0.05 s per tuple; pause; change the code to tag `v2`; resume | update 200 with `{updateId, operatorId}` and `ModifyLogicResponse.isValid`; the other user's update 403; `ModifyLogicCompletedEvent` names the UDF; Completed with 300 rows, some `v1`, some `v2`, every `v1` before every `v2` in `n` order; an update after Completed 409; status 3 |
-| k | `compile-error-from-create` | B | Projection of a missing column | create 400, `operatorErrors` has the Projection and names the column; the 400's eid row is 4; no unit statement for it |
+| j | `modify-while-paused` | B | `numbers.csv` → UDF tagging `v1`, 0.05 s per tuple; pause; change the code to tag `v2`; resume | update 201 with `{updateId, operatorId}` and `ModifyLogicResponse.isValid`; the other user's update 403; `ModifyLogicCompletedEvent` names the UDF; Completed with 300 rows, some `v1`, some `v2`, every `v1` before every `v2` in `n` order; an update after Completed 409; status 3 |
+| k | `compile-error-from-create` | B | Projection of a missing column | create 400, saying so as every refusal does (`code`, `message`), with `operatorErrors`, which has the Projection and names the column, and `eid`; that eid's row is 4; no unit statement for it |
 | l1-l4, l7 | `refuse-*` | B | unknown unit; other user + texera's workflow; other user + texera's unit; terminated unit; another user's warehouse | 403, 403, 403, 409, 400; no new row |
-| l5, l6, l9, l10 | `refuse-*` | B | other user starts texera's execution; a start naming another execution's `planUri`; a socket for texera's second unit; a `planUri` in another user's warehouse | a `WorkflowErrorEvent` on the starting socket with the design's message (l5: "only the user who created" or, with warehouses on, "another user's warehouse"; l6: "the plan is execution"; l9: "computing unit"; l10: "another user's warehouse"); none on a texera socket watching the workflow; never Running; the row stays 0 (allowed in the final check); no unit statement for the eid; the unit silent from the start until settled |
-| l8 | `refuse-second-start` | B | start a completed execution again (the first socket stays open, so no idle cleanup runs; with evidence the unit first settles, 1 s without a statement, so the first run's trailing writes stay out). The new socket gets the held run replayed while it opens (state Completed, its console); that is kept apart from the start's answer | "already started" on the new socket; the first socket gets no error and no state; never Running after the start; the row stays 3; no unit statement for the eid after the second start; the unit silent from the second start until settled |
+| l5, l6, l9, l10 | `refuse-*` | B | other user starts texera's execution; a start naming another execution's `planUri`; a socket for texera's second unit; a `planUri` in another user's warehouse | one `RequestRefusedEvent` on the starting socket, naming `WorkflowStartRequest` and the execution, with the unit's sentence (l5: "Only the user who created execution N may start it." or, with warehouses on, "The plan is in another user's warehouse."; l6: "The plan is execution B's, not A's."; l9: "Execution N was created for computing unit A, not B."; l10: "The plan is in another user's warehouse."), and no `WorkflowErrorEvent` with it (a refusal is not a run's error); neither on a texera socket watching the workflow; never Running; the row stays 6, Created (left unstarted on purpose, for the final check); no unit statement for the eid; the unit silent from the start until settled |
+| l8 | `refuse-second-start` | B | start a completed execution again (the first socket stays open, so no idle cleanup runs; with evidence the unit first settles, 1 s without a statement, so the first run's trailing writes stay out). The new socket gets the held run replayed while it opens (state Completed, its console); that is kept apart from the start's answer | a `RequestRefusedEvent` of the start on the new socket, "Execution N was already started.", and no `WorkflowErrorEvent`; the first socket gets no refusal, no error and no state; never Running after the start; the row stays 3; no unit statement for the eid after the second start; the unit silent from the second start until settled |
 | m | `replay` | B | refusals always: a source without a log (with `--with-replay-log` every run has one, so a missing execution instead) and a source of another workflow; with `--with-replay-log`: a slow run on JVM workers only (`numbers.csv` → a Java UDF sleeping 50 ms per tuple; a Python worker cannot take a checkpoint) with a `WorkflowCheckpointRequest` (the only thing that records an interaction), its interactions, a replay from the last one, started | refusals 400 and no row; the source run completes; it lists ≥ 1 interaction; replay create 201; the replay reaches Running, Paused or Completed |
-| o | `agent-sync-run` | B | create with `targetOperatorIds` [Filter]; `docker exec <unit> curl -X POST http://localhost:8085/api/execution/<eid>/run` with texera's token and `{planUri, computingUnitId, targetOperatorIds, timeoutSeconds, maxOperatorResultCharLimit, maxOperatorResultCellCharLimit}`; with evidence, before the repeat the unit settles (its cleanup delay + 1 s, then 1 s without a statement: no socket holds the workflow, so the unit cleans the run up) and the repeat gets a start mark | `success`, state Completed, the Filter's rows exact, the Projection downstream not in the result; a repeat: `success: false`, "already started"; the unit silent from the repeat until settled; status 3 |
+| o | `agent-sync-run` | B | create as the agent service does: the part of the workflow up to the Filter, cut by the client (`Workflow.plan_up_to`), with `engineVersion: "agent"`, no operator named to cut at and no `workflowSettings`; `docker exec <unit> curl -X POST http://localhost:8085/api/execution/<eid>/run` with texera's token and `{planUri, computingUnitId, targetOperatorIds, timeoutSeconds, maxOperatorResultCharLimit, maxOperatorResultCellCharLimit}`; with evidence, before the repeat the unit settles (its cleanup delay + 1 s, then 1 s without a statement: no socket holds the workflow, so the unit cleans the run up) and the repeat gets a start mark | `success`, state Completed, the Filter's rows exact, the Projection downstream not in the result; a repeat: `success: false`, `errors: ["Execution N was already started."]`; the unit silent from the repeat until settled; status 3 |
 | f | `file-lister-scan` | C | File Lister (the e2e dataset's v1) → File Scan From Input (single string, with the file name) → Python UDF adding the content's size and SHA-256 | Completed; 3 rows; the file names are the three logical paths; no value contains `http`; each content is the uploaded bytes: its size and SHA-256, taken in the run, and the cell as a result table shows it (the first 100 characters, then `...`) |
 | f2 | `file-scan-needs-lister` | C | Text Input of a dataset path → File Scan From Input | create 400; `operatorErrors` names the File Scan |
 | g | `environment-install` | D | precondition as g0; the install root is the unit's `UDF_PYTHON_ENVIRONMENTS_ROOT` (else `/tmp/texera-python-environments`); an earlier install whose marker lists `tabulate==0.9.0` (a `--keep` stack, a rerun) is removed first, since reuse is decided by the marker; environment `sce-env-<hex>` = `{tabulate: ==0.9.0}` through `/api/environments`; the UDF outputs `tabulate.__version__`; run twice, each on its own workflow (installs are keyed by requirements and engine, not by workflow, and run 2 then gets no replay of run 1's console) | run 1: console "Installing Python environment" then "is ready" with `tabulate==0.9.0`, Running only after "ready", row 0.9.0, status 3; run 2: "reused", no "Installing", start-to-Running shorter; exactly one directory under the root whose `texera-environment.json` (read whole by the unit's python3) lists these requirements |
-| h | `environment-broken` | D | environment `{sce-e2e-nonexistent-<hex>: ==1.0.0}`; the root's entries (without `*.lock`) listed before and after | Failed (waited with fail-fast off); never Running; the fatal error has "could not be installed" and "No matching distribution found"; the UDF emitted 0 rows; status 4; no new entry under the root |
+| h | `environment-broken` | D | environment `{sce-e2e-nonexistent-<hex>: ==1.0.0}`; the root's entries (without `*.lock`) listed before and after | Failed (waited with fail-fast off); never Running; the fatal error has "could not be installed" and "No matching distribution found"; it is the run's error only: no console holds an `ERROR` message of it; the UDF emitted 0 rows; status 4; no new entry under the root |
 | i | `environment-missing` | D | the UDF names `sce-missing-<hex>` | create 400; the UDF's error names the environment; that row is 4; no unit statement for it |
 
 Step 3 (design section 7 H3): the record a run leaves in the lake, and what the
@@ -352,9 +367,8 @@ What changes for the scenarios of step 2 (design H3):
 - j, from gate 3B: the Dashboard refuses a change by the closing record, which its
   job writes a tick after the run ended, so j waits until `/state` says closed before
   its late change (409).
-- l5, l6, l9, l10 leave an execution that was never started. At a step-3 gate its
-  row reads status 6, Created, not 0 (step 3 is built on step 2 with its review
-  fixes); from gate 3B Check K expects each closed as failed, "never started".
+- l5, l6, l9, l10 leave an execution that was never started, at status 6. From gate
+  3B Check K expects each closed as failed, "never started".
 - From gate 3B the driver no longer waits for the unit's cleanup `DELETE` between
   scenarios (the unit deletes nothing when it lets go of a run); it waits the unit's
   cleanup delay plus 0.5 s, and until the unit is quiet.
@@ -410,7 +424,7 @@ only these `RunHandle` members:
 |---|---|
 | Wait | `wait_for_state`, `wait_until` |
 | Control | `pause`, `resume`, `kill`, `ensure_stopped`, `modify_operator`, `send_raw` |
-| Observe | `eid`, `plan_uri`, `states`, `state_log`, `command_log`, `stats` / `output_rows`, `console`, `fatal_errors`, `error_event_count`, `modify_responses`, `modify_completed`, `results`, `replayed` |
+| Observe | `eid`, `plan_uri`, `states`, `state_log`, `command_log`, `stats` / `output_rows`, `console`, `fatal_errors`, `error_event_count`, `refusals`, `modify_responses`, `modify_completed`, `results`, `replayed` |
 | Report and clean up | `summary`, `close` |
 
 `eid` is the create's on `create-ws`. A socket that only joined a workflow learns it
@@ -449,6 +463,10 @@ Waits fail fast, raising `RunFailed` with the cause instead of running out the
 timeout, when any of these happens:
 
 - A `WorkflowErrorEvent` arrives.
+- The unit refuses the last command the handle sent (a `RequestRefusedEvent` naming
+  that request: a start, a pause, a resume or a kill): what the caller waits for
+  will not come. A refusal of something else the socket sent (`send_raw`) fails no
+  wait; it is in `refusals`.
 - An unexpected terminal state arrives. The error event that follows it is
   included in the message.
 - An operator sends an `ERROR` console message. On a Python exception, Texera
@@ -462,7 +480,7 @@ After each scenario, the runner kills any run that is still alive
 which nothing arrived after its open sequence (a watcher, or a refused start) is
 left alone: a kill there would reach whatever run the workflow holds. When a start
 went out and nothing came back yet, `ensure_stopped` first waits up to 5 s for a
-state or the refusal. These paths were checked against the published images:
+state or the refusal. The fail-fast paths were checked against the published images:
 
 | Probe | Outcome |
 |---|---|
@@ -486,16 +504,27 @@ The eid is not known at start; the driver reads it back (`latest_execution`).
 
 1. `POST /api/executions` with `{wid, executionName, engineVersion, logicalPlan,
    workflowSettings, emailNotificationEnabled: false, computingUnitId, warehouseId?,
-   replayFromExecution?, targetOperatorIds?}` (120 s timeout). 201 gives
-   `{eid, wid, computingUnitId, planUri}`; anything else raises
-   `CreateRefused(status, body)`.
+   replayFromExecution?}` (120 s timeout). 201 gives `{eid, planUri}`; anything
+   else raises `CreateRefused(status, body)`, the body `{code, message}` (and
+   `eid`, `operatorErrors` for a workflow that does not compile). The request
+   names no operator to run up to: the Dashboard no longer reads
+   `targetOperatorIds`, and no client sends its `targetOperatorId`.
 2. Open the websocket as above and wait for the end of the open sequence.
 3. Send `{"type": "WorkflowStartRequest", "executionId": eid, "planUri": planUri}`
    as the first marked command.
-4. Pause, resume, kill, pagination and heartbeat as on `ws`. `modify_operator`:
-   `POST /api/executions/{eid}/updates {operator}` (a 4xx raises `UpdateRefused`),
-   then `{"type": "OperatorUpdateRequest", "executionId": eid, "updateId": ...}`,
-   then the `ModifyLogicResponse`.
+4. Pagination and heartbeat as on `ws`. A pause, a resume and a kill name the
+   execution (`{"type": "WorkflowPauseRequest", "executionId": eid}`): the unit
+   refuses one that is not the run it holds. `modify_operator`:
+   `POST /api/executions/{eid}/updates {operator}` (anything but 201 raises
+   `UpdateRefused`), then `{"type": "OperatorUpdateRequest", "executionId": eid,
+   "updateId": ...}`, then the `ModifyLogicResponse`.
+5. What the unit does not do of what the socket asked, it answers to that socket
+   alone: `RequestRefusedEvent{request, executionId, message}` (`refusals`). A
+   `WorkflowErrorEvent` carries only a run's errors.
+
+On `ws` the handle knows no execution against a unit that names none in its state
+events (the published images), and sends the old control frames, which such a unit
+takes; where it knows one, its control frames name it.
 
 ### Evidence (`driver/evidence.py`, `--evidence [CHECKS]`)
 
@@ -553,7 +582,7 @@ F stay; F passes trivially once the unit sends nothing.
 | H | `pg_stat_activity`'s client backends, asked through the stack's control right before the scenario's begin mark and right before its end mark, hold no connection named `texera-computing-unit` and none from one of the unit's addresses. Postgres that cannot be asked makes H not evaluable |
 | I | for every run of the scenario that was started and has ended, read from Lakekeeper as Check E reads the plan table (`driver/lake.py`): the execution log's label names the ending the socket reported; the log holds exactly as many rows as the label's `seq` (more: a row landed twice, or a `seq` was skipped and another repeated; fewer: the label is ahead of its rows, or a `seq` was skipped); and the end tidy has run: the log holds one data file and one snapshot, the statistics table too (a run that never reached Running may have none of either), the console table too when the run printed, and no row when it did not. From gate 3B the rows are read as well, from `GET /api/executions/{eid}/log`: their `seq` are 1, 2, 3, ..., each is a state change (the log holds nothing else), and their states are the ones the run's socket was told, in order (READY for "Initializing"; Pausing and Resuming are not logged; a state told twice is one row). A run whose unit a scenario took down (q, s) is judged by the last state its unit recorded (RUNNING where it was killed, FAILED where it was stopped), its log may hold more than its socket heard, and its files are not counted: a unit that was lost or stopped does not finish its last tidy. A catalog that cannot be read makes I not evaluable |
 | J | on a stack started with `--unit-no-postgres` (the preflight refuses any other when J gates): at the scenario's end `getent hosts texera-postgres` in the unit finds nothing (the host is the stack's `STORAGE_JDBC_URL`'s), and `docker inspect` says the unit is healthy. That every scenario passes there is what the scenarios' own checks say |
-| K | after the last scenario, read from Postgres (`outcome`, `outcome_reason`, `ended_at` of the run's workflows' executions) every poll interval: every execution has its closing record within lost-after + 3 closing intervals of the last scenario's end (18 s); one that a scenario left unstarted on purpose (l5, l6, l9, l10, t's third) within never-started-after + 2 closing intervals (19 s), since it is closed only once it is that old, and as failed, "never started". K takes the place of the final "no row is left at status 0" |
+| K | after the last scenario, read from Postgres (`outcome`, `outcome_reason`, `ended_at` of the run's workflows' executions) every poll interval: every execution has its closing record within lost-after + 3 closing intervals of the last scenario's end (18 s); one that a scenario left unstarted on purpose (l5, l6, l9, l10, t's third) within never-started-after + 2 closing intervals (19 s), since it is closed only once it is that old, and as failed, "never started". K takes the place of the final check on the rows left at status 0 or 6 |
 
 - **When a record is judged.** A state's row and label reach the lake a moment after
   the state reaches the socket, and the end tidy after that, so a record is read
@@ -584,9 +613,10 @@ did not keep it out of the next windows. `settle_unit()` is the same quiet wait 
 scenarios (l8 before its second start, o before its repeat). From gate 3B the unit
 runs no cleanup statement, so only the delay and the quiet are waited for. After all
 scenarios, the final check: no execution of this run's workflows is left at status
-0, except the refused starts (l5, l6, l9, l10); with Check K required (gates 3B and
-3C), Check K instead; and with Check G required, G's look at the whole log (the
-report's `final_checks` then holds both).
+0 (its unit was setting its run up), and at 6 (created, and never started) only the
+ones a scenario left unstarted on purpose (l5, l6, l9, l10), which must read 6; with
+Check K required (gates 3B and 3C), Check K instead; and with Check G required, G's
+look at the whole log (the report's `final_checks` then holds both).
 
 A scenario that took the unit down tells the evidence when it is back
 (`unit_restarted`): the unit's addresses are read again, and the ones it had stay
@@ -632,10 +662,10 @@ did not.
 ### Offline tests (`driver/tests/`)
 
 ```
-.venv/bin/python -m unittest discover -s driver/tests -v     # 325 tests (55 of step 2 and 191 of step 3 on the single-node stack, 37 Kubernetes mode, 42 local-dev mode), about 6 minutes
+.venv/bin/python -m unittest discover -s driver/tests -v     # 338 tests (68 of step 2 and 191 of step 3 on the single-node stack, 37 Kubernetes mode, 42 local-dev mode), about 7 minutes
 ```
 
-- `test_evidence.py` (21): the log parser (parameters, continuation lines,
+- `test_evidence.py` (23): the log parser (parameters, continuation lines,
   interleaved pids, failed statements), the incremental reader, and Checks A-F
   against a fake `docker` serving a synthetic log of the old unit (A, B, C, D, F
   fail; the negative control passes) and of the new path (every check passes; the
@@ -645,12 +675,22 @@ did not.
   delay; `settle_unit`; C refusing a Dashboard-named insert from a unit address; F
   not evaluable with stale addresses; D failing on a gateway request from the unit
   and not evaluable without the gateway log; each negative control "inconclusive"
-  when it fails for another reason.
-- `test_transport.py` (21): both transports against `fake_texera.py`: the create
-  body of 3.4, the start by id as the first command, `CreateRefused`, the update then
-  `OperatorUpdateRequest`, `UpdateRefused` (409 after the end), a refused second
-  start that is not killed, a start as another user, the unchanged
-  `WorkflowExecuteRequest`, `ModifyLogicRequest` on `ws`, environments (new and
+  when it fails for another reason; the final check passing the rows a scenario left
+  unstarted on purpose, at 6, and failing a row left at 0, a created row nobody left
+  on purpose, and a refused start's row that reads 0.
+- `test_transport.py` (25): both transports against `fake_texera.py`: the create
+  body of 3.4, the start by id as the first command, the create's answers (201
+  `{eid, planUri}`; a refusal `{code, message}`; a workflow that does not compile
+  with `eid` and `operatorErrors` beside them), `CreateRefused`, the update (201)
+  then `OperatorUpdateRequest`, `UpdateRefused` (409 after the end), a pause and a
+  resume that name their execution, a refused second start (one
+  `RequestRefusedEvent` with the unit's sentence, no error event, nothing on the
+  session that holds the run) that is not killed, a wait on it failing at once with
+  the refusal, a kill of another execution and a pause that names none refused
+  while the run goes on and the handle's own waits hold, a checkpoint without a run
+  refused, a start as another user, the unchanged
+  `WorkflowExecuteRequest`, `ModifyLogicRequest` and control frames on `ws`,
+  environments (new and
   legacy), `/wsapi/pve`, users and unit termination; the open sequence (the fake
   replays the held run 0.1 s after the handshake, as the real unit does: the replay
   stays in `replayed`, the views stay empty; the quiet-period fallback without
@@ -662,15 +702,21 @@ did not.
   admin's list read page by page; and at gate 3C: stored console output page by
   page, and an export as the browser sends it (a form with the request and the
   user's token, the request naming the execution).
-- `test_scenarios.py` (14): g0, j, k, l1-l10, m (with and without a replay log), o,
-  f, f2, g, h, i through the real driver code against the fake (and a fake
-  `docker exec` for o and the environment scenarios); j on `ws`; g removing an
-  earlier install, and failing when run 1 says "reused".
-- `test_scenario_evidence.py` (5): scenarios and evidence together, as e2e.py runs
+- `test_scenarios.py` (19): d, g0, j, k, l1-l10, m (with and without a replay log),
+  o, f, f2, g, h, i through the real driver code against the fake (and a fake
+  `docker exec` for o and the environment scenarios); j on `ws`, with the old
+  frames; g removing an earlier install, and failing when run 1 says "reused"; the
+  refused starts' sentences; o's create as the agent service sends it. And the
+  product of before step 2's review fails what follows it: a refusal that comes as
+  a `WorkflowErrorEvent` fails l5 and l8, a created row that reads 0 fails l9, a kill
+  of another execution that reaches the run fails d, a failed install that is also
+  a console `ERROR` fails h.
+- `test_scenario_evidence.py` (6): scenarios and evidence together, as e2e.py runs
   them, on a fake stack (the fake reports the statements the design's services run,
   the requests a gateway logs and its plan tables): l8 passes all six checks and its
   silence check although the second socket gets the held run replayed; l5, l6, l9,
-  l10 and the final check; the cleanup between scenarios lands before the next begin
+  l10 and the final check (their five rows at 6, left on purpose; a refused start's
+  row that reads 0 fails l5 and the final check); the cleanup between scenarios lands before the next begin
   mark; o's repeat is silent; a refusal path that reads Postgres fails the silence
   check; and the start rule before this fix fails l8's Check A (the review's case).
 
@@ -771,9 +817,11 @@ did not.
   `--negative-control 3`, then the stack with `--unit-no-postgres --expect-unit-down`;
   its exit code when the unit came up, when the driver's controls failed and when
   the stack did not come up; `--step 3` without `--images` is refused.
-- `test_e2e_main.py` (7): the driver's own `main`, from its command line to its
+- `test_e2e_main.py` (8): the driver's own `main`, from its command line to its
   report, on the fake stack (the fake Texera at a step, a fake `docker` for the
-  evidence, the fake lake, the fake stack's control): gate 3C on a stack whose unit
+  evidence, the fake lake, the fake stack's control): gate D on the product after
+  step 2's review fixes (a refused start's row is left at 6, which the final check
+  expects); gate 3C on a stack whose unit
   has no Postgres (C to K gate, with both final checks) and on one with Postgres
   beside the unit (J is left out); gate 3B ends with Check K and closes what a
   refused start left; a unit that still writes to Postgres fails gate 3C in the
@@ -795,15 +843,20 @@ did not.
 
 `fake_texera.py` models the design, not Texera: a scenario that passes against it
 drives the design's protocol and judges its answers as the design says; it proves
-nothing about a branch. `step` chooses the product it models: the end of step 2
+nothing about a branch. Where the product's code is known to differ from the design
+it follows the code: step 2 is modelled as it is after its review fixes (status 6
+for a created execution, the create's and the update's answers, a create that clears
+only results a later run replaced, `RequestRefusedEvent` in the unit's sentences,
+control frames checked against the run the unit holds, a failed install as the run's
+error only), and the old `WorkflowExecuteRequest` path stands for the published
+images' unit. `step` chooses the product it models: the end of step 2
 (the default), or step 3 at a gate. At gate 3A every run started by id has a
 recorder (`fake_record.py`) with a thread of its own, as in the design: a state's row
 and label land a moment after the state reaches the socket (the log holds state
 changes only); statistics and console
 output land on the commit timer; the end tidy leaves one data file and one snapshot
 per table; and the unit still clears a run's results and console table once nobody
-watches it. From gate 3A on a created execution reads Created until its unit's first
-write. The fake engine sleeps what a UDF's `time.sleep()` asks for (scaled),
+watches it. The fake engine sleeps what a UDF's `time.sleep()` asks for (scaled),
 prints what its `print(f"...")` prints, aggregates, and fails a run whose UDF raises
 as its module is loaded.
 
@@ -879,7 +932,28 @@ rows also name what the harness had to assume (see "Step 3: what is assumed"):
 | Step 3's negative control: G and H failing for their reasons on a unit of step 2's end, q staying at status 1, and that unit not booting without Postgres (what its log says then: the control looks for Postgres's host name, `PSQLException` or `HikariPool`) | gate 3C | `test_step3_evidence.py` (`Step3Control`), `test_stack_options.py` (`UnitDownControlTest`), `test_negative_control.py` |
 | What a real stack must still show for gate 3C: how long the unit takes to stop politely (v reads results that expire 20 s after their run; see the scenarios); that `docker inspect`'s `State.StartedAt` and docker's log stamps order a unit's first statement after its start (G's look at the whole log); Envoy's `route_name` for a request the static route answers | gate 3C | - |
 | D failing on a gateway request from the unit, F not evaluable with stale addresses, a negative control reported "inconclusive", gate D | PR C-D | `test_evidence.py`, `test_scenario_evidence.py` |
+| The driver after step 2's review fixes (reports X1, X3 and X4), read in the product's code at `2147aeaec`: control frames that name the execution and d's kill of another execution; a refused start as one `RequestRefusedEvent` with the unit's sentence (l5, l6, l8, l9, l10, r, o's repeat); the create's and the update's answers (j, k); o's create as the agent service sends it; status 6 in the refused starts' rows and in the final check; h's failed install as the run's error only | the images of step 2 with its review fixes | `test_transport.py`, `test_scenarios.py`, `test_scenario_evidence.py`, `test_evidence.py` |
 | m's replay run after the checkpoint: its interactions, the replay's create and start | PR B, and an engine whose global checkpoint works | `test_scenarios.py` (`ReplayScenario`) |
+
+What step 2's review fixes changed that no scenario checks yet (from the reports'
+"Externally visible changes"; the browser's side is the browser smoke's):
+
+| Report | Not checked |
+|---|---|
+| X4 | A change the unit refuses (`OperatorUpdateRequest` of an execution it does not hold, or of another user): `ModifyLogicResponse` with `isValid: false` and the unit's sentence. j only makes a change that applies |
+| X4 | A frame the unit cannot read ("The request could not be read as a <Type>.", which is what the old `WorkflowExecuteRequest` now gets), a checkpoint, retry, skip, debug command or evaluation with no run ("No execution of this workflow is running here."), and a pause, resume or kill with no run at all. d checks a kill of another execution while a run is held |
+| X4 | A session without WRITE on the unit ("You do not have write access to the computing unit."): on the single-node stack every session has WRITE |
+| X4 | The sync route after a failed environment install: `errors[0]` carries the run's error and no operator has an `error`. h checks the socket's side only |
+| X4, X1 | The start refusals no scenario provokes: a plan of another workflow, input links that expired, a plan in a per-user warehouse while those are disabled, a claim lost to a change of the plan, a replay log outside where the unit keeps them |
+| X3 | `targetOperatorId`, the Dashboard's own cut of a plan, and its 400 for an operator the plan lacks. No client sends it |
+| X3 | The compile's deadline (504 after 60 s) and its queue (503), each leaving the row Failed |
+| X3 | A replay of another user's execution (400). m checks a source without a log and a source of another workflow |
+| X3 | A create clears an ended execution's results only once a later execution of the workflow on the unit has results of its own. t checks step 3's form of it |
+| X3 | What a Created row is not counted as: a run in progress for the editor's lock and the manager's idle sweep, the latest execution for an export; and "CREATED" in the admin's list. The driver checks that the row reads 6 |
+| X3 | The words of the create's and the update's refusals: l1-l4, l7, m and j check their statuses |
+| X3 | In Kubernetes, the four settings the manager now forwards to unit pods (the plan namespace, the allowed link endpoints, the environments' root and install timeout): the Kubernetes stack sets none of them, so nothing shows a unit pod getting one |
+| X1 | A UDF that reads a dataset or a model on a unit without a mounter: the create answers 201 and the run fails at its start, naming the operator and what it cannot mount; a change to a paused operator that reads one is refused |
+| X1 | A plan, or a change, larger than 16 MiB: 400, the row Failed |
 
 ### Step 3: what is assumed
 
@@ -902,7 +976,7 @@ change:
 | `GET /api/executions/{eid}/state` answers `{status, open, reason, timeMs}` | 3.5 | `ExecutionState.of` in `driver/texera_api.py` |
 | `GET /api/executions/{eid}/log` answers `{entries[{seq, timeMs, kind, state, reason?, errors?}], closing{outcome, reason, endedAtMs} or null}` | 3.5 | `LogEntry.of`, `ExecutionLog.of` in `driver/texera_api.py` |
 | The log holds state changes only: a stored port's location is in the plan, so the design's `output` rows are gone. A row that names no `kind` is taken to be a state change | changes since revision 2, 2 | `LogEntry.of`, `ExecutionLog.states` in `driver/texera_api.py`; `Evidence._log_problems` in `driver/evidence.py` |
-| An execution that was created and that no unit has started reads status 6, Created, also once its status comes from the label (a label that names no state); the closing job still closes it "never started" | changes since revision 2, 3 | `STATUS_CREATED`, `Ctx.unstarted_status` in `driver/scenarios.py` |
+| An execution that was created and that no unit has started still reads status 6, Created, once its status comes from the label (a label that names no state); the closing job still closes it "never started" | changes since revision 2, 3 | `STATUS_CREATED` in `driver/scenarios.py` (r) |
 | An ended execution's results are replaced by the closing job's expiry once a later execution of its workflow on its unit has started (its label names a state), so within a commit interval + one expiry pass + 2 closing intervals of that start; a create alone replaces nothing | changes since revision 2, 4 | `replaced_verdict_s`, `expired_verdict_s` in `driver/record_timing.py`; `scenario_t` in `driver/scenarios.py` |
 | A history entry carries `reason`, and a `completionTime` that is never null | 3.5, D21 | `history_reason`, `history_completion_ms` in `driver/texera_api.py` |
 | The admin's list says why an execution ended in a field named `reason` (the design says the list shows reasons, not the field's name), beside today's `workflowId`, `executionId`, `executionStatus` | 3.5, 6 | `AdminExecution.of` in `driver/texera_api.py` |

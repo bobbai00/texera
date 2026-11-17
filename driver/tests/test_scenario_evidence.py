@@ -2,8 +2,8 @@
 (begin_scenario, run_scenario, _apply_evidence). The fake Texera reports the
 Postgres statements the design's services would run and the requests a gateway
 would log; a fake `docker` serves them as the Postgres, unit and nginx logs, and
-answers the catalog (Check E) and the final check (the rows left at status 0, or
-from gate 3B on the closing records of Check K) from the fake's executions.
+answers the catalog (Check E) and the final check (the rows left at status 0 or 6,
+or from gate 3B on the closing records of Check K) from the fake's executions.
 
 The review's case: l8 opens a second socket on a completed run, and the unit
 replays that run (state Completed, its console) to it about 0.1 s after the
@@ -59,10 +59,10 @@ class StackDocker(FakeDocker):
                 if e.get("started"):
                     refs["started"] = {"snapshot-id": 1, "type": "tag"}
                 return subprocess.CompletedProcess(args, 0, json.dumps({"metadata": {"refs": refs}}) + "\n200", "")
-        if args[0] == "exec" and "psql" in args and "status = 0" in args[-1]:
-            wids = {int(w) for w in re.search(r"IN \(([^)]*)\)", args[-1]).group(1).split(",")}
-            rows = [f"{eid}|{x['wid']}" for eid, x in sorted(self.fake.executions.items())
-                    if x["status"] == 0 and x["wid"] in wids]
+        if args[0] == "exec" and "psql" in args and "e.status IN (0, 6)" in args[-1]:
+            wids = {int(w) for w in re.search(r"v\.wid IN \(([^)]*)\)", args[-1]).group(1).split(",")}
+            rows = [f"{eid}|{x['wid']}|{x['status']}" for eid, x in sorted(self.fake.executions.items())
+                    if x["status"] in (0, 6) and x["wid"] in wids]
             return subprocess.CompletedProcess(args, 0, "\n".join(rows) + "\n", "")
         if args[0] == "exec" and "psql" in args and "ended_at IS NOT NULL" in args[-1]:  # Check K
             wids = {int(w) for w in re.search(r"IN \(([^)]*)\)", args[-1]).group(1).split(",")}
@@ -148,7 +148,18 @@ class ScenarioEvidence(EvidenceCase):
                                 for c in rec.checks), key)
         final = self.ev.final_check(self.ctx.created_wids)
         self.assertTrue(final["ok"], final)
-        self.assertTrue(final["left"])  # the refused starts' rows, allowed
+        # the refused starts' rows, and the one l6 created for its plan: Created, and allowed
+        self.assertEqual([6] * 5, [row["status"] for row in final["left"]])
+        self.assertTrue(all(row["allowed"] for row in final["left"]))
+
+    def test_a_refused_starts_row_that_reads_initializing_fails_the_scenario_and_the_final_check(self):
+        """The Dashboard of before step 2's review, which created a row as Initializing."""
+        self.fake.faults.add("created-reads-initializing")
+        rec = self.run_ev("l5", expect="FAIL")
+        self.assertEqual(["l5 another user's socket: the row stays 6"], [c.name for c in rec.checks if not c.ok])
+        final = self.ev.final_check(self.ctx.created_wids)
+        self.assertIs(False, final["ok"])
+        self.assertTrue(final["detail"].endswith(f"not at 6: [({rec.eid}, 0)]"), final["detail"])
 
     def test_o_repeat_call_is_silent(self):
         rec = self.run_ev("o")

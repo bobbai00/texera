@@ -134,9 +134,22 @@ class DriverMainTest(unittest.TestCase):
         self.assertEqual(1, rc)
         self.assertEqual("a control did not fail as expected (or did not run)", report["summary"]["controls"])
 
+    def test_gate_d_on_the_product_after_step_2s_review_fixes(self):
+        """Step 2's last gate, as far as the fake engine runs it: a refused start leaves its
+        row Created, which the final check expects of a row left unstarted on purpose."""
+        rc, report = self.run_main("--gate", "D", "--scenario", "a,k,l5,l8", step="2")
+        self.assertEqual((0, dict.fromkeys(("a", "k", "l5", "l8"), "PASS")), (rc, self.outcomes(report)),
+                         report["summary"])
+        self.assertEqual(list("ABCDEF"), report["evidence"]["required"])
+        final = report["final_check"]
+        self.assertTrue(final["ok"] and final["name"].startswith("no row of this run's workflows is left at status 0"),
+                        final)
+        (left,) = final["left"]  # l5's execution; k's failed at its create, a's and l8's ran
+        self.assertEqual((6, "l5: start refused on purpose"), (left["status"], left["allowed"]))
+
     def test_a_run_without_a_step_3_gate_asks_step_2s_product_for_nothing_of_step_3(self):
         """j on step 2's product, as before step 3: it waits for no closing record, and the
-        final check is the one on status 0."""
+        final check is step 2's, on the rows that never came to run."""
         rc, report = self.run_main("--transport", "create-ws", "--scenario", "j", "--evidence", "C,E,F", step="2")
         self.assertEqual((0, {"j": "PASS"}), (rc, self.outcomes(report)), report["summary"])
         self.assertFalse([r for r in self.fake.rest_log if r["path"].endswith(("/state", "/log"))])

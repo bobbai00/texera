@@ -63,7 +63,7 @@ reports exactly what it did:
   K  after the last scenario: every execution of the run's workflows gets its closing
      record (`ended_at`) within lost-after + 3 closing intervals, and the ones a
      scenario left unstarted on purpose within never-started-after + 2, closed as
-     "never started". It replaces the final "no row is left at status 0"
+     "never started". It replaces the final check on the rows left at status 0 or 6
   J  on a stack started with --unit-no-postgres: at every scenario's end the unit
      cannot resolve Postgres's name and is healthy (and the scenario passes, which
      its own checks say)
@@ -102,6 +102,9 @@ EXECUTION_DB = "texera_db"
 RUN_STATE_TABLES = frozenset({"workflow_executions", "operator_port_executions", "operator_executions"})
 STATUS_STARTED = frozenset({1, 4, 5})   # RUNNING, or an early FAILED / KILLED
 STATUS_TERMINAL = frozenset({3, 4, 5})  # COMPLETED, FAILED, KILLED
+#: an execution whose unit is setting its run up, and one the Dashboard created that no unit
+#: has started (the product's WorkflowExecutionStatus)
+STATUS_INITIALIZING, STATUS_CREATED = 0, 6
 D_HOSTS = ("file-service", "texera-lakefs")
 D_PATTERNS = ("file-service", "texera-lakefs", ":9092", ":8000/api/v1")
 #: step 2's checks: what `--evidence` means without a list
@@ -692,7 +695,8 @@ class Evidence:
         #: eid -> (the last state its unit recorded, why its tables were left as they were):
         #: the executions whose unit a scenario took down under them
         self._left: dict[int, tuple[str, str]] = {}
-        self.allowed_status_zero: dict[int, str] = {}
+        #: eid -> why: the executions a scenario created and left unstarted on purpose
+        self.unstarted_on_purpose: dict[int, str] = {}
         self.warehouse_name: str | None = None
         self.info: dict[str, Any] = {}
         #: Check G: when the unit's container started, as docker stamps its log lines
@@ -1015,8 +1019,10 @@ class Evidence:
         self._expect_silent.append((eid, run.start_mark, until, why))
         return until
 
-    def allow_status_zero(self, eid: int, why: str) -> None:
-        self.allowed_status_zero[eid] = why
+    def leave_unstarted(self, eid: int, why: str) -> None:
+        """A scenario created this execution and leaves it unstarted, on purpose: the final
+        check expects its row as it was created (and Check K, closed "never started")."""
+        self.unstarted_on_purpose[eid] = why
 
     def record_left_as_is(self, eid: int, label_state: str, why: str) -> None:
         """The unit is about to be taken down under this execution. Check I then expects its
@@ -1482,12 +1488,12 @@ class Evidence:
 
     def final_check(self, wids: Iterable[int]) -> dict:
         """After the last scenario: Check K when it is required (gates 3B and 3C), else
-        step 2's "no row is left at status 0"."""
+        step 2's look at the rows that never came to run."""
         ids = sorted({int(w) for w in wids if w})
         if "K" in self.required:
             return {"name": f"Check K: {CHECK_TITLES['K']}", **self._check_k(ids)}
-        return {"name": "no row of this run's workflows is left at status 0 (refused starts excepted)",
-                **self._no_status_zero(ids)}
+        return {"name": "no row of this run's workflows is left at status 0, and at 6 only the ones a scenario "
+                        "left unstarted on purpose", **self._rows_that_never_ran(ids)}
 
     def final_checks(self, wids: Iterable[int]) -> list[dict]:
         """Every check made once, after the last scenario: the one on the executions' rows
@@ -1548,10 +1554,10 @@ class Evidence:
             time.sleep(self.timing.poll_s)
         late, wrong = [], []
         for row in rows:
-            unstarted = row["eid"] in self.allowed_status_zero
+            unstarted = row["eid"] in self.unstarted_on_purpose
             after = closed_after.get(row["eid"])
             row.update(closed_after_s=None if after is None else round(after, 1), deadline_s=deadlines[unstarted],
-                       unstarted_on_purpose=self.allowed_status_zero.get(row["eid"]))
+                       unstarted_on_purpose=self.unstarted_on_purpose.get(row["eid"]))
             if after is None or after > row["deadline_s"]:
                 late.append(row)
             elif unstarted and (row["outcome"], row["reason"]) != (OUTCOME_FAILED, REASON_NEVER_STARTED):
@@ -1566,22 +1572,25 @@ class Evidence:
                           f"{len(rows)} execution(s), each with its closing record; the last one "
                           f"{max(closed_after.values(), default=0):.1f} s after the last scenario"}
 
-    def _no_status_zero(self, ids: list[int]) -> dict:
-        """No row of this run's workflows is left at status 0, except the ones a
-        scenario left there on purpose (refused starts)."""
+    def _rows_that_never_ran(self, ids: list[int]) -> dict:
+        """No row of this run's workflows is left as its unit was setting its run up
+        (status 0), and none as it was created (6) but the ones a scenario left unstarted
+        on purpose (refused starts): those read Created, since no unit wrote to them."""
         if not ids:
             return {"ok": True, "detail": "no workflows", "left": []}
-        p = self._psql("SELECT e.eid, v.wid FROM texera_db.workflow_executions e JOIN "
-                       "texera_db.workflow_version v ON e.vid = v.vid WHERE e.status = 0 AND v.wid IN ("
+        p = self._psql("SELECT e.eid, v.wid, e.status FROM texera_db.workflow_executions e JOIN "
+                       "texera_db.workflow_version v ON e.vid = v.vid WHERE "
+                       f"e.status IN ({STATUS_INITIALIZING}, {STATUS_CREATED}) AND v.wid IN ("
                        + ",".join(str(i) for i in ids) + ") ORDER BY e.eid")
         if p.returncode != 0:
             return {"ok": False, "detail": f"psql failed: {p.stdout[:300]}", "left": []}
-        rows = [tuple(int(x) for x in ln.split("|")) for ln in p.stdout.split() if "|" in ln]
-        left = [{"eid": e, "wid": w, "allowed": self.allowed_status_zero.get(e)} for e, w in rows]
-        bad = [r for r in left if not r["allowed"]]
+        rows = [tuple(int(x) for x in ln.split("|")) for ln in p.stdout.split() if ln.count("|") == 2]
+        left = [{"eid": e, "wid": w, "status": s, "allowed": self.unstarted_on_purpose.get(e)} for e, w, s in rows]
+        bad = [r for r in left if not r["allowed"] or r["status"] != STATUS_CREATED]
         return {"ok": not bad, "left": left,
-                "detail": (f"{len(left)} row(s) at status 0, {len(bad)} not refused on purpose: "
-                           f"{[r['eid'] for r in bad]}" if left else "no row left at status 0")}
+                "detail": (f"{len(left)} row(s) at status 0 or 6; {len(bad)} of them not left unstarted on "
+                           f"purpose, or not at 6: {[(r['eid'], r['status']) for r in bad]}" if left
+                           else "no row left at status 0 or 6")}
 
 
 def control_failed_for_its_reason(key: str, r: CheckResult) -> tuple[bool, str]:

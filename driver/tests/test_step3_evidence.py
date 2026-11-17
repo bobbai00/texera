@@ -474,7 +474,7 @@ class ClosingCheckTest(unittest.TestCase):
 
     def test_a_row_left_unstarted_on_purpose_has_until_it_is_old_enough(self):
         self.docker.rows[92] = {"wid": 6, "closed": False}
-        self.ev.allow_status_zero(92, "l5: start refused on purpose")
+        self.ev.leave_unstarted(92, "l5: start refused on purpose")
         self.close_later(92, 0.65, outcome=4, reason="never started")
         final = self.ev.final_check([5, 6])
         self.assertTrue(final["ok"], final)
@@ -483,7 +483,7 @@ class ClosingCheckTest(unittest.TestCase):
 
     def test_a_row_left_unstarted_on_purpose_must_be_closed_as_never_started(self):
         self.docker.rows[92] = {"wid": 6, "outcome": 4, "reason": "unit lost", "closed": True}
-        self.ev.allow_status_zero(92, "l5: start refused on purpose")
+        self.ev.leave_unstarted(92, "l5: start refused on purpose")
         final = self.ev.final_check([5, 6])
         self.assertIs(False, final["ok"])
         self.assertEqual('execution 92, left unstarted on purpose, is closed 4 "unit lost", not 4 "never started"',

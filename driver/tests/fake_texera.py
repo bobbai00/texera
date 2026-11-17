@@ -5,6 +5,20 @@ unit's POST /api/execution/{eid}/run) and websockets (/wsapi/workflow-websocket
 with WorkflowStartRequest / OperatorUpdateRequest and the old
 WorkflowExecuteRequest / ModifyLogicRequest, /wsapi/pve).
 
+Where the product's code differs from the design it follows the code, as it is after
+the review fixes of step 2 (docs/review-step2 in the main worktree, reports X1, X3 and
+X4). The Dashboard: a created execution has a status of its own, Created (6), until
+its unit's first write; a create answers 201 {eid, planUri}, a workflow that does not
+compile 400 {code, message, eid, operatorErrors}, a stored change 201; a create clears
+an ended execution's results only once a later execution of the workflow on the unit
+has results of its own. The unit: what it does not do of what a session asked, it
+answers to that session alone as a RequestRefusedEvent, in sentences, and a
+WorkflowErrorEvent carries only a run's errors; a pause, a resume and a kill name
+their execution and are refused unless the unit holds its run; a failed environment
+install is the run's error and not a console message. The old WorkflowExecuteRequest
+and ModifyLogicRequest are the published images' unit, which the `ws` transport and
+step 2's negative control are for: a run started that way takes the old frames.
+
 It emulates just enough of an engine to give exact rows for the harness's small
 workflows (CSV scan, Text Input, Filter, Projection, the tagging and tabulate
 UDFs, File Lister -> File Scan From Input). Everything it receives is recorded,
@@ -21,12 +35,9 @@ it up. With a `statement_sink` it reports the Postgres statements the design's
 services would run (Dashboard: the INSERT at create; unit: the run-state writes and
 the idle cleanup; a refused start: nothing), for evidence tests.
 
-`step` chooses the product it models: "2" (the default: step 2 as gates A to D were run
-on it), or step 3 at one of its harness gates. Step 3 is built on step 2 with its review
-fixes (docs/review-step2/x3-report.md), so from "3A" on a created execution has a status
-of its own, Created, until its unit's first write, and a create clears an ended
-execution's results only once a later execution of the workflow on the unit has results
-of its own. At "3A" (the step-3 design's sub-parts 2 to 7) every
+`step` chooses the product it models: "2" (the default: the end of step 2, with its
+review fixes), or step 3 at one of its harness gates. At "3A" (the step-3 design's
+sub-parts 2 to 7) every
 run started by id has a recorder (fake_record.py) that writes its log, statistics and
 console into the fake lake (fake_lake.py), and the statistics route reads the lake.
 The fake engine also sleeps what a UDF's `time.sleep()` asks for, scaled by
@@ -86,8 +97,11 @@ TUPLE_DELAY_S = 0.004
 REPLAY_DELAY_S = 0.1
 STATUS_CODES = {"Uninitialized": 0, "Initializing": 0, "Running": 1, "Paused": 2, "Completed": 3,
                 "Failed": 4, "Killed": 5}
-#: an execution that was created and that no unit has started, from "3A" on
+#: an execution that was created and that no unit has started
 STATUS_CREATED = 6
+#: the requests that name their execution: the unit answers for the execution they name
+EXECUTION_REQUESTS = ("WorkflowStartRequest", "OperatorUpdateRequest", "WorkflowPauseRequest",
+                      "WorkflowResumeRequest", "WorkflowKillRequest")
 #: the products the fake models, in order (see the module doc)
 STEPS = ("2", "3A", "3B", "3C")
 #: the unit's own faults, and those of the routes that serve stored output, for the tests
@@ -95,6 +109,10 @@ STEPS = ("2", "3A", "3B", "3C")
 #: Dashboard's in fake_closing.FAULTS)
 FAULTS = {
     "created-reads-initializing": "an execution nobody started reads Initializing (0), as before step 2's review",
+    "refusal-as-error-event": "a request the unit refuses is answered with a WorkflowErrorEvent, as before "
+                              "step 2's review",
+    "stale-control": "a pause, a resume or a kill reaches the run the unit holds whatever execution it names",
+    "install-failure-on-console": "a failed environment install is also an ERROR message on the consoles",
     "stop-unrecorded": "a unit that is stopped politely records nothing: its runs end as if it was killed",
     "unit-statement": "the unit still writes its run's status to Postgres",
     "unit-pool": "the unit still opens its pool: two idle connections",
@@ -486,12 +504,14 @@ class Run:
             if key in self.fake.installed_envs:
                 self.console(op_id, "PRINT", f"Python environment '{name}' reused", "\n".join(lines))
                 continue
-            self.console(op_id, "PRINT", f"Installing Python environment '{name}' ({len(lines)} packages)")
+            packages = "1 package" if len(lines) == 1 else f"{len(lines)} packages"
+            self.console(op_id, "PRINT", f"Installing Python environment '{name}' ({packages})", "\n".join(lines))
             time.sleep(0.05)
             bad = [ln for ln in lines if "nonexistent" in ln]
-            if bad:
+            if bad:  # the run's error, and nothing on the consoles
                 tail = f"ERROR: No matching distribution found for {bad[0]}"
-                self.console(op_id, "ERROR", f"Python environment '{name}' could not be installed", tail)
+                if "install-failure-on-console" in self.fake.faults:
+                    self.console(op_id, "ERROR", f"Python environment '{name}' could not be installed", tail)
                 error = {"type": {"name": "EXECUTION_FAILURE"},
                          "message": f"Python environment '{name}' could not be installed: {tail}",
                          "details": tail, "operatorId": op_id, "workerId": ""}
@@ -611,7 +631,7 @@ class FakeTexera:
     @property
     def created_status(self) -> int:
         """The status of an execution from its creation until a unit starts it."""
-        return STATUS_CREATED if self.at("3A") and "created-reads-initializing" not in self.faults else 0
+        return 0 if "created-reads-initializing" in self.faults else STATUS_CREATED
 
     # ------------------------------------------------------------ the lake
 
@@ -681,17 +701,15 @@ class FakeTexera:
         return (self.execution_table(eid, "console") is not None
                 or any(name.startswith(prefix) for name in self.lake.names(warehouse, NAMESPACES["result"])))
 
-    def clear_at_create(self, wid: int, cuid: int, created: int) -> None:
-        """What a create clears until "3B". Step 2 as gates A to D ran on it (D8): the
-        results of every ended earlier execution of the workflow on the unit. With step
-        2's review fix D2, which "3A" is built on: only those of an ended execution that
-        a later one has replaced with results of its own, so an execution that is only
-        created clears nothing."""
+    def clear_at_create(self, wid: int, cuid: int) -> None:
+        """What a create clears until "3B" (ExecutionResources.clearReplacedExecutions): the
+        results of an ended execution of the workflow on the unit that a later one has
+        replaced with results of its own. An execution that is only created clears
+        nothing: the results the unit ran last stay until a run has some in their place."""
         same = {eid: x for eid, x in self.executions.items() if (x["wid"], x["cuid"]) == (wid, cuid)}
         for eid, x in sorted(same.items()):
-            replaced = eid < created if not self.at("3A") else (
-                self.holds_results(eid) and any(later > eid and self.holds_results(later) for later in same))
-            if x["status"] in (3, 4, 5) and replaced:
+            if x["status"] in (3, 4, 5) and self.holds_results(eid) \
+                    and any(later > eid and self.holds_results(later) for later in same):
                 self.clear_results(eid)
 
     def store_results(self, run: "Run") -> None:
@@ -1034,35 +1052,44 @@ class FakeTexera:
             return self.err(404, f"no route {method} {path}")
 
     def create(self, uid: int, body: dict):
-        """Design 3.4 and section 4 Create, steps 1-11."""
-        if not isinstance(body, dict) or "wid" not in body or "computingUnitId" not in body \
-                or not isinstance(body.get("logicalPlan"), dict):
-            return self.err(400, "malformed request")
+        """Design 3.4 and section 4 Create, steps 1-11, in the product's words (ExecutionCreator).
+        A field the request should not have, `targetOperatorIds` among them, is not read."""
+        if not isinstance(body, dict) or "wid" not in body or "computingUnitId" not in body:
+            return self.err(400, "The request names no workflow.")
+        if not isinstance(body.get("logicalPlan"), dict):
+            return self.err(400, "The request has no logical plan.")
         wid, cuid = body["wid"], body["computingUnitId"]
         if self.workflows.get(wid, {}).get("owner") != uid:
-            return self.err(403, f"no READ access to workflow {wid}")
+            return self.err(403, f"You do not have access to workflow {wid}.")
         unit = self.units.get(cuid)
         if unit is None or unit["uid"] != uid:
-            return self.err(403, f"no WRITE access to computing unit {cuid}")
+            return self.err(403, f"You may not run workflows on computing unit {cuid}.")
         if unit.get("terminateTime"):
-            return self.err(409, f"computing unit {cuid} is terminated")
+            return self.err(409, f"Computing unit {cuid} is terminated.")
         whid = body.get("warehouseId")
         if self.warehouses_enabled:
-            if whid is None or self.warehouses.get(whid, {}).get("uid") != uid:
-                return self.err(400, f"warehouse {whid} is missing or not yours")
+            if whid is None:
+                return self.err(400, "A warehouse must be selected for this execution.")
+            if self.warehouses.get(whid, {}).get("uid") != uid:
+                return self.err(400, f"You have no warehouse with id {whid}.")
         elif whid is not None:
-            return self.err(400, "warehouses are disabled")
+            return self.err(400, "Per-user warehouses are disabled in this deployment.")
         replay = body.get("replayFromExecution")
         if replay:
             src = self.executions.get(replay["eid"])
-            if src is None or src["wid"] != wid or not src.get("log"):
-                return self.err(400, "the replay source is of another workflow or has no log")
+            if src is None or src["wid"] != wid:
+                return self.err(400, f"Workflow {wid} has no execution {replay['eid']} to replay.")
+            if src["uid"] != uid:
+                return self.err(400, f"Execution {replay['eid']} is another user's: only your own executions "
+                                     f"can be replayed.")
+            if not src.get("log"):
+                return self.err(400, f"Execution {replay['eid']} kept no replay log to replay.")
         eid = self.next["eid"]
         self.next["eid"] += 1
         self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": uid, "whid": whid, "status": self.created_status,
                                 "name": body.get("executionName", ""), "plan": body["logicalPlan"],
                                 "started": False, "log": (f"file:///logs/{wid}/{eid}/" if self.replay_log else None),
-                                "targets": body.get("targetOperatorIds") or [], "updates": {},
+                                "updates": {},
                                 "plan_uri": self.plan_uri(uid, whid, wid, eid), **Closing.new_row()}
         self.sql("dashboard", "insert into workflow_executions (vid, uid, cuid, whid, status) values "
                               "($1, $2, $3, $4, $5) returning eid",
@@ -1076,14 +1103,17 @@ class FakeTexera:
                 first = next(iter(errors.values()))["message"]
                 self.closing.close(eid, 4, (REASON_COMPILE_ERROR + first)[:REASON_CHARS], int(time.time() * 1000),
                                    never_started=True)
-            return 400, {"eid": eid, "operatorErrors": errors, "errors": []}
+            count = "1 operator has an error." if len(errors) == 1 else f"{len(errors)} operators have errors."
+            listed = "".join(f"\n{op}: {error['message']}" for op, error in errors.items())
+            return 400, {"code": 400, "message": f"The workflow does not compile: {count}{listed}", "eid": eid,
+                         "operatorErrors": errors}
         self.write_plan(eid)
         # From "3B" on a create clears nothing: the closing job's expiry replaces results.
         if not self.at("3B"):
-            self.clear_at_create(wid, cuid, eid)
+            self.clear_at_create(wid, cuid)
         elif "replaced-at-create" in self.faults:
             self.closing.expire_at_create(wid, cuid, eid)
-        return 201, {"eid": eid, "wid": wid, "computingUnitId": cuid, "planUri": self.executions[eid]["plan_uri"]}
+        return 201, {"eid": eid, "planUri": self.executions[eid]["plan_uri"]}
 
     def statistics_reach_the_unit(self, query: dict) -> bool:
         """Kubernetes until step 3's sub-part 16: the gateway sends a statistics request to
@@ -1173,43 +1203,64 @@ class FakeTexera:
         return errors
 
     def post_update(self, uid: int, eid: int, body: dict):
-        """Design 3.5."""
+        """Design 3.5, in the product's words (OperatorUpdates)."""
         e = self.executions.get(eid)
         if e is None:
-            return self.err(404, f"execution {eid} does not exist")
+            return self.err(404, f"There is no execution {eid}.")
         if e["uid"] != uid:
-            return self.err(403, f"only the creator of execution {eid} may change it")
+            return self.err(403, f"Only the user who created execution {eid} may change its operators.")
         ended = e["ended_at"] is not None if self.at("3B") else e["status"] in (3, 4, 5)
         if ended:  # from 3B on by the closing record, which the job writes a tick after the end
-            return self.err(409, f"execution {eid} has ended")
+            return self.err(409, f"Execution {eid} has ended.")
         op = body["operator"]
         if op["operatorID"] not in {o["operatorID"] for o in e["plan"]["operators"]}:
-            return self.err(404, "operator not in the plan")
+            return self.err(404, f"Execution {eid} has no operator {op['operatorID']}.")
         update_id = f"update-{len(e['updates']) + 1:04d}-4f6c"
         e["updates"][update_id] = op
-        return 200, {"updateId": update_id, "operatorId": op["operatorID"]}
+        return 201, {"updateId": update_id, "operatorId": op["operatorID"]}
 
     def start_checks(self, user: dict, eid: int, plan_uri: str, wid: int | None, cuid: int) -> str | None:
-        """Section 4 Start, steps 1-6: the refusal message, or None."""
+        """Section 4 Start, steps 1-6: why the unit refuses the start, in its words
+        (StoredExecutionStart and WorkflowService in the product), or None."""
         m = re.fullmatch(r"vfs:///(?:wh/([^/]+)/)?wid/(\d+)/eid/(\d+)/plan", plan_uri or "")
         if not m:
-            return "not an execution plan"
+            return "The request does not name an execution's plan."
         if int(m.group(3)) != eid:
-            return f"the plan is execution {m.group(3)}'s, not {eid}'s"
+            return f"The plan is execution {m.group(3)}'s, not {eid}'s."
         if wid is not None and int(m.group(2)) != wid:
-            return f"the plan belongs to workflow {m.group(2)}, not to this one"
+            return f"The plan belongs to workflow {m.group(2)}, not to this one."
         if m.group(1) and not re.fullmatch(rf"user-{user['uid']}-\d+", m.group(1)):
-            return "the plan is in another user's warehouse"
+            return "The plan is in another user's warehouse."
         e = self.executions.get(eid)
         if e is None or e["plan_uri"] != plan_uri:
-            return f"execution {eid} has no stored plan"
+            return f"Execution {eid} has no stored plan."
         if e["uid"] != user["uid"]:
-            return f"only the user who created execution {eid} may start it"
+            return f"Only the user who created execution {eid} may start it."
         if e["cuid"] != cuid:
-            return f"execution {eid} was created for computing unit {e['cuid']}, not {cuid}"
+            return f"Execution {eid} was created for computing unit {e['cuid']}, not {cuid}."
         if e["started"]:
-            return f"execution {eid} was already started"
+            return f"Execution {eid} was already started."
         return None
+
+    def refuse(self, conn: WsConn, msg: dict, why: str) -> None:
+        """The unit did not do what a session asked: it tells that session, and it alone,
+        which request and, when the request names one, which execution."""
+        if "refusal-as-error-event" in self.faults:
+            conn.send({"type": "WorkflowErrorEvent", "fatalErrors": [
+                {"type": {"name": "EXECUTION_FAILURE"}, "message": why, "details": "", "operatorId": "",
+                 "workerId": ""}]})
+            return
+        named = {"executionId": msg.get("executionId", 0)} if msg.get("type") in EXECUTION_REQUESTS else {}
+        conn.send({"type": "RequestRefusedEvent", "request": msg.get("type"), **named, "message": why})
+
+    def run_asked_for(self, held: "Run | None", msg: dict) -> "Run | None":
+        """The run a pause, a resume or a kill is for: the one the unit holds for the
+        workflow, when it is the execution the request names. A run the published images'
+        unit started (the old path) takes the old frame, which names none."""
+        if held is None:
+            return None
+        named = msg.get("executionId", 0) == held.eid
+        return held if named or not held.named or "stale-control" in self.faults else None
 
     def sync_run(self, user: dict, eid: int, body: dict):
         """Design 3.7: the unit's REST path for agents."""
@@ -1279,9 +1330,7 @@ class FakeTexera:
                     elif typ == "WorkflowStartRequest":
                         refused = self.start_checks(user, msg["executionId"], msg["planUri"], wid, cuid)
                         if refused:  # D33: that session only, no state, no statement
-                            conn.send({"type": "WorkflowErrorEvent", "fatalErrors": [
-                                {"type": {"name": "EXECUTION_FAILURE"}, "message": refused, "details": "",
-                                 "operatorId": "", "workerId": ""}]})
+                            self.refuse(conn, msg, refused)
                             continue
                         e = self.executions[msg["executionId"]]
                         self.claim_start(msg["executionId"])
@@ -1309,9 +1358,11 @@ class FakeTexera:
                     elif typ == "OperatorUpdateRequest":
                         run = self.runs.get(msg["executionId"])
                         upd = (self.executions.get(msg["executionId"]) or {}).get("updates", {}).get(msg["updateId"])
-                        if run is None or upd is None:
+                        if run is None or upd is None:  # a change that does not apply, not a refusal event
+                            why = (f"Execution {msg['executionId']} is not running here." if run is None
+                                   else f"Execution {msg['executionId']} has no change {msg['updateId']}.")
                             conn.send({"type": "ModifyLogicResponse", "opId": "", "isValid": False,
-                                       "errorMessage": f"execution {msg['executionId']} is not running here"})
+                                       "errorMessage": why})
                         else:
                             run.pending_updates.append(upd)
                             conn.send({"type": "ModifyLogicResponse", "opId": upd["operatorID"], "isValid": True,
@@ -1321,19 +1372,18 @@ class FakeTexera:
                         current.pending_updates.append(op)
                         conn.send({"type": "ModifyLogicResponse", "opId": op["operatorID"], "isValid": True,
                                    "errorMessage": ""})
-                    elif typ == "WorkflowCheckpointRequest" and current:
-                        current.checkpoints += 1
-                    elif typ == "WorkflowPauseRequest" and current:
-                        current.pause()
-                    elif typ == "WorkflowResumeRequest" and current:
-                        current.resume()
-                    elif typ == "WorkflowKillRequest":
+                    elif typ == "WorkflowCheckpointRequest":
                         if current:
-                            current.kill()
+                            current.checkpoints += 1
                         else:
-                            conn.send({"type": "WorkflowErrorEvent", "fatalErrors": [
-                                {"type": {"name": "COMPILATION_ERROR"}, "message": "workflow execution is not initialized",
-                                 "operatorId": "unknown operator"}]})
+                            self.refuse(conn, msg, "No execution of this workflow is running here.")
+                    elif typ in ("WorkflowPauseRequest", "WorkflowResumeRequest", "WorkflowKillRequest"):
+                        run = self.run_asked_for(current, msg)
+                        if run is None:
+                            self.refuse(conn, msg, f"Execution {msg.get('executionId', 0)} is not running here.")
+                        else:
+                            {"WorkflowPauseRequest": run.pause, "WorkflowResumeRequest": run.resume,
+                             "WorkflowKillRequest": run.kill}[typ]()
                     elif typ == "ResultPaginationRequest":
                         # until sub-part 17 a unit that holds no run of the workflow looks the
                         # workflow's newest execution up in Postgres; from then on the page is empty

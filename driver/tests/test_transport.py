@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_texera import FakeTexera  # noqa: E402
 from record_timing import RecordTiming  # noqa: E402
 from texera_api import ExecutionLog, TexeraApi, TexeraApiError  # noqa: E402
-from transport import (CreateRefused, CreateStartTransport, UpdateRefused,  # noqa: E402
+from transport import (CreateRefused, CreateStartTransport, RunFailed, UpdateRefused,  # noqa: E402
                        WebSocketTransport)
 from workflow import Workflow, csv_scan, python_udf, text_input  # noqa: E402
 
@@ -99,15 +99,30 @@ class CreateWsTest(FakeCase):
         self.assertEqual(["create", "created", "start"], [p for p, _ in self.phases])
         self.assertEqual(h.eid, self.phases[1][1]["eid"])
 
-    def test_target_and_replay_reach_the_body(self):
+    def test_a_replay_reaches_the_body_and_the_answers_are_the_products(self):
         wf, udf = self.plan()
-        resp = self.t.create_only(wid=self.wid, cuid=self.cuid, warehouse_id=self.whid,
-                                  logical_plan=wf.logical_plan([udf]), execution_name="x",
-                                  target_operator_ids=[udf], replay_from={"eid": 5, "interaction": "i"})
+        asked = dict(wid=self.wid, cuid=self.cuid, warehouse_id=self.whid, logical_plan=wf.logical_plan([udf]),
+                     execution_name="x")
+        resp = self.t.create_only(**asked, replay_from={"eid": 5, "interaction": "i"})
         body = self.fake.rest_log[-1]["body"]
-        self.assertEqual([udf], body["targetOperatorIds"])
         self.assertEqual({"eid": 5, "interaction": "i"}, body["replayFromExecution"])
-        self.assertEqual(400, resp.status_code)  # the fake has no execution 5
+        # the fake has no execution 5: a refusal is {code, message}, whatever its status
+        self.assertEqual((400, {"code": 400, "message": f"Workflow {self.wid} has no execution 5 to replay."}),
+                         (resp.status_code, resp.json()))
+        created = self.t.create_only(**asked)
+        self.assertEqual((201, {"eid", "planUri"}), (created.status_code, set(created.json())))
+        self.assertEqual(("created", {"eid": created.json()["eid"], "plan_uri": created.json()["planUri"],
+                                      "wid": self.wid}), self.phases[-1])
+
+    def test_a_workflow_that_does_not_compile_answers_its_operators_errors_beside_the_refusal(self):
+        wf = Workflow("w")
+        udf = wf.add("tab", "PythonUDFV2", python_udf("import tabulate", env_name="no-such-environment"))
+        resp = self.t.create_only(wid=self.wid, cuid=self.cuid, warehouse_id=self.whid,
+                                  logical_plan=wf.logical_plan([udf]), execution_name="x")
+        body = resp.json()
+        self.assertEqual((400, ["code", "eid", "message", "operatorErrors"]), (resp.status_code, sorted(body)))
+        self.assertEqual((400, [udf]), (body["code"], list(body["operatorErrors"])))
+        self.assertTrue(body["message"].startswith("The workflow does not compile: 1 operator has an error."))
 
     def test_refused_create_raises_with_status_and_body(self):
         wf, udf = self.plan()
@@ -136,6 +151,11 @@ class CreateWsTest(FakeCase):
         self.assertEqual({"type": "OperatorUpdateRequest", "executionId": h.eid, "updateId": out["updateId"]}, msg)
         h.resume()
         h.wait_for_state("Completed", timeout=30)
+        # a pause and a resume name their execution
+        controls = [w["msg"] for w in self.fake.ws_log
+                    if w["msg"]["type"] in ("WorkflowPauseRequest", "WorkflowResumeRequest")]
+        self.assertEqual([{"type": "WorkflowPauseRequest", "executionId": h.eid},
+                          {"type": "WorkflowResumeRequest", "executionId": h.eid}], controls)
         h.wait_until(lambda: bool(h.modify_completed), 10, "completed event", fail_fast=False)
         self.assertEqual([udf], h.modify_completed[0]["opIds"])
         tags = {r["tag"] for r in h.results(udf)["rows"]}
@@ -150,13 +170,60 @@ class CreateWsTest(FakeCase):
         h.wait_for_state("Completed", timeout=30)
         again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
         self.handles.append(again)
-        again.wait_until(lambda: again.error_event_count > 0, 10, "refusal", fail_fast=False)
-        self.assertIn("already started", again.fatal_errors[0]["message"])
+        again.wait_until(lambda: bool(again.refusals), 10, "refusal", fail_fast=False)
+        refusal = {"request": "WorkflowStartRequest", "executionId": h.eid,
+                   "message": f"Execution {h.eid} was already started."}
+        self.assertEqual([refusal], again.refusals)
+        self.assertEqual([refusal], again.summary()["refusals"])
+        # a refusal is not a run's error, and the session that holds the run is told nothing
+        self.assertEqual((0, []), (again.error_event_count, again.fatal_errors))
+        self.assertEqual(([], 0), (h.refusals, h.error_event_count))
         # the unit replayed the held run while the socket opened; none of it is this start's
         self.assertEqual(["Uninitialized", "Completed"], again.replayed["states"])
         self.assertEqual([], again.states)
         self.assertIsNone(again.ensure_stopped(timeout=1))
         self.assertFalse(any(w["msg"]["type"] == "WorkflowKillRequest" for w in self.fake.ws_log))
+
+    def test_a_wait_on_a_refused_start_fails_at_once_and_says_why(self):
+        wf, udf = self.plan()
+        h = self.start(wf, udf)
+        h.wait_for_state("Completed", timeout=30)
+        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
+        self.handles.append(again)
+        t0 = time.monotonic()
+        with self.assertRaisesRegex(RunFailed, f"the unit refused the WorkflowStartRequest: Execution {h.eid} was "
+                                               f"already started."):
+            again.wait_for_state("Running", timeout=30)
+        self.assertLess(time.monotonic() - t0, 5)
+
+    def test_a_pause_or_a_kill_of_another_execution_is_refused_and_the_run_goes_on(self):
+        wf, udf = self.plan()
+        h = self.start(wf, udf)
+        h.wait_until(lambda: h.output_rows(udf) >= 10, 30, "rows")
+        h.send_raw({"type": "WorkflowKillRequest", "executionId": h.eid + 1})
+        h.send_raw({"type": "WorkflowPauseRequest"})  # the frame of before: it names no execution
+        h.wait_until(lambda: len(h.refusals) == 2, 10, "the refusals", fail_fast=False)
+        self.assertEqual([
+            {"request": "WorkflowKillRequest", "executionId": h.eid + 1,
+             "message": f"Execution {h.eid + 1} is not running here."},
+            {"request": "WorkflowPauseRequest", "executionId": 0, "message": "Execution 0 is not running here."},
+        ], h.refusals)
+        self.assertEqual(("Running", []), (h.last_state, h.fatal_errors))
+        # neither refusal answers a command of this handle: its waits go on, and its own pause holds
+        h.wait_until(lambda: h.output_rows(udf) >= 20, 30, "more rows")
+        h.pause()
+        self.assertEqual("Paused", h.wait_for_state("Paused", timeout=30))
+        h.kill()
+        self.assertEqual("Killed", h.wait_for_state("Killed", timeout=30))
+        self.assertEqual({"type": "WorkflowKillRequest", "executionId": h.eid}, self.fake.ws_log[-1]["msg"])
+
+    def test_a_request_the_unit_does_not_do_without_a_run_is_refused_to_its_sender(self):
+        watcher = self.t.open_socket(self.wid, self.cuid)
+        self.handles.append(watcher)
+        watcher.send_raw({"type": "WorkflowCheckpointRequest"})
+        watcher.wait_until(lambda: bool(watcher.refusals), 10, "the refusal", fail_fast=False)
+        self.assertEqual([{"request": "WorkflowCheckpointRequest", "executionId": None,
+                           "message": "No execution of this workflow is running here."}], watcher.refusals)
 
     def test_open_waits_for_the_replay_and_keeps_it_apart(self):
         """The reviewer's probe: a second socket on a workflow whose run completed gets
@@ -214,9 +281,9 @@ class CreateWsTest(FakeCase):
         again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
         self.handles.append(again)
         self.assertEqual(1, again.replayed["error_events"])
-        again.wait_until(lambda: again.error_event_count > 0, 10, "the refusal")  # fail_fast on
-        self.assertIn("already started", again.fatal_errors[0]["message"])
-        self.assertEqual(1, again.error_event_count)
+        again.wait_until(lambda: bool(again.refusals), 10, "the refusal")  # fail_fast on
+        self.assertEqual(f"Execution {h.eid} was already started.", again.refusals[0]["message"])
+        self.assertEqual(0, again.error_event_count)
 
     def test_start_existing_as_another_user(self):
         other_token = self.api.register_user("other", "other@example.com", "pw")
@@ -228,10 +295,10 @@ class CreateWsTest(FakeCase):
         h = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=created["eid"],
                                   plan_uri=created["planUri"], token=other_token)
         self.handles.append(h)
-        h.wait_until(lambda: h.error_event_count > 0, 10, "refusal", fail_fast=False)
+        h.wait_until(lambda: bool(h.refusals), 10, "refusal", fail_fast=False)
         start = [w for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"][-1]
         self.assertNotEqual(1, start["uid"])  # the socket was the other user's
-        self.assertIn("another user's warehouse", h.fatal_errors[0]["message"])
+        self.assertEqual("The plan is in another user's warehouse.", h.refusals[0]["message"])
 
 
 class WsTest(FakeCase):
@@ -272,6 +339,9 @@ class WsTest(FakeCase):
         msg = next(w["msg"] for w in self.fake.ws_log if w["msg"]["type"] == "ModifyLogicRequest")
         self.assertEqual({"type": "ModifyLogicRequest", "operator": op}, msg)
         self.assertFalse(any(r["path"].endswith("/updates") for r in self.fake.rest_log))
+        # the old unit names no execution, so the handle knows none and sends the old frame
+        self.assertEqual({"type": "WorkflowPauseRequest"},
+                         next(w["msg"] for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowPauseRequest"))
 
     def test_ws_has_no_separate_create(self):
         with self.assertRaises(NotImplementedError):

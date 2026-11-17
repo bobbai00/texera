@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scenarios  # noqa: E402
 from fake_stack import FakeStack  # noqa: E402
-from fake_texera import FakeTexera  # noqa: E402
+from fake_texera import FAULTS, FakeTexera  # noqa: E402
 from lake import Catalog, Lake  # noqa: E402
 from scenarios import Ctx, OtherUser, run_scenario  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
@@ -129,6 +129,14 @@ class ScenarioCase(unittest.TestCase):
     def names(self, rec) -> list[str]:
         return [c.name for c in rec.checks]
 
+    def failed_with(self, key: str, fault: str) -> list[str]:
+        """Run `key` against the fake with `fault` turned on; the checks that failed."""
+        self.assertIn(fault, FAULTS)
+        self.fake.faults.add(fault)
+        rec = run_scenario(self.ctx, key)
+        self.assertEqual("FAIL", rec.outcome, f"{key} passed with {fault}")
+        return [c.name for c in rec.checks if not c.ok]
+
 
 class CreateWsScenarios(ScenarioCase):
     def test_j_modify_while_paused(self):
@@ -140,6 +148,7 @@ class CreateWsScenarios(ScenarioCase):
         rec = self.run_key("k")
         self.assertEqual(4, self.fake.executions[rec.eid]["status"])
         self.assertTrue(any("not checked without --evidence" in n for n in rec.notes))
+        self.assertIn("the 400 says so as every refusal does, in {code, message}", self.names(rec))
 
     def test_l_refusals(self):
         for key in ("l1", "l2", "l3", "l4", "l7"):
@@ -147,17 +156,38 @@ class CreateWsScenarios(ScenarioCase):
             self.assertTrue(any("no execution row was written" in n for n in self.names(rec)), key)
         for key in ("l5", "l6", "l9", "l10"):
             rec = self.run_key(key)
-            self.assertTrue(any("the row stays 0" in n for n in self.names(rec)), key)
+            self.assertTrue(any("the row stays 6" in n for n in self.names(rec)), key)  # Created
             self.assertFalse(self.fake.executions[rec.eid]["started"], key)
         rec = self.run_key("l8")
         self.assertEqual(3, self.fake.executions[rec.eid]["status"])
 
-    def test_l_messages_follow_the_design(self):
-        self.run_key("l6")
-        self.run_key("l9")
-        self.run_key("l10")
-        refusals = [w for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"]
-        self.assertEqual(3, len(refusals))
+    def test_l_refusals_are_the_units_sentences(self):
+        said = {}
+        for key in ("l5", "l6", "l9", "l10", "l8"):
+            rec = self.run_key(key)
+            said[key] = next(n for n in self.names(rec) if "gets a RequestRefusedEvent of its start" in n)
+        starts = [w["msg"] for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"]
+        self.assertEqual(6, len(starts))  # l8's first start ran
+        first, second = starts[1]["executionId"], starts[1]["executionId"] + 1  # l6's two creates
+        self.assertIn(f"\"The plan is execution {second}'s, not {first}'s.\"", said["l6"])
+        self.assertIn(f"\"Execution {starts[2]['executionId']} was created for computing unit "
+                      f"{self.ctx.cuid}, not {self.ctx.unit2_cuid}.\"", said["l9"])
+        self.assertIn("\"The plan is in another user's warehouse.\"", said["l5"])
+        self.assertIn("\"The plan is in another user's warehouse.\"", said["l10"])
+        self.assertIn(f"\"Execution {starts[4]['executionId']} was already started.\"", said["l8"])
+
+    def test_a_refusal_that_comes_as_a_runs_error_fails_the_refused_starts(self):
+        """The unit of before step 2's review answered a refused start with a WorkflowErrorEvent."""
+        for key, label in (("l5", "l5 another user's socket"), ("l8", "l8 second start")):
+            failed = self.failed_with(key, "refusal-as-error-event")
+            self.assertEqual([f"{label}: the starting socket gets a RequestRefusedEvent of its start",
+                              f"{label}: ... and no WorkflowErrorEvent (a refusal is not a run's error)"],
+                             [name.split(": \"")[0] for name in failed], key)
+
+    def test_an_unstarted_execution_that_reads_initializing_fails_a_refused_start(self):
+        """The Dashboard of before step 2's review created a row as Initializing (0)."""
+        self.assertEqual([f"l9 socket of unit {self.ctx.unit2_cuid}: the row stays 6"],
+                         self.failed_with("l9", "created-reads-initializing"))
 
     def test_m_refusals_without_replay_log(self):
         rec = self.run_key("m")
@@ -170,9 +200,22 @@ class CreateWsScenarios(ScenarioCase):
         curls = [c for c in self.unit.calls if c[0] == "curl"]
         self.assertEqual(2, len(curls))
         self.assertTrue(curls[0][-1] == "@-")
-        create = next(r for r in self.fake.rest_log if r["path"] == "/api/executions")
-        self.assertEqual(1, len(create["body"]["targetOperatorIds"]))
+        # the create is the agent service's: the part of the workflow up to the Filter, cut by
+        # the client; no operator named to cut at, and no workflow settings
+        body = next(r for r in self.fake.rest_log if r["path"] == "/api/executions")["body"]
+        self.assertEqual({"wid", "executionName", "engineVersion", "logicalPlan", "computingUnitId",
+                          "emailNotificationEnabled", "warehouseId"}, set(body))
+        self.assertEqual("agent", body["engineVersion"])
+        plan = body["logicalPlan"]
+        self.assertEqual(["CSVFileScan", "Filter"], [o["operatorType"] for o in plan["operators"]])
+        self.assertEqual(1, len(plan["links"]))
+        self.assertEqual([plan["operators"][1]["operatorID"]], plan["opsToViewResult"])
+        # the run names its target to the unit, which answers that operator's result
+        run = next(r for r in self.fake.rest_log if r["path"] == f"/api/execution/{rec.eid}/run")["body"]
+        self.assertEqual(plan["opsToViewResult"], run["targetOperatorIds"])
         self.assertEqual(3, self.fake.executions[rec.eid]["status"])
+        self.assertIn(f"a repeat of the call is refused: success false, \"Execution {rec.eid} was already "
+                      f"started.\"", self.names(rec))
 
     def test_f_and_f2(self):
         self.run_key("f")
@@ -190,6 +233,11 @@ class CreateWsScenarios(ScenarioCase):
         self.assertIn("the run fails before it starts (never Running)", self.names(rec))
         self.assertTrue(any(n.startswith("no install directory is left") for n in self.names(rec)))
         self.run_key("i")
+
+    def test_h_fails_when_a_failed_install_is_also_a_console_error(self):
+        """The unit of before step 2's review wrote the failed install to the consoles too."""
+        self.assertEqual(["the failure is the run's error only: no console holds an ERROR message of it"],
+                         self.failed_with("h", "install-failure-on-console"))
 
     def test_g_removes_an_earlier_install_of_the_same_requirements(self):
         """A unit that ran g before (a --keep stack, a rerun) holds the install; g removes
@@ -220,6 +268,33 @@ class CreateWsScenarios(ScenarioCase):
         self.assertTrue(any(r["path"] == "/api/pve/db" for r in self.fake.rest_log))
 
 
+class PauseResumeKill(ScenarioCase):
+    """d against the fake: a UDF that sleeps, as the fake engine sleeps it."""
+
+    STALE_KILL = "a kill naming another execution"
+
+    def setUp(self):
+        super().setUp()
+        self.fake.sleep_scale = 1.0  # d's bound on work done while paused counts real seconds per tuple
+        self.addCleanup(setattr, scenarios, "PAUSE_HOLD_S", scenarios.PAUSE_HOLD_S)
+        scenarios.PAUSE_HOLD_S = 0.5
+
+    def test_d_names_its_execution_and_a_kill_of_another_is_refused(self):
+        rec = self.run_key("d")
+        self.assertTrue(any(n.startswith(self.STALE_KILL) for n in self.names(rec)))
+        sent = [w["msg"] for w in self.fake.ws_log if w["msg"]["type"] != "WorkflowStartRequest"
+                and w["msg"]["type"].startswith("Workflow")]
+        self.assertEqual([("WorkflowKillRequest", rec.eid + 1_000_000), ("WorkflowPauseRequest", rec.eid),
+                          ("WorkflowResumeRequest", rec.eid), ("WorkflowKillRequest", rec.eid)],
+                         [(m["type"], m.get("executionId")) for m in sent])
+        self.assertEqual(5, self.fake.executions[rec.eid]["status"])
+
+    def test_d_fails_when_a_kill_of_another_execution_reaches_the_run(self):
+        """The unit of before step 2's review took a pause or a kill for the run it held."""
+        failed = self.failed_with("d", "stale-control")
+        self.assertTrue(failed and failed[0].startswith(self.STALE_KILL), failed)
+
+
 class ReplayScenario(ScenarioCase):
     replay_log = True
 
@@ -236,6 +311,10 @@ class WsScenarios(ScenarioCase):
         rec = self.run_key("j")
         self.assertTrue(any(w["msg"]["type"] == "ModifyLogicRequest" for w in self.fake.ws_log))
         self.assertTrue(any("checked on create-ws only" in n for n in rec.notes))
+        # the old unit takes the old frames, which name no execution
+        self.assertEqual([{"type": "WorkflowPauseRequest"}, {"type": "WorkflowResumeRequest"}],
+                         [w["msg"] for w in self.fake.ws_log if w["msg"]["type"].startswith(("WorkflowPause",
+                                                                                              "WorkflowResume"))])
 
     def test_create_ws_only_scenarios_refuse_ws(self):
         rec = run_scenario(self.ctx, "k")
