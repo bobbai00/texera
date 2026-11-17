@@ -1,0 +1,304 @@
+{
+ "area": "What changed recently and what is in flight (all steps): git history 11ab0ceed..205fe77c4 and since 2026-10-15, re-check of ten older claims, overlapping TODOs, open upstream PRs and local branches, and which service is the Dashboard service",
+ "summary": "The worktree is clean at 205fe77c4 on feat/self-contained-engine. There are 72 commits in 11ab0ceed..HEAD and 87 on the engine and service paths since Oct 15. None of them touched console, statistics, VFSURIFactory/DocumentFactory, PVE code or ExecutionsMetadataPersistService.\n\nMerged changes that matter:\n- #9049 adds output_mode and result_count to operator_port_executions, so more run state now lives in Postgres. The unit writes it on every poll.\n- #9219 moves WorkflowAccess, ExecutionResultUris, WarehouseReadGuard and TupleUtils into common, to prepare for a result-service.\n- #9054, #9058 and #9063 let the browser page any output port, including hover and pinned previews, over the unit's websocket.\n- #9315 adds a ScanFileResolver seam to WorkflowCompiler.\n- #9279 and #9339 extend the function-valued ExecutionTimeBinding (dataset and model mounts) to R and Java UDFs.\n- #5375-#5377 add OpenTelemetry to every entry point and pass the OTEL settings to units.\n- #8777 adds a NetworkPolicy for the unit pool that limits incoming traffic only.\n\nAll ten claims from the older read are still true. Two caveats:\n- Single-node and local-dev have no Envoy. /wsapi and /api/pve go straight to the unit with no auth, and the unit grants WRITE to everyone.\n- Units are also given the S3 key, AUTH_JWT_SECRET and the token of the user who created the unit.\n\nThe Dashboard service is amber's TexeraWebApplication: sbt project WorkflowExecutionService, port 8080, image texera-dashboard-service. The unit is ComputingUnitMaster in the same module, on port 8085.\n\nWork in flight that overlaps:\n- Open upstream PR #9356 adds a separate result-service that lists results from Postgres.\n- #9271 and #9272 rework ExecutionResultService.\n- The cache-reuse PRs #8731-#8734 rewrite CostBasedScheduleGenerator and ResourceAllocator, and read earlier runs' results, which conflicts with rule 5.\n- #9043 and #9234 edit AccessControlResource and ComputingUnitAccess.\n- #9452 restructures the Helm templates.\n- Locally, an unpushed 16-commit stack (feat/dashboard-dispatched-runs, 54 commits behind) does Dashboard admission, per-run tokens and PVE on the Dashboard. It also has the unit report to the Dashboard and look files up through file-service, which conflicts with rules 2 and 3.",
+ "facts": [
+  {
+   "claim": "The Dashboard service is amber's TexeraWebApplication: sbt project WorkflowExecutionService (module amber/). It serves /api/* on port 8080 (admin 8081) and initializes Postgres. It registers the dashboard REST resources: Auth, User, Workflow, WorkflowAccess, WorkflowVersion, WorkflowExecutions, Dashboard, AdminExecution, UserQuota, Warehouse and others.",
+   "where": "amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:62-84,108-114,144-163; amber/src/main/resources/web-config.yml:24,27; build.sbt:268",
+   "evidence": "Image texera-dashboard-service is built from texera-web-application.dockerfile (.github/workflows/build-and-push-images.yml:255-256). Single-node container is dashboard-service (bin/single-node/docker-compose.yml:423-443). K8s deployment is webserver, port 8080 (bin/k8s/values.yaml:228-234)."
+  },
+  {
+   "claim": "The unit is org.apache.texera.web.ComputingUnitMaster in the same amber module, on port 8085. Its image is texera-workflow-execution-coordinator. In single-node it runs as workflow-runtime-coordinator-service; in K8s, as pods computing-unit-<cuid> in namespace texera-workflow-computing-unit-pool.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:66-119; amber/src/main/resources/computing-unit-master-config.yml:22; bin/single-node/docker-compose.yml:406-420; bin/k8s/values.yaml:395-409",
+   "evidence": "build-and-push-images.yml:258-259 maps computing-unit-master to texera-workflow-execution-coordinator."
+  },
+  {
+   "claim": "Top-level services with their own sbt project: config-service (ConfigService, 9094), access-control-service (AccessControlService, 9096), computing-unit-managing-service (ComputingUnitManagingService, 8888, admin 8082), file-service (FileService, 9092), workflow-compiling-service (WorkflowCompilingService, 9090), notebook-migration-service (NotebookMigrationService, 9098) and amber (two main classes). Services with a package.json: frontend/, agent-service/ (bun, 3001), pyright-language-service/ and bin/y-websocket-server/ (shared-editing). There is no result-service directory on main.",
+   "where": "build.sbt:139-302; */src/main/resources/*-config.yaml:21; bin/dockerfiles/agent-service.dockerfile:54",
+   "evidence": "The root aggregate at build.sbt:305-326 lists 7 services and 10 common libraries."
+  },
+  {
+   "claim": "History counts: 72 commits in 11ab0ceed..HEAD (Nov 4 to Nov 16) and 87 on amber, common/workflow-*, CU manager, access-control, file-service, bin/k8s, bin/single-node and sql since Oct 15. None since Oct 15 touched ExecutionConsoleService, ExecutionStatsService, VFSURIFactory, DocumentFactory, ExecutionsMetadataPersistService, the PVE code or CostBasedScheduleGenerator.",
+   "where": "git log --since=2026-10-15 on those paths",
+   "evidence": "Per-file git log since 2026-10-01 is empty for those files."
+  },
+  {
+   "claim": "#9049 (8cfacf2f0, Nov 6) adds output_mode and result_count to operator_port_executions. The unit inserts URI plus mode when OperatorPortResultUriAvailable fires, and writes result_size plus result_count on every result poll and once more at the end. This is new Postgres run state that step 3 has to remove. Nothing reads the columns on main; open PR #9356 does.",
+   "where": "sql/updates/52.sql; sql/texera_ddl.sql:551-562; amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:92-104,486-493; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:698",
+   "evidence": "Commit body: 'Nothing reads the columns yet; that is #8995.'"
+  },
+  {
+   "claim": "#9219 (483569400, Nov 6) moved WorkflowAccess (hasReadAccess/hasWriteAccess/isOwner/...) to common/auth, and moved ExecutionResultUris, WarehouseReadGuard and TupleUtils.convertTuplesToJson to common/workflow-core. This was a prerequisite for result-service #8995, and the moved code is reusable by the Dashboard.",
+   "where": "common/auth/src/main/scala/org/apache/texera/auth/util/WorkflowAccess.scala; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/ExecutionResultUris.scala",
+   "evidence": "Commit says code was moved verbatim, behaviour unchanged."
+  },
+  {
+   "claim": "Recent frontend features read results only through the unit's websocket ResultPaginationRequest: #9054 (Oct 27) pages any output port, #9058 (Nov 5) hover preview (peekFirstRows), #9063 (Nov 12) pinned windows with a tab per port. Step 3/4 must move all of these consumers.",
+   "where": "frontend/src/app/workspace/service/workflow-result/workflow-result.service.ts:348,372; amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:96-99",
+   "evidence": "send(\"ResultPaginationRequest\", ...) is used for both paging and peek."
+  },
+  {
+   "claim": "#9315 (01cfd253b, Nov 10) passes a ScanFileResolver into WorkflowCompiler/LogicalPlan. This is the seam for compiling at the Dashboard. However, the unit still compiles at run time, and FileResolver still reads Postgres.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/ScanFileResolver.scala:27-33; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/FileResolver.scala:23-24,55,223-269; amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:120-121",
+   "evidence": "new WorkflowCompiler(workflowContext, FileResolver.forUser(uid)).compile(...)"
+  },
+  {
+   "claim": "PhysicalOp now carries executionTimeBinding, a lazy trait that is Jackson-ignored. Python, R (#9279, Nov 4) and Java (#9339, Nov 10) UDFs use it. At run time it resolves the dataset/model version from Postgres and produces mount locators. Step 1 must resolve all three UDF kinds at plan time, not only Python.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/ExecutionTimeBinding.scala:32-39; common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:164-174,216-246; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:46-74; .../udf/java/JavaUDFOpDesc.scala:136,152; .../udf/r/RUDFOpDesc.scala:135; .../udf/r/RUDFSourceOpDesc.scala:88",
+   "evidence": "FileResolver.resolveRepositoryVersion (FileResolver.scala:304) is called inside the lazy val resolved."
+  },
+  {
+   "claim": "Before a region runs, the unit asks access-control-service to mount repositories by POSTing to /api/mounts/{cuid} with the USER_JWT_TOKEN from its environment (unit-to-service call). The K8s mounter is off by default.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/RepositoryMountManager.scala:95-111; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:122,365-371; access-control-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitMountResource.scala:49-81; bin/k8s/values.yaml:422",
+   "evidence": "post(s\"$accessControlService/api/mounts/$cuid\", body, jwt)"
+  },
+  {
+   "claim": "CLAIM TRUE: PythonWorkflowWorker.choosePythonBin silently falls back to the default Python when the PVE is unset, the cuid is missing or the venv is missing. Nothing is logged.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:235-246",
+   "evidence": "...flatMap(cuid => PveManager.getPythonBin(cuid, pveName)).map(_.toString).getOrElse(fallback). getPythonBin returns None when the venv binary is absent (PveManager.scala:87-93)."
+  },
+  {
+   "claim": "CLAIM TRUE: ComputingUnitMaster opens Postgres at startup. It also registers PveResource, WorkflowExecutionsResource and SyncExecutionResource, and schedules a cleanup of expired results.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:145-149,165,181-206",
+   "evidence": "SqlServer.initConnection(StorageConfig.jdbcUrl, jdbcUsername, jdbcPassword). CI smoke-boot also assumes the unit 'boots on postgres only' (.github/workflows/build.yml:719-735)."
+  },
+  {
+   "claim": "Every unit's cleanup jobs act on expired executions across the whole deployment. The query has no cuid filter. With clean-all-execution-results-on-server-start (default false), startup marks every incomplete execution FAILED.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:97-114; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:181-203,240-256,299-307",
+   "evidence": "getExpiredExecutionsWithResultOrLog selects from WORKFLOW_EXECUTIONS by time only."
+  },
+  {
+   "claim": "CLAIM TRUE: LakeFSFileDocument reads USER_JWT_TOKEN from the environment. With a token it asks the file-service presign endpoint (Bearer). Without one it presigns directly through LakeFS. On error it falls back to a direct LakeFS fetch.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/model/LakeFSFileDocument.scala:36-40,108-166",
+   "evidence": "lazy val userJwtToken = sys.env.getOrElse(EnvironmentalVariable.ENV_USER_JWT_TOKEN, \"\").trim. #9348 (Nov 10) added LengthCheckedInputStream at line 171."
+  },
+  {
+   "claim": "CLAIM TRUE: IcebergTableWriter commits once per flush. A flush happens when the buffer reaches storage.iceberg.table.commit.batch-size (4096), and close() flushes the rest. The Python writer does the same.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/IcebergTableWriter.scala:73,87-91,99-135,141-145; common/config/src/main/resources/storage.conf:65; amber/src/main/python/core/storage/iceberg/iceberg_table_writer.py:64,84-85,109",
+   "evidence": "table.newAppend().appendFile(dataFile).commit() on every flushBuffer."
+  },
+  {
+   "claim": "CLAIM TRUE: CostBasedScheduleGenerator creates result URIs with createPortBaseURI, using workflowContext workflowId, executionId and warehouse. Stats and console URIs are created in the unit's web layer and registered in Postgres.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostBasedScheduleGenerator.scala:23,192-200; amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:79,88; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:147,157",
+   "evidence": "createPortBaseURI(workflowId=..., executionId=..., globalPortId=gpid, warehouse=workflowContext.warehouse)"
+  },
+  {
+   "claim": "CLAIM TRUE: ResourceAllocator calls physicalOp.derivePartition. derivePartition is a function-typed PhysicalOp field (Jackson-ignored), set by PhysicalOp's single-partition helper and by ProjectionOpDesc.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/resourcePolicies/ResourceAllocator.scala:192; common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:133,166,192,335-336; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/projection/ProjectionOpDesc.scala:66,86",
+   "evidence": "Some(physicalOp.derivePartition(inputPartitionInfos))"
+  },
+  {
+   "claim": "CLAIM TRUE: PveManager uses Postgres (VIRTUAL_ENVIRONMENTS via SqlServer) behind GET/POST /api/pve/db and PUT/DELETE /api/pve/db/{veid}. These run on the unit. GET /pve/system, GET /pve/pves, DELETE /pve/pves/{cuId} and DELETE /pve/{cuid}/{pveName}/packages/{pkg} take no @Auth.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResource.scala:47,54-57,75-78,93-99,125-128,136-139,163-166,194-208; amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:316-379; sql/texera_ddl.sql:307",
+   "evidence": "listPvesForUser/deletePveFromDb/updatePve/savePve call SqlServer.getInstance().createDSLContext()."
+  },
+  {
+   "claim": "CLAIM TRUE: on the unit websocket only WorkflowExecuteRequest checks WRITE, and that is the unit-access privilege, not workflow access. ModifyLogicRequest, ResultPaginationRequest and the 8 other request types (pause/resume/kill/skip/retry/checkpoint/debug/eval) have no check. wid and cuid come from the query string unchecked.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:54-56,94-136; amber/src/main/scala/org/apache/texera/web/model/websocket/request/TexeraWebSocketRequest.scala:33-44",
+   "evidence": "if (sessionState.getUserComputingUnitAccess != PrivilegeEnum.WRITE) throw ..."
+  },
+  {
+   "claim": "Identity on the unit websocket: when all four x-user-* headers are present the unit trusts them (K8s mode). Otherwise it sets WRITE for everyone and parses an optional access-token JWT. Single-node nginx forwards client headers to the unit with no auth_request, so a non-browser client could set those headers itself.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:50-97; bin/single-node/nginx.conf:121-140; common/auth/src/main/scala/org/apache/texera/auth/util/HeaderField.scala:23-26",
+   "evidence": "No auth_request anywhere in nginx.conf (grep count 0)."
+  },
+  {
+   "claim": "CLAIM TRUE: K8s units get the Postgres superuser login. texeraEnvVars sets STORAGE_JDBC_USERNAME=postgres. The manager deployment gets STORAGE_JDBC_PASSWORD from the bitnami postgres-password secret (root_password, 'superuser'). The manager copies jdbcUrl, user and password into every unit pod.",
+   "where": "bin/k8s/values.yaml:51,448-449; bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-deployment.yaml:98-104; computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:431-436",
+   "evidence": "ENV_JDBC_URL -> StorageConfig.jdbcUrl, ENV_JDBC_USERNAME -> ..., ENV_JDBC_PASSWORD -> ..."
+  },
+  {
+   "claim": "Other unit env vars set by the manager: LakeFS endpoint; S3 endpoint, region, access key and secret; Iceberg REST URI and warehouse (or the Postgres catalog credentials); file-service presign and upload endpoints; AUTH_JWT_SECRET (required, or the unit is refused with 503); USER_JWT_TOKEN, which is the creating user's token; JAVA_OPTS; OTEL settings. KubernetesClient adds CU_ID, TEXERA_MOUNT_IN_POD_ROOT and ACCESS_CONTROL_SERVICE_URL when mounting is on.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:315-333,338-342,409-447,776-781; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:166-187",
+   "evidence": "requiredComputingUnitEnvNames = FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT, FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT, AUTH_JWT_SECRET"
+  },
+  {
+   "claim": "The unit verifies tokens with the shared HS256 secret, which also signs tokens, so every unit holds a key that can mint logins. The Python worker receives the S3 key and secret, plus the Postgres catalog password in postgres mode, in its argv startup config (Base64 JSON).",
+   "where": "common/auth/src/main/scala/org/apache/texera/auth/JwtAuth.scala:35-50; amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:83-116,265-272",
+   "evidence": "\"s3AuthUsername\" -> StorageConfig.s3Username, \"s3AuthPassword\" -> StorageConfig.s3Password"
+  },
+  {
+   "claim": "CLAIM TRUE: access-control-service ext-auth checks the token and the unit privilege. It then reads workflow_computing_unit.uri and returns it as the Host header together with x-user-* headers. It authorizes /wsapi/workflow-websocket, /api/executions/{n}/stats/{n}, /api/executions/result/export and /pve routes, and logs the raw token at INFO.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:46-53,74-91,154,156-216",
+   "evidence": "logger.info(s\"token extracted from request $token\"); .header(\"Host\", targetHost) // Envoy ExtAuth: Rewrite Host"
+  },
+  {
+   "claim": "Envoy exists only in the K8s chart. It uses Envoy Gateway ext-auth against access-control /api/auth, and dynamic routes for /wsapi, ^/api/executions/\\d+/stats/\\d+$, /api/executions/result/export, /api/pve and Jupyter to a DynamicResolver backend. Single-node uses nginx: /api/pve/ and /wsapi/ go straight to the unit at :8085 with no auth. Local-dev uses the Angular proxy the same way.",
+   "where": "bin/k8s/Chart.yaml:58-60; bin/k8s/templates/base/gateway/gateway-security-policy.yaml:28-34; bin/k8s/templates/base/gateway/gateway-routes.yaml:168-193; bin/single-node/nginx.conf:121-140; frontend/proxy.config.json:73-77,88-93",
+   "evidence": "rg -i envoy in bin/single-node, bin/local-dev and proxy.config.json returns nothing."
+  },
+  {
+   "claim": "The run-statistics endpoint exists on both servers. WorkflowExecutionsResource is registered on the Dashboard and on the unit. K8s routes /api/executions/{wid}/stats/{eid} to the unit; single-node sends it to the Dashboard. Either way it reads runtime_stats_uri from Postgres and the table from the lake.",
+   "where": "amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:156; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:205; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:676-737",
+   "evidence": "The Dashboard can already serve stats from the lake, so the unit route is unnecessary."
+  },
+  {
+   "claim": "The agent-service bypasses Envoy. It POSTs directly to http://computing-unit-{cuid}.<pool-svc>:8085/api/execution/{wid}/{cuid}/run. That SyncExecutionResource endpoint only checks @RolesAllowed(REGULAR, ADMIN): there is no workflow or unit access check in it, in WorkflowService or in WorkflowExecutionService.",
+   "where": "agent-service/src/agent/tools/workflow-execution-tools.ts:261-266; bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-141",
+   "evidence": "rg WorkflowAccess|ComputingUnitAccess in those three Scala files returns nothing."
+  },
+  {
+   "claim": "The NetworkPolicy from #8777 (Nov 5) blocks only incoming traffic, only between pods of the pool namespace. Any other namespace can reach units, including agent-service and the Dashboard, and outgoing traffic is unrestricted.",
+   "where": "bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml:23-34",
+   "evidence": "policyTypes: [Ingress]; from namespaceSelector NotIn [pool namespace]"
+  },
+  {
+   "claim": "The unit creates the execution record. initExecutionService resolves the warehouse from Postgres and clears the previous execution's results, Postgres rows and Iceberg tables for the same (wid, cuid). It then inserts the workflow_executions row and sets log_location, and replay reads the earlier row.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:255,266-279,284-310,425-460; amber/src/main/scala/org/apache/texera/web/service/ExecutionsMetadataPersistService.scala:54-91",
+   "evidence": "TODO at WorkflowService.scala:270: 'change this behavior after enabling cache.' The cross-execution cleanup conflicts with rule 5."
+  },
+  {
+   "claim": "Every state change goes through ExecutionStateStore.updateWorkflowState. It writes status and last_update_time to Postgres and, since #5376 (Oct 27), calls WorkflowMetricsRecorder.onStateChange. This is where the step-3 log-table write fits.",
+   "where": "amber/src/main/scala/org/apache/texera/web/storage/ExecutionStateStore.scala:38-52",
+   "evidence": "execution.setStatus(maptoStatusCode(state)); WorkflowMetricsRecorder.onStateChange(...)"
+  },
+  {
+   "claim": "The unit manager's idle-unit sweep reads workflow_executions status, starting_time and last_update_time. When status leaves Postgres in step 3, the sweep breaks.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:188-258; sql/texera_ddl.sql:318-336",
+   "evidence": "boolOr(WORKFLOW_EXECUTIONS.STATUS.notIn(TerminalWorkflowExecutionStatus.dbStatuses: _*))"
+  },
+  {
+   "claim": "Lake layout today: four global namespaces, one per resource type (operator-port-result, operator-console-messages, workflow-runtime-statistics, operator-port-state). The table name is the URI path with / replaced by _ (wid_X_eid_Y_...). A per-user BYO warehouse adds a leading /wh/<name> segment. There is no per-execution namespace yet.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/DocumentFactory.scala:42-53,82-90; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:72-83,160-170; common/config/src/main/resources/storage.conf:52-61",
+   "evidence": "resolveNamespace(RESULT) = StorageConfig.icebergTableResultNamespace"
+  },
+  {
+   "claim": "Lakekeeper has no authentication or authorization in place. The JVM RESTCatalog has no OAuth (TODO) and gets S3 settings from the server (remote signing). The chart sets internalOpenFGA: false and the warehouse is created with sts-enabled false. Lakekeeper itself uses the postgres superuser.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:127,133-149; bin/k8s/values.yaml:169-189; bin/k8s/templates/base/lakekeeper/lakekeeper-init-job.yaml:163; bin/single-node/docker-compose.yml:291; amber/src/main/python/core/storage/iceberg/iceberg_utils.py:230-242",
+   "evidence": "#9129 (Oct 25) disabled the fsspec S3 instance cache so remote signers are not shared across tables."
+  },
+  {
+   "claim": "Result export runs on the unit, which Envoy routes /api/executions/result/export to. It calls the file-service upload endpoint, another unit-to-service call. The request carries computingUnitId with a TODO to remove it once result and compute lifecycles are separated.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:86,549-567; amber/src/main/scala/org/apache/texera/web/model/http/request/result/ResultExportRequest.scala:42",
+   "evidence": "Export is on hold per the plan decisions."
+  },
+  {
+   "claim": "The CU-manager changes since Oct 15 are #9441 (quota lookup only for K8s), #8772 (quota message), #9174 (email on admin terminate), #8986 (admin cluster-capacity endpoint plus a ClusterRole to list nodes and pods), #8890 (OwnerAccess) and #5377 (OTEL env sent to units). None changes how units are created, addressed or credentialed beyond the OTEL env.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:409-429,683-690",
+   "evidence": "git log --since=2026-10-15 -- computing-unit-managing-service"
+  },
+  {
+   "claim": "The operator_port_cache table (since #5967, Jun 30) has no runtime reader or writer outside generated jOOQ code. The open cache-reuse PRs #8731/#8732/#8733/#8734 add saved-result reads from earlier runs.",
+   "where": "sql/texera_ddl.sql:577-589; common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/cache/CacheKeyUtil.scala:62",
+   "evidence": "#8732/#8733 edit CostBasedScheduleGenerator, ResourceAllocator, Region, ScheduleGenerator, PortConfig and WorkflowContext (matchedResults). The schedule is unchanged until a lookup lands."
+  },
+  {
+   "claim": "Open upstream PR #9356 (mengw15, updated Nov 13, part of #8995 and #5363) adds a new top-level result-service Dropwizard module. It exposes GET /api/results/workflows/{wid}/latest-execution, /executions/{eid}, /executions/{eid}/operators/{op}/pages and .../statistics, and lists results 'from the database alone' using the #9049 columns. The image, Helm, gateway and frontend changes follow in later PRs.",
+   "where": "PR apache/texera#9356 (files: build.sbt, .github/workflows/build.yml, common/auth/.../WorkflowAccess.scala, common/workflow-core/.../ExecutionResultUris.scala, TupleUtils.scala, result-service/**)",
+   "evidence": "Issue #8995 'Add a result-service that reads execution results' is OPEN. Issue #5363 'Workflow results become inaccessible after CU termination' is OPEN."
+  },
+  {
+   "claim": "Open PR #9271 (per-port WorkflowResultStore; edits ExecutionResultService.scala and WorkflowResultStore.scala) and draft #9272 (stacked on it; adds portUpdates to WebResultUpdateEvent and frontend workflow-result.service.ts) change the live result path that step 3/4 replaces.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/WorkflowResultStore.scala",
+   "evidence": "gh pr view 9271/9272: updated Nov 12 / Nov 4"
+  },
+  {
+   "claim": "Other open PRs overlap files the plan edits: #9043 (agent JWT and gateway ext_authz; AccessControlResource.scala, nginx.conf, new gateway-agent-security-policy.yaml; updated Nov 15), #9234 (ComputingUnitAccess while sharing is disabled), #9452 (shares Helm templates across 17 chart files, Nov 15), #9364 (PythonWorkflowWorker/Coordinator detect a dead Python process), #9214 (PveWebsocketResource JSON packages), #9445 (SyncExecutionResource tracing span), #9417 (engine helper removal), #8969 (ModifyLogic rejection), #7994 (export rules), #8862/#8863/#8865 (least-loaded partitioner).",
+   "where": "gh pr list --repo apache/texera --state open (175 open)",
+   "evidence": "Titles and file lists come from gh pr view."
+  },
+  {
+   "claim": "Local, unpushed 16-commit stack on bb6136d8d (Nov 5), 54 commits behind HEAD: feat/dashboard-dispatched-runs plus 15 ancestor branches (refactor/run-output-registry, run-metadata-reporter, run-from-spec, feat/per-run-token, run-time-file-resolution, pve-definitions-on-dashboard, pve-missing-env-error, dashboard-result-cleanup, k8s-stats-on-dashboard, dashboard-run-admission, dashboard-run-reports, fix/final-result-update-fast-run, fix/k8s-dashboard-object-store, test/cu-postgres-tripwire, tmp/pr-9315). 143 files changed, +9073/-2805; no remote branch.",
+   "where": "git log bb6136d8d..feat/dashboard-dispatched-runs (e3bcb8ebe..0011546c1); worktree /Users/jiadongb/Desktop/projects/texera-worktrees/cu-dashboard-dispatch",
+   "evidence": "It adds POST /api/runs with a signed ExecutionSpec, RunToken, PUT /api/runs/{eid}/state and POST outputs/release (unit-to-Dashboard reports), file-service /api/resolve (unit-to-file-service), PVE definitions served by the Dashboard, a 'fail a run whose Python environment is missing' change, and the ComputingUnitPostgresUseSpec tripwire."
+  },
+  {
+   "claim": "Uncommitted step-0 work exists in a sibling worktree: untracked proofs/step0/{envoy-route,run-token,iceberg-commits} and IcebergCommitBench.scala, on branch spike/sce-step0-proofs at 205fe77c4.",
+   "where": "/Users/jiadongb/Desktop/projects/texera-worktrees/sce-step0-proofs",
+   "evidence": "git status --short shows only untracked paths."
+  },
+  {
+   "claim": "Overlapping TODOs in code: clear previous results 'after enabling cache'; result export computingUnitId 'until result and compute are unbundled'; REST catalog OAuth; a 500 ms sleep in sync execution waiting for result caching; 'merge this logic to the server-side' in the CU cleanup; first-port-only results; 'tie results to an execution ID instead of a workflow ID' in the frontend.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:270; amber/src/main/scala/org/apache/texera/web/model/http/request/result/ResultExportRequest.scala:42; common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:127; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:304; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:262; amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:359; frontend/src/app/workspace/component/result-panel/result-panel.component.ts:350",
+   "evidence": "rg TODO|FIXME filtered for result/execution/unit"
+  },
+  {
+   "claim": "Websocket models were consolidated by #9265 (Nov 4) and #9304 (Nov 8). All request types now live in TexeraWebSocketRequest.scala and responses in TexeraWebSocketResponse.scala. Packages and the wire format are unchanged, but older branches that touch the deleted single-class files will conflict.",
+   "where": "amber/src/main/scala/org/apache/texera/web/model/websocket/request/TexeraWebSocketRequest.scala:33-67; amber/src/main/scala/org/apache/texera/web/model/websocket/response/TexeraWebSocketResponse.scala",
+   "evidence": "19 + 6 single-class files deleted"
+  },
+  {
+   "claim": "SECURITY.md currently states that the platform does not isolate app secrets from UDF code in the same pod. Step 5 changes this, so the docs need an update.",
+   "where": "SECURITY.md:223,232",
+   "evidence": "'Isolation of application secrets from UDF code executing within the same process or pod' is listed as not guaranteed."
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "all",
+   "change": "Branch from 205fe77c4, not from the local stack (54 commits behind). Reuse only pieces that fit the rules: ExecutionAdmission/POST /api/runs access checks, RunToken, PVE definitions on the Dashboard, the missing-environment failure, the ComputingUnitPostgresUseSpec tripwire and the fast-run final-result fix. Do not port DashboardExecutionReporter (unit to Dashboard) or RunFileService//api/resolve (unit to file-service); they break rules 2 and 3.",
+   "where": "feat/dashboard-dispatched-runs stack (e3bcb8ebe, 7b894c3d9, 53fba1c01, ed54f2b90, 12bfe1686, 05a5ba888, 37942bbe8, 9909ca167, 0011546c1)"
+  },
+  {
+   "step": "1",
+   "change": "Make derivePartition, propagateSchema, opExecInitInfo and executionTimeBinding data. Resolve the dataset/model versions and mount locators for the Python, R and Java UDFs (all three use UdfUiParameterSupport.executionBinding) at plan time on the Dashboard. Then remove the unit's FileResolver/Postgres lookups and RepositoryMountManager's call to access-control /api/mounts.",
+   "where": "common/workflow-core/.../PhysicalOp.scala:164-246; .../ExecutionTimeBinding.scala; common/workflow-operator/.../udf/UdfUiParameterSupport.scala:46-74; .../RepositoryMountManager.scala:95-111; amber/.../RegionExecutionManager.scala:122,365-371"
+  },
+  {
+   "step": "1",
+   "change": "Expect conflicts with the open cache-reuse PRs (#8731/#8732/#8733/#8734) in CostBasedScheduleGenerator, ResourceAllocator, Region, ScheduleGenerator, PortConfig and WorkflowContext. Their reading of earlier runs' saved results needs a rule-5 design decision before either lands.",
+   "where": "amber/.../scheduling/CostBasedScheduleGenerator.scala:192-200; amber/.../resourcePolicies/ResourceAllocator.scala:192"
+  },
+  {
+   "step": "2",
+   "change": "Move execution creation off the unit. Today WorkflowService.initExecutionService inserts the row, resolves the warehouse, clears the previous run and sets log_location. The new POST /executions on the Dashboard must check workflow READ/WRITE and unit WRITE, which neither the websocket path nor SyncExecutionResource checks today. Switch agent-service from EXECUTION_ENDPOINT_TEMPLATE (direct pod) to Dashboard create, then start through Envoy.",
+   "where": "amber/.../web/service/WorkflowService.scala:233-310; amber/.../web/resource/SyncExecutionResource.scala:134-190; agent-service/src/agent/tools/workflow-execution-tools.ts:261-266; bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61"
+  },
+  {
+   "step": "2",
+   "change": "Move the PVE DB endpoints (/pve/db*) to the Dashboard and delete the unit's environment endpoints, including the unauthenticated /pve/pves, /pve/pves/{cuId} and /pve/{cuid}/{pve}/packages/{pkg}. Replace the silent choosePythonBin fallback with install-on-first-sight from the plan, or a hard failure. Coordinate with open PR #9214 (PveWebsocketResource).",
+   "where": "amber/.../pythonvirtualenvironment/PveResource.scala; PveManager.scala:316-379; PythonWorkflowWorker.scala:235-246; nginx.conf:121-125; proxy.config.json:73-77; gateway-routes.yaml:181; AccessControlResource.scala:49-53"
+  },
+  {
+   "step": "3",
+   "change": "Replace the Postgres writes in ExecutionStateStore.updateWorkflowState with the log-table append, keeping the WorkflowMetricsRecorder hook. Remove persistOperatorPortResultUri, updateResultSizeAndCount, the console/stats URI and size registrations, and the #9049 columns (output_mode, result_count). Re-point the CU-manager idle sweep and the unit's expired-result cleanup (which today covers all executions) to the Dashboard timer job that reads the lake.",
+   "where": "amber/.../web/storage/ExecutionStateStore.scala:38-52; ExecutionResultService.scala:92-104,486-493; ExecutionStatsService.scala:79-88; ExecutionConsoleService.scala:147-157; ComputingUnitManagingResource.scala:188-258; ComputingUnitMaster.scala:181-307; sql/texera_ddl.sql:318-336,540-562"
+  },
+  {
+   "step": "3",
+   "change": "Decide how to align with open PR #9356 (a separate result-service that lists results from Postgres #9049 columns) and with #9271/#9272 (live per-port results). Either build 'result service reads the lake' on top of #9356 with lake-based listing, or put it in the Dashboard and tell the author. Also move the frontend's websocket-based paging, peek and pinned windows (workflow-result.service.ts:348,372) to that service.",
+   "where": "PR apache/texera#9356; frontend/src/app/workspace/service/workflow-result/workflow-result.service.ts"
+  },
+  {
+   "step": "4",
+   "change": "Add Envoy to single-node (replace or front nginx) and to local-dev (in place of the Angular proxy's /wsapi and /api/pve routes to :8085). Replace the unit's ServletAwareConfigurator trust in x-user-* headers, and its single-node 'WRITE for everyone', with a check of the unit's key. Change access-control ext-auth to swap the login token for the unit key. Stop logging the raw token (AccessControlResource.scala:154). Coordinate with open PRs #9043 and #9234.",
+   "where": "amber/.../web/ServletAwareConfigurator.scala:50-97; access-control-service/.../AccessControlResource.scala:74-216; bin/single-node/nginx.conf; frontend/proxy.config.json; bin/k8s/templates/base/gateway/*"
+  },
+  {
+   "step": "4",
+   "change": "Remove the unit's dashboard-style resources (WorkflowExecutionsResource and SyncExecutionResource registrations) and the Envoy route for /api/executions/{wid}/stats/{eid}; the Dashboard already serves stats from the lake in single-node.",
+   "where": "amber/.../ComputingUnitMaster.scala:205-206; bin/k8s/templates/base/gateway/gateway-routes.yaml:172-178"
+  },
+  {
+   "step": "5",
+   "change": "Stop putting these into unit env: JDBC URL, user and password; the S3 key and secret; AUTH_JWT_SECRET; USER_JWT_TOKEN; LakeFS endpoint. Stop passing the S3 key and Postgres catalog password to the Python worker in argv. Turn on Lakekeeper OpenFGA and give the REST catalog auth (IcebergUtil TODO). Move from four global namespaces to one per execution (DocumentFactory.resolveNamespace/sanitizeURIPath, VFSURIFactory, Python decode_uri). Tighten the pool NetworkPolicy: incoming traffic from Envoy only, outgoing to the lake and object store only. Expect conflicts with PR #9452's Helm template refactor, and update SECURITY.md.",
+   "where": "ComputingUnitManagingResource.scala:315-347,431-447,776-781; KubernetesClient.scala:166-187; PythonWorkflowWorker.scala:83-116; IcebergUtil.scala:127-149; DocumentFactory.scala:42-90; values.yaml:173,448-449; workflow-computing-units-network-policy.yaml; SECURITY.md:223,232"
+  },
+  {
+   "step": "5",
+   "change": "Update the CI smoke-boot step for computing-unit-master, which asserts the unit 'boots on postgres only', once the unit no longer opens Postgres.",
+   "where": ".github/workflows/build.yml:719-735"
+  },
+  {
+   "step": "6",
+   "change": "Local units are stored with a user-supplied URI and K8s units with a pod URI, and access-control routes on that recorded URI. The platform interface must keep providing an address that Envoy can route to. Curated images (iid) and the K8s-only quota check live in the manager.",
+   "where": "ComputingUnitManagingResource.scala:582-781; AccessControlResource.scala:188-216; sql/texera_ddl.sql:100"
+  }
+ ],
+ "open_questions": [
+  "Is result reading meant to live in the Dashboard service (rule 3), or should the plan adopt the separate result-service module from open PR #9356 (which lists results from Postgres #9049 columns, contrary to step 3)?",
+  "What happens to the local unpushed stack feat/dashboard-dispatched-runs (16 commits, 54 behind)? Abandon it, or cherry-pick the parts that fit the rules (admission, RunToken, PVE on Dashboard, tripwire)?",
+  "How should cache reuse (#5881; open PRs #8731-#8734, which read an earlier run's saved results) work under rule 5 ('a unit can reach only the namespace of the execution it is running')?",
+  "Do per-user BYO warehouses (the /wh/<name> URI segment and user_warehouse.whid on workflow_executions) stay? A per-execution namespace must then exist inside the user's warehouse, and the Dashboard must create it there through LakekeeperClient.",
+  "Should the LakeFS FUSE mount path (mounter, access-control /api/mounts) be kept and requested by the platform or Dashboard instead of the unit, or replaced by presigned links in the plan?",
+  "Single-node identity headers: is it acceptable to keep nginx until Envoy lands, given that the unit trusts client-supplied x-user-* headers and grants WRITE to everyone there?"
+ ],
+ "risks": [
+  "Merge conflicts with active upstream PRs on the same files: ExecutionResultService/WorkflowResultStore (#9271, #9272), CostBasedScheduleGenerator/ResourceAllocator/WorkflowContext (#8731-#8734), AccessControlResource/nginx.conf/gateway (#9043), ComputingUnitAccess (#9234), Helm templates (#9452), PythonWorkflowWorker/Coordinator (#9364), PveWebsocketResource (#9214), SyncExecutionResource (#9445).",
+  "#9049 just added more run state to Postgres (output_mode, result_count), and #9356 depends on it. Removing those columns in step 3 will break that PR unless it is coordinated.",
+  "The frontend now has three result consumers on the unit websocket (result panel, hover preview, pinned windows with per-port tabs). Moving paging off the unit touches all of them.",
+  "Units hold the HS256 signing secret, the S3 root key and the Postgres superuser password today. Until step 5 lands, any UDF can mint logins and read or write any table, and SECURITY.md documents this as accepted.",
+  "The agent-service reaches unit pods directly and SyncExecutionResource has no workflow or unit access check. Gating it behind the Dashboard and Envoy changes the agent's request flow and the K8s env (EXECUTION_ENDPOINT_TEMPLATE).",
+  "Every unit runs deployment-wide expired-result cleanup, and the unit clears the previous run's tables. Narrowing unit permissions (step 5) before moving these jobs to the Dashboard (step 3) would make them fail silently, since they log and continue."
+ ]
+}

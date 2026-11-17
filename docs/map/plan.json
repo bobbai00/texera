@@ -1,0 +1,231 @@
+{
+ "area": "Step 1: the physical plan and the compiler (upstream main 205fe77c4, worktree self-contained-engine)",
+ "summary": "The engine core already runs on a PhysicalPlan alone: AmberClient takes only a context and a plan. In a normal run the plan never leaves the JVM; it is serialized only inside Kryo checkpoints. Most of PhysicalOp is already data. OpExecInitInfo is a protobuf oneof with two variants and no function variants; ports, links and ids are protobuf; PartitionInfo has Jackson subtypes. Three fields are not data:\n- derivePartition is a Scala function. Only ResourceAllocator calls it, at run time, during region planning. It has 13 setters, all constants except Projection and the pass-through default.\n- propagateSchema is a closure called only at compile time. Its results are stored in each port as Either[Throwable, Schema].\n- executionTimeBinding is a lazy closure on UDFs that have dataset or model UiParameters. It is forced on the unit: a Postgres lookup with no read check, a mount path built from the unit's environment, and a mount request to access-control-service.\n\nAssumptions in the brief that do not hold:\n- amber has no compiler of its own. It calls the shared WorkflowCompiler in Strict mode, on the unit, after inserting the execution row.\n- Port storage URIs are created by the coordinator's scheduler at run time, not by the compiler.\n- The compiling service does return a physical plan, but as lossy Jackson JSON: 8 fields are ignored and the workflow id is 0. Nothing reads it.\n- No code reads a plan back from JSON except one test.\n\nAt run time the logical plan is used only to change an operator while paused (one operator is recompiled on the unit). Also: one field nothing reads, and the sync API's sub-DAG.\n\nScan sources are resolved at compile time (Postgres plus an access check). FileLister and FileScan-from-input are resolved on the unit at run time with no read check. The cost estimator and the CSV executor also query Postgres.\n\nMinimal path:\n1. Turn derivePartition into an ADT.\n2. Resolve the bindings at plan time into locators plus final code.\n3. Store ports with their resolved schemas.\n4. Add a versioned codec (protobuf messages plus scalapb-json4s, already a dependency). Its header carries the ids, the warehouse and WorkflowSettings, including outputPortsNeedingStorage.\n5. Run the read-back plan on today's execution path and compare results.",
+ "facts": [
+  {
+   "claim": "PhysicalOp has 17 constructor fields. Data: id/workflowId/executionId (protobuf ids), opExecInitInfo (protobuf oneof), parallelizable, locationPreference (sealed objects), partitionRequirement: List[Option[PartitionInfo]], isOneToManyOp, requiresMaterializedExecution, isLoopStart, suggestedWorkerNum: Option[Int], pveName: String. Not data: derivePartition: List[PartitionInfo] => PartitionInfo (line 192), propagateSchema: SchemaPropagationFunc wrapping a Scala function (line 200; class at line 47), and executionTimeBinding: Option[ExecutionTimeBinding] (line 221). inputPorts/outputPorts are Map[PortIdentity, (port, List[PhysicalLink], Either[Throwable, Schema])], so they hold Throwables (lines 195-198).",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:175"
+  },
+  {
+   "claim": "Jackson ignores 8 PhysicalOp fields: opExecInitInfo, derivePartition, inputPorts, outputPorts, propagateSchema, locationPreference, partitionRequirement and executionTimeBinding. Any JSON of a PhysicalOp therefore lacks executor info, ports, schemas, partitioning and placement.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:163"
+  },
+  {
+   "claim": "OpExecInitInfo is already pure data: a protobuf oneof with exactly two variants plus scalapb's Empty. There is no function-valued variant anywhere in the code. Languages in use: python, java (JavaUDFOpDesc.scala:118), r-tuple and r-table (RUdfUiParameterSupport.scala:34). descString is the operator descriptor serialized to JSON (e.g. ProjectionOpDesc.scala:60-63), and executors parse it back.",
+   "where": "common/workflow-core/src/main/protobuf/org/apache/texera/amber/core/executor.proto:31",
+   "evidence": "OpExecWithClassName{className, descString}; OpExecWithCode{code, language}"
+  },
+  {
+   "claim": "These are protobuf types with preserve_unknown_fields false: PortIdentity, GlobalPortIdentity, InputPort (dependencies), OutputPort (blocking, an OutputMode enum, reuseStorage) and PhysicalLink. The identity types are protobuf too (virtualidentity.proto:30-55).",
+   "where": "common/workflow-core/src/main/protobuf/org/apache/texera/amber/core/workflow.proto:31"
+  },
+  {
+   "claim": "PartitionInfo is a sealed class with Jackson @JsonTypeInfo(\"type\") and six subtypes (hash, range, single, oneToOne, broadcast, none): plain data. LocationPreference is a sealed trait with two objects, PreferCoordinator and RoundRobinPreference, and no Jackson annotations (LocationPreference.scala:23-33).",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PartitionInfo.scala:28"
+  },
+  {
+   "claim": "PhysicalPlan is PhysicalPlan(operators: Set[PhysicalOp], links: Set[PhysicalLink]). operatorMap, dag and maxChains are derived @transient lazy vals (lines 44-60). Every link is stored twice: in plan.links and inside both endpoint ops' port tuples. addLink adds it to both and re-runs schema propagation on the target op (lines 168-180).",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalPlan.scala:39"
+  },
+  {
+   "claim": "Where derivePartition is set:\n- Default `inputParts => inputParts.head` (PhysicalOp.scala:192).\n- manyToOnePhysicalOp sets `_ => SinglePartition()` (PhysicalOp.scala:133). StableMergeSortOpDesc.scala:55 and UrlVizOpDesc.scala:62 keep it.\n- Projection, ProjectionOpDesc.scala:66 with the function at lines 86-99: a non-empty Hash or Range input is kept, an empty one becomes Unknown, anything else passes through.\n- HashPartition constants: SymmetricDifferenceOpDesc.scala:47, DifferenceOpDesc.scala:44, IntersectOpDesc.scala:44, DistinctOpDesc.scala:44, AggregateOpDesc.scala:131 (groupByKeys), HashJoinOpDesc.scala:149 (probe key).\n- UnknownPartition constants: JavaUDFOpDesc.scala:128 and 145, RUDFOpDesc.scala:129, DualInputPortsPythonUDFOpDescV2.scala:144, PythonUDFOpDescV2.scala:171.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:335"
+  },
+  {
+   "claim": "derivePartition is called only at run time, inside the coordinator: ResourceAllocator.propagatePartitionRequirement (line 156) calls it, allocate calls that at line 77, and the cost estimator calls allocate during the region-plan search. ScheduleGenerator.scala:38 builds the allocator. Nothing calls it at compile time.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/resourcePolicies/ResourceAllocator.scala:192",
+   "evidence": "Some(physicalOp.derivePartition(inputPartitionInfos))"
+  },
+  {
+   "claim": "Where propagateSchema is set:\n- The default identity (PhysicalOp.scala:200).\n- 40 withPropagateSchema calls in 37 operator files. Scan sources call sourceSchema() inside the closure (e.g. CSVScanSourceOpDesc.scala:83-85).\n- PythonOperatorDescriptor.scala:65 wraps getOutputSchemas for every Python-generated operator (68 classes define generatePythonCode). PythonVisualizationOpDesc.scala:37-40 fixes the schema to html-content.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/PythonOperatorDescriptor.scala:65"
+  },
+  {
+   "claim": "propagateSchema.func is called only at compile time:\n- PhysicalOp.scala:497, reached from WorkflowCompiler.scala:301 and from PhysicalPlan.addLink (PhysicalPlan.scala:174) via WorkflowCompiler.scala:305.\n- PhysicalPlan.propagateSchema (PhysicalPlan.scala:365-388), reached only from LogicalOp.getExternalOutputSchemas (LogicalOp.scala:523-543), which only tests call.\n\nNo amber main code calls it. The engine reads only the stored Right(schema) values: RegionExecutionManager.scala:519, 547 and 669.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:497"
+  },
+  {
+   "claim": "executionTimeBinding is set through UdfUiParameterSupport.executionBinding (lines 46-75) at PythonUDFOpDescV2.scala:178, DualInputPortsPythonUDFOpDescV2.scala:171, PythonUDFSourceOpDescV2.scala:114, RUDFOpDesc.scala:135, RUDFSourceOpDesc.scala:88 and JavaUDFOpDesc.scala:119 (applied at 136 and 152). It is Some only when a UiParameter's inputType is a resource. The only resources are MODEL and DATASET (ui-parameter-types.json); no other operator has resource UiParameters. At compile time the logical version path is injected as the value (lines 41-44).",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:46"
+  },
+  {
+   "claim": "executionTimeBinding is forced only at run time, on the unit:\n- RegionExecutionManager.scala:371 calls mountLocators, then ensureMounted.\n- RegionExecutionManager.scala:484 calls executableOpExecInitInfo and puts it into InitializeExecutorRequest.\n- ExecutionReconfigurationService.scala:123-124, on resume.\n\nForcing runs FileResolver.resolveRepositoryVersion (Postgres, reader=None, FileResolver.scala:304-331) and mountPointOf (needs TEXERA_MOUNT_IN_POD_ROOT, RepositoryMountManager.scala:78). Mounting POSTs to access-control-service /api/mounts/{cuid} with the user's JWT (RepositoryMountManager.scala:118).",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:58"
+  },
+  {
+   "claim": "How executor info reaches workers: initExecutors sends each worker InitializeExecutorRequest{totalWorkerCount, opExecInitInfo, isSource, loopStartPortUris} as an AsyncRPC ControlInvocation (controlcommands.proto:253-272). Reconfiguration sends UpdateExecutorRequest{targetOpId, newExecInitInfo} (proto:274-277). Schemas travel separately in AssignPortRequest as map<string,string> (proto:240-246, RegionExecutionManager.scala:579), which AssignPortHandler.scala:44 parses with Schema.fromRawSchema.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:475"
+  },
+  {
+   "claim": "Worker actors are created from Props that carry only the WorkerConfig and replay config, not executor info, and are deployed to a remote node with Deploy(RemoteScope(address)). PreferCoordinator places them on the coordinator node; RoundRobin uses workerIndex % addresses. isPythonBased (PhysicalOp.scala:256-263) picks PythonWorkflowWorker.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/common/ExecutorDeployment.scala:62"
+  },
+  {
+   "claim": "Transport: Pekko binds java.io.Serializable to Kryo, and Java serialization is off. ScalaPB messages and WorkflowFIFOMessage (WorkflowMessage.scala:39) cross JVMs through Kryo. AmberKryoInitializer.scala:29-32 registers ClosureSerializer and SerializedLambda. Python workers receive protobuf bytes over Arrow Flight (PythonProxyClient.scala:179-180) and read op_exec_with_code (initialize_executor_handler.py:28-31).",
+   "where": "common/config/src/main/resources/cluster.conf:43"
+  },
+  {
+   "claim": "Worker-side instantiation: InitializeExecutorHandler.scala:38-47 calls setupExecutor.\n- OpExecWithClassName goes to ExecFactory.newExecFromJavaClassName (reflection on constructors (String), (Int,Int) or (String,Int,Int); loop-variable sidecar binding; ExecFactory.scala:37-113).\n- OpExecWithCode goes to newExecFromJavaCode, which compiles Java at run time (ExecFactory.scala:28-34).\n- The restore path builds it again from the cached request (SerializationManager.scala:39-55).",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/worker/DataProcessorRPCHandlerInitializer.scala:82"
+  },
+  {
+   "claim": "The physical plan is never serialized in a normal run. AmberClient sends InitializeRequest(context, plan, config) to a local ClientActor (AmberClient.scala:52-72), which creates the Coordinator as a local child (ClientActor.scala:101-105), and Coordinator.initState calls workflowScheduler.updateSchedule(physicalPlan) (Coordinator.scala:118). The only full-plan serialization is Kryo of the CoordinatorProcessor, which holds WorkflowScheduler.physicalPlan (WorkflowScheduler.scala:34), in global checkpoints. It is read back at Coordinator.scala:224.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/promisehandlers/TakeGlobalCheckpointHandler.scala:90"
+  },
+  {
+   "claim": "amber has no compiler of its own. WorkflowExecutionService.executeWorkflow calls the shared WorkflowCompiler with FileResolver.forUser(uid) in Strict mode, then Workflow.fromCompilationResult (Workflow.scala:40-55). amber and workflow-compiling-service both depend on WorkflowCompiler (build.sbt:247-252, 268-269). The compile runs in the unit's JVM: ComputingUnitMaster registers WorkflowWebsocketResource and SyncExecutionResource (ComputingUnitMaster.scala:132, 206).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:120"
+  },
+  {
+   "claim": "WorkflowCompiler.compile (lines 364-410), in order:\n1. LogicalPlan(pojo) (line 377).\n2. resolveScanSourceOpFileName (line 380).\n3. expandLogicalPlan, per operator: normalizeStateReferences (277), getPhysicalPlan(wid, eid) (278), unbindableStateReferences (281), propagateSchema plus addLink (301-305), Python codegen-error check (308-321), outputPortsNeedingStorage (326-341).\n4. collectOutputSchemaFromPhysicalPlan, which checks only non-internal output ports (198).\n5. Strict mode throws (394-396).\n\nThe result is WorkflowCompilationResult(logicalPlan, physicalPlan: Option, schemas, errors, outputPortsNeedingStorage) (lines 225-231).",
+   "where": "common/workflow-compiler/src/main/scala/org/apache/texera/common/compiler/WorkflowCompiler.scala:364"
+  },
+  {
+   "claim": "Where the ids are stamped. On the unit, WorkflowService builds the context with wid and cuid (lines 229-231, 261), sets the warehouse (262), and inserts the execution row in Postgres to get the eid (272-279). Compilation then stamps wid and eid onto every op through getPhysicalPlan (WorkflowCompiler.scala:278). The editing path uses WorkflowIdentity(0) and the default ExecutionIdentity(1) (WorkflowCompilationResource.scala:73, WorkflowContext.scala:30-31). The per-op ids are read at run time: worker ids use physicalOp.workflowId and the large-binary base URI uses physicalOp.executionId (WorkerConfig.scala:47, 50).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:272"
+  },
+  {
+   "claim": "Compile-time file resolution applies only to ScanSourceOpDesc subclasses: CSV, CSVOld, ParallelCSV, JSONL, Arrow and FileScanSource. FileResolver.forUser (FileResolver.scala:56) looks up the dataset or model through SqlServer with a ResourceAccess read check (lines 200-251, 261-296). The resulting URI, dataset:///repo/versionHash/path or model:///..., is written into the descriptor (ScanSourceOpDesc.scala:116-118), and so into descString. Names that are already resolved are refused (FileResolver.scala:76-78).",
+   "where": "common/workflow-compiler/src/main/scala/org/apache/texera/common/compiler/model/LogicalPlan.scala:142"
+  },
+  {
+   "claim": "Compiling reads the data files. Schema inference opens the resolved file (CSVScanSourceOpDesc.scala:102, JSONLScanSourceOpDesc.scala:258, ParallelCSVScanSourceOpDesc.scala:189, CSVOldScanSourceOpDesc.scala:176, ArrowSourceOpDesc.scala:175) through LakeFSFileDocument. That calls the file service's presign endpoint with the user's JWT from the environment, or LakeFS directly (LakeFSFileDocument.scala:36-54, 121-140). It also reads site_settings csv_parser_max_columns from Postgres (CSVScanSourceOpDesc.scala:111, CSVScanSourceOpExec.scala:130-131).",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/csv/CSVScanSourceOpDesc.scala:102"
+  },
+  {
+   "claim": "Source executors recompute their own schema from descString at run time instead of using the plan's schema: CSVScanSourceOpExec.scala:43 re-reads the file, and likewise ParallelCSVScanSourceOpExec.scala:42, CSVOldScanSourceOpExec.scala:39, JSONLScanSourceOpExec.scala:46 and the PostgreSQL, MySQL and AsterixDB source executors.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/csv/CSVScanSourceOpExec.scala:43"
+  },
+  {
+   "claim": "Port storage URIs are decided at run time by the coordinator, not by the compiler. The compiler only lists outputPortsNeedingStorage: terminal ops plus opsToViewResult (WorkflowCompiler.scala:260-262). Workflow.fromCompilationResult copies that list into context.workflowSettings (Workflow.scala:51-53). createRegions then creates createPortBaseURI(wid, eid, gpid, warehouse) for materialized edges and viewed ports (lines 180-199) and attaches reader URIs in pass 2 (lines 233-265). The URI format is vfs:///[wh/<n>/]wid/<w>/eid/<e>/globalportid/<gp> (VFSURIFactory.scala:160-169).",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostBasedScheduleGenerator.scala:194"
+  },
+  {
+   "claim": "The workflow-compiling-service response is WorkflowCompilationSuccess(physicalPlan: PhysicalPlan, operatorOutputSchemas) or WorkflowCompilationFailure(operatorErrors, operatorOutputSchemas), as Jackson JSON with a \"type\" discriminator. It uses Dropwizard's mapper plus registerWorkflowModules (WorkflowCompilingService.scala:46). So the response does contain the physical plan, but in the lossy form described above, with wid 0. I did not run the service to capture the exact JSON.",
+   "where": "workflow-compiling-service/src/main/scala/org/apache/texera/service/resource/WorkflowCompilationResource.scala:50"
+  },
+  {
+   "claim": "No consumer reads the returned plan. The frontend stores it (workflow-compiling.service.ts:106-109) under a stale TS type that lists sourceOperator/sinkOperator and no executor or ports (frontend/src/app/common/type/physical-plan.ts:27-41). agent-service types it as any (agent-service/src/api/compile-api.ts:40). The only code that reads a PhysicalPlan back from JSON is a test, and the operators it gets have no opExecInitInfo or ports.",
+   "where": "workflow-compiling-service/src/test/scala/org/apache/texera/service/resource/WorkflowCompilationResourceSpec.scala:177"
+  },
+  {
+   "claim": "Existing serialization:\n- LogicalPlanPojo is Jackson JSON, with LogicalOp polymorphism on \"operatorType\" (LogicalOp.scala:171-175, LogicalPlanPojo.scala:24-29).\n- JSONUtils.objectMapper registers a PortIdentity key serde \"id_internal\" and a mixin for scalapb sealed oneofs (lines 45, 76-83). JSONUtilsSpec.scala:224-234 round-trips OpExecWithCode.\n- Schema has @JsonCreator (Schema.scala:31) and toRawSchema/fromRawSchema (106, 198).\n- scalapb-json4s is declared (common/workflow-core/build.sbt:110) but used nowhere.\n- No Jackson serde exists for scalapb enums (OutputPort.OutputMode) or for OpExecInitInfo polymorphism.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/JSONUtils.scala:76"
+  },
+  {
+   "claim": "CacheKeyUtil serializes a sub-DAG to deterministic JSON (sorted ops and links, opExec as proto text, schema strings) and hashes it, but no main code calls it. LogicalPlan.apply drops opsToReuseResult (LogicalPlan.scala:60-64), and reused_from_cache is only aggregated, never set true (ExecutionUtils.scala:87). Cache reuse does not run.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/cache/CacheKeyUtil.scala:72"
+  },
+  {
+   "claim": "The logical plan's only real run-time use is changing an operator while paused. modifyOperatorLogic reads workflow.logicalPlan.getOperator (line 66) and operatorsInsideLoopBlocks (104), then recompiles the edited op on the unit through runtimeReconfiguration and getPhysicalOp (75-81). Overrides: MapOpDesc.scala:30, FilterOpDesc.scala:30, LimitOpDesc.scala:69, PythonUDFOpDescV2.scala:215, JavaUDFOpDesc.scala:190, RUDFOpDesc.scala:172. It then sends UpdateExecutorRequest(op.id, executableOpExecInitInfo) (120-125). StateTransferFunc is not sent (111-112).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionReconfigurationService.scala:66"
+  },
+  {
+   "claim": "WorkflowService.lastCompletedLogicalPlan is written but never read; WorkflowServiceSpec.scala:147-152 says so explicitly. SyncExecutionResource, the agent API on the unit, cuts a sub-DAG from the logical plan before compiling (lines 172-173, 887-929) and reads op.operatorInfo.inputPorts while the run is in progress (218-221).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:180"
+  },
+  {
+   "claim": "FileListerSourceOpDesc.datasetVersionPath (FileListerSourceOpDesc.scala:34-36) is not resolved at compile time. FileListerSourceOpExec runs SQL from the unit with no reader check, lists LakeFS, and outputs logical paths.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/dataset/FileListerSourceOpExec.scala:77"
+  },
+  {
+   "claim": "FileScanOpExec (File Scan From Input) resolves each tuple's file name at run time. A resolved URI is used as is, an existing local path on the unit is read, and anything else goes to FileResolver.resolveVersionedResource with no user scope (FileResolver.scala:71-72).",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/file/FileScanOpExec.scala:51"
+  },
+  {
+   "claim": "At schedule time DefaultCostEstimator queries Postgres for the last successful execution's RUNTIME_STATS_URI and reads that Iceberg document (lines 68-75, 120-148). If the lookup fails it falls back to default costs. It runs inside the engine's scheduler.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostEstimator.scala:120"
+  },
+  {
+   "claim": "The engine reads config that is not in the plan: the default worker count when suggestedWorkerNum is None (WorkerConfig.scala:38), maxConcurrentRegions (ScheduleGenerator.scala:73), and the search mode and timeout (CostBasedScheduleGenerator.scala:344-351). The search is bounded by Await with a timeout, so region plans can differ between runs.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/config/WorkerConfig.scala:38"
+  },
+  {
+   "claim": "Run inputs that live outside the plan, in WorkflowContext (WorkflowContext.scala:34-42): wid, eid, workflowSettings, cuid and warehouse. WorkflowSettings holds dataTransferBatchSize, executionMode (default read from GuiConfig) and outputPortsNeedingStorage. The engine reads them: executionMode at CostBasedScheduleGenerator.scala:325, outputPortsNeedingStorage at line 181, the batch size in ResourceAllocator, the warehouse in createPortBaseURI.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/WorkflowSettings.scala:24"
+  },
+  {
+   "claim": "How the engine handles schemas stored in the plan: assignPorts silently skips any port whose schema is Left (RegionExecutionManager.scala:519, 547), and creating an output document throws on a Left schema (lines 669-681). ExecutionResultService also reads OutputPort.mode from the in-memory plan (ExecutionResultService.scala:355-363, 478-482).",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:669"
+  },
+  {
+   "claim": "workflow-core, which holds PhysicalOp and FileResolver, depends on DAO and Resource. FileResolver imports jOOQ and SqlServer (FileResolver.scala:22-37). So the module that defines the plan can reach Postgres.",
+   "where": "build.sbt:168"
+  },
+  {
+   "claim": "Python-based operators get OpExecWithCode generated at compile time. Codegen failures are embedded as \"#EXCEPTION DURING CODE GENERATION\" (PythonOperatorDescriptor.scala:28-30, 36-44), and the compiler checks for them (WorkflowCompiler.scala:308-321). pveName is only a string; PythonWorkflowWorker.scala:239-243 resolves it on the unit with PveManager.getPythonBin(cuid, name).",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/PythonOperatorDescriptor.scala:32"
+  },
+  {
+   "claim": "The e2e harness gives a natural place to test a plan round trip. buildWorkflow compiles with fixtureFileResolver (lines 91-105), and runWorkflowAndReadResults builds an AmberClient straight from workflow.physicalPlan and reads the materialized results (145-191). LogicalOp.orderSensitive (LogicalOp.scala:482) says whether row order must match when comparing.",
+   "where": "amber/src/test/scala/org/apache/texera/amber/engine/e2e/TestUtils.scala:91"
+  },
+  {
+   "claim": "PhysicalOp is a case class whose equality and hash include function values and Throwables. A plan read back from JSON can never be == the original, so comparisons must be field by field or on the encoded form.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:192"
+  },
+  {
+   "claim": "Tests that pin the current function or binding shapes and will need updates:\n- derivePartition: PhysicalOpSpec, ProjectionOpDescSpec, DifferenceOpDescSpec, IntersectOpDescSpec, DistinctOpDescSpec, DualInputPortsPythonUDFOpDescV2Spec.\n- Binding: RegionExecutionManagerSpec, ExecutionReconfigurationServiceSpec, PythonUdfUiParameterSupportSpec, PythonUDFOpDescV2Spec, PythonUDFSourceOpDescV2Spec, JavaUdfUiParameterInjectorSpec.",
+   "where": "common/workflow-core/src/test/scala/org/apache/texera/amber/core/workflow/PhysicalOpSpec.scala:44"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "1a. Make the output-partitioning rule data",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:133,192,335-337 plus the 13 withDerivePartition call sites; caller ResourceAllocator.scala:192",
+   "change": "Replace `derivePartition: List[PartitionInfo] => PartitionInfo` with a sealed ADT that has an apply(List[PartitionInfo]) method, so the call at ResourceAllocator.scala:192 compiles unchanged. Cases: FirstInput (the default), Fixed(p: PartitionInfo) for the manyToOne SinglePartition and every `_ => X` site, and KeepKeyedInput, which matches ProjectionOpDesc.scala:86-99 exactly. Give it a Jackson or protobuf encoding."
+  },
+  {
+   "step": "1b. Resolve datasets and models named by UDFs at plan time",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:46-75; ExecutionTimeBinding.scala; PhysicalOp.scala:221,239-246; RegionExecutionManager.scala:371,484; ExecutionReconfigurationService.scala:123-124",
+   "change": "Add a resolver parameter to WorkflowCompiler, next to ScanFileResolver, that maps a version path to <repo>:<commit> with a read check for the requesting user. In Strict mode only, replace the lazy closure with data:\n- mountLocators: Set[String]\n- either the final opExecInitInfo, built from a mount root fixed by the plan contract,\n- or (raw code, language, uiParameters with locator values), with the engine injecting mountPointOf(locator) itself.\n\nThe editing path stays lazy and makes no Postgres calls. The engine keeps only ensureMounted(locators)."
+  },
+  {
+   "step": "1c. Keep schema propagation compile-only and store its results",
+   "where": "PhysicalOp.scala:195-200; PhysicalPlan.scala:168-180",
+   "change": "Do not store propagateSchema. Store every input and output port as (port protobuf, ordered link list, Schema as an ordered list of attributes). The writer rejects any Left; the reader sets Right(schema) and a stub propagateSchema. The reader must not rebuild the plan through addLink, which re-propagates schemas; it should construct the ops and links directly and check that port link lists match plan.links. Do not reuse the map<string,string> raw schema in the stored form."
+  },
+  {
+   "step": "1d. Versioned plan codec (save and read back)",
+   "where": "new common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/ (e.g. PhysicalPlanCodec.scala); optionally new messages in common/workflow-core/src/main/protobuf/org/apache/texera/amber/core/workflow.proto",
+   "change": "write(plan, header) \u2192 JSON and read(JSON) \u2192 (PhysicalPlan, WorkflowContext fields).\n\nHeader: format version, wid, eid, warehouse, and WorkflowSettings with explicit dataTransferBatchSize, executionMode and outputPortsNeedingStorage. Without outputPortsNeedingStorage the run succeeds but stores no terminal results.\n\nOperators are sorted by id and links by tuple. Encodings: OpExecInitInfo through asMessage, OutputMode by name, LocationPreference as an enum, PartitionInfo with its existing subtypes or a protobuf oneof.\n\nRecommendation: define the stored plan as protobuf messages and write it with scalapb-json4s, which is already a dependency. That handles oneofs and enums, and ts-proto/Python readers exist. The alternative is Jackson with mixins for OpExecInitInfo, OutputMode and LocationPreference."
+  },
+  {
+   "step": "1e. Engine runs a plan it is handed",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/Workflow.scala:26-55; amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:118-136",
+   "change": "Add Workflow.fromPlan(json) and make logicalPlan optional. On today's unit path: compile (Strict), write the JSON, read it back, then hand the read-back plan to ComputingUnitMaster.createAmberRuntime. Every existing e2e run then exercises the codec before step 2 moves compilation off the unit. Allow pause-time edits only when the logical plan is present, or move the one-op recompile to the Dashboard later."
+  },
+  {
+   "step": "1f. Remove run-time lookups the plan should carry (needed for 'a unit calls no service'; may be done with step 2)",
+   "where": "FileListerSourceOpExec.scala:77-97; FileScanOpExec.scala:51-59; CostEstimator.scala:68-75,120-148; CSVScanSourceOpExec.scala:130-131; WorkerConfig.scala:38",
+   "change": "- FileLister: resolve the version to (repositoryName, versionHash) at plan time, inside descString, with a read check.\n- FileScan from input: accept only resolved URIs and drop local paths and resolveVersionedResource.\n- Cost estimator: take cost hints, or the previous stats URI, from the plan, or skip the lookup.\n- Put csv_parser_max_columns and the per-op worker count into the plan."
+  },
+  {
+   "step": "1g. Cleanup",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:180-194; frontend/src/app/common/type/physical-plan.ts:27-41",
+   "change": "Delete the write-only lastCompletedLogicalPlan. If the compile response switches to the codec, update the stale TS PhysicalPlan type; nothing reads it today."
+  },
+  {
+   "step": "1h. Tests",
+   "where": "common/workflow-core/src/test/...; amber/src/test/scala/org/apache/texera/amber/engine/e2e/TestUtils.scala:91-191",
+   "change": "(1) Codec round trip for every operator in LogicalOp's JsonSubTypes, at least HashJoin and Aggregate (multi-op), Projection (input-dependent rule), a Python UDF with a dataset UiParameter, loop ops (isLoopStart, reuseStorage) and a Java UDF. Assert write(read(write(p))) == write(p), port schemas match, and the partition rule gives the same output for sample inputs.\n(2) e2e: buildWorkflow, then the codec round trip, then runWorkflowAndReadTerminalResults on both plans with different eids. Compare as multisets unless LogicalOp.orderSensitive is set.\n(3) A guard spec that the stored model has no Function or Throwable fields.\n(4) Update the specs listed in the facts."
+  }
+ ],
+ "open_questions": [
+  "Stored plan format: protobuf messages written with scalapb-json4s (handles oneofs and enums; Python and TS readers already exist), or Jackson with mixins? This decides whether the Dashboard, the result service and agents can read the plan without Scala.",
+  "UDF resource code: finalize it at plan time against a mount root fixed in the plan contract (every unit platform must provide that path), or let the engine inject mountPointOf(locator) from data locators (keeps a per-unit root, but the injector code must run on the unit)?",
+  "Keep wid and eid on every PhysicalOp (read at WorkerConfig.scala:47,50), or move them to the plan header and stamp them on read?",
+  "Should pause-time operator edits keep working for plan-run executions in step 1? This needs either the logical op shipped with the plan or the one-op recompile moved to the Dashboard.",
+  "Should the plan carry worker counts and cost hints so the engine reads neither ApplicationConfig nor Postgres, or is engine-side config acceptable until step 2?"
+ ],
+ "risks": [
+  "The Projection partition rule depends on its input: an empty HashPartition becomes Unknown and a keyed Hash or Range is kept. An ADT that gets this wrong changes repartitioning, and possibly results, only for multi-worker plans.",
+  "Source executors recompute their schema from the file at run time, ignoring the stored plan schema. If the Dashboard and the unit differ (for example site_settings csv_parser_max_columns, or file access), the executor's schema can disagree with the plan's.",
+  "If outputPortsNeedingStorage is left out of the stored header, runs complete but materialize no terminal results, and no error is raised.",
+  "Region-plan search is bounded by a timeout, so schedules vary between runs. Output order of non-order-sensitive operators can differ, so 'identical results' tests must compare as multisets.",
+  "FileListerSourceOpExec and FileScanOpExec resolve datasets on the unit with no reader check, and FileScan reads local paths on the unit. Under rules 2 and 5 these become an access gap.",
+  "resolveRepositoryVersion has no reader check because it relies on the mount authority. Moving it to plan time without adding a check widens access.",
+  "workflow-core depends on DAO, so a pure engine still carries Postgres code on its classpath until the plan types move to a module without DAO.",
+  "Global checkpoints Kryo-serialize the CoordinatorProcessor, including the plan's closures. Changing the PhysicalOp fields changes that format and breaks restore of old checkpoints."
+ ]
+}

@@ -1,0 +1,277 @@
+{
+ "area": "Result storage, Iceberg, Lakekeeper and object storage (steps 3 and 5)",
+ "summary": "Every engine output is an Iceberg table addressed by a `vfs:` URI: `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/...` ending in result, state, runtimestatistics or consolemessages. DocumentFactory sends each resource type to one of four namespaces that all executions share (operator-port-result, operator-port-state, workflow-runtime-statistics, operator-console-messages). It turns the rest of the path into the table name, and Python does the same for result and state. There is no per-execution namespace and no plan or log table. The unit creates the URIs and records them in Postgres, which is how every reader finds them.\n\nWriters buffer 4096 rows and commit only when the buffer is full or closed. So runtime stats (one row per operator every 2 s) and console messages normally reach the lake only when a run ends, and are lost if the unit dies. The only tidying is expireSnapshots on the previous run's stats table. Nothing compacts.\n\nThe catalog is Lakekeeper v0.11.0 with no authentication or authorization, and clients send no token. Warehouses use sts-enabled=false with the RustFS root keys, so Iceberg reads and writes are remote-signed. Large binaries bypass Lakekeeper: they go to `s3://texera-large-binaries/objects/<eid>/<uuid>` with root keys held by the unit and the Python workers. Units also get the JDBC login and AUTH_JWT_SECRET.\n\nPer-user warehouses are on by default. Each is `user-<uid>-<whid>`, always 'local' flavor, in the same bucket. The unit resolves a run's warehouse through Postgres. BYO-S3 is not implemented.\n\nResults are read through the unit's websocket, for the latest execution of (wid, cuid) only. The result service (#8995) is not on main. Nothing reuses results across executions: a new run deletes the previous run's results, and only CostEstimator reads another execution's stats.",
+ "facts": [
+  {
+   "claim": "The VFS URI scheme is `vfs`. A port base URI is `vfs://` + optional `/wh/<name>` + `/wid/<wid>/eid/<eid>/globalportid/<serialized port>`, and result and state URIs append `/result` or `/state`. The engine has no plan or log resource type: the only types are RESULT, RUNTIME_STATISTICS, CONSOLE_MESSAGES and STATE.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:33-38,160-176",
+   "evidence": "new URI(s\"$VFS_FILE_URI_SCHEME://${warehousePathSegment(warehouse)}/wid/${workflowId.id}/eid/${executionId.id}/globalportid/${globalPortId.serializeAsString}\")"
+  },
+  {
+   "claim": "The runtime-statistics URI is `.../wid/<wid>/eid/<eid>/runtimestatistics` and the console URI is `.../eid/<eid>/opid/<opId>/consolemessages` (operator ids may not contain '/').",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:181-210,254-268"
+  },
+  {
+   "claim": "The warehouse is carried only as a leading `/wh/<name>` segment. Names must match `[A-Za-z0-9][A-Za-z0-9_-]*`, and decodeURI reads the warehouse only from the first segments.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:62,74-84,102-106,115-154"
+  },
+  {
+   "claim": "DocumentFactory resolves a URI to three things. The warehouse comes from the URI. The namespace depends only on the resource type. The table name is the URI path with a leading `wh/<name>/` removed and '/' replaced by '_'. For example, `wid_5_eid_12_globalportid_(logicalOpId=X,layerName=main,portId=0,isInternal=false,isInput=false)_result`.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/DocumentFactory.scala:43-54,84-91",
+   "evidence": "uri.getPath.stripPrefix(\"/\").replaceFirst(\"^wh/[^/]+/\", \"\").replace(\"/\", \"_\")"
+  },
+  {
+   "claim": "All executions share four fixed namespaces, each overridable by an environment variable: operator-port-result, operator-console-messages, workflow-runtime-statistics and operator-port-state (STORAGE_ICEBERG_TABLE_{RESULT,CONSOLE_MESSAGES,RUNTIME_STATISTICS,STATE}_NAMESPACE).",
+   "where": "common/config/src/main/resources/storage.conf:51-62"
+  },
+  {
+   "claim": "Python mirrors only RESULT and STATE. It applies the same sanitizing regex, and takes its two namespace names from the JVM's startup config (icebergTableNamespace and icebergTableStateNamespace).",
+   "where": "amber/src/main/python/core/storage/document_factory.py:48-76",
+   "evidence": "PythonWorkflowWorker.scala:106-107 passes StorageConfig.icebergTableResultNamespace/StateNamespace"
+  },
+  {
+   "claim": "URIs are created on the unit. The scheduler builds each materialized port's base URI from workflowContext.warehouse. The coordinator then creates the result and state tables, dropping and recreating them unless reuseStorage is set, and sends OperatorPortResultUriAvailable(uri, mode) to the in-process client.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostBasedScheduleGenerator.scala:192-201; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:660-702"
+  },
+  {
+   "claim": "Workers open the coordinator-created tables, using the worker index as the writer id. Python workers also drop and recreate tables themselves when a nested loop resets its output and when writing loop state, so the unit needs create and drop rights inside its namespace.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/messaginglayer/OutputManager.scala:317-346; amber/src/main/python/core/architecture/packaging/output_manager.py:246-253; amber/src/main/python/core/runnables/main_loop.py:221"
+  },
+  {
+   "claim": "The unit's web layer, not the engine, creates the runtime-stats table at the start of a run and each console table lazily on an operator's first message. It writes those URIs to Postgres (workflow_executions.runtime_stats_uri and operator_executions.console_messages_uri).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:77-95; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:143-166; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:264-297"
+  },
+  {
+   "claim": "The unit inserts the result URI and output_mode rows into operator_port_executions. These Postgres rows (result_uri, result_size, output_mode, result_count, console_messages_uri/size, runtime_stats_uri/size and whid) are the only index that readers use to find an execution's tables.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:92-104,333-337; sql/texera_ddl.sql:318-339,540-563; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/ExecutionResultUris.scala:40-84"
+  },
+  {
+   "claim": "IcebergUtil.createTable creates the namespace whenever it is missing, drops an existing table when override is set (createDocument always sets it), and creates an unpartitioned table whose only properties are the commit retries. Python's create_table also calls create_namespace_if_not_exists and sets no retry properties.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:189-228; amber/src/main/python/core/storage/iceberg/iceberg_utils.py:253-287; DocumentFactory.scala:110-116"
+  },
+  {
+   "claim": "The JVM IcebergTableWriter buffers STORAGE_ICEBERG_TABLE_COMMIT_BATCH_SIZE rows (default 4096) and flushes only when the buffer is full or on close(). Each flush loads the table over REST, writes one Parquet file at `<table location>/<writerId>_<n>`, and makes one append commit. There is no time-based flush.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/IcebergTableWriter.scala:73,87-92,99-136,141-145; common/config/src/main/resources/storage.conf:64-80"
+  },
+  {
+   "claim": "Each result port's writer runs on its own thread, which drains a queue and closes (flushes) the writer when the port finishes.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/worker/managers/OutputPortStorageWriterThread.scala:48-72"
+  },
+  {
+   "claim": "The Python writer uses the same batch size and calls table.refresh() then table.append() once per flush, retrying up to 10 times with random exponential backoff.",
+   "where": "amber/src/main/python/core/storage/iceberg/iceberg_table_writer.py:64,82-119"
+  },
+  {
+   "claim": "The coordinator sends runtime stats for storage on a 2000 ms timer (CONSTANTS_RUNTIME_STATISTICS_PERSISTENCE_INTERVAL) and also at region start and completion, pause, resume and worker state changes. ExecutionStatsService puts one row per operator into the 4096-row buffer and closes the writer only at COMPLETED, FAILED or KILLED. Stats therefore usually reach the lake only when a run ends.",
+   "where": "common/config/src/main/resources/application.conf:35-36; amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/promisehandlers/QueryWorkerStatisticsHandler.scala:56-60,71-72; amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:198-222,244-271"
+  },
+  {
+   "claim": "Each console message is written as one row in its operator's table. The row's single STRING column `message` holds the ConsoleMessage in protobuf text format. Rows are committed at 4096, at terminal state, or on unsubscribeAll.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:207-233,286-304; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/ResultSchema.scala:25-41",
+   "evidence": "Readers decode it with ConsoleMessage.fromAscii (SyncExecutionResource.scala:800-803)"
+  },
+  {
+   "claim": "The only table maintenance is OnIceberg.expireSnapshots (retainLast(1), expireOlderThan(now), cleanExpiredFiles). It is called only on the previous execution's runtime-stats table when a new run starts. No code rewrites or compacts data files or manifests.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/OnIceberg.scala:33-47; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:446-464"
+  },
+  {
+   "claim": "When a run starts on the same (wid, cuid), the unit clears the previous execution's result and console tables, deletes their Postgres URI rows and deletes its large binaries. The code comment reads 'TODO: change this behavior after enabling cache'.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:265-270,425-467"
+  },
+  {
+   "claim": "The unit's TTL cleanup job does nothing for Iceberg ('case DocumentFactory.ICEBERG => // rely on the server-side result cleanup logic'). With clean-all-execution-results-on-server-start, a unit marks every unfinished execution in the database FAILED at boot, not only its own.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:181-203,240-280"
+  },
+  {
+   "claim": "Catalog types are rest (the default), postgres and hadoop. The REST defaults are http://localhost:8181/catalog, warehouse 'texera' and bucket 'texera-iceberg'. Postgres is a JdbcCatalog and hadoop a HadoopCatalog, both using HadoopFileIO on the local `$TEXERA_HOME/amber/user-resources/workflow-results`, so a reader on another host cannot read those files.",
+   "where": "common/config/src/main/resources/storage.conf:23-48; common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:100-112,151-175; common/config/src/main/scala/org/apache/texera/common/config/StorageConfig.scala:101-106"
+  },
+  {
+   "claim": "The JVM caches one REST catalog per warehouse name in a Guava cache (at most 64 entries; idle entries expire after 60 min and are closed). Postgres and hadoop share one cache entry. Python keeps an unbounded dict keyed by warehouse.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/IcebergCatalogInstance.scala:72-73,108-140,167-186; amber/src/main/python/core/storage/iceberg/iceberg_catalog_instance.py:38-72"
+  },
+  {
+   "claim": "The REST client sets only warehouse, uri and io-impl=S3FileIO. It sends no OAuth token, credential, header or X-Iceberg-Access-Delegation, so the S3 endpoint and signing come from Lakekeeper. Python's client sets type, uri and warehouse only, and turns off fsspec's shared S3 cache because it shares request signers between tables (#9129).",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:133-149; amber/src/main/python/core/storage/iceberg/iceberg_utils.py:222-250"
+  },
+  {
+   "claim": "Lakekeeper v0.11.0 runs with no authentication or authorization. Its only settings are the PG read/write URLs and the encryption key, there is no LAKEKEEPER__AUTHZ_BACKEND or OpenID setting anywhere, and the Helm values set `internalOpenFGA: false`. LakekeeperClient's management and catalog calls carry no credentials ('The channel is unauthenticated today; catalog-side authentication is Phase 2 (#6040)').",
+   "where": "bin/single-node/docker-compose.yml:121-154; bin/single-node/.env:57-61; bin/k8s/values.yaml:169-189; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:54-60,118-122"
+  },
+  {
+   "claim": "Every warehouse is registered with sts-enabled=false and credential-type access-key, using STORAGE_S3_AUTH_USERNAME and STORAGE_S3_AUTH_PASSWORD (the store's root keys). Clients therefore use Lakekeeper remote signing: the compose comment says the host JVMs reach RustFS via 'Iceberg remote-signing'. No vended credentials are used anywhere.",
+   "where": "bin/single-node/docker-compose.yml:233-240,279-299; bin/k8s/templates/base/lakekeeper/lakekeeper-init-job.yaml:146-170; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:100-116"
+  },
+  {
+   "claim": "The default warehouse uses key prefix 'shared' (STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX), because per-user warehouses share the same bucket and a warehouse at the bucket root would overlap them (#7739).",
+   "where": "bin/single-node/.env:78-80; bin/k8s/values.yaml:211-213"
+  },
+  {
+   "claim": "No application code reads LAKEKEEPER_BASE_URI, STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX or STORAGE_ICEBERG_CATALOG_REST_REGION; only the init scripts do. The JVM derives Lakekeeper's management URL from STORAGE_ICEBERG_CATALOG_REST_URI.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:75-76",
+   "evidence": "rg over *.scala/*.py/*.conf finds no reader"
+  },
+  {
+   "claim": "Kubernetes units receive the Iceberg environment variables plus STORAGE_JDBC_URL/USERNAME/PASSWORD, STORAGE_S3_ENDPOINT/REGION/AUTH_USERNAME/AUTH_PASSWORD and the required AUTH_JWT_SECRET. The Python worker receives the S3 root keys through its startup config.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:315-333,340-344,431-447; amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:83-116"
+  },
+  {
+   "claim": "Per-user warehouses (STORAGE_WAREHOUSE_ENABLED) default to true and take effect only with the REST catalog. The unit pod does not receive STORAGE_WAREHOUSE_ENABLED or STORAGE_S3_LARGE_BINARIES_BUCKET, so it always runs with the defaults.",
+   "where": "common/config/src/main/resources/storage.conf:155-161; common/config/src/main/scala/org/apache/texera/common/config/StorageConfig.scala:97-98"
+  },
+  {
+   "claim": "The Dashboard's POST /warehouse creates the Lakekeeper warehouse `user-<uid>-<whid>`, always with flavor 'local'. Its storage profile uses the same bucket STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET, key prefix equal to the warehouse name, path-style access, sts off and the platform's root keys. The user_warehouse row stores the Lakekeeper name and id, bucket, endpoint and region. BYO-S3 (assume-role) does not exist: the 'aws' enum value is never used, and the DDL says those columns 'come in a later change'.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/warehouse/WarehouseResource.scala:58-59,163-234; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:95-125; sql/texera_ddl.sql:288-304"
+  },
+  {
+   "claim": "The warehouse for a run is chosen as follows. The browser sends warehouseId in WorkflowExecuteRequest. The unit checks in Postgres that the user owns that user_warehouse row; a warehouse is required while the feature is on. The unit then sets workflowContext.warehouse to the Lakekeeper name, and that name becomes the `/wh/<name>` segment of every URI in the run. The id is stored in workflow_executions.whid (ON DELETE SET NULL).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:91-121,255-262,272-279; amber/src/main/scala/org/apache/texera/web/model/websocket/request/WorkflowExecuteRequest.scala:41; amber/src/main/scala/org/apache/texera/web/service/ExecutionsMetadataPersistService.scala:74-76; common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/WorkflowContext.scala:39-41"
+  },
+  {
+   "claim": "Deleting a warehouse lists every top-level namespace, drops every table with purgeRequested=true, drops the namespaces, then deletes the warehouse, retrying while Lakekeeper answers 409 WarehouseHasUnfinishedTasks. The client treats namespaces as single-level only.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:133-179,195-208"
+  },
+  {
+   "claim": "WarehouseReadGuard refuses reads of `/wh/` URIs and skips their cleanup while the warehouse feature is disabled.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/WarehouseReadGuard.scala:44-73"
+  },
+  {
+   "claim": "Large binaries are stored at `s3://<STORAGE_S3_LARGE_BINARIES_BUCKET, default texera-large-binaries>/objects/<eid>/<uuid>`, outside every Iceberg warehouse. WorkerConfig computes the per-execution base and DPThread sets it per thread; Python receives it as s3LargeBinariesBaseUri.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/service/util/LargeBinaryManager.scala:30-45,65-75; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/config/WorkerConfig.scala:50; amber/src/main/scala/org/apache/texera/amber/engine/architecture/worker/DPThread.scala:101; amber/src/main/python/core/storage/storage_config.py:44-46"
+  },
+  {
+   "claim": "Large binaries are uploaded and downloaded with the static root keys: the JVM's S3StorageClient (StaticCredentialsProvider) and Python's boto3 both use STORAGE_S3_AUTH_*. In Iceberg the value is stored as its URI string in a StringType column whose name carries a LARGE_BINARY suffix.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/service/util/S3StorageClient.scala:49-54; amber/src/main/python/pytexera/storage/large_binary_manager.py:70-79; common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:286-287,313,358-364"
+  },
+  {
+   "claim": "Large binaries are deleted by the prefix `objects/<eid>`: by the unit when the next run starts, and by the Dashboard when a workflow is deleted. file-service creates the bucket at startup.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/service/util/LargeBinaryManager.scala:83-106; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:466; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowResource.scala:670-672; file-service/src/main/scala/org/apache/texera/service/FileService.scala:82-85"
+  },
+  {
+   "claim": "The frontend reads result pages only through the unit's websocket. A ResultPaginationRequest reaches handleResultPagination, which finds the latest execution of (wid, cuid) in Postgres and its URI in operator_port_executions, then calls getRange with column projection. getCount sums recordCount over planFiles.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:404-460; frontend/src/app/workspace/service/workflow-result/workflow-result.service.ts:348; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/IcebergDocument.scala:131-140"
+  },
+  {
+   "claim": "Live result updates come from the unit polling every 3 s (WEB_SERVER_WORKFLOW_RESULT_PULLING_IN_SECONDS). Each poll counts rows on each operator's first port and writes result_size and result_count to Postgres for that port only. A diff handler then pushes WebResultUpdateEvent (dirty pages, a full snapshot or a delta).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:284-316,340-395,462-509; common/config/src/main/resources/application.conf:87-88"
+  },
+  {
+   "claim": "Live reads run incremental append scans between the last seen snapshot and the current one, ordered by file sequence number. Rows appear only after a writer commits, in blocks of up to 4096 rows per worker.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/IcebergDocument.scala:280-313"
+  },
+  {
+   "claim": "Past-run stats and export are served in different places depending on the deployment. In Kubernetes, Envoy routes `/api/executions/<wid>/stats/<eid>` and `/api/executions/result/export` to the unit (the frontend adds `?cuid=`). In single-node, nginx sends them to the Dashboard, which also registers WorkflowExecutionsResource and reads Iceberg directly. Single-node mounts the result volume into both the unit and the Dashboard containers.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:169-192; bin/single-node/nginx.conf:121-135; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:205-206; amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:156; frontend/src/app/dashboard/service/user/workflow-executions/workflow-executions.service.ts:88-93; bin/single-node/docker-compose.yml:419-437"
+  },
+  {
+   "claim": "The agent-service calls the unit's synchronous REST endpoint `/api/execution/{wid}/{cuid}/run` directly, and that endpoint reads result and console tables on the unit.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-139,546-561,785-805; agent-service/src/agent/tools/workflow-execution-tools.ts:266"
+  },
+  {
+   "claim": "The result service is not on main: build.sbt has no such module. Two merged changes prepare for it. #9049 (8cfacf2f0) added output_mode and result_count to operator_port_executions; its message says 'Nothing reads the columns yet; that is #8995'. #9219 (483569400) moved ExecutionResultUris, WarehouseReadGuard, WorkflowAccess and TupleUtils.convertTuplesToJson into common modules for #8995.",
+   "where": "sql/texera_ddl.sql:557-560",
+   "evidence": "git show 8cfacf2f0; git show 483569400"
+  },
+  {
+   "claim": "The quota page sums result, console and stats sizes from the Postgres size columns that the unit writes.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/quota/UserQuotaResource.scala:108-165"
+  },
+  {
+   "claim": "No result is reused across executions. The operator_port_cache table and CacheKeyUtil.computeCacheKey exist, but no main code reads or writes the table, and reused_from_cache is never set to true; it is only aggregated.",
+   "where": "sql/texera_ddl.sql:565-589; common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/cache/CacheKeyUtil.scala:72-90; amber/src/main/protobuf/org/apache/texera/amber/engine/common/executionruntimestate.proto:88; amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/execution/ExecutionUtils.scala:87"
+  },
+  {
+   "claim": "The only read across executions is in the engine's DefaultCostEstimator. It queries Postgres for the newest COMPLETED (status 3) execution of the workflow, by any user on any unit, and reads that execution's runtime-stats table, which may sit in another user's warehouse.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostEstimator.scala:68-76,120-164"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "3",
+   "change": "Add PLAN and LOG resource types (plus URI builders keyed by wid, eid and warehouse) and map them in resolveNamespace. Until step 5 they are two more namespaces in today's layout (new STORAGE_ICEBERG_TABLE_*_NAMESPACE keys). Keep the Python enum in step even though Python never writes them.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:33-38,181-269; DocumentFactory.scala:46-54; common/config/src/main/resources/storage.conf:51-62; StorageConfig.scala:53-59; amber/src/main/python/core/storage/vfs_uri_factory.py:34-38"
+  },
+  {
+   "step": "3",
+   "change": "Give writers an explicit commit: make flushBuffer public as flush() on BufferedItemWriter, and add a timed flush (about 30 s) on top of the 4096-row size flush. Use it for runtime stats and console, and commit log rows immediately. Move the stats and console writers from the unit's web layer (web/service) into the engine (coordinator), because the web layer leaves the unit in step 4.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/IcebergTableWriter.scala:87-145; amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:77-95,198-271; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:143-166,286-304"
+  },
+  {
+   "step": "3",
+   "change": "Add tidying: run expireSnapshots (and rewriteManifests or small-file compaction through table.newRewrite) every N commits and when a log or stats writer closes. Stop running expireSnapshots on the previous run at the start of each run.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/result/iceberg/OnIceberg.scala:33-47; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:446-464"
+  },
+  {
+   "step": "3",
+   "change": "Stop the unit writing URIs, sizes and counts to Postgres: remove persistOperatorPortResultUri and its callback, insertOperatorExecutions, updateRuntimeStatsUri, updateResultSizeAndCount and the size updaters. Readers should derive tables from (warehouse, eid, plan), take row count and size from the snapshot summary (total-records and total-files-size), and change getCount from planFiles to the summary.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:92-104,333-337,462-509; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:264-297,418-506; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/ExecutionResultUris.scala:40-84; IcebergDocument.scala:131-140"
+  },
+  {
+   "step": "3",
+   "change": "Readers outside the unit (Dashboard or result service): locate an execution's tables from workflow_executions.whid \u2192 user_warehouse.lakekeeper_warehouse_name plus eid, or by listing the namespace. Decode console rows with ConsoleMessage.fromAscii and stats with ResultSchema. Serve `/executions/{wid}/stats/{eid}` and export from there, and drop their Kubernetes routes to the unit. Read quota sizes from table summaries.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:173-178; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:676-736; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:481-497; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/quota/UserQuotaResource.scala:108-165"
+  },
+  {
+   "step": "3",
+   "change": "Keep history: stop clearExecutionResources at run start. Deletion becomes a Dashboard operation per execution, replacing the URI loops in removeAllExecutionFiles and workflow delete. Remove the unit's TTL stub and its boot-time 'mark FAILED', which the Dashboard's timer job replaces.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:265-270,425-467; WorkflowExecutionsResource.scala:378-408; WorkflowResource.scala:645-690; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:181-203,240-307"
+  },
+  {
+   "step": "2",
+   "change": "Resolve the warehouse at POST /executions on the Dashboard instead of on the unit, and carry the warehouse name (and later the namespace) in the plan. The engine sets WorkflowContext.warehouse from the plan.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:91-121,255-262"
+  },
+  {
+   "step": "1-2",
+   "change": "Remove CostEstimator's Postgres query and its read of another execution's stats. The Dashboard computes per-operator cost hints when it builds the plan and puts them in it. This must land before step 5, or the read is denied.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostEstimator.scala:68-76,120-164"
+  },
+  {
+   "step": "5",
+   "change": "One namespace per execution: change resolveIcebergLocation and sanitizeURIPath so the namespace comes from the URI (for example eid-<eid>) and the table name from the resource (result_<port>, state_<port>, console_<opId>, runtime_statistics, plan, log). Change Scala and Python together, and stop passing namespace names in the Python startup config.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/DocumentFactory.scala:43-54,84-91; amber/src/main/python/core/storage/document_factory.py:48-76; PythonWorkflowWorker.scala:106-107; storage_config.py:34-35"
+  },
+  {
+   "step": "5",
+   "change": "The Dashboard creates the namespace at create time and grants the run on it. Remove namespace creation from the engine's path (Scala createTable and Python create_namespace_if_not_exists), or make it tolerate a 403.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:203-215; amber/src/main/python/core/storage/iceberg/iceberg_utils.py:276"
+  },
+  {
+   "step": "5",
+   "change": "Turn on Lakekeeper authentication and OpenFGA (Helm internalOpenFGA, compose LAKEKEEPER__AUTHZ_BACKEND and an OpenID provider). Add a per-run token to the catalog properties (JVM `token` or `header.Authorization`; Python the same). Key the catalog caches by warehouse and token, not by name only. Give LakekeeperClient the Dashboard's own credentials.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:141-145; amber/src/main/python/core/storage/iceberg/iceberg_utils.py:243-250; IcebergCatalogInstance.scala:124-140; iceberg_catalog_instance.py:62-70; LakekeeperClient.scala:118-171; bin/k8s/values.yaml:169-189; bin/single-node/docker-compose.yml:134-154"
+  },
+  {
+   "step": "5",
+   "change": "Storage keys: keep remote signing, which Lakekeeper authorizes per request, or switch warehouses to vended STS credentials (sts-enabled true, an STS role, header.X-Iceberg-Access-Delegation=vended-credentials). Every warehouse payload must change.",
+   "where": "bin/single-node/docker-compose.yml:250-299; bin/k8s/templates/base/lakekeeper/lakekeeper-init-job.yaml:146-170; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:100-116"
+  },
+  {
+   "step": "5",
+   "change": "Large binaries: stop using root keys. Either store them under the execution's warehouse or namespace location, or have the Dashboard issue credentials or presigned URLs scoped to `objects/<eid>/`. Remove STORAGE_S3_AUTH_* from the unit and the Python worker.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/service/util/LargeBinaryManager.scala:30-45; S3StorageClient.scala:49-54; PythonWorkflowWorker.scala:110-114; amber/src/main/python/pytexera/storage/large_binary_manager.py:70-79"
+  },
+  {
+   "step": "5",
+   "change": "Remove STORAGE_JDBC_*, the S3 root keys and AUTH_JWT_SECRET from the unit's environment in Kubernetes and in single-node (whose unit loads the whole .env). Add an egress NetworkPolicy that limits the unit to Envoy, Lakekeeper and the object store; today's policy restricts ingress only.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:340-344,431-447; bin/single-node/docker-compose.yml:406-420; bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml:18-34"
+  }
+ ],
+ "open_questions": [
+  "What should execution namespaces be called: a flat `eid-<eid>` or nested `wid.<wid>.eid.<eid>`? LakekeeperClient.listNamespaces only handles top-level namespaces (LakekeeperClient.scala:195-201), so warehouse delete would need recursion for nested ones.",
+  "Are the postgres and hadoop catalog types dropped? They have no warehouses or authorization, and they store data on the local disk, which a reader outside the unit cannot reach.",
+  "Remote signing or vended credentials? This depends on whether RustFS supports STS. Lakekeeper authorizes signing requests per request either way.",
+  "Where do large binaries live after step 5, and with which keys? Today they sit in a separate bucket that Lakekeeper does not govern.",
+  "Are results from executions made before the change dropped or migrated? They live in the four shared namespaces and are indexed only by Postgres URIs.",
+  "Does pyiceberg's drop_table, used when Python recreates a table, purge the data files the way Java's dropTable(id) does? I did not verify this; it may leave files behind inside a namespace."
+ ],
+ "risks": [
+  "Readers outside the unit see stats and console rows only after a run ends, and partial rows are lost if the unit dies, because writers commit only at 4096 rows or on close. Timed commits must land before any history reads from the lake.",
+  "Many small commits without compaction slow down loadTable and reads. Nothing tidies today except expireSnapshots on the previous run's stats table.",
+  "Lakekeeper's management and catalog APIs are unauthenticated and reachable from units, so any unit can read or delete any warehouse. Units also hold the RustFS root keys, the JDBC login and AUTH_JWT_SECRET.",
+  "The Kubernetes Dashboard pod (webserver-deployment.yaml:44-81) receives no STORAGE_S3_* variables. LakekeeperClient.createWarehouse would therefore register per-user warehouses with the storage.conf defaults (http://localhost:9000 and texera_rustfs/password). I verified the missing variables; I did not test what happens at run time.",
+  "The Scala and Python DocumentFactory copies, and their URI parsers, must change in lockstep. If they drift, tables are silently not found.",
+  "The JVM writer names data files `<location>/<workerIdx>_<n>` and opens them with overwrite(). A JVM port that reused storage across re-runs would overwrite files the table still references. Today only Python's LoopEnd sets reuseStorage, so this is latent.",
+  "The name 'log' already means something else: workflow_executions.log_location and fault-tolerance.log-storage-uri (the replay log, off by default). Give the new execution log table a distinct name in code and docs."
+ ]
+}

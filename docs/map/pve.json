@@ -1,0 +1,284 @@
+{
+ "area": "Python environments (PVE) and Python/R workers (step 2)",
+ "summary": "Python environments (PVEs) live entirely on the unit today. ComputingUnitMaster registers PveResource (/api/pve/*) and PveWebsocketResource (/wsapi/pve). TexeraWebApplication, which is the Dashboard service, has no PVE code. The unit serves two things:\n- the Postgres-backed saved-environment rows (/api/pve/db CRUD on virtual_environments);\n- the venvs on its own disk under /tmp/texera-pve/venvs/{cuid}/{name}/pve. A venv is built with `python -m venv` plus `pip install -r requirements.txt`. User packages are added with `pip install --constraint <frozen system set>`, and pip output streams over the websocket.\n\nNothing reads virtual_environments at execution time. The rows are only templates that the workspace modal replays into a unit venv.\n\nA Python UDF names its environment by a string alone (defaultEnv/envName becomes PhysicalOp.pveName). The worker turns (WorkflowContext.cuid, pveName) into a venv path. If the venv is missing, it silently uses the default interpreter. The same happens on remote cluster nodes, where venvs never exist.\n\nR UDFs run inside the same Python worker process through the optional texera_r plugin, and they cannot choose an environment.\n\nPython workers start with the unit's whole environment. On K8s that includes the JDBC password, S3 keys, AUTH_JWT_SECRET and the owner's USER_JWT_TOKEN; single-node passes the whole .env. Workers also receive the catalog and S3 credentials in argv.\n\nDataset and model UiParameters resolve on the unit when the run starts: a Postgres lookup with reader=None, then a POST to access-control /api/mounts/{cuid} using the owner's JWT. A mount belongs to the unit for the pod's life and is authorized as the unit owner. It works only on K8s with the mounter on, which is off by default.\n\nWhere the brief does not match the code:\n- The dashboard page is labeled \"Environments\", and it calls the unit, not the Dashboard service.\n- On K8s its /api/pve/db calls carry no cuid, so ext-authz refuses them (from reading the code, not run).\n- Package lists never travel in the plan.\n- There is no separate R worker process.",
+ "facts": [
+  {
+   "claim": "PVE REST and WS endpoints are registered only on the unit (ComputingUnitMaster). The Dashboard service (TexeraWebApplication, image texera-dashboard-service) registers no PVE resource.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:130-135,165",
+   "evidence": "WebsocketBundle(WorkflowWebsocketResource, PveWebsocketResource); environment.jersey.register(classOf[PveResource]). TexeraWebApplication.scala:133-163 lists no Pve*; bin/dockerfiles/texera-web-application.dockerfile:137 CMD bin/texera-web-application"
+  },
+  {
+   "claim": "PveResource is @Path(\"/pve\"). Routes: GET /system; GET and POST /db; PUT and DELETE /db/{veid}; GET /pves?cuid; DELETE /pves/{cuId}; DELETE /{cuid}/{pveName}/packages/{packageName}. Only the /db routes take @Auth SessionUser; the others have no auth on the unit.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResource.scala:47-221"
+  },
+  {
+   "claim": "The /db routes use Postgres on the unit: PveManager reads and writes virtual_environments through SqlServer, and ComputingUnitMaster opens the JDBC connection.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:316-379",
+   "evidence": "listPvesForUser, deletePveFromDb, updatePve, savePve (VirtualEnvironmentsDao). ComputingUnitMaster.scala:145-149 SqlServer.initConnection"
+  },
+  {
+   "claim": "Table virtual_environments: veid SERIAL PK, uid FK to user ON DELETE CASCADE, name VARCHAR(128), packages JSONB default '{}', UNIQUE(uid,name). packages maps a package name to \"==x\", \">=x\", \"<=x\" or \"\" (unpinned).",
+   "where": "sql/texera_ddl.sql:306-315",
+   "evidence": "also sql/updates/24.sql:29-37. The value format is built in frontend/src/app/dashboard/component/user/user-venv/user-venv.component.ts:190-200"
+  },
+  {
+   "claim": "Nothing reads virtual_environments at execution time. A row is only a template that the workspace modal replays into a unit venv, so a row and the venv can drift apart.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:316-379",
+   "evidence": "rg VIRTUAL_ENVIRONMENTS outside PveManager finds nothing. The replay is in computing-unit-selection.component.ts:991-1071"
+  },
+  {
+   "claim": "Venvs live on the unit's local disk under the hard-coded root /tmp/texera-pve/venvs. The venv is {cuid}/{pveName}/pve and its metadata is {cuid}/{pveName}/user-packages.txt. They are keyed by (cuid, name), not by user.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:58-81,457"
+  },
+  {
+   "claim": "createNewPve runs `<UDF_PYTHON_PATH or python3> -m venv <dir>`, then `pip install -r` from /tmp/requirements.txt or ./amber/requirements.txt. It does not use --system-site-packages, so operator-requirements (torch, scikit-learn, transformers, plotly and so on) are missing from every venv.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:126-128,255-313",
+   "evidence": "PythonUtils.scala:22-26; udf.conf:18-21; amber/operator-requirements.txt:18-33"
+  },
+  {
+   "claim": "The system package set is computed lazily, once per JVM: create a temporary venv, `pip install -r requirements.txt`, then `pip freeze`. It needs PyPI network access. The result becomes the --constraint file for user installs and the list of names users may not install or remove, and GET /api/pve/system serves it.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:132-219",
+   "evidence": "PveResource.scala:54-70"
+  },
+  {
+   "claim": "Each user package is installed with `python -u -m pip install --progress-bar off --no-input --constraint <frozen> <pkg>`. The loop stops at the first failure, leaving the earlier packages installed. The system-name check splits only on \"==\", so a spec like \"numpy>=1\" passes it. Delete runs `pip uninstall -y`.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:221-243,443-508,516-583"
+  },
+  {
+   "claim": "How output streams: Process(...).!(ProcessLogger) blocks, and each line goes into a LinkedBlockingQueue tagged [pip], [pip][ERR], [pve] or [PVE]. WS onOpen runs the action in a Future on the global ExecutionContext, and a second Future pumps the queue to session.sendText until \"__DONE__\". The packages param is parsed by stripping [] and splitting on ',', so specs that contain a comma break.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveWebsocketResource.scala:26,54-116",
+   "evidence": "runProcess seam at PveManager.scala:107-111"
+  },
+  {
+   "claim": "/wsapi/pve has no ServletAwareConfigurator, so it carries no identity, unlike the workflow websocket. The create, install and delete-package paths do not validate pveName (only getPythonBin and the /db routes do), and they trust the client's cuid as a directory key.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveWebsocketResource.scala:34,67-72",
+   "evidence": "WorkflowWebsocketResource.scala:44-47; PveManager.scala:65-70,87-88,255-270"
+  },
+  {
+   "claim": "Every PVE child process (venv, pip) and every Python worker inherits the unit's full environment. scala Process adds extraEnv on top of the inherited environment, and the Python worker is started with no env or cwd override.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:265-272",
+   "evidence": "PveManager.scala:95-111 (pip vars PYTHONUNBUFFERED, PIP_PROGRESS_BAR, PIP_DISABLE_PIP_VERSION_CHECK, PIP_NO_INPUT)"
+  },
+  {
+   "claim": "The frontend's WorkflowPveService calls: POST/GET api/pve/db, PUT/DELETE api/pve/db/{veid}, GET api/pve/system?cuid&access-token, GET api/pve/pves?cuid&access-token, DELETE api/pve/pves/{cuid}, DELETE api/pve/{cuid}/{pveName}/packages/{pkg}?access-token, and ws(s)://<host>/wsapi/pve?packages&cuid&pveName&action&access-token.",
+   "where": "frontend/src/app/workspace/service/virtual-environment/virtual-environment.service.ts:45-116",
+   "evidence": "apiUrl \"api\" (relative) at frontend/src/environments/environment.default.ts:37"
+  },
+  {
+   "claim": "The dashboard page is UserVenvComponent at route /user/python-venv, with menu label \"Environments\" (not \"Python Virtual Envs\"). It uses only the /db CRUD calls. The client accepts names matching ^[a-zA-Z0-9]+$, while the server accepts ^[A-Za-z0-9._-]+$ up to 128 characters.",
+   "where": "frontend/src/app/dashboard/component/user/user-venv/user-venv.component.ts:106-247",
+   "evidence": "name check at :179-182; dashboard.component.html:123-133; app-routing.constant.ts:84; app-routing.module.ts:180-183; PveManager.scala:60-63"
+  },
+  {
+   "claim": "The workspace \"Python Environments\" modal opens from the unit list in the power button. It lists the unit's venvs (/pves), system packages (/system) and saved rows (/db); it creates and installs over WS and deletes packages over REST. Terminating a unit calls DELETE /api/pve/pves/{cuid}, but it checks the selected unit's type, not the terminated unit's.",
+   "where": "frontend/src/app/workspace/component/power-button/computing-unit-selection.component.ts:740-749,954-1133,1177-1356",
+   "evidence": "computing-unit-selection.component.html:244-245,350-351"
+  },
+  {
+   "claim": "In the property editor, the envName dropdown (enum) is filled with the venv directory names on the selected unit (fetchPVEs(cuid)), not with DB rows. defaultEnv defaults to true, and envName is hidden while it is true.",
+   "where": "frontend/src/app/workspace/component/property-editor/operator-property-edit-frame/operator-property-edit-frame.component.ts:538-558,685-723"
+  },
+  {
+   "claim": "Every mode routes PVE paths to a unit. Dev proxy: /api/pve and /wsapi go to localhost:8085. Single-node nginx: /api/pve/ and /wsapi/ go to workflow-runtime-coordinator-service:8085, one container for every local unit. K8s: the dynamic HTTPRoute includes /wsapi and /api/pve behind Envoy ext-authz, which rewrites Host to the unit's recorded URI.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:156-192",
+   "evidence": "frontend/proxy.config.json:73-77,88-93; bin/single-node/nginx.conf:121-125,134-135; gateway-security-policy.yaml:19-39"
+  },
+  {
+   "claim": "On K8s, ext-authz takes the cuid from ?cuid or from the /pves/{cuid} or /{cuid}/.../packages path, and refuses with 403 when there is none. The api/pve/db calls carry no cuid, so the Environments page and the modal's saved list are refused behind Envoy (from reading the code, not run).",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:49-53,84-86,156-169",
+   "evidence": "AccessControlResourceSpec.scala:450-455 tests \"FORBIDDEN for a PVE path with no cuid\"; virtual-environment.service.ts:45-59 sends no cuid"
+  },
+  {
+   "claim": "Three operators can name an environment: PythonUDFOpDescV2, DualInputPortsPythonUDFOpDescV2 and PythonUDFSourceOpDescV2. Each has defaultEnv (default true) and envName. getPhysicalOp sets pveName to \"\" when defaultEnv is true, otherwise to the trimmed envName (blank throws), then calls withPveName. R and Java UDFs have no environment field.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/python/PythonUDFOpDescV2.scala:85-95,159-177",
+   "evidence": "DualInputPortsPythonUDFOpDescV2.scala:86-96,111-120,170; PythonUDFSourceOpDescV2.scala:64-74,87-96,113"
+  },
+  {
+   "claim": "PhysicalOp.pveName is a plain String that is not listed in @JsonIgnoreProperties, so it serializes. It carries only the name, no packages.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:163-174,219,411-412"
+  },
+  {
+   "claim": "How the name reaches the worker: ResourceAllocator.allocate calls WorkerConfig.generateWorkerConfigs(op, cuid), which copies pveName and cuid into every WorkerConfig. cuid is WorkflowContext.cuid, set by WorkflowService.createWorkflowContext from the websocket's ?cuid (or the SyncExecutionResource path).",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/config/WorkerConfig.scala:29-63",
+   "evidence": "ResourceAllocator.scala:39-44,71-73; ScheduleGenerator.scala:37-43; WorkflowService.scala:229-231; WorkflowWebsocketResource.scala:55"
+  },
+  {
+   "claim": "Inside the engine, WorkflowContext.cuid is read only on this PVE path: ScheduleGenerator, then WorkerConfig.cuid, then choosePythonBin.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/WorkflowContext.scala:38",
+   "evidence": "rg finds only ScheduleGenerator.scala:42 and PythonWorkflowWorker.scala:241"
+  },
+  {
+   "claim": "choosePythonBin silently uses PythonUtils.getPythonExecutable (UDF_PYTHON_PATH or \"python3\") when cuid is None, the name is blank or invalid, the path escapes the root, or the interpreter is missing or not executable. It logs nothing, and tests pin this behavior.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:235-246",
+   "evidence": "PveManager.scala:87-93; PythonWorkflowWorkerSpec.scala:185-217"
+  },
+  {
+   "claim": "The engine depends on the web layer: PythonWorkflowWorker imports org.apache.texera.web.resource.pythonvirtualenvironment.PveManager.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:46"
+  },
+  {
+   "claim": "In cluster mode, Python UDF workers have no location preference and are placed round-robin across nodes (RemoteScope). Venvs exist only on the master, which created them over the WS, so workers on other nodes silently use the default interpreter.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/common/ExecutorDeployment.scala:62-89",
+   "evidence": "PhysicalOp.scala:86-135 (oneToOne/manyToOne leave locationPreference None); PythonUDFSourceOpDescV2.scala:112 sets Option.empty"
+  },
+  {
+   "claim": "Workers are created in RegionExecutionManager's constructor (initRegionExecution), and a Python worker's initState starts its Python process right away. Region mounts run later, at launch. An environment must therefore be ready before RegionExecutionManager is built, or be installed inside the worker.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:125,408-416,421-462",
+   "evidence": "PythonWorkflowWorker.scala:207-211"
+  },
+  {
+   "claim": "Python worker command line: `<pythonBin> -u <amberHome>/src/main/python/texera_run_python_worker.py <base64 JSON>`. The JSON holds workerId, outputPort, loggerLevel, rPath, the Iceberg catalog URI and warehouse, icebergPostgresCatalogUsername/Password, s3Endpoint/Region/AuthUsername/AuthPassword and the large-binary base URI. Credentials therefore sit in argv (/proc/<pid>/cmdline) and in StorageConfig, inside the same process that runs user code. Worker stdout and stderr go to the unit's.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:83-116,248-273",
+   "evidence": "amber/src/main/python/texera_run_python_worker.py:57-79,118-152; core/storage/storage_config.py:31,43,49-88"
+  },
+  {
+   "claim": "A K8s unit pod's environment, which Python, R and pip all inherit, includes: STORAGE_JDBC_URL/USERNAME/PASSWORD, STORAGE_S3_* with the username and password, the Iceberg catalog variables (plus the Postgres catalog password when that catalog is used), STORAGE_LAKEFS_ENDPOINT, the FILE_SERVICE_* endpoints, AUTH_JWT_SECRET (the signing secret), USER_JWT_TOKEN (the owner's JWT, minted when the unit is created), TEXERA_CU_ID, TEXERA_MOUNT_IN_POD_ROOT, ACCESS_CONTROL_SERVICE_URL, OTEL_* and JAVA_OPTS.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:315-347,431-447,731,778-781",
+   "evidence": "KubernetesClient.scala:161-189"
+  },
+  {
+   "claim": "In single-node, the coordinator container (the only unit) loads env_file .env. That file also holds POSTGRES_PASSWORD, USER_SYS_ADMIN_PASSWORD, the LakeFS secret keys, the Lakekeeper DB URLs and encryption key, LITELLM_MASTER_KEY, JUPYTER_TOKEN and GRAFANA_ADMIN_PASSWORD, and UDF code can read all of them.",
+   "where": "bin/single-node/docker-compose.yml:406-420",
+   "evidence": "variable names in bin/single-node/.env:33-163"
+  },
+  {
+   "claim": "R has no separate process. RUDF ops compile to OpExecWithCode(\"r-tuple\" or \"r-table\"), which counts as Python-based, so they run in PythonWorkflowWorker. The Python side imports the optional texera_r plugin (texera-rudf), which is in neither the requirements files nor the images. R_HOME comes from rPath (UDF_R_PATH). R ops never get a pveName, so they always use the default interpreter.",
+   "where": "amber/src/main/python/core/architecture/managers/executor_manager.py:407-429",
+   "evidence": "RUdfUiParameterSupport.scala:34; PhysicalOp.scala:256-263; texera_run_python_worker.py:141-146; udf.conf:32-36"
+  },
+  {
+   "claim": "The unit image installs requirements.txt and operator-requirements.txt into the system Python, installs python3-venv, copies the requirements to /tmp, runs as non-root user texera (uid 1001) and uses WORKDIR /texera/amber. The Dashboard image has no requirements file at runtime.",
+   "where": "bin/dockerfiles/computing-unit-master.dockerfile:89-103,124-129",
+   "evidence": "texera-web-application.dockerfile only uses amber/requirements.txt in its build stage (:82)"
+  },
+  {
+   "claim": "The JVM and the Python worker talk over Arrow Flight with insecure gRPC on localhost.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonProxyServer.scala:173",
+   "evidence": "PythonProxyClient.scala:63"
+  },
+  {
+   "claim": "Dataset and model UiParameters: the resource types are {MODEL:\"model\", DATASET:\"dataset\"} on STRING params. At compile time the code only checks that a value is chosen and injects the raw version path /dataset|model/<ownerEmail>/<name>/<version>. An executionBinding is created only when a resource param exists.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:41-47,85-91",
+   "evidence": "ui-parameter-types.json:36; UiUdfParameterContract.scala:44,66-70; pytexera/udf/udf_operator.py:29-39"
+  },
+  {
+   "claim": "When a run starts, the coordinator forces executableOpExecInitInfo. The binding resolves each version path with FileResolver.resolveRepositoryVersion, a Postgres lookup on the unit with reader=None (no access check), into the locator \"<repo>:<commitHash>\". It then rewrites the value to $TEXERA_MOUNT_IN_POD_ROOT/<repo>/<commit>.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:52-73",
+   "evidence": "FileResolver.scala:298-331; RepositoryMountManager.scala:51-61,78-81; RegionExecutionManager.scala:475-489"
+  },
+  {
+   "claim": "Before a region launches, the coordinator calls RepositoryMountManager.ensureAllMounted. That POSTs to $ACCESS_CONTROL_SERVICE_URL/api/mounts/$TEXERA_CU_ID with Bearer USER_JWT_TOKEN, then polls /proc/mounts for a fuse mount for up to 35 s. A resumed reconfiguration mounts the same way.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:122,361-376,409",
+   "evidence": "RepositoryMountManager.scala:91-142,146-181; ExecutionReconfigurationService.scala:122-124,139-141"
+  },
+  {
+   "claim": "The mount authority checks that the token holder has WRITE on the unit and READ on the repository version, then has the node's GeeseFS mount it with a JWT it mints. The holder is the unit owner (the pod's JWT), not the user who started the run. One mount serves every worker and execution for the pod's life, so there is no per-execution binding.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitMountResource.scala:70-111,142-192",
+   "evidence": "ComputingUnitManagingResource.scala:731,779; RepositoryMountManager.scala:39-40"
+  },
+  {
+   "claim": "Mounting exists only on K8s with mounter.enabled, which defaults to false. Without TEXERA_MOUNT_IN_POD_ROOT, mountPointOf throws when the run starts, so resource UiParameters fail in single-node, local and default K8s deployments.",
+   "where": "bin/k8s/values.yaml:415-428",
+   "evidence": "KubernetesClient.scala:171-187; RepositoryMountManager.scala:51-61"
+  },
+  {
+   "claim": "executionTimeBinding is ignored by Jackson, so resolved locators and paths never reach a serialized plan.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:163-174,221,240-246"
+  },
+  {
+   "claim": "pytexera exports DatasetFileDocument (it is in `from pytexera import *`). It reads USER_JWT_TOKEN and FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT from the environment and calls the file service for a presigned URL, so UDF code can make the unit call a service.",
+   "where": "amber/src/main/python/pytexera/storage/dataset_file_document.py:91-140",
+   "evidence": "pytexera/__init__.py:24,51"
+  },
+  {
+   "claim": "Tests tied to PVE: PveResourceSpec, PveWebsocketResourceSpec, ComputingUnitMasterSpec:56,559,592, TexeraWebApplicationSpec:237, the PVE cases in AccessControlResourceSpec (~348-731), PythonWorkflowWorkerSpec:78,105-130,185-217, PhysicalOpSpec:155-163, and the frontend specs virtual-environment.service, user-venv, computing-unit-selection, operator-property-edit-frame and workflow-form.rendered.",
+   "where": "amber/src/test/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResourceSpec.scala"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "1 (plan is pure data)",
+   "change": "Replace PhysicalOp.pveName: String with a serializable environment spec, for example pythonEnvironment: Option[PythonEnvironmentSpec(name, requirements: List[String] sorted, digest)]. The digest should cover the requirements, the system constraint set and the base Python version. The three Python UDF descriptors keep emitting the name at compile time; the Dashboard fills in the packages.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/PhysicalOp.scala:219,411-412; WorkerConfig.scala:48,58; PythonUDFOpDescV2.scala:159-177 and its two siblings"
+  },
+  {
+   "step": "1 (datasets/models resolved at plan time)",
+   "change": "Replace ExecutionTimeBinding, which is a function and ignored by Jackson, with data on the operator: the resolved (repo, commit) locators plus the rewritten parameter values or code. Resolve with the runner's uid (reader=Some(uid)) instead of reader=None. The unit must stop calling access-control /api/mounts and the Postgres lookup (rule 2). Decide what the plan carries instead: links or temporary keys.",
+   "where": "UdfUiParameterSupport.scala:46-75; PhysicalOp.scala:172,221,240-246; FileResolver.scala:304-331; RegionExecutionManager.scala:122,361-376,484; ExecutionReconfigurationService.scala:122-124,139-141; RepositoryMountManager.scala:94-133"
+  },
+  {
+   "step": "2 (environment rows edited at the Dashboard service)",
+   "change": "Move the /db CRUD (list, save, update, delete) and the PveManager DB helpers into a new resource registered in TexeraWebApplication, either at a new path such as /api/environments or by keeping /api/pve/db. Keep the uid scoping and the UNIQUE(uid,name) 409.",
+   "where": "PveResource.scala:75-158; PveManager.scala:316-379; TexeraWebApplication.scala:133-163"
+  },
+  {
+   "step": "2 (environment rows edited at the Dashboard service)",
+   "change": "Replace the unit's GET /system, which runs a temporary venv plus pip freeze, with a static system or constraint list generated at image build from the engine interpreter's pip freeze and shipped to the Dashboard as a resource. Validate package specs on the server: name pattern, operators limited to ==, >= and <= (or \"\"), and no leading '-', URLs or paths. Use one name regex on client and server.",
+   "where": "PveResource.scala:54-70; PveManager.scala:60-63,132-219,466-473; user-venv.component.ts:179-199; computing-unit-master.dockerfile:91-103"
+  },
+  {
+   "step": "2 (POST /executions)",
+   "change": "For each Python op with defaultEnv=false, look up virtual_environments by (runner uid, envName) and put {name, packages, digest} into the plan written to the lake. Fail with a 4xx if no row exists, replacing today's silent fallback.",
+   "where": "sql/texera_ddl.sql:306-315; PythonUDFOpDescV2.scala:159-168; DualInputPortsPythonUDFOpDescV2.scala:111-120; PythonUDFSourceOpDescV2.scala:87-96"
+  },
+  {
+   "step": "2 (engine installs on first sight, logs versions)",
+   "change": "Add an installer in the engine package, not in org.apache.texera.web. Use a configurable, content-addressed root keyed by digest instead of /tmp/texera-pve/venvs/{cuid}/{name}. Hold a file lock while running venv creation, `pip install --constraint <system set> <requirements>` and `pip freeze`. Write the digest and the frozen versions (plus a failure reason) to the execution log. Fail the run instead of falling back. It must finish before workers are created (RegionExecutionManager's constructor calls initRegionExecution), or run inside PythonWorkflowWorker.initState under a per-node lock. Do not block the global ExecutionContext.",
+   "where": "PythonWorkflowWorker.scala:46,207-211,235-252; PveManager.scala:95-111,176-185,221-313 (pip invocation to reuse); RegionExecutionManager.scala:125,421-462"
+  },
+  {
+   "step": "2 (engine, cluster mode)",
+   "change": "Python workers are placed round-robin onto remote nodes. Either install the environment on each worker's node, or pin environment-using Python ops to the coordinator.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/common/ExecutorDeployment.scala:62-89"
+  },
+  {
+   "step": "2 (engine)",
+   "change": "Remove the cuid plumbing that exists only for PVE paths: WorkerConfig.cuid, the ResourceAllocator cuid parameter, the ScheduleGenerator pass-through, and WorkflowContext.cuid if nothing outside the engine still needs it.",
+   "where": "WorkerConfig.scala:31,49,59; ResourceAllocator.scala:43,72; ScheduleGenerator.scala:42; WorkflowContext.scala:38; WorkflowService.scala:230"
+  },
+  {
+   "step": "2 (unit endpoints removed)",
+   "change": "Delete PveWebsocketResource and the unit-filesystem routes of PveResource (/system, /pves, DELETE /pves/{cuId}, DELETE packages), and remove PveManager's createNewPve, installUserPackages, deletePackages, getEnvironments, deleteEnvironments and getPythonBin. Unregister them from ComputingUnitMaster.",
+   "where": "ComputingUnitMaster.scala:58-59,133,165; PveWebsocketResource.scala; PveResource.scala:54-70,163-221; PveManager.scala:65-93,255-313,382-583"
+  },
+  {
+   "step": "2 (routing)",
+   "change": "Remove the PVE routes to the unit: the dev proxy entry, the single-node nginx location, the K8s dynamic-route match, and the access-control PVE regexes and cuid-from-path extraction. Point the /db replacement at the Dashboard; with nginx and the dev proxy, plain /api already goes there.",
+   "where": "frontend/proxy.config.json:73-77; bin/single-node/nginx.conf:121-125; bin/k8s/templates/base/gateway/gateway-routes.yaml:179-181; AccessControlResource.scala:49-53,84-86,156-161"
+  },
+  {
+   "step": "2 (frontend)",
+   "change": "In WorkflowPveService, keep the row CRUD (pointed at the Dashboard path) and drop getSystemPackages(cuid), fetchPVEs, deleteEnvironments, deletePackage and getPveWebSocketUrl. Fill the property editor's envName list from listUserPves() instead of fetchPVEs(cuid). Remove the workspace PVE modal, its button and the delete-on-terminate call. Keep UserVenvComponent, and show install logs and versions in the run view.",
+   "where": "virtual-environment.service.ts:75-116; operator-property-edit-frame.component.ts:695-723; computing-unit-selection.component.ts:143-157,740-749,954-1420; computing-unit-selection.component.html:244-245,350-520; frontend/src/styles.scss:98-180"
+  },
+  {
+   "step": "2 (tests)",
+   "change": "Delete PveResourceSpec and PveWebsocketResourceSpec. Update ComputingUnitMasterSpec, TexeraWebApplicationSpec, the PVE cases in AccessControlResourceSpec, PythonWorkflowWorkerSpec (replace the fallback tests with fail-closed and install tests), PhysicalOpSpec and the five frontend specs. Add Dashboard resource specs and an installer spec that uses a fake process runner, following the PveManager.runProcess seam.",
+   "where": "amber/src/test/scala/org/apache/texera/web/ComputingUnitMasterSpec.scala:56,559,592; TexeraWebApplicationSpec.scala:237; PythonWorkflowWorkerSpec.scala:78,105-130,185-217; AccessControlResourceSpec.scala:348-731"
+  },
+  {
+   "step": "5 (same code)",
+   "change": "Start the Python process with an explicit, minimal environment instead of inheriting the unit's. Move credentials out of argv (for example stdin or a 0600 file), and give the worker per-run, per-namespace credentials only. Replace DatasetFileDocument's USER_JWT_TOKEN plus file-service presign with links supplied in the plan. Stop sending AUTH_JWT_SECRET, JDBC, USER_JWT_TOKEN and S3 root keys to units.",
+   "where": "PythonWorkflowWorker.scala:83-116,265-272; texera_run_python_worker.py:57-79,118-139; pytexera/storage/dataset_file_document.py:91-101; ComputingUnitManagingResource.scala:340-344,431-447,778-781; bin/single-node/docker-compose.yml:417-418"
+  }
+ ],
+ "open_questions": [
+  "Whose row does an environment name resolve to: the runner's (uid, name) or the workflow owner's? Rows are unique per user, so a shared workflow that names \"ml\" can resolve to a different package list or to none.",
+  "Should a venv be built with --system-site-packages from the image interpreter, which is fast and includes operator-requirements such as torch? Or should it stay a fresh venv plus requirements.txt as today, which is slow and lacks the operator packages?",
+  "Under rule 5's network lock-down (Envoy, lake and object store only), where does pip download from: a PyPI mirror or proxy allowed by NetworkPolicy, or a wheelhouse in the object store?",
+  "May a venv cache keyed by digest outlive an execution on a unit and be reused by later runs, possibly by other users of a shared unit? Rule 5 scopes the lake, not local disk.",
+  "Ranges and unpinned specs (\">=\", \"<=\", \"\") make runs non-reproducible. Should the Dashboard pin exact versions at plan time, or is logging the frozen versions per run enough?",
+  "Should R UDFs get environment or package support in the plan? Today texera-rudf is not in any image.",
+  "For dataset and model UiParameters, how does a unit read the data without calling access-control /api/mounts or the file service: presigned links in the plan, temporary per-repository object-store keys, or mounts requested by the platform at start?",
+  "Should the system package list shown in the UI be the image's pip freeze, generated at build time, or only the pins in requirements.txt?"
+ ],
+ "risks": [
+  "Failing closed instead of the current silent fallback will break saved workflows whose envName has no matching row for the runner, or whose row was renamed (PUT /db allows renames). Today those workflows run quietly on the default interpreter.",
+  "Installing on first sight moves pip errors and multi-minute installs (pyarrow, pandas and pyiceberg reinstall in every venv; torch if users add it) into run time. The workspace modal, the only place pip output is shown interactively, is being removed.",
+  "Parallel Python workers of one op, and several ops sharing an environment, start at the same moment. Without a per-node lock and atomic rename they race on venv creation, which today has no locking at all.",
+  "pip install runs package build code with the unit's identity. Until step 5 lands, that code and UDF code can read the inherited AUTH_JWT_SECRET, the Postgres password, S3 root keys and the owner's JWT (on single-node, the whole .env), plus catalog and S3 credentials from argv.",
+  "In cluster mode, an install done only on the master node leaves remote workers without the environment.",
+  "Removing unit routes without first adding the Dashboard /db route breaks the Environments page in dev and single-node. On K8s it is already refused today, from reading the code.",
+  "Mounts for dataset and model resources are per unit and authorized as the unit owner. Moving resolution to plan time must add the runner's access check, which reader=None skips today, or users on a shared unit may read data they cannot see."
+ ]
+}

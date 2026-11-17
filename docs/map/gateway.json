@@ -1,0 +1,258 @@
+{
+ "area": "Every network path into a computing unit, and the authentication and authorization on each, in all deployment modes (step 4)",
+ "summary": "Only Kubernetes puts a check in front of units. Envoy Gateway 1.6.3 sends /wsapi, /api/pve, /api/executions/N/stats/N and /api/executions/result/export through a SecurityPolicy extAuth to access-control-service (/api/auth). That service verifies the HS256 login JWT (from the access-token query parameter, otherwise the Authorization header) and checks only the caller's privilege on the cuid. READ is enough, and nothing checks the workflow or the execution. It answers with Host set to the unit URI stored in Postgres (the backend is a DynamicResolver) plus x-user-* headers. The login token still reaches the unit, because the query string and Authorization header pass through, and access-control-service writes it to its logs. In single-node, nginx sends /wsapi and /api/pve straight to the one coordinator with no check, and the local-dev Angular proxy does the same.\n\nThe unit does almost no checking of its own. On the websocket it trusts the x-user-* headers when they are present. Without them it grants WRITE to everyone and only parses a token if one is sent. Only the execute request checks WRITE; pause, kill, debug, eval and modify-logic do not. /wsapi/pve and four PVE REST endpoints have no auth at all. The REST endpoints that do check use the shared HS256 secret. Kubernetes units hold that secret (AUTH_JWT_SECRET) and the creator's 7-day login token (USER_JWT_TOKEN), and UDF code can read both.\n\nagent-service is the only service that calls units. It sends POST /api/execution/{wid}/{cuid}/run with the user's login token and bypasses Envoy in every mode. Neither side checks rights on the unit or the workflow. The Dashboard, the CU manager, y-websocket and pylsp never call units. The CU NetworkPolicy lets in every namespace except the pool's, on any port, and has no egress rules.\n\nThree things the brief assumes are not true today:\n- There is no unit key.\n- Envoy's ext-auth target is access-control-service, not the Dashboard service.\n- Envoy exists only in Kubernetes.",
+ "facts": [
+  {
+   "claim": "Kubernetes ingress is the Envoy Gateway subchart gateway-helm 1.6.3 (alias envoy-gateway) with extension APIs Backend and EnvoyPatchPolicy enabled. The chart contains only one SecurityPolicy, two BackendTrafficPolicies and one Backend. No EnvoyPatchPolicy, ClientTrafficPolicy, EnvoyProxy, JWT provider or authorization rule exists.",
+   "where": "bin/k8s/Chart.yaml:58-61; bin/k8s/values.yaml:631-637",
+   "evidence": "rg over bin/ for EnvoyPatchPolicy|ClientTrafficPolicy|jwt:|SecurityPolicy|BackendTrafficPolicy found only those objects"
+  },
+  {
+   "claim": "There is one Gateway, <release>-gateway (GatewayClass eg), with HTTP :80 and HTTPS :443 listeners (TLS terminated, cert-manager annotation). allowedRoutes is from: Same namespace.",
+   "where": "bin/k8s/templates/base/gateway/gateway.yaml:18-61"
+  },
+  {
+   "claim": "In Kubernetes, only the <release>-dynamic-routes HTTPRoute reaches units. It matches PathPrefix /wsapi, the regex ^/api/executions/\\d+/stats/\\d+$, PathPrefix /api/executions/result/export and PathPrefix /api/pve. When notebook migration is on it also matches the Jupyter base path, which leads to Jupyter pods. Its backendRef is the Envoy Backend texera-dynamic-backend.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:156-192"
+  },
+  {
+   "claim": "The route hard-codes the name 'texera-dynamic-backend', but the Backend is rendered as {{ .Release.Name }}-dynamic-backend. A release with any other name loses all unit routing (install.sh defaults RELEASE=texera).",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:192; bin/k8s/templates/base/gateway/gateway-backend.yaml:21; bin/k8s/install.sh:37"
+  },
+  {
+   "claim": "The Backend is type DynamicResolver, so Envoy picks the upstream from the Host header. That makes the unit whatever Host the ext-auth answer writes.",
+   "where": "bin/k8s/templates/base/gateway/gateway-backend.yaml:18-24"
+  },
+  {
+   "claim": "SecurityPolicy <release>-ext-auth targets only the dynamic-routes HTTPRoute. It uses extAuth.http with backend access-control-service-svc:9096, path /api/auth, and headersToBackend x-user-computing-unit-access, x-user-id, x-user-name, x-user-email and Host. It sets no bodyToExtAuth, headersToExtAuth, failOpen or recomputeRoute, so no request body is sent and a failed check is refused.",
+   "where": "bin/k8s/templates/base/gateway/gateway-security-policy.yaml:18-39"
+  },
+  {
+   "claim": "Other Envoy features in use:\n- A BackendTrafficPolicy with consistentHash on the X-Agent-Workflow-Id header, for /api/agents.\n- A BackendTrafficPolicy with connectionIdleTimeout 30s on the dynamic routes (rendered only when notebook migration is on).\n- Per-rule timeouts.request: \"0s\" for versionZip and RustFS, 3m for notebook migration, and llmRequestTimeout for LLM routes.\n\nThe dynamic route sets no timeout. The chart's own comments note that Envoy's 15s default cuts long HTTP responses.",
+   "where": "bin/k8s/templates/base/gateway/gateway-agent-traffic-policy.yaml:21-38; bin/k8s/templates/base/gateway/gateway-jupyter-traffic-policy.yaml:26-40; bin/k8s/templates/base/gateway/gateway-routes.yaml:60-71,109-113,124-127,169-192,238-241"
+  },
+  {
+   "claim": "The static routes have no check at the gateway, and none of them leads to a unit. /rtc goes to y-websocket-server-svc:1234, /python-language-server to python-language-server-svc:3000, /api/agents to agent-service-svc:3001, and /api and / to webserver-svc:8080.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:18-154,198-219"
+  },
+  {
+   "claim": "The ext-auth endpoint is AccessControlResource, @Path(\"/auth\") @PermitAll, with GET/POST/PUT/DELETE on /{path:.*}. Envoy calls /api/auth followed by the original path. authorize() handles four kinds of path:\n- the Jupyter path (routing only)\n- wsapi/workflow-websocket\n- api/executions/N/stats/N and api/executions/result/export\n- any pve path, wsapi/pve included\n\nEvery other path gets 403.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:45-53,74-91,274-317"
+  },
+  {
+   "claim": "The token is read from the access-token query parameter first, then the Authorization header (Bearer prefix stripped), then a 'token' field in the body (JSON, urlencoded or multipart). The SecurityPolicy forwards no body, so the body branch only serves direct callers. The export-to-local form, which carries its token only in the body, arrives at this check with no token.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:144-153,219-268"
+  },
+  {
+   "claim": "The check verifies the JWT with JwtAuth.jwtConsumer (HS256 with the shared AUTH_JWT_SECRET, no JWKS). It takes the cuid from the cuid query parameter or the PVE path, and the privilege from ComputingUnitAccess: the owner gets WRITE, others get their grant, and NONE means 403. It never reads the wid or an execution, so there is no workflow access check. READ passes every unit path, and the unit's terminate_time is not checked.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:156-186; common/auth/src/main/scala/org/apache/texera/auth/JwtAuth.scala:35-42; common/auth/src/main/scala/org/apache/texera/auth/util/ComputingUnitAccess.scala:34-55; common/auth/src/main/scala/org/apache/texera/auth/util/OwnerAccess.scala:29-30"
+  },
+  {
+   "claim": "On success the check returns 200 with x-user-computing-unit-access (READ or WRITE), x-user-id, x-user-name, x-user-email, and Host set to workflow_computing_unit.uri from Postgres. A unit with no recorded URI gets 403. For a Kubernetes unit, the CU manager writes the URI at create time as computing-unit-<cuid>.<pool>-svc.<pool-ns>.svc.cluster.local:8085.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:194-216; computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:758-770; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:50-54"
+  },
+  {
+   "claim": "A request with no cuid gets 403. The frontend calls /api/pve/db (list, save, update and delete environment rows) without a cuid, so those calls are always refused in Kubernetes.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:156-169; frontend/src/app/workspace/service/virtual-environment/virtual-environment.service.ts:45-59"
+  },
+  {
+   "claim": "access-control-service writes login tokens to its logs at INFO, the default level:\n- line 141: the request URI, all headers and all query parameters, which include access-token and Authorization\n- line 154: the extracted token\n- line 295: every POST body",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:140-142,154,295; access-control-service/src/main/resources/access-control-service-web-config.yaml:28"
+  },
+  {
+   "claim": "The same SecurityPolicy also covers per-user Jupyter. routeToJupyter returns only a Host taken from user_jupyter.internal_url and authenticates nothing. Any change to the ext-auth answer must keep this working, or move Jupyter to its own HTTPRoute.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:83,103-126; bin/k8s/templates/base/gateway/gateway-routes.yaml:182-188"
+  },
+  {
+   "claim": "A unit (ComputingUnitMaster) serves HTTP on 8085 on all interfaces, with no bindHost set. The Pekko master binds localhost:2552 because the image starts without --cluster, and the Python Arrow Flight proxies bind localhost. So 8085 is the unit's only listener reachable from outside the pod.",
+   "where": "amber/src/main/resources/computing-unit-master-config.yml:18-22; amber/src/main/scala/org/apache/texera/amber/engine/common/AmberRuntime.scala:89-103; bin/dockerfiles/computing-unit-master.dockerfile:129-131; amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonProxyServer.scala:173"
+  },
+  {
+   "claim": "On 8085 the unit serves the websockets /wsapi/workflow-websocket and /wsapi/pve, and the REST paths /api/pve/*, /api/executions/* (the full dashboard WorkflowExecutionsResource) and /api/execution/* (SyncExecutionResource). It opens a Postgres pool at startup.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:131-134,145-151,165,205-206"
+  },
+  {
+   "claim": "The unit checks REST requests with Dropwizard's toastshaman JwtAuthFilter, using the same HS256 jwtConsumer (no JWKS). The filter applies only to methods with @Auth or @RolesAllowed.",
+   "where": "amber/src/main/scala/org/apache/texera/web/auth/JwtAuth.scala:31-44; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:167-174"
+  },
+  {
+   "claim": "These unit endpoints have no auth:\n- GET /api/pve/system\n- GET /api/pve/pves\n- DELETE /api/pve/pves/{cuId}\n- DELETE /api/pve/{cuid}/{pve}/packages/{pkg}\n- GET /api/execution/health\n- the /wsapi/pve websocket, which creates a venv and runs pip install, and has no configurator and no identity",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResource.scala:54-55,163-164,194-196,203-204; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:933-935; amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveWebsocketResource.scala:34-90"
+  },
+  {
+   "claim": "These unit endpoints check a JWT:\n- /api/pve/db* (@Auth).\n- POST /api/execution/{wid}/{cuid}/run (@RolesAllowed). It takes wid and cuid from the path and checks neither the unit nor the workflow.\n- /api/executions/{wid}/stats/{eid} and /result/export/dataset, which check workflow READ with a WorkflowAccess database query.\n- /result/export/local, which reads the token from a form field, runs parseToken, then checks workflow READ.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResource.scala:75-139; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-191; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:676-685,772-775,851-855,874-895"
+  },
+  {
+   "claim": "At the websocket handshake, if all four x-user-* headers are present the unit trusts them (\"KUBERNETES MODE\") and never verifies the access-token that also arrives. Otherwise (\"SINGLE NODE MODE\") it first grants WRITE, then parses access-token with jwtConsumer. A missing or invalid token leaves no user but keeps the WRITE grant, because the exception is caught and logged.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:50-104"
+  },
+  {
+   "claim": "On the workflow websocket only WorkflowExecuteRequest checks for WRITE. ModifyLogicRequest, ResultPaginationRequest, and everything passed on through wsInput (pause, resume, kill, checkpoint, retry, skip-tuple, PythonExpressionEvaluate, DebugCommand) has no privilege check. So a user with READ on the unit can kill or pause a run, and send debugger or eval commands into Python workers.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:96-135; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:84-125; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:317-358"
+  },
+  {
+   "claim": "The unit takes wid and cuid from the websocket query string without checking them, and WorkflowService is shared per (wid, cuid). Any session admitted to a unit can therefore watch and command any workflow's live run there. The execution record uses the computingUnitId from the request body. Starting a run needs a uid, so an anonymous single-node session can watch, pause and kill but cannot start.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:54-71; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:245-279"
+  },
+  {
+   "claim": "Authorization happens only once, at the websocket upgrade. After that, commands are frames on a socket that Jetty keeps open for up to 1 hour of idle time, so revoking access or an expiring token does not end the session.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:153-155; access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:84-86"
+  },
+  {
+   "claim": "The browser puts its login JWT where the unit can see it:\n- The websocket URL is ?wid&uid&cuid&access-token=<jwt>. The full URL is written to the console, and uid defaults to 1 and is ignored by the unit.\n- PVE REST calls and the /wsapi/pve URL carry access-token as a query parameter.\n- The Angular JwtModule adds Authorization: Bearer to every same-origin request.\n- Export-to-local POSTs the token as a hidden form field.",
+   "where": "frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:112-127; frontend/src/app/workspace/service/virtual-environment/virtual-environment.service.ts:66-117; frontend/src/app/app.module.ts:204-210; frontend/src/app/dashboard/service/user/download/download.service.ts:240-269"
+  },
+  {
+   "claim": "Envoy forwards the original path, the query string and the client's Authorization header to the unit. The dynamic route has no URLRewrite or RequestHeaderModifier filter, and headersToBackend overwrites only the five listed headers. So the login token reaches the unit in Kubernetes as well.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:169-192; bin/k8s/templates/base/gateway/gateway-security-policy.yaml:34-39"
+  },
+  {
+   "claim": "A Kubernetes unit's environment holds:\n- USER_JWT_TOKEN: a full login token for the creator, minted at create time (same claims as a login, valid 10080 minutes = 7 days by default).\n- AUTH_JWT_SECRET, which is required.\n- The JDBC user and password, and the S3 root keys.\n\nNo per-unit key exists. TEXERA_CU_ID is set only when mounting is on.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:338-344,431-447,731,773-781; common/config/src/main/resources/auth.conf:22-26; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:167-187"
+  },
+  {
+   "claim": "Python workers inherit the unit JVM's environment, because scala.sys.process.Process is called without overriding it. UDF code can therefore read USER_JWT_TOKEN, and can read AUTH_JWT_SECRET and use it to mint a token for any user.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:265-272"
+  },
+  {
+   "claim": "The unit uses login tokens for outgoing calls, which breaks rule 2:\n- LakeFSFileDocument asks file-service for a presigned URL with USER_JWT_TOKEN.\n- pytexera DatasetFileDocument does the same.\n- RepositoryMountManager POSTs to ACS /api/mounts/{cuid} with USER_JWT_TOKEN.\n- ResultExportService mints a token with AUTH_JWT_SECRET to upload to file-service.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/model/LakeFSFileDocument.scala:39-40,120-140; amber/src/main/python/pytexera/storage/dataset_file_document.py:91-125; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/RepositoryMountManager.scala:104-118; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:545-558"
+  },
+  {
+   "claim": "Single-node and local-dev sign and verify every JWT with the literal secret in auth.conf: neither bin/single-node/.env nor bin/local-dev/main.sh sets AUTH_JWT_SECRET. The Kubernetes values also ship a development literal.",
+   "where": "common/config/src/main/resources/auth.conf:25-26; bin/k8s/values.yaml:537-539"
+  },
+  {
+   "claim": "agent-service calls the unit directly with POST <endpoint>/api/execution/{wid}/{cuid}/run and Authorization: Bearer <the user's login token>. This is its only call to a unit. The endpoint depends on the mode:\n- Kubernetes: EXECUTION_ENDPOINT_TEMPLATE http://computing-unit-{cuid}.<pool>-svc.<ns>.svc.cluster.local:8085. This bypasses Envoy and hard-codes the computing-unit prefix instead of using podNamePrefix.\n- Single-node: workflow-runtime-coordinator-service:8085.\n- Local-dev: localhost:8085.",
+   "where": "agent-service/src/agent/tools/workflow-execution-tools.ts:251-303; bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61; bin/single-node/.env:102; bin/local-dev/main.sh:710; agent-service/src/config/env.ts:34-35"
+  },
+  {
+   "claim": "agent-service never verifies the JWT signature; it only base64-decodes the token and checks expiry. It takes computingUnitId from the create-agent request body. Since the unit's run endpoint checks neither the unit nor the workflow, any logged-in user can run plans on any unit id through the agent.",
+   "where": "agent-service/src/api/auth-api.ts:24-58; agent-service/src/server.ts:176-202"
+  },
+  {
+   "claim": "The CU managing service never calls a unit over the network:\n- Status and metrics come from Kubernetes pod snapshots via the API server.\n- Its RBAC allows pods get/list/watch/create/delete and pods/log get, with no exec or proxy.\n- Local units are reported as Running without any probe.\n- Unit pods get no readiness or liveness probes.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ComputingUnitHelpers.scala:71-100,196-250; bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-service-account.yaml:30-43; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:146-316"
+  },
+  {
+   "claim": "The Dashboard (TexeraWebApplication) never calls units. It serves its own copy of WorkflowExecutionsResource, plus an unused /wsapi/collab socket that the gateway's /wsapi prefix sends to units in Kubernetes. y-websocket (/rtc) and pylsp (/python-language-server) never contact units.",
+   "where": "amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:98,156; amber/src/main/scala/org/apache/texera/web/resource/CollaborationResource.scala:50-53; frontend/src/app/workspace/service/workflow-graph/model/shared-model.ts:128; frontend/src/app/workspace/component/code-editor-dialog/code-editor.component.ts:331-333"
+  },
+  {
+   "claim": "The admin execution page opens the workflow websocket without a cuid to kill, pause or resume a run, and sends the command before the socket is open. In Kubernetes, access-control-service refuses it because there is no cuid.",
+   "where": "frontend/src/app/dashboard/component/admin/execution/admin-execution.component.ts:298-333"
+  },
+  {
+   "claim": "Mounting is a path into a unit's files, not its network. On POST /api/mounts/{cuid}, access-control-service checks WRITE on the unit and read access to the dataset. It then asks the node's mounter (port 8100, caller authenticated by a projected service-account token) to FUSE-mount into the unit's per-cuid hostPath, giving GeeseFS a newly minted user JWT. The mounter is off by default.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitMountResource.scala:49-101; bin/k8s/values.yaml:415-425"
+  },
+  {
+   "claim": "In single-node, nginx (the only published port, 8080) sends /api/pve/ and /wsapi/ to workflow-runtime-coordinator-service:8085 with no auth_request, and sends /api/executions/* to dashboard-service. nginx passes client headers through, so a client outside a browser can send x-user-* headers and be any user on the websocket.",
+   "where": "bin/single-node/nginx.conf:121-140; bin/single-node/docker-compose.yml:533-549; amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:50-76"
+  },
+  {
+   "claim": "The single-node coordinator publishes no port, but it shares the default compose network with every other service and receives the whole .env (database, S3, LakeFS and LiteLLM credentials) through env_file.",
+   "where": "bin/single-node/docker-compose.yml:405-421"
+  },
+  {
+   "claim": "In single-node and local-dev, one coordinator serves every cuid, and routing ignores the cuid. A 'local' unit stores a URI chosen by the user (the frontend sets <origin>/wsapi) that nothing routes by. Local units are on by default and turned off in the Kubernetes values.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:713-724,739-740; frontend/src/app/common/util/computing-unit.util.ts:369-371; common/config/src/main/resources/computing-unit.conf:20-23; bin/k8s/values.yaml:464-465"
+  },
+  {
+   "claim": "Local dev has no gateway. The Angular dev-server proxy sends /api/pve and /wsapi (websocket) to localhost:8085, /rtc to port 1234 and /api to 8080, with no check. The unit listens on all interfaces, so other machines on the network can reach it.",
+   "where": "frontend/proxy.config.json:73,83,88,94; bin/local-dev/main.sh:101-111; amber/src/main/resources/computing-unit-master-config.yml:20-22"
+  },
+  {
+   "claim": "The CU-pool NetworkPolicy is always rendered. It selects every pod in the pool namespace (podSelector {}), restricts ingress only, and admits traffic from every namespace except the pool's. So Envoy, agent-service, the webserver and other tenants can all reach units, on any port. There are no egress rules.",
+   "where": "bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml:17-34"
+  },
+  {
+   "claim": "The Jupyter NetworkPolicy stops units from reaching Jupyter, but nothing stops Jupyter from reaching units. With notebook migration on (off by default), a user's JupyterLab can connect to computing-unit-<cuid>...:8085 and send x-user-* headers. These are the chart's only two NetworkPolicies.",
+   "where": "bin/k8s/templates/base/jupyter-pool/jupyter-network-policy.yaml:17-49; bin/k8s/values.yaml:236-239,258-263"
+  },
+  {
+   "claim": "Unit pods are labelled type=computing-unit, cuid=<id> and name=<pod>. The headless service <pool.name>-svc (clusterIP None) selects type: computing-unit on port 8085, so the same label can serve as a policy's podSelector.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:205-211; bin/k8s/templates/base/workflow-computing-unit-pool/workflow-computing-units-service.yaml:24-26"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "4",
+   "change": "Rewrite the check Envoy calls:\n- Resolve the execution id to its workflow and unit.\n- Require workflow READ to watch. Per the recorded decision, starting or sending a command needs workflow READ plus unit WRITE.\n- Return Host (the unit's address) and Authorization: Bearer <unit key>, and stop returning the x-user-* headers.\n- Stop reading tokens from the query string or body, and remove the token-logging lines 141, 154 and 295.\n- In the SecurityPolicy, replace the x-user-* entries in headersToBackend with 'authorization' (keep Host), so Envoy overwrites the browser's token. If the check moves into the Dashboard service, point extAuth.http.backendRefs at it.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:74-268; bin/k8s/templates/base/gateway/gateway-security-policy.yaml:28-39"
+  },
+  {
+   "step": "4",
+   "change": "Change the dynamic routes:\n- Replace the /wsapi, stats, export and /api/pve matches with the engine's start, watch, command and health paths, keyed by execution id.\n- Give the watch rule timeouts.request: \"0s\" if the watch is an HTTP stream.\n- Move Jupyter to its own HTTPRoute and SecurityPolicy.\n- Fix the backendRef name to {{ .Release.Name }}-dynamic-backend.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:156-192; bin/k8s/templates/base/gateway/gateway-jupyter-traffic-policy.yaml:33-36"
+  },
+  {
+   "step": "4",
+   "change": "Introduce a unit key, which does not exist today:\n- Create it when the unit is created. Either derive it (for example an HMAC of the cuid with a control-side secret) or store it in a Kubernetes Secret.\n- Inject it into the pod from that Secret.\n- Stop injecting USER_JWT_TOKEN and AUTH_JWT_SECRET.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:338-344,731,773-781; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:146-187"
+  },
+  {
+   "step": "4",
+   "change": "Give the engine one check: a single filter that compares the unit key, in constant time, on every HTTP request and websocket upgrade (health excepted). Then:\n- Delete ServletAwareConfigurator's trust in x-user-* headers, its grant of WRITE by default, and its query-token parsing.\n- Remove setupJwtAuth, AuthValueFactoryProvider and RolesAllowedDynamicFeature from ComputingUnitMaster.\n- Drop SessionUser from engine endpoints.\n- Add start, watch, command and health endpoints.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:131-134,165-206; amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:44-104; amber/src/main/scala/org/apache/texera/web/auth/JwtAuth.scala:31-44"
+  },
+  {
+   "step": "4",
+   "change": "Make each command (pause, resume, kill, debug, eval, modify-logic, checkpoint) its own HTTP request through Envoy, so each one passes the check. This closes today's gap where only execute checks WRITE. Remove commands sent as websocket frames.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:96-135; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:84-125; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:317-358"
+  },
+  {
+   "step": "4",
+   "change": "Frontend changes:\n- Stop putting access-token in URLs, and stop logging the websocket URL.\n- Create the execution with POST /executions at the Dashboard service, then start it.\n- Open the watch stream with an Authorization header (fetch streaming), or with a cookie that Envoy strips before the unit. A browser cannot set headers on a WebSocket or EventSource.\n- Send commands through HttpClient, whose interceptor already adds Authorization.\n- Have the admin page send commands by execution id.",
+   "where": "frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:112-127; frontend/src/app/workspace/service/virtual-environment/virtual-environment.service.ts:66-117; frontend/src/app/dashboard/component/admin/execution/admin-execution.component.ts:298-333"
+  },
+  {
+   "step": "4",
+   "change": "agent-service changes:\n- Remove EXECUTION_ENDPOINT_TEMPLATE and WORKFLOW_EXECUTION_SERVICE_ENDPOINT.\n- Create the execution at the Dashboard service, then start and watch it through Envoy with the user's token, which Envoy swaps for the unit key.\n- Remove SyncExecutionResource from the unit.",
+   "where": "agent-service/src/agent/tools/workflow-execution-tools.ts:251-303; agent-service/src/config/env.ts:34-35; bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61; bin/single-node/.env:102; bin/local-dev/main.sh:710; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:206"
+  },
+  {
+   "step": "4",
+   "change": "Kubernetes NetworkPolicy: let into type=computing-unit pods only the Envoy proxy pods, on TCP 8085. Match them with a namespaceSelector for the namespace the proxies run in AND a podSelector on app.kubernetes.io/managed-by=envoy-gateway and gateway.envoyproxy.io/owning-gateway-name=<release>-gateway. In step 5, allow egress only to DNS, Lakekeeper and the object store.",
+   "where": "bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml:17-34"
+  },
+  {
+   "step": "4",
+   "change": "Single-node:\n- Replace nginx with Envoy: an HTTP ext_authz call to the Dashboard check, then routing to the coordinator by the Host it returns.\n- Put the coordinator on a network it shares only with Envoy, Lakekeeper and the object store.\n- Generate AUTH_JWT_SECRET instead of using the literal in auth.conf.",
+   "where": "bin/single-node/nginx.conf:121-140; bin/single-node/docker-compose.yml:405-421,533-549; bin/single-node/.env"
+  },
+  {
+   "step": "4",
+   "change": "Local dev:\n- Run a local Envoy with the same ext_authz configuration, and point proxy.config.json's /wsapi and engine paths at it instead of :8085.\n- Bind the unit to 127.0.0.1 and require the unit key.",
+   "where": "frontend/proxy.config.json:73-93; amber/src/main/resources/computing-unit-master-config.yml:20-22; bin/local-dev/main.sh:101-111"
+  },
+  {
+   "step": "2/3 (prerequisite for 4)",
+   "change": "Move what the unit serves for the Dashboard:\n- /api/pve/db moves to the Dashboard service, which also fixes today's 403 in Kubernetes.\n- /wsapi/pve and the PVE REST endpoints leave the unit.\n- Execution stats and export are read from the lake by the Dashboard or the result service.\n\nThen unregister PveResource, PveWebsocketResource and WorkflowExecutionsResource from ComputingUnitMaster, and drop the dynamic-route matches for stats, export and /api/pve.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:131-134,165,205; bin/k8s/templates/base/gateway/gateway-routes.yaml:173-181"
+  },
+  {
+   "step": "5",
+   "change": "Remove the unit's uses of login tokens:\n- File presigning in LakeFSFileDocument and DatasetFileDocument goes away once the plan carries file links (step 2).\n- The RepositoryMountManager call to access-control-service is replaced by the control side asking for the mount at create time.\n- ResultExportService's token minting goes away when export moves off the unit.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/model/LakeFSFileDocument.scala:39-40,120-140; amber/src/main/python/pytexera/storage/dataset_file_document.py:91-125; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/RepositoryMountManager.scala:104-118; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:545-558"
+  }
+ ],
+ "risks": [
+  "Until the unit stops trusting x-user-* headers, any pod that can reach it can act as any user, and today that is every pod outside the pool namespace. A NetworkPolicy alone does nothing on a CNI that does not enforce NetworkPolicy (the chart's Jupyter comment notes this).",
+  "Envoy's HTTP ext_authz cannot remove query parameters. Any token the browser still puts in a URL reaches the unit and lands in logs.",
+  "Removing USER_JWT_TOKEN before step 2's file links exist breaks dataset reads on Kubernetes units. Removing AUTH_JWT_SECRET breaks export-to-dataset until export leaves the unit.",
+  "The SecurityPolicy and the dynamic HTTPRoute also carry Jupyter routing, so changing the check's answer can break notebook migration.",
+  "The agent's run-and-wait path (SyncExecutionResource) breaks as soon as the unit accepts only its key. The agent-service tests that cover it need rework.",
+  "An HTTP streaming watch on the dynamic route is cut by Envoy's default 15s route timeout unless the rule sets timeouts.request: \"0s\"."
+ ],
+ "open_questions": [
+  "Which process answers Envoy? The check could fold into the Dashboard service, which owns the workflow and execution tables, or stay in access-control-service, today's ext-auth target, which also runs the LLM proxy, mounts and Jupyter routing.",
+  "How should the unit key work? Options: derived from the cuid and a control-side secret, so nothing is stored, or random and kept in a Secret. It could be per unit or per run, and it needs a rotation story.",
+  "Should the watch stream be a WebSocket or an SSE stream over fetch, and how does the browser authenticate it without putting a token in the URL (cookie or header)?",
+  "What runs Envoy in Docker Compose and local-dev: plain Envoy with a static bootstrap (ext_authz plus dynamic_forward_proxy), or Envoy Gateway in standalone/host mode?",
+  "Which namespace do this chart's Envoy proxies run in (by default the subchart's controller namespace, the release namespace)? Check on OrbStack with kubectl get pods -A -l app.kubernetes.io/managed-by=envoy-gateway, and confirm OrbStack enforces NetworkPolicy.",
+  "Does export-to-local work in Kubernetes today? Its token travels only in the form body, which Envoy does not forward to the check. Confirm end to end.",
+  "For units on Slurm or EC2, can the DynamicResolver backend reach them, and how is TLS to remote units configured?"
+ ]
+}

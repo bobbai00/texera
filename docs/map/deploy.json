@@ -1,0 +1,271 @@
+{
+ "area": "Launching the whole Texera locally (single-node, local-dev, Helm/OrbStack, images) and driving end-to-end workflow runs headlessly",
+ "summary": "Texera launches three ways today, and only Kubernetes has Envoy.\n\n(1) bin/single-node is Docker Compose with nginx on :8080 in front of the ghcr.io/apache/texera-*:latest images. One shared computing-unit container (workflow-runtime-coordinator-service) gets every /wsapi and /api/pve request. A \"local\" CU is only a Postgres row with a stored URI.\n\n(2) bin/local-dev.sh uses the same compose file for infra. The JVM services run natively from their `sbt <Project>/dist` launchers, agent-service runs on bun, and the Angular dev server on :4200 acts as the gateway. This is the fastest loop for the branch. It clashes with the user's single-node stack (fixed names and ports), it never generates the Python protobufs, and the frontend needs Node 24.\n\n(3) The bin/k8s Helm chart puts Envoy Gateway in front, with ext-authz in access-control-service rewriting Host to the CU row's URI. Units are pods that receive DB, S3 and JWT-secret credentials plus the user's token. On OrbStack:\n- the release must be named `texera`;\n- pull policy and registry need overriding;\n- the example loader must be off, because its image is never built;\n- the webserver has no STORAGE_S3_*, so per-user warehouse creation fails.\n\nImages: every Dockerfile runs a clean sbt build, and .dockerignore blocks the dists built on the host. Branch images are best built as thin layers on the nightly images, from a separate build context.\n\nHeadless run:\n1. Log in as texera/texera. The dashboard creates this admin at startup; it is not in the DDL.\n2. Create a dataset, upload the CSV and create a version.\n3. Create a warehouse. Runs require one, because warehouses are on by default with the REST catalog.\n4. Create a local CU and a workflow.\n5. Send a WorkflowExecuteRequest over the websocket, or call the sync API, which only the unit serves.\n6. Page the results.\n\nNo full-stack e2e test exists. CI only checks that each dist boots and runs engine-level specs.\n\nWhere the brief is wrong: there is no Envoy outside k8s and no separate frontend image. Agent-service reaches k8s units directly, bypassing Envoy.",
+ "facts": [
+  {
+   "claim": "Single-node compose runs infra (rustfs/rustfs:1.0.0, rustfs/rc:v0.1.35 bucket init, groonga/pgroonga:4.0.1-debian-15, treeverse/lakefs:1.51, vakamo/lakekeeper:v0.11.0 migrate+serve+alpine init job creating project 0000.. and warehouse 'texera', litellm v1.83.10-stable, nginx:1.30.5-alpine) plus Texera images named ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-<x>:${IMAGE_TAG:-latest} for x = file-service, config-service, access-control-service, workflow-computing-unit-managing-service, workflow-compiling-service, workflow-execution-coordinator, dashboard-service, agent-service, notebook-migration-service, jupyter. Postgres runs every sql/*.sql on first init only.",
+   "where": "bin/single-node/docker-compose.yml:22-550,88"
+  },
+  {
+   "claim": "Single-node has exactly one computing unit: container workflow-runtime-coordinator-service (image texera-workflow-execution-coordinator, port 8085 not published, no healthcheck). nginx sends /wsapi/ and /api/pve/ to it and everything else under /api/ to dashboard-service:8080. There is no nginx route for /api/execution (sync API) or /api/cu-image, so both fall through to the dashboard, which serves neither.",
+   "where": "bin/single-node/docker-compose.yml:406-420; bin/single-node/nginx.conf:121-147"
+  },
+  {
+   "claim": "Single-node publishes 8080 (nginx), 9000 (RustFS) and 9100 (Jupyter). It pins the network name texera-single-node and fixed container_names (texera-postgres, texera-rustfs, texera-lakefs, texera-lakekeeper, litellm, texera-jupyter...), so a second copy or local-dev cannot run beside it.",
+   "where": "bin/single-node/docker-compose.yml:24-26,76,92,513-514,548-549,834-836"
+  },
+  {
+   "claim": "single-node .env sets IMAGE_REGISTRY=ghcr.io/apache, IMAGE_TAG=latest, admin texera/texera, Postgres texera/password, S3 texera_rustfs/password (region us-west-2), STORAGE_ICEBERG_CATALOG_TYPE=rest, Lakekeeper warehouse texera / bucket texera-iceberg / key-prefix shared, and agent endpoints. It sets no AUTH_JWT_SECRET, so every service uses the auth.conf default secret.",
+   "where": "bin/single-node/.env:29-34,57-80,99-102; common/config/src/main/resources/auth.conf"
+  },
+  {
+   "claim": "`bin/single-node.sh up [--with-examples]` runs `docker compose -f bin/single-node/docker-compose.yml [--profile examples] up -d`. With the examples profile, load-examples.sh logs in as admin, creates dataset iris-species (multipart upload, then version v1) and creates the Iris workflow.",
+   "where": "bin/single-node/main.sh:112-142; bin/single-node/docker-compose.yml:573-591; bin/single-node/examples/load-examples.sh"
+  },
+  {
+   "claim": "The only full workflow JSON in the repo is the Iris example: CSVFileScan(/dataset/texera/iris-species/v1/Iris.csv) -> Projection/Split -> Sklearn* (PythonOperatorDescriptor) -> Scatterplot/ScatterMatrix (Python viz). It exercises both the CSV scan and the Python worker.",
+   "where": "bin/single-node/examples/workflows/[Example] Machine Learning on Iris Dataset.json; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/sklearn/SklearnModelOpDesc.scala:75"
+  },
+  {
+   "claim": "`bin/local-dev.sh up` does the following:\n- brings up docker infra (project texera-local-dev: postgres, rustfs, lakefs, lakekeeper(+migrate/init), litellm, jupyter) from bin/single-node/docker-compose.yml plus an overlay that publishes 5432/8000/8181/4000;\n- bootstraps the DDL and replays liquibase updates;\n- runs `sbt <proj>/dist` and unzips the results;\n- starts these natively: config 9094, access-control 9096, file 9092, compiling 9090, CU-managing (app 8888; the script probes admin port 8082), notebook-migration 9098, texera-web 8080 and computing-unit-master 8085 (both from the amber dist, cwd amber), agent-service 3001 (`bun run dev`), frontend 4200.",
+   "where": "bin/local-dev/main.sh:101-119,901-1007,2177-2251; bin/local-dev/docker-compose.override.yml:33-47; computing-unit-managing-service/src/main/resources/computing-unit-managing-service-config.yaml:17-24"
+  },
+  {
+   "claim": "local-dev exports:\n- STORAGE_S3_ENDPOINT=http://<host LAN IP>:9000 (fatal if no LAN IP);\n- JDBC texera/password@localhost:5432;\n- Iceberg REST http://localhost:8181/catalog;\n- USER_SYS_EMAIL_VERIFICATION=false.\nState and logs live in /tmp/texera-local-dev (logs/<svc>.log). It refuses to start infra if 5432/9000/8000/8181/4000 are held by other containers. AGENTS.md: only one local-dev stack per machine.",
+   "where": "bin/local-dev/main.sh:149-150,659-723,1620-1638,1684-1702; AGENTS.md:85-89"
+  },
+  {
+   "claim": "`up --worktree/--branch` runs the tooling of the checkout that holds the script and persists the deploy target. The main checkout is on texera-2-0, so run the new worktree's own bin/local-dev.sh. `up --json` prints status JSON on stdout; `status --json` exits 0 only if every service runs; `auto` rebuilds only changed services.",
+   "where": "bin/local-dev/main.sh:40-99,128-145"
+  },
+  {
+   "claim": "Python workers need generated protobufs that nothing in local-dev produces. amber/src/main/python/proto is gitignored and absent in this worktree; bin/python-proto-gen.sh needs protoc and protoc-gen-python_betterproto (amber/dev-requirements.txt). The UDF interpreter is UDF_PYTHON_PATH, else `python3`. local-dev searches $VIRTUAL_ENV, <workspace>/venv312, pyenv, then PATH.",
+   "where": "bin/python-proto-gen.sh; .gitignore ('Regenerated by bin/python-proto-gen.sh'); common/config/src/main/scala/org/apache/texera/common/config/PythonUtils.scala:24-25; bin/local-dev/main.sh:1463-1501"
+  },
+  {
+   "claim": "The frontend dev-server proxy is the local-dev 'gateway':\n- /wsapi and /api/pve -> 8085\n- /api/computing-unit, /api/access/computing-unit and /api/cu-image -> 8888\n- /api/dataset|model|access/* -> 9092\n- /api/compile and /api/workflow-to-python -> 9090\n- /api/config -> 9094\n- /api/models and /api/chat/completion -> 9096\n- /api/agents -> 3001\n- /api -> 8080\n- /rtc -> 1234\n`yarn start` = y-websocket + ng serve. package.json requires node >=24.",
+   "where": "frontend/proxy.config.json; frontend/package.json:4-9; frontend/angular.json:88"
+  },
+  {
+   "claim": "The Helm chart is installed by bin/k8s/install.sh: `helm dependency build` then `helm upgrade --install ${RELEASE:-texera} -n ${NAMESPACE:-texera} --create-namespace \"$@\"`. Subcharts: bitnami postgresql 16.5.6, rustfs 1.0.0, lakefs 1.8.1, envoyproxy gateway-helm 1.6.3 (alias envoy-gateway), lakekeeper 0.9.0, metrics-server 3.12.2 (enabled by default; unit metrics read pod metrics).",
+   "where": "bin/k8s/install.sh; bin/k8s/Chart.yaml; bin/k8s/values.yaml:582-583; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:122-130"
+  },
+  {
+   "claim": "Chart images are {texera.imageRegistry}/{imageName}:{texera.imageTag}. Defaults are docker.io/apache with 1.4.0-incubating-SNAPSHOT; values-development.yaml uses ghcr.io/apache with latest. texeraImages.pullPolicy is Always. Unit pods use KUBERNETES_IMAGE_NAME=<registry>/texera-workflow-execution-coordinator:<tag> with KUBERNETES_IMAGE_PULL_POLICY=IfNotPresent.",
+   "where": "bin/k8s/values.yaml:21-22,216-217,392-409,476-477; bin/k8s/values-development.yaml:3-4; bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-deployment.yaml:62-63,84-85"
+  },
+  {
+   "claim": "The release must be named `texera`. values.yaml hardcodes texera-postgresql (the lakeFS connection string and Lakekeeper host_read/host_write), and gateway-routes.yaml hardcodes backend `texera-dynamic-backend`. The GatewayClass `eg` and the pool namespaces are cluster-scoped.",
+   "where": "bin/k8s/values.yaml:148,184-185; bin/k8s/templates/base/gateway/gateway-routes.yaml:192; bin/k8s/templates/base/gateway/gateway.yaml"
+  },
+  {
+   "claim": "Gateway setup:\n- Envoy Gateway runs Gateway <release>-gateway with listeners 80 and 443; 443 expects TLS secret <release>-cert.\n- Static HTTPRoutes go to the services: /api/computing-unit and /api/cu-image -> manager:8888, catch-all /api and / -> webserver:8080.\n- A dynamic route (/wsapi, ^/api/executions/\\d+/stats/\\d+$, /api/executions/result/export, /api/pve, jupyter) -> Backend DynamicResolver, guarded by a SecurityPolicy extAuth to access-control-service path /api/auth that forwards x-user-* and Host.\n- There is no EnvoyProxy resource, so Envoy Gateway's default proxy Service applies.",
+   "where": "bin/k8s/templates/base/gateway/gateway.yaml; bin/k8s/templates/base/gateway/gateway-routes.yaml:30-152,154-193; bin/k8s/templates/base/gateway/gateway-security-policy.yaml; bin/k8s/templates/base/gateway/gateway-backend.yaml"
+  },
+  {
+   "claim": "The ext-authz check takes the token from ?access-token, Bearer or body, and the cuid from ?cuid (or the PVE path). It checks CU access in Postgres, then returns 200 with Host = the CU row's recorded uri plus x-user-computing-unit-access, x-user-id, x-user-name and x-user-email. Any other path gets 403.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:46-91,128-217; common/auth/src/main/scala/org/apache/texera/auth/util/HeaderField.scala:22-27"
+  },
+  {
+   "claim": "Kubernetes CU creation (POST /api/computing-unit/create, unitType kubernetes):\n- inserts the row and sets uri = computing-unit-<cuid>.<pool>-svc.<pool ns>.svc.cluster.local:8085;\n- creates pod computing-unit-<cuid> (label type=computing-unit) in texera-workflow-computing-unit-pool, behind a headless service.\nOptions must match the env: cpu \"2\", memory \"2Gi\", gpu \"0\"; jvmMemorySize digits <= memory; shmSize must be a valid quantity <= memory.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:578-793; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:50-54,146-230; bin/k8s/values.yaml:458-463; bin/k8s/templates/base/workflow-computing-unit-pool/workflow-computing-units-service.yaml"
+  },
+  {
+   "claim": "Every k8s unit receives:\n- STORAGE_JDBC url, user and password;\n- S3 endpoint and keys;\n- the lakeFS endpoint;\n- the Iceberg catalog type, REST uri and warehouse name;\n- file-service presign/upload URLs;\n- AUTH_JWT_SECRET (required, 503 if unset);\n- the creator's JWT as USER_JWT_TOKEN;\n- JAVA_OPTS.\nSTORAGE_WAREHOUSE_ENABLED is not forwarded.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:315-376,431-447,778-781"
+  },
+  {
+   "claim": "The pool namespace gets ExternalName services for file-service, config-service, <release>-postgresql, webserver, <release>-rustfs-svc and <release>-lakekeeper. The only NetworkPolicy is ingress-only: it denies traffic from inside the pool namespace (cross-unit) and allows other namespaces. There is no egress restriction.",
+   "where": "bin/k8s/templates/base/external-names/external-names.yaml:47-93; bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml"
+  },
+  {
+   "claim": "In k8s, agent-service calls unit pods directly and skips Envoy: EXECUTION_ENDPOINT_TEMPLATE=http://computing-unit-{cuid}.<pool>-svc.<pool ns>.svc.cluster.local:8085, then POST /api/execution/{wid}/{cuid}/run with the user's Bearer token. Elsewhere it uses WORKFLOW_EXECUTION_SERVICE_ENDPOINT (default http://localhost:8085).",
+   "where": "bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:60-61; agent-service/src/agent/tools/workflow-execution-tools.ts:251-313; agent-service/src/config/env.ts:31-35"
+  },
+  {
+   "claim": "The k8s webserver deployment sets no STORAGE_S3_* env. WarehouseResource.create -> LakekeeperClient.createWarehouse builds the storage profile from StorageConfig.s3Endpoint/s3Username/s3Password, which default to http://localhost:9000. Per-user warehouse creation, and therefore every run on k8s, fails unless S3 env is added to the webserver.",
+   "where": "bin/k8s/templates/base/webserver/webserver-deployment.yaml:46-80; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:95-116; common/config/src/main/resources/storage.conf:111-130"
+  },
+  {
+   "claim": "The k8s example-data-loader Job is enabled by default and uses image <registry>/texera-example-data-loader, which no Dockerfile or CI workflow builds.",
+   "where": "bin/k8s/values.yaml:220-226; bin/k8s/templates/base/example-data-loader/example-data-loader-job.yaml:36; .github/workflows/build-and-push-images.yml:253-293"
+  },
+  {
+   "claim": "k8s env defaults: COMPUTING_UNIT_LOCAL_ENABLED=false, KUBERNETES_COMPUTING_UNIT_ENABLED=true, USER_SYS_INVITE_ONLY=true, USER_SYS_EMAIL_VERIFICATION=true (new sign-ups are blocked, so use the admin), dev AUTH_JWT_SECRET. Lakekeeper has internalOpenFGA: false; no deployment mode configures Lakekeeper authz.",
+   "where": "bin/k8s/values.yaml:443-539,169-189; bin/single-node/docker-compose.yml:121-154"
+  },
+  {
+   "claim": "Each Dockerfile runs `sbt clean <Project>/dist` from scratch inside the build. Runtime layouts:\n- amber images: WORKDIR /texera/amber with bin/, lib/, src/main/resources and common/config/src/main/resources; the unit image also has src/main/python with generated protos.\n- other JVM services: WORKDIR /texera with bin/, lib/, <svc>/src/main/resources and common/config/...\n- agent-service: /app (bun run src/server.ts).\nAll run as user texera, uid 1001.",
+   "where": "bin/dockerfiles/computing-unit-master.dockerfile:27-131; bin/dockerfiles/file-service.dockerfile:50-83; bin/dockerfiles/agent-service.dockerfile:27-56"
+  },
+  {
+   "claim": "Two images:\n- Unit image: eclipse-temurin:17-jdk-jammy with apt python3 and pip-installed amber/requirements.txt + operator-requirements.txt; CMD bin/computing-unit-master; EXPOSE 8085.\n- Dashboard image: temurin 17 JRE (no Python); the frontend is built in a node:24.19 stage into /frontend/dist and served by FileAssetsBundle(\"../../frontend/dist\").\nThere is no separate frontend image.",
+   "where": "bin/dockerfiles/computing-unit-master.dockerfile:87-131; bin/dockerfiles/texera-web-application.dockerfile:27-44,110-139; amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:96"
+  },
+  {
+   "claim": "CI maps Dockerfiles to images: texera-web-application -> texera-dashboard-service, computing-unit-master -> texera-workflow-execution-coordinator, computing-unit-worker -> texera-workflow-execution-runner, everything else -> texera-<name>. A nightly cron (02:00 UTC) pushes ghcr.io/apache/<image>:latest as an amd64+arm64 manifest.",
+   "where": ".github/workflows/build-and-push-images.yml:52-54,78-90,253-293,540-548"
+  },
+  {
+   "claim": "bin/build-images.sh tags texera/<dockerfile-name>:<tag>-<arch> and always pushes (--output type=registry, --push). Those names don't match the compose/chart names, and the script cannot do a local-only build.",
+   "where": "bin/build-images.sh:102-177"
+  },
+  {
+   "claim": ".dockerignore excludes **/target/, *.jar, *.zip and amber/src/main/python/proto/, so a repo-root build context cannot COPY host-built dists or protos. Hand builds also need the jOOQ sources generated first (`sbt DAO/jooqGenerate`), because Postgres is absent in docker.",
+   "where": ".dockerignore; bin/README.md:44,63"
+  },
+  {
+   "claim": "jOOQ codegen runs on every compile against storage.jdbc (default postgres/postgres@localhost:5432/texera_db, overridden by STORAGE_JDBC_*). If Postgres is unreachable it only warns and keeps the existing generated classes, which are gitignored and present in this worktree.",
+   "where": "common/dao/build.sbt:41-107; common/dao/.gitignore:1; common/config/src/main/resources/storage.conf:164-172"
+  },
+  {
+   "claim": "The admin is not seeded in sql/texera_ddl.sql. TexeraWebApplication.run calls AuthResource.createAdminUser() with user-sys.admin-username/password (default texera/texera; env USER_SYS_ADMIN_USERNAME/PASSWORD), which creates name = email = 'texera', role ADMIN, with a LOCAL credential. Self-registered users get role INACTIVE. The CU master never creates the admin.",
+   "where": "common/config/src/main/resources/user-system.conf:20-24; amber/src/main/scala/org/apache/texera/web/resource/auth/AuthResource.scala:126-153,384-390; amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:165"
+  },
+  {
+   "claim": "Login is POST /api/auth/login {\"username\",\"password\"} -> {\"accessToken\"} (the dashboard serves it). The JWT carries sub=name, userId, email, role and avatar; it expires after 10080 min and is signed with auth.jwt.256-bit-secret / AUTH_JWT_SECRET.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/auth/AuthResource.scala:292-304; amber/src/main/scala/org/apache/texera/web/model/http/response/TokenIssueResponse.scala:22; common/auth/src/main/scala/org/apache/texera/auth/JwtAuth.scala:76-86; common/config/src/main/resources/auth.conf"
+  },
+  {
+   "claim": "The unit websocket is /wsapi/workflow-websocket?wid=&cuid=&access-token= (the uid param is ignored; a missing cuid throws).\n- If all four x-user-* headers are present, the unit trusts them ('KUBERNETES MODE').\n- Otherwise ('SINGLE NODE MODE') it grants WRITE CU access and builds the user from the access-token JWT.\nExecute requests need WRITE access.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:44-72,114-129; amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:48-100"
+  },
+  {
+   "claim": "Websocket messages are JSON with a 'type' discriminator.\nRequests: HeartBeatRequest, WorkflowExecuteRequest, WorkflowPauseRequest, WorkflowResumeRequest, WorkflowKillRequest, ResultPaginationRequest{requestID, operatorID, pageIndex (1-based), pageSize, portIndex}, ModifyLogicRequest, RetryRequest, SkipTupleRequest, WorkflowCheckpointRequest, Python debug requests.\nEvents: WorkflowStateEvent{state: Uninitialized/Initializing/Running/Paused/Completed/Failed/Killed...}, WorkflowErrorEvent, OperatorStatisticsUpdateEvent, WebResultUpdateEvent, ConsoleUpdateEvent, PaginatedResultEvent{table, schema, totalTuples}.",
+   "where": "amber/src/main/scala/org/apache/texera/web/model/websocket/request/TexeraWebSocketRequest.scala:30-67; amber/src/main/scala/org/apache/texera/web/model/websocket/event/TexeraWebSocketEvent.scala; amber/src/main/scala/org/apache/texera/amber/engine/common/Utils.scala:118-133; amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:405-406"
+  },
+  {
+   "claim": "WorkflowExecuteRequest = {executionName, engineVersion (stored in a NOT NULL column), logicalPlan, replayFromExecution?, workflowSettings{dataTransferBatchSize, executionMode PIPELINED|MATERIALIZED}, emailNotificationEnabled, computingUnitId, warehouseId?}.\nlogicalPlan = {operators: [{operatorID, operatorType, ...props, inputPorts?, outputPorts?}], links: [{fromOpId, fromPortId{id, internal}, toOpId, toPortId}], opsToViewResult, opsToReuseResult}.\nThe frontend spreads operatorProperties and maps port IDs to ordinals. PythonUDFV2 ports default to 1 in / 1 out when omitted.",
+   "where": "amber/src/main/scala/org/apache/texera/web/model/websocket/request/WorkflowExecuteRequest.scala:32-43; common/workflow-compiler/src/main/scala/org/apache/texera/common/compiler/model/LogicalPlanPojo.scala:24-29; frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:353-386,552-590; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/python/PythonUDFOpDescV2.scala:181-201"
+  },
+  {
+   "claim": "A run needs:\n- a persisted workflow (vid = its latest version);\n- an existing workflow_computing_unit row (FK cuid);\n- a uid from the token;\n- with storage.warehouse.enabled=true (default) and the rest catalog (default): a warehouseId owned by the caller. Otherwise it fails with 'a warehouse must be selected for this execution'.\nThe postgres catalog turns warehouses off, and then a warehouseId is rejected.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:91-121,233-280; amber/src/main/scala/org/apache/texera/web/service/ExecutionsMetadataPersistService.scala:54-91; sql/texera_ddl.sql:318-339; common/config/src/main/resources/storage.conf:155-161; common/config/src/main/scala/org/apache/texera/common/config/StorageConfig.scala:97-98"
+  },
+  {
+   "claim": "POST /api/warehouse {\"name\"} (dashboard only) creates the Lakekeeper warehouse user-<uid>-<whid> and returns {whid, name, lakekeeperWarehouseName, ...}. GET /api/warehouse/status lists warehouses. The per-user warehouse records the S3 endpoint current at creation, while lakekeeper-init refreshes only the shared 'texera' warehouse.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/warehouse/WarehouseResource.scala:58-59,125-234; amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:163; bin/single-node/docker-compose.yml:217-276"
+  },
+  {
+   "claim": "CU create endpoint: POST /api/computing-unit/create {name, unitType 'local'|'kubernetes', cpuLimit, memoryLimit, gpuLimit, jvmMemorySize, shmSize, uri?, iid?} returns {computingUnit{cuid, uri, ...}, status, ...}.\n- A local unit needs a non-empty uri, which is only stored, and its status is always Running.\n- Local units are enabled by default, Kubernetes units disabled.\n- The UI's default local uri is <origin>/wsapi.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:457-468,525-532,578-745; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ComputingUnitHelpers.scala:90-91; common/config/src/main/resources/computing-unit.conf:21; common/config/src/main/resources/kubernetes.conf:20; frontend/src/app/common/util/computing-unit.util.ts:369-371"
+  },
+  {
+   "claim": "The sync run API exists only on the unit:\n- Endpoint: POST /api/execution/{wid}/{cuid}/run, Bearer JWT, roles REGULAR/ADMIN.\n- Body: {executionName, logicalPlan, workflowSettings?, targetOperatorIds, timeoutSeconds, maxOperatorResultCharLimit (cap 100000), maxOperatorResultCellCharLimit (cap 20000), warehouseId?}.\n- Response: {success, state, operators{opId: {state, inputTuples, outputTuples, resultMode, result[], totalRowCount, consoleLogs, error}}, compilationErrors, errors}.\n- It first shuts down the workflow's previous run on that unit; a single target runs only that target's upstream sub-DAG.\n- GET /api/execution/health -> {status: ok}.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:71-118,125-362,933-935; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:205-206"
+  },
+  {
+   "claim": "ComputingUnitMaster needs Postgres to boot (SqlServer.initConnection). It serves /wsapi/workflow-websocket, /wsapi/pve, /api/pve (Python environments), /api/executions (WorkflowExecutionsResource) and /api/execution (sync), but no /api/healthcheck. TexeraWebApplication serves /api/healthcheck and also registers WorkflowExecutionsResource.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:119-206; amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:130-163"
+  },
+  {
+   "claim": "Scan paths are /dataset/<ownerEmail>/<dataset>/<version>/<file> (an unprefixed legacy form also works). The unit resolves them while compiling, via FileResolver.forUser(uid), which reads Postgres. Pre-resolved URIs (file:, dataset:) are rejected, so a service-level test must upload a real dataset. The first version is named 'v1', and the admin's ownerEmail is 'texera'.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/FileResolver.scala:56-98,74-82,233; amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:120; file-service/src/main/scala/org/apache/texera/service/resource/DatasetResource.scala:452"
+  },
+  {
+   "claim": "Dataset and workflow setup (file-service :9092, base /api/dataset):\n1. POST /create {datasetName, datasetDescription, isDatasetPublic, isDatasetDownloadable} -> {did}.\n2. POST /multipart-upload?type=init&ownerEmail&datasetName&filePath&fileSizeBytes&partSizeBytes.\n3. POST /multipart-upload/part?...&partNumber=1 (octet-stream).\n4. POST /multipart-upload?type=finish.\n5. POST /{did}/version/create (text/plain, empty).\n6. Workflow: POST /api/workflow/create {name, content: '<UI json string>'} -> {workflow: {wid}}.",
+   "where": "bin/single-node/examples/load-examples.sh (authenticate/load_datasets/load_workflows); file-service/src/main/scala/org/apache/texera/service/resource/DatasetResource.scala:241-247,263,326,412,717,746; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowResource.scala:336,598-610"
+  },
+  {
+   "claim": "When the unit reads a dataset file:\n- With USER_JWT_TOKEN set (k8s units), it calls the file-service presign-download endpoint with that token.\n- Without it (single-node and local-dev), it presigns through lakeFS directly and falls back to a direct lakeFS fetch.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/model/LakeFSFileDocument.scala:36-56,108-166"
+  },
+  {
+   "claim": "Existing tests:\n- amber engine e2e specs (DataProcessingSpec etc.) run an AmberClient on a compiled LogicalPlanPojo, with embedded Postgres (MockTexeraDB) and an Iceberg catalog.\n- Python-UDF specs live in amber/src/test/integration (tag IntegrationTest), selected by AMBER_TEST_FILTER=skip-integration|integration-only.\n- Fixtures: TestOperators.smallCsvScanOpDesc (country_sales_small.csv) and pythonOpDesc (pass-through UDF), resolved by the test-only fixtureFileResolver.",
+   "where": "amber/src/test/scala/org/apache/texera/amber/engine/e2e/TestUtils.scala:83-243; amber/build.sbt:54-74; project/TestFilters.scala; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/TestOperators.scala:61-99,176-188"
+  },
+  {
+   "claim": "CI:\n- The amber job runs with STORAGE_ICEBERG_CATALOG_TYPE=postgres and skip-integration.\n- amber-integration starts Postgres, RustFS and Lakekeeper, creates bucket texera-iceberg plus warehouse 'texera', runs integration-only specs and `pytest -m integration`, then only checks that texera-web (8080) and computing-unit-master (8085) reach LISTEN (smoke-boot.sh).\n- No job starts the full stack or runs a workflow through the services. Frontend tests are vitest only (jsdom and Playwright-Chromium component specs).",
+   "where": ".github/workflows/build.yml:197-350,374-745,1053-1121; .github/scripts/smoke-boot.sh; frontend/package.json:12-13; frontend/TESTING.md:44-64"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "recipe-0 prerequisites (this machine)",
+   "change": "Stop whatever holds the ports or names: run `bin/local-dev.sh down` in any other checkout, and stop the user's single-node stack with `docker compose -p texera-single-node down`, keeping volumes. Warn the user first. Then:\n- run `source ~/.nvm/nvm.sh && nvm use 24` (PATH node is v22.22.0; v24.15.0 is installed);\n- `export UDF_PYTHON_PATH=/Users/jiadongb/Desktop/projects/venv312/bin/python`;\n- generate the protos with `PATH=/Users/jiadongb/Desktop/projects/venv312/bin:$PATH bash bin/python-proto-gen.sh` from the worktree root. venv312 already has protoc-gen-python_betterproto, websocket-client, requests and httpx; protoc on PATH is Homebrew 33.4, while the pin is 3.19.4.\nWait for the background sbt build to release its lock.",
+   "where": "bin/python-proto-gen.sh; frontend/package.json:4-5; AGENTS.md:95-120"
+  },
+  {
+   "step": "recipe-1 build+run the branch (local-dev, fastest loop)",
+   "change": "From the new worktree, run `bin/local-dev.sh up --json` (its own tooling, not the texera-2-0 checkout's). Gate on `bin/local-dev.sh status --json` exiting 0. Logs are under /tmp/texera-local-dev/logs. Endpoints:\n- dashboard: http://localhost:8080\n- unit: http://localhost:8085, ws://localhost:8085/wsapi/...\n- CU manager: http://localhost:8888\n- file-service: http://localhost:9092\n- UI: http://localhost:4200, which also proxies all of the above\nAfter edits, run `bin/local-dev.sh auto`.",
+   "where": "bin/local-dev/main.sh:40-111"
+  },
+  {
+   "step": "recipe-2 branch images for single-node",
+   "change": "1. On the host, run `sbt WorkflowExecutionService/dist FileService/dist ComputingUnitManagingService/dist WorkflowCompilingService/dist ConfigService/dist AccessControlService/dist`, plus `cd frontend && yarn build` if the frontend changed.\n2. Unzip the */target/universal/*.zip files into a scratch build context (not the repo root, because of .dockerignore).\n3. Build thin images:\n   - FROM ghcr.io/apache/texera-workflow-execution-coordinator:latest, replacing /texera/amber/{bin,lib,src/main/resources,src/main/python incl. proto};\n   - FROM ghcr.io/apache/texera-dashboard-service:latest, replacing /texera/amber/{bin,lib,src/main/resources} and /frontend/dist;\n   - FROM ghcr.io/apache/texera-<svc>:latest, replacing /texera/{bin,lib,<svc>/src/main/resources}.\n   Copy as root, then chown texera:texera.\n4. Tag all ten Texera images as <reg>/texera-<name>:<tag> (retag the untouched ones), then run `IMAGE_REGISTRY=<reg> IMAGE_TAG=<tag> docker compose -f bin/single-node/docker-compose.yml [--profile examples] up -d`.\n5. Use http://localhost:8080 and ws://localhost:8080/wsapi.",
+   "where": "bin/dockerfiles/*.dockerfile; .dockerignore; bin/single-node/docker-compose.yml:325-510"
+  },
+  {
+   "step": "recipe-3 Kubernetes on OrbStack",
+   "change": "Use kube context `orbstack`. First check `helm list -A` and `kubectl get gatewayclass eg` for an old `texera` release. Install with `bin/k8s/install.sh -f bin/k8s/values-development.yaml -f <override>`. The override must:\n- set texera.imageRegistry and texera.imageTag to the local images, and texeraImages.pullPolicy=IfNotPresent;\n- set exampleDataLoader.enabled=false;\n- redefine the whole texeraEnvVars list (a list override replaces it) to add STORAGE_S3_ENDPOINT=http://texera-rustfs-svc:9000, STORAGE_S3_AUTH_USERNAME=texera_rustfs and STORAGE_S3_AUTH_PASSWORD=password for the webserver.\nKeep RELEASE=texera. Reach Envoy by port-forwarding its Service (`kubectl get svc -A | grep envoy`). Create units with {unitType:'kubernetes', cpuLimit:'2', memoryLimit:'2Gi', gpuLimit:'0', jvmMemorySize:'1G', shmSize:'64Mi'}, then poll GET /api/computing-unit/{cuid} until status=Running.",
+   "where": "bin/k8s/install.sh; bin/k8s/values.yaml:216-226,443-539; bin/k8s/templates/base/webserver/webserver-deployment.yaml:46-80"
+  },
+  {
+   "step": "recipe-4 log in",
+   "change": "`TOKEN=$(curl -s -X POST $BASE/api/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"texera\",\"password\":\"texera\"}' | jq -r .accessToken)`. Decode userId (uid) and email ('texera') from the JWT payload.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/auth/AuthResource.scala:292-304"
+  },
+  {
+   "step": "recipe-5 upload the CSV",
+   "change": "Use $FILE/api/dataset (local-dev :9092 directly; single-node and k8s through $BASE), with ownerEmail=texera:\n1. create -> did;\n2. multipart-upload init, part 1, finish for people.csv;\n3. POST /{did}/version/create.\nThe scan path is /dataset/texera/<ds>/v1/people.csv.",
+   "where": "bin/single-node/examples/load-examples.sh; file-service/src/main/scala/org/apache/texera/service/resource/DatasetResource.scala:326-870"
+  },
+  {
+   "step": "recipe-6 warehouse and CU",
+   "change": "1. `POST $BASE/api/warehouse {\"name\":\"e2e\"}` -> whid. Skip this only if the catalog is postgres, and then omit warehouseId.\n2. `POST $CUM/api/computing-unit/create {\"name\":\"e2e\",\"unitType\":\"local\",\"cpuLimit\":\"NaN\",\"memoryLimit\":\"NaN\",\"gpuLimit\":\"NaN\",\"jvmMemorySize\":\"NaN\",\"shmSize\":\"NaN\",\"uri\":\"http://localhost:8085\"}` -> computingUnit.cuid. $CUM is local-dev :8888, or $BASE in single-node.\n3. `POST $BASE/api/workflow/create {\"name\":\"e2e\",\"content\":\"<stringified UI workflow {operators,operatorPositions,links,commentBoxes,settings}>\"}` -> workflow.wid.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/warehouse/WarehouseResource.scala:163-234; computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:578-745; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowResource.scala:598-610"
+  },
+  {
+   "step": "recipe-7 run CSV -> Python UDF over the websocket",
+   "change": "Open $WS/wsapi/workflow-websocket?wid=W&uid=U&cuid=C&access-token=$TOKEN and send:\n{\"type\":\"WorkflowExecuteRequest\",\"executionName\":\"e2e\",\"engineVersion\":\"e2e\",\"logicalPlan\":{\"operators\":[{\"operatorID\":\"csv-1\",\"operatorType\":\"CSVFileScan\",\"fileName\":\"/dataset/texera/<ds>/v1/people.csv\",\"fileEncoding\":\"UTF_8\",\"customDelimiter\":\",\",\"hasHeader\":true},{\"operatorID\":\"udf-1\",\"operatorType\":\"PythonUDFV2\",\"workers\":1,\"retainInputColumns\":true,\"outputColumns\":[],\"code\":\"from pytexera import *\\n\\nclass ProcessTupleOperator(UDFOperatorV2):\\n    @overrides\\n    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:\\n        yield tuple_\\n\"}],\"links\":[{\"fromOpId\":\"csv-1\",\"fromPortId\":{\"id\":0,\"internal\":false},\"toOpId\":\"udf-1\",\"toPortId\":{\"id\":0,\"internal\":false}}],\"opsToViewResult\":[\"udf-1\"],\"opsToReuseResult\":[]},\"workflowSettings\":{\"dataTransferBatchSize\":400,\"executionMode\":\"PIPELINED\"},\"emailNotificationEnabled\":false,\"computingUnitId\":C,\"warehouseId\":WH}\nSend {\"type\":\"HeartBeatRequest\"} every 10s. Wait for WorkflowStateEvent.state in {Completed, Failed, Killed}; WorkflowErrorEvent carries compile and runtime errors.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:79-163; frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:48-120"
+  },
+  {
+   "step": "recipe-8 read results",
+   "change": "Three ways to read results:\n- On the same socket, send {\"type\":\"ResultPaginationRequest\",\"requestID\":\"r1\",\"operatorID\":\"udf-1\",\"pageIndex\":1,\"pageSize\":100} and assert PaginatedResultEvent.totalTuples and the table rows.\n- Call GET $BASE/api/executions/{wid}/latest for status and eid, and GET /api/executions/{wid}/stats/{eid} for Iceberg runtime stats.\n- One-shot alternative: POST $UNIT/api/execution/{wid}/{cuid}/run (Bearer) with targetOperatorIds [\"udf-1\"], timeoutSeconds, char limits and warehouseId. This works directly in local-dev (:8085). In single-node it is reachable only inside the network (http://workflow-runtime-coordinator-service:8085), and in k8s only in-cluster.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:400-420; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:553-736; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-362"
+  },
+  {
+   "step": "e2e harness (missing today)",
+   "change": "Add a scripted driver: Python with venv312's websocket-client and requests, or bun, parameterized by BASE/WS/FILE/CUM per mode. It runs recipes 4-8 and asserts the row count against the CSV, Completed state and a Postgres or Lakekeeper side effect. Reuse it as the acceptance check after every build step. Nothing in the repo starts the stack and runs a workflow.",
+   "where": ".github/workflows/build.yml; bin/single-node/examples/load-examples.sh (reusable upload logic)"
+  },
+  {
+   "step": "steps 1-2 (plan as data, POST /executions)",
+   "change": "Today two callers build a WorkflowExecuteRequest from a logical plan on the unit itself: the websocket handler and SyncExecutionResource, which agent-service uses. Both compile there with FileResolver.forUser (Postgres). Move these callers to the Dashboard's POST /executions. Also re-point agent-service (EXECUTION_ENDPOINT_TEMPLATE / WORKFLOW_EXECUTION_SERVICE_ENDPOINT) and adapt its legacy sync adapter.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:120; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:157-193; agent-service/src/api/execution-api.ts:96-233"
+  },
+  {
+   "step": "step 4 (Envoy in every mode)",
+   "change": "Today:\n- single-node routes /wsapi/ and /api/pve/ with nginx and passes client headers through;\n- local-dev uses the Angular proxy (/wsapi and /api/pve -> 8085);\n- only k8s has Envoy plus ext-authz.\nAdd Envoy (and the unit-key swap) to single-node and local-dev, and route or remove /api/execution. Remove ServletAwareConfigurator's x-user-* header trust and its WRITE-by-default 'single node' branch. The single shared unit container in single-node also has to become per-unit.",
+   "where": "bin/single-node/nginx.conf:121-147; frontend/proxy.config.json; amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:48-100"
+  },
+  {
+   "step": "step 5 (lock down the unit)",
+   "change": "Remove JDBC/S3/lakeFS credentials, AUTH_JWT_SECRET and USER_JWT_TOKEN from computingUnitEnvironmentVariables. Drop the pool-namespace ExternalNames for postgres, file-service, config-service and webserver, and add an egress NetworkPolicy (today it is ingress-only). Enable Lakekeeper authz: internalOpenFGA is false and single-node has no OpenFGA. The unit must also boot without Postgres, which it needs today.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:431-447,778-781; bin/k8s/templates/base/external-names/external-names.yaml:47-93; bin/k8s/values.yaml:173; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:145-149"
+  },
+  {
+   "step": "chart fixes needed just to test on k8s",
+   "change": "Fix three chart problems:\n- give the webserver STORAGE_S3_* (or make warehouse creation not depend on it);\n- build or disable the example-data-loader image;\n- template the hardcoded 'texera-' names (texera-postgresql, texera-dynamic-backend) from .Release.Name.",
+   "where": "bin/k8s/templates/base/webserver/webserver-deployment.yaml:46-80; bin/k8s/templates/base/example-data-loader/example-data-loader-job.yaml:36; bin/k8s/values.yaml:148,184-185; bin/k8s/templates/base/gateway/gateway-routes.yaml:192"
+  }
+ ],
+ "risks": [
+  "Launching local-dev or a branch single-node stack means stopping the user's single-node stack, which holds ports 8080/9000/9100, the network name and container names. A prior session found that `orbctl start k8s` restarts OrbStack's Docker engine and with it every container. Tell the user before doing either.",
+  "The main checkout is on texera-2-0. `bin/local-dev.sh up --worktree=...` run from there would use that branch's tooling and persist a deploy-source pointer in /tmp/texera-local-dev. Run the new worktree's own script.",
+  "The background sbt build holds the sbt lock. local-dev `up` runs sbt dist, so it will block or fail until that build finishes.",
+  "Thin images on the nightly :latest bases can drift from the branch: Python requirements, resources and config may differ. Re-run the pip layer if amber/requirements*.txt change, and pin bases by digest so test runs are reproducible.",
+  "jOOQ codegen silently keeps stale generated classes when Postgres is unreachable. Schema changes in step 3, which drops columns, can then compile against old classes.",
+  "The unit trusts the x-user-* headers whenever all four are present. Without them it grants WRITE to any websocket holder of a valid JWT, and single-node nginx forwards client headers untouched. Security tests for steps 4 and 5 must cover header spoofing.",
+  "Per-user warehouses keep the S3 endpoint they were created with, and local-dev's endpoint is the host LAN IP. After a network change, old user warehouses break; lakekeeper-init only refreshes the shared 'texera' warehouse.",
+  "Helm list values such as texeraEnvVars are replaced whole by an override file. Whether OrbStack enforces NetworkPolicy, and whether a host process can reach the Envoy LoadBalancer IP, are unverified; a prior session needed a port-forward."
+ ],
+ "open_questions": [
+  "Which mode is the acceptance gate for each step? One option: local-dev for steps 0-3, single-node with Envoy added for step 4, OrbStack for steps 5-6.",
+  "Should the e2e driver be committed (for example under bin/ or amber/src/test/integration) and wired into CI, or stay a local script?",
+  "For step 4 in single-node and local-dev, should Envoy replace nginx and the Angular proxy entirely, or sit only in front of the unit routes (/wsapi, /api/pve, unit REST)?",
+  "Does the plan's per-execution namespace replace the per-user Lakekeeper warehouses (user-<uid>-<whid>), which every run requires today? If so, the warehouse step in the test recipe goes away.",
+  "Is the unit-only sync API (/api/execution/{wid}/{cuid}/run), and agent-service's direct pod calls, to be kept behind Envoy or removed in favour of POST /executions plus watch?"
+ ]
+}

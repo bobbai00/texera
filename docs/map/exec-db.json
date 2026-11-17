@@ -1,0 +1,326 @@
+{
+ "area": "Execution lifecycle on the computing unit and every Postgres access reachable from it (steps 2 and 3). Repo root: /Users/jiadongb/Desktop/projects/texera-worktrees/self-contained-engine (upstream main 205fe77c4); all paths below are relative to it.",
+ "summary": "On upstream main the computing unit (ComputingUnitMaster) opens a Postgres pool at startup and uses Postgres throughout a run. There is no separate run coordinator: the single-node \"workflow-runtime-coordinator-service\" is the unit itself.\n\nThe unit creates the run. Two entry points reach WorkflowService.initExecutionService: the browser's websocket WorkflowExecuteRequest, and the agent's POST /api/execution/{wid}/{cuid}/run. The agent calls the pod directly, not through Envoy, and that endpoint only checks the user's role. initExecutionService checks the warehouse in user_warehouse and inserts the workflow_executions row (eid = SERIAL, vid = latest saved version, status defaults to 1). It then compiles on the unit through FileResolver, which reads dataset/model rows and checks read access. Nothing checks the user's access to the workflow.\n\nLive state is held in in-memory StateStores and pushed over the websocket. Every state change goes through ExecutionStateStore.updateWorkflowState, which updates status and last_update_time. It has 12 call sites, and KILLED, PAUSING and RESUMING are set by the web layer, not the engine.\n\nWhere results, console messages and statistics live is recorded in operator_port_executions, operator_executions and runtime_stats_uri. Sizes and row counts are rewritten on a 3 s poll and again once per connected browser. Readers find results by \"latest eid for (wid, cuid)\", and each new run deletes the previous run's rows and tables.\n\nOther Postgres use on the unit: CostEstimator, which reads another execution's statistics; email (workflow name, then SMTP from the unit); environment row CRUD; replay log location; operator lookups at run time (file scan, file lister, UDF mounts, CSV site_settings); and a TTL job over all units that in practice matches nothing. Nothing marks superseded or orphaned runs as ended, yet the unit manager's idle sweep reads status.\n\nlastCompletedLogicalPlan is never read, and cache reuse does not use the database. The lake has four shared namespaces and no per-execution namespace or log table. The Dashboard service has no scheduler.",
+ "facts": [
+  {
+   "claim": "ComputingUnitMaster.main starts the Pekko actor system first (single node, or --cluster with a seed node on 2552 and a ClusterListener actor), then runs Dropwizard on port 8085.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:100-116; amber/src/main/scala/org/apache/texera/amber/engine/common/AmberRuntime.scala:89-127; amber/src/main/resources/computing-unit-master-config.yml (port: 8085)",
+   "evidence": "AmberRuntime.startActorMaster(clusterMode); new ComputingUnitMaster().run(\"server\", .../computing-unit-master-config.yml)"
+  },
+  {
+   "claim": "run() initializes OTel and metrics, then opens the Postgres pool (HikariCP, max 10, min idle 2, STORAGE_JDBC_* config). The lake is not initialized at startup: Iceberg catalogs are created lazily per warehouse on first document access.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:141-149; common/dao/src/main/scala/org/apache/texera/dao/SqlServer.scala:44-61,80-87; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/IcebergCatalogInstance.scala:137-140,167-186",
+   "evidence": "SqlServer.initConnection(StorageConfig.jdbcUrl, jdbcUsername, jdbcPassword); getInstance() = instance.get"
+  },
+  {
+   "claim": "The unit serves /wsapi/workflow-websocket, /wsapi/pve, /api/pve/*, /api/executions/* (WorkflowExecutionsResource, which the Dashboard also registers) and /api/execution/{wid}/{cuid}/run plus /api/execution/health (SyncExecutionResource). REST auth verifies an HMAC JWT with the shared signing secret and checks only the role; it does not use the database.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:130-135,165-175,205-206; amber/src/main/scala/org/apache/texera/web/auth/JwtAuth.scala:31-44; common/auth/src/main/scala/org/apache/texera/auth/JwtAuth.scala:34-41; amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:156",
+   "evidence": "environment.jersey.register(classOf[WorkflowExecutionsResource]); register(classOf[SyncExecutionResource])"
+  },
+  {
+   "claim": "Every unit runs two cleanup jobs. One is a one-time 'clean all on start' (off by default). The other is a recurring TTL job (default every 86400 s) that selects expired executions across ALL units (no cuid filter) and rewrites their rows (result='', log_location=null, status). For Iceberg results dropCollections does nothing; only replay logs are deleted.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:181-203,240-307; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:97-114; common/config/src/main/resources/application.conf:69-74,90",
+   "evidence": "case DocumentFactory.ICEBERG => // rely on the server-side result cleanup logic."
+  },
+  {
+   "claim": "In practice the TTL/startup query matches nothing, and no code marks orphaned runs as ended. The query requires result <> '' OR log_location <> ''. result is never written with a value (only cleared), and log_location is set only when fault tolerance is on, so in the default config rows with NULLs never match.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:108-110; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:251; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:285-295",
+   "evidence": "rg 'setResult(' finds only ComputingUnitMaster.scala:251 setResult(\"\")"
+  },
+  {
+   "claim": "Unit pods are given the Postgres JDBC URL, user and password, the S3 root username and password, the LakeFS endpoint, file-service endpoints, the JWT signing secret (required) and the creating user's JWT.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:340-344,431-447,779",
+   "evidence": "ENV_JDBC_URL -> StorageConfig.jdbcUrl ... ENV_S3_AUTH_PASSWORD; ENV_AUTH_JWT_SECRET required; ENV_USER_JWT_TOKEN -> userToken"
+  },
+  {
+   "claim": "(f) There is no separate service that coordinates runs. 'workflow-runtime-coordinator-service' (single-node compose and nginx) and the image 'texera-workflow-execution-coordinator' are the ComputingUnitMaster. 'Coordinator' is the engine's in-JVM actor, renamed from Controller.",
+   "where": "bin/single-node/docker-compose.yml:405-420; bin/single-node/nginx.conf:121-139; .github/workflows/build-and-push-images.yml:258-259; bin/dockerfiles/computing-unit-master.dockerfile:129",
+   "evidence": "\"computing-unit-master\") image_name=\"texera-workflow-execution-coordinator\"; CMD [\"bin/computing-unit-master\"]"
+  },
+  {
+   "claim": "The browser opens /wsapi/workflow-websocket?wid=&cuid=&access-token=. On open the unit gets or creates a WorkflowService keyed by wid only (cuid is not in the key), so a unit process holds at most one live execution per workflow.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:50-72; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:126-145; frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:125-126",
+   "evidence": "mkWorkflowStateId(workflowId) = workflowId.toString"
+  },
+  {
+   "claim": "How the unit learns who the user is: in k8s it trusts x-user-* headers that access-control-service sets after checking only CU access. In single-node it verifies the JWT from the query string and hard-codes WRITE CU access. No unit code checks the user's access to the workflow (wid) on either run path.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:50-100; access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:128-217; amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:114-117",
+   "evidence": "config.getUserProperties.put(HeaderField.UserComputingUnitAccess, PrivilegeEnum.WRITE.name())"
+  },
+  {
+   "claim": "WorkflowExecuteRequest has these fields: executionName, engineVersion, logicalPlan (LogicalPlanPojo), replayFromExecution, workflowSettings (dataTransferBatchSize, executionMode, outputPortsNeedingStorage), emailNotificationEnabled, computingUnitId, warehouseId. It needs WRITE CU access and is handled inside a synchronized block.",
+   "where": "amber/src/main/scala/org/apache/texera/web/model/websocket/request/WorkflowExecuteRequest.scala:31-41; common/workflow-core/src/main/scala/org/apache/texera/amber/core/workflow/WorkflowSettings.scala:24-29; amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:114-127",
+   "evidence": "synchronized { workflow.initExecutionService(workflowExecuteRequest, userOpt, session.getRequestURI) }"
+  },
+  {
+   "claim": "initExecutionService does these steps in order: (1) require a uid; (2) resolve the warehouse with a SELECT on user_warehouse by whid and uid (a pick is mandatory because warehouses are on by default with the REST catalog); (3) unsubscribe the previous execution; (4) clear the previous (wid, cuid) run's resources; (5) INSERT workflow_executions; (6) optionally UPDATE log_location; (7) read the replay source; (8) build ExecutionStateStore and errorHandler; (9) construct WorkflowExecutionService and call executeWorkflow().",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:91-121,233-386; common/config/src/main/scala/org/apache/texera/common/config/StorageConfig.scala:97-98; common/config/src/main/resources/storage.conf:158-161",
+   "evidence": "warehouseEnabled = storage.warehouse.enabled && icebergCatalogType == \"rest\" (default true)"
+  },
+  {
+   "claim": "The execution id is a Postgres SERIAL eid returned by WorkflowExecutionsDao.insert. The row's vid is the latest SAVED workflow_version, not the plan that actually runs, and the unit INSERTs a '[]' version row if none exists. The row also gets uid, cuid, whid, name, starting_time and environment_version={\"engine_version\":...}. status is not set, so the DDL default 1 (RUNNING) applies from before compilation.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionsMetadataPersistService.scala:54-91; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowVersionResource.scala:109-136; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:400-405; sql/texera_ddl.sql:324",
+   "evidence": "val vid = getLatestVersion(workflowId.id.toInt); workflowExecutionsDao.insert(newExecution); ExecutionIdentity(newExecution.getEid)"
+  },
+  {
+   "claim": "executeWorkflow compiles on the unit with WorkflowCompiler and FileResolver.forUser(uid), which reads dataset/user/dataset_version (or model/model_version) and checks the user's read access for each scan file. It then creates the AmberClient and the stats, runtime and console services, and attaches the result service before start (otherwise result-location events are lost). Finally it writes READY, calls startWorkflow and writes the state that call returns.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:118-183; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/FileResolver.scala:56-64,199-296",
+   "evidence": "new WorkflowCompiler(workflowContext, FileResolver.forUser(uid)).compile(request.logicalPlan, Strict)"
+  },
+  {
+   "claim": "ExecutionStateStore.updateWorkflowState is the only place the unit writes run state to Postgres. It fetches the row by eid, then UPDATEs the full row with status and last_update_time. It runs inside StateStore.updateState's lock, and DB errors are logged at INFO and swallowed. Status codes: UNINITIALIZED/READY=0, RUNNING=1, PAUSED=2, COMPLETED=3, FAILED=4, KILLED=5, PAUSING/RESUMING/TERMINATED/UNKNOWN=-1.",
+   "where": "amber/src/main/scala/org/apache/texera/web/storage/ExecutionStateStore.scala:39-52; amber/src/main/scala/org/apache/texera/web/storage/StateStore.scala:50-55; amber/src/main/scala/org/apache/texera/web/service/ExecutionsMetadataPersistService.scala:103-114; amber/src/main/scala/org/apache/texera/amber/engine/common/Utils.scala:160-171",
+   "evidence": "execution.setStatus(maptoStatusCode(state)); execution.setLastUpdateTime(...)"
+  },
+  {
+   "claim": "updateWorkflowState has 12 call sites: WorkflowExecutionService 162 (READY) and 176 (start reply); ExecutionRuntimeService 72 (engine ExecutionStateUpdate), 86 (PAUSING), 95 (RESUMING), 101 (RUNNING) and 111 (KILLED); ExecutionStatsService 312 (FatalError->FAILED); WorkflowService 338 (errorHandler FAILED); SyncExecutionResource 310 (COMPLETED override) and 388 (KILLED); ClusterListener 90 (node removed->FAILED).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:162,176; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:72,86,95,101,111; amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:312; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:338; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:310,388; amber/src/main/scala/org/apache/texera/amber/clustering/ClusterListener.scala:90",
+   "evidence": "rg 'updateWorkflowState(' amber/src/main"
+  },
+  {
+   "claim": "KILLED, PAUSING and RESUMING come from the web layer, not the engine. A kill is client.shutdown() (a PoisonPill to the client actor) followed by writing KILLED; the engine never reports a killed state.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:84-113; amber/src/main/scala/org/apache/texera/amber/engine/common/client/AmberClient.scala:74-79",
+   "evidence": "client.shutdown(); ... updateWorkflowState(KILLED, metadataStore)"
+  },
+  {
+   "claim": "Superseded runs never get an end state. A new websocket run or a sync run on the same wid only calls client.shutdown on the old run, and the 30 s idle cleanup shuts the client down without writing state. The old row keeps its last status (1, 2 or -1).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:161-178,257-259; amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:185-196; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:364-375",
+   "evidence": "executionService.getValue.unsubscribeAll() -> client.shutdown(); no updateWorkflowState"
+  },
+  {
+   "claim": "The unit INSERTs into operator_port_executions (eid, global_port_id, result_uri, output_mode) when the engine sends the OperatorPortResultUriAvailable event. RegionExecutionManager sends it once per stored output port, when it creates the port's result and state documents (not on restart).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:92-104,326-337; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:690-699",
+   "evidence": "new OperatorPortExecutionsDao(...).insert(pojo)"
+  },
+  {
+   "claim": "The unit INSERTs into operator_executions (eid, operator_id, console_messages_uri) when an operator's first console message is written, on the console writer thread. The messages themselves go to one Iceberg table per operator.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:143-166,286-304; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:264-278",
+   "evidence": "WorkflowExecutionsResource.insertOperatorExecutions(eid, opId.id, uri)"
+  },
+  {
+   "claim": "The unit UPDATEs workflow_executions.runtime_stats_uri (joined through workflow_version by wid) when ExecutionStatsService is constructed. The statistics rows go to an Iceberg table on RuntimeStatisticsPersist events.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:77-95,198-206; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:280-297",
+   "evidence": "WorkflowExecutionsResource.updateRuntimeStatsUri(wid, eid, uri)"
+  },
+  {
+   "claim": "While the run is RUNNING the result service polls every 3 s, and once more at the end. Each poll reads all result URIs of the eid from Postgres, opens each Iceberg table to get its count, and UPDATEs operator_port_executions.result_size and result_count for ports that are not SINGLE_SNAPSHOT.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:284-316,462-509; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:418-431; common/config/src/main/resources/application.conf:87",
+   "evidence": "WorkflowExecutionsResource.updateResultSizeAndCount(executionId, globalPortId, getTotalFileSize, count)"
+  },
+  {
+   "claim": "The resultStore diff handler runs once per connected browser. On each result change it reads the port URI, runtime_stats_uri and console URI from Postgres and UPDATEs runtime_stats_size and console_messages_size.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:339-395,485-486; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:438-506",
+   "evidence": "updateRuntimeStatsSize(executionId); updateConsoleMessageSize(executionId, opId)"
+  },
+  {
+   "claim": "Websocket result pagination and export find the eid as MAX(eid) for (wid, cuid) through a workflow_version join, then look up the URI in operator_port_executions. They never use the eid of the run being viewed.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:404-418; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:122-137; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:172,208,253,487-490; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/ExecutionResultUris.scala:40-84",
+   "evidence": "getLatestExecutionId(workflowIdentity, computingUnitId)"
+  },
+  {
+   "claim": "Only the latest run per (wid, cuid) keeps its results. At every new run, and at the 30 s idle cleanup, the unit reads the previous run's URIs, DELETEs its operator_port_executions and operator_executions rows, clears its result and console tables, expires its statistics snapshots and deletes its large binaries from S3.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:161-178,265-270,425-467; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:361-370; common/config/src/main/resources/application.conf:78",
+   "evidence": "previousExecutionId.foreach(eid => clearExecutionResources(eid)) // TODO: change this behavior after enabling cache."
+  },
+  {
+   "claim": "CostEstimator is engine core and runs at Coordinator.initState. It reads runtime_stats_uri of the newest COMPLETED (status 3) execution of the same wid from Postgres, then reads that OTHER execution's Iceberg statistics table. If either step fails it falls back to counting stored ports.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostEstimator.scala:69-76,120-164; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostBasedScheduleGenerator.scala:82-87; amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/Coordinator.scala:116-118",
+   "evidence": "WORKFLOW_EXECUTIONS.STATUS.eq(3.toByte) ... DocumentFactory.openDocument(uri)"
+  },
+  {
+   "claim": "Completion email is sent from the unit. WorkflowEmailNotifier's constructor reads the workflow name from Postgres, and the email goes out through Gmail SMTP using the SMTP credentials in the user-system config. It fires on COMPLETED, PAUSED, FAILED and KILLED.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowEmailNotifier.scala:39-49,61; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:53-62,75; amber/src/main/scala/org/apache/texera/web/resource/GmailResource.scala:112-130; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowResource.scala:94-100",
+   "evidence": "private val workflowName = WorkflowResource.getWorkflowName(workflowId.toInt)"
+  },
+  {
+   "claim": "Replay reads log_location for whatever eid the request names, with no access check. Fault-tolerance logs are written outside the lake, under faultToleranceLogRootFolder/<wid>/<eid>/, and that path is stored in workflow_executions.log_location.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:285-311",
+   "evidence": "ExecutionsMetadataPersistService.tryGetExistingExecution(ExecutionIdentity(replayInfo.eid))"
+  },
+  {
+   "claim": "Python environments: /api/pve/db (GET, PUT, DELETE, POST) reads and writes virtual_environments rows on the unit, scoped by the uid in the JWT. The venvs themselves live on unit disk at /tmp/texera-pve/venvs/<cuid>/<pveName>. A Python worker picks one by (cuid, pveName) and silently falls back to the default Python if it is missing.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResource.scala:75-158; amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:58,87-93,316-378; amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:235-246",
+   "evidence": "SqlServer...selectFrom(VIRTUAL_ENVIRONMENTS).where(UID.eq(uid))"
+  },
+  {
+   "claim": "Operator code also reads Postgres while the run is going. FileScanOpExec resolves dataset paths without a user scope. UDF UI parameters resolve dataset/model versions lazily at execution time, with no access check, and then ask access-control-service to mount them. FileListerSourceOpExec queries dataset/user/dataset_version directly, with no access check. CSV scan reads site_settings.csv_parser_max_columns both at compile and at run time.",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/file/FileScanOpExec.scala:52-59; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:46-75; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/dataset/FileListerSourceOpExec.scala:79-92; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/csv/CSVScanSourceOpExec.scala:108,130-131; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/csv/CSVScanSourceOpDesc.scala:111; common/dao/src/main/scala/org/apache/texera/dao/SiteSettings.scala:79-89; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/FileResolver.scala:304-331",
+   "evidence": "FileResolver.resolveRepositoryVersion(...) // resolveRepositoryVersion passes reader = None"
+  },
+  {
+   "claim": "In cluster mode the remote worker JVMs (ComputingUnitWorker) never call SqlServer.initConnection, so the lookups in the previous fact throw there (SiteSettings silently falls back to its default).",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitWorker.scala:46-50; common/dao/src/main/scala/org/apache/texera/dao/SiteSettings.scala:35-40; common/dao/src/main/scala/org/apache/texera/dao/SqlServer.scala:85-87",
+   "evidence": "SiteSettings doc: 'SqlServer not initialised (e.g. on workers in distributed mode)'"
+  },
+  {
+   "claim": "(c) workflow_executions columns: eid SERIAL PK; vid INT NOT NULL FK workflow_version (CASCADE); uid INT NOT NULL FK user; cuid INT FK workflow_computing_unit (ON DELETE CASCADE); status SMALLINT NOT NULL DEFAULT 1; result TEXT; starting_time NOT NULL DEFAULT now; last_update_time; bookmarked; name DEFAULT 'Untitled Execution'; environment_version NOT NULL; log_location; runtime_stats_uri; runtime_stats_size BIGINT; whid FK user_warehouse (SET NULL). There is an index on cuid.",
+   "where": "sql/texera_ddl.sql:318-343",
+   "evidence": "CREATE TABLE IF NOT EXISTS workflow_executions (...)"
+  },
+  {
+   "claim": "operator_executions has PK (workflow_execution_id, operator_id) plus console_messages_uri and console_messages_size. operator_port_executions has PK (workflow_execution_id, global_port_id) plus result_uri, result_size, output_mode (enum) and result_count. Both cascade from workflow_executions. output_mode and result_count are written, but no main code reads them yet.",
+   "where": "sql/texera_ddl.sql:540-562; sql/texera_ddl.sql:107",
+   "evidence": "rg RESULT_COUNT|OUTPUT_MODE: only the writers in WorkflowExecutionsResource.scala:427 and ExecutionResultService.scala:100"
+  },
+  {
+   "claim": "Other tables the unit touches: user_warehouse (warehouse pick), virtual_environments (environment CRUD), site_settings (CSV limit), workflow_version (vid read or insert), workflow (email name), workflow_of_user and workflow_user_access (WorkflowAccess in the /api/executions endpoints), and dataset, dataset_version, model, model_version, user and the resource access tables (FileResolver).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:110-115; common/auth/src/main/scala/org/apache/texera/auth/util/WorkflowAccess.scala:36-75; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/FileResolver.scala:199-296",
+   "evidence": "ResourceAccess.userHasReadAccess(ctx, resource, id, uid)"
+  },
+  {
+   "claim": "Two things the brief assumes do not hold. lastCompletedLogicalPlan is set when a run reaches COMPLETED, but nothing reads it. Cache reuse does not use the database: operator_port_cache is in the DDL (added in #5967) but no main code reads or writes it, the cache.enabled flag has no reader, and opsToReuseResult is carried in the plan but unused.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:180-194; sql/texera_ddl.sql:577-588; common/config/src/main/resources/application.conf:63-67; common/workflow-compiler/src/main/scala/org/apache/texera/common/compiler/model/LogicalPlanPojo.scala:28",
+   "evidence": "rg lastCompletedLogicalPlan / OPERATOR_PORT_CACHE: no readers outside DDL and a comment"
+  },
+  {
+   "claim": "How state is held and pushed: each execution has five RxJava StateStores (stats, metadata, console, breakpoint, reconfiguration), and each workflow has one resultStore. Diff handlers turn state changes into websocket events, and WorkflowService.connect and connectToExecution subscribe each session. This state lives only in memory.",
+   "where": "amber/src/main/scala/org/apache/texera/web/storage/ExecutionStateStore.scala:56-65; amber/src/main/scala/org/apache/texera/web/storage/WorkflowStateStore.scala:24-31; amber/src/main/scala/org/apache/texera/web/storage/StateStore.scala:30-72; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:196-221",
+   "evidence": "getWebsocketEventObservable = diffSubject.onTerminateDetach()"
+  },
+  {
+   "claim": "Engine core writes into the web layer directly. Coordinator.initState and RegionExecutionManager.setPhase send RegionUpdateEvent and RegionStateEvent to ALL websocket sessions on the unit. ClusterListener walks the WorkflowService registry and writes FAILED. PythonWorkflowWorker calls PveManager.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/Coordinator.scala:116-128; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:704-708; amber/src/main/scala/org/apache/texera/amber/clustering/ClusterListener.scala:83-130; amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:46,243",
+   "evidence": "SessionState.getAllSessionStates.foreach { state => state.send(RegionUpdateEvent(regions)) }"
+  },
+  {
+   "claim": "(e) SyncExecutionResource, POST /api/execution/{wid}/{cuid}/run, checks only @RolesAllowed: no workflow or CU access check. It resolves the warehouse, shuts down any in-flight run of that wid (client only), and builds a WorkflowExecuteRequest (engineVersion \"1.0\", email off, a sub-DAG when there is exactly one target). It then calls the same initExecutionService, so the Postgres row is created the same way.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-193,364-375,886-931",
+   "evidence": "@RolesAllowed(Array(\"REGULAR\", \"ADMIN\")) def executeWorkflowSync(...)"
+  },
+  {
+   "claim": "How the sync endpoint waits and collects: it takes a snapshot, then waits on Observable.amb of three conditions (terminal state, a console ERROR, or all targets COMPLETED with every external input port reporting) with a timeout. On timeout it kills the run (KILLED written). On a console error it kills the run but reports 'Failed'. When targets are ready it sleeps 500 ms, kills the run and overwrites KILLED with COMPLETED in Postgres. It then sleeps another 500 ms and reads results by eid via operator_port_executions, and console logs via operator_executions with an in-memory fallback.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:206-333,377-394,537-560,785-840",
+   "evidence": "Thread.sleep(500); killExecution(...); updateWorkflowState(COMPLETED, metadataStore)"
+  },
+  {
+   "claim": "agent-service calls the sync endpoint on the unit directly, not through Envoy: localhost:8085 by default, and the pod DNS computing-unit-{cuid}.<pool>-svc in Helm. The gateway does not route /api/execution/* to units at all.",
+   "where": "agent-service/src/agent/tools/workflow-execution-tools.ts:261-266; agent-service/src/config/env.ts:34-35; bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61; bin/k8s/templates/base/gateway/gateway-routes.yaml:169-181",
+   "evidence": "`${executionEndpoint}/api/execution/${workflowId}/${computingUnitId}/run`"
+  },
+  {
+   "claim": "In k8s the gateway sends /wsapi, /api/executions/{wid}/stats/{eid}, /api/executions/result/export and /api/pve to the unit, so those endpoints run there. The stats endpoint reads runtime_stats_uri and checks WorkflowAccess, both in Postgres. Export reads the latest eid and result URIs, and export-to-dataset POSTs to file-service with a JWT the unit signs itself. In single-node, nginx sends only /wsapi and /api/pve to the unit.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:169-181; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:676-736,851-911; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:530-575; bin/single-node/nginx.conf:121-139",
+   "evidence": "Authorization: Bearer ${JwtAuth.jwtToken(jwtClaims(user))}"
+  },
+  {
+   "claim": "Code outside the unit depends on these columns. The idle sweep in computing-unit-managing-service treats any execution with status not in (3,4,5) as active and uses last_update_time and starting_time per cuid. UserQuotaResource sums the size columns. AdminExecutionResource and the Dashboard's executions list read status and times.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:123-130,180-260; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/quota/UserQuotaResource.scala:110-152; amber/src/main/scala/org/apache/texera/web/resource/dashboard/admin/execution/AdminExecutionResource.scala:140-166; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:320-359,553-602",
+   "evidence": "boolOr(WORKFLOW_EXECUTIONS.STATUS.notIn(TerminalWorkflowExecutionStatus.dbStatuses))"
+  },
+  {
+   "claim": "The Dashboard service (TexeraWebApplication) has no scheduler and starts no actor system, and AmberRuntime's schedule helpers silently skip when there is none, so a Dashboard timer job needs its own executor.",
+   "where": "amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:103-200; amber/src/main/scala/org/apache/texera/amber/engine/common/AmberRuntime.scala:56-77",
+   "evidence": "scheduleRecurringCallThroughActorSystem called with no started AmberRuntime; skipping"
+  },
+  {
+   "claim": "Lake layout today: four shared Iceberg namespaces by resource type (operator-port-result, operator-console-messages, workflow-runtime-statistics, operator-port-state). Each table is named after its URI path, 'wid_<wid>_eid_<eid>_...', and the warehouse is an optional /wh/<name> segment. There is no per-execution namespace and no execution log table. The REST catalog client is built with only the URI and warehouse, with no credential.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/DocumentFactory.scala:43-53,84-91; common/config/src/main/resources/storage.conf:52-62; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:160-176,224-268; common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:133-149",
+   "evidence": "case RESULT => StorageConfig.icebergTableResultNamespace"
+  },
+  {
+   "claim": "The e2e specs build an AmberClient directly but still need MockTexeraDB, because result URIs are looked up through operator_port_executions. TestUtils registers the same insert callback for this.",
+   "where": "amber/src/test/scala/org/apache/texera/amber/engine/e2e/TestUtils.scala:114-125,145-201,229-236",
+   "evidence": "registerResultUriPersistence -> ExecutionResultService.persistOperatorPortResultUri"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "2",
+   "change": "Create the execution at the Dashboard. POST /executions inserts the workflow_executions row (and decides which vid it records) after the rights checks. The unit takes eid, wid, uid, cuid, warehouse and settings from the stored plan and never inserts. Remove ExecutionsMetadataPersistService and the getLatestVersion/insertNewVersion calls from the unit.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionsMetadataPersistService.scala:54-91; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:233-386 (272-279); amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowVersionResource.scala:109-136"
+  },
+  {
+   "step": "2",
+   "change": "Do all rights checks at create time; the unit does none of these today: workflow write access (WorkflowAccess), CU WRITE (ComputingUnitAccess), warehouse ownership (move resolveLakekeeperWarehouseName), and dataset/model read access (FileResolver.forUser).",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:91-121,250-255; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-167; amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:114-117; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/FileResolver.scala:199-296"
+  },
+  {
+   "step": "2",
+   "change": "Compile at the Dashboard and save the physical plan in the execution's namespace. In executeWorkflow, replace the compile with 'read the plan and build the Workflow from it'. The sync API's sub-DAG trimming moves to the Dashboard with the compile.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:118-129; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:171-173,886-931"
+  },
+  {
+   "step": "2",
+   "change": "Resolve the run-time Postgres lookups at plan time and carry the results in the plan: FileScanOpExec.locate, UdfUiParameterSupport.executionBinding (plus its mount), FileListerSourceOpExec.produceTuple (the listing, as data or links), and csv_parser_max_columns (as a setting in the plan).",
+   "where": "common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/file/FileScanOpExec.scala:52-59; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/udf/UdfUiParameterSupport.scala:46-75; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/dataset/FileListerSourceOpExec.scala:79-97; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/csv/CSVScanSourceOpExec.scala:108,130-131; common/workflow-operator/src/main/scala/org/apache/texera/amber/operator/source/scan/csv/CSVScanSourceOpDesc.scala:111"
+  },
+  {
+   "step": "2",
+   "change": "Stop DefaultCostEstimator reading Postgres and another execution's table. Either the Dashboard puts per-operator times from the last completed run into the plan, or the estimator always uses the port-count fallback.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/CostEstimator.scala:69-76,120-164"
+  },
+  {
+   "step": "2",
+   "change": "Replay and fault tolerance: the Dashboard resolves replayFromExecution, with an access check, into the plan. The fault-tolerance write location goes into the plan or the log instead of workflow_executions.log_location.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:285-311"
+  },
+  {
+   "step": "2",
+   "change": "Environments: remove /api/pve/db* and PveManager's DB helpers from the unit, and serve virtual_environments CRUD from the Dashboard. Put each Python operator's package list in the plan and have the unit create and install the venv the first time it sees it, instead of silently falling back to the default Python.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveResource.scala:75-158; amber/src/main/scala/org/apache/texera/web/resource/pythonvirtualenvironment/PveManager.scala:87-93,316-378; amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:235-246; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:133,165"
+  },
+  {
+   "step": "2",
+   "change": "Agent runs: replace the unit-side SyncExecutionResource with a Dashboard create plus a start through Envoy, and stop agent-service calling the pod directly. Move the wait-and-collect logic (amb on state, console and targets; truncation) onto the log and the lake.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-362; agent-service/src/agent/tools/workflow-execution-tools.ts:251-266; bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61"
+  },
+  {
+   "step": "3",
+   "change": "Add the execution log table (a new VFSResourceType in the execution's own namespace). Turn ExecutionStateStore.updateWorkflowState into an append of {event, state, time, why or fatal errors}. Update all 12 callers, and record a kill as an end the engine writes; today the web layer writes KILLED after a PoisonPill.",
+   "where": "amber/src/main/scala/org/apache/texera/web/storage/ExecutionStateStore.scala:39-52; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/DocumentFactory.scala:46-53; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/VFSURIFactory.scala:181-268; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:70-113"
+  },
+  {
+   "step": "3",
+   "change": "Stop writing result, console and statistics locations to Postgres. Drop persistOperatorPortResultUri, insertOperatorExecutions and updateRuntimeStatsUri. Record each port's URI and output mode in the log, or derive them from fixed names in the execution's namespace. Replace ExecutionResultUris with a lake lookup keyed by eid and update every reader.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:92-104,175-179,333-337,372-385,404-418,465-466; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:157-161; amber/src/main/scala/org/apache/texera/web/service/ExecutionStatsService.scala:88-92; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/ExecutionResultUris.scala:34-85; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:546-550,826-840; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:487-490; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:427-447"
+  },
+  {
+   "step": "3",
+   "change": "Move sizes and row counts out of Postgres. Remove updateResultSizeAndCount, updateRuntimeStatsSize and updateConsoleMessageSize from the poll and from the per-browser diff handler. Write the counts into log records at the timed and size-based commits, and have the Dashboard quota and executions list read them from the lake.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:339-395,462-509; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:418-506; amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/quota/UserQuotaResource.scala:110-152"
+  },
+  {
+   "step": "3",
+   "change": "Use the explicit eid, not 'latest eid for (wid, cuid)', in pagination, export and cleanup.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:122-137; amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala:48-55; amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:407; amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:172,208,253,488"
+  },
+  {
+   "step": "3",
+   "change": "Take cleanup off the unit. Remove the startup and TTL job and the previous-run cleanup, both of which touch other executions' rows and tables (which rule 5 forbids). Retention belongs to the Dashboard timer job.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:181-203,240-307; amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:161-178,265-270,425-467"
+  },
+  {
+   "step": "3",
+   "change": "Add a timer job to the Dashboard service; it needs its own executor because there is no actor system. It marks as ended any run with no 'ended' record whose unit is gone ('unit lost'), sends the completion email, and gives the unit manager's idle sweep the state it reads today from workflow_executions.status and last_update_time.",
+   "where": "amber/src/main/scala/org/apache/texera/web/TexeraWebApplication.scala:103-200; computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:123-130,180-260; amber/src/main/scala/org/apache/texera/web/service/WorkflowEmailNotifier.scala:39-61; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:53-75"
+  },
+  {
+   "step": "3",
+   "change": "Start the unit without Postgres. Remove SqlServer.initConnection and the WorkflowExecutionsResource registration from the unit. Move the /api/executions/{wid}/stats/{eid} and /api/executions/result/export routes and the access-control matches to the Dashboard. Stop passing ENV_JDBC_* to unit pods. Change the e2e specs to read results from the lake instead of MockTexeraDB.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:145-149,205; bin/k8s/templates/base/gateway/gateway-routes.yaml:169-181; access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:45-47,84-86; computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:434-436; amber/src/test/scala/org/apache/texera/amber/engine/e2e/TestUtils.scala:199-201,229-236"
+  },
+  {
+   "step": "3",
+   "change": "Give the engine one output path. Today Coordinator and RegionExecutionManager broadcast to every session, and ClusterListener writes FAILED directly. Turn these into client events or log records scoped to the execution.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/coordinator/Coordinator.scala:116-128; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:704-708; amber/src/main/scala/org/apache/texera/amber/clustering/ClusterListener.scala:83-130"
+  }
+ ],
+ "open_questions": [
+  "Once the web layer is gone, who records KILLED, PAUSING and RESUMING: the engine (a new end reason such as 'killed') or the Dashboard acting for a command? Today the web layer creates all three.",
+  "Should every execution keep its results? Today a new run on the same (wid, cuid) deletes the previous run's rows and tables.",
+  "Which vid should an execution created at the Dashboard record: the version the plan was compiled from, or the latest saved version (what the unit records today)?",
+  "How should the log record the sync API's 'targets ready, then kill, then report COMPLETED'? Today the run ends as KILLED and is then overwritten with COMPLETED.",
+  "Do fault tolerance and replay stay? Their logs live outside the lake, and replay reads another execution's log.",
+  "Should the cost estimator keep using past runs? Reading another execution's data conflicts with rule 5, so if it stays, who computes the history?",
+  "Which workflow_executions and operator_* columns stay as Dashboard records (name, bookmarked, uid, vid, cuid, whid, starting_time), and which are derived from the lake or dropped?"
+ ],
+ "risks": [
+  "Postgres state writes are best-effort today: errors are swallowed and the write runs under the StateStore lock. A lake log needs batched commits; one Iceberg commit per state change would be costly. It must also not copy today's fan-out of one write per connected browser plus the 3 s poll.",
+  "WorkflowService is keyed by wid only. Local units that share one process also share one WorkflowService, and result pagination uses the first cuid seen.",
+  "Access gaps the new design must close: the sync API has role-only auth and bypasses Envoy; single-node grants WRITE to any valid token; the unit trusts x-user-* headers whenever they are present; and the unit NetworkPolicy only blocks ingress from inside the unit namespace.",
+  "Removing Postgres alone does not satisfy rules 2 and 5. The unit also calls services: file-service presign and upload (with a JWT it signs), access-control-service mounts, LakeFS, and Gmail SMTP. It also holds secrets: JDBC credentials, S3 root credentials, the JWT signing secret and the user's JWT.",
+  "In cluster mode the remote workers have no SqlServer, so run-time DB lookups already fail there. Moving them to plan time fixes this but changes operator code in common/workflow-operator.",
+  "Taking status out of Postgres breaks the idle-unit sweep and the admin and Dashboard lists unless they switch in the same change. Today, superseded runs left at status 1, 2 or -1 already keep a unit from ever being garbage-collected.",
+  "About 40 amber specs use MockTexeraDB (including ExecutionResultServiceSpec, WorkflowServiceSpec, SyncExecutionResourceSpec, ExecutionsMetadataPersistServiceSpec, DefaultCostEstimatorSpec and the e2e TestUtils), and many of them assert the current Postgres writes."
+ ]
+}

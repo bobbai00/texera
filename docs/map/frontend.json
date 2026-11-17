@@ -1,0 +1,312 @@
+{
+ "area": "Frontend execution flow (plan steps 2, 3 and 4): starting a run, websocket protocol, dashboard execution pages, result paging and export, direct HTTP to units",
+ "summary": "Today the browser starts a run over one websocket to the unit. Selecting a computing unit, not pressing Run, opens `wsapi/workflow-websocket?wid&uid&cuid&access-token`. The unit keys its live session by workflow id and replays that session to every socket. When it gets `WorkflowExecuteRequest`, the unit creates the Postgres execution row itself. The request carries the logical plan built in the browser, plus settings, the unit id, the warehouse, the email flag and replay info. The browser never learns the execution id (eid).\n\nEverything else uses that same socket:\n- every command (pause, resume, kill, checkpoint, retry, skip, change an operator, debug)\n- result paging, as a request/response pair\n- all live data: state, statistics, results, console, regions, workers and duration\n\nRun and Kill stay disabled until the socket delivers its first event. Editing-time compilation is HTTP to the compiling service. Cache/reuse sends no messages at all.\n\nThe browser makes other direct calls to the unit:\n- all `/api/pve*` and `/wsapi/pve` routes, in every mode\n- in Kubernetes only, the stats call and result export, with `?cuid=`\n\nThe agent service also calls the unit directly, bypassing Envoy.\n\nThe execution history, admin list, quota page, time travel and latest-execution lookup all go through the Dashboard service. They read status codes 0-5 and sizes from Postgres. There is no \"unit lost\" status.\n\nBrief assumptions that do not hold today:\n- Envoy runs only in Kubernetes. Single-node uses nginx with no check, and local-dev uses the Angular proxy.\n- Envoy's authorization check is the access-control-service, not the Dashboard service.\n- Environment rows are edited through the unit.\n- The unit checks permission only to start a run; every other command is unchecked.\n\nBugs that already exist, found by reading the code:\n- Skip-tuple sends the wrong field name, and its handler is turned off.\n- The admin page's kill/pause/resume buttons open a socket without `cuid`.\n- The stats field names differ between frontend and backend.\n- `/api/pve/db` would get 403 in Kubernetes.\n- Three event types and the expression-evaluate request are unused.",
+ "facts": [
+  {
+   "claim": "A run is sent as websocket message WorkflowExecuteRequest by ExecuteWorkflowService.sendExecutionRequest, 150 ms after the call (FORM_DEBOUNCE_TIME_MS). Body: executionName, engineVersion (version.buildNumber), logicalPlan, replayFromExecution {eid, interaction}, workflowSettings {dataTransferBatchSize, executionMode}, emailNotificationEnabled, computingUnitId (selected unit's cuid), warehouseId (selected warehouse). No wid, vid or uid in the body; the unit takes wid from the socket URL.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:353-387",
+   "evidence": ":56 FORM_DEBOUNCE_TIME_MS = 150; :361-383 builds the object; :385-387 setTimeout + send; frontend/src/app/common/type/workflow.ts:28-31 WorkflowSettings"
+  },
+  {
+   "claim": "The TypeScript WorkflowExecuteRequest type declares only executionName, engineVersion, logicalPlan; the other five fields are sent untyped. The Scala case class declares all eight.",
+   "where": "frontend/src/app/workspace/types/workflow-websocket.interface.ts:44-49",
+   "evidence": "amber/src/main/scala/org/apache/texera/web/model/websocket/request/WorkflowExecuteRequest.scala:32-42"
+  },
+  {
+   "claim": "The logical plan is built in the browser from the graph (or the sub-DAG up to a target operator): operator properties + operatorID + operatorType + inputPorts + outputPorts, links with port ordinals, opsToViewResult, opsToReuseResult. The same builder feeds editing-time compilation.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:552-590",
+   "evidence": "frontend/src/app/workspace/service/compile-workflow/workflow-compiling.service.ts:97-102"
+  },
+  {
+   "claim": "Run entry points: canvas Run (passes config.env.workflowEmailNotificationEnabled), Form View Run, run-up-to-operator, AI fixer, Time Travel replay (executeWorkflowWithReplay). Before sending, the service refuses locally if the selected unit is Terminating/Failed/Unknown or a warehouse is required and none is picked.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:268-351",
+   "evidence": "menu.component.ts:1115-1146; workflow-form.component.ts:1863-1875; operator-menu.service.ts:259; ai-workflow-fixer.service.ts:342; time-travel.component.ts:167"
+  },
+  {
+   "claim": "Socket URL: <document.baseURI>/wsapi/workflow-websocket?wid=<wid>&uid=<uid, default 1>&cuid=<cuid>&access-token=<JWT from localStorage>, http->ws. The unit reads only wid and cuid (uid ignored); the user comes from x-user-* headers set by Envoy ext-authz (K8s) or from the access-token JWT, in which case CU access is forced to WRITE.",
+   "where": "frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:55,112-128",
+   "evidence": "frontend/src/app/common/util/url.ts:27-40; amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:44-47,54-55; amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:50-99"
+  },
+  {
+   "claim": "The socket opens when a unit is selected, not when Run is pressed: selectComputingUnit(wid, cuid) closes the old socket, clears status, emits connectionReset, opens a new socket and polls GET /api/computing-unit/{cuid} (managing service) every 2 s; leaving the workspace calls disconnect().",
+   "where": "frontend/src/app/common/service/computing-unit/computing-unit-status/computing-unit-status.service.ts:185-207",
+   "evidence": ":56,:110-126 poll; :283-290 disconnect; frontend/src/app/workspace/component/workspace.component.ts:220"
+  },
+  {
+   "claim": "Unit choice per workflow: an explicit pick remembered in localStorage 'computing-unit-of-workflow-{wid}'; else cuId (and whId) from GET /api/executions/{wid}/latest; else the first Running unit with WRITE.",
+   "where": "frontend/src/app/workspace/component/power-button/computing-unit-selection.component.ts:369-465",
+   "evidence": ":505-530 storage key; :393-425 retrieveLatestWorkflowExecution; :446-456 fallback"
+  },
+  {
+   "claim": "Run and Kill are disabled while a unit is selected but the socket is not 'connected'; connected flips true on any received event, and the unit sends WorkflowStateEvent('Uninitialized') + ClusterStatusUpdateEvent right after open.",
+   "where": "frontend/src/app/workspace/component/menu/menu.component.html:450-472",
+   "evidence": "menu.component.ts:484-491 ('Connecting'); workflow-form.component.ts:1776-1781,1819-1828; workflow-websocket.service.ts:169-174; WorkflowWebsocketResource.scala:66-71"
+  },
+  {
+   "claim": "The unit creates the execution: it checks WRITE on the unit for WorkflowExecuteRequest only, clears the previous execution of (wid, cuid) and inserts the WORKFLOW_EXECUTIONS row. All other requests (pause, resume, kill, checkpoint, retry, debug, modify) are forwarded with no access check.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:114-136",
+   "evidence": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:265-279"
+  },
+  {
+   "claim": "The browser never learns the current run's eid: no event carries one and ExecuteWorkflowService keeps none; eids appear only in REST history rows and the replay request.",
+   "where": "frontend/src/app/workspace/types/workflow-websocket.interface.ts:195-213",
+   "evidence": "grep of executionId/eid in frontend/src/app/workspace hits only execute-workflow.service.ts:307 and workflow-websocket.interface.ts:53"
+  },
+  {
+   "claim": "The unit keeps one live session per workflow id, replays the current execution's stores to every new socket, and when the last viewer leaves and the run is not RUNNING it deletes the latest execution's results after 30 s.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:125-221",
+   "evidence": ":125-145 keyed by mkWorkflowStateId(workflowId); :161-176 cleanup; :196-221 connect; common/config/src/main/resources/application.conf:78"
+  },
+  {
+   "claim": "Protocol maps. Requests: HeartBeatRequest, ModifyLogicRequest, ResultPaginationRequest, RetryRequest, SkipTupleRequest, WorkflowExecuteRequest, WorkflowKillRequest, WorkflowPauseRequest, WorkflowCheckpointRequest, WorkflowResumeRequest, PythonExpressionEvaluateRequest, DebugCommandRequest. Events: HeartBeatResponse, WorkflowStateEvent, OperatorStatisticsUpdateEvent, WebResultUpdateEvent, RecoveryStartedEvent, WorkflowErrorEvent, ConsoleUpdateEvent, OperatorCurrentTuplesUpdateEvent, PaginatedResultEvent, PythonExpressionEvaluateResponse, WorkerAssignmentUpdateEvent, ModifyLogicResponse, ModifyLogicCompletedEvent, ExecutionDurationUpdateEvent, ClusterStatusUpdateEvent, RegionUpdateEvent, RegionStateEvent.",
+   "where": "frontend/src/app/workspace/types/workflow-websocket.interface.ts:180-213",
+   "evidence": "payloads :44-178; ConsoleUpdateEvent workflow-common.interface.ts:105-122; OperatorStatsUpdate/WorkflowResultUpdateEvent execute-workflow.interface.ts:96-137"
+  },
+  {
+   "claim": "Execution control sends: Pause (Running only) :405, Kill :415, Checkpoint :425, Resume (Paused) :432, SkipTuple :439, Retry :446, ModifyLogic (Paused) :459. Callers: menu.component.ts:545,552,590,594; workflow-form.component.ts:1862; time-travel.component.ts:96; ai-workflow-fixer.service.ts:488; console-frame.component.ts:290,298; operator-property-edit-frame.component.ts:1389.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:401-460"
+  },
+  {
+   "claim": "SkipTuple cannot work: the frontend sends {workers}, the Scala field is workerIds, and the unit's handler throws 'skipping tuple is temporarily disabled'.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:439",
+   "evidence": "amber/src/main/scala/org/apache/texera/web/model/websocket/request/TexeraWebSocketRequest.scala:62-63; amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:65-67"
+  },
+  {
+   "claim": "Dead entries: PythonExpressionEvaluateRequest/Response are typed but never sent or consumed by the frontend (the unit still handles them); RecoveryStartedEvent and OperatorCurrentTuplesUpdateEvent are handled but no backend code emits them.",
+   "where": "frontend/src/app/workspace/types/workflow-websocket.interface.ts:116-135,191,200,203,205",
+   "evidence": "execute-workflow.service.ts:176-194; amber/src/main/scala/org/apache/texera/web/service/ExecutionConsoleService.scala:317; amber/src/test/scala/org/apache/texera/web/model/websocket/event/TexeraWebSocketEventSpec.scala:183-184"
+  },
+  {
+   "claim": "Debug: DebugCommandRequest {operatorId, workerId, cmd} is sent once per worker (break/clear/condition/continue/next, and free text from the console); breakpoint ids and hits are parsed from ConsoleUpdateEvent messages with source '(Pdb)'; worker ids come from WorkerAssignmentUpdateEvent.",
+   "where": "frontend/src/app/workspace/service/operator-debug/udf-debug.service.ts:77-148,165-200",
+   "evidence": "console-frame.component.ts:246-263; execute-workflow.service.ts:128-130,592-594"
+  },
+  {
+   "claim": "State and errors: WorkflowStateEvent maps to ExecutionState (Failed waits for the following WorkflowErrorEvent) and drives the canvas edit lock; the console clears on Initializing. A refused or malformed request returns as WorkflowErrorEvent with type COMPILATION_ERROR.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:159-205,499-537",
+   "evidence": "workflow-console.service.ts:57-62; WorkflowWebsocketResource.scala:138-161"
+  },
+  {
+   "claim": "Statistics: OperatorStatisticsUpdateEvent feeds WorkflowStatusService (operator state, statistics, heat-map metrics). ExecutionDurationUpdateEvent is sent twice per run and anchors a client clock. ClusterStatusUpdateEvent sets numWorkers shown in the menu. RegionUpdateEvent/RegionStateEvent drive the canvas region overlay.",
+   "where": "frontend/src/app/workspace/service/workflow-status/workflow-status.service.ts:63-68",
+   "evidence": "execute-workflow.service.ts:95-105,122-133,226-233; workflow-websocket.service.ts:169-172; menu.component.html:523; workflow-editor.component.ts:869,902"
+  },
+  {
+   "claim": "Result push: WebResultUpdateEvent {updates, tableStats}. PaginationMode updates carry totalNumTuples + dirtyPageIndices; SetSnapshotMode carries the whole table (visualizations) and exists only as pushed data; tableStats are per-column stats.",
+   "where": "frontend/src/app/workspace/service/workflow-result/workflow-result.service.ts:57-62,154-178,255-262",
+   "evidence": "frontend/src/app/workspace/types/execute-workflow.interface.ts:107-137"
+  },
+  {
+   "claim": "Console: ConsoleUpdateEvent messages go into a per-operator ring buffer (operatorConsoleMessageBufferSize); the frontend has no REST read of stored console output. Reconfiguration: ModifyLogicResponse/ModifyLogicCompletedEvent become toasts.",
+   "where": "frontend/src/app/workspace/service/workflow-console/workflow-console.service.ts:43-55",
+   "evidence": "execute-workflow.service.ts:145-157; WorkflowWebsocketResource.scala:100-113"
+  },
+  {
+   "claim": "Heartbeat and reconnect: HeartBeatRequest every 10 s and after each redial; redial every 3 s; a server close before any message counts as refusal and is not retried.",
+   "where": "frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:48-49,67,131-162"
+  },
+  {
+   "claim": "Editing-time compilation is HTTP: POST /api/compile {operators, links, opsToReuseResult: [], opsToViewResult: []}, debounced on graph edits, to workflow-compiling-service :9090 in every mode.",
+   "where": "frontend/src/app/workspace/service/compile-workflow/workflow-compiling.service.ts:86-120,302-329",
+   "evidence": "frontend/proxy.config.json:28; bin/k8s/templates/base/gateway/gateway-routes.yaml:48-59; bin/single-node/nginx.conf:30-31"
+  },
+  {
+   "claim": "Cache/reuse has no wire messages: reuse marks are client-side icons and travel only as opsToReuseResult in the plan; the compiler reads only opsToViewResult.",
+   "where": "frontend/src/app/workspace/service/workflow-status/operator-reuse-cache-status.service.ts:37-53",
+   "evidence": "execute-workflow.service.ts:585-589; common/workflow-compiler/src/main/scala/org/apache/texera/common/compiler/WorkflowCompiler.scala:384"
+  },
+  {
+   "claim": "Execution history (workspace left panel when workflowExecutionsTrackingEnabled, and admin modal) calls GET /api/executions/{wid}[?status=], PUT set_execution_bookmarks, PUT delete_executions, POST update_execution_name on the Dashboard service, which reads Postgres status codes 0-5 (Initializing..Killed). There is no lost/unknown code.",
+   "where": "frontend/src/app/dashboard/service/user/workflow-executions/workflow-executions.service.ts:28-86",
+   "evidence": "workflow-execution-history.component.ts:182-189,212-262,320-326,337; workflow-executions-entry.ts:21-46; left-panel.component.ts:86-91,123; TexeraWebApplication.scala:156; WorkflowExecutionsResource.scala:645-674"
+  },
+  {
+   "claim": "Runtime stats: showRuntimeStatistics(eId, row.cuId) calls GET /api/executions/{wid}/stats/{eid}?cuid=, whose handler reads RUNTIME_STATS_URI from Postgres, then the Iceberg table. K8s routes this path to the execution's unit (so that unit must still be alive with a recorded URI); local-dev and single-node send it to the Dashboard service. Heat-map restore uses the same list + stats calls.",
+   "where": "frontend/src/app/dashboard/service/user/workflow-executions/workflow-executions.service.ts:88-93",
+   "evidence": "workflow-execution-history.component.ts:772-786 and .html:230; WorkflowExecutionsResource.scala:676-737; gateway-routes.yaml:174-175; AccessControlResource.scala:47,84-86,194-207; proxy.config.json:83; nginx.conf:128-129; heatmap-stats-restore.service.ts:75-81"
+  },
+  {
+   "claim": "Stats field names do not match: the frontend expects totalDataProcessingTime/totalControlProcessingTime/totalIdleTime/numberOfWorkers, but the Scala case class serializes dataProcessingTime/controlProcessingTime/idleTime/numWorkers (no naming strategy). Per the code, those four read as undefined in the stats modal and heat-map restore. Not run.",
+   "where": "frontend/src/app/dashboard/type/workflow-runtime-statistics.ts:28-31",
+   "evidence": "WorkflowExecutionsResource.scala:524-536; runtime-statistics-mapper.ts:71-74; workflow-runtime-statistics.component.ts:99-102; TexeraWebApplication.scala:100"
+  },
+  {
+   "claim": "Admin executions page: GET /api/admin/execution/executionList/{size}/{index}/{field}/{dir}?filter= and /totalWorkflow, polled every 5 s, read Postgres STATUS. Its kill/pause/resume buttons open a new socket with wid only and no cuid. The unit's onOpen reads the missing cuid param and K8s ext-authz returns 403, so per the code these buttons never reach a run.",
+   "where": "frontend/src/app/dashboard/component/admin/execution/admin-execution.component.ts:302-336",
+   "evidence": "admin-execution.service.ts:26-50; admin-execution.component.ts:55,113-118; AdminExecutionResource.scala:93-214; WorkflowWebsocketResource.scala:55; AccessControlResource.scala:156-169"
+  },
+  {
+   "claim": "Quota page: GET /api/quota/user_quota_size and DELETE /api/quota/deleteCollection/{eid}; sizes come from Postgres RUNTIME_STATS_SIZE, OPERATOR_PORT_EXECUTIONS.RESULT_SIZE, OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_SIZE.",
+   "where": "frontend/src/app/dashboard/service/user/quota/user-quota.service.ts:27-57",
+   "evidence": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/quota/UserQuotaResource.scala:112-152,172-208"
+  },
+  {
+   "claim": "Time Travel: GET /api/executions/{wid} and /api/executions/{wid}/interactions/{eid} (Dashboard service; reads the replay log at LOG_LOCATION); replay re-runs over the socket with replayFromExecution.",
+   "where": "frontend/src/app/workspace/component/left-panel/time-travel/time-travel.component.ts:116-125,167",
+   "evidence": "WorkflowExecutionsResource.scala:604-643; WorkflowService.scala:294-309"
+  },
+  {
+   "claim": "Result paging is a request/response pair on the socket: ResultPaginationRequest {requestID uuid, operatorID, pageIndex (1-based), pageSize, columnOffset, columnLimit (ALL_COLUMNS=2147483647), columnSearch, portIndex (omitted for 0)} answered by PaginatedResultEvent {requestID, operatorID, pageIndex, table, schema, portIndex, totalTuples}, matched by requestID. Pages are cached only for port 0 with all columns, and dirtyPageIndices invalidates them.",
+   "where": "frontend/src/app/workspace/service/workflow-result/workflow-result.service.ts:269-425",
+   "evidence": "workflow-websocket.interface.ts:91-112; consumers result-table-frame.component.ts:495, result-panel-modal.component.ts:113, operator-result-preview.component.ts:126, report-generation.service.ts:179"
+  },
+  {
+   "claim": "On the unit, paging always reads the latest execution of (wid, cuid) from Postgres, so an older execution's results cannot be paged.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionResultService.scala:407-422"
+  },
+  {
+   "claim": "Export: the dialog first calls GET /api/executions/{wid}/result/downloadability (Dashboard). It then sends POST /api/executions/result/export/dataset (JSON), or submits a hidden-iframe form to /result/export/local with fields 'request' and 'token'. '?cuid=' is added only for kubernetes units. The body names computingUnitId, not an eid, and the server exports the latest execution of (wid, cuid). K8s routes the export paths to the unit, and ext-authz reads the token from the form body.",
+   "where": "frontend/src/app/dashboard/service/user/download/download.service.ts:161-275",
+   "evidence": "workflow-result-export.service.ts:193-347; result-exportation.component.ts:263-279; ResultExportRequest.scala:33-44; ResultExportService.scala:92,172,208,253,483-488; gateway-routes.yaml:176-178; AccessControlResource.scala:48,144-153,219-260"
+  },
+  {
+   "claim": "The unit serves the Python environment endpoints over HTTP and websocket in every mode: /api/pve/db (list/save/update/delete rows, no cuid), GET /api/pve/system?cuid, GET /api/pve/pves?cuid, DELETE /api/pve/pves/{cuid}, DELETE /api/pve/{cuid}/{pveName}/packages/{pkg}, and WS /wsapi/pve?packages&cuid&pveName&action&access-token.",
+   "where": "frontend/src/app/workspace/service/virtual-environment/virtual-environment.service.ts:45-117",
+   "evidence": "amber/.../pythonvirtualenvironment/PveResource.scala:47-210; PveWebsocketResource.scala:34; ComputingUnitMaster.scala:132-133,165; proxy.config.json:73-77,88-92; nginx.conf:121-122,134-135; gateway-routes.yaml:179-181"
+  },
+  {
+   "claim": "Environment callers: the unit dropdown's environments modal (delete on terminating a local unit, saved-environment picker, list, system packages, pip websocket, user packages, delete package); the Python UDF property editor fills envName choices from the selected unit's /api/pve/pves; the dashboard environments page edits rows via /api/pve/db.",
+   "where": "frontend/src/app/workspace/component/power-button/computing-unit-selection.component.ts:741-748,974-975,1088-1125,1190-1259,1397-1398",
+   "evidence": "operator-property-edit-frame.component.ts:538-556,685-725; user-venv.component.ts:107,205-206,234"
+  },
+  {
+   "claim": "In K8s, /api/pve/db carries no cuid. ext-authz takes the cuid from the query or two path patterns and otherwise returns 403, so per the code the dashboard environments page cannot list or save in K8s.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:49-53,156-169"
+  },
+  {
+   "claim": "Gateway today: Envoy exists only in K8s. Its dynamic route (/wsapi, the stats pattern, the export prefix, /api/pve, Jupyter) goes through ext-authz at access-control-service /api/auth, not the Dashboard service. That check verifies the JWT and the user's access to the unit, then returns x-user-* headers and Host = the unit's recorded URI. Single-node nginx sends /wsapi and /api/pve/ to the one unit with no check; local-dev uses the Angular proxy to :8085.",
+   "where": "bin/k8s/templates/base/gateway/gateway-security-policy.yaml",
+   "evidence": "gateway-routes.yaml:156-193; AccessControlResource.scala:74-91,128-217; bin/single-node/nginx.conf:121-139; frontend/proxy.config.json:73-92"
+  },
+  {
+   "claim": "Agent path: the frontend sends the selected cuid to agent-service, and agent-service POSTs straight to the unit at ${EXECUTION_ENDPOINT_TEMPLATE}/api/execution/{wid}/{cuid}/run (SyncExecutionResource), bypassing Envoy. The unit also registers the Postgres-backed WorkflowExecutionsResource.",
+   "where": "agent-service/src/agent/tools/workflow-execution-tools.ts:259-266",
+   "evidence": "frontend/src/app/workspace/service/agent/agent.service.ts:718; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:125-140; ComputingUnitMaster.scala:205-206"
+  },
+  {
+   "claim": "Auth transport: HttpClient calls get 'Authorization: Bearer' from angular-jwt (same-origin), with the token in localStorage 'access_token'. Browser websockets carry it as the access-token query parameter.",
+   "where": "frontend/src/app/app.module.ts:204-210",
+   "evidence": "auth.service.ts:35,285-289; workflow-websocket.service.ts:126; virtual-environment.service.ts:106-115"
+  },
+  {
+   "claim": "No execution is ever marked lost: unit health comes only from the managing service (Failed/Unknown means 'unavailable'), the socket keeps redialing every 3 s, and the UI keeps the run's last state.",
+   "where": "frontend/src/app/common/util/computing-unit.util.ts:206-218",
+   "evidence": "workflow-websocket.service.ts:150-161; execute-workflow.service.ts:323-336"
+  },
+  {
+   "claim": "Path collision: the existing /api/executions/{id} endpoints take a workflow id, not an eid (/{wid}/latest, /{wid}, /{wid}/stats/{eid}, /{wid}/interactions/{eid}, /{wid}/result/downloadability), and K8s already sends two /api/executions sub-paths to units.",
+   "where": "amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala:550-850",
+   "evidence": ":555,606,647,678,829; gateway-routes.yaml:174-178"
+  },
+  {
+   "claim": "The unit sends the run-notification email itself (Gmail API), using the socket URI; the browser only passes emailNotificationEnabled.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ExecutionRuntimeService.scala:47-62",
+   "evidence": "amber/src/main/scala/org/apache/texera/web/service/WorkflowEmailNotifier.scala:61; menu.component.ts:1142-1145"
+  },
+  {
+   "claim": "These frontend specs are tied to the current transport and will need rewriting: execute-workflow, workflow-websocket, workflow-result, workflow-result-export, heatmap-stats-restore, virtual-environment, workflow-executions, download, computing-unit-status, computing-unit-selection, operator-property-edit-frame, admin-execution, workflow-execution-history.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.spec.ts",
+   "evidence": "grep for openWebsocket|WorkflowExecuteRequest|ResultPaginationRequest|retrieveWorkflowRuntimeStatistics|exportWorkflowResultTo|fetchPVEs|getPveWebSocketUrl in *.spec.ts"
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "2",
+   "change": "Create the execution with HTTP POST /api/executions to the Dashboard service. It falls under the static /api route, so the gateway needs no change. Body: wid, executionName, engineVersion, logicalPlan, workflowSettings, emailNotificationEnabled, computingUnitId, warehouseId, replayFromExecution. Response: at least eid. Replace the websocket send in sendExecutionRequest. Move the type out of the websocket map and type all fields. Keep the two local refusal checks (and the debounce, if form edits must settle) before the create call.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:268-399; frontend/src/app/workspace/types/workflow-websocket.interface.ts:44-55,186"
+  },
+  {
+   "step": "2",
+   "change": "Keep the current execution id (and its unit) in ExecuteWorkflowService: set it from the create response, clear it in resetExecutionState/resetExecutionAndWorkers, and expose it to the result, export, stats, console and debug code.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:79-119,477-497"
+  },
+  {
+   "step": "2",
+   "change": "Turn create failures (no rights, compile errors that name operators) into ExecutionState.Failed with errorMessages. This replaces the COMPILATION_ERROR WorkflowErrorEvent path. A refused create must leave Run usable and keep the results already on screen.",
+   "where": "frontend/src/app/workspace/service/execute-workflow/execute-workflow.service.ts:159-205; amber/src/main/scala/org/apache/texera/web/resource/WorkflowWebsocketResource.scala:138-161"
+  },
+  {
+   "step": "2",
+   "change": "Environments leave the unit. The Python UDF environment picker lists Dashboard-service rows instead of /api/pve/pves?cuid. Remove the unit dropdown's environment modal: pip websocket, system packages, per-unit delete and package delete. Drop getSystemPackages, fetchPVEs, getUserPackages, deleteEnvironments, deletePackage and getPveWebSocketUrl. Keep listUserPves, savePve, updateUserPve and deleteUserPve, now served by the Dashboard service. Remove the unit routes for /api/pve and /wsapi/pve in the dev proxy, nginx, the K8s dynamic route and AccessControlResource. Install output must show up in the run's log or console instead.",
+   "where": "operator-property-edit-frame.component.ts:538-556,685-725; computing-unit-selection.component.ts:741-748,965-1260,1397; virtual-environment.service.ts:61-117; frontend/proxy.config.json:73-77; bin/single-node/nginx.conf:121-125; gateway-routes.yaml:179-181; AccessControlResource.scala:49-53,84-86,156-162"
+  },
+  {
+   "step": "2",
+   "change": "Agent runs must use the same create (and later start through Envoy) instead of agent-service calling the unit's /api/execution/{wid}/{cuid}/run.",
+   "where": "frontend/src/app/workspace/service/agent/agent.service.ts:700-720; agent-service/src/agent/tools/workflow-execution-tools.ts:259-266"
+  },
+  {
+   "step": "3",
+   "change": "Execution status comes from the lake log through the Dashboard service. Add an outcome for 'unit lost' and a reason string to WorkflowExecutionsEntry and EXECUTION_STATUS_CODE, to the history statusMapping, icons and pie chart, and to the admin Execution type, filter and mapToStatus. /latest only needs cuId and whId for unit and warehouse preselection.",
+   "where": "frontend/src/app/dashboard/type/workflow-executions-entry.ts:21-46; workflow-execution-history.component.ts:182-189,212-262,337; frontend/src/app/common/type/execution.ts; AdminExecutionResource.scala:71-90"
+  },
+  {
+   "step": "3",
+   "change": "Read runtime statistics by eid from a service that reads the lake: retrieveWorkflowRuntimeStatistics(eid) without cuid. Fix the four mismatched field names on one side. Update the history modal and heat-map restore. Delete the K8s stats regex route and the matching ext-authz pattern.",
+   "where": "workflow-executions.service.ts:88-93; workflow-runtime-statistics.ts:28-31; heatmap-stats-restore.service.ts:75-81; workflow-execution-history.component.ts:772-786 and .html:230; gateway-routes.yaml:174-175; AccessControlResource.scala:47"
+  },
+  {
+   "step": "3",
+   "change": "Result pages over HTTP from the result service by eid. OperatorPaginationResultService.selectPage/peekFirstRows send GET with operator, port, page, size, columnOffset, columnLimit and columnSearch, and get {table, schema, totalTuples} back. Keep the page cache, invalidated by dirtyPageIndices from the watch stream. Also add a read for SetSnapshotMode (visualization) results, so a reload or a past execution can render them. Consumers keep the same API.",
+   "where": "frontend/src/app/workspace/service/workflow-result/workflow-result.service.ts:269-425; workflow-websocket.interface.ts:91-112,183,204"
+  },
+  {
+   "step": "3",
+   "change": "Export by eid: ResultExportRequest carries executionId instead of computingUnitId. Drop the '?cuid=' branches and the K8s export route, so export reads the lake rather than the 'latest of (wid, cuid)'.",
+   "where": "frontend/src/app/dashboard/service/user/download/download.service.ts:169-275; workflow-result-export.service.ts:243-262; gateway-routes.yaml:176-178; ResultExportService.scala:92,172,208,253"
+  },
+  {
+   "step": "3",
+   "change": "Workspace entry without unit replay: get the workflow's latest execution with its state from the lake. If it is still open, watch it. Otherwise restore results, console and stats from services, because the unit no longer replays and may be gone. The quota page gets sizes computed from the lake, with the same frontend type.",
+   "where": "computing-unit-selection.component.ts:393-425; workflow-console.service.ts:43-55; heatmap-stats-restore.service.ts:61-102; user-quota.service.ts:53; UserQuotaResource.scala:112-152"
+  },
+  {
+   "step": "4",
+   "change": "Start through Envoy: after create, POST <unit-bound prefix>/{eid}/start, then open the watch stream. Use a prefix that cannot collide with /api/executions/{wid}, for example /api/runs/{eid}/... and /wsapi/runs/{eid}/watch, and add it to the dynamic route.",
+   "where": "execute-workflow.service.ts:353-399; bin/k8s/templates/base/gateway/gateway-routes.yaml:156-193"
+  },
+  {
+   "step": "4",
+   "change": "One watch stream per execution. Replace openWebsocket(wid, uid, cuid) with watch(eid) and drop uid and cuid. Envoy's check resolves eid to the unit, checks read access and swaps the login token for the unit key. The engine sends state first, then changes, so a redial replays: execution state, duration anchor, worker assignments, regions, numWorkers. Drop client heartbeats. Only events come in; requests leave the socket.",
+   "where": "frontend/src/app/workspace/service/workflow-websocket/workflow-websocket.service.ts:48-182; execute-workflow.service.ts:120-143"
+  },
+  {
+   "step": "4",
+   "change": "Commands become HTTP requests through Envoy with a Bearer token: pause, resume, kill, checkpoint, retry, skip (fix or drop), modify-logic, debug (send one request carrying the worker list to keep order), evaluate (drop, unused). The check must test each command's permission; today nothing is checked beyond execute. The admin page's kill/pause/resume move to these calls by executionId.",
+   "where": "execute-workflow.service.ts:401-460; udf-debug.service.ts:77-148; console-frame.component.ts:246-263; admin-execution.component.ts:298-336"
+  },
+  {
+   "step": "4",
+   "change": "Decouple unit selection from the stream. selectComputingUnit only selects and polls. Run/Kill gating stops reading workflowWebsocketService.isConnected and uses unit status plus the current execution's state. 'Connecting' becomes a start/watch pending state. numWorkers moves into the stream's first message.",
+   "where": "computing-unit-status.service.ts:149-207,283-290,318-325; menu.component.ts:484-491; menu.component.html:450-472,514-523; workflow-form.component.ts:1776-1828"
+  },
+  {
+   "step": "4",
+   "change": "Envoy in every mode. Local-dev sends /wsapi and the new unit prefix to Envoy instead of :8085; single-node replaces nginx's /wsapi and /api/pve routes. The check moves from access-control-service to the Dashboard service and returns Host plus the unit key for an eid.",
+   "where": "frontend/proxy.config.json:73-92; bin/single-node/nginx.conf:121-139; bin/k8s/templates/base/gateway/gateway-security-policy.yaml; AccessControlResource.scala:128-217"
+  },
+  {
+   "step": "2-4",
+   "change": "Rewrite the 13 specs tied to the current transport, plus mock-computing-unit-status.service.ts.",
+   "where": "frontend/src/app/**/(execute-workflow|workflow-websocket|workflow-result|workflow-result-export|heatmap-stats-restore|virtual-environment|workflow-executions|download|computing-unit-status|computing-unit-selection|operator-property-edit-frame|admin-execution|workflow-execution-history)*.spec.ts"
+  }
+ ],
+ "risks": [
+  "The edit lock and the Run button depend on the unit pushing WorkflowStateEvent('Uninitialized') on connect and on real transitions only. A watch stream that re-announces the same state, or starts without one, misbehaves: the canvas editor throws on Recovering->non-terminal transitions (execute-workflow.service.ts:243-249).",
+  "ExecutionDurationUpdateEvent is sent only twice per run. A watch redial that does not replay it leaves the clock wrong (execute-workflow.service.ts:95-105).",
+  "Paging from the lake during a run lags: the Iceberg result writer commits every 4096 rows (common/config/src/main/resources/storage.conf:65; IcebergTableWriter.scala:73,89). Live pages may need the engine through Envoy until the run ends.",
+  "Debug commands are fired one per worker in loops. As separate HTTP requests they can reorder, so send them as one request.",
+  "The unit keys live state by workflow, so every tab and collaborator on a workflow shares one session today. A per-eid watch must still find the running execution when a second user opens the workflow.",
+  "The run-notification email is sent from the unit (WorkflowEmailNotifier.scala:61), which breaks rule 2. It needs a new home, such as the Dashboard timer job.",
+  "Time Travel and checkpoint rely on the unit's fault-tolerance log location in Postgres (WorkflowService.scala:283-309). They need a plan under a lake-only state model.",
+  "Existing bugs (skip tuple, admin commands, stats field names, K8s 403 on /api/pve/db) should not be carried over as-is. Fixing the stats names changes the numbers users see."
+ ],
+ "open_questions": [
+  "Watch transport: WebSocket or SSE (one-way)? Both need the token in the query or a cookie, because browsers cannot set headers on them.",
+  "While a run is going, do result pages come from the result service (lags up to 4096 rows per port) or from the engine through Envoy?",
+  "Does the browser still choose the computing unit at create, and should the Dashboard service record the workflow version (vid) for the execution?",
+  "An earlier decision held export 'where it is for now'. Does step 3 move export to eid and lake reads, or does it stay on the unit through Envoy?",
+  "Which service answers Envoy's check after the change: the Dashboard service (per the brief) or the existing access-control-service?",
+  "Should SkipTuple, PythonExpressionEvaluate, RecoveryStartedEvent and OperatorCurrentTuplesUpdateEvent be removed rather than ported?"
+ ]
+}

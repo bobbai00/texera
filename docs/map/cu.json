@@ -1,0 +1,322 @@
+{
+ "area": "Computing unit management, platforms and credentials (build steps 5 and 6)",
+ "summary": "Units are rows in workflow_computing_unit (type local|kubernetes, uri, resource JSON), managed by computing-unit-managing-service. There is no platform interface, no Slurm or EC2 code and no unit key. Where a unit runs is decided by a type match repeated across ComputingUnitManagingResource and ComputingUnitHelpers, plus the uri column, which access-control-service (the Envoy ext-auth) copies into Host.\n\nA Kubernetes unit is one pod (computing-unit-master on port 8085), created inside the create transaction. Its status comes from the pod object; nothing probes the unit's health. Vanished pods are retired only when someone lists units. The idle sweep is off by default and reads workflow_executions.status from Postgres. A local unit starts nothing: the user types a URI. Single-node runs one shared coordinator container behind nginx and gives it the whole .env. Local-dev runs a host JVM behind the Angular proxy. Envoy exists only in the Helm chart, and the agent-service calls units directly.\n\nEvery K8s unit receives:\n- the Postgres superuser login\n- the object-store root keys, which also reach every Python worker's argv\n- AUTH_JWT_SECRET (the unit both verifies and mints JWTs)\n- the owner's 7-day USER_JWT_TOKEN\n- file-service endpoints\n- the access-control-service URL when mounting is on\n\nLakeFS keys are not forwarded. However, storage.conf's defaults equal the chart's default LakeFS admin keys, and the unit falls back to them. Lakekeeper is unauthenticated (no OpenFGA, STS off, root keys stored in warehouses), so any unit can reach any warehouse. The unit NetworkPolicy covers ingress only and admits every other namespace, and the unit trusts x-user-* headers. So any pod outside the pool namespace, Jupyter included, can impersonate a user today.\n\nSteps 5 and 6 need: secrets stripped on both the manager and engine sides, a unit key delivered through a per-unit Secret and checked by one engine filter, Lakekeeper authn, OpenFGA and vended credentials with per-run tokens, default-deny ingress and egress, a ComputingUnitPlatform trait (Kubernetes and Local first), schema enum extensions, and Envoy in single-node and local-dev.",
+ "facts": [
+  {
+   "claim": "The managing service exposes /api/computing-unit: GET /limits, GET /types, POST /create, GET '' (list), GET /{cuid}, DELETE /{cuid}/terminate, PUT /{cuid}/rename/{name}, GET /{cuid}/metrics, GET /{cuid}/limits. Separate resources serve /computing-unit/admin/{list,cluster-capacity}, /access/computing-unit/{list,grant,revoke,owner} (enabled by COMPUTING_UNIT_SHARING_ENABLED) and /cu-image (curated images). It never calls a unit over HTTP; it talks only to the Kubernetes API.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:506",
+   "evidence": "@Path lines 557,567,582,820,907,947,1010,1063,1078; AdminComputingUnitResource.scala:51,61,115; ComputingUnitAccessResource.scala:106-237; CuratedImageResource.scala:502; registered at ComputingUnitManagingService.scala:103-106; no HTTP client in the service's main code (grep)."
+  },
+  {
+   "claim": "Only two unit types exist: the Postgres enum ('local','kubernetes'), its jOOQ enum (checked into the repo) and the frontend union type. local is gated by COMPUTING_UNIT_LOCAL_ENABLED (default true); kubernetes is gated by KUBERNETES_COMPUTING_UNIT_ENABLED (default false; the chart sets true/false the other way round). No slurm, ec2 or platform code exists anywhere in the repo.",
+   "where": "sql/texera_ddl.sql:100",
+   "evidence": "common/dao/src/main/scala/org/apache/texera/dao/jooq/generated/enums/WorkflowComputingUnitTypeEnum.java:19-21; frontend/src/app/common/type/workflow-computing-unit.ts:29; ComputingUnitManagingResource.scala:525-532; computing-unit.conf:20-23; kubernetes.conf:20-21; values.yaml:464-467; grep for slurm/ec2/sbatch finds only false positives."
+  },
+  {
+   "claim": "Columns of workflow_computing_unit: uid, name, cuid (SERIAL PK), creation_time, terminate_time, termination_reason enum ('USER_REQUESTED','GARBAGE_COLLECTED'), type, uri (TEXT NOT NULL DEFAULT ''), resource (TEXT JSON with limits, iid, imageName, curatedImage and nodeAddresses). workflow_executions.cuid has an FK with ON DELETE CASCADE and an index. The latest migration is 52.",
+   "where": "sql/texera_ddl.sql:246",
+   "evidence": "texera_ddl.sql:101 (reason enum), 325, 337, 343; sql/updates/51.sql adds the reason enum; sql/changelog.xml:173-175 (changeSet 52)."
+  },
+  {
+   "claim": "Kubernetes create flow: validates cpu, memory and gpu against the option lists, checks that shm and the JVM heap fit in memory, and applies a per-user running-unit quota (Kubernetes only, default 10). It inserts the row with uri '', then sets uri = generatePodURI(cuid) and resource.nodeAddresses, and calls KubernetesClient.createPod. All of this runs inside one DB transaction, so a pod-creation failure rolls back the row.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:680",
+   "evidence": "Validation 606-656; quota 684-692; resource JSON 694-713; uri placeholder 741-743; uri update 758-769; createPod 773-792."
+  },
+  {
+   "claim": "Local create starts nothing. A user-supplied uri is required and stored verbatim in uri and nodeAddresses. Status is always Running, metrics and limits are NaN, and terminate only stamps the row. The UI placeholder suggests a URI with a scheme (http://localhost:8085).",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:659",
+   "evidence": "715-726, 739-740; ComputingUnitHelpers.scala:89-91, 202-203; ComputingUnitManagingResource.scala:538-539, 967-975; frontend/src/app/common/component/computing-unit-create-modal/computing-unit-create-modal.component.html:239."
+  },
+  {
+   "claim": "A Kubernetes unit's address is recorded as a scheme-less authority '<podNamePrefix>-<cuid>.<svc>.<pool-ns>.svc.cluster.local:8085'. It resolves through a headless Service (selector type=computing-unit) plus the hostname and subdomain set on the pod.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:50",
+   "evidence": "KubernetesClient.scala:54, 306-309; bin/k8s/templates/base/workflow-computing-unit-pool/workflow-computing-units-service.yaml:18-30; kubernetes.conf:23-45 (pool namespace, service, prefix, port 8085)."
+  },
+  {
+   "claim": "The unit pod spec has one container, 'computing-unit-master', running KUBERNETES_IMAGE_NAME or a curated image, with all env as plain values and limits only (no requests). It carries labels type, cuid and name, and its runtimeClass comes from KUBERNETES_COMPUTING_UNIT_RUNTIME_CLASS_{CPU,GPU}, read via sys.env. There is no serviceAccountName, no automountServiceAccountToken=false and no probes. A securityContext (non-root, drop ALL) is set only for curated images.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:146",
+   "evidence": "Env 161-164; limits 192-200; labels 203-209; runtime class 216-224; container 226-235; curated-image securityContext 242-252; values.yaml:540-547 (Kata runtime-class knobs)."
+  },
+  {
+   "claim": "Pool namespace objects: the namespace, the headless Service, a ResourceQuota on requests (default cpu 100, memory 100Gi, nvidia.com/gpu 5) and a DaemonSet that prepulls the master image in the release namespace.",
+   "where": "bin/k8s/templates/base/workflow-computing-unit-pool/workflow-computing-unit-resource-quota.yaml:18",
+   "evidence": "workflow-computing-units-namespace.yaml:18-23; workflow-computing-units-service.yaml:18-30; workflow-computing-unit-master-prepull-daemonset.yaml:18-54; values.yaml:392-409."
+  },
+  {
+   "claim": "DELETE /{cuid}/terminate (ADMIN or owner) deletes the pod for Kubernetes units only, then stamps terminate_time and USER_REQUESTED, and emails the owner when an admin terminated the unit.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:943",
+   "evidence": "967-975 (pod delete for kubernetes only); 985-994 (email); KubernetesClient.deletePod 315-317."
+  },
+  {
+   "claim": "Health and status are read from the pod object, never by asking the unit. ComputingUnitState is {Running, Pending, Failed, Unknown, Terminating}, mapped from a PodStatusSnapshot (phase, deletion, reason and message, unschedulable, container waiting reason, last-terminated reason, restartCount). An absent pod maps to Pending. The unit does expose /api/execution/health, but nothing probes it.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ComputingUnitHelpers.scala:164",
+   "evidence": "ComputingUnitState.scala:26-29; PodStatusSnapshot.scala:44-51; ComputingUnitHelpers.scala:84-106, 168; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:933-935."
+  },
+  {
+   "claim": "A Kubernetes unit whose pod has vanished is stamped GARBAGE_COLLECTED only when a listing endpoint runs. There is no background liveness poll and no 'lost' or 'failed' termination reason.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ComputingUnitHelpers.scala:320",
+   "evidence": "Callers: ComputingUnitManagingResource.scala:868-875 and AdminComputingUnitResource.scala:77-89; isVanished at ComputingUnitHelpers.scala:302-307; texera_ddl.sql:101."
+  },
+  {
+   "claim": "The idle sweep (IdleComputingUnitCleanupJob) is registered only when Kubernetes units and KUBERNETES_COMPUTING_UNIT_IDLE_CLEANUP_ENABLED are both on (default off; timeout 1440 minutes, interval 60). It judges idleness from Postgres workflow_executions.status, treating codes 3/4/5 as terminal, plus starting_time and last_update_time. It stamps the row, then deletes the pod. It therefore depends on the engine writing status to Postgres, which step 3 removes.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:180",
+   "evidence": "Terminal codes 123-130; liveExecutionExists 247-261; stamp then delete 263-313; ComputingUnitManagingService.scala:113-120; IdleComputingUnitCleanupJob.scala:36-63; kubernetes.conf:54-62."
+  },
+  {
+   "claim": "Metrics: per-unit CPU and memory come from metrics.k8s.io (the metrics-server chart dependency). Limits are read back from the pod spec. Admin cluster capacity lists nodes and pods cluster-wide. All of these are Kubernetes-only; local units report NaN.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:100",
+   "evidence": "KubernetesClient.scala:93-144, 108-120; ComputingUnitHelpers.scala:200-213, 284-300; bin/k8s/Chart.yaml (metrics-server dependency)."
+  },
+  {
+   "claim": "The manager's RBAC is a Role in the pool namespace granting pods get/list/watch/create/delete, metrics pods get/list, batch jobs, pods/log and apps daemonsets, plus a ClusterRole to list nodes and pods. It has no permission on secrets.",
+   "where": "bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-service-account.yaml:25",
+   "evidence": "Role rules 30-50; ClusterRole 71-78; bindings 53-65, 81-92."
+  },
+  {
+   "claim": "Env passed to every Kubernetes unit: STORAGE_ICEBERG_CATALOG_TYPE, plus the REST URI and WAREHOUSE_NAME (or the Postgres-catalog URI, user and password); STORAGE_JDBC_URL, USERNAME and PASSWORD; STORAGE_LAKEFS_ENDPOINT; STORAGE_S3_ENDPOINT, REGION, AUTH_USERNAME and AUTH_PASSWORD; FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT; FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT; AUTH_JWT_SECRET; the optional MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB; USER_JWT_TOKEN; JAVA_OPTS=-Xmx; and OTEL_* with a per-unit service.instance.id.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:431",
+   "evidence": "Iceberg 315-333; JDBC 434-436; LakeFS 440; S3 442-445; required list 340-344; optional 351-353; USER_JWT_TOKEN and JAVA_OPTS 778-780; OTEL 392-428, 781."
+  },
+  {
+   "claim": "AUTH_JWT_SECRET and both FILE_SERVICE endpoints are required: a blank value fails Kubernetes creation with HTTP 503. Specs pin this behaviour.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:340",
+   "evidence": "requiredComputingUnitEnv 361-376; ComputingUnitManagingResourceSpec.scala:563-618 asserts AUTH_JWT_SECRET forwarding; KubernetesClientSpec.scala:443-493 asserts the mount env and hostPath."
+  },
+  {
+   "claim": "In the chart, the JDBC values forwarded to units are the Postgres superuser's: STORAGE_JDBC_USERNAME=postgres (from texeraEnvVars) and the password from secret <release>-postgresql, key postgres-password. AUTH_JWT_SECRET is a literal in texeraEnvVars.",
+   "where": "bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-deployment.yaml:98",
+   "evidence": "manager-deployment.yaml:98-104, 151-154; values.yaml:448-449, 537-539."
+  },
+  {
+   "claim": "The S3 credentials forwarded to units are the in-cluster RustFS root keys (<release>-rustfs-secret, RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY) or the external-S3 deployment keys. The manager's own code uses StorageConfig only for JDBC; its S3, LakeFS, Iceberg and FILE_SERVICE env, and its wait-lakekeeper init container, exist only to forward to units.",
+   "where": "bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-deployment.yaml:111",
+   "evidence": "manager-deployment.yaml:39-57, 105-150; _helpers.tpl:40-56; ComputingUnitManagingService.scala:43-48 (its only StorageConfig use besides the forwarding)."
+  },
+  {
+   "claim": "User code receives the store keys. Each Python worker gets s3AuthUsername and s3AuthPassword (plus catalog settings) in a Base64 JSON argv, and the process inherits the JVM's environment, which includes the DB password, AUTH_JWT_SECRET and USER_JWT_TOKEN.",
+   "where": "amber/src/main/scala/org/apache/texera/amber/engine/architecture/pythonworker/PythonWorkflowWorker.scala:110",
+   "evidence": "buildStartupConfig 83-116; encodeStartupConfig 66-74; Process(Seq(pythonBin, ..., encodedConfig)) 265-272, with no env override."
+  },
+  {
+   "claim": "LakeFS credentials are deliberately not forwarded (only the endpoint is). However, storage.conf's default LakeFS credentials equal the chart's default LakeFS admin keys. LakeFSFileDocument falls back to direct LakeFS access with those credentials whenever USER_JWT_TOKEN is empty or the presign call fails.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:438",
+   "evidence": "common/config/src/main/resources/storage.conf:95-99; bin/k8s/values.yaml:151-152; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/model/LakeFSFileDocument.scala:110-132, 159-161."
+  },
+  {
+   "claim": "FILE_SERVICE_GET_MODEL_PRESIGNED_URL_ENDPOINT is read by the unit, but neither the manager nor the chart sets it. Model-file reads on a Kubernetes unit therefore hit localhost:9092 and fall back to LakeFS.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/model/LakeFSFileDocument.scala:50",
+   "evidence": "Not in requiredComputingUnitEnvNames (ComputingUnitManagingResource.scala:340-344); absent from manager-deployment.yaml:106-109."
+  },
+  {
+   "claim": "USER_JWT_TOKEN is minted for the creating user at unit creation: HS256 with AUTH_JWT_SECRET, expiring after AUTH_JWT_EXPIRATION_IN_MINUTES (default 10080, i.e. 7 days), while the pod lives on. Every sharee's run on that unit reads files as the owner.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:731",
+   "evidence": "common/auth/src/main/scala/org/apache/texera/auth/JwtAuth.scala:46-52, 84; common/config/src/main/resources/auth.conf:22-26. Consumers: LakeFSFileDocument.scala:39-40,140; amber/src/main/python/pytexera/storage/dataset_file_document.py:91-110; RepositoryMountManager.scala:104-118."
+  },
+  {
+   "claim": "The unit both verifies and mints JWTs, so AUTH_JWT_SECRET is load-bearing on it. ResultExportService signs a fresh user JWT to call file-service; the master registers the JWT auth filter; the websocket handshake verifies access-token JWTs.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/ResultExportService.scala:557",
+   "evidence": "ResultExportService.scala:83-89, 557-558; amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:167; ServletAwareConfigurator.scala:89-90."
+  },
+  {
+   "claim": "The unit logs in to Postgres at startup and runs a recurring expired-results cleanup that reads and updates workflow_executions.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:145",
+   "evidence": "ComputingUnitMaster.scala:145-149, 181-203, 240-256, 299-307; engine-side SqlServer users: WorkflowService.scala, ExecutionResultService.scala, ExecutionsMetadataPersistService.scala, CostEstimator.scala."
+  },
+  {
+   "claim": "The unit itself decides which Lakekeeper warehouse an execution writes to, by reading USER_WAREHOUSE from Postgres.",
+   "where": "amber/src/main/scala/org/apache/texera/web/service/WorkflowService.scala:91",
+   "evidence": "WorkflowService.scala:91-121, 255-262; SyncExecutionResource.scala:167."
+  },
+  {
+   "claim": "Mounting (opt-in via mounter.enabled, default false) adds TEXERA_CU_ID, TEXERA_MOUNT_IN_POD_ROOT and ACCESS_CONTROL_SERVICE_URL, plus a hostPath <root>/<cuid> with HostToContainer propagation. At region launch the engine POSTs to access-control-service /api/mounts/{cuid} with USER_JWT_TOKEN, i.e. the unit calls a service.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/RepositoryMountManager.scala:104",
+   "evidence": "KubernetesClient.scala:166-189, 257-264, 295-304; RegionExecutionManager.scala:122, 371-372 (PhysicalOp.mountLocators); UdfUiParameterSupport.scala:39-73; values.yaml:415-436."
+  },
+  {
+   "claim": "Mount authority chain: access-control-service checks WRITE on the unit and read access to the repo version, then finds the node from the pod's hostIP. It mints a JWT and calls that node's privileged mounter on hostPort 8100. The mounter authenticates callers by TokenReview with audience texera-mounter and allows only access-control-service's ServiceAccount. It then runs GeeseFS against file-service with the JWT as the S3 key.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitMountResource.scala:70",
+   "evidence": "ComputingUnitNodeLocator.scala:37-44; access-control-service-service-account.yaml:58-80 (pod get); access-control-service-deployment.yaml:105-124 (projected token); mounter-daemonset.yaml:47-52, 79-82; bin/mounter/mounter.py:83-106, 216-284, 308-357."
+  },
+  {
+   "claim": "The engine's Iceberg REST catalog is unauthenticated: it sets only warehouse, uri and S3FileIO, with a TODO for OAuth2. The Python side likewise gets only the URI and warehouse. Catalogs are cached in-process per warehouse name, not per run.",
+   "where": "common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:127",
+   "evidence": "IcebergUtil.scala:133-149; PythonWorkflowWorker.scala:103-105; IcebergCatalogInstance.scala:150-186."
+  },
+  {
+   "claim": "Lakekeeper runs without OpenFGA authorization. Warehouses are created with the store's root access keys and 'sts-enabled': false, both by the chart init job, the single-node init and LakekeeperClient (per-user warehouses). Any caller can therefore reach any warehouse or namespace.",
+   "where": "bin/k8s/values.yaml:173",
+   "evidence": "bin/k8s/templates/base/lakekeeper/lakekeeper-init-job.yaml:146-170; bin/single-node/docker-compose.yml:283-298; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:95-123."
+  },
+  {
+   "claim": "The chart creates ExternalName aliases in the pool namespace for file-service, config-service, postgresql, webserver, rustfs (when enabled) and lakekeeper, so the unaddressed hostnames units receive resolve there. The OTel collector has no alias, so the forwarded OTEL endpoint does not resolve from a unit pod.",
+   "where": "bin/k8s/templates/base/external-names/external-names.yaml:46",
+   "evidence": "external-names.yaml:46-93; _helpers.tpl:69-76 (http://<release>-otel-collector:4317)."
+  },
+  {
+   "claim": "The unit NetworkPolicy covers ingress only. It blocks only other pods in the pool namespace and admits every other namespace, including the Jupyter pool, which runs user code. It has no egress rules. By contrast, the Jupyter policy does block the CU pool from reaching Jupyter.",
+   "where": "bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml:24",
+   "evidence": "Lines 18-34; bin/k8s/templates/base/jupyter-pool/jupyter-network-policy.yaml:39-48."
+  },
+  {
+   "claim": "The unit trusts identity headers without verifying them. When x-user-computing-unit-access, x-user-id, x-user-name and x-user-email are all present, the handshake builds the User from them ('KUBERNETES MODE'). Otherwise it verifies the access-token JWT and grants WRITE ('SINGLE NODE MODE'). Together with the ingress policy above, any non-pool pod can impersonate any user.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:50",
+   "evidence": "ServletAwareConfigurator.scala:49-99; header names in common/auth/src/main/scala/org/apache/texera/auth/util/HeaderField.scala:23-26."
+  },
+  {
+   "claim": "Envoy (Kubernetes only) has a dynamic HTTPRoute for /wsapi, /api/executions/\\d+/stats/\\d+, /api/executions/result/export, /api/pve (and /jupyter). It points to a DynamicResolver Backend, under an ext-auth SecurityPolicy that calls access-control-service /api/auth and forwards x-user-* and Host upstream. Static routes send /api/computing-unit, /api/cu-image and /api/access/computing-unit to the manager.",
+   "where": "bin/k8s/templates/base/gateway/gateway-routes.yaml:168",
+   "evidence": "gateway-routes.yaml:31-46, 90-96, 155-192; gateway-backend.yaml:18-24; gateway-security-policy.yaml:18-39."
+  },
+  {
+   "claim": "The ext-auth takes the user token from the access-token query parameter, the Authorization header or the JSON body, and the cuid from the query or the /pve path. It checks ComputingUnitAccess (owner or grant, without checking terminate_time), reads workflow_computing_unit.uri and returns it as Host verbatim, plus x-user-* headers. The user JWT passes through to the unit, and the token and headers are logged at INFO.",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:128",
+   "evidence": "AccessControlResource.scala:140-154, 156-169, 188-216; common/auth/src/main/scala/org/apache/texera/auth/util/ComputingUnitAccess.scala:34-54."
+  },
+  {
+   "claim": "Envoy-to-unit traffic is plain HTTP: the Backend sets no TLS. The ext-auth copies uri into Host without parsing, unlike Jupyter routing, which takes URI.getAuthority. A user-typed local URI with a scheme would therefore be passed through as-is.",
+   "where": "bin/k8s/templates/base/gateway/gateway-backend.yaml:24",
+   "evidence": "AccessControlResource.scala:198-215 versus 106-111."
+  },
+  {
+   "claim": "The agent-service bypasses Envoy and calls units directly. In Kubernetes it uses EXECUTION_ENDPOINT_TEMPLATE (http://computing-unit-{cuid}.<pool>-svc.<ns>.svc.cluster.local:8085), which hard-codes the 'computing-unit' prefix instead of podNamePrefix. In single-node it uses WORKFLOW_EXECUTION_SERVICE_ENDPOINT. The unit authenticates these calls by JWT @RolesAllowed and does not check access to the cuid.",
+   "where": "bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:60",
+   "evidence": "agent-service/src/agent/tools/workflow-execution-tools.ts:261-266; agent-service/src/config/env.ts:34; bin/single-node/.env:102; SyncExecutionResource.scala:134-142."
+  },
+  {
+   "claim": "Single-node runs one shared unit, the container workflow-runtime-coordinator-service (texera-workflow-execution-coordinator image). It uses env_file .env and so receives every secret there (JDBC user and password, S3 keys, LakeFS installation keys and the Lakekeeper DB URL), and it shares the workflow_result_data volume with dashboard-service. Kubernetes units are off by default, so users register 'local' rows whose URI nginx ignores.",
+   "where": "bin/single-node/docker-compose.yml:406",
+   "evidence": "docker-compose.yml:406-420, 436-437; bin/single-node/.env:37-69; kubernetes.conf:20."
+  },
+  {
+   "claim": "In single-node, nginx forwards /api/pve and /wsapi straight to the coordinator on port 8085, with no ext-auth and no cuid routing. /api/executions/* goes to dashboard-service, whereas in Kubernetes it goes to the unit. There is no Envoy outside the Helm chart, and .env sets no AUTH_JWT_SECRET, so every service uses auth.conf's published literal.",
+   "where": "bin/single-node/nginx.conf:121",
+   "evidence": "nginx.conf:79-89, 121-140, 128-132; common/config/src/main/resources/auth.conf:25-26; grep for envoy outside bin/k8s finds nothing."
+  },
+  {
+   "claim": "Local-dev runs computing-unit-master as a host JVM on port 8085. The Angular dev proxy forwards /wsapi and /api/pve to localhost:8085 without auth, and the manager on localhost:8888.",
+   "where": "frontend/proxy.config.json:88",
+   "evidence": "frontend/proxy.config.json:58-77, 88-93; bin/local-dev/main.sh:109, 978-985."
+  },
+  {
+   "claim": "A unit is a single process: the image runs bin/computing-unit-master as uid 1001 and exposes 8085. ComputingUnitMaster supports --cluster and ComputingUnitWorker supports --serverAddr, but no deployment uses the worker image.",
+   "where": "bin/dockerfiles/computing-unit-master.dockerfile:129",
+   "evidence": "Dockerfile lines 125-131; ComputingUnitMaster.scala:85-115; ComputingUnitWorker.scala:31-51; grep finds no worker image in bin/k8s or bin/single-node."
+  },
+  {
+   "claim": "The only abstraction of where a unit runs is the type match plus the uri column. The Kubernetes branch calls the global KubernetesClient object directly; by-name 'k8s: => KubernetesClient' seams exist only for tests. Quota, resource validation, idle sweep, vanished-unit reconciliation, metrics and capacity are all Kubernetes-only.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:525",
+   "evidence": "Type matches: ComputingUnitManagingResource.scala:525-552, 603-666, 684, 694-728, 739-743, 758, 968; ComputingUnitHelpers.scala:84-106, 200-257, 264-307; KubernetesClient.scala:321-329; AccessControlResource.scala:188-192 (uri is the single routing source of truth)."
+  },
+  {
+   "claim": "Curated images are Kubernetes-only: validation runs a skopeo Job and prepull creates one DaemonSet per image in the pool namespace, each through its own fabric8 client.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ImageValidationClient.scala:151",
+   "evidence": "ImageValidationClient.scala:51-54; ImagePrepullClient.scala:41-44, 89-136; CuratedImageResource.scala:202-215 (readyImageFor); kubernetes.conf:140-193."
+  },
+  {
+   "claim": "API responses embed the whole WorkflowComputingUnit POJO, including uri and the resource JSON, and are returned to sharees as well as owners. Any new column on workflow_computing_unit, such as a unit key or its hash, would be serialized to browsers.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:481",
+   "evidence": "DashboardWorkflowComputingUnit 481-492; listComputingUnits 821-896; frontend/src/app/common/type/workflow-computing-unit.ts:31-40."
+  },
+  {
+   "claim": "The repo already has two precedents for a unit key. Jupyter tokens are derived as HMAC-SHA256(server secret, uid) and never stored. access-control-service authenticates to the mounter with a projected ServiceAccount token bound to a fixed audience.",
+   "where": "notebook-migration-service/src/main/scala/org/apache/texera/service/util/JupyterTokenDeriver.scala:38",
+   "evidence": "JupyterTokenDeriver.scala:31-58; sql/texera_ddl.sql:720-724; bin/k8s/templates/base/access-control-service/access-control-service-deployment.yaml:105-124; _helpers.tpl:84-98."
+  }
+ ],
+ "changes_needed": [
+  {
+   "step": "5",
+   "change": "Stop forwarding secrets to units. Delete ENV_JDBC_URL, USERNAME and PASSWORD; ENV_S3_AUTH_USERNAME and PASSWORD; ENV_LAKEFS_ENDPOINT; the Postgres-catalog branch; FILE_SERVICE_* and AUTH_JWT_SECRET from requiredComputingUnitEnvNames; and USER_JWT_TOKEN. Keep only non-secret config (REST catalog URI, S3 endpoint and region, JAVA_OPTS, OTEL_*) plus the unit key. Update ComputingUnitManagingResourceSpec (lines ~563-618) and KubernetesClientSpec (~443-493). Then remove the manager deployment's S3, LakeFS, Iceberg and FILE_SERVICE env and its wait-lakekeeper init container, which exist only for forwarding.",
+   "where": "computing-unit-managing-service/src/main/scala/org/apache/texera/service/resource/ComputingUnitManagingResource.scala:315-353,431-447,778-781; bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-deployment.yaml:39-57,105-150"
+  },
+  {
+   "step": "4/5",
+   "change": "Mint a unit key per unit in createWorkflowComputingUnit. Either generate a random 256-bit key and store only its hash, outside the serialized WorkflowComputingUnit POJO (a separate table or an ignored field), or derive it as HMAC(server secret, cuid) as JupyterTokenDeriver does. Deliver it as a per-unit Kubernetes Secret referenced by secretKeyRef rather than plain env, and delete that Secret in deletePod and on a rolled-back create. Grant the manager Role get, create and delete on secrets in the pool namespace.",
+   "where": "ComputingUnitManagingResource.scala:730-784; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/KubernetesClient.scala:161-189,315-317; bin/k8s/templates/base/workflow-computing-unit-manager/workflow-computing-unit-manager-service-account.yaml:30-50"
+  },
+  {
+   "step": "4",
+   "change": "Make the unit key the engine's only check. Replace setupJwtAuth, the x-user header trust and access-token parsing in the websocket handshake, and the @RolesAllowed/@Auth SessionUser checks on unit resources with one filter that compares the bearer token to the unit key in constant time. User identity, if the engine still needs it, should arrive in the start request or plan that Envoy forwards, not in headers the unit trusts.",
+   "where": "amber/src/main/scala/org/apache/texera/web/ComputingUnitMaster.scala:167-174; amber/src/main/scala/org/apache/texera/web/ServletAwareConfigurator.scala:49-99; amber/src/main/scala/org/apache/texera/web/resource/SyncExecutionResource.scala:134-142"
+  },
+  {
+   "step": "5",
+   "change": "Remove every DB login and service call the engine makes. Drop the Postgres init and the expired-result cleanup (moves to the Dashboard timer job). Carry the warehouse and namespace in the plan instead of reading USER_WAREHOUSE. Remove ResultExportService's JWT minting and file-service upload (export is on hold or moves elsewhere). Replace USER_JWT_TOKEN presign reads and the LakeFS fallback with links resolved into the plan. Delete the RepositoryMountManager call to access-control-service. Remove S3 root keys from the Python worker startup config.",
+   "where": "ComputingUnitMaster.scala:145-149,181-203; WorkflowService.scala:91-121; ResultExportService.scala:83-89,557-558; LakeFSFileDocument.scala:39-56,108-166; amber/src/main/python/pytexera/storage/dataset_file_document.py:91-110; RepositoryMountManager.scala:104-118; PythonWorkflowWorker.scala:96-114"
+  },
+  {
+   "step": "5",
+   "change": "Lakekeeper authn and authz. Turn on authentication (OIDC or Kubernetes ServiceAccount tokens) and OpenFGA in the chart, the single-node compose file and the local-dev overlay. At POST /executions the Dashboard creates one namespace per execution, grants it to a per-run principal and mints a short-lived per-run token. That token travels to the engine with the start request or plan, never as pod env. The engine's RESTCatalog and pyiceberg present it, and the catalog cache key must include the run so tokens are not shared across executions.",
+   "where": "bin/k8s/values.yaml:169-190; bin/single-node/docker-compose.yml:121-160; common/workflow-core/src/main/scala/org/apache/texera/amber/util/IcebergUtil.scala:133-149; common/workflow-core/src/main/scala/org/apache/texera/amber/core/storage/IcebergCatalogInstance.scala:150-186; PythonWorkflowWorker.scala:103-106"
+  },
+  {
+   "step": "5",
+   "change": "Temporary per-table storage keys. Create warehouses with STS / vended credentials (or Lakekeeper remote signing) instead of 'sts-enabled': false, so units never hold store keys. The large-binaries bucket, currently reached with root keys, needs either per-run temporary keys or links in the plan.",
+   "where": "bin/k8s/templates/base/lakekeeper/lakekeeper-init-job.yaml:146-170; bin/single-node/docker-compose.yml:233-317; amber/src/main/scala/org/apache/texera/web/service/LakekeeperClient.scala:95-123; common/workflow-core/src/main/scala/org/apache/texera/service/util/S3StorageClient.scala:49"
+  },
+  {
+   "step": "5",
+   "change": "Network lockdown. Make the unit NetworkPolicy default-deny for both ingress and egress. Allow ingress only from the Envoy proxy pods to 8085, and egress only to kube-dns, Lakekeeper and the object store (the RustFS Service or an external CIDR), plus the OTel collector if units should keep telemetry. Delete the pool-namespace ExternalName aliases for postgresql, file-service, config-service and webserver. Give unit pods a dedicated ServiceAccount with automountServiceAccountToken: false.",
+   "where": "bin/k8s/templates/base/gateway/workflow-computing-units-network-policy.yaml:18-34; bin/k8s/templates/base/external-names/external-names.yaml:46-74; KubernetesClient.scala:203-310"
+  },
+  {
+   "step": "4",
+   "change": "Ext-auth swaps the login token for the unit key. checkComputingUnitAccess returns 'authorization: Bearer <unit key>' (plus the execution id if needed) instead of x-user-*. Add authorization to headersToBackend and make sure a client-sent value never reaches the unit. Parse uri down to an authority, refuse terminated units, and stop logging tokens and headers. Decide whether this endpoint moves into the Dashboard service (rule 3).",
+   "where": "access-control-service/src/main/scala/org/apache/texera/service/resource/AccessControlResource.scala:128-217; bin/k8s/templates/base/gateway/gateway-security-policy.yaml:34-39; common/auth/src/main/scala/org/apache/texera/auth/util/ComputingUnitAccess.scala:37-47"
+  },
+  {
+   "step": "4",
+   "change": "Route the agent-service through Envoy. Remove EXECUTION_ENDPOINT_TEMPLATE and WORKFLOW_EXECUTION_SERVICE_ENDPOINT, and call the gateway with the user's token, so only Envoy connects to units.",
+   "where": "bin/k8s/templates/base/agent-service/agent-service-deployment.yaml:58-61; agent-service/src/agent/tools/workflow-execution-tools.ts:261-266; agent-service/src/config/env.ts:34; bin/single-node/.env:102"
+  },
+  {
+   "step": "4",
+   "change": "Envoy in every mode. Add an Envoy container (standalone envoy.yaml with ext_authz plus a dynamic forward proxy on Host) to single-node and local-dev, replacing nginx's /wsapi and /api/pve passthrough and the Angular proxy entries. Turn the single-node coordinator into a local-platform unit that holds only its key: drop env_file .env and the shared workflow_result_data volume, and record its address in uri.",
+   "where": "bin/single-node/nginx.conf:121-140; bin/single-node/docker-compose.yml:406-437; frontend/proxy.config.json:73-93; bin/local-dev/main.sh:978-985"
+  },
+  {
+   "step": "6",
+   "change": "Add a platform interface in computing-unit-managing-service, e.g. util/platform/ComputingUnitPlatform.scala, with: start(cuid, spec, unitKeyRef) returning an address; stop(cuid); status(cuid) returning (state, endedReason); and optional metrics, limits and capacity. KubernetesPlatform wraps KubernetesClient (createPod, deletePod, getPodByName, getAllPodStatusSnapshots and kubernetesStatusAndReason); LocalPlatform keeps today's behaviour. Replace each type match with a registry lookup keyed by WorkflowComputingUnitTypeEnum, reusing the existing by-name k8s seams for tests.",
+   "where": "ComputingUnitManagingResource.scala:525-552,603-666,684-692,694-743,758-792,967-970; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ComputingUnitHelpers.scala:84-106,200-307; AdminComputingUnitResource.scala:114-117"
+  },
+  {
+   "step": "6",
+   "change": "Schema changes. Add sql/updates/53.sql and a changelog.xml changeSet that add slurm and ec2 to workflow_computing_unit_type_enum and a 'lost'/'failed' value to the termination reason enum, and mirror them in texera_ddl.sql:100-101. Regenerate the jOOQ enums. Extend the frontend union type and the create modal. Store the platform handle (pod name, Slurm job id or EC2 instance id) in the resource JSON or a new column that is not serialized to browsers.",
+   "where": "sql/texera_ddl.sql:100-101,246-258; sql/changelog.xml:173-176; common/dao/src/main/scala/org/apache/texera/dao/jooq/generated/enums/WorkflowComputingUnitTypeEnum.java; WorkflowComputingUnitTerminationReasonEnum.java; frontend/src/app/common/type/workflow-computing-unit.ts:29"
+  },
+  {
+   "step": "3/6",
+   "change": "Add a periodic platform.status poll that stamps ended or lost units with a reason; today only the listing endpoints reconcile. Move the idle sweep off workflow_executions.status and onto lake-derived or Dashboard state in the same change that removes status from Postgres.",
+   "where": "ComputingUnitHelpers.scala:302-336; ComputingUnitManagingResource.scala:123-130,180-313; IdleComputingUnitCleanupJob.scala:36-63"
+  },
+  {
+   "step": "6",
+   "change": "Prepare for Slurm and EC2. The address must be reachable from Envoy's DynamicResolver, and the Envoy-to-unit link needs TLS or mTLS. Deliver the unit key through a job-private file on Slurm or user-data/SSM on EC2. Enforce network limits with a host firewall or security groups. Give curated image validation and prepull per-platform equivalents, or declare them Kubernetes-only. Quota and resource-limit validation are Kubernetes-only today. Multi-node Slurm would need ComputingUnitMaster --cluster plus ComputingUnitWorker --serverAddr.",
+   "where": "bin/k8s/templates/base/gateway/gateway-backend.yaml:18-24; computing-unit-managing-service/src/main/scala/org/apache/texera/service/util/ImageValidationClient.scala:151; ImagePrepullClient.scala:41-44; ComputingUnitManagingResource.scala:606-656,684-692; amber/src/main/scala/org/apache/texera/web/ComputingUnitWorker.scala:31-51"
+  },
+  {
+   "step": "5",
+   "change": "Mounting. Either remove the mounter integration from units (its env, hostPath and the region-launch mount request) or have the Dashboard request mounts when it creates the execution, because a unit may call no service.",
+   "where": "KubernetesClient.scala:166-189,257-264,295-304; amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionManager.scala:371-372; bin/k8s/values.yaml:415-436"
+  }
+ ],
+ "open_questions": [
+  "Does access-control-service, today's Envoy ext-auth and mount authority, merge into the Dashboard service to satisfy rule 3 ('Envoy asks the Dashboard service'), or stay a separate Dashboard-side service?",
+  "Unit key: random and hashed (needs a column or table hidden from API responses) or HMAC(server secret, cuid) like the Jupyter token (nothing stored, but rotating the secret invalidates every live unit)?",
+  "Units are long-lived and shared through computing_unit_user_access. Per-run Lakekeeper tokens arrive with each start, but how are they refreshed for runs longer than the token TTL, given the unit may not call any service?",
+  "Is the mounter (GeeseFS) feature kept with Dashboard-initiated mounts, or replaced by 'input files into links'?",
+  "Single-node: does it keep one shared coordinator registered as a single local unit, or does the manager start local units as Docker containers or processes? Today local creation starts nothing.",
+  "Which namespace and labels do the Envoy Gateway proxy pods use in this chart (gateway-helm subchart)? The unit ingress allow rule depends on it; verify on the cluster.",
+  "Should units still send OTel telemetry, given that egress is limited to Envoy, the lake and the object store? The forwarded collector hostname does not even resolve from the pool namespace today."
+ ],
+ "risks": [
+  "Live security gap today: any pod outside the pool namespace, including Jupyter pods running user code, can reach a unit on 8085 and forge x-user-* headers to act as any user with WRITE. Fix the NetworkPolicy no later than step 4.",
+  "Until step 5 lands, user UDF code can read the Postgres superuser password, the object-store root keys, AUTH_JWT_SECRET (and so forge any user's JWT) and the owner's JWT from os.environ or argv.",
+  "Adding a unit-key or hash column to workflow_computing_unit leaks it to browsers and sharees through DashboardWorkflowComputingUnit.",
+  "The idle sweep and 'unit lost' logic read workflow_executions.status. Once status leaves Postgres in step 3, units with live runs could be deleted, or idle units kept forever, unless both move together.",
+  "createPod runs inside the DB transaction. Adding a per-unit Secret adds another non-transactional side effect that must be cleaned up when the transaction fails, or a key Secret is orphaned.",
+  "The per-warehouse catalog cache (IcebergCatalogInstance) would share one token across executions and users unless it is re-keyed by run.",
+  "LakeFS default credentials in storage.conf equal the chart defaults, so deleting only the forwarded endpoint does not remove the unit's LakeFS reach. Remove the fallback code path as well.",
+  "EXECUTION_ENDPOINT_TEMPLATE hard-codes the 'computing-unit' pod prefix. Agent runs already break if podNamePrefix is changed, and will break when units stop being reachable directly."
+ ]
+}
