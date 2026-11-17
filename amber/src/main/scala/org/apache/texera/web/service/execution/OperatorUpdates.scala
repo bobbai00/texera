@@ -61,7 +61,16 @@ import javax.ws.rs.{
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
-object OperatorUpdates extends OperatorUpdates {
+object OperatorUpdates {
+
+  /**
+    * Builds the operator that an operator of the workflow an execution runs becomes once changed:
+    * given the operator, the operator as changed, the workflow and the execution.
+    */
+  type Reconfigure =
+    (LogicalOp, LogicalOp, WorkflowIdentity, ExecutionIdentity) => Try[
+      (PhysicalOp, Option[StateTransferFunc])
+    ]
 
   /** What a change to an execution's operator reads of the execution's row. */
   private case class ExecutionRow(
@@ -96,32 +105,21 @@ object OperatorUpdates extends OperatorUpdates {
   *
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
+  *
+  * @param bindingsFor       what a change is bound to, for a user, as the execution's plan was
+  * @param warehousesEnabled whether runs write into per-user warehouses
+  * @param appendUpdate      appends the update row to the plan table at a URI
+  * @param reconfigure       builds the operator a change makes of an operator; by default the
+  *                          operator builds it itself ([[LogicalOp.runtimeReconfiguration]])
   */
-class OperatorUpdates extends LazyLogging {
+class OperatorUpdates(
+    bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
+    warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
+    appendUpdate: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.appendUpdate,
+    reconfigure: OperatorUpdates.Reconfigure = (current, changed, workflowId, executionId) =>
+      current.runtimeReconfiguration(workflowId, executionId, current, changed)
+) extends LazyLogging {
   import OperatorUpdates.ExecutionRow
-
-  /** What a change is bound to, for user `uid`, as the execution's plan was. A seam for a spec. */
-  protected def bindingsFor(uid: Integer): RunBindings = PlanToRun.bindingsFor(uid)
-
-  /** Whether runs write into per-user warehouses. A seam for a spec. */
-  protected def warehousesEnabled: Boolean = StorageConfig.warehouseEnabled
-
-  /** Appends the update row. A seam, so a spec can make the write fail. */
-  protected def appendUpdate(planUri: URI, record: PlanRecord, logical: String): Unit =
-    ExecutionPlanStore.appendUpdate(planUri, record, logical)
-
-  /**
-    * Has `current`, an operator of the workflow the execution runs, build the operator it becomes
-    * once changed to `changed`. A seam, so a spec can make it fail in ways no descriptor of the
-    * build does.
-    */
-  protected def reconfigure(
-      current: LogicalOp,
-      changed: LogicalOp,
-      workflowId: WorkflowIdentity,
-      executionId: ExecutionIdentity
-  ): Try[(PhysicalOp, Option[StateTransferFunc])] =
-    current.runtimeReconfiguration(workflowId, executionId, current, changed)
 
   /**
     * Stores the change `request` makes to an operator of execution `eid`, for `user`.

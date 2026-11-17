@@ -28,8 +28,11 @@ import io.dropwizard.auth.{AuthDynamicFeature, AuthValueFactoryProvider}
 import io.dropwizard.jackson.Jackson
 import io.dropwizard.jersey.validation.Validators
 import io.dropwizard.setup.{Bootstrap, Environment}
+import org.apache.texera.auth.JwtAuth
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
+import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.resource._
 import org.apache.texera.web.resource.auth.{AuthResource, GoogleAuthResource}
 import org.apache.texera.web.resource.dashboard.DashboardResource
@@ -369,6 +372,29 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     // A route neither resource serves is not answered 401: what resolves is told from what does not.
     jersey.statusOf("DELETE", "/executions") should (be(404) or be(405))
     jersey.statusOf("GET", "/executions/12/updates") should (be(404) or be(405))
+  }
+
+  it should "make the resource of the create and its updates for a signed-in user's request" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+    val jersey = new InMemoryJersey(
+      ranEnvironment.jersey.getResourceConfig,
+      json = Some(initializedBootstrap().getObjectMapper)
+    )
+    val user = new User
+    user.setUid(Integer.valueOf(1))
+    user.setName("texera-web-application-spec")
+    user.setEmail("texera-web-application-spec@example.com")
+    user.setRole(UserRoleEnum.REGULAR)
+    val token = Some(JwtAuth.jwtToken(JwtAuth.jwtClaims(user)))
+
+    // Past the filters, Jersey makes the resource through its no-argument constructor and hands
+    // it the body, `{}`, which names no workflow and no operator: refused before anything is
+    // read. A resource Jersey could not make would be answered 500.
+    jersey.statusOf("POST", "/executions", token) shouldBe 400
+    jersey.statusOf("POST", "/executions/12/updates", token) shouldBe 400
   }
 
   it should "install the JWT auth stack and role enforcement" in {

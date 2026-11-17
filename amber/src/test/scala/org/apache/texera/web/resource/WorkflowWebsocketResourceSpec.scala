@@ -68,7 +68,6 @@ import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
-import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
 import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_OF_USER}
@@ -950,18 +949,20 @@ class WorkflowWebsocketResourceSpec
   }
 
   /** The Dashboard's create, with the fixture bindings and no cost hints. */
-  private object FixtureCreator extends ExecutionCreator {
-    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
-    override protected def replayLogRoot: Option[URI] = None
-    override protected def warehousesEnabled: Boolean = false
-    override protected def costHintsLoader: CostHintsLoader = NoHints
-  }
+  private object FixtureCreator
+      extends ExecutionCreator(
+        bindingsFor = _ => TestUtils.fixtureBindings,
+        replayLogRoot = None,
+        warehousesEnabled = false,
+        costHints = NoHints
+      )
 
   /** The Dashboard's store of a change to a paused operator, with the fixture bindings. */
-  private object FixtureUpdates extends OperatorUpdates {
-    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
-    override protected def warehousesEnabled: Boolean = false
-  }
+  private object FixtureUpdates
+      extends OperatorUpdates(
+        bindingsFor = _ => TestUtils.fixtureBindings,
+        warehousesEnabled = false
+      )
 
   private def userOf(uid: Int): User = {
     val user = new User

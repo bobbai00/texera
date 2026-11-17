@@ -39,6 +39,13 @@ import java.util.{Collections, LinkedHashMap => JLinkedHashMap, Map => JMap}
 import scala.concurrent.duration.{Duration, DurationInt, FiniteDuration}
 import scala.util.control.NonFatal
 
+object CostHintsLoader {
+
+  /** The rows of the runtime statistics at `uri`, as the lake holds them. */
+  def statisticsAt(uri: URI): Iterator[Tuple] =
+    DocumentFactory.openDocument(uri)._1.get().map(_.asInstanceOf[Tuple])
+}
+
 /**
   * Finds the cost hints of a run: how long each logical operator of the workflow took in the
   * newest completed run of it by the same user, for the scheduler's cost model. The hints are
@@ -57,11 +64,16 @@ import scala.util.control.NonFatal
   * for another's read for at most `waitLimit`, and gives its run no hints if the read takes longer:
   * a read that stalls holds up only the load that makes it.
   *
-  * @param cacheCapacity how many runs' costs to keep, at least 1
-  * @param waitLimit     how long a load waits for the read another load makes, more than 0
+  * @param cacheCapacity  how many runs' costs to keep, at least 1
+  * @param waitLimit      how long a load waits for the read another load makes, more than 0: by
+  *                       default a quarter of the time a create is given
+  * @param openStatistics reads the rows of the runtime statistics at a URI
   */
-class CostHintsLoader(cacheCapacity: Int, waitLimit: FiniteDuration = 30.seconds)
-    extends LazyLogging {
+class CostHintsLoader(
+    cacheCapacity: Int = 256,
+    waitLimit: FiniteDuration = 30.seconds,
+    openStatistics: URI => Iterator[Tuple] = CostHintsLoader.statisticsAt
+) extends LazyLogging {
   require(cacheCapacity >= 1, s"Cost hints are kept for at least 1 run, not $cacheCapacity.")
   require(
     waitLimit > Duration.Zero,
@@ -218,18 +230,4 @@ class CostHintsLoader(cacheCapacity: Int, waitLimit: FiniteDuration = 30.seconds
     )
     Option.when(seconds.nonEmpty)(CostHints(source, seconds))
   }
-
-  /**
-    * The rows of the runtime statistics at `uri`. A seam, so a test can count the statistics
-    * read.
-    */
-  protected def openStatistics(uri: URI): Iterator[Tuple] =
-    DocumentFactory.openDocument(uri)._1.get().map(_.asInstanceOf[Tuple])
 }
-
-/**
-  * The cost hints of the runs this service makes plans for, kept for the 256 runs used most
-  * recently. A load waits at most 30 seconds for another's read, a quarter of the time a create
-  * is given.
-  */
-object CostHintsLoader extends CostHintsLoader(cacheCapacity = 256, waitLimit = 30.seconds)

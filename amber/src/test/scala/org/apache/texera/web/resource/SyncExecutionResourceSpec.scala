@@ -71,7 +71,6 @@ import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -1067,12 +1066,13 @@ class SyncExecutionResourceSpec
   }
 
   /** The Dashboard's create, with the fixture bindings and no cost hints. */
-  private object FixtureCreator extends ExecutionCreator {
-    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
-    override protected def replayLogRoot: Option[URI] = None
-    override protected def warehousesEnabled: Boolean = false
-    override protected def costHintsLoader: CostHintsLoader = NoHints
-  }
+  private object FixtureCreator
+      extends ExecutionCreator(
+        bindingsFor = _ => TestUtils.fixtureBindings,
+        replayLogRoot = None,
+        warehousesEnabled = false,
+        costHints = NoHints
+      )
 
   private def syncUser(uid: Int = testUid): SessionUser = {
     val user = new User

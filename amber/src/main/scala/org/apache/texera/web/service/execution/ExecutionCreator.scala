@@ -62,7 +62,7 @@ import javax.ws.rs.{
 import scala.util.Try
 import scala.util.control.NonFatal
 
-object ExecutionCreator extends ExecutionCreator {
+object ExecutionCreator {
 
   /** The longest text the execution's row keeps as its name, and as its engine version. */
   val MaxColumnLength = 128
@@ -118,25 +118,22 @@ object ExecutionCreator extends ExecutionCreator {
   *
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
+  *
+  * @param bindingsFor       what a plan is bound to, for a user
+  * @param replayLogRoot     where runs keep their replay logs; None when they keep none
+  * @param warehousesEnabled whether runs write into per-user warehouses
+  * @param costHints         finds the cost hints a plan is saved with
+  * @param writePlan         writes the plan row, and the logical plan it was compiled from, to
+  *                          the plan table at a URI
   */
-class ExecutionCreator extends LazyLogging {
+class ExecutionCreator(
+    bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
+    replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder,
+    warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
+    costHints: CostHintsLoader = new CostHintsLoader(),
+    writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan
+) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, ExecutionNotCreated, MaxColumnLength}
-
-  /** What the plan is bound to, for user `uid`. A seam for a spec's fixtures. */
-  protected def bindingsFor(uid: Integer): RunBindings = PlanToRun.bindingsFor(uid)
-
-  /** Where runs keep their replay logs; None when they keep none. A seam for a spec. */
-  protected def replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder
-
-  /** Whether runs write into per-user warehouses. A seam for a spec. */
-  protected def warehousesEnabled: Boolean = StorageConfig.warehouseEnabled
-
-  /** Finds the cost hints a plan is saved with. */
-  protected def costHintsLoader: CostHintsLoader = CostHintsLoader
-
-  /** Writes the plan row. A seam, so a spec can make the write fail. */
-  protected def writePlan(planUri: URI, record: PlanRecord, logical: String): Unit =
-    ExecutionPlanStore.writePlan(planUri, record, logical)
 
   /**
     * Creates the execution `request` asks for, for `user`.
@@ -202,7 +199,7 @@ class ExecutionCreator extends LazyLogging {
       val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
       // How long each operator took in the user's newest completed run of the workflow, for the
       // scheduler's cost model: saved with the plan, which the engine takes them from.
-      context.costHints = costHintsLoader.load(checked.wid, uid)
+      context.costHints = costHints.load(checked.wid, uid)
       // The plan compiled, as an editor sends it, loop-variable references included: written
       // before the compile resolves its operators in place, and without what a compile sets,
       // whatever the request sent there.

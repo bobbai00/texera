@@ -31,6 +31,13 @@ import javax.annotation.security.RolesAllowed
 import javax.ws.rs.core.{Context, MediaType, Response, UriInfo}
 import javax.ws.rs.{Consumes, POST, Path, PathParam, Produces}
 
+object ExecutionResource {
+
+  // Jersey makes a resource for each request; these are the service's, shared by them all.
+  private lazy val creator = new ExecutionCreator()
+  private lazy val updates = new OperatorUpdates()
+}
+
 /**
   * Executions as the Dashboard service creates them, before any computing unit is involved, and
   * the changes made to their operators while they are paused.
@@ -38,17 +45,17 @@ import javax.ws.rs.{Consumes, POST, Path, PathParam, Produces}
   * Registered only by the Dashboard. It shares its path with [[WorkflowExecutionsResource]],
   * which a computing unit registers too; Jersey merges the two, and none of their methods share a
   * path and a method.
+  *
+  * @param creator creates the executions
+  * @param updates stores the changes to paused operators
   */
 @Path("/executions")
 @Consumes(Array(MediaType.APPLICATION_JSON))
 @Produces(Array(MediaType.APPLICATION_JSON))
-class ExecutionResource {
+class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
 
-  /** Creates the executions. A seam, so a spec can create them with fixtures of its own. */
-  protected def creator: ExecutionCreator = ExecutionCreator
-
-  /** Stores the changes to paused operators. A seam, as [[creator]] is. */
-  protected def updates: OperatorUpdates = OperatorUpdates
+  // No-arg constructor for Jersey reflection. Tests use the param-ful form.
+  def this() = this(ExecutionResource.creator, ExecutionResource.updates)
 
   /**
     * Creates an execution of a workflow, to run on a computing unit: checks the caller's rights,

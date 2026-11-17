@@ -220,12 +220,13 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   }
 
   /** The Dashboard's create, bound as the suite binds its plans. */
-  private object Dashboard extends ExecutionCreator {
-    override protected def bindingsFor(uid: Integer): RunBindings = bindings
-    override protected def replayLogRoot: Option[URI] = None
-    override protected def warehousesEnabled: Boolean = false
-    override protected def costHintsLoader: CostHintsLoader = NoHints
-  }
+  private object Dashboard
+      extends ExecutionCreator(
+        bindingsFor = _ => bindings,
+        replayLogRoot = None,
+        warehousesEnabled = false,
+        costHints = NoHints
+      )
 
   /**
     * The workflow's service on the unit, as the unit makes one for the first session on the

@@ -227,13 +227,30 @@ class CostHintsLoaderSpec
     Some(CostHints(ExecutionIdentity(eid.toLong), seconds.toMap))
 
   /** A loader that counts how often it opens the statistics at each location. */
-  private final class CountingLoader(cacheCapacity: Int = 256)
-      extends CostHintsLoader(cacheCapacity) {
-    val opened: mutable.Map[String, Int] = mutable.Map.empty[String, Int].withDefaultValue(0)
+  private final class CountingLoader(
+      cacheCapacity: Int = 256,
+      val opened: mutable.Map[String, Int] = mutable.Map.empty[String, Int].withDefaultValue(0)
+  ) extends CostHintsLoader(
+        cacheCapacity,
+        openStatistics = uri => {
+          opened(uri.toString) += 1
+          CostHintsLoader.statisticsAt(uri)
+        }
+      )
 
-    override protected def openStatistics(uri: URI): Iterator[Tuple] = {
-      opened(uri.toString) += 1
-      super.openStatistics(uri)
+  /** What a [[GatedLoader]]'s reads of statistics wait at, and whether they then fail. */
+  private final class Gate {
+    val opened = new AtomicInteger()
+    val reading = new CountDownLatch(1)
+    val gate = new CountDownLatch(1)
+    @volatile var failing = false
+
+    def open(uri: URI): Iterator[Tuple] = {
+      opened.incrementAndGet()
+      reading.countDown()
+      gate.await(30, TimeUnit.SECONDS)
+      if (failing) throw new IllegalStateException("the statistics cannot be read")
+      CostHintsLoader.statisticsAt(uri)
     }
   }
 
@@ -241,20 +258,13 @@ class CostHintsLoaderSpec
     * A loader whose reads of statistics, once begun, wait at `gate`, so that other loads can be
     * made to miss the same run while one reads it. A read fails while `failing` is set.
     */
-  private final class GatedLoader(waitLimit: FiniteDuration = 30.seconds)
-      extends CostHintsLoader(256, waitLimit) {
-    val opened = new AtomicInteger()
-    val reading = new CountDownLatch(1)
-    val gate = new CountDownLatch(1)
-    @volatile var failing = false
-
-    override protected def openStatistics(uri: URI): Iterator[Tuple] = {
-      opened.incrementAndGet()
-      reading.countDown()
-      gate.await(30, TimeUnit.SECONDS)
-      if (failing) throw new IllegalStateException("the statistics cannot be read")
-      super.openStatistics(uri)
-    }
+  private final class GatedLoader(waitLimit: FiniteDuration = 30.seconds, at: Gate = new Gate)
+      extends CostHintsLoader(256, waitLimit, at.open) {
+    def opened: AtomicInteger = at.opened
+    def reading: CountDownLatch = at.reading
+    def gate: CountDownLatch = at.gate
+    def failing_=(fail: Boolean): Unit = at.failing = fail
+    def failing: Boolean = at.failing
   }
 
   /** A load of workflow `wid`'s hints by the run's user, on a thread of its own. */

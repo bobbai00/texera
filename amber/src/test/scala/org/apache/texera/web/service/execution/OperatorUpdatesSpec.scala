@@ -67,7 +67,7 @@ import org.apache.texera.amber.operator.udf.python.{
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.{PythonEnvironmentResolver, RunBindings}
+import org.apache.texera.common.compiler.PythonEnvironmentResolver
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -290,12 +290,13 @@ class OperatorUpdatesSpec
       .execute()
 
   /** Creates executions with the fixture bindings and no cost hints. */
-  private class FixtureCreator(warehouses: Boolean = false) extends ExecutionCreator {
-    override protected def bindingsFor(uid: Integer): RunBindings = TestUtils.fixtureBindings
-    override protected def replayLogRoot: Option[URI] = None
-    override protected def warehousesEnabled: Boolean = warehouses
-    override protected def costHintsLoader: CostHintsLoader = NoHints
-  }
+  private class FixtureCreator(warehouses: Boolean = false)
+      extends ExecutionCreator(
+        bindingsFor = _ => TestUtils.fixtureBindings,
+        replayLogRoot = None,
+        warehousesEnabled = warehouses,
+        costHints = NoHints
+      )
 
   private object NoHints extends CostHintsLoader(1) {
     override def load(wid: Long, uid: Int): Option[CostHints] = None
@@ -306,37 +307,34 @@ class OperatorUpdatesSpec
 
   /**
     * The updates under test, bound to the fixtures but for `resolver` and `environments` (the
-    * fixtures', unless a case gives others), and with seams set as the case needs:
-    * `reconfiguration` stands in for the answer of the operator a change is made to.
-    * `resolverUsers` records the user each change was bound for: bindings are made for every
-    * change that reaches the binding, whether or not it names a dataset or a model.
+    * fixtures', unless a case gives others), and set up as the case needs: `reconfiguration`
+    * stands in for the answer of the operator a change is made to. `resolverUsers` records the
+    * user each change was bound for: bindings are made for every change that reaches the binding,
+    * whether or not it names a dataset or a model.
     */
   private class FixtureUpdates(
       warehouses: Boolean = false,
       failAppend: Option[RuntimeException] = None,
       resolver: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
       environments: PythonEnvironmentResolver = TestUtils.fixtureBindings.environments,
-      reconfiguration: Option[() => Reconfiguration] = None
-  ) extends OperatorUpdates {
-    val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
-    override protected def bindingsFor(uid: Integer): RunBindings = {
-      resolverUsers += uid
-      TestUtils.fixtureBindings.copy(repositories = resolver, environments = environments)
-    }
-    override protected def warehousesEnabled: Boolean = warehouses
-    override protected def appendUpdate(planUri: URI, record: PlanRecord, logical: String): Unit =
-      failAppend match {
-        case Some(failure) => throw failure
-        case None          => super.appendUpdate(planUri, record, logical)
-      }
-    override protected def reconfigure(
-        current: LogicalOp,
-        changed: LogicalOp,
-        workflowId: WorkflowIdentity,
-        executionId: ExecutionIdentity
-    ): Reconfiguration =
-      reconfiguration.fold(super.reconfigure(current, changed, workflowId, executionId))(_())
-  }
+      reconfiguration: Option[() => Reconfiguration] = None,
+      val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
+  ) extends OperatorUpdates(
+        bindingsFor = uid => {
+          resolverUsers += uid
+          TestUtils.fixtureBindings.copy(repositories = resolver, environments = environments)
+        },
+        warehousesEnabled = warehouses,
+        appendUpdate = (planUri, record, logical) =>
+          failAppend match {
+            case Some(failure) => throw failure
+            case None          => ExecutionPlanStore.appendUpdate(planUri, record, logical)
+          },
+        reconfigure = (current, changed, workflowId, executionId) =>
+          reconfiguration.fold(
+            current.runtimeReconfiguration(workflowId, executionId, current, changed)
+          )(_())
+      )
 
   private def sessionUser(uid: Int): SessionUser = {
     val user = new User
@@ -363,11 +361,7 @@ class OperatorUpdatesSpec
   private def resource(
       fixtureCreator: ExecutionCreator = new FixtureCreator(),
       fixtureUpdates: OperatorUpdates = new FixtureUpdates()
-  ): ExecutionResource =
-    new ExecutionResource {
-      override protected def creator: ExecutionCreator = fixtureCreator
-      override protected def updates: OperatorUpdates = fixtureUpdates
-    }
+  ): ExecutionResource = new ExecutionResource(fixtureCreator, fixtureUpdates)
 
   private def named[T <: LogicalOp](op: T, id: String): T = {
     op.setOperatorId(id)

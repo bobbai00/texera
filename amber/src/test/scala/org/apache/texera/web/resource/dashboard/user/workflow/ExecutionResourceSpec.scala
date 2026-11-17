@@ -115,8 +115,8 @@ import org.apache.texera.web.model.http.response.execution.{
   CreateExecutionResponse
 }
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
-import org.apache.texera.web.service.WorkflowService
-import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
+import org.apache.texera.web.service.{PlanToRun, WorkflowService}
+import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.JSONB
 import org.jooq.exception.DataAccessException
@@ -402,7 +402,7 @@ class ExecutionResourceSpec
 
   /**
     * The creator under test, bound to the fixture files, links and versions in place of a
-    * user's, and with seams set as the case needs. `resolvedFor` records the user each plan was
+    * user's, and set up as the case needs. `resolvedFor` records the user each plan was
     * bound for. The site's settings stay the ones the database holds.
     *
     * @param bindings what a plan is bound to, given what the deployment binds it to for its
@@ -413,23 +413,23 @@ class ExecutionResourceSpec
       warehouses: Boolean = false,
       val hints: RecordingHints = new RecordingHints(None),
       failWrite: Option[RuntimeException] = None,
-      bindings: RunBindings => RunBindings = _ => TestUtils.fixtureBindings
-  ) extends ExecutionCreator {
-    val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
-    override protected def bindingsFor(uid: Integer): RunBindings = {
-      resolvedFor += uid
-      val forUser = super.bindingsFor(uid)
-      bindings(forUser).copy(settings = forUser.settings)
-    }
-    override protected def replayLogRoot: Option[URI] = logRoot
-    override protected def warehousesEnabled: Boolean = warehouses
-    override protected def costHintsLoader: CostHintsLoader = hints
-    override protected def writePlan(planUri: URI, record: PlanRecord, logical: String): Unit =
-      failWrite match {
-        case Some(failure) => throw failure
-        case None          => super.writePlan(planUri, record, logical)
-      }
-  }
+      bindings: RunBindings => RunBindings = _ => TestUtils.fixtureBindings,
+      val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
+  ) extends ExecutionCreator(
+        bindingsFor = uid => {
+          resolvedFor += uid
+          val forUser = PlanToRun.bindingsFor(uid)
+          bindings(forUser).copy(settings = forUser.settings)
+        },
+        replayLogRoot = logRoot,
+        warehousesEnabled = warehouses,
+        costHints = hints,
+        writePlan = (planUri, record, logical) =>
+          failWrite match {
+            case Some(failure) => throw failure
+            case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
+          }
+      )
 
   private def sessionUser(uid: Int): SessionUser = {
     val user = new User
@@ -457,12 +457,9 @@ class ExecutionResourceSpec
       request: CreateExecutionRequest,
       uid: Int = creatorUid,
       creator: FixtureCreator = new FixtureCreator()
-  ): Response = {
-    val fixture = creator
-    new ExecutionResource {
-      override protected def creator: ExecutionCreator = fixture
-    }.create(request, sessionUser(uid), uriInfo)
-  }
+  ): Response =
+    new ExecutionResource(creator, new OperatorUpdates())
+      .create(request, sessionUser(uid), uriInfo)
 
   private def named[T <: LogicalOp](op: T, id: String): T = {
     op.setOperatorId(id)
@@ -1329,9 +1326,8 @@ class ExecutionResourceSpec
       noAddress.getUser.setEmail(email)
       val fixture = new FixtureCreator()
 
-      val response = new ExecutionResource {
-        override protected def creator: ExecutionCreator = fixture
-      }.create(request(emailNotificationEnabled = true), noAddress, uriInfo)
+      val response = new ExecutionResource(fixture, new OperatorUpdates())
+        .create(request(emailNotificationEnabled = true), noAddress, uriInfo)
 
       withClue(s"email '$email': ") {
         storedPlan(created(response))._1.notification shouldBe None
