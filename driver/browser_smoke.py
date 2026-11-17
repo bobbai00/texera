@@ -25,6 +25,10 @@ Cases
       the result table shows the second run's rows.
   B6  (extra) Stop pressed while the execution is still being created: the run is given
       up in the browser, nothing goes to the unit, and Run works again.
+  B7  B4 with the page loaded again while its run is paused: the page that makes the
+      change no longer holds the create's answer, only the execution the unit names.
+  B8  B4 with the change made, and the run resumed, in a second tab opened on the paused
+      run.
 
 Writes <out>/report.json and one screenshot (or more) per case. Exit code 0 when every
 selected case passes, 1 when one fails, 2 when setup fails.
@@ -63,6 +67,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 STATUS_COMPLETED, STATUS_FAILED, STATUS_KILLED = 3, 4, 5
 OLD_REQUESTS = ("WorkflowExecuteRequest", "ModifyLogicRequest")
 WS_PATH = "/wsapi/workflow-websocket"
+UPDATES_PATH = re.compile(r"/api/executions/\d+/updates")
 MISSING_COLUMN = "sce_no_such_column"
 
 _T0 = time.monotonic()
@@ -180,6 +185,7 @@ class NetLog:
         self.token = token
         self._responses: list[tuple[float, Any]] = []
         self._failed: list[tuple[float, Any]] = []
+        self._views: list[dict] = []  # of _responses, in step: each answer is read once
         self.http_errors: Counter = Counter()  # "METHOD path -> status" of every answer >= 400
         self._last_t = 0.0
         self.sockets: list[dict] = []
@@ -264,9 +270,9 @@ class NetLog:
 
     def executions_requests(self) -> list[dict]:
         """Every request to /api/executions*: method, path, status and a short view of
-        the bodies (read now; a body the browser no longer holds is noted)."""
-        out = []
-        for t, resp in self._responses:
+        the bodies. An answer is read the first time it is listed (a body the browser no
+        longer holds is noted): the browser drops the bodies of a document that is reloaded."""
+        for t, resp in self._responses[len(self._views):]:
             req = resp.request
             entry: dict[str, Any] = {"t": t, "method": req.method,
                                      "path": urllib.parse.urlsplit(resp.url).path, "status": resp.status}
@@ -282,7 +288,8 @@ class NetLog:
                         entry["response"] = self.redact(resp.text()[:600])
                     except Exception:  # noqa: BLE001
                         entry["response"] = f"<unreadable: {type(e).__name__}>"
-            out.append(entry)
+            self._views.append(entry)
+        out = list(self._views)
         for t, req in self._failed:
             out.append({"t": t, "method": req.method, "path": urllib.parse.urlsplit(req.url).path,
                         "status": None, "failure": req.failure})
@@ -341,8 +348,8 @@ class NetLog:
                 # every frame the page sent, whole; heartbeats as a count
                 entry["sent"] = [{"t": rel(t), **m} for t, m in sent if m.get("type") != "HeartBeatRequest"]
                 entry["received_types"] = dict(Counter(m.get("type", "?") for _, m in received))
-                entry["states"] = [{"t": rel(t), "state": m.get("state")} for t, m in received
-                                   if m.get("type") == "WorkflowStateEvent"]
+                entry["states"] = [{"t": rel(t), "state": m.get("state"), "executionId": m.get("executionId")}
+                                   for t, m in received if m.get("type") == "WorkflowStateEvent"]
                 entry["received_kept"] = [
                     {"t": rel(t), **self._kept(m)} for t, m in received
                     if m.get("type") in ("WorkflowErrorEvent", "ModifyLogicResponse", "ModifyLogicCompletedEvent")]
@@ -396,16 +403,23 @@ class Editor:
     """One browser page on one workflow of the editor, with its evidence."""
 
     def __init__(self, browser, *, base: str, token: str, cuid: int, wid: int, out: Path, key: str,
-                 rec: CaseRecord, label: str = "", hold_compile: bool = False):
-        self.base, self.wid, self.cuid, self.out, self.key, self.rec = base, wid, cuid, out, key, rec
+                 rec: CaseRecord, label: str = "", hold_compile: bool = False, tab_of: Editor | None = None):
+        """A page in a browser context of its own, or, with `tab_of`, a second tab in that
+        editor's context (the same sign-in and storage), on the same workflow."""
+        self.base, self.wid, self.cuid, self.out, self.rec = base, wid, cuid, out, rec
+        self.key = f"{key}-tab" if tab_of else key  # the prefix of this page's files
         self.label = label or f"wid {wid}"
         self.t0 = time.time()
-        self.context = browser.new_context(viewport={"width": 1680, "height": 1050})
-        storage = {"access_token": token, f"computing-unit-of-workflow-{wid}": str(cuid),
-                   "result-panel-height": "430"}
-        self.context.add_init_script(
-            "try {" + "".join(f"localStorage.setItem({json.dumps(k)}, {json.dumps(v)});"
-                              for k, v in storage.items()) + "} catch (e) {}\n" + INIT_SCRIPT)
+        self.earlier: dict[str, list[dict]] = {"run": [], "toasts": []}  # of the page's loads before a reload
+        if tab_of:
+            self.context = tab_of.context
+        else:
+            self.context = browser.new_context(viewport={"width": 1680, "height": 1050})
+            storage = {"access_token": token, f"computing-unit-of-workflow-{wid}": str(cuid),
+                       "result-panel-height": "430"}
+            self.context.add_init_script(
+                "try {" + "".join(f"localStorage.setItem({json.dumps(k)}, {json.dumps(v)});"
+                                  for k, v in storage.items()) + "} catch (e) {}\n" + INIT_SCRIPT)
         self.page = self.context.new_page()
         self.page.set_default_timeout(30000)
         self.net = NetLog(self.page, token)
@@ -450,6 +464,20 @@ class Editor:
     def open(self, operators: list[str], timeout: float = 90) -> None:
         url = f"{self.base}/user/workflow/{self.wid}"
         self.page.goto(url, wait_until="domcontentloaded")
+        self._wait_loaded(operators, timeout)
+
+    def reload(self, operators: list[str], timeout: float = 90) -> None:
+        """Load the page again, as the browser's reload does: the page's code starts from
+        nothing. What the page showed until now is kept for the report."""
+        self.net.executions_requests()  # read while the browser holds the answers' bodies
+        for name in self.earlier:
+            self.earlier[name] = self._page_log(name)
+        self.earlier["run"].append({"t": time.time() * 1000, "text": "(page reloaded)", "disabled": None,
+                                    "killDisabled": None})
+        self.page.reload(wait_until="domcontentloaded")
+        self._wait_loaded(operators, timeout)
+
+    def _wait_loaded(self, operators: list[str], timeout: float) -> None:
         deadline = time.monotonic() + timeout
         self.page.wait_for_selector("#run-button", timeout=timeout * 1000)
         missing = list(operators)
@@ -472,14 +500,16 @@ class Editor:
                     killDisabled: kill ? !!kill.disabled : null};
         }""")
 
+    def _page_log(self, name: str) -> list[dict]:
+        """What the init script recorded under `name`, after what the page's earlier loads did."""
+        return self.earlier[name] + self.page.evaluate(f"() => (window.__sce ? window.__sce.{name} : [])")
+
     def run_timeline(self) -> list[dict]:
-        log_ = self.page.evaluate("() => (window.__sce ? window.__sce.run : [])")
         return [{"t": round(e["t"] / 1000 - self.t0, 3), "text": e["text"], "disabled": e["disabled"],
-                 "killDisabled": e["killDisabled"]} for e in log_]
+                 "killDisabled": e["killDisabled"]} for e in self._page_log("run")]
 
     def toasts(self) -> list[dict]:
-        log_ = self.page.evaluate("() => (window.__sce ? window.__sce.toasts : [])")
-        return [{"t": round(e["t"] / 1000 - self.t0, 3), "text": e["text"]} for e in log_]
+        return [{"t": round(e["t"] / 1000 - self.t0, 3), "text": e["text"]} for e in self._page_log("toasts")]
 
     def wait_run_button(self, *texts: str, timeout: float, enabled: bool | None = None) -> str:
         deadline = time.monotonic() + timeout
@@ -670,9 +700,11 @@ class Editor:
                 "compile_requests_held": self.compile_seen or None}
 
     def close(self) -> None:
+        """Keep the page's evidence and close the page. Its context, which a second tab may
+        share, is closed when the case is over."""
         self.rec.pages.append(self.evidence())
         try:
-            self.context.close()
+            self.page.close()
         except PlaywrightError:
             pass
 
@@ -700,9 +732,10 @@ class Smoke:
         log(f"  workflow {wid} '{wf.name}' saved")
         return wid
 
-    def editor(self, rec: CaseRecord, wid: int, *, label: str = "", hold_compile: bool = False) -> Editor:
+    def editor(self, rec: CaseRecord, wid: int, *, label: str = "", hold_compile: bool = False,
+               tab_of: Editor | None = None) -> Editor:
         ed = Editor(self.browser, base=self.a.base, token=self.api.token, cuid=self.cuid, wid=wid,
-                    out=self.out, key=rec.key, rec=rec, label=label, hold_compile=hold_compile)
+                    out=self.out, key=rec.key, rec=rec, label=label, hold_compile=hold_compile, tab_of=tab_of)
         self.editors.append(ed)
         return ed
 
@@ -773,13 +806,13 @@ class Smoke:
         rec.check(f"{what}the Dashboard records execution {eid if eid is not None else '(latest)'} with status {want}",
                   bool(entry) and entry.get("status") == want, got)
 
-    def no_old_requests(self, rec: CaseRecord, ed: Editor) -> None:
+    def no_old_requests(self, rec: CaseRecord, ed: Editor, page: str = "the page") -> None:
         types = ed.net.sent_types()
         old = [t for t in types if t in OLD_REQUESTS]
-        rec.check("the page never sent WorkflowExecuteRequest or ModifyLogicRequest", not old,
+        rec.check(f"{page} never sent WorkflowExecuteRequest or ModifyLogicRequest", not old,
                   {"sent_types": dict(Counter(types))})
         uncaught = [text for (kind, text) in ed.console if kind == "pageerror"]
-        rec.check("no uncaught error in the page", not uncaught, uncaught[:3])
+        rec.check(f"no uncaught error in {page}", not uncaught, uncaught[:3])
 
     # ---- B1
 
@@ -1093,33 +1126,118 @@ class Smoke:
         rec.note(f"{total} rows at {SLOW_SLEEP_S}s each: the run was stopped long before its end")
         self.no_old_requests(rec, ed)
 
-    # ---- B4
+    # ---- B4, B7, B8: a change to a paused operator, on the page that started the run or another
 
     def b4(self, rec: CaseRecord) -> None:
-        total = len(self.data["numbers.csv"])
-        wf = self.workflow("B4 change-paused-operator")
+        wid, scan, udf = self.tagger(rec, "B4 change-paused-operator")
+        ed = self.editor(rec, wid)
+        eid = self.run_and_pause(ed, rec, [scan, udf])
+        if eid is not None:
+            self.change_paused_udf(ed, rec, wid, scan, udf, eid)
+
+    def b7(self, rec: CaseRecord) -> None:
+        """The page is loaded again while its run is paused. Nothing in it holds the create's
+        answer any more: the execution it changes is the one the unit names."""
+        wid, scan, udf = self.tagger(rec, "B7 change-after-reload")
+        ed = self.editor(rec, wid)
+        eid = self.run_and_pause(ed, rec, [scan, udf])
+        if eid is None:
+            return
+        t_reload = time.time()
+        log("    reload the page")
+        ed.reload([scan, udf])
+        if self.check_joined_paused(ed, rec, [scan, udf], eid, t_reload, "after the reload"):
+            self.change_paused_udf(ed, rec, wid, scan, udf, eid)
+        else:
+            self.no_old_requests(rec, ed)
+
+    def b8(self, rec: CaseRecord) -> None:
+        """The change is made, and the run resumed, in a second tab of the same browser,
+        opened on the workflow while the first page holds its run paused."""
+        wid, scan, udf = self.tagger(rec, "B8 change-in-second-tab")
+        first = self.editor(rec, wid, label="the first page: starts the run and pauses it")
+        eid = self.run_and_pause(first, rec, [scan, udf])
+        if eid is None:
+            return
+        t_paused = time.time()
+        log("    open the workflow in a second tab")
+        second = self.editor(rec, wid, label="the second tab: opened on the paused run, changes the UDF and resumes",
+                             tab_of=first)
+        second.open([scan, udf])
+        if self.check_joined_paused(second, rec, [scan, udf], eid, t_paused, "in the second tab"):
+            self.change_paused_udf(second, rec, wid, scan, udf, eid)
+            # the first page only watched
+            sent = first.net.sent_types(t_paused)
+            posts = [e["path"] for e in first.net.executions_requests()
+                     if e["method"] == "POST" and e["t"] >= t_paused]
+            rec.check("the first page sent neither the change nor the resume: both were the second tab's",
+                      not posts and not {"OperatorUpdateRequest", "WorkflowResumeRequest"} & set(sent),
+                      {"sent_since_paused": sent, "posts_since_paused": posts})
+            self.wait_completed(first, rec, [scan, udf], t_paused, 60, what="the first page: ")
+            first.screenshot("first-page-completed")
+        else:
+            self.no_old_requests(rec, second)
+        self.no_old_requests(rec, first, page="the first page")
+
+    def tagger(self, rec: CaseRecord, name: str) -> tuple[int, str, str]:
+        """The workflow of these cases, saved: numbers.csv -> the UDF tagging "v" + str(VERSION).
+        Returns its wid and the two operators."""
+        wf = self.workflow(name)
         scan = wf.add("numbers", "CSVFileScan", csv_scan(self.paths["numbers.csv"]), n_in=0)
         udf = wf.add("tagger", "PythonUDFV2", python_udf(UDF_TAG, out_columns=[("tag", "string")]))
         wf.link(scan, udf)
-        wid = self.save(rec, wf)
+        return self.save(rec, wf), scan, udf
 
-        ed = self.editor(rec, wid)
-        ed.open([scan, udf])
+    def run_and_pause(self, ed: Editor, rec: CaseRecord, ops: list[str]) -> int | None:
+        """Open the workflow, press Run and, once the run is going, Pause. Returns the
+        execution, or None when it was not created."""
+        ed.open(ops)
         ed.wait_run_button("Run", timeout=90, enabled=True)
         resp, body, t_click = self.press_run(ed, rec)
         if not rec.check("Run: POST /api/executions answers 201", resp.status == 201,
                          {"status": resp.status, "body": body}):
             ed.screenshot("create-failed")
-            return
-        eid = body.get("eid")
+            return None
         self.check_start(ed, rec, body, t_click, resp=resp)
         ed.wait_run_button("Pause", timeout=self.a.timeout, enabled=True)
         ed.page.wait_for_timeout(2500)
-        t_pause = time.time()
         ed.click_run_button("Pause")
         ed.wait_run_button("Resume", timeout=120, enabled=True)
-        rec.check("the run is Paused (run button Resume)", True, ed.operator_states([scan, udf]))
+        rec.check("the run is Paused (run button Resume)", True, ed.operator_states(ops))
+        return body.get("eid")
 
+    def check_joined_paused(self, ed: Editor, rec: CaseRecord, ops: list[str], eid: int, since: float,
+                            where: str) -> bool:
+        """A page loaded (since `since`) on a run it did not start, held paused: it shows the
+        run Paused, having been told the state as it stands and the execution it is of, and
+        has created and started nothing itself. False when it does not show the run Paused."""
+        try:
+            ed.wait_run_button("Resume", timeout=60, enabled=True)
+        except UiTimeout as e:
+            rec.check(f"{where} the page shows the run Paused (run button Resume)", False,
+                      f"{e} -- states from the unit {ed.net.events('WorkflowStateEvent', since)}")
+            ed.screenshot("not-paused")
+            return False
+        button = ed.run_button()
+        rec.check(f"{where} the page shows the run Paused (run button Resume, stop enabled)",
+                  button["killDisabled"] is False, {"run_button": button, "operators": ed.operator_states(ops)})
+        states = ed.net.events("WorkflowStateEvent", since)
+        rec.check(f"{where} the unit named the paused execution to the page: "
+                  "WorkflowStateEvent{state: Paused, executionId} of the run's eid",
+                  any(s.get("state") == "Paused" and s.get("executionId") == eid for s in states),
+                  {"eid": eid, "state_events": states})
+        posts = [f"{e['path']} -> {e['status']}" for e in ed.net.executions_requests()
+                 if e["method"] == "POST" and e["t"] >= since]
+        sent = ed.net.sent_types(since)
+        rec.check(f"{where} the page created no execution and started none",
+                  not posts and "WorkflowStartRequest" not in sent, {"posts": posts, "sent_types": sent})
+        ed.screenshot("joined-paused")
+        return True
+
+    def change_paused_udf(self, ed: Editor, rec: CaseRecord, wid: int, scan: str, udf: str, eid: int) -> None:
+        """On a page that shows the run of execution `eid` Paused: change the UDF's code in the
+        code editor (VERSION = 2), confirm, resume; then the update, the frames and the rows."""
+        total = len(self.data["numbers.csv"])
         # the property editor of the UDF: unlock, change the code, confirm
         t_edit = time.time()
         update_resp = None
@@ -1151,15 +1269,18 @@ class Smoke:
                           "the code editor to show VERSION = 2")
             ed.screenshot("code-changed")
             ed.page.locator("#code-editor-container #close-button").first.click()
+            # the update of whichever execution the page names: which one is checked below
             with ed.page.expect_response(
                     lambda r: r.request.method == "POST"
-                    and urllib.parse.urlsplit(r.url).path == f"/api/executions/{eid}/updates",
+                    and UPDATES_PATH.fullmatch(urllib.parse.urlsplit(r.url).path) is not None,
                     timeout=60000) as info:
                 confirm.first.click()
             update_resp = info.value
         except (UiTimeout, PlaywrightError) as e:
             rec.check("the UDF's code is changed in the code editor and confirmed (Unlock for Logic Change, "
-                      "Edit code content, Confirm Change)", False, f"{e} -- editor text: {self._editor_text(ed)[-200:]!r}")
+                      "Edit code content, Confirm Change)", False,
+                      f"{e} -- editor text: {self._editor_text(ed)[-200:]!r}; run button {ed.run_button()}; "
+                      f"toasts {ed.toasts()[-4:]}")
             ed.screenshot("edit-failed")
             ed.dump_html("edit-failed")
         if update_resp is None:
@@ -1176,10 +1297,13 @@ class Smoke:
         except Exception:  # noqa: BLE001
             update_body = update_resp.text()
         sent_op = (json.loads(update_resp.request.post_data or "{}") or {}).get("operator") or {}
-        rec.check("Confirm Change: POST /api/executions/{eid}/updates answers 200 with {updateId, operatorId}",
-                  update_resp.status == 200 and isinstance(update_body, dict)
+        update_path = urllib.parse.urlsplit(update_resp.url).path
+        rec.check("Confirm Change: POST /api/executions/{eid}/updates, of the run's execution, answers 200 "
+                  "with {updateId, operatorId}",
+                  update_path == f"/api/executions/{eid}/updates" and update_resp.status == 200
+                  and isinstance(update_body, dict)
                   and bool(update_body.get("updateId")) and update_body.get("operatorId") == udf,
-                  {"status": update_resp.status, "body": update_body})
+                  {"path": update_path, "eid": eid, "status": update_resp.status, "body": update_body})
         rec.check("the update carries the operator as the editor holds it: the UDF with VERSION = 2",
                   sent_op.get("operatorID") == udf and str(sent_op.get("code", "")).rstrip().endswith("VERSION = 2"),
                   {"operatorID": sent_op.get("operatorID"), "operatorType": sent_op.get("operatorType"),
@@ -1421,6 +1545,8 @@ class Smoke:
         "B4": ("b4", "Change a paused operator in the UI (the UDF's code), resume"),
         "B5": ("b5", "Run again on the same page after a completed run"),
         "B6": ("b6", "Extra: Stop while the execution is being created; nothing reaches the unit"),
+        "B7": ("b7", "Change a paused operator after the page was loaded again"),
+        "B8": ("b8", "Change a paused operator, and resume, in a second tab"),
     }
 
     def run_case(self, key: str) -> CaseRecord:
@@ -1442,6 +1568,11 @@ class Smoke:
                 if not ed.page.is_closed():
                     self._leave_idle(ed, rec)
                     ed.close()
+            for context in {ed.context for ed in self.editors}:
+                try:
+                    context.close()
+                except PlaywrightError:
+                    pass
         rec.duration_s = time.monotonic() - t0
         rec.outcome = "PASS" if rec.checks and all(c["ok"] for c in rec.checks) and not rec.error else "FAIL"
         return rec
