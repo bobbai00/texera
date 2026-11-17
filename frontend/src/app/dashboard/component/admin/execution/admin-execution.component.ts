@@ -301,10 +301,10 @@ export class AdminExecutionComponent implements OnInit, OnDestroy {
    Due to the Async nature when setting up the websocket, the socket would be closed before the connection is established.
    Therefore, commenting the code to ensure the connections is established and request has been sent.
    */
-  killExecution(wid: number) {
+  killExecution(wid: number, executionId: number) {
     let socket = new WorkflowWebsocketService(this.config);
     socket.openWebsocket(wid);
-    socket.send("WorkflowKillRequest", {});
+    socket.send("WorkflowKillRequest", { executionId });
     // Reflect the new status promptly instead of waiting for the next refresh tick.
     this.fetchCurrentPage();
     // socket.closeWebsocket();
@@ -314,10 +314,10 @@ export class AdminExecutionComponent implements OnInit, OnDestroy {
    Due to the Async nature when setting up the websocket, the socket would be closed before the connection is established.
    Therefore, commenting the code to ensure the connections is established and request has been sent.
    */
-  pauseExecution(wid: number) {
+  pauseExecution(wid: number, executionId: number) {
     let socket = new WorkflowWebsocketService(this.config);
     socket.openWebsocket(wid);
-    socket.send("WorkflowPauseRequest", {});
+    socket.send("WorkflowPauseRequest", { executionId });
     // Reflect the new status promptly instead of waiting for the next refresh tick.
     this.fetchCurrentPage();
     // socket.closeWebsocket();
@@ -327,10 +327,10 @@ export class AdminExecutionComponent implements OnInit, OnDestroy {
    Due to the Async nature when setting up the websocket, the socket would be closed before the connection is established.
    Therefore, commenting the code to ensure the connections is established and request has been sent.
    */
-  resumeExecution(wid: number) {
+  resumeExecution(wid: number, executionId: number) {
     let socket = new WorkflowWebsocketService(this.config);
     socket.openWebsocket(wid);
-    socket.send("WorkflowResumeRequest", {});
+    socket.send("WorkflowResumeRequest", { executionId });
     // Reflect the new status promptly instead of waiting for the next refresh tick.
     this.fetchCurrentPage();
     // socket.closeWebsocket();

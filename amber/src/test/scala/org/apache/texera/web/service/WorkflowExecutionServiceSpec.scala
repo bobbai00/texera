@@ -1178,7 +1178,7 @@ class WorkflowExecutionServiceSpec
       eventually(titlesOn(run, "killed-first") should have size 1)
 
       // Stop, while pip is at work.
-      run.service.wsInput.onNext(WorkflowKillRequest(), None)
+      run.service.wsInput.onNext(WorkflowKillRequest(executionPlan.context.executionId.id), None)
       run.store.metadataStore.getState.state shouldBe KILLED
       held.letGo()
 
@@ -1222,7 +1222,7 @@ class WorkflowExecutionServiceSpec
         None
       begun.await(30, TimeUnit.SECONDS) shouldBe true
       eventually(titlesOn(run, "killed-then-failed-first") should have size 1)
-      run.service.wsInput.onNext(WorkflowKillRequest(), None)
+      run.service.wsInput.onNext(WorkflowKillRequest(executionPlan.context.executionId.id), None)
       release.countDown()
 
       // The install fails once the run no longer waits for it: nothing of it reaches the run.

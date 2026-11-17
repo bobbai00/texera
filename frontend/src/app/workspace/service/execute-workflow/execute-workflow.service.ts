@@ -154,8 +154,9 @@ export class ExecuteWorkflowService {
    */
   private pendingRun = Subscription.EMPTY;
   /**
-   * The execution of the run the computing unit holds, as the unit names it with each state it reports: the
-   * one a change to an operator is stored for while its run is paused, whichever page started the run.
+   * The execution of the run on screen: the one this page asked the computing unit to start, once the
+   * Dashboard service has created it, and then the one the unit names with each state it reports. A pause, a
+   * resume, a kill and a change to a paused operator name it, whichever page started the run.
    */
   private currentExecutionId?: number;
   /**
@@ -453,6 +454,7 @@ export class ExecuteWorkflowService {
       )
       .subscribe({
         next: ({ eid, planUri }) => {
+          this.currentExecutionId = eid;
           this.awaitedStart = eid;
           this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri });
         },
@@ -506,7 +508,9 @@ export class ExecuteWorkflowService {
     if (this.currentState === undefined || this.currentState.state !== ExecutionState.Running) {
       throw new Error("cannot pause workflow, the current execution state is " + this.currentState?.state);
     }
-    this.workflowWebsocketService.send("WorkflowPauseRequest", {});
+    this.workflowWebsocketService.send("WorkflowPauseRequest", {
+      executionId: this.executionOnScreen("pause workflow"),
+    });
   }
 
   public killWorkflow(): void {
@@ -523,7 +527,7 @@ export class ExecuteWorkflowService {
       this.updateExecutionState({ state: ExecutionState.Killed });
       return;
     }
-    this.workflowWebsocketService.send("WorkflowKillRequest", {});
+    this.workflowWebsocketService.send("WorkflowKillRequest", { executionId: this.executionOnScreen("kill workflow") });
   }
 
   public takeGlobalCheckpoint(): void {
@@ -540,7 +544,20 @@ export class ExecuteWorkflowService {
     if (this.currentState.state !== ExecutionState.Paused) {
       throw new Error("cannot resume workflow, the current execution state is " + this.currentState.state);
     }
-    this.workflowWebsocketService.send("WorkflowResumeRequest", {});
+    this.workflowWebsocketService.send("WorkflowResumeRequest", {
+      executionId: this.executionOnScreen("resume workflow"),
+    });
+  }
+
+  /**
+   * The execution of the run on screen, for a request that names the run it is for; `request` says what is
+   * asked, for the error of a run whose execution is not known.
+   */
+  private executionOnScreen(request: string): number {
+    if (this.currentExecutionId === undefined) {
+      throw new Error(`cannot ${request}, the computing unit has not named the execution it runs`);
+    }
+    return this.currentExecutionId;
   }
 
   public skipTuples(workers: ReadonlyArray<string>): void {
@@ -567,10 +584,7 @@ export class ExecuteWorkflowService {
     if (this.currentState.state !== ExecutionState.Paused) {
       throw new Error("cannot modify logic, the current execution state is " + this.currentState.state);
     }
-    const executionId = this.currentExecutionId;
-    if (executionId === undefined) {
-      throw new Error("cannot modify logic, the computing unit has not named the paused execution");
-    }
+    const executionId = this.executionOnScreen("modify logic");
     const op = this.workflowActionService.getTexeraGraph().getOperator(operatorID);
     const operator: LogicalOperator = {
       ...op.operatorProperties,

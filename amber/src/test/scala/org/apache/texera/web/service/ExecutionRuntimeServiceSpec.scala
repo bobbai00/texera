@@ -71,6 +71,9 @@ class ExecutionRuntimeServiceSpec
     finally super.afterAll()
   }
 
+  /** The execution the commands of these cases name: what a run does with one is not its id's. */
+  private val executionId = 31L
+
   /** Records resume wiring while skipping constructor-time client and workflow subscriptions. */
   private final class RecordingReconfigurationService
       extends ExecutionReconfigurationService(
@@ -150,7 +153,7 @@ class ExecutionRuntimeServiceSpec
           Future.value(EmptyReturn())
         }
 
-      f.wsInput.onNext(WorkflowPauseRequest(), None)
+      f.wsInput.onNext(WorkflowPauseRequest(executionId), None)
 
       f.stateStore.metadataStore.getState.state shouldBe PAUSING
       f.errors shouldBe empty
@@ -168,7 +171,7 @@ class ExecutionRuntimeServiceSpec
           resumeResult
         }
 
-      f.wsInput.onNext(WorkflowResumeRequest(), None)
+      f.wsInput.onNext(WorkflowResumeRequest(executionId), None)
       f.stateStore.metadataStore.getState.state shouldBe RESUMING
 
       resumeResult.setValue(EmptyReturn())
@@ -186,7 +189,7 @@ class ExecutionRuntimeServiceSpec
           f.stateStore.metadataStore.updateState(_.withState(live))
 
           val before = System.currentTimeMillis()
-          f.wsInput.onNext(WorkflowKillRequest(), None)
+          f.wsInput.onNext(WorkflowKillRequest(executionId), None)
           val after = System.currentTimeMillis()
 
           f.client.shutdownCount shouldBe 1
@@ -210,7 +213,7 @@ class ExecutionRuntimeServiceSpec
           f.stateStore.statsStore.updateState(_.withEndTimeStamp(endedAt))
           val asItEnded = f.stateStore.metadataStore.getState
 
-          f.wsInput.onNext(WorkflowKillRequest(), None)
+          f.wsInput.onNext(WorkflowKillRequest(executionId), None)
 
           f.stateStore.metadataStore.getState shouldBe asItEnded
           f.stateStore.statsStore.getState.endTimeStamp shouldBe endedAt
@@ -227,7 +230,7 @@ class ExecutionRuntimeServiceSpec
       val completedAt = f.stateStore.statsStore.getState.endTimeStamp
       completedAt should be > 0L
 
-      f.wsInput.onNext(WorkflowKillRequest(), None)
+      f.wsInput.onNext(WorkflowKillRequest(executionId), None)
 
       f.stateStore.metadataStore.getState.state shouldBe COMPLETED
       f.stateStore.statsStore.getState.endTimeStamp shouldBe completedAt

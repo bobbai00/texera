@@ -404,25 +404,25 @@ describe("AdminExecutionComponent methods (#6550)", () => {
     it("killExecution opens the socket for the workflow, sends a kill request and refreshes", () => {
       vi.mocked(service.getExecutionList).mockClear();
 
-      component.killExecution(42);
+      component.killExecution(42, 7);
 
       expect(openWebsocket).toHaveBeenCalledWith(42);
-      expect(send).toHaveBeenCalledWith("WorkflowKillRequest", {});
+      expect(send).toHaveBeenCalledWith("WorkflowKillRequest", { executionId: 7 });
       expect(service.getExecutionList).toHaveBeenCalledTimes(1);
     });
 
     it("pauseExecution sends a pause request", () => {
-      component.pauseExecution(9);
+      component.pauseExecution(9, 8);
 
       expect(openWebsocket).toHaveBeenCalledWith(9);
-      expect(send).toHaveBeenCalledWith("WorkflowPauseRequest", {});
+      expect(send).toHaveBeenCalledWith("WorkflowPauseRequest", { executionId: 8 });
     });
 
     it("resumeExecution sends a resume request", () => {
-      component.resumeExecution(9);
+      component.resumeExecution(9, 8);
 
       expect(openWebsocket).toHaveBeenCalledWith(9);
-      expect(send).toHaveBeenCalledWith("WorkflowResumeRequest", {});
+      expect(send).toHaveBeenCalledWith("WorkflowResumeRequest", { executionId: 8 });
     });
 
     it("clickToViewHistory opens the history modal for the workflow", () => {
@@ -605,7 +605,7 @@ describe("AdminExecutionComponent template rendering", () => {
     expect(cells[5]).toBe("Not Available");
   });
 
-  it("kills the execution with its workflow id when the kill control is clicked", () => {
+  it("kills the execution, by its workflow and its own id, when the kill control is clicked", () => {
     const killSpy = vi.spyOn(component, "killExecution").mockImplementation(() => {});
     renderRows([makeExecution({ executionStatus: "RUNNING", workflowId: 42 })]);
 
@@ -614,7 +614,7 @@ describe("AdminExecutionComponent template rendering", () => {
 
     killButton!.triggerEventHandler("click", null);
 
-    expect(killSpy).toHaveBeenCalledWith(42);
+    expect(killSpy).toHaveBeenCalledWith(42, 21);
   });
 
   it("renders the workflow name as plain text when the admin has no access", () => {
@@ -647,7 +647,7 @@ describe("AdminExecutionComponent template rendering", () => {
 
     nativePause.click();
 
-    expect(pauseSpy).toHaveBeenCalledWith(42);
+    expect(pauseSpy).toHaveBeenCalledWith(42, 21);
   });
 
   it("resumes the execution when the resume control is clicked on a paused row", () => {
@@ -664,7 +664,7 @@ describe("AdminExecutionComponent template rendering", () => {
 
     nativeResume.click();
 
-    expect(resumeSpy).toHaveBeenCalledWith(43);
+    expect(resumeSpy).toHaveBeenCalledWith(43, 21);
   });
 
   it("greys out kill, pause and resume once the execution has finished", () => {

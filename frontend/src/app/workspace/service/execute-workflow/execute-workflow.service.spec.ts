@@ -1318,23 +1318,56 @@ describe("ExecuteWorkflowService", () => {
 
   // ---- control commands ----------------------------------------------------------------------
 
-  it("pauseWorkflow sends a pause request while running", () => {
-    (service as any).currentState = { state: ExecutionState.Running };
-    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+  it("pauseWorkflow sends a pause request while running, of the execution the unit named", () => {
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+    const wsSendSpy = spyOnSocket();
     service.pauseWorkflow();
-    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowPauseRequest", {});
+    expect(wsSendSpy.mock.calls).toEqual([["WorkflowPauseRequest", { executionId: 345 }]]);
   });
 
-  it("killWorkflow throws in a terminal state and sends a kill request otherwise", () => {
+  it("killWorkflow throws in a terminal state and sends a kill request otherwise, of the execution the unit named", () => {
     (service as any).currentState = { state: ExecutionState.Uninitialized };
     expect(() => service.killWorkflow()).toThrowError(
       "cannot kill workflow, the current execution state is Uninitialized"
     );
 
-    (service as any).currentState = { state: ExecutionState.Running };
-    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+    const wsSendSpy = spyOnSocket();
     service.killWorkflow();
-    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowKillRequest", {});
+    expect(wsSendSpy.mock.calls).toEqual([["WorkflowKillRequest", { executionId: 345 }]]);
+  });
+
+  // A page names the run it shows, so that the unit refuses a pause, a resume or a kill of a run another
+  // has replaced since.
+  it("names the execution the unit named last in a pause, a resume and a kill", () => {
+    const wsSendSpy = spyOnSocket();
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+    // Another tab's run took its place on the unit.
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 400 });
+
+    service.pauseWorkflow();
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused, executionId: 400 });
+    service.resumeWorkflow();
+    service.killWorkflow();
+
+    expect(wsSendSpy.mock.calls).toEqual([
+      ["WorkflowPauseRequest", { executionId: 400 }],
+      ["WorkflowResumeRequest", { executionId: 400 }],
+      ["WorkflowKillRequest", { executionId: 400 }],
+    ]);
+  });
+
+  it("sends no pause, resume or kill of a run whose execution the unit has not named", () => {
+    const wsSendSpy = spyOnSocket();
+    const unnamed = "the computing unit has not named the execution it runs";
+
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running });
+    expect(() => service.pauseWorkflow()).toThrowError(`cannot pause workflow, ${unnamed}`);
+    expect(() => service.killWorkflow()).toThrowError(`cannot kill workflow, ${unnamed}`);
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+    expect(() => service.resumeWorkflow()).toThrowError(`cannot resume workflow, ${unnamed}`);
+
+    expect(wsSendSpy).not.toHaveBeenCalled();
   });
 
   // The menu and the Form View offer to stop a run from the moment it shows as starting. Until its
@@ -1358,9 +1391,10 @@ describe("ExecuteWorkflowService", () => {
 
     service.killWorkflow();
 
+    // The unit has not reported on the run yet: the kill names the execution it was asked to start.
     expect(wsSendSpy.mock.calls).toEqual([
       ["WorkflowStartRequest", { executionId: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
-      ["WorkflowKillRequest", {}],
+      ["WorkflowKillRequest", { executionId: 345 }],
     ]);
     // Killed is the unit's to report.
     expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
@@ -1371,11 +1405,11 @@ describe("ExecuteWorkflowService", () => {
     const wsSendSpy = spyOnSocket();
     service.executeWorkflow("run");
     expectCreate().flush({ code: 403, message: "no" }, { status: 403, statusText: "Forbidden" });
-    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused, executionId: 400 });
 
     service.killWorkflow();
 
-    expect(wsSendSpy.mock.calls).toEqual([["WorkflowKillRequest", {}]]);
+    expect(wsSendSpy.mock.calls).toEqual([["WorkflowKillRequest", { executionId: 400 }]]);
   }));
 
   it("takeGlobalCheckpoint throws when completed and sends a checkpoint request otherwise", () => {
@@ -1390,11 +1424,11 @@ describe("ExecuteWorkflowService", () => {
     expect(wsSendSpy).toHaveBeenCalledWith("WorkflowCheckpointRequest", {});
   });
 
-  it("resumeWorkflow sends a resume request while paused", () => {
-    (service as any).currentState = { state: ExecutionState.Paused };
-    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+  it("resumeWorkflow sends a resume request while paused, of the execution the unit named", () => {
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused, executionId: 345 });
+    const wsSendSpy = spyOnSocket();
     service.resumeWorkflow();
-    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowResumeRequest", {});
+    expect(wsSendSpy.mock.calls).toEqual([["WorkflowResumeRequest", { executionId: 345 }]]);
   });
 
   it("skipTuples requires a paused state and forwards the workers", () => {
@@ -1561,7 +1595,7 @@ describe("ExecuteWorkflowService", () => {
       const wsSendSpy = spyOnSocket();
 
       expect(() => service.modifyOperatorLogic("1")).toThrowError(
-        "cannot modify logic, the computing unit has not named the paused execution"
+        "cannot modify logic, the computing unit has not named the execution it runs"
       );
       expect(wsSendSpy).not.toHaveBeenCalled();
     });
@@ -1600,7 +1634,7 @@ describe("ExecuteWorkflowService", () => {
 
       expect(service.getExecutionState().state).toBe(ExecutionState.Paused);
       expect(() => service.modifyOperatorLogic("1")).toThrowError(
-        "cannot modify logic, the computing unit has not named the paused execution"
+        "cannot modify logic, the computing unit has not named the execution it runs"
       );
     });
   });

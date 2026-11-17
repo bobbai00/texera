@@ -80,6 +80,8 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
   private val startFields =
     """"executionId":345,"planUri":"vfs:///wh/user-1-7/wid/12/eid/345/plan""""
   private val updateFields = """"executionId":345,"updateId":"update-4f6c""""
+  // A pause, a resume and a kill, as the browser sends them of the run it shows.
+  private val commandFields = """"executionId":345"""
 
   /**
     * (wire type id, extra JSON fields, expected concrete class). The payloads are
@@ -108,9 +110,9 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
       ("SkipTupleRequest", """"workerIds":["worker-1"]""", classOf[SkipTupleRequest]),
       ("WorkflowStartRequest", startFields, classOf[WorkflowStartRequest]),
       ("OperatorUpdateRequest", updateFields, classOf[OperatorUpdateRequest]),
-      ("WorkflowKillRequest", "", classOf[WorkflowKillRequest]),
-      ("WorkflowPauseRequest", "", classOf[WorkflowPauseRequest]),
-      ("WorkflowResumeRequest", "", classOf[WorkflowResumeRequest]),
+      ("WorkflowKillRequest", commandFields, classOf[WorkflowKillRequest]),
+      ("WorkflowPauseRequest", commandFields, classOf[WorkflowPauseRequest]),
+      ("WorkflowResumeRequest", commandFields, classOf[WorkflowResumeRequest]),
       ("WorkflowCheckpointRequest", "", classOf[WorkflowCheckpointRequest]),
       (
         "PythonExpressionEvaluateRequest",
@@ -276,6 +278,32 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     written.get("executionId").asLong() shouldBe 345L
     written.get("updateId").asText() shouldBe "update-4f6c"
     read(objectMapper.writeValueAsString(req)) shouldBe req
+  }
+
+  "a pause, a resume and a kill" should "bind the execution whose run they are for" in {
+    read(frame("WorkflowPauseRequest", commandFields)) shouldBe WorkflowPauseRequest(345L)
+    read(frame("WorkflowResumeRequest", commandFields)) shouldBe WorkflowResumeRequest(345L)
+    read(frame("WorkflowKillRequest", commandFields)) shouldBe WorkflowKillRequest(345L)
+    read(frame("WorkflowKillRequest", s""""executionId":${Int.MaxValue + 1L}""")) shouldBe
+      WorkflowKillRequest(Int.MaxValue + 1L)
+  }
+
+  it should "name no execution a unit runs when its frame names none" in {
+    // The endpoint refuses it as an execution that is not running here; the mapper only binds.
+    read(frame("WorkflowKillRequest", "")) shouldBe WorkflowKillRequest(0L)
+  }
+
+  "every request that names an execution" should "be an ExecutionRequest" in {
+    registeredRequests.collect {
+      case (typeId, fields, _) if read(frame(typeId, fields)).isInstanceOf[ExecutionRequest] =>
+        typeId
+    }.toSet shouldBe Set(
+      "WorkflowStartRequest",
+      "OperatorUpdateRequest",
+      "WorkflowKillRequest",
+      "WorkflowPauseRequest",
+      "WorkflowResumeRequest"
+    )
   }
 
   "the python request payloads" should "bind each wire field to the matching parameter" in {

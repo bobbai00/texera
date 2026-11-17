@@ -131,8 +131,9 @@ class WorkflowWebsocketResource extends LazyLogging {
     * Does what `request` asks, for the session `sender` that sent it. A heartbeat and a read of
     * results are open to every session. Every other request changes a run, so it is its sender's
     * to make only with WRITE on the socket's computing unit: a start, a change to an operator, and
-    * every command to the run the workflow's service holds (pause, resume, kill, checkpoint,
-    * retry, skip, debug command, expression to evaluate).
+    * every command to a run. A change, a pause, a resume and a kill name the execution whose run
+    * they are for, and are refused unless the workflow's service holds that run; a checkpoint, a
+    * retry, a skip, a debug command and an expression to evaluate go to the run it holds.
     *
     * @return why the request is refused, if it is; None once it is done or handed on
     */
@@ -163,14 +164,23 @@ class WorkflowWebsocketResource extends LazyLogging {
       case update: OperatorUpdateRequest =>
         applyStoredUpdate(sender, run, user, update)
       case command =>
-        run match {
-          case Some(run) =>
-            run.wsInput.onNext(command, user.map(_.getUid))
-            None
-          case None => Some("No execution of this workflow is running here.")
+        val asked = command match {
+          case named: ExecutionRequest => runOf(named, run).toRight(notRunningHere(named))
+          case _                       => run.toRight("No execution of this workflow is running here.")
         }
+        asked.map(_.wsInput.onNext(command, user.map(_.getUid))).left.toOption
     }
   }
+
+  /** The run of the execution `request` names, when it is the run `held`. */
+  private def runOf(
+      request: ExecutionRequest,
+      held: Option[WorkflowExecutionService]
+  ): Option[WorkflowExecutionService] =
+    held.filter(_.workflowContext.executionId.id == request.executionId)
+
+  private def notRunningHere(request: ExecutionRequest): String =
+    s"Execution ${request.executionId} is not running here."
 
   /**
     * Starts the execution `start` names, which the Dashboard service created, on this socket's
@@ -219,13 +229,12 @@ class WorkflowWebsocketResource extends LazyLogging {
       user: Option[User],
       update: OperatorUpdateRequest
   ): Option[String] =
-    run
-      .filter(_.workflowContext.executionId.id == update.executionId)
+    runOf(update, run)
       .flatMap(execution => Option(execution.executionReconfigurationService)) match {
       case Some(service) =>
         sender.send(service.applyStoredUpdate(update.updateId, user.map(_.getUid.intValue())))
         None
-      case None => Some(s"Execution ${update.executionId} is not running here.")
+      case None => Some(notRunningHere(update))
     }
 
   /**

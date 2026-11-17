@@ -56,8 +56,8 @@ class WebsocketInputSpec extends AnyFlatSpec with Matchers {
     val received = mutable.ListBuffer.empty[TexeraWebSocketRequest]
     val sub = input.subscribe[HeartBeatRequest]((req, _) => received += req)
     try {
-      input.onNext(WorkflowKillRequest(), None)
-      input.onNext(WorkflowKillRequest(), Some(1))
+      input.onNext(WorkflowKillRequest(1L), None)
+      input.onNext(WorkflowKillRequest(1L), Some(1))
       received shouldBe empty
       errors shouldBe empty
     } finally sub.dispose()

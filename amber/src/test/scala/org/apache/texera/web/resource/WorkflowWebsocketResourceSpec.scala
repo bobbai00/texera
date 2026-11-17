@@ -100,6 +100,7 @@ import org.apache.texera.web.model.websocket.request.{
   OperatorUpdateRequest,
   ResultPaginationRequest,
   TexeraWebSocketRequest,
+  WorkflowKillRequest,
   WorkflowStartRequest
 }
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
@@ -158,6 +159,9 @@ import scala.util.Try
   *     `workflow.map(...)` yields `Some(null)` — a shape that slips past a `case None` guard and
   *     NPEs on the next dereference. The middle state is the only input that tells the workflow
   *     apart from its run, so it is what pins the guard's condition.
+  *   - which run a command is for. A pause, a resume and a kill name their execution, as a change
+  *     to an operator does, and are refused unless the run held is of that execution: a page that
+  *     still shows a run another has replaced does not pause or kill the one that replaced it.
   *
   * The cases of a single session drive a mocked `javax.websocket.Session` (the pattern
   * `CollaborationResourceSpec` established) and register a `SessionState` directly, on a
@@ -405,13 +409,19 @@ class WorkflowWebsocketResourceSpec
       |"pageIndex":3,"pageSize":25}""".stripMargin
 
   /**
-    * A frame of each command to a run, by its type: every request but a heartbeat, a read of
-    * results, a start and a change to an operator. Each carries a payload where its type has one.
+    * A frame of each command that names the execution whose run it is for, by its type: a pause,
+    * a resume and a kill of execution `executionId`.
     */
-  private val commandFrames: Seq[(String, String)] = Seq(
-    "WorkflowPauseRequest" -> """{"type":"WorkflowPauseRequest"}""",
-    "WorkflowResumeRequest" -> """{"type":"WorkflowResumeRequest"}""",
-    "WorkflowKillRequest" -> """{"type":"WorkflowKillRequest"}""",
+  private def namedCommandFrames(executionId: Long): Seq[(String, String)] =
+    Seq("WorkflowPauseRequest", "WorkflowResumeRequest", "WorkflowKillRequest").map(kind =>
+      kind -> s"""{"type":"$kind","executionId":$executionId}"""
+    )
+
+  /**
+    * A frame of each command that goes to the run a workflow's service holds, by its type. Each
+    * carries a payload where its type has one.
+    */
+  private val unnamedCommandFrames: Seq[(String, String)] = Seq(
     "WorkflowCheckpointRequest" -> """{"type":"WorkflowCheckpointRequest"}""",
     "RetryRequest" -> """{"type":"RetryRequest","workers":["worker-a","worker-b"]}""",
     "SkipTupleRequest" -> """{"type":"SkipTupleRequest","workerIds":["worker-a"]}""",
@@ -420,6 +430,14 @@ class WorkflowWebsocketResourceSpec
     "PythonExpressionEvaluateRequest" ->
       """{"type":"PythonExpressionEvaluateRequest","expression":"len(tuple_)","operatorId":"op-eval"}"""
   )
+
+  /**
+    * A frame of each command to a run, by its type: every request but a heartbeat, a read of
+    * results, a start and a change to an operator. Those that name an execution name
+    * `executionId`.
+    */
+  private def commandFrames(executionId: Long): Seq[(String, String)] =
+    namedCommandFrames(executionId) ++ unnamedCommandFrames
 
   /** The `type` discriminator of each frame the endpoint wrote back. */
   private def sentTypes(sent: ArrayBuffer[String]): Seq[String] =
@@ -646,10 +664,12 @@ class WorkflowWebsocketResourceSpec
   it should "refuse every request that changes a run to a session without WRITE on the unit, to that session alone" in {
     // The gate covers every request the mapper registers but the two reads. Checked against the
     // registry, so a request type added later is either refused here or declared a read.
-    val changing: Seq[(String, String)] = commandFrames ++ Seq(
+    val changing: Seq[(String, String)] = commandFrames(974999L) ++ Seq(
       "WorkflowStartRequest" -> frameOf(WorkflowStartRequest(974999L, "vfs:///x")),
       "OperatorUpdateRequest" -> frameOf(OperatorUpdateRequest(974999L, "update-1"))
     )
+    // The requests that name an execution, which the refusal names in turn.
+    val naming = namedCommandFrames(974999L).map(_._1).toSet + "WorkflowStartRequest"
     val registered = classOf[TexeraWebSocketRequest]
       .getAnnotation(classOf[JsonSubTypes])
       .value()
@@ -690,8 +710,7 @@ class WorkflowWebsocketResourceSpec
               sent,
               noWriteAccess,
               request = Some(kind),
-              // A start names its execution, which the refusal names in turn.
-              executionId = Some(974999L).filter(_ => kind == "WorkflowStartRequest")
+              executionId = Some(974999L).filter(_ => naming.contains(kind))
             )
           }
           otherSent shouldBe empty
@@ -706,12 +725,13 @@ class WorkflowWebsocketResourceSpec
   // -- commands to the run ------------------------------------------------------
 
   it should "hand each command of a session with WRITE on to the run's websocket input, with its sender" in {
-    commandFrames.foreach {
+    commandFrames(9103L).foreach {
       case (kind, frame) =>
         withClue(s"a $kind: ") {
           val (session, sent) = mockSession(uid = Some(42))
           val workflow = new TestWorkflowService(9102L)
           val execution = newExecution()
+          execution.workflowContext.executionId = ExecutionIdentity(9103L)
           attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
           val received = ArrayBuffer.empty[(TexeraWebSocketRequest, Option[Integer])]
           execution.wsInput.subscribe[TexeraWebSocketRequest]((req, uid) =>
@@ -735,6 +755,29 @@ class WorkflowWebsocketResourceSpec
     }
   }
 
+  /**
+    * Fails unless each command of `session` is refused for want of a run: one that names an
+    * execution as not running here, and any other as there being no run at all.
+    */
+  private def assertNoRunFor(session: Session, sent: ArrayBuffer[String]): Unit =
+    commandFrames(9108L).foreach {
+      case (kind, frame) =>
+        withClue(s"a $kind: ") {
+          val names = namedCommandFrames(9108L).exists(_._1 == kind)
+          sent.clear()
+
+          noException should be thrownBy resource.myOnMsg(session, frame)
+
+          assertRefused(
+            sent,
+            if (names) "Execution 9108 is not running here."
+            else "No execution of this workflow is running here.",
+            request = Some(kind),
+            executionId = Some(9108L).filter(_ => names)
+          )
+        }
+    }
+
   it should "refuse a command that arrives before any workflow is attached, to its sender" in {
     // Commands go to the run's `wsInput`, which only exists once a run is held. This is the
     // no-workflow state; the workflow-but-no-run state is the next case, and both have to report
@@ -742,14 +785,7 @@ class WorkflowWebsocketResourceSpec
     val (session, sent) = mockSession(uid = Some(42))
     registerState(session, PrivilegeEnum.WRITE)
 
-    noException should be thrownBy
-      resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
-
-    assertRefused(
-      sent,
-      "No execution of this workflow is running here.",
-      request = Some("WorkflowPauseRequest")
-    )
+    assertNoRunFor(session, sent)
   }
 
   it should "refuse a command that arrives with a workflow but no run, to its sender" in {
@@ -764,14 +800,46 @@ class WorkflowWebsocketResourceSpec
     val workflow = new TestWorkflowService(9107L)
     attach(session, PrivilegeEnum.WRITE, workflow)
 
-    noException should be thrownBy
-      resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
+    assertNoRunFor(session, sent)
+  }
 
-    assertRefused(
-      sent,
-      "No execution of this workflow is running here.",
-      request = Some("WorkflowPauseRequest")
-    )
+  it should "refuse a pause, a resume and a kill of another execution than the run held, to their sender alone" in {
+    // A page that still shows a run another has replaced, as after a run started in another tab:
+    // what it asks of the run it shows does not reach the run that took its place.
+    val service = new StoredStartService
+    try {
+      val held = runInFlight(service)
+      val heldState = held.executionStateStore.metadataStore.getState
+      val commands = ArrayBuffer.empty[TexeraWebSocketRequest]
+      held.wsInput.subscribe[TexeraWebSocketRequest]((request, _) => commands += request)
+      val (session, sent) = sessionOn(service)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      namedCommandFrames(974998L).foreach {
+        case (kind, frame) =>
+          withClue(s"a $kind: ") {
+            sent.clear()
+            otherSent.clear()
+
+            val statements = recorder.record {
+              noException should be thrownBy resource.myOnMsg(session, frame)
+            }
+
+            statements shouldBe empty
+            assertRefused(
+              sent,
+              "Execution 974998 is not running here.",
+              request = Some(kind),
+              executionId = Some(974998L)
+            )
+            otherSent shouldBe empty
+            commands shouldBe empty
+            held.executionStateStore.metadataStore.getState shouldBe heldState
+          }
+      }
+      // The same commands, of the execution the run held is of, reach it.
+      namedCommandFrames(974999L).foreach { case (_, frame) => resource.myOnMsg(session, frame) }
+      commands.map(_.getClass.getSimpleName) shouldBe namedCommandFrames(974999L).map(_._1)
+    } finally service.unsubscribeAll()
   }
 
   // -- session lifecycle --------------------------------------------------------
@@ -1569,7 +1637,7 @@ class WorkflowWebsocketResourceSpec
       sent.clear()
       otherSent.clear()
 
-      resource.myOnMsg(session, """{"type":"WorkflowKillRequest"}""")
+      resource.myOnMsg(session, frameOf(WorkflowKillRequest(execution.eid)))
 
       run.executionStateStore.metadataStore.getState.state shouldBe KILLED
       statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
@@ -1597,7 +1665,7 @@ class WorkflowWebsocketResourceSpec
 
       val statements = recorder.record {
         noException should be thrownBy
-          resource.myOnMsg(session, """{"type":"WorkflowKillRequest"}""")
+          resource.myOnMsg(session, frameOf(WorkflowKillRequest(execution.eid)))
       }
 
       // Nothing is written, and no session is told anything: the run stays completed, in its

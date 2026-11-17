@@ -49,6 +49,11 @@ export type OperatorUpdateRequest = Readonly<{
   updateId: string;
 }>;
 
+/** Pauses, resumes or kills the run of an execution: the computing unit refuses it for any other run. */
+export type RunCommandRequest = Readonly<{
+  executionId: number;
+}>;
+
 /**
  * Tells this session that a request it sent was not done, and why. It says nothing about the run the
  * computing unit holds.
@@ -190,10 +195,10 @@ export type TexeraWebsocketRequestTypeMap = {
   RetryRequest: { workers: ReadonlyArray<string> };
   SkipTupleRequest: { workers: ReadonlyArray<string> };
   WorkflowStartRequest: WorkflowStartRequest;
-  WorkflowKillRequest: {};
-  WorkflowPauseRequest: {};
+  WorkflowKillRequest: RunCommandRequest;
+  WorkflowPauseRequest: RunCommandRequest;
   WorkflowCheckpointRequest: {};
-  WorkflowResumeRequest: {};
+  WorkflowResumeRequest: RunCommandRequest;
   PythonExpressionEvaluateRequest: PythonExpressionEvaluateRequest;
   DebugCommandRequest: DebugCommandRequest;
 };
