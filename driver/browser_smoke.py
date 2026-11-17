@@ -1473,9 +1473,9 @@ class Smoke:
             update_body = update_resp.text()
         sent_op = (json.loads(update_resp.request.post_data or "{}") or {}).get("operator") or {}
         update_path = urllib.parse.urlsplit(update_resp.url).path
-        rec.check("Confirm Change: POST /api/executions/{eid}/updates, of the run's execution, answers 200 "
+        rec.check("Confirm Change: POST /api/executions/{eid}/updates, of the run's execution, answers 201 "
                   "with {updateId, operatorId}",
-                  update_path == f"/api/executions/{eid}/updates" and update_resp.status == 200
+                  update_path == f"/api/executions/{eid}/updates" and update_resp.status == 201
                   and isinstance(update_body, dict)
                   and bool(update_body.get("updateId")) and update_body.get("operatorId") == udf,
                   {"path": update_path, "eid": eid, "status": update_resp.status, "body": update_body})
