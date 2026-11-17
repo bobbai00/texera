@@ -52,6 +52,7 @@ import org.apache.texera.amber.error.ErrorUtils.{
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
+import org.apache.texera.web.observability.WorkflowMetricsRecorder
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
 import org.apache.texera.web.service.execution.{ExecutionResources, StoredExecutionStart}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
@@ -71,14 +72,13 @@ object WorkflowService extends LazyLogging {
   /**
     * A start of execution `executionId` by its id that passed every check made before the
     * execution is claimed ([[checkStoredStart]]): the plan table at `planUri`, of workflow
-    * `workflowId`; its plan row `record`, made for the user who asks and for computing unit
-    * `cuid`; and the plan the row holds, read back.
+    * `workflowId`; its plan row `record`, made for the user who asks and for the computing unit
+    * asked; and the plan the row holds, read back.
     */
   final case class CheckedStart(
       executionId: Long,
       planUri: URI,
       workflowId: WorkflowIdentity,
-      cuid: Int,
       record: PlanRecord,
       executionPlan: ExecutionPlan
   )
@@ -121,7 +121,7 @@ object WorkflowService extends LazyLogging {
         cuid,
         System.currentTimeMillis()
       )
-    } yield CheckedStart(executionId, planUri, location.workflowId, cuid, record, executionPlan)
+    } yield CheckedStart(executionId, planUri, location.workflowId, record, executionPlan)
 
   /** The plan row of execution `executionId` at `planUri`, or why it cannot be had. */
   private def storedPlanRow(
@@ -226,9 +226,9 @@ class WorkflowService(
     * is a run that finishes while it is let go of: it keeps the state it finished in.
     *
     * The run is let go of before KILLED is recorded, so neither the sessions on the workflow nor
-    * its idle clean-up hear of the kill: sessions see the new run take its place, as they did
-    * before a superseded run was recorded, and the kill does not arm the clean-up. A run still
-    * being set up is let go of only once its setup is over (see `runLock`).
+    * its idle clean-up hear of the kill: sessions see the new run take its place, and the kill
+    * does not arm the clean-up. A run still being set up is let go of only once its setup is over
+    * (see `runLock`).
     */
   def supersedeCurrentRun(): Unit = {
     runLock.lock()
@@ -320,7 +320,6 @@ class WorkflowService(
     * ([[WorkflowService.checkStoredStart]]: the user, the URI before any catalog is opened, then
     * the plan row), then started ([[startChecked]]).
     *
-    * @param sessionUri the URI the request came to, for the run's log lines
     * @return why the start was refused (Left), or the run started (Right), which may have failed
     *         before its engine started
     */
@@ -328,12 +327,11 @@ class WorkflowService(
       executionId: Long,
       planUri: URI,
       user: User,
-      cuid: Int,
-      sessionUri: URI
+      cuid: Int
   ): Either[String, WorkflowExecutionService] =
     WorkflowService
       .checkStoredStart(executionId, planUri, user, cuid, Some(workflowId.id), readPlan)
-      .flatMap(startChecked(_, sessionUri))
+      .flatMap(startChecked)
 
   /**
     * Starts the execution `start` names, a start of this workflow that passed its checks
@@ -347,14 +345,10 @@ class WorkflowService(
     * and is answered only to the caller. Once the execution is claimed, what fails is the run's
     * failure: reported through its error handler to every session on the workflow, and recorded.
     *
-    * @param sessionUri the URI the request came to, for the run's log lines
     * @return why the start was refused, or why its run could not even be built (Left); or the run
     *         started (Right), which may have failed before its engine started
     */
-  def startChecked(
-      start: WorkflowService.CheckedStart,
-      sessionUri: URI
-  ): Either[String, WorkflowExecutionService] =
+  def startChecked(start: WorkflowService.CheckedStart): Either[String, WorkflowExecutionService] =
     if (start.workflowId != workflowId) {
       Left(s"the plan belongs to workflow ${start.workflowId.id}, not to this one")
     } else {
@@ -367,9 +361,7 @@ class WorkflowService(
       // Until the new run is set up or has failed: no other request supersedes it meanwhile.
       runLock.lock()
       try {
-        claimForStart(start.executionId, start.planUri).flatMap { _ =>
-          startClaimedRun(start, sessionUri, span)
-        }
+        claimForStart(start.executionId, start.planUri).flatMap(_ => startClaimedRun(start, span))
       } finally {
         runLock.unlock()
         scope.close()
@@ -405,7 +397,6 @@ class WorkflowService(
     */
   private def startClaimedRun(
       start: WorkflowService.CheckedStart,
-      sessionUri: URI,
       span: Span
   ): Either[String, WorkflowExecutionService] = {
     val context = start.executionPlan.context
@@ -416,13 +407,12 @@ class WorkflowService(
     var built: Option[WorkflowExecutionService] = None
     var published = false
     try {
-      org.apache.texera.web.observability.WorkflowMetricsRecorder.onStart(executionId)
+      WorkflowMetricsRecorder.onStart(executionId)
       val execution = storedRun(context, executionStateStore, errorHandler)
       built = Some(execution)
       logger.info(
         s"Execution ${executionId.id} of workflow ${workflowId.id} starts on computing unit " +
-          s"${start.cuid} from its plan at ${start.planUri}, as asked at " +
-          s"${StoredExecutionStart.withoutSecrets(sessionUri)}."
+          s"${start.record.computingUnitId} from its plan at ${start.planUri}."
       )
       supersedeCurrentRun()
       // Kept with the run, so the clean-up stops following it once the run is let go of.

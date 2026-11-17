@@ -436,9 +436,6 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     StoredExecutionStart.withoutSecrets(
       new URI(s"wss://texera.example/wsapi/workflow-websocket?access-token=$token#$token")
     ) shouldBe new URI("wss://texera.example/wsapi/workflow-websocket")
-    // The agent's runs name their workflow where a host would be.
-    StoredExecutionStart.withoutSecrets(new URI("sync-execution://12")) shouldBe
-      new URI("sync-execution://12")
     // Escapes in the path stay as they were.
     StoredExecutionStart.withoutSecrets(new URI("ws://[::1]:8080/a%20b?x=1")) shouldBe
       new URI("ws://[::1]:8080/a%20b")
@@ -505,19 +502,19 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       refusals.foreach {
         case (uri, why) =>
           withClue(s"$uri: ") {
-            service.startStoredExecution(eid, uri, user(uid), cuid, new URI("ws://unit")) shouldBe
+            service.startStoredExecution(eid, uri, user(uid), cuid) shouldBe
               Left(why)
           }
       }
       // and a start with no user, however good its URI
-      service.startStoredExecution(eid, planUri(), user(null), cuid, new URI("ws://unit")) shouldBe
+      service.startStoredExecution(eid, planUri(), user(null), cuid) shouldBe
         Left("a signed-in user is required to start an execution")
-      service.startStoredExecution(eid, planUri(), null, cuid, new URI("ws://unit")) shouldBe
+      service.startStoredExecution(eid, planUri(), null, cuid) shouldBe
         Left("a signed-in user is required to start an execution")
       catalog.calls.get() shouldBe 0
 
       // The control: a URI that passes is looked up, and has no table here.
-      service.startStoredExecution(eid, planUri(), user(uid), cuid, new URI("ws://unit")) shouldBe
+      service.startStoredExecution(eid, planUri(), user(uid), cuid) shouldBe
         Left(s"execution $eid has no stored plan")
       catalog.calls.get() should be > 0
     }

@@ -28,7 +28,7 @@ import org.apache.texera.amber.core.storage.{
   RepositoryMountManager
 }
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, PhysicalOpIdentity}
-import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
+import org.apache.texera.amber.core.workflow.{OperatorUpdate, PhysicalOp, PhysicalPlanCodec}
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   UpdateExecutorRequest,
@@ -93,70 +93,103 @@ class ExecutionReconfigurationService(
     * @return valid, naming the logical operator that changes; or invalid, saying why the change is
     *         refused, naming the operator once the change is read
     */
-  def applyStoredUpdate(updateId: String, requester: Option[Int]): ModifyLogicResponse = {
-    val executionId = workflow.context.executionId.id
-    def refuse(operator: String, why: String): ModifyLogicResponse =
-      ModifyLogicResponse(operator, isValid = false, why)
+  def applyStoredUpdate(updateId: String, requester: Option[Int]): ModifyLogicResponse =
+    storedUpdate(updateId, requester) match {
+      case Left(why) => ModifyLogicResponse("", isValid = false, why)
+      case Right(update) =>
+        val operator = update.opId.logicalOpId.id
+        changedBy(update, updateId) match {
+          case Left(why) => ModifyLogicResponse(operator, isValid = false, why)
+          case Right(changed) =>
+            stateStore.reconfigurationStore.updateState(old =>
+              old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
+            )
+            logger.info(
+              s"Queued $updateId, a change to operator ${show(update.opId)} of execution " +
+                s"$executionId."
+            )
+            ModifyLogicResponse(operator, isValid = true, "")
+        }
+    }
+
+  private def executionId: Long = workflow.context.executionId.id
+
+  /**
+    * The change stored as `updateId`, read for `requester`, in this order: only the execution's
+    * creator may ask, then the update row is read, and must be one the creator stored, in the
+    * format this unit reads.
+    *
+    * @return why the change is refused (Left), or the change (Right)
+    */
+  private def storedUpdate(
+      updateId: String,
+      requester: Option[Int]
+  ): Either[String, OperatorUpdate] = {
     val onlyTheCreator =
       s"only the user who created execution $executionId may change its operators"
-    if (!requester.contains(creator)) {
-      return refuse("", onlyTheCreator)
-    }
-    if (updateId == null || updateId.isBlank) {
-      return refuse("", "the request names no change to apply")
-    }
+    for {
+      _ <- Either.cond(requester.contains(creator), (), onlyTheCreator)
+      _ <- Either.cond(
+        updateId != null && !updateId.isBlank,
+        (),
+        "the request names no change to apply"
+      )
+      record <- updateRow(updateId)
+      _ <- Either.cond(record.createdBy == creator, (), onlyTheCreator)
+      update <-
+        try Right(PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(record.body)))
+        catch { case refused: IllegalArgumentException => Left(refused.getMessage) }
+    } yield update
+  }
+
+  /** The update row stored as `updateId`, or why it cannot be had. */
+  private def updateRow(updateId: String): Either[String, PlanRecord] =
     // An update row: the store finds no other kind under an update's id.
-    val record =
-      try readUpdate(planUri, updateId)
-      catch {
-        case _: NoSuchUpdateException =>
-          return refuse("", s"execution $executionId has no change $updateId")
-        case _: NoStoredPlanException =>
-          return refuse("", s"execution $executionId has no stored plan")
-        case NonFatal(failure) =>
-          logger.warn(s"Change $updateId of execution $executionId could not be read.", failure)
-          return refuse("", s"change $updateId of execution $executionId could not be read")
-      }
-    if (record.createdBy != creator) {
-      return refuse("", onlyTheCreator)
+    try Right(readUpdate(planUri, updateId))
+    catch {
+      case _: NoSuchUpdateException => Left(s"execution $executionId has no change $updateId")
+      case _: NoStoredPlanException => Left(s"execution $executionId has no stored plan")
+      case NonFatal(failure) =>
+        logger.warn(s"Change $updateId of execution $executionId could not be read.", failure)
+        Left(s"change $updateId of execution $executionId could not be read")
     }
-    val update =
-      try PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(record.body))
-      catch { case refused: IllegalArgumentException => return refuse("", refused.getMessage) }
-    val operator = update.opId.logicalOpId.id
-    if (update.executionId.id != executionId) {
-      return refuse(
-        operator,
+
+  /**
+    * The running operator as `update`, stored as `updateId`, changes it: the change must be this
+    * execution's, stored under the id it names itself, of an operator the running plan has, and
+    * read nothing this unit cannot mount.
+    *
+    * @return why the change is refused (Left), or the changed operator (Right)
+    */
+  private def changedBy(update: OperatorUpdate, updateId: String): Either[String, PhysicalOp] =
+    for {
+      _ <- Either.cond(
+        update.executionId.id == executionId,
+        (),
         s"the change is execution ${update.executionId.id}'s, not $executionId's"
       )
-    }
-    if (update.updateId != updateId) {
-      return refuse(operator, s"the change stored as $updateId names itself ${update.updateId}")
-    }
-    workflow.physicalPlan.operators.find(_.id == update.opId) match {
-      case None => refuse(operator, s"operator ${show(update.opId)} is not in the running plan")
-      case Some(running) =>
-        val stored = running.copy(
-          opExecInitInfo = update.opExecInitInfo,
-          repositoryMounts = update.repositoryMounts
-        )
-        // A change that reads what this unit cannot mount is refused here, rather than failing
-        // the run on resume.
-        val changed =
-          try UdfRepositoryDirectories.mountedUnder(mountRoot)(stored)
-          catch {
-            case refused @ (_: IllegalStateException | _: IllegalArgumentException) =>
-              return refuse(operator, refused.getMessage)
-          }
-        stateStore.reconfigurationStore.updateState(old =>
-          old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
-        )
-        logger.info(
-          s"Queued $updateId, a change to operator ${show(update.opId)} of execution $executionId."
-        )
-        ModifyLogicResponse(operator, isValid = true, "")
-    }
-  }
+      _ <- Either.cond(
+        update.updateId == updateId,
+        (),
+        s"the change stored as $updateId names itself ${update.updateId}"
+      )
+      running <-
+        workflow.physicalPlan.operators
+          .find(_.id == update.opId)
+          .toRight(s"operator ${show(update.opId)} is not in the running plan")
+      stored = running.copy(
+        opExecInitInfo = update.opExecInitInfo,
+        repositoryMounts = update.repositoryMounts
+      )
+      // A change that reads what this unit cannot mount is refused here, rather than failing
+      // the run on resume.
+      changed <-
+        try Right(UdfRepositoryDirectories.mountedUnder(mountRoot)(stored))
+        catch {
+          case refused @ (_: IllegalStateException | _: IllegalArgumentException) =>
+            Left(refused.getMessage)
+        }
+    } yield changed
 
   // Reads a stored change. A seam, so a test can make the read fail.
   protected def readUpdate(planUri: URI, updateId: String): PlanRecord =

@@ -215,17 +215,19 @@ class ExecutionConsoleService(
       case ExecutionStateUpdate(state: WorkflowAggregatedState.Recognized)
           if Set(COMPLETED, FAILED, KILLED).contains(state) =>
         logger.info("Workflow execution terminated. Commit console messages.")
-        consoleMessageOpIdToWriterMap.values.foreach { writer =>
-          try {
-            writer.close()
-          } catch {
-            case e: Exception =>
-              logger.error("Failed to close console message writer", e)
-          }
-        }
+        closeWriters()
       case _ =>
     }
   )
+
+  // Closing a writer commits the messages it holds.
+  private def closeWriters(): Unit =
+    consoleMessageOpIdToWriterMap.values.foreach { writer =>
+      try writer.close()
+      catch {
+        case e: Exception => logger.error("Failed to close console message writer", e)
+      }
+    }
 
   /**
     * Adds a message of the computing unit's own to the console of operator `operatorId`: what the
@@ -259,24 +261,12 @@ class ExecutionConsoleService(
     */
   def commitMessages(): Unit =
     consoleWriterThread.execute(() => {
-      consoleMessageOpIdToWriterMap.values.foreach { writer =>
-        try writer.close()
-        catch {
-          case e: Exception => logger.error("Failed to close console message writer", e)
-        }
-      }
+      closeWriters()
       consoleMessageOpIdToWriterMap.clear()
     })
 
   override def unsubscribeAll(): Unit = {
-    consoleMessageOpIdToWriterMap.values.foreach { writer =>
-      try {
-        writer.close()
-      } catch {
-        case e: Exception =>
-          logger.error("Failed to close console message writer during unsubscribeAll", e)
-      }
-    }
+    closeWriters()
     consoleMessageOpIdToWriterMap.clear()
 
     super.unsubscribeAll()

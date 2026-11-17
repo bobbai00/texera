@@ -372,13 +372,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     try {
       val statements = recorder.record {
         service
-          .startStoredExecution(
-            execution.eid,
-            new URI(execution.planUri),
-            creator,
-            unitCuid,
-            new URI("ws://texera.example/wsapi/workflow-websocket")
-          )
+          .startStoredExecution(execution.eid, new URI(execution.planUri), creator, unitCuid)
           .left
           .foreach(why => fail(s"the start was refused: $why"))
         Await.result(session.ended, 3.minutes)

@@ -195,9 +195,9 @@ object StoredExecutionStart {
   }
 
   /**
-    * `uri` without the parts that can carry a secret, for a log line or a refusal: its user
-    * info, query and fragment. A socket's URI carries the user's access token in its query. A
-    * URI that is not a hierarchical one, which may be a secret whole, is the empty URI.
+    * `uri` without the parts that can carry a secret, for a refusal: its user info, query and
+    * fragment. A URI that is not a hierarchical one, which may be a secret whole, is the empty
+    * URI.
     */
   def withoutSecrets(uri: URI): URI =
     Option(uri)

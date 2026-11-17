@@ -566,8 +566,6 @@ class WorkflowServiceSpec
     held
   }
 
-  private val startUri = new URI("ws://texera.example/wsapi/workflow-websocket")
-
   /**
     * Runs `body` and answers what it gave, with the lines the loggers under `name` wrote
     * meanwhile, every level, from any thread, each with the message of what it logged as its
@@ -826,21 +824,18 @@ class WorkflowServiceSpec
     val held = holdRunningRun(service, heldStoredEid)
     val heldEvents = collectExecutionEvents(held)
     heldEvents.clear()
-    // Asked with a URI that carries a secret, as a socket's does in its query.
-    val askedAt = new URI(s"$startUri?wid=$testWid&access-token=secret-token#also-secret")
 
     val (started, logged) = linesLoggedBy("org.apache.texera.web") {
       service
-        .startStoredExecution(startedEid, planUri, executingUser, storedCuid, askedAt)
+        .startStoredExecution(startedEid, planUri, executingUser, storedCuid)
         .getOrElse(fail("the start was refused"))
     }
 
-    // The start is logged, where it was asked without what can carry a secret.
+    // The start is logged, with the unit asked and the plan it starts from.
     logged.filter(_.contains(s"Execution $startedEid of workflow $testWid starts")) shouldBe Seq(
       s"Execution $startedEid of workflow $testWid starts on computing unit $storedCuid from its " +
-        s"plan at $planUri, as asked at $startUri."
+        s"plan at $planUri."
     )
-    logged.filter(line => line.contains("secret")) shouldBe empty
     // Claimed for its one start, in its plan table.
     ExecutionPlanStore.isStarted(planUri) shouldBe true
     // The run it held reads Killed, in its store and its row, and no session was told of it.
@@ -867,13 +862,7 @@ class WorkflowServiceSpec
     // A second start of it is refused, however it comes, writing nothing and leaving the run
     // started as it is.
     val again = recorder.record {
-      service.startStoredExecution(
-        startedEid,
-        planUri,
-        executingUser,
-        storedCuid,
-        startUri
-      ) shouldBe
+      service.startStoredExecution(startedEid, planUri, executingUser, storedCuid) shouldBe
         Left(s"execution $startedEid was already started")
     }
     again shouldBe empty
@@ -900,8 +889,7 @@ class WorkflowServiceSpec
       case (user, cuid, why) =>
         withClue(s"$why: ") {
           val statements = recorder.record {
-            service.startStoredExecution(refusedEid, planUri, user, cuid, startUri) shouldBe
-              Left(why)
+            service.startStoredExecution(refusedEid, planUri, user, cuid) shouldBe Left(why)
           }
           statements shouldBe empty
         }
@@ -912,8 +900,7 @@ class WorkflowServiceSpec
         heldStoredEid,
         planUriOf(heldStoredEid),
         executingUser,
-        storedCuid,
-        startUri
+        storedCuid
       ) shouldBe Left(s"execution $heldStoredEid has no stored plan")
     } shouldBe empty
     // A start checked for another workflow, which the agent's path would have asked another
@@ -924,8 +911,7 @@ class WorkflowServiceSpec
     checked.workflowId shouldBe WorkflowIdentity(testWid.toLong)
     recorder.record {
       service.startChecked(
-        checked.copy(workflowId = WorkflowIdentity(testWid.toLong + 1)),
-        startUri
+        checked.copy(workflowId = WorkflowIdentity(testWid.toLong + 1))
       ) shouldBe Left(s"the plan belongs to workflow ${testWid + 1}, not to this one")
     } shouldBe empty
 
@@ -941,7 +927,7 @@ class WorkflowServiceSpec
     def refusalOf(service: StoredStartService): Either[String, WorkflowExecutionService] = {
       val held = holdRunningRun(service, heldStoredEid)
       val answer =
-        service.startStoredExecution(unclaimedEid, planUri, executingUser, storedCuid, startUri)
+        service.startStoredExecution(unclaimedEid, planUri, executingUser, storedCuid)
       service.executionService.getValue should be theSameInstanceAs held
       held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
       service.started shouldBe empty
@@ -990,7 +976,7 @@ class WorkflowServiceSpec
 
     val before = System.currentTimeMillis()
     val failed = service
-      .startStoredExecution(failedEid, planUri, executingUser, storedCuid, startUri)
+      .startStoredExecution(failedEid, planUri, executingUser, storedCuid)
       .getOrElse(fail("the start was refused"))
     val after = System.currentTimeMillis()
 
@@ -1024,7 +1010,7 @@ class WorkflowServiceSpec
     )
 
     val failed = service
-      .startStoredExecution(failedByWorkerEid, planUri, executingUser, storedCuid, startUri)
+      .startStoredExecution(failedByWorkerEid, planUri, executingUser, storedCuid)
       .getOrElse(fail("the start was refused"))
 
     val errors = failed.executionStateStore.metadataStore.getState.fatalErrors
@@ -1041,7 +1027,7 @@ class WorkflowServiceSpec
     service.computingUnitId shouldBe testCuid
 
     val (answer, logged) = linesLoggedBy("org.apache.texera.web") {
-      service.startStoredExecution(askedUnitEid, planUri, executingUser, storedCuid, startUri)
+      service.startStoredExecution(askedUnitEid, planUri, executingUser, storedCuid)
     }
 
     // The plan row was made for the unit asked, so the start is not refused for the service's.
@@ -1061,7 +1047,7 @@ class WorkflowServiceSpec
     val held = holdRunningRun(service, heldStoredEid)
 
     val failed = service
-      .startStoredExecution(unpublishedEid, planUri, executingUser, storedCuid, startUri)
+      .startStoredExecution(unpublishedEid, planUri, executingUser, storedCuid)
       .getOrElse(fail("the start was refused"))
 
     // Claimed, so never to start: published FAILED in the held run's place, with the reason,
@@ -1087,7 +1073,7 @@ class WorkflowServiceSpec
       new StoredStartService(buildFailure = Some(new IllegalStateException("cannot build")))
     val held = holdRunningRun(service, heldStoredEid)
 
-    service.startStoredExecution(unbuiltEid, planUri, executingUser, storedCuid, startUri) shouldBe
+    service.startStoredExecution(unbuiltEid, planUri, executingUser, storedCuid) shouldBe
       Left(
         s"execution $unbuiltEid could not be started, because of an error on this computing unit"
       )
@@ -1108,26 +1094,14 @@ class WorkflowServiceSpec
         case (store, state) if store eq run.executionStateStore => state
       }.toSeq
     val first = service
-      .startStoredExecution(
-        followedEid,
-        storePlanOf(followedEid),
-        executingUser,
-        storedCuid,
-        startUri
-      )
+      .startStoredExecution(followedEid, storePlanOf(followedEid), executingUser, storedCuid)
       .getOrElse(fail("the start was refused"))
     // As though its engine had started, so that the next run kills it.
     first.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
     statesFollowed(first).last shouldBe RUNNING
 
     val second = service
-      .startStoredExecution(
-        followingEid,
-        storePlanOf(followingEid),
-        executingUser,
-        storedCuid,
-        startUri
-      )
+      .startStoredExecution(followingEid, storePlanOf(followingEid), executingUser, storedCuid)
       .getOrElse(fail("the start was refused"))
 
     // Killed, but the kill did not reach the clean-up: on a workflow no session has open, it
@@ -1154,7 +1128,7 @@ class WorkflowServiceSpec
     implicit val onThreads: ExecutionContext = ExecutionContext.fromExecutorService(threads)
     try {
       val setUp = Future(
-        service.startStoredExecution(setUpEid, planUri, executingUser, storedCuid, startUri)
+        service.startStoredExecution(setUpEid, planUri, executingUser, storedCuid)
       )
       starting.await(60, TimeUnit.SECONDS) shouldBe true
       // The run is published by now, and still being set up.

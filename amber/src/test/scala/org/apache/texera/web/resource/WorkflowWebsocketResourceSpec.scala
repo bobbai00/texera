@@ -1076,18 +1076,17 @@ class WorkflowWebsocketResourceSpec
     /** The workflow each run's engine was handed. */
     val engines: ArrayBuffer[EngineWorkflow] = ArrayBuffer.empty
 
-    /** The unit and the URI each start by id was asked with. */
-    val asked: ArrayBuffer[(Int, URI)] = ArrayBuffer.empty
+    /** The unit each start by id was asked with. */
+    val asked: ArrayBuffer[Int] = ArrayBuffer.empty
 
     override def startStoredExecution(
         executionId: Long,
         planUri: URI,
         user: User,
-        cuid: Int,
-        sessionUri: URI
+        cuid: Int
     ): Either[String, WorkflowExecutionService] = {
-      asked += ((cuid, sessionUri))
-      super.startStoredExecution(executionId, planUri, user, cuid, sessionUri)
+      asked += cuid
+      super.startStoredExecution(executionId, planUri, user, cuid)
     }
 
     override protected def storedRun(
@@ -1229,12 +1228,12 @@ class WorkflowWebsocketResourceSpec
       stateEvents(sent) shouldBe Seq(("Initializing", Some(execution.eid)))
       stateEvents(otherSent) shouldBe Seq(("Initializing", Some(execution.eid)))
       fatalErrorMessages(sent) shouldBe empty
-      // The start was asked with the socket's unit, and with the socket's URI without its query,
-      // which holds the user's access token: no line logged names the token.
-      service.asked shouldBe Seq(
-        (storedCuid, new URI("ws://localhost:8085/wsapi/workflow-websocket"))
-      )
-      val startLine = s"Execution ${execution.eid} of workflow $storedWid starts"
+      // The start was asked with the socket's unit. The socket's URI holds the user's access
+      // token in its query: no line logged names the token.
+      service.asked shouldBe Seq(storedCuid)
+      logLines.count(_.contains(s"Asked to start execution ${execution.eid}.")) shouldBe 1
+      val startLine =
+        s"Execution ${execution.eid} of workflow $storedWid starts on computing unit $storedCuid"
       logLines.count(_.contains(startLine)) shouldBe 1
       logLines.filter(_.contains(accessToken)) shouldBe empty
       logLines.filter(_.contains("access-token")) shouldBe empty

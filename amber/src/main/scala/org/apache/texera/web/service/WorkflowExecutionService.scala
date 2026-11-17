@@ -157,9 +157,6 @@ class WorkflowExecutionService(
   }
 
   var workflow: Workflow = _
-
-  // Runtime starts from here:
-  logger.info("Initialing an AmberClient, runtime starting...")
   var client: AmberClient = _
   var executionReconfigurationService: ExecutionReconfigurationService = _
   var executionStatsService: ExecutionStatsService = _

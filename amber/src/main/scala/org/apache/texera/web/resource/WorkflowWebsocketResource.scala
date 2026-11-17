@@ -152,7 +152,7 @@ class WorkflowWebsocketResource extends LazyLogging {
       case _ if sender.getUserComputingUnitAccess != PrivilegeEnum.WRITE =>
         Some("you do not have write access to the computing unit")
       case start: WorkflowStartRequest =>
-        startStoredExecution(session, sender, workflow, user, start)
+        startStoredExecution(sender, workflow, user, start)
       case update: OperatorUpdateRequest =>
         applyStoredUpdate(sender, run, user, update)
       case command =>
@@ -175,28 +175,20 @@ class WorkflowWebsocketResource extends LazyLogging {
     * @return why the start is refused, if it is
     */
   private def startStoredExecution(
-      session: Session,
       sender: SessionState,
       workflow: Option[WorkflowService],
       user: Option[User],
       start: WorkflowStartRequest
   ): Option[String] =
     try {
+      logger.info(s"Asked to start execution ${start.executionId}.")
       val started = for {
         user <- user.toRight("a signed-in user is required to start an execution")
         workflow <- workflow.toRight("workflow is not initialized")
         // Set with the socket's workflow: a socket with a workflow has its unit.
         cuid <- sender.getComputingUnitId.toRight("workflow is not initialized")
         planUri <- StoredExecutionStart.planUriOf(start.planUri)
-        execution <- workflow.startStoredExecution(
-          start.executionId,
-          planUri,
-          user,
-          cuid,
-          // The socket's URI carries the user's access token in its query: only the rest of it
-          // goes on, to the run's log lines.
-          StoredExecutionStart.withoutSecrets(session.getRequestURI)
-        )
+        execution <- workflow.startStoredExecution(start.executionId, planUri, user, cuid)
       } yield execution
       started.left.toOption
     } catch {

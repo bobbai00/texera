@@ -51,7 +51,7 @@ import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
-import org.apache.texera.web.service.WorkflowService
+import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
@@ -158,6 +158,7 @@ class SyncExecutionResource extends LazyLogging {
       @Auth user: SessionUser
   ): SyncExecutionResult = {
     if (request == null) return errorResult("The request has no body.")
+    logger.info(s"Asked to run execution $executionId.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
     try {
       val started = for {
@@ -169,8 +170,8 @@ class SyncExecutionResource extends LazyLogging {
           request.computingUnitId,
           socketWorkflowId = None
         )
-        execution <- workflowServiceOf(checked.workflowId, request.computingUnitId)
-          .startChecked(checked, new URI(s"sync-execution://${checked.workflowId.id}"))
+        execution <-
+          workflowServiceOf(checked.workflowId, request.computingUnitId).startChecked(checked)
       } yield execution
       started match {
         case Left(message) =>
@@ -210,7 +211,7 @@ class SyncExecutionResource extends LazyLogging {
     * before it built its plan, which has ended already.
     */
   private def expectedExternalInputsOf(
-      execution: org.apache.texera.web.service.WorkflowExecutionService,
+      execution: WorkflowExecutionService,
       targets: List[String]
   ): Map[String, Int] =
     Option(execution.workflow).fold(Map.empty[String, Int]) { workflow =>
@@ -231,7 +232,7 @@ class SyncExecutionResource extends LazyLogging {
     * operator to log an error, at most `timeoutSeconds`; then answers what the run produced.
     */
   private def awaitResults(
-      executionService: org.apache.texera.web.service.WorkflowExecutionService,
+      executionService: WorkflowExecutionService,
       targetOperatorIds: List[String],
       targetExpectedExternalInputs: Map[String, Int],
       timeoutSeconds: Int,
@@ -379,7 +380,7 @@ class SyncExecutionResource extends LazyLogging {
   }
 
   private def killExecution(
-      executionService: org.apache.texera.web.service.WorkflowExecutionService
+      executionService: WorkflowExecutionService
   ): Unit = {
     try {
       if (executionService.client != null) {
@@ -399,7 +400,7 @@ class SyncExecutionResource extends LazyLogging {
 
   private def collectOperatorInfos(
       executionId: ExecutionIdentity,
-      executionService: org.apache.texera.web.service.WorkflowExecutionService,
+      executionService: WorkflowExecutionService,
       targetOperatorIds: List[String],
       maxOperatorResultCharLimit: Int,
       maxOperatorResultCellCharLimit: Int,
