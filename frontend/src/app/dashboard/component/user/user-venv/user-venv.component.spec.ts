@@ -30,20 +30,20 @@ import { BehaviorSubject, of, throwError } from "rxjs";
 import { UserVenvComponent } from "./user-venv.component";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import {
-  UserPveRecord,
-  WorkflowPveService,
-} from "../../../../workspace/service/virtual-environment/virtual-environment.service";
+  PythonEnvironment,
+  PythonEnvironmentService,
+} from "../../../../workspace/service/python-environment/python-environment.service";
 import { commonTestProviders } from "../../../../common/testing/test-utils";
 
 describe("UserVenvComponent", () => {
   let component: UserVenvComponent;
   let fixture: ComponentFixture<UserVenvComponent>;
 
-  let pveServiceSpy: {
-    listUserPves: ReturnType<typeof vi.fn>;
-    savePve: ReturnType<typeof vi.fn>;
-    updateUserPve: ReturnType<typeof vi.fn>;
-    deleteUserPve: ReturnType<typeof vi.fn>;
+  let environmentServiceSpy: {
+    list: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   let notificationSpy: {
     error: ReturnType<typeof vi.fn>;
@@ -56,18 +56,18 @@ describe("UserVenvComponent", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   /** A row as the Dashboard answers a save with it: the environment as stored. */
-  const storedRow = (veid: number, name: string, packages: Record<string, string> = {}): UserPveRecord => ({
+  const storedRow = (veid: number, name: string, packages: Record<string, string> = {}): PythonEnvironment => ({
     veid,
     name,
     packages,
   });
 
   beforeEach(async () => {
-    pveServiceSpy = {
-      listUserPves: vi.fn().mockReturnValue(of([])),
-      savePve: vi.fn().mockReturnValue(of(storedRow(1, "env"))),
-      updateUserPve: vi.fn().mockReturnValue(of(storedRow(1, "env"))),
-      deleteUserPve: vi.fn().mockReturnValue(of(undefined)),
+    environmentServiceSpy = {
+      list: vi.fn().mockReturnValue(of([])),
+      create: vi.fn().mockReturnValue(of(storedRow(1, "env"))),
+      update: vi.fn().mockReturnValue(of(storedRow(1, "env"))),
+      delete: vi.fn().mockReturnValue(of(undefined)),
     };
     notificationSpy = {
       error: vi.fn(),
@@ -85,7 +85,7 @@ describe("UserVenvComponent", () => {
       ],
       providers: [
         NzModalService,
-        { provide: WorkflowPveService, useValue: pveServiceSpy as unknown as WorkflowPveService },
+        { provide: PythonEnvironmentService, useValue: environmentServiceSpy as unknown as PythonEnvironmentService },
         { provide: NotificationService, useValue: notificationSpy as unknown as NotificationService },
         ...commonTestProviders,
       ],
@@ -116,18 +116,18 @@ describe("UserVenvComponent", () => {
 
   describe("ngOnInit / refreshPves", () => {
     it("maps records to drafts, parsing every version-op form, and renders the list", () => {
-      const records: UserPveRecord[] = [
+      const records: PythonEnvironment[] = [
         {
           veid: 1,
           name: "envA",
           packages: { numpy: "==1.2", pandas: ">=2.0", scipy: "<=3.1", bare: "1.5", empty: "" },
         },
       ];
-      pveServiceSpy.listUserPves.mockReturnValue(of(records));
+      environmentServiceSpy.list.mockReturnValue(of(records));
 
       fixture.detectChanges(); // triggers ngOnInit -> refreshPves
 
-      expect(pveServiceSpy.listUserPves).toHaveBeenCalledTimes(1);
+      expect(environmentServiceSpy.list).toHaveBeenCalledTimes(1);
       expect(component.pves.length).toBe(1);
 
       const rows = component.pves[0].newPackages;
@@ -147,7 +147,7 @@ describe("UserVenvComponent", () => {
     });
 
     it("logs and notifies on the error path, leaving the list empty", () => {
-      pveServiceSpy.listUserPves.mockReturnValue(throwError(() => new Error("boom")));
+      environmentServiceSpy.list.mockReturnValue(throwError(() => new Error("boom")));
 
       fixture.detectChanges(); // triggers ngOnInit -> refreshPves error
 
@@ -157,7 +157,7 @@ describe("UserVenvComponent", () => {
     });
 
     it("treats a record with no packages as an empty package list", () => {
-      pveServiceSpy.listUserPves.mockReturnValue(of([{ veid: 1, name: "envA" } as UserPveRecord]));
+      environmentServiceSpy.list.mockReturnValue(of([{ veid: 1, name: "envA" } as PythonEnvironment]));
 
       fixture.detectChanges();
 
@@ -167,8 +167,8 @@ describe("UserVenvComponent", () => {
     it("falls back to an empty version when the stored value is nullish", () => {
       // distinct from the `empty: ""` case above: "" is not nullish, so only a null
       // value reaches the `?? ""` arm
-      pveServiceSpy.listUserPves.mockReturnValue(
-        of([{ veid: 1, name: "envA", packages: { ghost: null } } as unknown as UserPveRecord])
+      environmentServiceSpy.list.mockReturnValue(
+        of([{ veid: 1, name: "envA", packages: { ghost: null } } as unknown as PythonEnvironment])
       );
 
       fixture.detectChanges();
@@ -252,8 +252,8 @@ describe("UserVenvComponent", () => {
       component.currentDraft = { name: "   ", newPackages: [] };
       component.saveEnvironment();
       expect(notificationSpy.error).toHaveBeenCalledWith("Environment name is required.");
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
-      expect(pveServiceSpy.updateUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.update).not.toHaveBeenCalled();
       expect(component.saving).toBe(false);
     });
 
@@ -267,7 +267,7 @@ describe("UserVenvComponent", () => {
           "Environment name must start with a letter or digit and contain only letters, digits, '.', '_' and '-', at most 128 characters."
         );
       }
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
       expect(component.saving).toBe(false);
     });
 
@@ -276,9 +276,9 @@ describe("UserVenvComponent", () => {
       for (const name of names) {
         component.currentDraft = { name, newPackages: [] };
         component.saveEnvironment();
-        expect(pveServiceSpy.savePve).toHaveBeenLastCalledWith(name, {});
+        expect(environmentServiceSpy.create).toHaveBeenLastCalledWith(name, {});
       }
-      expect(pveServiceSpy.savePve).toHaveBeenCalledTimes(names.length);
+      expect(environmentServiceSpy.create).toHaveBeenCalledTimes(names.length);
       expect(notificationSpy.error).not.toHaveBeenCalled();
     });
 
@@ -287,7 +287,7 @@ describe("UserVenvComponent", () => {
       component.currentDraft = { name: "foo", newPackages: [] };
       component.saveEnvironment();
       expect(notificationSpy.error).toHaveBeenCalledWith('An environment named "foo" already exists.');
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
     });
 
     it("rejects a draft with duplicate package names", () => {
@@ -300,7 +300,7 @@ describe("UserVenvComponent", () => {
       };
       component.saveEnvironment();
       expect(notificationSpy.error).toHaveBeenCalledWith('Duplicate package "x".');
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
     });
 
     it("creates a new environment: formats versions, skips blank rows, then succeeds", () => {
@@ -314,20 +314,20 @@ describe("UserVenvComponent", () => {
         ],
       };
       component.pveModalVisible = true;
-      pveServiceSpy.savePve.mockReturnValue(of(storedRow(5, "envNew", { a: ">=1.0", b: "", c: "" })));
-      pveServiceSpy.listUserPves.mockReturnValue(of([]));
+      environmentServiceSpy.create.mockReturnValue(of(storedRow(5, "envNew", { a: ">=1.0", b: "", c: "" })));
+      environmentServiceSpy.list.mockReturnValue(of([]));
 
       component.saveEnvironment();
 
       // blank-name row skipped, empty/whitespace versions -> "",
       // non-empty version formatted as "<op><version>"
-      expect(pveServiceSpy.savePve).toHaveBeenCalledWith("envNew", { a: ">=1.0", b: "", c: "" });
-      expect(pveServiceSpy.updateUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).toHaveBeenCalledWith("envNew", { a: ">=1.0", b: "", c: "" });
+      expect(environmentServiceSpy.update).not.toHaveBeenCalled();
       expect(notificationSpy.success).toHaveBeenCalledWith('Saved environment "envNew".');
       expect(component.saving).toBe(false);
       expect(component.currentDraft).toBeNull();
       expect(component.pveModalVisible).toBe(false);
-      expect(pveServiceSpy.listUserPves).toHaveBeenCalledTimes(1); // refresh after save
+      expect(environmentServiceSpy.list).toHaveBeenCalledTimes(1); // refresh after save
     });
 
     it("treats a row whose version is nullish as an empty version", () => {
@@ -335,12 +335,12 @@ describe("UserVenvComponent", () => {
         name: "envNull",
         newPackages: [{ name: "a", versionOp: ">=", version: null as unknown as string }],
       };
-      pveServiceSpy.savePve.mockReturnValue(of(storedRow(6, "envNull", { a: "" })));
-      pveServiceSpy.listUserPves.mockReturnValue(of([]));
+      environmentServiceSpy.create.mockReturnValue(of(storedRow(6, "envNull", { a: "" })));
+      environmentServiceSpy.list.mockReturnValue(of([]));
 
       component.saveEnvironment();
 
-      expect(pveServiceSpy.savePve).toHaveBeenCalledWith("envNull", { a: "" });
+      expect(environmentServiceSpy.create).toHaveBeenCalledWith("envNull", { a: "" });
     });
 
     it("updates an existing environment when the draft carries a veid", () => {
@@ -350,14 +350,14 @@ describe("UserVenvComponent", () => {
         name: "envU",
         newPackages: [{ name: "numpy", versionOp: "==", version: "1.2" }],
       };
-      pveServiceSpy.updateUserPve.mockReturnValue(of(storedRow(7, "envU", { numpy: "==1.2" })));
-      pveServiceSpy.listUserPves.mockReturnValue(of([]));
+      environmentServiceSpy.update.mockReturnValue(of(storedRow(7, "envU", { numpy: "==1.2" })));
+      environmentServiceSpy.list.mockReturnValue(of([]));
 
       component.saveEnvironment();
 
       // same name on the same veid is not treated as a conflict
-      expect(pveServiceSpy.updateUserPve).toHaveBeenCalledWith(7, "envU", { numpy: "==1.2" });
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.update).toHaveBeenCalledWith(7, "envU", { numpy: "==1.2" });
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
       expect(notificationSpy.success).toHaveBeenCalledWith('Saved environment "envU".');
       expect(component.currentDraft).toBeNull();
     });
@@ -365,7 +365,7 @@ describe("UserVenvComponent", () => {
     it("handles the save error path: stops the spinner, notifies, keeps the modal open", () => {
       component.currentDraft = { name: "envErr", newPackages: [] };
       component.pveModalVisible = true;
-      pveServiceSpy.savePve.mockReturnValue(throwError(() => new Error("nope")));
+      environmentServiceSpy.create.mockReturnValue(throwError(() => new Error("nope")));
 
       component.saveEnvironment();
 
@@ -379,8 +379,8 @@ describe("UserVenvComponent", () => {
     it("is a no-op when there is no draft", () => {
       component.currentDraft = null;
       component.saveEnvironment();
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
-      expect(pveServiceSpy.updateUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.update).not.toHaveBeenCalled();
       expect(component.saving).toBe(false);
     });
 
@@ -395,7 +395,7 @@ describe("UserVenvComponent", () => {
         newPackages: [{ name: "pkg[extra]", versionOp: "==", version: "" }],
       };
       component.pveModalVisible = true;
-      pveServiceSpy.savePve.mockReturnValue(throwError(() => refusal(400, message)));
+      environmentServiceSpy.create.mockReturnValue(throwError(() => refusal(400, message)));
 
       component.saveEnvironment();
 
@@ -415,7 +415,7 @@ describe("UserVenvComponent", () => {
       ] as const) {
         notificationSpy.error.mockClear();
         component.currentDraft = { veid: 7, name: "envU", newPackages: [] };
-        pveServiceSpy.updateUserPve.mockReturnValue(throwError(() => refusal(status, message)));
+        environmentServiceSpy.update.mockReturnValue(throwError(() => refusal(status, message)));
 
         component.saveEnvironment();
 
@@ -434,7 +434,7 @@ describe("UserVenvComponent", () => {
       for (const failure of failures) {
         notificationSpy.error.mockClear();
         component.currentDraft = { name: "envErr", newPackages: [] };
-        pveServiceSpy.savePve.mockReturnValue(throwError(() => failure));
+        environmentServiceSpy.create.mockReturnValue(throwError(() => failure));
 
         component.saveEnvironment();
 
@@ -446,8 +446,8 @@ describe("UserVenvComponent", () => {
   describe("confirmDeletePve", () => {
     it("builds a danger confirm config whose nzOnOk deletes the environment", () => {
       component.pves = [{ veid: 3, name: "foo", newPackages: [] }];
-      pveServiceSpy.deleteUserPve.mockReturnValue(of(undefined));
-      pveServiceSpy.listUserPves.mockReturnValue(of([]));
+      environmentServiceSpy.delete.mockReturnValue(of(undefined));
+      environmentServiceSpy.list.mockReturnValue(of([]));
 
       component.confirmDeletePve(0);
 
@@ -459,7 +459,7 @@ describe("UserVenvComponent", () => {
 
       (capturedConfirmConfig?.nzOnOk as () => void)();
 
-      expect(pveServiceSpy.deleteUserPve).toHaveBeenCalledWith(3);
+      expect(environmentServiceSpy.delete).toHaveBeenCalledWith(3);
       expect(notificationSpy.success).toHaveBeenCalledWith('Deleted environment "foo".');
     });
 
@@ -482,30 +482,30 @@ describe("UserVenvComponent", () => {
     it("does nothing when the target row is missing", () => {
       component.pves = [];
       component.deletePve(0);
-      expect(pveServiceSpy.deleteUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.delete).not.toHaveBeenCalled();
     });
 
     it("does nothing when the target has no veid", () => {
       component.pves = [{ name: "x", newPackages: [] }];
       component.deletePve(0);
-      expect(pveServiceSpy.deleteUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.delete).not.toHaveBeenCalled();
     });
 
     it("notifies success and refreshes on a successful delete", () => {
       component.pves = [{ veid: 7, name: "z", newPackages: [] }];
-      pveServiceSpy.deleteUserPve.mockReturnValue(of(undefined));
-      pveServiceSpy.listUserPves.mockReturnValue(of([]));
+      environmentServiceSpy.delete.mockReturnValue(of(undefined));
+      environmentServiceSpy.list.mockReturnValue(of([]));
 
       component.deletePve(0);
 
-      expect(pveServiceSpy.deleteUserPve).toHaveBeenCalledWith(7);
+      expect(environmentServiceSpy.delete).toHaveBeenCalledWith(7);
       expect(notificationSpy.success).toHaveBeenCalledWith('Deleted environment "z".');
-      expect(pveServiceSpy.listUserPves).toHaveBeenCalledTimes(1); // refresh
+      expect(environmentServiceSpy.list).toHaveBeenCalledTimes(1); // refresh
     });
 
     it("logs and notifies on a failed delete", () => {
       component.pves = [{ veid: 8, name: "y", newPackages: [] }];
-      pveServiceSpy.deleteUserPve.mockReturnValue(throwError(() => new Error("x")));
+      environmentServiceSpy.delete.mockReturnValue(throwError(() => new Error("x")));
 
       component.deletePve(0);
 
@@ -515,8 +515,8 @@ describe("UserVenvComponent", () => {
 
     it("reports a blank-named environment as (unnamed) on success", () => {
       component.pves = [{ veid: 9, name: "", newPackages: [] }];
-      pveServiceSpy.deleteUserPve.mockReturnValue(of(undefined));
-      pveServiceSpy.listUserPves.mockReturnValue(of([]));
+      environmentServiceSpy.delete.mockReturnValue(of(undefined));
+      environmentServiceSpy.list.mockReturnValue(of([]));
 
       component.deletePve(0);
 
@@ -565,8 +565,8 @@ describe("UserVenvComponent", () => {
       return overlay();
     };
 
-    const seedList = (records: UserPveRecord[]): void => {
-      pveServiceSpy.listUserPves.mockReturnValue(of(records));
+    const seedList = (records: PythonEnvironment[]): void => {
+      environmentServiceSpy.list.mockReturnValue(of(records));
       fixture.detectChanges();
     };
     /** Types `text` into `element` the way a user would, so [(ngModel)] writes back. */
@@ -624,7 +624,7 @@ describe("UserVenvComponent", () => {
       seedList([
         { veid: 1, name: "envA", packages: {} },
         { veid: 2, name: "", packages: {} },
-      ] as UserPveRecord[]);
+      ] as PythonEnvironment[]);
 
       const rows = fixture.debugElement.queryAll(By.css("li.python-env-page-item"));
       expect(rows.length).toBe(2);
@@ -639,7 +639,7 @@ describe("UserVenvComponent", () => {
     });
 
     it("fires confirmDeletePve from the row delete icon and stops row-open propagation", () => {
-      seedList([{ veid: 3, name: "envDel", packages: {} }] as UserPveRecord[]);
+      seedList([{ veid: 3, name: "envDel", packages: {} }] as PythonEnvironment[]);
       const stopPropagation = vi.fn();
       fixture.debugElement.query(By.css(".python-env-delete-icon")).triggerEventHandler("click", { stopPropagation });
       expect(stopPropagation).toHaveBeenCalled();
@@ -704,14 +704,14 @@ describe("UserVenvComponent", () => {
       expect(component.currentDraft?.newPackages.length).toBe(1);
 
       footerButton(o, "Save").click();
-      expect(pveServiceSpy.savePve).toHaveBeenCalledWith("envDrive", {});
+      expect(environmentServiceSpy.create).toHaveBeenCalledWith("envDrive", {});
     });
 
     /**
      * The discard paths need the negative assertion as much as the positive one: a
      * successful saveEnvironment() also clears the draft and hides the dialog, so
      * "the modal closed" alone does not distinguish Close from Save. Without
-     * `savePve`/`updateUserPve` asserted un-called, dismissing the dialog could
+     * `create`/`update` asserted un-called, dismissing the dialog could
      * silently persist the edits and this suite would stay green.
      */
     it("closes the modal from the footer Close button without persisting anything", () => {
@@ -723,8 +723,8 @@ describe("UserVenvComponent", () => {
       expect(component.currentDraft).toBeNull();
       // The dialog must actually leave the DOM, not merely flip the field.
       expect(document.querySelector(".footer-all")).toBeNull();
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
-      expect(pveServiceSpy.updateUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.update).not.toHaveBeenCalled();
     });
 
     it("closes the modal on the nz-modal cancel (X / mask) output without persisting anything", () => {
@@ -735,8 +735,8 @@ describe("UserVenvComponent", () => {
       expect(component.pveModalVisible).toBe(false);
       expect(component.currentDraft).toBeNull();
       expect(document.querySelector(".footer-all")).toBeNull();
-      expect(pveServiceSpy.savePve).not.toHaveBeenCalled();
-      expect(pveServiceSpy.updateUserPve).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.create).not.toHaveBeenCalled();
+      expect(environmentServiceSpy.update).not.toHaveBeenCalled();
     });
 
     /**
@@ -803,14 +803,14 @@ describe("UserVenvComponent", () => {
       expect(selectedOperatorLabel(select)).toBe("<=");
 
       footerButton(overlay(), "Save").click();
-      expect(pveServiceSpy.savePve).toHaveBeenCalledWith("envOp", { pandas: "<=2.5" });
+      expect(environmentServiceSpy.create).toHaveBeenCalledWith("envOp", { pandas: "<=2.5" });
     });
 
     it("opens and deletes the row that was clicked, not the first one", () => {
       seedList([
         { veid: 1, name: "envFirst", packages: {} },
         { veid: 2, name: "envSecond", packages: { numpy: "==1.0" } },
-      ] as UserPveRecord[]);
+      ] as PythonEnvironment[]);
       const rows = fixture.debugElement.queryAll(By.css("li.python-env-page-item"));
       expect(rows.length).toBe(2);
 
@@ -827,15 +827,15 @@ describe("UserVenvComponent", () => {
       icons[1].triggerEventHandler("click", { stopPropagation: vi.fn() });
       expect(capturedConfirmConfig?.nzTitle).toBe('Delete environment "envSecond"?');
       (capturedConfirmConfig?.nzOnOk as () => void)();
-      expect(pveServiceSpy.deleteUserPve).toHaveBeenCalledWith(2);
+      expect(environmentServiceSpy.delete).toHaveBeenCalledWith(2);
     });
 
     it("reuses the row element for an unchanged veid across a refresh (trackBy)", () => {
-      const feed = new BehaviorSubject<UserPveRecord[]>([
+      const feed = new BehaviorSubject<PythonEnvironment[]>([
         { veid: 1, name: "envKeep", packages: {} },
         { veid: 2, name: "envAlso", packages: {} },
-      ] as UserPveRecord[]);
-      pveServiceSpy.listUserPves.mockReturnValue(feed);
+      ] as PythonEnvironment[]);
+      environmentServiceSpy.list.mockReturnValue(feed);
       fixture.detectChanges();
       const before = fixture.debugElement.queryAll(By.css("li.python-env-page-item"))[0].nativeElement;
 
@@ -843,7 +843,7 @@ describe("UserVenvComponent", () => {
       feed.next([
         { veid: 1, name: "envKeep", packages: {} },
         { veid: 2, name: "envAlso", packages: {} },
-      ] as UserPveRecord[]);
+      ] as PythonEnvironment[]);
       flushOverlay();
       const after = fixture.debugElement.queryAll(By.css("li.python-env-page-item"))[0].nativeElement;
       expect(after).toBe(before);
@@ -912,7 +912,7 @@ describe("UserVenvComponent", () => {
      * TypeError, which would cement the defect.
      *
      * The state it needs is unreachable through the product: `virtual_environments.name`
-     * is `VARCHAR(128) NOT NULL` (sql/texera_ddl.sql:279) and `UserPveRecord.name` is typed
+     * is `VARCHAR(128) NOT NULL` (sql/texera_ddl.sql:279) and `PythonEnvironment.name` is typed
      * `string`, hence the off-type cast below. So the branch arm this reaches is an
      * unreachable partial -- a null guard on a non-nullable value -- and the line and
      * arm it moves are excluded from this bundle's claimed coverage gain. Everything
@@ -920,7 +920,7 @@ describe("UserVenvComponent", () => {
      * whitespace-name test above.
      */
     it("keeps Save disabled when the stored environment name is null", () => {
-      seedList([{ veid: 1, name: null, packages: {} } as unknown as UserPveRecord]);
+      seedList([{ veid: 1, name: null, packages: {} } as unknown as PythonEnvironment]);
       fixture.debugElement.query(By.css("li.python-env-page-item")).triggerEventHandler("click", {});
       flushOverlay();
 

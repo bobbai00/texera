@@ -36,9 +36,9 @@ import { NotificationService } from "../../../../common/service/notification/not
 import {
   ENVIRONMENT_NAME_PATTERN,
   ENVIRONMENT_NAME_RULE,
-  UserPveRecord,
-  WorkflowPveService,
-} from "../../../../workspace/service/virtual-environment/virtual-environment.service";
+  PythonEnvironment,
+  PythonEnvironmentService,
+} from "../../../../workspace/service/python-environment/python-environment.service";
 
 type PveUserPackageRow = {
   name: string;
@@ -96,7 +96,7 @@ export class UserVenvComponent implements OnInit {
   saving = false;
 
   constructor(
-    private workflowPveService: WorkflowPveService,
+    private pythonEnvironmentService: PythonEnvironmentService,
     private notificationService: NotificationService,
     private modalService: NzModalService
   ) {}
@@ -119,8 +119,8 @@ export class UserVenvComponent implements OnInit {
   }
 
   private refreshPves(): void {
-    this.workflowPveService
-      .listUserPves()
+    this.pythonEnvironmentService
+      .list()
       .pipe(untilDestroyed(this))
       .subscribe({
         next: records => {
@@ -133,7 +133,7 @@ export class UserVenvComponent implements OnInit {
       });
   }
 
-  private recordToDraft(record: UserPveRecord): PveDraft {
+  private recordToDraft(record: PythonEnvironment): PveDraft {
     const newPackages: PveUserPackageRow[] = Object.entries(record.packages ?? {}).map(([name, raw]) => {
       const match = raw?.match?.(/^(==|>=|<=)(.*)$/);
       return {
@@ -218,8 +218,8 @@ export class UserVenvComponent implements OnInit {
     this.saving = true;
     const request$ =
       draft.veid === undefined
-        ? this.workflowPveService.savePve(trimmedName, packages)
-        : this.workflowPveService.updateUserPve(draft.veid, trimmedName, packages);
+        ? this.pythonEnvironmentService.create(trimmedName, packages)
+        : this.pythonEnvironmentService.update(draft.veid, trimmedName, packages);
 
     request$.pipe(untilDestroyed(this)).subscribe({
       next: () => {
@@ -247,8 +247,8 @@ export class UserVenvComponent implements OnInit {
     const veid = target.veid;
     const name = target.name || "(unnamed)";
 
-    this.workflowPveService
-      .deleteUserPve(veid)
+    this.pythonEnvironmentService
+      .delete(veid)
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => {

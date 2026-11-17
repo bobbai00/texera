@@ -21,7 +21,7 @@ import { Observable } from "rxjs";
 import { HttpClient } from "@angular/common/http";
 import { AppSettings } from "../../../common/app-setting";
 
-export interface UserPveRecord {
+export interface PythonEnvironment {
   veid: number;
   name: string;
   packages: Record<string, string>;
@@ -39,24 +39,24 @@ export const ENVIRONMENT_NAME_RULE =
   "Environment name must start with a letter or digit and contain only letters, digits, '.', '_' and '-', at most 128 characters.";
 
 @Injectable({ providedIn: "root" })
-export class WorkflowPveService {
+export class PythonEnvironmentService {
   constructor(private http: HttpClient) {}
 
   // The environments a user keeps belong to the user, not to a computing unit, so the Dashboard
   // stores and checks them at /environments.
-  savePve(name: string, packages: Record<string, string>): Observable<UserPveRecord> {
-    return this.http.post<UserPveRecord>(`${AppSettings.getApiEndpoint()}/environments`, { name, packages });
+  create(name: string, packages: Record<string, string>): Observable<PythonEnvironment> {
+    return this.http.post<PythonEnvironment>(`${AppSettings.getApiEndpoint()}/environments`, { name, packages });
   }
 
-  updateUserPve(veid: number, name: string, packages: Record<string, string>): Observable<UserPveRecord> {
-    return this.http.put<UserPveRecord>(`${AppSettings.getApiEndpoint()}/environments/${veid}`, { name, packages });
+  update(veid: number, name: string, packages: Record<string, string>): Observable<PythonEnvironment> {
+    return this.http.put<PythonEnvironment>(`${AppSettings.getApiEndpoint()}/environments/${veid}`, { name, packages });
   }
 
-  listUserPves(): Observable<UserPveRecord[]> {
-    return this.http.get<UserPveRecord[]>(`${AppSettings.getApiEndpoint()}/environments`);
+  list(): Observable<PythonEnvironment[]> {
+    return this.http.get<PythonEnvironment[]>(`${AppSettings.getApiEndpoint()}/environments`);
   }
 
-  deleteUserPve(veid: number): Observable<void> {
+  delete(veid: number): Observable<void> {
     return this.http.delete<void>(`${AppSettings.getApiEndpoint()}/environments/${veid}`);
   }
 }

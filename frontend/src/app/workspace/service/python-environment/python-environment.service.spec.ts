@@ -20,19 +20,19 @@
 import { TestBed } from "@angular/core/testing";
 import { AppSettings } from "../../../common/app-setting";
 import { HttpClientTestingModule, HttpTestingController } from "@angular/common/http/testing";
-import { UserPveRecord, WorkflowPveService } from "./virtual-environment.service";
+import { PythonEnvironment, PythonEnvironmentService } from "./python-environment.service";
 import { commonTestProviders } from "../../../common/testing/test-utils";
 
-describe("WorkflowPveService", () => {
-  let service: WorkflowPveService;
+describe("PythonEnvironmentService", () => {
+  let service: PythonEnvironmentService;
   let httpTestingController: HttpTestingController;
 
   beforeEach(() => {
     TestBed.configureTestingModule({
       imports: [HttpClientTestingModule],
-      providers: [WorkflowPveService, ...commonTestProviders],
+      providers: [PythonEnvironmentService, ...commonTestProviders],
     });
-    service = TestBed.inject(WorkflowPveService);
+    service = TestBed.inject(PythonEnvironmentService);
     httpTestingController = TestBed.inject(HttpTestingController);
   });
 
@@ -40,11 +40,11 @@ describe("WorkflowPveService", () => {
     expect(service).toBeTruthy();
   });
 
-  it("savePve() POSTs name + packages to the Dashboard's /environments and returns the stored row", () => {
+  it("create() POSTs name + packages to the Dashboard's /environments and returns the stored row", () => {
     const packages = { numpy: "==1.26.0" };
-    const stored: UserPveRecord = { veid: 42, name: "env-a", packages };
-    let received: UserPveRecord | undefined;
-    service.savePve("env-a", packages).subscribe(resp => {
+    const stored: PythonEnvironment = { veid: 42, name: "env-a", packages };
+    let received: PythonEnvironment | undefined;
+    service.create("env-a", packages).subscribe(resp => {
       received = resp;
     });
 
@@ -55,11 +55,11 @@ describe("WorkflowPveService", () => {
     expect(received).toEqual(stored);
   });
 
-  it("updateUserPve() PUTs name + packages to /environments/{veid} and returns the stored row", () => {
+  it("update() PUTs name + packages to /environments/{veid} and returns the stored row", () => {
     const packages = { pandas: "" };
-    const stored: UserPveRecord = { veid: 7, name: "env-b", packages };
-    let received: UserPveRecord | undefined;
-    service.updateUserPve(7, "env-b", packages).subscribe(resp => {
+    const stored: PythonEnvironment = { veid: 7, name: "env-b", packages };
+    let received: PythonEnvironment | undefined;
+    service.update(7, "env-b", packages).subscribe(resp => {
       received = resp;
     });
 
@@ -70,10 +70,10 @@ describe("WorkflowPveService", () => {
     expect(received).toEqual(stored);
   });
 
-  it("listUserPves() GETs /environments and returns the array of records", () => {
-    const records: UserPveRecord[] = [{ veid: 1, name: "env-a", packages: { numpy: "==1.26.0" } }];
-    let received: UserPveRecord[] | undefined;
-    service.listUserPves().subscribe(resp => {
+  it("list() GETs /environments and returns the array of records", () => {
+    const records: PythonEnvironment[] = [{ veid: 1, name: "env-a", packages: { numpy: "==1.26.0" } }];
+    let received: PythonEnvironment[] | undefined;
+    service.list().subscribe(resp => {
       received = resp;
     });
 
@@ -83,9 +83,9 @@ describe("WorkflowPveService", () => {
     expect(received).toEqual(records);
   });
 
-  it("deleteUserPve() DELETEs /environments/{veid}", () => {
+  it("delete() DELETEs /environments/{veid}", () => {
     let completed = false;
-    service.deleteUserPve(9).subscribe({ complete: () => (completed = true) });
+    service.delete(9).subscribe({ complete: () => (completed = true) });
 
     const req = httpTestingController.expectOne(`${AppSettings.getApiEndpoint()}/environments/9`);
     expect(req.request.method).toBe("DELETE");

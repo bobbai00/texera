@@ -66,7 +66,7 @@ import { DynamicSchemaService } from "../../../service/dynamic-schema/dynamic-sc
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { WorkflowGraph } from "../../../service/workflow-graph/model/workflow-graph";
 import { UiUdfParametersSyncService } from "../../../service/code-editor/ui-udf-parameters-sync.service";
-import { WorkflowPveService } from "../../../service/virtual-environment/virtual-environment.service";
+import { PythonEnvironmentService } from "../../../service/python-environment/python-environment.service";
 import { WorkflowWebsocketService } from "../../../service/workflow-websocket/workflow-websocket.service";
 import { OperatorState } from "../../../types/execute-workflow.interface";
 import { TexeraWebsocketEvent } from "../../../types/workflow-websocket.interface";
@@ -3117,12 +3117,12 @@ describe("OperatorPropertyEditFrameComponent", () => {
      * keeps `environments` at the Dashboard: two, unless a case gives others.
      */
     function selectUdfOperator(opts: { environments?: unknown; predicate?: typeof mockScanPredicate } = {}): {
-      listUserPves: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
       notificationError: ReturnType<typeof vi.fn>;
     } {
       const predicate = opts.predicate ?? mockScanPredicate;
       vi.spyOn(TestBed.inject(DynamicSchemaService), "getDynamicSchema").mockReturnValue(udfSchema());
-      const listUserPves = vi.spyOn(TestBed.inject(WorkflowPveService), "listUserPves").mockReturnValue(
+      const list = vi.spyOn(TestBed.inject(PythonEnvironmentService), "list").mockReturnValue(
         (opts.environments ??
           of([
             { veid: 1, name: "env-a", packages: {} },
@@ -3138,7 +3138,7 @@ describe("OperatorPropertyEditFrameComponent", () => {
         currentOperatorId: new SimpleChange(undefined, predicate.operatorID, true),
       });
       fixture.detectChanges();
-      return { listUserPves: listUserPves as any, notificationError: notificationError as any };
+      return { list: list as any, notificationError: notificationError as any };
     }
 
     const envField = () => component.formlyFields?.[0]?.fieldGroup?.find(f => f.key === "envName");
@@ -3160,9 +3160,9 @@ describe("OperatorPropertyEditFrameComponent", () => {
     });
 
     it("lists the environments the user keeps at the Dashboard as envName options, by name", () => {
-      const { listUserPves } = selectUdfOperator();
+      const { list } = selectUdfOperator();
 
-      expect(listUserPves).toHaveBeenCalled();
+      expect(list).toHaveBeenCalled();
       expect((envField()?.props as any).options).toEqual([
         { value: "env-a", label: "env-a" },
         { value: "env-b", label: "env-b" },

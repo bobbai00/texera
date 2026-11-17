@@ -81,7 +81,7 @@ import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzPopoverDirective } from "ng-zorro-antd/popover";
 import { NzFormDirective } from "ng-zorro-antd/form";
 import { NzWaveDirective } from "ng-zorro-antd/core/wave";
-import { WorkflowPveService } from "../../../service/virtual-environment/virtual-environment.service";
+import { PythonEnvironmentService } from "../../../service/python-environment/python-environment.service";
 import { map } from "rxjs/operators";
 import { UiUdfParametersSyncService } from "../../../service/code-editor/ui-udf-parameters-sync.service";
 
@@ -528,7 +528,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
     private workflowVersionService: WorkflowVersionService,
     private workflowStatusSerivce: WorkflowStatusService,
     private config: GuiConfigService,
-    private workflowPveService: WorkflowPveService,
+    private pythonEnvironmentService: PythonEnvironmentService,
     private uiUdfParametersSyncService: UiUdfParametersSyncService
   ) {}
 
@@ -692,8 +692,8 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
     if (isPythonUdf) {
       // The environments a UDF can name are the ones its user keeps at the Dashboard, whichever
       // computing unit the workflow runs on.
-      this.workflowPveService
-        .listUserPves()
+      this.pythonEnvironmentService
+        .list()
         .pipe(
           map(environments => environments.map(environment => environment.name)),
           untilDestroyed(this)
