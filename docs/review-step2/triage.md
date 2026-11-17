@@ -117,6 +117,24 @@ General rules for every batch
   thread, the stored update's checks written like the start's, "close every console writer"
   written once, one style for refusal messages, inline fully qualified names.
 - D21. The browser's environment service and types use the word "environment".
+- Found by the browser tests on the merged tree (evidence, with screenshots, under
+  `/Users/jiadongb/Desktop/projects/texera-worktrees/sce-e2e/reports/browser-probes-step2m-20261117/`;
+  the case is B9 in `sce-e2e/driver/browser_smoke.py`):
+  - B-1. The console of a UDF that runs in a Python environment is empty while the run is
+    Running: the unit's "Installing ..." and "... is ready" messages vanish when the run goes from
+    Initializing to Running and come back with the next message or state
+    (`probe1-out/p5-02-run-04.png`, `probe1-out/p5-console-samples.json`). They must stay.
+  - B-2. Those messages look like errors: a message that has a detail gets a bold red title
+    whatever its type. Colour by type.
+  - B-3. A run that fails before it starts (an environment pip cannot install, a refused create)
+    leaves no sign on the page while the console is closed: the run button is back to Run and
+    nothing says why (`probe3-out/R2-02-ended-console-closed.png`,
+    `probe1-out/p3-01-after-400-nothing-clicked.png`). The user must be told, in the way the page
+    tells of other failures.
+  - B-4. A failed install is listed twice in the console, once from the unit and once as the
+    run's error (`probe3-out/R2-04-console-nothing-selected.png`). Once.
+  - B-5. After a refused create the same compile error can be listed twice, once the editor's own
+    compile also answers (`probe1-out/p3-07-after-editor-compile.png`). Once, if the fix is small.
 
 ## Not fixed now, and why
 
