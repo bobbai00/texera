@@ -77,6 +77,12 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  it should "commit an execution's statistics and console output every 30 seconds by default" in {
+    if (sys.env.get("STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS").isEmpty) {
+      StorageConfig.icebergTableCommitIntervalMs shouldBe 30000L
+    }
+  }
+
   "StorageConfig input-link settings" should
     "sign links for the S3 endpoint, and read links from it alone, by default" in {
     // A deployment whose services and computing units reach the object store at one address

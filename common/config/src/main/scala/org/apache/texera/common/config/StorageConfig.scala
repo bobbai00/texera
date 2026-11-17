@@ -61,6 +61,8 @@ object StorageConfig {
     conf.getString("storage.iceberg.table.plan-namespace")
   val icebergTableCommitBatchSize: Int =
     conf.getInt("storage.iceberg.table.commit.batch-size")
+  val icebergTableCommitIntervalMs: Long =
+    conf.getLong("storage.iceberg.table.commit.interval-ms")
   val icebergTableCommitNumRetries: Int =
     conf.getInt("storage.iceberg.table.commit.retry.num-retries")
   val icebergTableCommitMinRetryWaitMs: Int =
