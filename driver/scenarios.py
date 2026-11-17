@@ -1178,7 +1178,11 @@ def scenario_o(ctx: Ctx) -> None:
               code == 200 and ok and result.get("state") == "Completed",
               f"HTTP {code}: {str(result)[:500]}")
     op = ((result or {}).get("operators") or {}).get(flt) if isinstance(result, dict) else None
-    rows = sorted((op or {}).get("result") or [], key=lambda r: int(r.get("id", 0)))
+    # The sync endpoint adds bookkeeping keys to every row; the agent service strips them
+    # before use, so the comparison does too.
+    rows = [{k: v for k, v in r.items() if k not in ("__row_index__", "__is_visualization__")}
+            for r in (op or {}).get("result") or []]
+    rows.sort(key=lambda r: int(r.get("id", 0)))
     d = diff_rows(rows, expected, ordered=True)
     ctx.check("the Filter's rows are exact", bool(op) and not d, d or f"{len(rows)} rows")
     if isinstance(result, dict):
