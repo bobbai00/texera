@@ -22,7 +22,6 @@ package org.apache.texera.web.service.execution
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, PhysicalPlanCodec}
@@ -131,12 +130,12 @@ class OperatorUpdates extends LazyLogging {
     }
     val changed = changedOperatorOf(request)
     val operatorId = changed.operatorIdentifier
-    // The change as the editor sent it, written as the plan row's logical plan is
-    // (LogicalPlanPojo.toJson), without the stateReferences sidecar, and before it is made to run:
-    // the update's provenance. A change that refers to a loop variable is refused below, so the
-    // change stored has no typed reference to put back.
+    // The change as the editor sent it, written as each operator of the plan row's logical plan
+    // is (LogicalPlanPojo.asSent), without the stateReferences sidecar or anything a compile
+    // sets, and before it is made to run: the update's provenance. A change that refers to a loop
+    // variable is refused below, so the change stored has no typed reference to put back.
     val logical = objectMapper.writeValueAsString(
-      StateReferencing.restoreReferences(objectMapper.valueToTree[ObjectNode](changed))
+      LogicalPlanPojo.asSent(objectMapper.valueToTree[ObjectNode](changed), changed)
     )
 
     val execution =

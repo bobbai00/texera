@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.csv
 
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 
@@ -40,7 +41,7 @@ class ParallelCSVScanSourceOpExecSpec extends AnyFlatSpec {
     desc.customDelimiter = Some(delimiter)
     desc.hasHeader = header
     desc.setResolvedFileName(new java.net.URI(uri))
-    objectMapper.writeValueAsString(desc)
+    objectMapper.writeValueAsString(TestOperators.linked(desc))
   }
 
   private def drain(exec: ParallelCSVScanSourceOpExec): List[Seq[Any]] = {

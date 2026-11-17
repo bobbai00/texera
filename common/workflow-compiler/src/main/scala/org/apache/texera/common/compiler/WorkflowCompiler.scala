@@ -42,6 +42,7 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalLink,
   PhysicalOp,
   PhysicalPlan,
+  PlanInput,
   PortIdentity,
   RepositoryMounts,
   WorkflowContext
@@ -230,7 +231,9 @@ case class WorkflowCompilationResult(
     physicalPlan: Option[PhysicalPlan], // if physicalPlan is None, compilation failed
     operatorIdToOutputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]],
     operatorIdToError: Map[OperatorIdentity, WorkflowFatalError],
-    outputPortsNeedingStorage: Set[GlobalPortIdentity]
+    outputPortsNeedingStorage: Set[GlobalPortIdentity],
+    // what a plan made to run reads from outside the run; empty for any other compile
+    inputs: Seq[PlanInput]
 )
 
 /**
@@ -245,10 +248,10 @@ case class WorkflowCompilationResult(
   * [[WorkflowCompilationResult]]. `outputPortsNeedingStorage` is always computed — the
   * editing-path caller simply ignores it — keeping both paths on one code path.
   *
-  * Only a Strict compile makes a plan to run, so only it pins the datasets and models operators
-  * name (see [[bindResources]]): that is a database lookup per version, and the editing path
-  * compiles on every edit. Every compile, in either mode, gives each operator the site's
-  * settings it is compiled under.
+  * Only a Strict compile makes a plan to run, so only it links the files its scan sources read,
+  * and pins the datasets and models operators name (see [[bindResources]]): each is a lookup,
+  * of the storage or the database, and the editing path compiles on every edit. Every compile,
+  * in either mode, gives each operator the site's settings it is compiled under.
   *
   * @param context  the workflow and execution the compiler makes plans for: their ids stamp
   *                 every operator. Public, so what saves a plan to run saves it for the run the
@@ -465,8 +468,9 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     * @throws WorkflowCompilationFailed if the compile is Strict and an operator has an error: with
     *                                   each such operator's first error, upstream operators first.
     *                                   A failure that is no operator's error, such as the database
-    *                                   not answering while a version is pinned, is thrown as it
-    *                                   is.
+    *                                   or the storage not answering while a file is resolved or
+    *                                   linked, or a version is pinned, is thrown as it is, in
+    *                                   either mode.
     */
   def compile(
       logicalPlanPojo: LogicalPlanPojo,
@@ -483,8 +487,12 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     // whatever it arrived with
     logicalPlan.applyCompileSettings(bindings.settings)
 
-    // 3. resolve the file name in each scan source operator
-    logicalPlan.resolveScanSourceOpFileName(bindings.files, Some(errors))
+    // 3. resolve the file each scan source reads, and, for a plan made to run, link it
+    val inputs = logicalPlan.bindScanFiles(
+      bindings.files,
+      Option.when(errorHandling == CompilationErrorHandling.Strict)(bindings.inputLinker),
+      errors
+    )
 
     // 4. expand the logical plan to the physical plan, and get the output ports that need storage
     val (expandedPlan, outputPortsNeedingStorage) =
@@ -516,7 +524,8 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
       operatorIdToOutputSchemas = opIdToOutputSchema,
       // map each error from OpId to WorkflowFatalError, and report them via logger
       operatorIdToError = convertErrorListToWorkflowFatalErrorMap(logger, errors.toList),
-      outputPortsNeedingStorage = outputPortsNeedingStorage
+      outputPortsNeedingStorage = outputPortsNeedingStorage,
+      inputs = inputs
     )
   }
 }

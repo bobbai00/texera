@@ -332,7 +332,7 @@ object ComputingUnitManagingResource {
     }
   }
 
-  // Required: the endpoints default to localhost:9092 (LakeFSFileDocument,
+  // Required: the endpoints default to localhost:9092 (pytexera's DatasetFileDocument,
   // ResultExportService) and the secret to a published literal (auth.conf), none of which
   // suits a real deployment. Forwarded raw -- the endpoints are trimmed by their own readers,
   // and trimming the secret would leave the unit and this service verifying the token against

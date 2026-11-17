@@ -762,42 +762,46 @@ class WorkflowExecutionServiceSpec
     val mounting = storedSource.copy(repositoryMounts =
       Some(RepositoryMounts("/mnt/another-root", Set(datasetLocator)))
     )
+    val executionPlan =
+      readBack(ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(mounting), Set.empty)))
+    val run = new StoredRun(executionPlan)
+    try {
+      val failure = run.service
+        .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
+        .getOrElse(fail("the run started"))
+      failure shouldBe an[IllegalStateException]
+      failure.getMessage should include("under /mnt/another-root")
+      failure.getMessage should include(s"mounts them under $unitMountRoot")
+      run.errors shouldBe Seq(failure)
+      run.engineWorkflow shouldBe None
+      run.service.workflow shouldBe null
+      run.service.client shouldBe null
+    } finally run.close()
+  }
+
+  it should "start a plan that reads files through links, handing the engine the plan as it is" in {
+    // The links are the operators' own, in the descriptors their executors are built from: the
+    // run reads nothing of an input but that the plan lists it.
     def input(name: String): PlanInput =
       PlanInput(OperatorIdentity("stored-text"), name, InputFile(Long.MaxValue, 3))
-    def reading(inputs: PlanInput*): ExecutionPlan =
-      ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty), inputs = inputs)
-    val notTaken = "from outside the run, which the engine does not take from a saved plan."
-    Seq[(ExecutionPlan, String => Unit)](
-      (
-        readBack(ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(mounting), Set.empty))),
-        why => {
-          why should include("under /mnt/another-root")
-          why should include(s"mounts them under $unitMountRoot")
-        }
-      ),
-      (
-        readBack(reading(input("lines.csv"))),
-        _ shouldBe s"The plan handed to execution $testEid reads 1 input $notTaken"
-      ),
-      (
-        readBack(reading(input("a.csv"), input("b.csv"))),
-        _ shouldBe s"The plan handed to execution $testEid reads 2 inputs $notTaken"
+    val executionPlan = readBack(
+      ExecutionPlan(
+        savedPlanContext(),
+        PhysicalPlan(Set(storedSource), Set.empty),
+        inputs =
+          Seq(input("dataset:///dataset-12/9f3c/a.csv"), input("dataset:///dataset-12/9f3c/b.csv"))
       )
-    ).foreach {
-      case (executionPlan, refusedBecause) =>
-        val run = new StoredRun(executionPlan)
-        try {
-          val failure = run.service
-            .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
-            .getOrElse(fail("the run started"))
-          failure shouldBe an[IllegalStateException]
-          refusedBecause(failure.getMessage)
-          run.errors shouldBe Seq(failure)
-          run.engineWorkflow shouldBe None
-          run.service.workflow shouldBe null
-          run.service.client shouldBe null
-        } finally run.close()
-    }
+    )
+    executionPlan.inputs should have size 2
+    val run = new StoredRun(executionPlan)
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      run.errors shouldBe empty
+      run.engineWorkflow.getOrElse(fail("the engine was handed no workflow")).physicalPlan should
+        be theSameInstanceAs executionPlan.plan
+      run.engine.getOrElse(fail("no engine")).answers.keySet should contain("startWorkflow")
+    } finally run.close()
   }
 
   it should "refuse a plan row whose notification it cannot read, before it builds the engine" in {

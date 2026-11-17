@@ -28,6 +28,8 @@ import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionPlanStore,
+  InputLink,
+  InputLinker,
   NoStoredPlanException,
   PlanRecord,
   VFSURIFactory
@@ -43,7 +45,9 @@ import org.apache.texera.amber.core.workflow.{
   ExecutionMode,
   ExecutionPlan,
   GlobalPortIdentity,
+  InputFile,
   PhysicalPlanCodec,
+  PlanInput,
   PortIdentity,
   ReplaySource,
   WorkflowSettings
@@ -53,6 +57,7 @@ import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpDesc}
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.file.FileScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -63,6 +68,7 @@ import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.{MockTexeraDB, SiteSettings}
 import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
+  DATASET_USER_ACCESS,
   OPERATOR_EXECUTIONS,
   SITE_SETTINGS,
   USER_WAREHOUSE,
@@ -78,6 +84,8 @@ import org.apache.texera.dao.jooq.generated.enums.{
   WorkflowComputingUnitTypeEnum
 }
 import org.apache.texera.dao.jooq.generated.tables.daos.{
+  DatasetDao,
+  DatasetVersionDao,
   UserDao,
   WorkflowComputingUnitDao,
   WorkflowDao,
@@ -85,6 +93,8 @@ import org.apache.texera.dao.jooq.generated.tables.daos.{
   WorkflowVersionDao
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.{
+  Dataset,
+  DatasetVersion,
   User,
   Workflow,
   WorkflowComputingUnit,
@@ -102,12 +112,14 @@ import org.apache.texera.web.model.http.response.execution.{
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
+import org.jooq.exception.DataAccessException
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.lang.reflect.Proxy
 import java.net.URI
+import java.nio.file.{Files, Paths}
 import java.sql.Timestamp
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
@@ -122,8 +134,9 @@ import scala.util.Try
   * build's tests use (the Postgres JDBC catalog in CI), named after this suite's own workflow and
   * execution ids. The executions it creates take ids after 962000, set in `beforeAll`, so their
   * plan tables and their large binaries' prefixes are this suite's own too. Plans are compiled
-  * with the fixture resolvers of `TestOperators` (scan files on the local disk), and the cost
-  * hints, the replay log root and the warehouse switch are the creator's seams.
+  * with the fixture resolvers and linker of `TestOperators` (scan files on the local disk, read
+  * through links to its server) unless a case binds them otherwise, and the cost hints, the
+  * replay log root and the warehouse switch are the creator's seams.
   *
   * Users: `creatorUid` owns the workflows and most units; `readerUid` may only read
   * `testWid`, only read `unitCuid`, and owns `readerCuid`; `strangerUid` has no right to
@@ -167,6 +180,13 @@ class ExecutionResourceSpec
   private val creatorWarehouse = s"user-$creatorUid-spec"
   private var creatorWhid: Integer = _
   private var strangerWhid: Integer = _
+
+  // A private dataset of the creator's, with one version, and a file of it as a scan names it and
+  // as the creator's resolver resolves it.
+  private val notesDid = 9631
+  private val notesVersionHash = "5f0c7a1be2d94c3fa6b87d10e4c9a2b35d6e7f80"
+  private val notesPath = s"/dataset/$creatorEmail/execution-resource-notes/v1/2026/notes.txt"
+  private val notesUri = new URI(s"dataset:///dataset-$notesDid/$notesVersionHash/2026/notes.txt")
 
   private val requestUri = new URI("http://texera.example:4200/api/executions")
   private val logRoot = new URI("file:///tmp/texera-spec-replay-logs/")
@@ -247,6 +267,21 @@ class ExecutionResourceSpec
       .set(COMPUTING_UNIT_USER_ACCESS.UID, Integer.valueOf(readerUid))
       .set(COMPUTING_UNIT_USER_ACCESS.PRIVILEGE, PrivilegeEnum.READ)
       .execute()
+
+    val notes = new Dataset
+    notes.setDid(notesDid)
+    notes.setOwnerUid(creatorUid)
+    notes.setName("execution-resource-notes")
+    notes.setRepositoryName(s"dataset-$notesDid")
+    notes.setIsPublic(false)
+    notes.setDescription("")
+    new DatasetDao(cfg).insert(notes)
+    val notesVersion = new DatasetVersion
+    notesVersion.setDid(notesDid)
+    notesVersion.setCreatorUid(creatorUid)
+    notesVersion.setName("v1")
+    notesVersion.setVersionHash(notesVersionHash)
+    new DatasetVersionDao(cfg).insert(notesVersion)
 
     creatorWhid = insertWarehouse(creatorUid, creatorWarehouse)
     strangerWhid = insertWarehouse(strangerUid, s"user-$strangerUid-spec")
@@ -359,20 +394,25 @@ class ExecutionResourceSpec
   }
 
   /**
-    * The creator under test, bound to the fixture files, versions and mount root in place of a
-    * user's, and with seams set as the case needs. `resolvedFor` records the user each plan was
-    * bound for. The site's settings stay the ones the database holds.
+    * The creator under test, bound to the fixture files, links, versions and mount root in place
+    * of a user's, and with seams set as the case needs. `resolvedFor` records the user each plan
+    * was bound for. The site's settings stay the ones the database holds.
+    *
+    * @param bindings what a plan is bound to, given what the deployment binds it to for its
+    *                 user; the fixtures', unless a case gives another
     */
   private class FixtureCreator(
       logRoot: Option[URI] = None,
       warehouses: Boolean = false,
       val hints: RecordingHints = new RecordingHints(None),
-      failWrite: Option[RuntimeException] = None
+      failWrite: Option[RuntimeException] = None,
+      bindings: RunBindings => RunBindings = _ => TestUtils.fixtureBindings
   ) extends ExecutionCreator {
     val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
     override protected def bindingsFor(uid: Integer): RunBindings = {
       resolvedFor += uid
-      TestUtils.fixtureBindings.copy(settings = super.bindingsFor(uid).settings)
+      val forUser = super.bindingsFor(uid)
+      bindings(forUser).copy(settings = forUser.settings)
     }
     override protected def replayLogRoot: Option[URI] = logRoot
     override protected def warehousesEnabled: Boolean = warehouses
@@ -504,16 +544,55 @@ class ExecutionResourceSpec
       .intValue()
 
   /**
-    * `plan` as a request sends it, written as JSON, but for each operator's loop-variable sidecar,
-    * which a parse sets from scratch and the plan row leaves out.
+    * `plan` as an editor sends it, written as JSON: but for each operator's loop-variable sidecar,
+    * which a parse sets from scratch, and for what a compile sets on a scan (its column limit and
+    * its links), all of which the plan row leaves out.
     */
   private def asSent(plan: LogicalPlanPojo): JsonNode = {
     val tree = objectMapper.readTree(objectMapper.writeValueAsString(plan))
-    tree.get("operators").elements().asScala.foreach {
-      _.asInstanceOf[ObjectNode].remove(StateReferencing.SIDECAR_PROPERTY)
+    tree.get("operators").elements().asScala.foreach { operator =>
+      Seq(StateReferencing.SIDECAR_PROPERTY, "maxColumns", "inputLinks")
+        .foreach(operator.asInstanceOf[ObjectNode].remove)
     }
     tree
   }
+
+  /** The descriptor the stored `plan` gives the executor of operator `id`, as JSON. */
+  private def descriptorOf(plan: ExecutionPlan, id: String): JsonNode =
+    plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity(id)).head.opExecInitInfo match {
+      case OpExecWithClassName(_, descString) => objectMapper.readTree(descString)
+      case other                              => fail(s"the executor of $id is $other")
+    }
+
+  /** The links the stored `plan` gives the executor of scan `id`, by the name of each file. */
+  private def linksOf(plan: ExecutionPlan, id: String): Map[String, InputLink] =
+    descriptorOf(plan, id)
+      .get("inputLinks")
+      .fields()
+      .asScala
+      .map(entry => entry.getKey -> objectMapper.treeToValue(entry.getValue, classOf[InputLink]))
+      .toMap
+
+  /** A scan of the creator's private dataset file, which reads nothing of it to compile. */
+  private def notesPlan(): LogicalPlanPojo = {
+    val scan = named(new FileScanSourceOpDesc(), "notes")
+    scan.fileName = Some(notesPath)
+    LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
+  }
+
+  /** A link as the deployment's linker signs one. */
+  private val signedLink = InputLink(
+    "http://texera-rustfs:9000/texera-dataset/dataset-9631/data/gdm5?X-Amz-Signature=5ecr3t",
+    System.currentTimeMillis() + 3600L * 1000,
+    1234
+  )
+
+  /**
+    * A creator bound as the deployment binds a plan for its user, files resolved as the user may
+    * read them, but for the links, which `linker` makes in place of LakeFS and the object store.
+    */
+  private def creatorLinkingWith(linker: InputLinker): FixtureCreator =
+    new FixtureCreator(bindings = _.copy(inputLinker = linker))
 
   /** The operators of the logical plan `record` keeps, as JSON objects. */
   private def logicalOperators(record: PlanRecord): List[JsonNode] =
@@ -590,7 +669,20 @@ class ExecutionResourceSpec
       Set(OperatorIdentity("scan"), OperatorIdentity("search"))
     plan.replay shouldBe None
     plan.replayLog shouldBe None
-    plan.inputs shouldBe empty
+    // The scan's file is the plan's one input, read through the link the scan's executor is
+    // given, which lasts as long as the plan says.
+    val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
+    val links = linksOf(plan, "scan")
+    links.keySet shouldBe Set(scanned.toASCIIString)
+    val link = links(scanned.toASCIIString)
+    link.expiresAtMs should be > System.currentTimeMillis()
+    plan.inputs shouldBe Seq(
+      PlanInput(
+        OperatorIdentity("scan"),
+        scanned.toASCIIString,
+        InputFile(link.expiresAtMs, Files.size(Paths.get(scanned)))
+      )
+    )
 
     // Compiled as the creator may read files, datasets and models.
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(creatorUid))
@@ -682,6 +774,107 @@ class ExecutionResourceSpec
         .where(SITE_SETTINGS.KEY.eq("csv_parser_max_columns"))
         .execute()
     }
+  }
+
+  it should "link each file the creator may read, in the plan it stores and nowhere else" in {
+    val linked = mutable.ListBuffer.empty[URI]
+    val creator = creatorLinkingWith { file =>
+      linked += file
+      signedLink
+    }
+
+    val (record, plan) = storedPlan(created(post(request(plan = notesPlan()), creator = creator)))
+
+    // Resolved for the creator, by the name as typed, and that file linked.
+    linked.toList shouldBe List(notesUri)
+    linksOf(plan, "notes") shouldBe Map(notesUri.toASCIIString -> signedLink)
+    descriptorOf(plan, "notes").get("fileName").asText() shouldBe notesUri.toASCIIString
+    plan.inputs shouldBe Seq(
+      PlanInput(
+        OperatorIdentity("notes"),
+        notesUri.toASCIIString,
+        InputFile(signedLink.expiresAtMs, signedLink.sizeBytes)
+      )
+    )
+    // The link is a secret of the plan to run. The logical plan beside it is the workflow as
+    // its user wrote it: the file by its name, and no link.
+    record.body should include("X-Amz-Signature=5ecr3t")
+    record.logical should not include "X-Amz-Signature"
+    val logical = logicalOperators(record).head
+    logical.get("fileName").asText() shouldBe notesPath
+    logical.has("inputLinks") shouldBe false
+  }
+
+  it should "refuse a file its creator may not read as the scan's error, and make no link to it" in {
+    // The reader may read the workflow and run it on a unit of their own, but not the dataset
+    // its scan names, which is the creator's and private.
+    val linked = mutable.ListBuffer.empty[URI]
+    val creator = creatorLinkingWith { file =>
+      linked += file
+      signedLink
+    }
+    def createdByReader(): Response =
+      post(request(plan = notesPlan(), cuid = readerCuid), uid = readerUid, creator = creator)
+
+    val failure = compileFailure(createdByReader())
+
+    failure.operatorErrors.keySet shouldBe Set("notes")
+    val error = failure.operatorErrors("notes")
+    error.`type` shouldBe COMPILATION_ERROR
+    error.message should startWith("org.apache.commons.vfs2.FileNotFoundException")
+    error.message should include(notesPath)
+    linked shouldBe empty
+    row(failure.eid).getStatus shouldBe 4.toByte
+    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
+    )
+
+    // Once the dataset is shared with the reader, the same request makes a plan with its link.
+    getDSLContext
+      .insertInto(DATASET_USER_ACCESS)
+      .set(DATASET_USER_ACCESS.DID, Integer.valueOf(notesDid))
+      .set(DATASET_USER_ACCESS.UID, Integer.valueOf(readerUid))
+      .set(DATASET_USER_ACCESS.PRIVILEGE, PrivilegeEnum.READ)
+      .execute()
+    try {
+      val (_, plan) = storedPlan(created(createdByReader()))
+
+      linked.toList shouldBe List(notesUri)
+      linksOf(plan, "notes") shouldBe Map(notesUri.toASCIIString -> signedLink)
+    } finally {
+      getDSLContext
+        .deleteFrom(DATASET_USER_ACCESS)
+        .where(DATASET_USER_ACCESS.DID.eq(Integer.valueOf(notesDid)))
+        .execute()
+    }
+  }
+
+  it should "keep nothing a request sent for what a compile sets, in the plan or beside it" in {
+    // As a request could send them: a column limit of its own, and links to a place of its own
+    // choosing, under the scan's file as typed and as it resolves.
+    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+    val resolved = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath).toASCIIString
+    val scan = named(TestOperators.smallCsvScanOpDesc(), "scan")
+    scan.maxColumns = Some(100000)
+    scan.inputLinks = Map(resolved -> sentLink, TestOperators.CountrySalesSmallCsvPath -> sentLink)
+    val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
+
+    val (record, plan) = storedPlan(created(post(request(plan = sent))))
+
+    // The executor is given the compile's own link, to the fixture's server, and the site's
+    // limit.
+    val links = linksOf(plan, "scan")
+    links.keySet shouldBe Set(resolved)
+    links(resolved).url should startWith("http://127.0.0.1:")
+    descriptorOf(plan, "scan").get("maxColumns").asInt() shouldBe
+      CSVScanSourceOpDesc.DefaultMaxColumns
+    record.body should not include "169.254.169.254"
+    // And the logical plan kept beside it holds neither property, whatever was sent for it.
+    record.logical should not include "169.254.169.254"
+    val logical = logicalOperators(record).head
+    logical.has("fileName") shouldBe true
+    logical.has("maxColumns") shouldBe false
+    logical.has("inputLinks") shouldBe false
   }
 
   it should "compile only the target and what is upstream of it, given one target" in {
@@ -981,6 +1174,36 @@ class ExecutionResourceSpec
     // Nothing replaced it, so the earlier run keeps its results.
     consolesOf(961921) shouldBe 1
     hasTable(console) shouldBe true
+  }
+
+  it should "answer 500, not the scan's error, when a file cannot be resolved or linked for a reason not the workflow's" in {
+    // The database or the storage not answering says nothing about the file a scan names: it is
+    // the server's failure, and not an error of the workflow for its user to fix.
+    val databaseDown = new DataAccessException("the database does not answer")
+    val storageDown = new java.io.IOException("the storage does not answer")
+    Seq[(RunBindings => RunBindings, Exception)](
+      (_ => TestUtils.fixtureBindings.copy(files = _ => throw databaseDown), databaseDown),
+      (_ => TestUtils.fixtureBindings.copy(inputLinker = _ => throw storageDown), storageDown)
+    ).foreach {
+      case (bindings, outage) =>
+        val before = executionCount
+
+        val failure = intercept[InternalServerErrorException] {
+          post(request(), creator = new FixtureCreator(bindings = bindings))
+        }
+
+        failure.getResponse.getStatus shouldBe 500
+        failure.getCause shouldBe outage
+        executionCount shouldBe before + 1
+        val eid = newestEid
+        failure.getMessage shouldBe
+          s"Execution $eid could not be created: its plan could not be made."
+        row(eid.toLong).getStatus shouldBe 4.toByte
+        a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+          ExecutionPlanStore
+            .planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
+        )
+    }
   }
 
   // --- clearing earlier runs ---

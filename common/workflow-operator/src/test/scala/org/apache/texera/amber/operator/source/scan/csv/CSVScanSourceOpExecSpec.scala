@@ -21,6 +21,7 @@ package org.apache.texera.amber.operator.source.scan.csv
 
 import com.univocity.parsers.common.{ParsingContext, TextParsingException}
 import com.univocity.parsers.csv.{CsvParser, CsvParserSettings}
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
@@ -181,9 +182,9 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
   /**
     * Builds a CSVScanSourceOpExec over `path`. The descriptor MUST have a custom
     * delimiter and a resolved file URI *before* the exec is constructed: the
-    * constructor eagerly computes the schema via desc.sourceSchema(), which needs
-    * both to return a non-null schema. It carries the column limit a compile
-    * would have set, the default unless a case gives another.
+    * constructor eagerly infers the schema from the file, which needs both. It
+    * carries what a compile that makes a plan to run would have set: the link to
+    * the file, and the column limit, the default unless a case gives another.
     */
   private def execOver(
       path: Path,
@@ -199,7 +200,7 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     desc.limit = limit
     desc.maxColumns = maxColumns
     desc.setResolvedFileName(URI.create(path.toUri.toString))
-    new CSVScanSourceOpExec(objectMapper.writeValueAsString(desc))
+    new CSVScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
   }
 
   "CSVScanSourceOpExec" should "scan a header CSV and emit one tuple per data row" in {

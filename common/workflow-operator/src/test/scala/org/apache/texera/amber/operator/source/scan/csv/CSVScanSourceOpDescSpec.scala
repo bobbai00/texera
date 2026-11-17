@@ -336,7 +336,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     )
 
     val exec = new ParallelCSVScanSourceOpExec(
-      objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc)
+      objectMapper.writeValueAsString(TestOperators.linked(parallelCsvScanSourceOpDesc))
     )
     exec.open()
     val rows =
@@ -361,7 +361,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     parallelCsvScanSourceOpDesc.setResolvedFileName(TestOperators.localFileUri(path))
 
     val exec = new ParallelCSVScanSourceOpExec(
-      objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc)
+      objectMapper.writeValueAsString(TestOperators.linked(parallelCsvScanSourceOpDesc))
     )
     exec.open()
     val rows =
@@ -400,7 +400,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     parallelCsvScanSourceOpDesc.limit = Some(2)
 
     val exec = new ParallelCSVScanSourceOpExec(
-      objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc)
+      objectMapper.writeValueAsString(TestOperators.linked(parallelCsvScanSourceOpDesc))
     )
     exec.open()
     val rowsRead =
@@ -711,7 +711,9 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     csvScanSourceOpDesc.maxColumns = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
     csvScanSourceOpDesc.setResolvedFileName(TestOperators.localFileUri(path))
 
-    val exec = new CSVScanSourceOpExec(objectMapper.writeValueAsString(csvScanSourceOpDesc))
+    val exec = new CSVScanSourceOpExec(
+      objectMapper.writeValueAsString(TestOperators.linked(csvScanSourceOpDesc))
+    )
     exec.open()
     val engineRows =
       try exec.produceTuple().toList
@@ -778,7 +780,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
         assert(desc.sourceSchema().getAttribute("w").getType == AttributeType.DOUBLE)
         assert(desc.sourceSchema().getAttribute("u").getType == AttributeType.DOUBLE)
 
-        val engine = exec(objectMapper.writeValueAsString(desc))
+        val engine = exec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
         engine.open()
         val engineRows =
           try engine.produceTuple().map(_.getFields.toSeq).toList

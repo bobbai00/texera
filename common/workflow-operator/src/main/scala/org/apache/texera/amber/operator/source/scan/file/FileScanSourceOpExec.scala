@@ -30,11 +30,13 @@ class FileScanSourceOpExec private[scan] (
 ) extends SourceOperatorExecutor {
   private val desc: FileScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[FileScanSourceOpDesc])
+  private val input = desc.openInputFile()
 
   @throws[IOException]
   override def produceTuple(): Iterator[TupleLike] = {
     FileScanUtils.createTuplesFromFile(
-      fileName = desc.fileName.get,
+      document = input,
+      displayFileName = desc.fileName.get,
       attributeType = desc.attributeType,
       fileEncoding = desc.encoding,
       extract = desc.extract,

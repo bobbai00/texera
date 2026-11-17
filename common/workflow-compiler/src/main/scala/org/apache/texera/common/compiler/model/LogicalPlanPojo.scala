@@ -25,7 +25,7 @@ import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import scala.collection.mutable
-import scala.jdk.CollectionConverters.IteratorHasAsScala
+import scala.jdk.CollectionConverters.{IteratorHasAsScala, SetHasAsJava}
 
 case class LogicalPlanPojo(
     operators: List[LogicalOp],
@@ -158,19 +158,39 @@ case class LogicalPlanPojo(
 
   /**
     * This plan as JSON that parses back to it, loop-variable references included: the plan as
-    * the editor sends it, as far as a parse can tell.
-    *
-    * Written with a mapper as it is, the plan would lose its typed references: the parse put a
-    * placeholder (`0`, `0.0` or `false`) where each was and recorded it in the operator's sidecar,
-    * which the next parse drops. So each operator is written with its references back in place
-    * and without the sidecar ([[StateReferencing.restoreReferences]]).
+    * the editor sends it, as far as a parse can tell. Each operator is written as the editor
+    * sends it ([[LogicalPlanPojo.asSent]]).
     */
   def toJson: String = {
     val tree = objectMapper.readTree(objectMapper.writeValueAsString(this))
-    Option(tree.get("operators")).foreach(_.elements().asScala.foreach {
-      case operator: ObjectNode => StateReferencing.restoreReferences(operator)
-      case _                    => // null: nothing to restore
+    Option(tree.get("operators")).foreach(_.elements().asScala.zip(operators).foreach {
+      case (written: ObjectNode, operator) => LogicalPlanPojo.asSent(written, operator)
+      case _                               => // null: no operator was written
     })
     objectMapper.writeValueAsString(tree)
+  }
+}
+
+object LogicalPlanPojo {
+
+  /**
+    * Makes `written`, the JSON a mapper wrote for `operator`, the JSON an editor sends for it,
+    * which parses back to the operator, loop-variable references included.
+    *
+    * Written with a mapper as it is, the operator would lose its typed references: the parse put
+    * a placeholder (`0`, `0.0` or `false`) where each was and recorded it in the operator's
+    * sidecar, which the next parse drops. So each reference is put back in place, and the
+    * sidecar left out ([[StateReferencing.restoreReferences]]).
+    *
+    * The properties a compile sets are left out too ([[LogicalOp.propertiesSetByCompiler]]). An
+    * editor sends none, every compile replaces whatever a request did send, and what a compile
+    * sets is no part of the workflow as its user wrote it: a link to a file is a secret of the
+    * plan made to run.
+    *
+    * @return `written`, changed in place
+    */
+  def asSent(written: ObjectNode, operator: LogicalOp): ObjectNode = {
+    StateReferencing.restoreReferences(written)
+    written.remove(LogicalOp.propertiesSetByCompiler(operator.getClass).asJava)
   }
 }

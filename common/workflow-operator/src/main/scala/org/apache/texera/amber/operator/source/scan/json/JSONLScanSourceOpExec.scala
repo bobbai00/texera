@@ -20,14 +20,12 @@
 package org.apache.texera.amber.operator.source.scan.json
 
 import org.apache.texera.amber.core.executor.SourceOperatorExecutor
-import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.parseField
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
 import org.apache.texera.amber.util.JSONUtils.{JSONToMap, objectMapper}
 
 import java.io.{BufferedReader, InputStreamReader}
-import java.net.URI
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 import scala.util.{Failure, Success, Try}
 
@@ -38,12 +36,13 @@ class JSONLScanSourceOpExec private[json] (
 ) extends SourceOperatorExecutor {
   private val desc: JSONLScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[JSONLScanSourceOpDesc])
+  private val input = desc.openInputFile()
   private var rows: Iterator[String] = _
   private var reader: BufferedReader = _
   // 0-based line offset of this worker's first row, captured in open() so skipped
   // rows can be reported with their absolute 1-based line number.
   private var startLine: Int = 0
-  private val schema = desc.sourceSchema()
+  private val schema = desc.inferSchemaFrom(input)
   private val skippedRows = new SkippedRowReporter()
 
   override def getWarnings: Seq[String] = skippedRows.warnings
@@ -81,10 +80,9 @@ class JSONLScanSourceOpExec private[json] (
   }
 
   override def open(): Unit = {
-    val stream = DocumentFactory.openReadonlyDocument(new URI(desc.fileName.get)).asInputStream()
     // count lines and partition the task to each worker
     reader = new BufferedReader(
-      new InputStreamReader(stream, desc.fileEncoding.getCharset)
+      new InputStreamReader(input.asInputStream(), desc.fileEncoding.getCharset)
     )
     val offsetValue = desc.windowOffset
     var lines = reader.lines().iterator().asScala.drop(offsetValue)

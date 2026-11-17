@@ -21,14 +21,20 @@ package org.apache.texera.amber.operator.metadata
 
 import com.fasterxml.jackson.databind.node.BooleanNode
 import org.apache.texera.amber.core.state.StateReferencing
+import org.apache.texera.amber.core.storage.InputLink
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.dictionary.DictionaryMatcherOpDesc
 import org.apache.texera.amber.operator.filter.SpecializedFilterOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.projection.ProjectionOpDesc
 import org.apache.texera.amber.operator.sortPartitions.SortPartitionsOpDesc
-import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.ReadsInputFiles
+import org.apache.texera.amber.operator.source.scan.csv.{
+  CSVScanSourceOpDesc,
+  ParallelCSVScanSourceOpDesc
+}
 import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
+import org.apache.texera.amber.operator.source.scan.json.JSONLScanSourceOpDesc
 import org.apache.texera.amber.operator.unneststring.UnnestStringOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -79,6 +85,61 @@ class OperatorMetadataGeneratorSpec extends AnyFlatSpec with Matchers {
     val json = objectMapper.writeValueAsString(compiled)
     objectMapper.readTree(json).get("maxColumns").asInt() shouldBe 731
     objectMapper.readValue(json, classOf[CSVScanSourceOpDesc]).maxColumns shouldBe Some(731)
+  }
+
+  it should "leave the links out of every operator that reads files, which reach the executor all the same" in {
+    // Every operator type whose executor reads files through links, and the parallel CSV scan,
+    // which is no operator type of the editor's.
+    val readers =
+      OperatorMetadataGenerator.operatorTypeMap.keys
+        .filter(classOf[ReadsInputFiles].isAssignableFrom)
+        .toSet + classOf[ParallelCSVScanSourceOpDesc]
+    readers.map(_.getSimpleName) shouldBe Set(
+      "CSVScanSourceOpDesc",
+      "ParallelCSVScanSourceOpDesc",
+      "CSVOldScanSourceOpDesc",
+      "JSONLScanSourceOpDesc",
+      "ArrowSourceOpDesc",
+      "FileScanSourceOpDesc"
+    )
+    readers.foreach { reader =>
+      withClue(s"${reader.getSimpleName}: ") {
+        val schema = OperatorMetadataGenerator.generateOperatorJsonSchema(reader)
+        // The file is the user's to choose; the link to it is the compiler's to make.
+        schema.get("properties").has("fileName") shouldBe true
+        schema.get("properties").has("inputLinks") shouldBe false
+        schema.get("required").elements().asScala.map(_.asText()).toList should not contain
+          "inputLinks"
+        LogicalOp.propertiesSetByCompiler(reader) should contain("inputLinks")
+      }
+    }
+
+    // Hidden from the editor only: the descriptor's JSON, which the executor is built from,
+    // carries the links, and they parse back.
+    val compiled = new JSONLScanSourceOpDesc
+    compiled.inputLinks = Map(
+      "dataset:///dataset-12/9f3c/people.jsonl" ->
+        InputLink(
+          "http://texera-rustfs:9000/texera-dataset/k?X-Amz-Signature=5ecr3t",
+          1763856000000L,
+          412
+        )
+    )
+    val json = objectMapper.writeValueAsString(compiled)
+    objectMapper.readTree(json).get("inputLinks") shouldBe objectMapper.readTree(
+      """{"dataset:///dataset-12/9f3c/people.jsonl": {
+        |  "url": "http://texera-rustfs:9000/texera-dataset/k?X-Amz-Signature=5ecr3t",
+        |  "expiresAtMs": 1763856000000,
+        |  "sizeBytes": 412}}""".stripMargin
+    )
+    objectMapper.readValue(json, classOf[JSONLScanSourceOpDesc]).inputLinks shouldBe
+      compiled.inputLinks
+  }
+
+  it should "name what the compiler sets on an operator, and nothing on one it sets nothing on" in {
+    LogicalOp.propertiesSetByCompiler(classOf[CSVScanSourceOpDesc]) shouldBe
+      Set("maxColumns", "inputLinks")
+    LogicalOp.propertiesSetByCompiler(classOf[SpecializedFilterOpDesc]) shouldBe empty
   }
 
   /** The properties of `opDescClass`'s schema whose `noLoopVariable` keyword is `true`. */

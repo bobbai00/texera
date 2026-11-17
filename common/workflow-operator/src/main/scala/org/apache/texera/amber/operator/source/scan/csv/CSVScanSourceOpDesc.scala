@@ -24,7 +24,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import com.univocity.parsers.csv.{CsvFormat, CsvParser, CsvParserSettings}
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.storage.model.ReadonlyVirtualDocument
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.inferSchemaFromRows
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
@@ -38,7 +38,6 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.io.{IOException, InputStreamReader}
-import java.net.URI
 import scala.util.Try
 
 class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator {
@@ -96,26 +95,17 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
       )
   }
 
+  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
+  override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".csv"))
+
   /**
-    * The schema of the file, inferred from its first rows, read under [[maxColumns]]; a
-    * descriptor no compile has set a limit on is read under
+    * The schema of the file `document` holds, inferred from its first rows, read under
+    * [[maxColumns]]; a descriptor no compile has set a limit on is read under
     * [[CSVScanSourceOpDesc.DefaultMaxColumns]].
     */
-  override def sourceSchema(): Schema = {
+  def inferSchemaFrom(document: ReadonlyVirtualDocument[_]): Schema = {
     val delimiterChar = customDelimiter.filter(_.nonEmpty).getOrElse(",").charAt(0)
-    require(
-      fileResolved(),
-      "No file selected. Please select a valid .csv file from the 'File' dropdown in the right panel."
-    )
-
-    val uri = new URI(fileName.get)
-    if (uri.getScheme == "file") {
-      require(
-        new java.io.File(uri).isFile,
-        "The selected item is a folder or does not exist. Please select an actual .csv file from the 'File' dropdown."
-      )
-    }
-    val stream = DocumentFactory.openReadonlyDocument(uri).asInputStream()
+    val stream = document.asInputStream()
     val inputReader =
       new InputStreamReader(stream, fileEncoding.getCharset)
 

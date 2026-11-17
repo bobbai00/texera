@@ -20,9 +20,6 @@
 package org.apache.texera.amber.core.storage.model
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.common.config.EnvironmentalVariable
-import org.apache.texera.amber.core.storage.ResourceType
-import org.apache.texera.amber.core.storage.model.LakeFSFileDocument.userJwtToken
 import org.apache.texera.amber.core.storage.util.LakeFSStorageClient
 
 import java.io.{File, IOException, InputStream}
@@ -33,62 +30,19 @@ import scala.jdk.CollectionConverters.IteratorHasAsScala
 import scala.util.Using
 
 object LakeFSFileDocument {
-  // Since requests need to be sent to the FileService in order to read the file, we store USER_JWT_TOKEN in the environment vars
-  // This variable should be NON-EMPTY in the dynamic-computing-unit architecture, i.e. each user-created computing unit should store user's jwt token.
-  // In the local development or other architectures, this token can be empty.
-  lazy val userJwtToken: String =
-    sys.env.getOrElse(EnvironmentalVariable.ENV_USER_JWT_TOKEN, "").trim
-
-  private lazy val datasetPresignEndpoint: String =
-    sys.env
-      .getOrElse(
-        EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-        "http://localhost:9092/api/dataset/presign-download"
-      )
-      .trim
-
-  private lazy val modelPresignEndpoint: String =
-    sys.env
-      .getOrElse(
-        EnvironmentalVariable.ENV_FILE_SERVICE_GET_MODEL_PRESIGNED_URL_ENDPOINT,
-        "http://localhost:9092/api/model/presign-download"
-      )
-      .trim
 
   /**
-    * The file-service presign-download endpoint serving this resource type. Each resource type
-    * owns an endpoint because they enforce different access control
+    * Where in LakeFS the file at `uri` is: its repository, the commit of its version, and its
+    * path within that version. `uri` is {scheme}:///{repositoryName}/{versionHash}/{file}, as
+    * `FileResolver` builds it, with each segment of the file's path URL-encoded.
+    *
+    * @throws IllegalArgumentException if `uri` has fewer than these three parts
     */
-  def presignEndpointOf(resourceType: ResourceType.Value): String =
-    resourceType match {
-      case ResourceType.Dataset => datasetPresignEndpoint
-      case ResourceType.Model   => modelPresignEndpoint
-    }
-}
-
-/**
-  * A read-only document over a single file stored in a LakeFS repository, addressed by the URI
-  * {scheme}:///{repositoryName}/{versionHash}/{fileRelativePath}.
-  *
-  * Every versioned-file resource (datasets, models, …) reads its files the same way — fetch the
-  * bytes through a presigned URL, falling back to a direct LakeFS fetch
-  *
-  * @param uri          the resolved {scheme}:///{repositoryName}/{versionHash}/{file} URI
-  * @param resourceType which resource this file belongs to, selecting the presign endpoint
-  */
-private[storage] class LakeFSFileDocument(uri: URI, val resourceType: ResourceType.Value)
-    extends VirtualDocument[Nothing]
-    with OnVersionedFileResource
-    with LazyLogging {
-
-  private val presignEndpoint: String = LakeFSFileDocument.presignEndpointOf(resourceType)
-  // Utility function to parse and decode URI segments into individual components
-  private def parseUri(uri: URI): (String, String, Path) = {
+  def locate(uri: URI): (String, String, Path) = {
     val segments = Paths.get(uri.getPath).iterator().asScala.map(_.toString).toArray
     if (segments.length < 3)
       throw new IllegalArgumentException("URI format is incorrect")
 
-    // parse uri to (repositoryName, versionHash, fileRelativePath)
     val repositoryName = segments(0)
     val versionHash = URLDecoder.decode(segments(1), StandardCharsets.UTF_8)
     val decodedRelativeSegments =
@@ -97,9 +51,26 @@ private[storage] class LakeFSFileDocument(uri: URI, val resourceType: ResourceTy
 
     (repositoryName, versionHash, fileRelativePath)
   }
+}
 
-  // Extract components from URI using the utility function
-  protected val (repositoryName, versionHash, fileRelativePath) = parseUri(uri)
+/**
+  * A read-only document over a single file stored in a LakeFS repository, addressed by the URI
+  * {scheme}:///{repositoryName}/{versionHash}/{fileRelativePath}.
+  *
+  * Every versioned-file resource (datasets, models, …) reads its files the same way — fetch the
+  * bytes through a URL LakeFS presigns, falling back to a direct LakeFS fetch. Both ask LakeFS,
+  * so a file is read this way only where LakeFS answers, with the credentials at hand: where a
+  * plan is made, a scan's file is read like this to infer its schema. The scan's executor reads
+  * the file through the link its plan carries instead ([[LinkDocument]]).
+  *
+  * @param uri the resolved {scheme}:///{repositoryName}/{versionHash}/{file} URI
+  */
+private[storage] class LakeFSFileDocument(uri: URI)
+    extends VirtualDocument[Nothing]
+    with OnVersionedFileResource
+    with LazyLogging {
+
+  protected val (repositoryName, versionHash, fileRelativePath) = LakeFSFileDocument.locate(uri)
 
   protected var tempFile: Option[File] = None
 
@@ -118,50 +89,16 @@ private[storage] class LakeFSFileDocument(uri: URI, val resourceType: ResourceTy
       Files.newInputStream(file.toPath, StandardOpenOption.DELETE_ON_CLOSE)
     }
 
-    if (userJwtToken.isEmpty) {
-      try {
-        val presignUrl = LakeFSStorageClient.getFilePresignedUrl(
-          getRepositoryName(),
-          getVersionHash(),
-          getFileRelativePath()
-        )
-        openPresigned(presignUrl)
-      } catch {
-        case e: Exception =>
-          fallbackToLakeFS(e)
-      }
-    } else {
-      val presignRequestUrl =
-        s"$presignEndpoint?repositoryName=${getRepositoryName()}&commitHash=${getVersionHash()}&filePath=${URLEncoder
-          .encode(getFileRelativePath(), StandardCharsets.UTF_8.name())}"
-
-      val connection = new URL(presignRequestUrl).openConnection().asInstanceOf[HttpURLConnection]
-      connection.setRequestMethod("GET")
-      connection.setRequestProperty("Authorization", s"Bearer $userJwtToken")
-
-      try {
-        if (connection.getResponseCode != HttpURLConnection.HTTP_OK) {
-          throw new RuntimeException(
-            s"Failed to retrieve presigned URL: HTTP ${connection.getResponseCode}"
-          )
-        }
-
-        // Read response body as a string
-        val responseBody =
-          new String(connection.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
-
-        // Extract presigned URL from JSON response
-        val presignedUrl = responseBody
-          .split("\"presignedUrl\"\\s*:\\s*\"")(1)
-          .split("\"")(0)
-
-        openPresigned(presignedUrl)
-      } catch {
-        case e: Exception =>
-          fallbackToLakeFS(e)
-      } finally {
-        connection.disconnect()
-      }
+    try {
+      val presignUrl = LakeFSStorageClient.getFilePresignedUrl(
+        getRepositoryName(),
+        getVersionHash(),
+        getFileRelativePath()
+      )
+      openPresigned(presignUrl)
+    } catch {
+      case e: Exception =>
+        fallbackToLakeFS(e)
     }
   }
 

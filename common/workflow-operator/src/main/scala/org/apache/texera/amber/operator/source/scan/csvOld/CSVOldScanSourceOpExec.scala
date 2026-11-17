@@ -21,12 +21,10 @@ package org.apache.texera.amber.operator.source.scan.csvOld
 
 import com.github.tototoshi.csv.{CSVReader, DefaultCSVFormat}
 import org.apache.texera.amber.core.executor.SourceOperatorExecutor
-import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeTypeUtils, Schema, TupleLike}
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
-import java.net.URI
 import scala.collection.compat.immutable.ArraySeq
 
 class CSVOldScanSourceOpExec private[csvOld] (
@@ -34,9 +32,10 @@ class CSVOldScanSourceOpExec private[csvOld] (
 ) extends SourceOperatorExecutor {
   val desc: CSVOldScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[CSVOldScanSourceOpDesc])
+  private val input = desc.openInputFile()
   var reader: CSVReader = _
   var rows: Iterator[Seq[String]] = _
-  val schema: Schema = desc.sourceSchema()
+  val schema: Schema = desc.inferSchemaFrom(input)
   private val skippedRows = new SkippedRowReporter()
 
   override def getWarnings: Seq[String] = skippedRows.warnings
@@ -84,8 +83,7 @@ class CSVOldScanSourceOpExec private[csvOld] (
     implicit object CustomFormat extends DefaultCSVFormat {
       override val delimiter: Char = desc.customDelimiter.get.charAt(0)
     }
-    val filePath = DocumentFactory.openReadonlyDocument(new URI(desc.fileName.get)).asFile().toPath
-    reader = CSVReader.open(filePath.toString, desc.fileEncoding.getCharset.name())(CustomFormat)
+    reader = CSVReader.open(input.asFile(), desc.fileEncoding.getCharset.name())(CustomFormat)
     // skip line if this worker reads the start of a file, and the file has a header line
     // Dropped one after the other: the largest offset plus the header line is past
     // what an Int holds, and the sum wrapped to a negative that skipped no row.
@@ -96,5 +94,6 @@ class CSVOldScanSourceOpExec private[csvOld] (
     if (reader != null) {
       reader.close()
     }
+    input.close()
   }
 }

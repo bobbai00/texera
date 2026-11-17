@@ -34,11 +34,15 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.dao.StatementRecorder
+import org.apache.texera.dao.{SqlServer, StatementRecorder}
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.assertj.core.api.Assertions.assertThat
+import org.jooq.ConnectionProvider
+import org.jooq.impl.DSL
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
+
+import java.sql.{Connection, SQLException}
 
 /**
   * Resource-layer tests for `/compile`. Owns only what the REST envelope
@@ -262,6 +266,30 @@ class WorkflowCompilationResourceSpec
       errorMessageOf(unreadable).replace(privateDatasetFilePath, "<path>")
         == errorMessageOf(missing).replace(missingPath, "<path>")
     )
+  }
+
+  it should "answer 500, not the scan's error, when its file cannot be looked up" in {
+    // A file that does not exist, or that the user may not read, is the scan's error, for the
+    // user to fix. A database that does not answer says nothing about the file: reported on the
+    // scan, the outage would read as the user's mistake.
+    val scan = wholeFileScanOp(privateDatasetFilePath)
+    val unreachable = getDSLContext
+      .configuration()
+      .derive(new ConnectionProvider {
+        override def acquire(): Connection = throw new SQLException("database unavailable")
+        override def release(connection: Connection): Unit = ()
+      })
+    SqlServer.getInstance().replaceDSLContext(DSL.using(unreachable))
+    val response =
+      try postCompile(planOf(scan), as = owner)
+      finally SqlServer.getInstance().replaceDSLContext(getDSLContext)
+
+    assertThat(response.getStatus).isEqualTo(500)
+    val body = response.readEntity(classOf[String])
+    assert(!body.contains("operatorErrors"), body)
+    assert(!body.contains(scan.operatorIdentifier.id), body)
+    // The same request compiles once the database answers again.
+    assertThat(postCompile(planOf(scan), as = owner).getStatus).isEqualTo(200)
   }
 
   it should "leave a dataset a UDF names to the run, resolving nothing while editing" in {

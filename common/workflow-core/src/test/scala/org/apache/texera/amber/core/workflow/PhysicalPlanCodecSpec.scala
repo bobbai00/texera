@@ -545,6 +545,19 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
+  it should "save and read back ten thousand inputs of one operator" in {
+    // A plan lists every file its operators read through links, however many.
+    val inputs = (1 to 10000).map { part =>
+      PlanInput(
+        OperatorIdentity("scan"),
+        f"dataset:///ds-1/d4t4/part-$part%05d.csv",
+        InputFile(1763856000000L + part, part.toLong)
+      )
+    }
+
+    assertRoundTrips(ExecutionPlan(contextOf(), fullPlan, inputs = inputs.reverse))
+  }
+
   it should "save and read back cost hints that name no operator, and costs of 0 and of the largest finite number" in {
     Seq(Map.empty[String, Double], Map("udf" -> 0.0), Map("udf" -> Double.MaxValue)).foreach {
       seconds =>

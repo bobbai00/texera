@@ -43,7 +43,8 @@ import scala.util.Using
   * `body` is the engine's input, a stored plan or a stored update. `logical` is the JSON of what
   * `body` was compiled from, as the user sent it (on the plan row, the logical plan, or the part
   * of it up to the one operator the execution runs to), written so that it parses back with its
-  * loop-variable references: the execution's provenance, and, on the plan row, what the
+  * loop-variable references, and without what a compile sets on an operator, such as the links
+  * its executor reads files through: the execution's provenance, and, on the plan row, what the
   * Dashboard compiles a change to a paused operator against. Who created the execution, the
   * computing unit it was created for and its email notification are columns, not fields of the
   * plan: they are what the unit's web layer checks and uses, and a plan names neither a user nor

@@ -21,7 +21,7 @@ package org.apache.texera.amber.storage
 
 import org.apache.texera.amber.core.storage.FileResolver
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.{MockTexeraDB, SqlServer}
 import org.apache.texera.dao.jooq.generated.enums.{PrivilegeEnum, UserRoleEnum}
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   DatasetDao,
@@ -41,10 +41,14 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   ModelVersion,
   User
 }
+import org.jooq.ConnectionProvider
+import org.jooq.exception.DataAccessException
+import org.jooq.impl.DSL
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
 import java.nio.file.Paths
+import java.sql.{Connection, SQLException}
 
 class FileResolverSpec
     extends AnyFlatSpec
@@ -472,6 +476,48 @@ class FileResolverSpec
     )
     assertThrows[FileNotFoundException] {
       FileResolver.forUser(otherUser.getUid).resolve(privateDatasetFilePath)
+    }
+  }
+
+  /** Runs `body` with the resolver pointed at a database it cannot reach. */
+  private def whileDatabaseUnreachable(body: => Unit): Unit = {
+    val unreachable = getDSLContext
+      .configuration()
+      .derive(new ConnectionProvider {
+        override def acquire(): Connection = throw new SQLException("database unavailable")
+        override def release(connection: Connection): Unit = ()
+      })
+    SqlServer.getInstance().replaceDSLContext(DSL.using(unreachable))
+    try body
+    finally SqlServer.getInstance().replaceDSLContext(getDSLContext)
+  }
+
+  "A lookup the database does not answer" should
+    "be thrown as it is, not as a file that is not there" in {
+    whileDatabaseUnreachable {
+      Seq[() => Any](
+        () => FileResolver.resolveForUser(privateDatasetFilePath, testUser.getUid),
+        () => FileResolver.resolveForUser(privateModelFilePath, testUser.getUid),
+        () => FileResolver.forUser(testUser.getUid).resolve(privateDatasetFilePath),
+        () => FileResolver.resolveVersionedResource(dataset1TxtFilePath)
+      ).foreach { lookup =>
+        val failure = intercept[DataAccessException](lookup())
+        val causes = Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).toList
+        assert(causes.exists(_.getMessage == "database unavailable"), causes)
+        assert(!causes.exists(_.isInstanceOf[FileNotFoundException]))
+      }
+    }
+  }
+
+  "A name that is no versioned file's" should "be not found, without asking the database" in {
+    whileDatabaseUnreachable {
+      Seq(privateDatasetFileUri, "some/random/path", "/dataset/test_user@test.com", "a\u0000b", "")
+        .foreach { name =>
+          val notFound = intercept[FileNotFoundException] {
+            FileResolver.resolveForUser(name, testUser.getUid)
+          }
+          assert(notFound.getMessage.contains(name), notFound.getMessage)
+        }
     }
   }
 

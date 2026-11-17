@@ -20,10 +20,11 @@
 package org.apache.texera.common.compiler.model
 
 import com.fasterxml.jackson.databind.node.ObjectNode
-import com.typesafe.scalalogging.LazyLogging
+import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.state.StateReferencing.literalReferences
-import org.apache.texera.amber.core.storage.ScanFileResolver
+import org.apache.texera.amber.core.storage.{InputLinker, ScanFileResolver}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
+import org.apache.texera.amber.core.workflow.{InputFile, PlanInput}
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
@@ -36,7 +37,6 @@ import org.jgrapht.util.SupplierUtil
 import java.util
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters.IteratorHasAsScala
-import scala.util.{Failure, Success, Try}
 
 object LogicalPlan {
 
@@ -72,7 +72,7 @@ object LogicalPlan {
 case class LogicalPlan(
     operators: List[LogicalOp],
     links: List[LogicalLink]
-) extends LazyLogging {
+) {
 
   private lazy val operatorMap: Map[OperatorIdentity, LogicalOp] =
     operators.map(op => (op.operatorIdentifier, op)).toMap
@@ -164,45 +164,59 @@ case class LogicalPlan(
     }
 
   /**
-    * Resolves each scan source operator's user-given file name to a URI and sets it on the
-    * operator via `setResolvedFileName`.
+    * Binds each scan source to the file it reads. Its file name is resolved to the URI of a file
+    * the plan's user may read, which is set on the operator (`setResolvedFileName`). For a plan
+    * made to run, the file is then linked, and the link, through which the scan's executor
+    * reads the file, is set on the operator too.
     *
-    * @param fileResolver resolves scan source file names to URIs
-    * @param errorList if given, errors encountered during resolution are appended to it;
-    *                  otherwise the first error is thrown
+    * An operator keeps no link it arrived with, so a request cannot hand an executor one: the
+    * only links an operator holds are to files this compile resolved for the plan's user.
+    *
+    * An operator's own error -- it names no file, or one that does not exist or that the user
+    * may not read -- is appended to `errors`, and the operator is left without a link. Any other
+    * failure, such as the database or the storage not answering, is no error of the operator's,
+    * and is thrown as it is.
+    *
+    * @param linker makes the links of a plan made to run; None for a compile that makes no plan
+    *               to run, which links nothing
+    * @return what the plan reads from outside the run: each file linked
     */
-  def resolveScanSourceOpFileName(
-      fileResolver: ScanFileResolver,
-      errorList: Option[ArrayBuffer[(OperatorIdentity, Throwable)]]
-  ): Unit = {
-    operators.foreach {
-      case operator @ (scanOp: ScanSourceOpDesc) =>
-        Try {
-          // Resolve file path for ScanSourceOpDesc
-          val fileName = scanOp.fileName.getOrElse(
-            throw new RuntimeException(
-              "No file selected. Please select a file from the 'File' dropdown in the right panel."
+  def bindScanFiles(
+      resolver: ScanFileResolver,
+      linker: Option[InputLinker],
+      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
+  ): Seq[PlanInput] =
+    operators.collect { case scan: ScanSourceOpDesc => scan }.flatMap { scan =>
+      scan.inputLinks = Map.empty
+      scan.fileName match {
+        case None =>
+          errors.append(
+            (
+              scan.operatorIdentifier,
+              new RuntimeException(
+                "No file selected. Please select a file from the 'File' dropdown in the right panel."
+              )
             )
           )
-          val fileUri = fileResolver.resolve(fileName) // Convert to URI
-
-          // Set the URI in the ScanSourceOpDesc
-          scanOp.setResolvedFileName(fileUri)
-        } match {
-          case Success(_) => // Successfully resolved and set the file URI
-
-          case Failure(err) =>
-            logger.error("Error resolving file path for ScanSourceOpDesc", err)
-            errorList match {
-              case Some(errList) =>
-                errList.append((operator.operatorIdentifier, err))
-              case None =>
-                // Throw the error if no errorList is provided
-                throw err
+          None
+        case Some(name) =>
+          try {
+            val file = resolver.resolve(name)
+            scan.setResolvedFileName(file)
+            linker.map(_.link(file)).map { link =>
+              val resolvedName = scan.fileName.get
+              scan.inputLinks = Map(resolvedName -> link)
+              PlanInput(
+                scan.operatorIdentifier,
+                resolvedName,
+                InputFile(link.expiresAtMs, link.sizeBytes)
+              )
             }
-        }
-
-      case _ => // Skip non-ScanSourceOpDesc operators
+          } catch {
+            case notFound: FileNotFoundException =>
+              errors.append((scan.operatorIdentifier, notFound))
+              None
+          }
+      }
     }
-  }
 }

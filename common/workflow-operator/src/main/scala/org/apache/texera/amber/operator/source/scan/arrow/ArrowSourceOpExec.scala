@@ -20,7 +20,6 @@
 package org.apache.texera.amber.operator.source.scan.arrow
 
 import org.apache.texera.amber.core.executor.SourceOperatorExecutor
-import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -28,7 +27,6 @@ import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.ipc.ArrowFileReader
 
-import java.net.URI
 import java.nio.file.{Files, StandardOpenOption}
 
 class ArrowSourceOpExec(
@@ -36,13 +34,16 @@ class ArrowSourceOpExec(
 ) extends SourceOperatorExecutor {
   private val desc: ArrowSourceOpDesc =
     objectMapper.readValue(descString, classOf[ArrowSourceOpDesc])
+  private val input = desc.openInputFile()
   private var reader: Option[ArrowFileReader] = None
   private var root: Option[VectorSchemaRoot] = None
   private var allocator: Option[RootAllocator] = None
 
   override def open(): Unit = {
+    // Outside the try below: a file that cannot be read is reported as such, not as an Arrow
+    // source that cannot be opened.
+    val file = input.asFile()
     try {
-      val file = DocumentFactory.openReadonlyDocument(new URI(desc.fileName.get)).asFile()
       val alloc = new RootAllocator()
       allocator = Some(alloc)
       val channel = Files.newByteChannel(file.toPath, StandardOpenOption.READ)
@@ -97,5 +98,6 @@ class ArrowSourceOpExec(
     reader.foreach(_.close())
     root.foreach(_.close())
     allocator.foreach(_.close())
+    input.close()
   }
 }

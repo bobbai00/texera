@@ -256,6 +256,31 @@ class CoreExecutorReflectionSpec extends AnyFlatSpec {
     }
   }
 
+  it should "throw what the executor's constructor throws, as it is" in {
+    // An executor reads its plan in its constructor, and says there what is wrong with it. That
+    // message is the reason its operator fails with, so reflection's own exception, which has
+    // none, must not stand in for it.
+    Seq((0, 1), (2, 4)).foreach {
+      case (idx, workerCount) =>
+        val thrown = intercept[IllegalStateException] {
+          ExecFactory.newExecFromJavaClassName(
+            classOf[CoreExecutorReflectionSpec.RefusingExec].getName,
+            descString = "a plan it cannot run",
+            idx = idx,
+            workerCount = workerCount
+          )
+        }
+        assert(thrown.getMessage == s"worker $idx of $workerCount refuses a plan it cannot run")
+    }
+    val alone = intercept[IllegalStateException] {
+      ExecFactory.newExecFromJavaClassName(
+        classOf[CoreExecutorReflectionSpec.RefusingAloneExec].getName,
+        descString = "another plan"
+      )
+    }
+    assert(alone.getMessage == "refuses another plan")
+  }
+
   // ---------------------------------------------------------------------------
   // ExecFactory.newExecFromJavaClassName with loop-variable references
   // ---------------------------------------------------------------------------
@@ -518,6 +543,26 @@ private object CoreExecutorReflectionSpec {
   /** Its setting is declared in its superclass, and held once more under another name. */
   class AliasedLimitExec(descString: String) extends LimitExecBase(descString) {
     val alias: LimitSetting = setting
+  }
+
+  /** Its `(String, Int, Int)` constructor, the only one it has, throws. */
+  class RefusingExec(desc: String, idx: Int, workerCount: Int) extends OperatorExecutor {
+    throw new IllegalStateException(s"worker $idx of $workerCount refuses $desc")
+
+    override def processTuple(
+        tuple: org.apache.texera.amber.core.tuple.Tuple,
+        port: Int
+    ): Iterator[org.apache.texera.amber.core.tuple.TupleLike] = Iterator.empty
+  }
+
+  /** Its `(String)` constructor throws. */
+  class RefusingAloneExec(desc: String) extends OperatorExecutor {
+    throw new IllegalStateException(s"refuses $desc")
+
+    override def processTuple(
+        tuple: org.apache.texera.amber.core.tuple.Tuple,
+        port: Int
+    ): Iterator[org.apache.texera.amber.core.tuple.TupleLike] = Iterator.empty
   }
 
   /** Only a `(Long)` constructor — neither factory branch matches. */

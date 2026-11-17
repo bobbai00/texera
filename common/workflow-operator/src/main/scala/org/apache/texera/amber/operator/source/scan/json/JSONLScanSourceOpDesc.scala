@@ -22,7 +22,7 @@ package org.apache.texera.amber.operator.source.scan.json
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.fasterxml.jackson.databind.JsonNode
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.storage.model.ReadonlyVirtualDocument
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.inferSchemaFromRows
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
@@ -34,7 +34,6 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 import org.apache.texera.amber.util.JSONUtils.{JSONToMap, objectMapper}
 
 import java.io._
-import java.net.URI
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 import scala.jdk.CollectionConverters.IteratorHasAsScala
@@ -235,19 +234,11 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerato
       )
   }
 
-  override def sourceSchema(): Schema = {
-    require(
-      fileResolved(),
-      "No file selected. Please select a valid .jsonl file from the 'File' dropdown in the right panel."
-    )
+  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
+  override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".jsonl"))
 
-    val uri = new URI(fileName.get)
-    if (uri.getScheme == "file") {
-      require(
-        new java.io.File(uri).isFile,
-        "The selected item is a folder or does not exist. Please select an actual .jsonl file from the 'File' dropdown."
-      )
-    }
+  /** The schema of the file `document` holds, inferred from the first lines of its window. */
+  def inferSchemaFrom(document: ReadonlyVirtualDocument[_]): Schema = {
     // A window of no rows is still a window on this file, and the file's columns
     // do not depend on how many of its rows were asked for. Reading the sample
     // through the limit left a Limit of 0 nothing to infer from, and the operator
@@ -255,7 +246,7 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerato
     val sampleSize = windowLimit.filter(_ > 0).getOrElse(INFER_READ_LIMIT).min(INFER_READ_LIMIT)
 
     def readSample(startOffset: Int): ArrayBuffer[Map[String, String]] = {
-      val stream = DocumentFactory.openReadonlyDocument(uri).asInputStream()
+      val stream = document.asInputStream()
       val reader = new BufferedReader(new InputStreamReader(stream, fileEncoding.getCharset))
       val sample: ArrayBuffer[Map[String, String]] = ArrayBuffer()
       reader

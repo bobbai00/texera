@@ -22,7 +22,8 @@ package org.apache.texera.amber.operator.source.scan
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyDescription}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
-import org.apache.texera.amber.core.storage.FileResolver
+import org.apache.texera.amber.core.storage.model.{LinkDocument, ReadonlyVirtualDocument}
+import org.apache.texera.amber.core.storage.{DocumentFactory, FileResolver}
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.workflow.OutputPort
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
@@ -31,7 +32,7 @@ import org.apache.commons.lang3.builder.EqualsBuilder
 
 import java.net.URI
 
-abstract class ScanSourceOpDesc extends SourceOperatorDescriptor {
+abstract class ScanSourceOpDesc extends SourceOperatorDescriptor with ReadsInputFiles {
 
   /** in the case we do not want to read the entire large file, but only
     * the first a few lines of it to do the type inference.
@@ -118,4 +119,32 @@ abstract class ScanSourceOpDesc extends SourceOperatorDescriptor {
     EqualsBuilder.reflectionEquals(this, that, "context", "fileHandle")
 
   def fileResolved(): Boolean = fileName.isDefined && FileResolver.isFileResolved(fileName.get)
+
+  /** Opens the file this scan reads, for its executor to read: through the plan's link to it. */
+  def openInputFile(): LinkDocument = openInputFile(fileName.get)
+
+  /**
+    * Opens the file this scan reads, for a compile to infer its schema from. A compile reads the
+    * file where the plan is made, as the service making it reaches files, and makes no link for
+    * that.
+    *
+    * @param extension the kind of file the scan reads, as it is named to the user: ".csv"
+    * @throws IllegalArgumentException if the scan's file name is not resolved, or is a local
+    *                                  path to something that is not a file
+    */
+  protected def openFileToInferFrom(extension: String): ReadonlyVirtualDocument[_] = {
+    require(
+      fileResolved(),
+      s"No file selected. Please select a valid $extension file from the 'File' dropdown in the right panel."
+    )
+
+    val uri = new URI(fileName.get)
+    if (uri.getScheme == "file") {
+      require(
+        new java.io.File(uri).isFile,
+        s"The selected item is a folder or does not exist. Please select an actual $extension file from the 'File' dropdown."
+      )
+    }
+    DocumentFactory.openReadonlyDocument(uri)
+  }
 }

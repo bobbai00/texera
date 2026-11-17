@@ -77,6 +77,28 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  "StorageConfig input-link settings" should
+    "sign links for the S3 endpoint, and read links from it alone, by default" in {
+    // A deployment whose services and computing units reach the object store at one address
+    // sets neither. Only assert when neither env override is set, since it would win otherwise.
+    if (
+      Seq("STORAGE_INPUT_LINKS_S3_ENDPOINT", "STORAGE_INPUT_LINKS_ALLOWED_ENDPOINTS")
+        .forall(sys.env.get(_).isEmpty)
+    ) {
+      // Read from the resource: a test may have repointed StorageConfig.s3Endpoint since.
+      val s3Endpoint =
+        ConfigFactory.parseResources("storage.conf").resolve().getString("storage.s3.endpoint")
+      StorageConfig.inputLinksS3Endpoint shouldBe s3Endpoint
+      StorageConfig.inputLinksAllowedEndpoints shouldBe Seq(s3Endpoint)
+    }
+  }
+
+  it should "make links that last seven days, the longest a link can, by default" in {
+    if (sys.env.get("STORAGE_INPUT_LINKS_TTL_SECONDS").isEmpty) {
+      StorageConfig.inputLinksTtlSeconds shouldBe 7L * 24 * 60 * 60
+    }
+  }
+
   "StorageConfig jupyter settings" should "default the public URL to the internal one" in {
     // Keeps the split a no-op outside containerized deployments.
     // Only assert when neither env override is set, since either would win otherwise.

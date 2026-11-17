@@ -22,7 +22,7 @@ package org.apache.texera.amber.operator.source.scan.file
 import org.apache.commons.compress.archivers.ArchiveStreamFactory
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 
-import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.storage.model.ReadonlyVirtualDocument
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.parseField
 import org.apache.texera.amber.core.tuple.LargeBinary
 import org.apache.texera.amber.core.tuple.TupleLike
@@ -34,7 +34,6 @@ import org.apache.texera.amber.operator.source.scan.{
 import org.apache.texera.service.util.LargeBinaryOutputStream
 
 import java.io._
-import java.net.URI
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 
@@ -67,8 +66,15 @@ private[file] object FileScanUtils {
         )
     }
   }
+
+  /**
+    * The tuples of the file `document` holds: one of the whole file, or one per line, and, of
+    * an archive that is extracted, those of each file in it.
+    *
+    * @param displayFileName what a tuple names the file as, when it names the file it is from
+    */
   def createTuplesFromFile(
-      fileName: String,
+      document: ReadonlyVirtualDocument[_],
       displayFileName: String,
       attributeType: FileAttributeType,
       fileEncoding: FileDecodingMethod,
@@ -77,7 +83,7 @@ private[file] object FileScanUtils {
       fileScanOffset: Option[Int],
       fileScanLimit: Option[Int]
   ): Iterator[TupleLike] = {
-    val inputStream = DocumentFactory.openReadonlyDocument(new URI(fileName)).asInputStream()
+    val inputStream = document.asInputStream()
 
     val closeables = mutable.ArrayBuffer.empty[AutoCloseable]
     var zipIn: ZipArchiveInputStream = null
@@ -163,26 +169,5 @@ private[file] object FileScanUtils {
       }
 
     new AutoClosingIterator(rawIterator, () => closeables.foreach(_.close()))
-  }
-
-  def createTuplesFromFile(
-      fileName: String,
-      attributeType: FileAttributeType,
-      fileEncoding: FileDecodingMethod,
-      extract: Boolean,
-      outputFileName: Boolean,
-      fileScanOffset: Option[Int],
-      fileScanLimit: Option[Int]
-  ): Iterator[TupleLike] = {
-    createTuplesFromFile(
-      fileName = fileName,
-      displayFileName = fileName,
-      attributeType = attributeType,
-      fileEncoding = fileEncoding,
-      extract = extract,
-      outputFileName = outputFileName,
-      fileScanOffset = fileScanOffset,
-      fileScanLimit = fileScanLimit
-    )
   }
 }

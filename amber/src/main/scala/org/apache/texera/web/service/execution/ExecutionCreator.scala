@@ -107,11 +107,16 @@ object ExecutionCreator extends ExecutionCreator {
   *     replay logs are kept. No row is left by a request refused before this.
   *  1. The workflow is compiled for the user, Strict, under the site's settings as they stand and
   *     with the cost hints of their newest completed run of it, and the plan made
-  *     ([[PlanToRun.make]]). A workflow that does not compile marks the row FAILED and is
-  *     answered with each operator's error (400).
+  *     ([[PlanToRun.make]]): each file a scan source reads is one the user may read, and the plan
+  *     carries a link to it for the computing unit to read it through. A workflow that does not
+  *     compile, a scan of a file the user may not read among them, marks the row FAILED and is
+  *     answered with each operator's error (400). A plan that cannot be made for another reason,
+  *     such as the database or the storage not answering while a file is resolved or linked,
+  *     marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
-  *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
-  *     the email notification. A write that fails marks the row FAILED (500).
+  *     from (as JSON that parses back to it, without what a compile sets,
+  *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A write that
+  *     fails marks the row FAILED (500).
   *  1. The results of the workflow's earlier executions on the unit that have ended are cleared:
   *     the new execution replaces them. A run that may still be running is left alone.
   *
@@ -206,8 +211,9 @@ class ExecutionCreator extends LazyLogging {
       // How long each operator took in the user's newest completed run of the workflow, for the
       // scheduler's cost model: saved with the plan, which the engine takes them from.
       context.costHints = costHintsLoader.load(checked.wid, uid)
-      // The plan compiled, as the request sent it, loop-variable references included: written
-      // before the compile resolves its operators in place.
+      // The plan compiled, as an editor sends it, loop-variable references included: written
+      // before the compile resolves its operators in place, and without what a compile sets,
+      // whatever the request sent there.
       val logical = checked.plan.toJson
       val compiler = new WorkflowCompiler(context, bindingsFor(uid))
       val made =

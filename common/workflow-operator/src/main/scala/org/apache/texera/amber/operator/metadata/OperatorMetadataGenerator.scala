@@ -29,7 +29,6 @@ import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{InputPort, OutputPort}
 import org.apache.texera.amber.operator.LogicalOp
-import org.apache.texera.amber.operator.metadata.annotations.SetByCompiler
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.util
@@ -127,7 +126,7 @@ object OperatorMetadataGenerator {
     // remove the loop-variable sidecar (StateReferencing.stateReferences): the backend fills it in
     jsonSchema.get("properties").asInstanceOf[ObjectNode].remove(StateReferencing.SIDECAR_PROPERTY)
     // remove the properties the compiler sets (`SetByCompiler`): they are not the user's to edit
-    propertiesSetByCompiler(opDescClass).foreach { name =>
+    LogicalOp.propertiesSetByCompiler(opDescClass).foreach { name =>
       jsonSchema.get("properties").asInstanceOf[ObjectNode].remove(name)
     }
     // remove inputPorts/outputPorts from json schema
@@ -160,19 +159,6 @@ object OperatorMetadataGenerator {
     }
     jsonSchema
   }
-
-  /**
-    * The JSON names of `opDescClass`'s properties marked `SetByCompiler`, a trait's or a
-    * superclass's included.
-    */
-  private def propertiesSetByCompiler(opDescClass: Class[_ <: LogicalOp]): Set[String] =
-    objectMapper.getSerializationConfig
-      .introspect(objectMapper.constructType(opDescClass))
-      .findProperties()
-      .asScala
-      .filter(property => Option(property.getField).exists(_.hasAnnotation(classOf[SetByCompiler])))
-      .map(_.getName)
-      .toSet
 
   def generateAllOperatorMetadata(): AllOperatorMetadata = {
     AllOperatorMetadata(

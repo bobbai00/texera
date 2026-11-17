@@ -27,9 +27,11 @@ import java.lang.annotation.Target;
 /**
  * Marks a descriptor property that the compiler sets when it makes a plan, and a user never
  * does: what the plan fixes for the operator's executor, such as a limit of the site's as it
- * stood when the plan was made. The property is optional, absent until a compile sets it. The
- * compiler replaces whatever value it arrived with, and the operator's schema leaves it out
- * ({@code OperatorMetadataGenerator.generateOperatorJsonSchema}), so no editor shows it.
+ * stood when the plan was made, or the links the executor reads its files through. The property
+ * is optional, absent until a compile sets it. The compiler replaces whatever value it arrived
+ * with. The operator's schema leaves it out
+ * ({@code OperatorMetadataGenerator.generateOperatorJsonSchema}), so no editor shows it, and so
+ * does the logical plan kept beside an execution's plan ({@code LogicalPlanPojo.asSent}).
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.FIELD})

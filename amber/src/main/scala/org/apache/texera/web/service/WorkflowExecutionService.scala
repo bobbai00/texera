@@ -63,20 +63,6 @@ object WorkflowExecutionService extends LazyLogging {
   }
 
   /**
-    * Fails unless the engine can run `executionPlan` on this computing unit, which mounts datasets
-    * and models under `unitMountRoot` ([[requireRunnableUnder]]), and the plan reads no input from
-    * outside the run, which the engine does not take from a saved plan yet: nothing here checks an
-    * input's link before the run starts. Run without them, such a plan would run otherwise than
-    * it was saved.
-    *
-    * @throws IllegalStateException if the engine cannot run the plan here, or it reads inputs
-    */
-  def requireRunnableHere(executionPlan: ExecutionPlan, unitMountRoot: Option[Path]): Unit = {
-    requireRunnableUnder(executionPlan.plan, unitMountRoot)
-    requireNoInputs(executionPlan.context.executionId.id, executionPlan)
-  }
-
-  /**
     * The configuration the coordinator of a run of `executionPlan` starts with: this unit's, with
     * the replay and the replay log the plan holds. The run replays the plan's replay log, up to
     * its interaction, and writes its own replay log where the plan says.
@@ -92,18 +78,6 @@ object WorkflowExecutionService extends LazyLogging {
       faultToleranceConfOpt =
         executionPlan.replayLog.map(location => FaultToleranceConfig(writeTo = location))
     )
-
-  /** Fails if `executionPlan` reads inputs from outside the run (see [[requireRunnableHere]]). */
-  private def requireNoInputs(executionId: Long, executionPlan: ExecutionPlan): Unit = {
-    val inputs = executionPlan.inputs.size
-    if (inputs > 0) {
-      throw new IllegalStateException(
-        s"The plan handed to execution $executionId reads $inputs " +
-          s"${if (inputs == 1) "input" else "inputs"} from outside the run, which the engine " +
-          "does not take from a saved plan."
-      )
-    }
-  }
 
   /**
     * Fails unless the engine can run `plan` on a computing unit that mounts datasets and models
@@ -188,7 +162,7 @@ class WorkflowExecutionService(
     * Starts the run from `executionPlan`, the plan the plan row `record` of the plan table at
     * `planUri` holds, read back. The execution was claimed for this start, and the run's context
     * is the one the plan was read back with. The engine must be able to run the plan on this unit
-    * ([[WorkflowExecutionService.requireRunnableHere]]). The run replays what the plan replays,
+    * ([[WorkflowExecutionService.requireRunnableUnder]]). The run replays what the plan replays,
     * writes its replay log where the plan says, and sends its status emails where the row says.
     * The engine and every service around the run are built on the plan read back, the run is
     * READY, and the engine is asked to start.
@@ -203,7 +177,7 @@ class WorkflowExecutionService(
   ): Option[Throwable] = {
     val notification =
       try {
-        WorkflowExecutionService.requireRunnableHere(executionPlan, mountRoot)
+        WorkflowExecutionService.requireRunnableUnder(executionPlan.plan, mountRoot)
         record.notification.map(Notification.fromJson)
       } catch {
         case err: Throwable =>

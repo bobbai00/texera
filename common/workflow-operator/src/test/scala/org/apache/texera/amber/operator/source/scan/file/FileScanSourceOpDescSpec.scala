@@ -81,7 +81,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.attributeType = FileAttributeType.STRING
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+      new FileScanSourceOpExec(
+        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+      )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
       .produceTuple()
@@ -102,7 +104,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.attributeType = FileAttributeType.STRING
     fileScanSourceOpDesc.fileScanOffset = Option(5)
     val FileScanSourceOpExec =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+      new FileScanSourceOpExec(
+        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+      )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
       .produceTuple()
@@ -126,7 +130,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.attributeType = FileAttributeType.STRING
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+      new FileScanSourceOpExec(
+        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+      )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
       .produceTuple()
@@ -146,7 +152,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
   it should "read first 5 lines of the input text file into a single output tuple" in {
     fileScanSourceOpDesc.attributeType = FileAttributeType.SINGLE_STRING
     val FileScanSourceOpExec =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+      new FileScanSourceOpExec(
+        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+      )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
       .produceTuple()
@@ -171,7 +179,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.attributeType = FileAttributeType.INTEGER
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+      new FileScanSourceOpExec(
+        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+      )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
       .produceTuple()
@@ -198,7 +208,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.attributeType = FileAttributeType.STRING
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+      new FileScanSourceOpExec(
+        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+      )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
       .produceTuple()
@@ -239,7 +251,9 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
       fileScanSourceOpDesc.attributeType = FileAttributeType.STRING
 
       val fileScanSourceOpExec =
-        new FileScanSourceOpExec(objectMapper.writeValueAsString(fileScanSourceOpDesc))
+        new FileScanSourceOpExec(
+          objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        )
       fileScanSourceOpExec.open()
       val processedTuple: Iterator[Tuple] = fileScanSourceOpExec
         .produceTuple()
@@ -308,7 +322,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
       // What the decoder mirrors: the engine reads the same bytes as big-endian.
       val desc = describing(utf16BeFile, """"encoding":"UTF_16"""")
       desc.attributeType = FileAttributeType.STRING
-      val exec = new FileScanSourceOpExec(objectMapper.writeValueAsString(desc))
+      val exec =
+        new FileScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
       exec.open()
       assert(exec.produceTuple().toList.map(_.getFields.head) == List("line1", "line2"))
       exec.close()

@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.csvOld
 
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.source.scan.FileDecodingMethod
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -45,7 +46,7 @@ class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
     desc.fileEncoding = FileDecodingMethod.UTF_8
     desc.limit = limit
     desc.offset = offset
-    objectMapper.writeValueAsString(desc)
+    objectMapper.writeValueAsString(TestOperators.linked(desc))
   }
 
   private def drain(exec: CSVOldScanSourceOpExec): List[Seq[Any]] = {

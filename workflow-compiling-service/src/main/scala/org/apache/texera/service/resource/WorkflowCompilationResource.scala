@@ -78,8 +78,9 @@ class WorkflowCompilationResource extends LazyLogging {
     val context = new WorkflowContext(workflowId = WorkflowIdentity(0))
 
     // Compile the pojo using WorkflowCompiler; the editing path must never
-    // throw, so pass Lenient explicitly (mirrors amber passing Strict). It makes no
-    // plan to run, so it is bound for editing, which pins no dataset or model version.
+    // throw for an operator's error, so pass Lenient explicitly (mirrors amber passing
+    // Strict). It makes no plan to run, so it is bound for editing, which links no file and
+    // pins no dataset or model version.
     val compilationResult =
       new WorkflowCompiler(
         context,

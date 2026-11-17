@@ -20,8 +20,9 @@
 package org.apache.texera.common.compiler
 
 import org.apache.commons.vfs2.FileNotFoundException
+import org.apache.texera.amber.core.storage.{InputLink, InputLinker, ScanFileResolver}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
-import org.apache.texera.amber.core.workflow.PortIdentity
+import org.apache.texera.amber.core.workflow.{InputFile, PlanInput, PortIdentity}
 import org.apache.texera.amber.operator.aggregate.AggregateOpDesc
 import org.apache.texera.amber.operator.hashJoin.HashJoinOpDesc
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
@@ -38,6 +39,7 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan, LogicalPlanPojo}
 import org.scalatest.flatspec.AnyFlatSpec
 
+import java.net.URI
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 import scala.util.Random
@@ -551,21 +553,19 @@ class LogicalPlanSpec extends AnyFlatSpec {
   }
 
   // ---------------------------------------------------------------------------
-  // resolveScanSourceOpFileName
+  // bindScanFiles
   // ---------------------------------------------------------------------------
   //
-  // How a name becomes a URI is the resolver's business, passed in by the caller;
-  // here it is the fixture resolver, which knows local files. The method has two
-  // failure modes:
-  //   1. Some(errorList) — every failing operator is appended to errorList by
-  //      opId and resolution CONTINUES (collect-all). What WorkflowCompiler passes
-  //      in both modes: the editing compile returns every bad operator's error so
-  //      the UI can surface them at once, and the compile before a run throws them
-  //      together.
-  //   2. None — the first failure rethrows (fail-fast). No compile uses it; it is
-  //      left for a direct caller that wants the first failure only.
-  // To force a failure deterministically, we point a ScanSource fixture at a
-  // non-existent file and assert the error surfaces both ways.
+  // How a name becomes a URI is the resolver's business, and how a file gets a link
+  // the linker's; both are passed in by the caller. Here the resolver is the fixture
+  // resolver, which knows local files, unless a case gives another, and the linker
+  // is one that records what it is asked to link.
+  //
+  // An operator's own error is appended to the error list by its id, and binding
+  // CONTINUES (collect-all): the editing compile returns every bad operator's error
+  // so the UI can surface them at once, and the compile before a run throws them
+  // together. To force one deterministically, a scan fixture is pointed at a file
+  // that does not exist.
 
   private def csvWithMissingFile(): CSVScanSourceOpDesc = {
     val op = TestOperators.headerlessSmallCsvScanOpDesc()
@@ -574,57 +574,220 @@ class LogicalPlanSpec extends AnyFlatSpec {
     op
   }
 
-  "LogicalPlan.resolveScanSourceOpFileName" should
+  /** The link `recordingLinker` makes for `file`. */
+  private def linkOf(file: URI): InputLink =
+    InputLink(
+      s"http://texera-rustfs:9000/bucket${file.getPath}?X-Amz-Signature=5ecr3t",
+      86400000L,
+      412
+    )
+
+  /** A linker that links any file, and lists the files it was asked to link in `asked`. */
+  private def recordingLinker(asked: ArrayBuffer[URI]): InputLinker =
+    file => {
+      asked += file
+      linkOf(file)
+    }
+
+  /** A link a request could send with an operator, to a place of the sender's choosing. */
+  private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+
+  "LogicalPlan.bindScanFiles" should
     "append a per-operator error for every failing scan source instead of throwing" in {
-    // Two independent broken scans: Some(errorList) must collect BOTH (it does
-    // not stop at the first failure), keyed by their distinct operator ids.
+    // Two independent broken scans: BOTH are collected (binding does not stop at
+    // the first failure), keyed by their distinct operator ids.
     val brokenA = csvWithMissingFile()
     val brokenB = csvWithMissingFile()
     val plan = LogicalPlan(List(brokenA, brokenB), List.empty)
     val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
-    plan.resolveScanSourceOpFileName(TestOperators.fixtureFileResolver, Some(errors))
+    plan.bindScanFiles(TestOperators.fixtureFileResolver, None, errors)
     assert(errors.size == 2, s"expected both failures captured, got: $errors")
     assert(
       errors.map(_._1).toSet ==
         Set(brokenA.operatorIdentifier, brokenB.operatorIdentifier)
     )
+    // The resolver raises `org.apache.commons.vfs2.FileNotFoundException` for a
+    // name it cannot resolve: that, and no other failure, is the operator's error.
+    assert(errors.forall(_._2.isInstanceOf[FileNotFoundException]))
   }
 
-  it should "rethrow FileNotFoundException when no errorList is provided" in {
-    // The resolver raises `org.apache.commons.vfs2.FileNotFoundException` for a
-    // name it cannot resolve. Pin the specific type so an unrelated failure
-    // mode (e.g. NPE) doesn't silently satisfy this test.
-    val brokenOp = csvWithMissingFile()
-    val plan = LogicalPlan(List(brokenOp), List.empty)
-    intercept[FileNotFoundException] {
-      plan.resolveScanSourceOpFileName(TestOperators.fixtureFileResolver, None)
-    }
+  it should "report a scan source that names no file, without asking the resolver" in {
+    val unnamed = new CSVScanSourceOpDesc()
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    LogicalPlan(List(unnamed), List.empty).bindScanFiles(
+      fileName => fail(s"asked to resolve $fileName"),
+      None,
+      errors
+    )
+
+    assert(errors.map(_._1).toList == List(unnamed.operatorIdentifier))
+    assert(
+      errors.head._2.toString == "java.lang.RuntimeException: No file selected. " +
+        "Please select a file from the 'File' dropdown in the right panel."
+    )
   }
 
   it should "set on each scan source the URI the given resolver returns for its file name" in {
-    val resolved = new java.net.URI("dataset:///repository/commit/data.csv")
+    val resolved = new URI("dataset:///repository/commit/data.csv")
     val asked = ArrayBuffer.empty[String]
     val op = TestOperators.headerlessSmallCsvScanOpDesc()
     op.fileName = Some("/dataset/owner@texera.io/sales/v1/data.csv")
-    val plan = LogicalPlan(List(op), List.empty)
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
 
-    plan.resolveScanSourceOpFileName(
+    val inputs = LogicalPlan(List(op), List.empty).bindScanFiles(
       fileName => { asked += fileName; resolved },
-      None
+      None,
+      errors
     )
 
     assert(asked.toList == List("/dataset/owner@texera.io/sales/v1/data.csv"))
     assert(op.fileName.contains(resolved.toASCIIString))
+    assert(errors.isEmpty)
+    // Given no linker, it links nothing: the plan reads no input through a link.
+    assert(inputs.isEmpty)
+    assert(op.inputLinks.isEmpty)
   }
 
-  it should "leave non-ScanSourceOpDesc operators untouched (no errors, no resolution)" in {
-    // KeywordSearch is not a ScanSourceOpDesc — the `case _` branch
-    // skips it entirely. An errorList provided here must remain empty.
+  it should "link each file it resolved, for a plan made to run, under its resolved name" in {
+    val csvFile = new URI("dataset:///repository/commit/data.csv")
+    val jsonlFile = new URI("model:///models/commit/a%20b/rows.jsonl")
+    val scanCsv = named(TestOperators.headerlessSmallCsvScanOpDesc(), "scan-csv")
+    scanCsv.fileName = Some("/dataset/owner@texera.io/sales/v1/data.csv")
+    val scanJsonl = named(TestOperators.smallJSONLScanOpDesc(), "scan-jsonl")
+    scanJsonl.fileName = Some("/model/owner@texera.io/models/v2/a b/rows.jsonl")
+    val linked = ArrayBuffer.empty[URI]
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val inputs = LogicalPlan(List(scanCsv, keyword(), scanJsonl), List.empty).bindScanFiles(
+      fileName => if (fileName.startsWith("/dataset/")) csvFile else jsonlFile,
+      Some(recordingLinker(linked)),
+      errors
+    )
+
+    assert(errors.isEmpty)
+    // The linker is handed what the resolver resolved, and nothing else.
+    assert(linked.toList == List(csvFile, jsonlFile))
+    // The executor looks its link up by the name it knows its file by.
+    assert(scanCsv.inputLinks == Map(scanCsv.fileName.get -> linkOf(csvFile)))
+    assert(scanJsonl.inputLinks == Map(scanJsonl.fileName.get -> linkOf(jsonlFile)))
+    // What the plan lists as read from outside the run: each file, with its link's expiry and
+    // the file's size, and never the link.
+    assert(
+      inputs == Seq(
+        PlanInput(OperatorIdentity("scan-csv"), csvFile.toASCIIString, InputFile(86400000L, 412)),
+        PlanInput(
+          OperatorIdentity("scan-jsonl"),
+          jsonlFile.toASCIIString,
+          InputFile(86400000L, 412)
+        )
+      )
+    )
+  }
+
+  it should "drop the links a scan source arrived with, whether or not it links its file" in {
+    Seq(None, Some(recordingLinker(ArrayBuffer.empty))).foreach { linker =>
+      val scan = csv()
+      // As a request could send it: a link under the very name the file resolves to.
+      val resolvedName = TestOperators.fixtureFileResolver.resolve(scan.fileName.get).toASCIIString
+      scan.inputLinks = Map(resolvedName -> sentLink, "another-name" -> sentLink)
+
+      LogicalPlan(List(scan), List.empty).bindScanFiles(
+        TestOperators.fixtureFileResolver,
+        linker,
+        ArrayBuffer.empty
+      )
+
+      assert(scan.fileName.contains(resolvedName))
+      assert(
+        scan.inputLinks == linker.map(_ => resolvedName -> linkOf(new URI(resolvedName))).toMap,
+        s"with ${linker.fold("no linker")(_ => "a linker")}"
+      )
+    }
+  }
+
+  it should "link no file whose name did not resolve, whatever the name is" in {
+    // A request names a file by a URI of its own making, of a dataset its user may
+    // not read, and sends a link with it. A user's resolver resolves no such name.
+    val refusesResolvedNames: ScanFileResolver =
+      fileName => throw new FileNotFoundException(fileName)
+    val scan = csv()
+    scan.fileName = Some("dataset:///another-users-repository/commit/secret.csv")
+    scan.inputLinks = Map("dataset:///another-users-repository/commit/secret.csv" -> sentLink)
+    val linked = ArrayBuffer.empty[URI]
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val inputs = LogicalPlan(List(scan), List.empty).bindScanFiles(
+      refusesResolvedNames,
+      Some(recordingLinker(linked)),
+      errors
+    )
+
+    assert(errors.map(_._1).toList == List(scan.operatorIdentifier))
+    assert(linked.isEmpty, "the linker was handed a file the resolver did not resolve")
+    assert(scan.inputLinks.isEmpty)
+    assert(inputs.isEmpty)
+  }
+
+  it should "report a file the linker does not find as its scan source's error" in {
+    val missing = csv()
+    val found = csv()
+    val notFound = new FileNotFoundException("no such file in the version")
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+    val missingFile = TestOperators.fixtureFileResolver.resolve(missing.fileName.get)
+    var asked = 0
+
+    val inputs = LogicalPlan(List(missing, found), List.empty).bindScanFiles(
+      TestOperators.fixtureFileResolver,
+      Some { file =>
+        asked += 1
+        if (asked == 1) throw notFound else linkOf(file)
+      },
+      errors
+    )
+
+    assert(errors.toList == List((missing.operatorIdentifier, notFound)))
+    assert(missing.fileName.contains(missingFile.toASCIIString), "the name was resolved")
+    assert(missing.inputLinks.isEmpty)
+    // The scan after it is linked all the same.
+    assert(inputs.map(_.logicalOperatorId) == Seq(found.operatorIdentifier))
+    assert(found.inputLinks.size == 1)
+  }
+
+  it should "throw, as it is, a failure of the resolver or the linker that is no scan's error" in {
+    // The database or the storage not answering says nothing about the file: reported on
+    // the scan, it would read as the user's mistake.
+    val outage = new java.io.IOException("the storage did not answer")
+    val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+    val fromResolver = intercept[java.io.IOException] {
+      LogicalPlan(List(csv()), List.empty).bindScanFiles(_ => throw outage, None, errors)
+    }
+    val fromLinker = intercept[java.io.IOException] {
+      LogicalPlan(List(csv()), List.empty).bindScanFiles(
+        TestOperators.fixtureFileResolver,
+        Some(_ => throw outage),
+        errors
+      )
+    }
+
+    assert(fromResolver eq outage)
+    assert(fromLinker eq outage)
+    assert(errors.isEmpty)
+  }
+
+  it should "leave operators that are no scan source untouched (no errors, no resolution)" in {
+    // KeywordSearch is not a ScanSourceOpDesc, so it is skipped entirely.
     val k = keyword()
     val plan = LogicalPlan(List(k), List.empty)
     val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
-    plan.resolveScanSourceOpFileName(TestOperators.fixtureFileResolver, Some(errors))
+    val inputs = plan.bindScanFiles(
+      fileName => fail(s"asked to resolve $fileName"),
+      Some(file => fail(s"asked to link $file")),
+      errors
+    )
     assert(errors.isEmpty)
+    assert(inputs.isEmpty)
   }
 
   // ---------------------------------------------------------------------------

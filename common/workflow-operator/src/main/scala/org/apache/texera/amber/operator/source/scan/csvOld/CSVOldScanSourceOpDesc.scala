@@ -23,7 +23,7 @@ import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.github.tototoshi.csv.{CSVReader, DefaultCSVFormat}
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.storage.model.ReadonlyVirtualDocument
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.inferSchemaFromRows
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
@@ -36,7 +36,6 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.io.IOException
-import java.net.URI
 import scala.util.Try
 
 class CSVOldScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator {
@@ -159,21 +158,13 @@ class CSVOldScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerat
     }
   }
 
-  override def sourceSchema(): Schema = {
-    val delimiterChar = customDelimiter.filter(_.nonEmpty).getOrElse(",").charAt(0)
-    require(
-      fileResolved(),
-      "No file selected. Please select a valid .csv file from the 'File' dropdown in the right panel."
-    )
+  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
+  override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".csv"))
 
-    val uri = new URI(fileName.get)
-    if (uri.getScheme == "file") {
-      require(
-        new java.io.File(uri).isFile,
-        "The selected item is a folder or does not exist. Please select an actual .csv file from the 'File' dropdown."
-      )
-    }
-    val file = DocumentFactory.openReadonlyDocument(uri).asFile()
+  /** The schema of the file `document` holds, inferred from the first rows of its window. */
+  def inferSchemaFrom(document: ReadonlyVirtualDocument[_]): Schema = {
+    val delimiterChar = customDelimiter.filter(_.nonEmpty).getOrElse(",").charAt(0)
+    val file = document.asFile()
     implicit object CustomFormat extends DefaultCSVFormat {
       override val delimiter: Char = delimiterChar
     }

@@ -104,11 +104,13 @@ object TestUtils {
 
   /**
     * What a plan compiled in a spec is bound to: its scan sources read fixture files on the local
-    * disk, a UDF's datasets and models are the fixture versions, read under the fixture mount
-    * root, and the site's settings are the defaults.
+    * disk, through links to the fixture server, as a run reads a dataset's files through links
+    * to the object store; a UDF's datasets and models are the fixture versions, read under the
+    * fixture mount root; and the site's settings are the defaults.
     */
   val fixtureBindings: RunBindings = RunBindings(
     files = TestOperators.fixtureFileResolver,
+    inputLinker = TestOperators.fixtureInputLinker,
     repositories = TestOperators.fixtureRepositoryResolver,
     mountRoot = Some(TestOperators.fixtureMountRoot),
     settings = CompileSettings.Default
@@ -117,7 +119,7 @@ object TestUtils {
   /**
     * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
     * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that and
-    * checked to be one the engine can run (`WorkflowExecutionService.requireRunnableHere`), so a
+    * checked to be one the engine can run (`WorkflowExecutionService.requireRunnableUnder`), so a
     * spec runs what a run would. `context` takes the settings and cost hints saved with the plan,
     * the ports whose results are stored among them. The text stays in memory: the Dashboard writes
     * it to the execution's plan table and a computing unit reads it back from there, which these
@@ -137,7 +139,10 @@ object TestUtils {
     if (fromSavedPlan) {
       val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan).savedPlan
       val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
-      WorkflowExecutionService.requireRunnableHere(readBack, Some(TestOperators.fixtureMountRoot))
+      WorkflowExecutionService.requireRunnableUnder(
+        readBack.plan,
+        Some(TestOperators.fixtureMountRoot)
+      )
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints
       Workflow(context, readBack.plan)

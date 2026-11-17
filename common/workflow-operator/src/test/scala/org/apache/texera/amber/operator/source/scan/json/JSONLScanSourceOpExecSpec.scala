@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.json
 
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.source.scan.FileDecodingMethod
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -48,7 +49,7 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
     desc.flatten = flatten
     desc.limit = limit
     desc.offset = offset
-    objectMapper.writeValueAsString(desc)
+    objectMapper.writeValueAsString(TestOperators.linked(desc))
   }
 
   private def drain(exec: JSONLScanSourceOpExec): List[Seq[Any]] = {

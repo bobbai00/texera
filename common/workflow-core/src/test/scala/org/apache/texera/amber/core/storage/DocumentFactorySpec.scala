@@ -137,19 +137,17 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
 
   private val versionHash = "97fd4c2a755b69b7c66d322eab40b7e5c2ad5d10"
 
-  "openReadonlyDocument" should "return a dataset-typed LakeFSFileDocument for the dataset scheme" in {
+  "openReadonlyDocument" should "return a LakeFSFileDocument for the dataset scheme" in {
     val datasetUri = new URI(s"dataset:///repo/$versionHash/file.txt")
     val doc = DocumentFactory.openReadonlyDocument(datasetUri)
     doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Dataset
     doc.getURI shouldBe datasetUri
   }
 
-  it should "return a model-typed LakeFSFileDocument for the model scheme and parse its URI components" in {
+  it should "return a LakeFSFileDocument for the model scheme and parse its URI components" in {
     val modelUri = new URI(s"model:///model-1/$versionHash/weights/model.pt")
     val doc = DocumentFactory.openReadonlyDocument(modelUri)
     doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Model
     doc.getURI shouldBe modelUri
 
     val resource = doc.asInstanceOf[OnVersionedFileResource]
@@ -181,19 +179,19 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   // openDocument / createDocument / documentExists -- unsupported schemes
   // ---------------------------------------------------------------------------
 
-  "openDocument" should "return a dataset-typed LakeFSFileDocument and no schema for the dataset scheme" in {
+  "openDocument" should "return a LakeFSFileDocument and no schema for the dataset scheme" in {
     val datasetUri = new URI(s"dataset:///repo/$versionHash/file.txt")
     val (doc, schemaOpt) = DocumentFactory.openDocument(datasetUri)
     doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Dataset
+    doc.getURI shouldBe datasetUri
     schemaOpt shouldBe None
   }
 
-  it should "return a model-typed LakeFSFileDocument and no schema for the model scheme" in {
+  it should "return a LakeFSFileDocument and no schema for the model scheme" in {
     val modelUri = new URI(s"model:///model-1/$versionHash/weights/model.pt")
     val (doc, schemaOpt) = DocumentFactory.openDocument(modelUri)
     doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Model
+    doc.getURI shouldBe modelUri
     schemaOpt shouldBe None
   }
 

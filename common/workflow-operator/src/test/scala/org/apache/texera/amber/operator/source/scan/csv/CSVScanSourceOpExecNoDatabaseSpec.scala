@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.csv
 
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.dao.jooq.generated.Tables.SITE_SETTINGS
 import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder}
@@ -65,7 +66,7 @@ class CSVScanSourceOpExecNoDatabaseSpec
     desc.customDelimiter = Some(",")
     desc.maxColumns = Some(maxColumns)
     desc.setResolvedFileName(threeColumns.toUri)
-    val exec = new CSVScanSourceOpExec(objectMapper.writeValueAsString(desc))
+    val exec = new CSVScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
     exec.open()
     try exec.produceTuple().map(_.getFields.toList).toList
     finally exec.close()

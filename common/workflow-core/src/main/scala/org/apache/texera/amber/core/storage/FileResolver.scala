@@ -38,9 +38,8 @@ import org.jooq.{DSLContext, Record}
 
 import java.net.{URI, URLEncoder}
 import java.nio.charset.StandardCharsets
-import java.nio.file.Paths
+import java.nio.file.{InvalidPathException, Paths}
 import scala.jdk.CollectionConverters.IteratorHasAsScala
-import scala.util.control.NonFatal
 
 /**
   * Resolves versioned-resource (dataset / model) logical paths to physical URIs.
@@ -64,7 +63,10 @@ object FileResolver {
   /**
     * Resolves a versioned-resource logical path on behalf of `uid`.
     *
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve for `uid`
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve for `uid`.
+    *                                                       A lookup that fails, because the
+    *                                                       database does not answer, is thrown as
+    *                                                       it is.
     */
   def resolveForUser(fileName: String, uid: Integer): URI =
     resolveLogicalPath(fileName, reader = Some(uid))
@@ -72,20 +74,34 @@ object FileResolver {
   /**
     * Resolves a versioned-resource logical path without a user scope.
     *
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve. A lookup
+    *                                                       that fails, because the database does
+    *                                                       not answer, is thrown as it is.
     */
   def resolveVersionedResource(fileName: String): URI =
     resolveLogicalPath(fileName, reader = None)
 
-  private def resolveLogicalPath(fileName: String, reader: Option[Integer]): URI =
-    try {
-      if (isFileResolved(fileName)) {
-        throw new FileNotFoundException(fileName)
-      }
-      versionedResourceResolveFunc(fileName, reader)
-    } catch {
-      case NonFatal(_) => throw new FileNotFoundException(fileName)
+  /**
+    * A name that resolves to nothing is a [[FileNotFoundException]] of that name: one already
+    * resolved, one that is no versioned-resource path, or one of a resource or version that does
+    * not exist or that `reader` may not read. Whatever else fails is the lookup's own failure,
+    * not the name's, and is thrown as it is, so that a database that cannot answer is never
+    * taken for a file that is not there.
+    */
+  private def resolveLogicalPath(fileName: String, reader: Option[Integer]): URI = {
+    if (isFileResolved(fileName)) {
+      throw new FileNotFoundException(fileName)
     }
+    try versionedResourceResolveFunc(fileName, reader)
+    catch {
+      case e: Throwable =>
+        unwrapNotFound(e) match {
+          case _: FileNotFoundException | _: InvalidPathException =>
+            throw new FileNotFoundException(fileName)
+          case lookupFailure => throw lookupFailure
+        }
+    }
+  }
 
   /**
     * Parses a versioned-resource file path into its components, or None if it is not well-formed.

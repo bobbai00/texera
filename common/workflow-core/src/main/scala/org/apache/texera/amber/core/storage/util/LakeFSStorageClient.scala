@@ -437,6 +437,19 @@ object LakeFSStorageClient extends LazyLogging {
   }
 
   /**
+    * Looks up a file of a specific repository and commit, without reading it.
+    *
+    * @param repoName     Repository name.
+    * @param commitHash   Commit hash of the version.
+    * @param filePath     Path to the file in the repository.
+    * @return             The file's metadata: among it, its size and its physical address, the
+    *                     object in the underlying store that holds its bytes.
+    */
+  def statObject(repoName: String, commitHash: String, filePath: String): ObjectStats = {
+    objectsApi.statObject(repoName, commitHash, filePath).execute()
+  }
+
+  /**
     * Get file size.
     *
     * @param repoName     Repository name.
@@ -449,11 +462,7 @@ object LakeFSStorageClient extends LazyLogging {
       commitHash: String,
       filePath: String
   ): Long = {
-    objectsApi
-      .statObject(repoName, commitHash, filePath)
-      .execute()
-      .getSizeBytes
-      .longValue()
+    statObject(repoName, commitHash, filePath).getSizeBytes.longValue()
   }
 
   /**

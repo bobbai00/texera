@@ -19,11 +19,14 @@
 
 package org.apache.texera.web.service
 
+import org.apache.texera.amber.core.storage.LakeFSInputLinker
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   CostHints,
   ExecutionMode,
+  InputFile,
   PhysicalPlanCodec,
+  PlanInput,
   PortIdentity,
   ReplaySource,
   WorkflowContext,
@@ -32,6 +35,7 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.compiler.{
@@ -58,7 +62,8 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
       warehouse = Some("warehouse-34")
     )
 
-  // The scan reads a fixture on the local disk, and no operator names a dataset or model.
+  // The scan reads a fixture on the local disk, through a link of the fixture linker's, and no
+  // operator names a dataset or model.
   private def newCompiler(context: WorkflowContext): WorkflowCompiler =
     new WorkflowCompiler(context, TestUtils.fixtureBindings)
 
@@ -83,6 +88,10 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
   private def searches(count: Int): List[LogicalOp] =
     TestOperators.smallCsvScanOpDesc() ::
       List.fill(count)(TestOperators.keywordSearchOpDesc("Region", "Asia"))
+
+  "PlanToRun.bindingsFor" should "bind a plan to the links the deployment's linker signs" in {
+    PlanToRun.bindingsFor(7).inputLinker should be theSameInstanceAs LakeFSInputLinker.forDeployment
+  }
 
   "PlanToRun.make" should
     "save the plan its compile makes for its compiler's run, with the ports whose results are stored" in {
@@ -114,11 +123,29 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     // A plan does not choose the computing unit it runs on.
     planContext.cuid shouldBe None
     TestUtils.assertReadBackFrom(compiled.physicalPlan, executionPlan.plan)
-    // Given no replay or replay log, the plan replays nothing and writes no replay log; and no
-    // operator reads inputs through links yet.
+    // Given no replay or replay log, the plan replays nothing and writes no replay log.
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None
-    executionPlan.inputs shouldBe empty
+    // The file its scan reads is its one input: read through a link, of which the plan lists
+    // when it expires, beside the file's size.
+    val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
+    val link = TestOperators.fixtureInputLinker.link(scanned)
+    executionPlan.inputs shouldBe Seq(
+      PlanInput(
+        operators.head.operatorIdentifier,
+        scanned.toASCIIString,
+        InputFile(link.expiresAtMs, link.sizeBytes)
+      )
+    )
+  }
+
+  it should "save a plan that reads no file with no input" in {
+    val text = new TextInputSourceOpDesc()
+    text.textInput = "north\nsouth"
+
+    val planToRun = PlanToRun.make(newCompiler(newContext()), pojo(List(text), List.empty))
+
+    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan)).inputs shouldBe empty
   }
 
   it should "save the run's cost hints with the plan, whatever operators they name" in {
@@ -194,7 +221,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
     executionPlan.replay shouldBe Some(replay)
     executionPlan.replayLog shouldBe Some(replayLog)
-    executionPlan.inputs shouldBe empty
   }
 
   it should "refuse to save a replay or a replay log the engine could not find" in {

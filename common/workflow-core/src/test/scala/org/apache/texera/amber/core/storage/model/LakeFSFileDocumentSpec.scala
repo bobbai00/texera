@@ -20,8 +20,7 @@
 package org.apache.texera.amber.core.storage.model
 
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import org.apache.texera.common.config.{EnvironmentalVariable, StorageConfig}
-import org.apache.texera.amber.core.storage.ResourceType
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -48,12 +47,6 @@ import scala.jdk.CollectionConverters._
   * two routes return different bytes. Against a real lakeFS both paths return the same file, so
   * the fallback could silently become the only live path.
   *
-  * These tests exercise the `userJwtToken.isEmpty` half of `asInputStream`. That is the half every
-  * test JVM takes: `USER_JWT_TOKEN` is injected only into the pod env of a user-created computing
-  * unit (`ComputingUnitManagingResource`), never in CI or a dev shell. The non-empty half — which
-  * asks a file-service presign endpoint on a fixed port for the URL — is left to file-service's own
-  * tests; reaching it here would need a hardcoded port in `build.sbt`'s test grouping.
-  *
   * Tagged [[NonParallelTest]] so `common/workflow-core/build.sbt` gives this suite its own forked
   * JVM. That is load-bearing: `beforeAll` repoints `StorageConfig.lakefsEndpoint`, a JVM-wide
   * `var` that `LakeFSStorageClient.apiClient` (a `lazy val`) captures once per JVM, and
@@ -71,8 +64,8 @@ class LakeFSFileDocumentSpec
   // (format: dataset:///{repositoryName}/{versionHash}/{fileRelativePath}).
   private val versionHash = "97fd4c2a755b69b7c66d322eab40b7e5c2ad5d10"
 
-  // URI parsing is shared by every resource type; exercise it through the dataset type.
-  private def datasetDoc(uri: URI) = new LakeFSFileDocument(uri, ResourceType.Dataset)
+  // URI parsing is the same for every resource type; exercise it through a dataset's URI.
+  private def datasetDoc(uri: URI) = new LakeFSFileDocument(uri)
 
   // -----------------------------------------------------------------------------------------
   // Loopback stub
@@ -329,43 +322,11 @@ class LakeFSFileDocumentSpec
     }
   }
 
-  // The companion object resolves the file-service endpoint from environment
-  // variables, falling back to a trimmed default. This lazy val is read whenever
-  // asInputStream needs to fetch a file; assert its fallback behavior without
-  // requiring a live FileService or LakeFS. The check is guarded so it holds
-  // regardless of whether the env override is present.
-  "the companion" should
-    "resolve the dataset presigned-URL endpoint, defaulting when the env override is absent" in {
-    val expected =
-      sys.env
-        .getOrElse(
-          EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-          "http://localhost:9092/api/dataset/presign-download"
-        )
-        .trim
-    LakeFSFileDocument.presignEndpointOf(ResourceType.Dataset) shouldBe expected
-  }
+  "the companion" should "locate the file a model URI names as it locates a dataset's" in {
+    // What the document reads and what a plan's linker links are found by the one parse.
+    val located = LakeFSFileDocument.locate(new URI(s"model:///model-7/$versionHash/a%20b/w.pt"))
 
-  // Each resource type resolves its own endpoint: a dataset grant must not authorize a model
-  // file, so the two presign endpoints stay distinct.
-  it should "resolve the model presigned-URL endpoint, defaulting when the env override is absent" in {
-    val expected =
-      sys.env
-        .getOrElse(
-          EnvironmentalVariable.ENV_FILE_SERVICE_GET_MODEL_PRESIGNED_URL_ENDPOINT,
-          "http://localhost:9092/api/model/presign-download"
-        )
-        .trim
-    LakeFSFileDocument.presignEndpointOf(ResourceType.Model) shouldBe expected
-    LakeFSFileDocument.presignEndpointOf(ResourceType.Model) should not be
-      LakeFSFileDocument.presignEndpointOf(ResourceType.Dataset)
-  }
-
-  // The user JWT token is shared by every LakeFS-backed document, whatever its resource type.
-  it should "expose a trimmed user JWT token defaulting to empty" in {
-    val expected =
-      sys.env.getOrElse(EnvironmentalVariable.ENV_USER_JWT_TOKEN, "").trim
-    LakeFSFileDocument.userJwtToken shouldBe expected
+    located shouldBe (("model-7", versionHash, Paths.get("a b", "w.pt")))
   }
 
   // -----------------------------------------------------------------------------------------
@@ -500,8 +461,7 @@ class LakeFSFileDocumentSpec
     // virtually, which is exactly the seam production uses.
     var closes = 0
     val doc = new LakeFSFileDocument(
-      new URI(s"dataset:///$repositoryName/$versionHash/$fileName"),
-      ResourceType.Dataset
+      new URI(s"dataset:///$repositoryName/$versionHash/$fileName")
     ) {
       override def asInputStream(): InputStream =
         new ByteArrayInputStream(presignedContent.getBytes(StandardCharsets.UTF_8)) {

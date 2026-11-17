@@ -21,7 +21,7 @@ package org.apache.texera.amber.core.executor
 
 import org.apache.texera.amber.core.state.StateReferencing
 
-import java.lang.reflect.Modifier
+import java.lang.reflect.{InvocationTargetException, Modifier}
 
 object ExecFactory {
 
@@ -80,6 +80,11 @@ object ExecFactory {
         case (held, _)                                                       => held
       }
 
+  /**
+    * What the executor's constructor throws is thrown as it is. Reflection wraps it in an
+    * exception of its own, which has no message: reported as the reason an operator failed, it
+    * would hide the constructor's.
+    */
   private def instantiate[K](
       className: String,
       descString: String,
@@ -88,27 +93,31 @@ object ExecFactory {
   ): OperatorExecutor = {
     val clazz = Class.forName(className).asInstanceOf[Class[K]]
     try {
-      if (descString.isEmpty) {
-        clazz.getDeclaredConstructor().newInstance().asInstanceOf[OperatorExecutor]
-      } else {
-        clazz
-          .getDeclaredConstructor(classOf[String])
-          .newInstance(descString)
-          .asInstanceOf[OperatorExecutor]
-      }
-    } catch {
-      case e: NoSuchMethodException =>
+      try {
         if (descString.isEmpty) {
-          clazz
-            .getDeclaredConstructor(classOf[Int], classOf[Int])
-            .newInstance(idx, workerCount)
-            .asInstanceOf[OperatorExecutor]
+          clazz.getDeclaredConstructor().newInstance().asInstanceOf[OperatorExecutor]
         } else {
           clazz
-            .getDeclaredConstructor(classOf[String], classOf[Int], classOf[Int])
-            .newInstance(descString, idx, workerCount)
+            .getDeclaredConstructor(classOf[String])
+            .newInstance(descString)
             .asInstanceOf[OperatorExecutor]
         }
+      } catch {
+        case e: NoSuchMethodException =>
+          if (descString.isEmpty) {
+            clazz
+              .getDeclaredConstructor(classOf[Int], classOf[Int])
+              .newInstance(idx, workerCount)
+              .asInstanceOf[OperatorExecutor]
+          } else {
+            clazz
+              .getDeclaredConstructor(classOf[String], classOf[Int], classOf[Int])
+              .newInstance(descString, idx, workerCount)
+              .asInstanceOf[OperatorExecutor]
+          }
+      }
+    } catch {
+      case thrownByConstructor: InvocationTargetException => throw thrownByConstructor.getCause
     }
   }
 }

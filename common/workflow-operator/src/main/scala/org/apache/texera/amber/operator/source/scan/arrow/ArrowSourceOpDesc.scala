@@ -21,7 +21,6 @@ package org.apache.texera.amber.operator.source.scan.arrow
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PhysicalOp, SchemaPropagationFunc}
@@ -35,7 +34,6 @@ import org.apache.arrow.vector.ipc.ArrowFileReader
 import org.apache.arrow.vector.types.pojo.{Schema => ArrowSchema}
 
 import java.io.IOException
-import java.net.URI
 import java.nio.file.{Files, StandardOpenOption}
 import scala.util.Using
 
@@ -160,19 +158,7 @@ class ArrowSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator {
     */
   @Override
   def inferSchema(): Schema = {
-    require(
-      fileResolved(),
-      "No file selected. Please select a valid .arrow file from the 'File' dropdown in the right panel."
-    )
-
-    val uri = new URI(fileName.get)
-    if (uri.getScheme == "file") {
-      require(
-        new java.io.File(uri).isFile,
-        "The selected item is a folder or does not exist. Please select an actual .arrow file from the 'File' dropdown."
-      )
-    }
-    val file = DocumentFactory.openReadonlyDocument(uri).asFile()
+    val file = openFileToInferFrom(".arrow").asFile()
 
     val allocator = new RootAllocator()
 

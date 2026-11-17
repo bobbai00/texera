@@ -19,6 +19,8 @@
 
 package org.apache.texera.common.compiler
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.amber.core.executor.{
@@ -28,13 +30,22 @@ import org.apache.texera.amber.core.executor.{
   SourceOperatorExecutor
 }
 import org.apache.texera.amber.core.state.State
-import org.apache.texera.amber.core.storage.{RepositoryVersionResolver, ScanFileResolver}
+import org.apache.texera.amber.core.storage.{
+  InputLink,
+  InputLinker,
+  RepositoryVersionResolver,
+  ScanFileResolver
+}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
 import org.apache.texera.amber.core.workflow.{
+  ExecutionPlan,
+  InputFile,
   OutputPort,
   PhysicalOp,
+  PhysicalPlanCodec,
   PhysicalPlanRoundTrip,
+  PlanInput,
   PortIdentity,
   RepositoryMounts,
   SchemaNotAvailableException,
@@ -69,6 +80,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 
 import java.nio.file.{Path, Paths}
 import scala.collection.mutable
+import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 /**
   * Direct unit coverage for the unified [[WorkflowCompiler]].
@@ -89,15 +101,18 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   private def newContext(): WorkflowContext =
     new WorkflowContext(workflowId = WorkflowIdentity(0))
 
-  // The scan sources here read fixture files on the local disk.
+  // The scan sources here read fixture files on the local disk, through the fixture linker's
+  // links in a plan made to run.
   private def newCompiler(
       fileResolver: ScanFileResolver = TestOperators.fixtureFileResolver,
-      settings: CompileSettings = CompileSettings.Default
+      settings: CompileSettings = CompileSettings.Default,
+      inputLinker: InputLinker = TestOperators.fixtureInputLinker
   ): WorkflowCompiler =
     new WorkflowCompiler(
       newContext(),
       RunBindings(
         fileResolver,
+        inputLinker,
         TestOperators.fixtureRepositoryResolver,
         Some(TestOperators.fixtureMountRoot),
         settings
@@ -106,8 +121,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
   /**
     * Saves the plan a Strict compile made to run, with the context it runs under (the context the
-    * compile was given, storing the results the compile asks to store), and fails unless it reads
-    * back as the same plan. Every plan this spec makes to run goes through it.
+    * compile was given, storing the results the compile asks to store) and the inputs it reads,
+    * and fails unless it reads back as the same plan. Every plan this spec makes to run goes
+    * through it.
     *
     * @return the plan's saved JSON text
     */
@@ -116,7 +132,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     context.workflowSettings = context.workflowSettings.copy(
       outputPortsNeedingStorage = result.outputPortsNeedingStorage
     )
-    PhysicalPlanRoundTrip.assertRoundTrips(context, result.physicalPlan.get)
+    PhysicalPlanRoundTrip.assertRoundTrips(
+      ExecutionPlan(context, result.physicalPlan.get, inputs = result.inputs)
+    )
   }
 
   /** What a Strict compile of `workflow` fails with; the test fails if it compiles. */
@@ -865,7 +883,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   // Re-anchor the subject after the sub-section.
   "WorkflowCompiler in strict mode" should
     "fail with the scan's error when a scan source has no fileName set" in {
-    // As in the lenient counterpart above, `resolveScanSourceOpFileName` keeps the failure as the
+    // As in the lenient counterpart above, `bindScanFiles` keeps the failure as the
     // operator's error and goes on; Strict then throws it, with any others, instead of returning
     // it (the execution path's contract: a plan made to run has no errors).
     val orphanCsv = new CSVScanSourceOpDesc()
@@ -891,7 +909,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(cause != null, "the failure should have the operator's error as its cause")
     assert(cause.toString == error.message)
     assert(
-      cause.getStackTrace.exists(_.getMethodName.contains("resolveScanSourceOpFileName")),
+      cause.getStackTrace.exists(_.getMethodName.contains("bindScanFiles")),
       cause.getStackTrace.take(8).mkString("\n")
     )
   }
@@ -1091,9 +1109,10 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(failure.getCause.toString == scanError, failure.getCause)
   }
 
-  it should "make from a valid workflow the plan the editing compile makes" in {
-    // With nothing to pin, the two compiles differ only in what they do with errors, and here
-    // there are none: the plan to run is the plan compiled, whatever Strict does with errors.
+  it should "make from a valid workflow the plan the editing compile makes, with its file linked" in {
+    // With nothing to pin, the two compiles differ in what they do with errors, and here there
+    // are none, and in the link to the scan's file, which only a plan made to run carries: but
+    // for that, the plan to run is the plan compiled.
     val ops = List(
       csvOp(TestOperators.CountrySalesSmallCsvPath),
       projectOp(List("Region", "Total Profit")),
@@ -1110,7 +1129,26 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(lenient.operatorIdToError.isEmpty, s"unexpected errors: ${lenient.operatorIdToError}")
     assert(strict.operatorIdToOutputSchemas == lenient.operatorIdToOutputSchemas)
     assert(strict.outputPortsNeedingStorage == lenient.outputPortsNeedingStorage)
-    assert(assertSavable(strict) == assertSavable(lenient))
+    assert(strict.inputs.map(_.logicalOperatorId) == Seq(ops.head.operatorIdentifier))
+    assert(lenient.inputs.isEmpty)
+    // The saved plans, each without its inputs and the links to them in its scans' descriptors.
+    def withoutInputs(savedPlan: String): JsonNode = {
+      val plan = objectMapper.readTree(savedPlan).asInstanceOf[ObjectNode]
+      plan.remove("inputs")
+      plan.get("operators").elements().asScala.foreach { operator =>
+        operator.at("/opExecInitInfo/opExecWithClassName") match {
+          case executor: ObjectNode =>
+            val descriptor = objectMapper.readTree(executor.get("descString").asText())
+            descriptor.asInstanceOf[ObjectNode].remove("inputLinks")
+            executor.put("descString", objectMapper.writeValueAsString(descriptor))
+          case _ => // an executor of generated code, which holds no descriptor
+        }
+      }
+      plan
+    }
+    val (savedStrict, savedLenient) = (assertSavable(strict), assertSavable(lenient))
+    assert(savedStrict != savedLenient)
+    assert(withoutInputs(savedStrict) == withoutInputs(savedLenient))
   }
 
   // -------------------- datasets and models a UDF names --------------------
@@ -1143,7 +1181,13 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   ): WorkflowCompiler =
     new WorkflowCompiler(
       newContext(),
-      RunBindings(TestOperators.fixtureFileResolver, resolver, mountRoot, CompileSettings.Default)
+      RunBindings(
+        TestOperators.fixtureFileResolver,
+        TestOperators.fixtureInputLinker,
+        resolver,
+        mountRoot,
+        CompileSettings.Default
+      )
     )
 
   private def uiParameter(
@@ -1455,15 +1499,25 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   }
 
   "RunBindings.forEditing" should
-    "bind a compile to the files and settings it is given, and to no dataset or model" in {
+    "bind a compile to the files and settings it is given, and to no link, dataset or model" in {
     val settings = CompileSettings(csvParserMaxColumns = 77)
 
     val bindings = RunBindings.forEditing(TestOperators.fixtureFileResolver, settings)
 
     assert(bindings.files eq TestOperators.fixtureFileResolver)
     assert(bindings.settings == settings)
+    assert(bindings.inputLinker eq InputLinker.Unavailable)
     assert(bindings.repositories eq RepositoryVersionResolver.Unavailable)
     assert(bindings.mountRoot.isEmpty)
+    // A plan made to run with them, which reads a file, fails rather than run with no link to
+    // it: with a failure of the compile's own, as no scan is at fault.
+    val unlinked = intercept[IllegalStateException] {
+      new WorkflowCompiler(newContext(), bindings).compile(
+        pojo(List(csvOp(TestOperators.CountrySalesSmallCsvPath)), List.empty),
+        CompilationErrorHandling.Strict
+      )
+    }
+    assert(unlinked.getMessage.startsWith("No linker for input files was given, so file:"))
     // A plan made to run with them, which reads a dataset, is refused rather than left unpinned.
     val source = resourceSourceUdf()
     val message = onlyErrorOf(
@@ -1557,6 +1611,157 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
     assert(rows.nonEmpty)
     assert(rows.forall(_.getFields.size == 14))
+  }
+
+  // -------------------- the files a plan reads --------------------
+
+  // A Strict compile, which makes a plan to run, links the file each scan source reads, once
+  // its resolver has resolved it for the plan's user. The link travels to the scan's executor in
+  // its descriptor, and the plan lists the file among its inputs. No other compile links
+  // anything, and no compile keeps a link a scan arrived with.
+
+  /** The links the plan of `result` gives the executor of `scan`, a CSV scan. */
+  private def linksOf(result: WorkflowCompilationResult, scan: LogicalOp): Map[String, InputLink] =
+    objectMapper.readValue(executorInit(result, scan)._2, classOf[CSVScanSourceOpDesc]).inputLinks
+
+  /** A linker that makes no link, for a compile that must ask for none. */
+  private val linksNothing: InputLinker = file => fail(s"asked to link $file")
+
+  /** A link a request could send with an operator, to a place of the sender's choosing. */
+  private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+
+  "WorkflowCompiler" should
+    "link the file of every scan source of a plan made to run, and list each as its input" in {
+    val small = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val medium = csvOp(TestOperators.CountrySalesMediumCsvPath)
+    val again = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val keyword = TestOperators.keywordSearchOpDesc("Region", "Asia")
+    val made = scala.collection.mutable.ArrayBuffer.empty[(java.net.URI, InputLink)]
+    val linker: InputLinker = file => {
+      val link = TestOperators.fixtureInputLinker.link(file)
+      made += file -> link
+      link
+    }
+
+    val result = newCompiler(inputLinker = linker).compile(
+      pojo(List(small, medium, again, keyword), List(linked(small, keyword))),
+      CompilationErrorHandling.Strict
+    )
+
+    val smallUri = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
+    val mediumUri = TestOperators.localFileUri(TestOperators.CountrySalesMediumCsvPath)
+    // One link per scan, of the file its resolver resolved: two scans of one file get one each.
+    assert(made.map(_._1).toList == List(smallUri, mediumUri, smallUri))
+    Seq(small, medium, again).zip(made).foreach {
+      case (scan, (file, link)) =>
+        // The executor finds its link under the name it knows its file by.
+        assert(linksOf(result, scan) == Map(file.toASCIIString -> link))
+    }
+    assert(
+      result.inputs == Seq(small, medium, again).zip(made).map {
+        case (scan, (file, link)) =>
+          PlanInput(
+            scan.operatorIdentifier,
+            file.toASCIIString,
+            InputFile(link.expiresAtMs, link.sizeBytes)
+          )
+      }
+    )
+    assert(
+      result.inputs.map(_.file.sizeBytes) == Seq(smallUri, mediumUri, smallUri).map(file =>
+        java.nio.file.Files.size(java.nio.file.Paths.get(file))
+      )
+    )
+    // The saved plan lists the inputs, and the links are in it only where the executors read
+    // them: in the scans' own descriptors.
+    val saved = PhysicalPlanCodec.fromJson(assertSavable(result))
+    assert(saved.inputs.size == 3)
+    assert(saved.inputs.forall(input => !input.toProtoString.contains("http")))
+  }
+
+  it should "link nothing for the editor's compile, which makes no plan to run" in {
+    val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
+
+    val result = newCompiler(inputLinker = linksNothing).compile(pojo(List(scan), List.empty))
+
+    assert(result.operatorIdToError.isEmpty, s"unexpected errors: ${result.operatorIdToError}")
+    assert(result.inputs.isEmpty)
+    assert(linksOf(result, scan).isEmpty)
+  }
+
+  it should "replace the links a scan source arrives with, as a request could send them" in {
+    def sent(): LogicalOp = {
+      val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
+      // Under the name the file resolves to, and under the name as typed.
+      scan.inputLinks = Map(
+        TestOperators
+          .localFileUri(TestOperators.CountrySalesSmallCsvPath)
+          .toASCIIString -> sentLink,
+        TestOperators.CountrySalesSmallCsvPath -> sentLink
+      )
+      scan
+    }
+
+    val edited = sent()
+    val lenient = newCompiler(inputLinker = linksNothing).compile(pojo(List(edited), List.empty))
+    assert(lenient.operatorIdToError.isEmpty)
+    assert(linksOf(lenient, edited).isEmpty)
+
+    val run = sent()
+    val strict =
+      newCompiler().compile(pojo(List(run), List.empty), CompilationErrorHandling.Strict)
+    val links = linksOf(strict, run)
+    assert(links.keySet == Set(run.asInstanceOf[CSVScanSourceOpDesc].fileName.get))
+    assert(!links.values.exists(_ == sentLink))
+    assert(strict.inputs.map(_.file.expiresAtMs) == links.values.map(_.expiresAtMs).toSeq)
+  }
+
+  it should "link no file its user may not read, and fail the plan with the scan's error" in {
+    // The resolver decides what the plan's user may read. A name it refuses is never handed to
+    // the linker, whatever the name is: here a URI of the request's own making.
+    val refusing: ScanFileResolver = fileName => throw new FileNotFoundException(fileName)
+    val scan = csvOp("dataset:///another-users-repository/commit/secret.csv")
+    scan.inputLinks = Map("dataset:///another-users-repository/commit/secret.csv" -> sentLink)
+
+    val failure = strictFailure(
+      pojo(List(scan), List.empty),
+      newCompiler(fileResolver = refusing, inputLinker = linksNothing)
+    )
+
+    assert(onlyErrorOf(failure, scan).startsWith(classOf[FileNotFoundException].getName))
+    assert(scan.inputLinks.isEmpty)
+  }
+
+  it should "report a file the linker does not find as its scan's error, in a plan made to run" in {
+    val scan = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val notFound = new FileNotFoundException("the version holds no such file")
+    val plan = pojo(List(scan), List.empty)
+
+    val failure = strictFailure(plan, newCompiler(inputLinker = _ => throw notFound))
+
+    assert(onlyErrorOf(failure, scan) == notFound.toString)
+    assert(failure.getCause eq notFound)
+    // The editing compile, which links nothing, has no such error.
+    assert(newCompiler(inputLinker = _ => throw notFound).compile(plan).operatorIdToError.isEmpty)
+  }
+
+  it should "throw, as it is, a failure to resolve or link a file that is no error of the scan's" in {
+    // A file that does not exist, or that the plan's user may not read, is the error of the scan
+    // naming it. A database or a storage that does not answer is not: the compile fails with that
+    // failure itself, which names no operator, so it is not taken for the user's mistake.
+    val fault = new java.io.IOException("the storage did not answer")
+    def plan() = pojo(List(csvOp(TestOperators.CountrySalesSmallCsvPath)), List.empty)
+
+    bothModes.foreach { mode =>
+      val unresolved = intercept[java.io.IOException] {
+        newCompiler(fileResolver = _ => throw fault).compile(plan(), mode)
+      }
+      assert(unresolved eq fault, s"$mode: expected the resolver's own failure, got $unresolved")
+    }
+    val unlinked = intercept[java.io.IOException] {
+      newCompiler(inputLinker = _ => throw fault).compile(plan(), CompilationErrorHandling.Strict)
+    }
+    assert(unlinked eq fault, s"expected the linker's own failure, got: $unlinked")
   }
 
   // -------------------- a plan made to run, saved and read back --------------------

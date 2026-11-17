@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.source.scan.file
 
 import org.apache.texera.amber.core.executor.OperatorExecutor
-import org.apache.texera.amber.core.storage.FileResolver
+import org.apache.texera.amber.core.storage.{DocumentFactory, FileResolver}
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
@@ -35,9 +35,8 @@ class FileScanOpExec private[scan] (
 
   override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = {
     val originalFileName = tuple.getFields.collectFirst { case s: String => s }.get
-    val fileName = locate(originalFileName).toASCIIString
     FileScanUtils.createTuplesFromFile(
-      fileName = fileName,
+      document = DocumentFactory.openReadonlyDocument(locate(originalFileName)),
       displayFileName = originalFileName,
       attributeType = desc.attributeType,
       fileEncoding = desc.fileEncoding,

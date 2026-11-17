@@ -19,12 +19,14 @@
 
 package org.apache.texera.amber.operator.source.scan.file
 
+import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.operator.source.scan.{FileAttributeType, FileDecodingMethod}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 
 import java.io.{BufferedOutputStream, FileOutputStream, IOException, InputStream}
+import java.net.URI
 import java.nio.file.{Files, Path}
 import java.util.zip.{ZipEntry, ZipOutputStream}
 
@@ -77,7 +79,7 @@ class FileScanUtilsSpec extends AnyFlatSpec with BeforeAndAfterAll {
   ): Seq[TupleLike] = {
     FileScanUtils
       .createTuplesFromFile(
-        fileName = fileName,
+        document = DocumentFactory.openReadonlyDocument(new URI(fileName)),
         displayFileName = displayFileName,
         attributeType = attributeType,
         fileEncoding = fileEncoding,
@@ -183,40 +185,6 @@ class FileScanUtilsSpec extends AnyFlatSpec with BeforeAndAfterAll {
       fileScanOffset = Some(1)
     )
     assert(contents(tuples) == Seq("l1\nl2\nl3\nl4\nl5"))
-  }
-
-  it should "read a file through the seven-argument overload under its own name" in {
-    // The short overload exists only to default displayFileName to fileName, so the
-    // emitted file-name column is the observation that pins the delegation.
-    val uri = makeTextFile("only line")
-    val tuples = FileScanUtils
-      .createTuplesFromFile(
-        fileName = uri,
-        attributeType = FileAttributeType.SINGLE_STRING,
-        fileEncoding = FileDecodingMethod.UTF_8,
-        extract = false,
-        outputFileName = true,
-        fileScanOffset = None,
-        fileScanLimit = None
-      )
-      .toSeq
-    assert(tuples.size == 1)
-    assert(tuples.head.getFields.toSeq == Seq(uri, "only line"))
-  }
-
-  it should "forward the offset and limit through the seven-argument overload" in {
-    val tuples = FileScanUtils
-      .createTuplesFromFile(
-        fileName = makeTextFile("l1\nl2\nl3\nl4\nl5"),
-        attributeType = FileAttributeType.STRING,
-        fileEncoding = FileDecodingMethod.UTF_8,
-        extract = false,
-        outputFileName = false,
-        fileScanOffset = Some(1),
-        fileScanLimit = Some(2)
-      )
-      .toSeq
-    assert(contents(tuples) == Seq("l2", "l3"))
   }
 
   // -- safeToByteArray: the out-of-memory guard ---------------------------------
