@@ -1058,14 +1058,47 @@ def scenario_l10(ctx: Ctx) -> None:
 # ------------------------------------------------------------- m: replay
 
 
-UDF_SLOW_TAG = udf_tag("replayed")
+REPLAY_SLEEP_MS = 50
+# A slow operator on a JVM worker. A global checkpoint asks every worker of the run to
+# prepare one, and a Python worker cannot: pyamber has no PrepareCheckpoint handler
+# (grpclib UNIMPLEMENTED), so with a Python UDF in the workflow the checkpoint never
+# completes and the coordinator records no interaction (seen on step2ckpt, 2026-11-16).
+JAVA_UDF_SLOW_TAG = '''import org.apache.texera.amber.operator.map.MapOpExec;
+import org.apache.texera.amber.core.tuple.Tuple;
+import org.apache.texera.amber.core.tuple.TupleLike;
+import org.apache.texera.amber.core.tuple.TupleLike$;
+import scala.Function1;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+
+public class JavaUDFOpExec extends MapOpExec {
+    public JavaUDFOpExec () {
+        this.setMapFunc((Function1<Tuple, TupleLike> & Serializable) this::processTuple);
+    }
+
+    public TupleLike processTuple(Tuple tuple) {
+        try {
+            Thread.sleep(%d);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        List<Object> fields = new ArrayList<>();
+        for (Object f : tuple.getFields()) {
+            fields.add(f);
+        }
+        fields.add("replayed");
+        return TupleLike$.MODULE$.apply(fields);
+    }
+}
+''' % REPLAY_SLEEP_MS
 
 
 def scenario_m(ctx: Ctx) -> None:
     """Replay: the refusals always (source without a log, source of another
     workflow: 400, no row); with --with-replay-log a run with a global checkpoint
     (the only interaction the engine records), its interactions, a replay created
-    from the last one and started."""
+    from the last one and started. The checkpointed run has JVM workers only."""
     _need_create_ws(ctx)
     wf1, src1 = _tiny(ctx, "m-replay-source")
     first = ctx.start(wf1, view=[src1])
@@ -1097,7 +1130,12 @@ def scenario_m(ctx: Ctx) -> None:
     total = len(ctx.data["numbers.csv"])
     wf3 = ctx.workflow("m-replay-run")
     scan = wf3.add("numbers", "CSVFileScan", csv_scan(ctx.paths["numbers.csv"]), n_in=0)
-    udf = wf3.add("slow", "PythonUDFV2", python_udf(UDF_SLOW_TAG, out_columns=[("tag", "string")]))
+    udf = wf3.add("slow", "JavaUDF", {
+        "code": JAVA_UDF_SLOW_TAG,
+        "workers": 1,
+        "retainInputColumns": True,
+        "outputColumns": [{"attributeName": "tag", "attributeType": "string"}],
+    })
     wf3.link(scan, udf)
     run = ctx.start(wf3, view=[udf])
     run.wait_for_state("Running", timeout=ctx.timeout)
@@ -1110,8 +1148,9 @@ def scenario_m(ctx: Ctx) -> None:
         run.wait_for_state("Completed", timeout=ctx.timeout)
     except RunFailed as e:
         ctx.check("m the replay-logged source run completes after a checkpoint", False,
-                  f"{e} -- on 2026-11-16 the engine failed every global checkpoint with 'portId has not "
-                  f"been set for channel ... call setPortId before getPortId' (upstream, not step 2)")
+                  f"{e} -- on 2026-11-16 (step2ckpt, where a source worker takes the checkpoint) the engine "
+                  f"failed the checkpoint of a JVM worker whose output port is stored: Kryo cannot serialize "
+                  f"OutputManager.outputPortResultWriterThreads, live threads (upstream, not step 2)")
         return
     wid3, eid3 = ctx.rec.wid, run.eid
     interactions = ctx.api.execution_interactions(wid3, eid3)
