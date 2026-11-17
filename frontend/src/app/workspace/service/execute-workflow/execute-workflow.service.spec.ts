@@ -50,12 +50,7 @@ import { UserService } from "src/app/common/service/user/user.service";
 import { StubUserService } from "src/app/common/service/user/stub-user.service";
 import { MockComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/mock-computing-unit-status.service";
 import { commonTestProviders } from "../../../common/testing/test-utils";
-import {
-  RegionStateEvent,
-  RegionUpdateEvent,
-  TexeraWebsocketEvent,
-  WorkflowFatalError,
-} from "../../types/workflow-websocket.interface";
+import { RegionStateEvent, RegionUpdateEvent, TexeraWebsocketEvent } from "../../types/workflow-websocket.interface";
 import { mockScanPredicate } from "../workflow-graph/model/mock-workflow-data";
 import { Version } from "src/environments/version";
 import { CreateExecutionResponse, ReplayExecutionInfo } from "./execution-api.service";
@@ -588,24 +583,166 @@ describe("ExecuteWorkflowService", () => {
       });
     }));
 
-    it("shows a start the unit refuses as the run's failure, and leaves Run usable", fakeAsync(() => {
+    it("fails the run when the unit refuses the start this page waits for, and leaves Run usable", fakeAsync(() => {
       const wsSendSpy = spyOnSocket();
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
       startExecution(345);
-      const refusal: WorkflowFatalError = {
-        type: { name: "EXECUTION_FAILURE" },
-        timestamp: { seconds: 1700000000, nanos: 0 },
-        message: "execution 345 was already started",
-        details: "",
-        operatorId: "",
-        workerId: "",
-      };
 
-      emitWsEvent({ type: "WorkflowErrorEvent", fatalErrors: [refusal] });
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 345,
+        message: "Execution 345 was already started.",
+      });
 
-      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Failed, errorMessages: [refusal] });
+      // The refusal is the run's one error, of no operator: whoever shows the run's failure shows it.
+      expect(service.getExecutionState()).toEqual({
+        state: ExecutionState.Failed,
+        errorMessages: [
+          {
+            type: { name: "EXECUTION_FAILURE" },
+            timestamp: { seconds: expect.any(Number), nanos: expect.any(Number) },
+            message: "Execution 345 was already started.",
+            details: "",
+            operatorId: "",
+            workerId: "",
+          },
+        ],
+      });
+      expect(errorSpy).not.toHaveBeenCalled();
       expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(true);
       // Only the start went to the unit.
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
+    }));
+  });
+
+  // ---- a request the unit does not do ------------------------------------------------------------
+
+  describe("a request the computing unit refuses", () => {
+    let errorSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+    });
+
+    /** The states the page showed, from here on. */
+    const statesShown = (): ExecutionState[] => {
+      const states: ExecutionState[] = [];
+      service.getExecutionStateStream().subscribe(event => states.push(event.current.state));
+      return states;
+    };
+
+    it("is told in a notification, and leaves the run on screen as it is", () => {
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+      const states = statesShown();
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowKillRequest",
+        executionId: 345,
+        message: "You do not have write access to the computing unit.",
+      });
+      // A frame the unit could not read names no request and no execution.
+      emitWsEvent({ type: "RequestRefusedEvent", message: "The request could not be read." });
+
+      expect(errorSpy.mock.calls).toEqual([
+        ["You do not have write access to the computing unit."],
+        ["The request could not be read."],
+      ]);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      expect(states).toEqual([]);
+      expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(false);
+    });
+
+    it("does not fail a run for a refused start of another execution than the one it waits for", fakeAsync(() => {
+      startExecution(345);
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 344,
+        message: "Execution 344 was already started.",
+      });
+      // Not a start at all, though it names the execution waited for.
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowKillRequest",
+        executionId: 345,
+        message: "Execution 345 is not running here.",
+      });
+
+      expect(errorSpy.mock.calls).toEqual([
+        ["Execution 344 was already started."],
+        ["Execution 345 is not running here."],
+      ]);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+    }));
+
+    it("does not fail a run the unit has started, for a later refusal of its start", fakeAsync(() => {
+      startExecution(345);
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 345,
+        message: "Execution 345 was already started.",
+      });
+
+      expect(errorSpy.mock.calls).toEqual([["Execution 345 was already started."]]);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+    }));
+
+    it("does not fail a run another page started meanwhile, for the refused start this page asked for", fakeAsync(() => {
+      startExecution(345);
+      // Another page's run took the screen before the unit answered this page's start.
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 400 });
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 345,
+        message: "Execution 345 could not be claimed for its start. Run the workflow again.",
+      });
+
+      expect(errorSpy.mock.calls).toEqual([
+        ["Execution 345 could not be claimed for its start. Run the workflow again."],
+      ]);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+    }));
+
+    it("does not fail a later run for the refused start of the run it took the place of", fakeAsync(() => {
+      startExecution(345);
+      // Asked for again before the unit answered: the page now waits for the later run.
+      service.executeWorkflow("run");
+      const create = expectCreate();
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 345,
+        message: "Execution 345 could not be claimed for its start. Run the workflow again.",
+      });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+      create.flush(created(346), { status: 201, statusText: "Created" });
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+    }));
+
+    it("does not fail the next session's run for a start refused after the page was reset", fakeAsync(() => {
+      startExecution(345);
+      service.resetExecutionAndWorkers();
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 345,
+        message: "Execution 345 was already started.",
+      });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Uninitialized });
     }));
   });
 

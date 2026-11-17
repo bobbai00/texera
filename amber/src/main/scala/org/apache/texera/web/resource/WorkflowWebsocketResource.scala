@@ -19,29 +19,20 @@
 
 package org.apache.texera.web.resource
 
-import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.clustering.ClusterListener
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
-import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
-import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
-import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.web.model.websocket.event.{
-  TexeraWebSocketEvent,
-  WorkflowErrorEvent,
-  WorkflowStateEvent
-}
+import org.apache.texera.web.model.websocket.event.{RequestRefusedEvent, WorkflowStateEvent}
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
-import java.time.Instant
 import javax.websocket._
 import javax.websocket.server.ServerEndpoint
 import scala.jdk.CollectionConverters.MapHasAsScala
@@ -87,10 +78,11 @@ class WorkflowWebsocketResource extends LazyLogging {
 
   /**
     * Takes one frame from a session. Whatever the frame asks for that is not done is answered to
-    * that session, and to it alone: a frame that reads as no request, a request that is refused
-    * (its sender may not change runs on the computing unit, or there is nothing for it to act
-    * on) and a request that fails. None of these is written into the run in flight, which every
-    * session on the workflow sees, and none closes the session.
+    * that session, and to it alone, with a [[RequestRefusedEvent]]: a frame that reads as no
+    * request, a request that is refused (its sender may not change runs on the computing unit,
+    * or there is nothing for it to act on) and a request that fails. None of these is written
+    * into the run in flight, which every session on the workflow sees, and none closes the
+    * session.
     */
   @OnMessage
   def myOnMsg(session: Session, message: String): Unit = {
@@ -100,25 +92,40 @@ class WorkflowWebsocketResource extends LazyLogging {
       case None =>
         // Not in the mapper's words, which quote the frame: it may hold what its sender would
         // not have logged.
-        val why = notARequest(message)
+        val kind = typeNamedBy(message)
+        val why = kind.fold("The request could not be read.")(kind =>
+          s"The request could not be read as a $kind."
+        )
         logger.info(s"Refused a frame: $why")
-        sender.send(errorOf(why))
+        sender.send(RequestRefusedEvent(kind, None, why))
       case Some(request) =>
         val kind = request.getClass.getSimpleName
+        def refused(why: String) = RequestRefusedEvent(Some(kind), executionNamedBy(request), why)
         try handle(session, sender, request).foreach { why =>
           logger.info(s"Refused a $kind: $why")
           sender.send(request match {
             // A change to an operator is answered as a change that does not apply.
             case _: OperatorUpdateRequest => ModifyLogicResponse("", isValid = false, why)
-            case _                        => errorOf(why)
+            case _                        => refused(why)
           })
         } catch {
           case NonFatal(failure) =>
             logger.error(s"A $kind failed.", failure)
-            sender.send(errorOf(failure.toString, getStackTraceWithAllCauses(failure)))
+            sender.send(
+              refused(
+                "The request failed on this computing unit: " +
+                  Option(failure.getMessage).getOrElse(failure.getClass.getSimpleName)
+              )
+            )
         }
     }
   }
+
+  private def executionNamedBy(request: TexeraWebSocketRequest): Option[Long] =
+    request match {
+      case named: ExecutionRequest => Some(named.executionId)
+      case _                       => None
+    }
 
   /**
     * Does what `request` asks, for the session `sender` that sent it. A heartbeat and a read of
@@ -150,7 +157,7 @@ class WorkflowWebsocketResource extends LazyLogging {
         )
         None
       case _ if sender.getUserComputingUnitAccess != PrivilegeEnum.WRITE =>
-        Some("you do not have write access to the computing unit")
+        Some("You do not have write access to the computing unit.")
       case start: WorkflowStartRequest =>
         startStoredExecution(sender, workflow, user, start)
       case update: OperatorUpdateRequest =>
@@ -160,7 +167,7 @@ class WorkflowWebsocketResource extends LazyLogging {
           case Some(run) =>
             run.wsInput.onNext(command, user.map(_.getUid))
             None
-          case None => Some("workflow execution is not initialized")
+          case None => Some("No execution of this workflow is running here.")
         }
     }
   }
@@ -183,10 +190,11 @@ class WorkflowWebsocketResource extends LazyLogging {
     try {
       logger.info(s"Asked to start execution ${start.executionId}.")
       val started = for {
-        user <- user.toRight("a signed-in user is required to start an execution")
-        workflow <- workflow.toRight("workflow is not initialized")
-        // Set with the socket's workflow: a socket with a workflow has its unit.
-        cuid <- sender.getComputingUnitId.toRight("workflow is not initialized")
+        user <- user.toRight("A signed-in user is required to start an execution.")
+        workflow <- workflow.toRight("This connection is not open on a workflow.")
+        cuid <- sender.getComputingUnitId.toRight(
+          "This connection is not open on a computing unit."
+        )
         planUri <- StoredExecutionStart.planUriOf(start.planUri)
         execution <- workflow.startStoredExecution(start.executionId, planUri, user, cuid)
       } yield execution
@@ -194,10 +202,7 @@ class WorkflowWebsocketResource extends LazyLogging {
     } catch {
       case NonFatal(failure) =>
         logger.error(s"Execution ${start.executionId} could not be started.", failure)
-        Some(
-          s"execution ${start.executionId} could not be started, because of an error on this " +
-            "computing unit"
-        )
+        Some(WorkflowService.notStarted(start.executionId))
     }
 
   /**
@@ -220,28 +225,18 @@ class WorkflowWebsocketResource extends LazyLogging {
       case Some(service) =>
         sender.send(service.applyStoredUpdate(update.updateId, user.map(_.getUid.intValue())))
         None
-      case None => Some(s"execution ${update.executionId} is not running here")
+      case None => Some(s"Execution ${update.executionId} is not running here.")
     }
 
   /**
-    * What a session is sent for a request of its own that is not done: one error, of no operator,
-    * saying why.
+    * The type of request `frame`, which binds to no request, says it is, when it says one that
+    * reads as a type's name.
     */
-  private def errorOf(why: String, details: String = ""): TexeraWebSocketEvent =
-    WorkflowErrorEvent(
-      Seq(WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), why, details, ""))
-    )
-
-  /**
-    * Why `frame`, which binds to no request, is refused: naming the type of request it says it
-    * is, when it says one that reads as a type's name.
-    */
-  private def notARequest(frame: String): String =
+  private def typeNamedBy(frame: String): Option[String] =
     Try(objectMapper.readTree(frame)).toOption
       .flatMap(Option(_))
       .flatMap(json => Option(json.get("type")))
       .filter(_.isTextual)
       .map(_.asText())
       .filter(_.matches("[A-Za-z][A-Za-z0-9]{0,63}"))
-      .fold("the request could not be read")(kind => s"the request could not be read as a $kind")
 }

@@ -1268,20 +1268,20 @@ class SyncExecutionResourceSpec
 
     refusalOf(
       resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser(testUid + 1000))
-    ) shouldBe s"only the user who created execution $eid may start it"
+    ) shouldBe s"Only the user who created execution $eid may start it."
     refusalOf(
       resource.runStoredExecution(
         eid,
         runRequest(execution.planUri, computingUnitId = fixtureCuid),
         syncUser()
       )
-    ) shouldBe s"execution $eid was created for computing unit $testCuid, not $fixtureCuid"
+    ) shouldBe s"Execution $eid was created for computing unit $testCuid, not $fixtureCuid."
     refusalOf(resource.runStoredExecution(eid, runRequest(other.planUri), syncUser())) shouldBe
-      s"the plan is execution ${other.eid}'s, not $eid's"
+      s"The plan is execution ${other.eid}'s, not $eid's."
     refusalOf(resource.runStoredExecution(eid, runRequest("vfs:///no/plan"), syncUser())) shouldBe
-      "not an execution plan"
+      "The request does not name an execution's plan."
     refusalOf(resource.runStoredExecution(eid, runRequest(null), syncUser())) shouldBe
-      "not an execution plan"
+      "The request does not name an execution's plan."
     refusalOf(resource.runStoredExecution(eid, null, syncUser())) shouldBe
       "The request has no body."
     // None of them started anything, or asked for a workflow's service: each was refused by the
@@ -1295,7 +1295,7 @@ class SyncExecutionResourceSpec
       true
     // The second call passes the checks, and its claim is refused on the workflow's service.
     refusalOf(resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser())) shouldBe
-      s"execution $eid was already started"
+      s"Execution $eid was already started."
     resource.asked shouldBe Seq.fill(2)((WorkflowIdentity(testWid.toLong), testCuid))
     service.started should have size 1
   }

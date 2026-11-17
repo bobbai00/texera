@@ -29,7 +29,11 @@ import { WorkflowResultExportService } from "../../service/workflow-result-expor
 
 import { HANDOVER_DRAIN_TIMEOUT_MS, MenuComponent } from "./menu.component";
 import { WorkflowWebsocketService } from "../../service/workflow-websocket/workflow-websocket.service";
-import type { ExecutionDurationUpdateEvent } from "../../types/workflow-websocket.interface";
+import type {
+  ExecutionDurationUpdateEvent,
+  TexeraWebsocketEvent,
+  WorkflowFatalError,
+} from "../../types/workflow-websocket.interface";
 import { OperatorMetadataService } from "../../service/operator-metadata/operator-metadata.service";
 import { StubOperatorMetadataService } from "../../service/operator-metadata/stub-operator-metadata.service";
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
@@ -429,6 +433,122 @@ describe("MenuComponent", () => {
         expect(killButton().disabled).toBe(disabled);
       }
     );
+
+    it("is disabled on a unit the user may only read, which would refuse the kill", () => {
+      component.executionState = ExecutionState.Running;
+      setConnected(true);
+      const unit = (accessPrivilege: Privilege) =>
+        ({
+          computingUnit: { cuid: 1, name: "shared" },
+          status: "Running",
+          accessPrivilege,
+        }) as unknown as DashboardWorkflowComputingUnit;
+
+      component.selectedComputingUnit = unit(Privilege.READ);
+      fixture.detectChanges();
+      expect(killButton().disabled).toBe(true);
+
+      component.selectedComputingUnit = unit(Privilege.WRITE);
+      fixture.detectChanges();
+      expect(killButton().disabled).toBe(false);
+    });
+  });
+
+  describe("a run that fails", () => {
+    let errorSpy: ReturnType<typeof vi.spyOn>;
+
+    const unitSends = (event: TexeraWebsocketEvent): void =>
+      (TestBed.inject(WorkflowWebsocketService).websocketEvent() as Subject<TexeraWebsocketEvent>).next(event);
+
+    const fatalError = (message: string): WorkflowFatalError => ({
+      message,
+      details: "",
+      operatorId: "op1",
+      workerId: "",
+      type: { name: "EXECUTION_FAILURE" },
+      timestamp: { seconds: 5, nanos: 0 },
+    });
+
+    /** The unit reports that the run it holds failed: the state, then the run's errors. */
+    const unitFails = (...errors: WorkflowFatalError[]): void => {
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Failed, executionId: 7 });
+      unitSends({ type: "WorkflowErrorEvent", fatalErrors: errors });
+    };
+
+    beforeEach(() => {
+      errorSpy = vi.spyOn(notificationService, "error").mockImplementation(() => {});
+    });
+
+    it("is announced with its first error, in a user's words", () => {
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 7 });
+
+      unitFails(fatalError("java.lang.RuntimeException: no column 'a'"));
+
+      expect(errorSpy.mock.calls).toEqual([["Run failed: no column 'a'"]]);
+      expect(component.executionState).toBe(ExecutionState.Failed);
+    });
+
+    // With the console closed, a run that never started leaves nothing else on the page to say so.
+    it("is announced when it fails before it starts", () => {
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Initializing, executionId: 7 });
+
+      unitFails(fatalError("Python environment 'ml' could not be installed: No matching distribution found"));
+
+      expect(errorSpy.mock.calls).toEqual([
+        ["Run failed: Python environment 'ml' could not be installed: No matching distribution found"],
+      ]);
+    });
+
+    it("says how many more errors the console lists", () => {
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 7 });
+      unitFails(fatalError("first"), fatalError("second"));
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 8 });
+      unitFails(fatalError("first"), fatalError("second"), fatalError("third"));
+
+      expect(errorSpy.mock.calls).toEqual([
+        ["Run failed: first (and 1 more error in the console)"],
+        ["Run failed: first (and 2 more errors in the console)"],
+      ]);
+    });
+
+    it("is announced with the start of an error too long for a notification", () => {
+      // What pip says of a version it cannot find lists every version there is.
+      const versions = Array.from({ length: 80 }, (_, minor) => `1.${minor}.0`).join(", ");
+      const message = `Python environment 'ml' could not be installed: no version 9.9 of numpy (from versions: ${versions})`;
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Initializing, executionId: 7 });
+
+      unitFails(fatalError(message));
+
+      expect(errorSpy.mock.calls).toEqual([[`Run failed: ${message.slice(0, 200)}…`]]);
+    });
+
+    it("is announced once, though the unit reports more of its errors afterwards", () => {
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 7 });
+      unitFails(fatalError("first"));
+
+      unitSends({ type: "WorkflowErrorEvent", fatalErrors: [fatalError("first"), fatalError("second")] });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("is not announced on a page that opens on a run that had failed already", () => {
+      // What a session is told when it opens: the state of no run, then that of the run the unit holds.
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Uninitialized });
+
+      unitFails(fatalError("failed a while ago"));
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(component.executionState).toBe(ExecutionState.Failed);
+    });
+
+    it("says nothing of a run that ends in any other way", () => {
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 7 });
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Killed, executionId: 7 });
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 8 });
+      unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Completed, executionId: 8 });
+
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("getRunButtonBehavior", () => {
@@ -2047,6 +2167,19 @@ describe("MenuComponent", () => {
 
         q("#checkpoint-button").triggerEventHandler("click", null);
         expect(checkpoint).toHaveBeenCalled();
+      });
+
+      it("is disabled on a unit the user may only read, which would refuse the checkpoint", () => {
+        TestBed.inject(GuiConfigService).env.timetravelEnabled = true;
+        component.executionState = ExecutionState.Paused;
+        component.selectedComputingUnit = {
+          computingUnit: { cuid: 1, name: "shared" },
+          status: "Running",
+          accessPrivilege: Privilege.READ,
+        } as unknown as DashboardWorkflowComputingUnit;
+        fixture.detectChanges();
+
+        expect(q("#checkpoint-button").nativeElement.disabled).toBe(true);
       });
     });
   });

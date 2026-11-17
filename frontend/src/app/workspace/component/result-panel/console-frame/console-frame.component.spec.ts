@@ -27,6 +27,7 @@ import { HttpClientTestingModule } from "@angular/common/http/testing";
 import { NzDropDownModule } from "ng-zorro-antd/dropdown";
 import { ComputingUnitStatusService } from "../../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { MockComputingUnitStatusService } from "../../../../common/service/computing-unit/computing-unit-status/mock-computing-unit-status.service";
+import { DashboardWorkflowComputingUnit } from "../../../../common/type/workflow-computing-unit";
 import { commonTestProviders } from "../../../../common/testing/test-utils";
 import { ExecuteWorkflowService } from "../../../service/execute-workflow/execute-workflow.service";
 import { WorkflowCompilingService } from "../../../service/compile-workflow/workflow-compiling.service";
@@ -68,6 +69,13 @@ describe("ConsoleFrameComponent", () => {
   let doContinue: ReturnType<typeof vi.fn>;
   let executionStateStream: Subject<StateEvent>;
   let consoleUpdateStream: Subject<void>;
+
+  /** Selects a computing unit the user has `accessPrivilege` on, or none. */
+  const selectUnit = (accessPrivilege?: DashboardWorkflowComputingUnit["accessPrivilege"]): void => {
+    vi.spyOn(TestBed.inject(ComputingUnitStatusService), "getSelectedComputingUnitValue").mockReturnValue(
+      accessPrivilege ? ({ accessPrivilege } as DashboardWorkflowComputingUnit) : null
+    );
+  };
 
   beforeEach(async () => {
     getWorkerIds = vi.fn().mockReturnValue([]);
@@ -113,6 +121,8 @@ describe("ConsoleFrameComponent", () => {
       ],
     }).compileComponents();
 
+    // What the console's commands need: a computing unit the user may change runs on.
+    selectUnit("WRITE");
     fixture = TestBed.createComponent(ConsoleFrameComponent);
     component = fixture.componentInstance;
     fixture.detectChanges(); // runs ngOnInit -> registerAutoConsoleRerender
@@ -733,6 +743,48 @@ describe("ConsoleFrameComponent", () => {
       // targetWorker defaults to ALL_WORKERS, so the command is broadcast to every worker id
       expect(send).toHaveBeenCalledWith("DebugCommandRequest", { operatorId: "op1", workerId: "w-0", cmd: "break" });
       expect(send).toHaveBeenCalledWith("DebugCommandRequest", { operatorId: "op1", workerId: "w-1", cmd: "break" });
+    });
+
+    // The console's commands change a run, which the computing unit takes only from a user with write
+    // access to it: without, each would be refused.
+    for (const access of ["READ", "NONE", undefined] as const) {
+      it(`disables the debug controls with ${access ?? "no unit"} selected`, async () => {
+        selectUnit(access);
+        component.operatorId = "op1";
+        component.consoleInputEnabled = true;
+        fixture.detectChanges();
+        // The command box takes its disabled state from its model, a microtask later.
+        await Promise.resolve();
+        fixture.detectChanges();
+
+        const buttons = fixture.debugElement.queryAll(By.css(".console-input-container button"));
+        expect(buttons.map(button => (button.nativeElement as HTMLButtonElement).disabled)).toEqual([
+          true,
+          true,
+          true,
+          true,
+        ]);
+        const input = fixture.debugElement.query(By.css("input[nz-input]")).nativeElement as HTMLInputElement;
+        expect(input.disabled).toBe(true);
+      });
+    }
+
+    it("enables the debug controls on a unit the user may change runs on", async () => {
+      component.operatorId = "op1";
+      component.consoleInputEnabled = true;
+      fixture.detectChanges();
+      await Promise.resolve();
+      fixture.detectChanges();
+
+      const buttons = fixture.debugElement.queryAll(By.css(".console-input-container button"));
+      expect(buttons.map(button => (button.nativeElement as HTMLButtonElement).disabled)).toEqual([
+        false,
+        false,
+        false,
+        false,
+      ]);
+      const input = fixture.debugElement.query(By.css("input[nz-input]")).nativeElement as HTMLInputElement;
+      expect(input.disabled).toBe(false);
     });
 
     it("sends the text typed into the command box, then clears it", fakeAsync(() => {

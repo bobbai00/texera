@@ -41,6 +41,7 @@ import org.apache.texera.web.model.websocket.response.{
   ModifyLogicCompletedEvent,
   ModifyLogicResponse
 }
+import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.{ExecutionReconfigurationStore, ExecutionStateStore}
 
 import java.net.URI
@@ -126,13 +127,13 @@ class ExecutionReconfigurationService(
       requester: Option[Int]
   ): Either[String, OperatorUpdate] = {
     val onlyTheCreator =
-      s"only the user who created execution $executionId may change its operators"
+      s"Only the user who created execution $executionId may change its operators."
     for {
       _ <- Either.cond(requester.contains(creator), (), onlyTheCreator)
       _ <- Either.cond(
         updateId != null && !updateId.isBlank,
         (),
-        "the request names no change to apply"
+        "The request names no change to apply."
       )
       record <- updateRow(updateId)
       _ <- Either.cond(record.createdBy == creator, (), onlyTheCreator)
@@ -147,11 +148,11 @@ class ExecutionReconfigurationService(
     // An update row: the store finds no other kind under an update's id.
     try Right(readUpdate(planUri, updateId))
     catch {
-      case _: NoSuchUpdateException => Left(s"execution $executionId has no change $updateId")
-      case _: NoStoredPlanException => Left(s"execution $executionId has no stored plan")
+      case _: NoSuchUpdateException => Left(s"Execution $executionId has no change $updateId.")
+      case _: NoStoredPlanException => Left(StoredExecutionStart.noStoredPlan(executionId))
       case NonFatal(failure) =>
         logger.warn(s"Change $updateId of execution $executionId could not be read.", failure)
-        Left(s"change $updateId of execution $executionId could not be read")
+        Left(s"Change $updateId of execution $executionId could not be read.")
     }
 
   /**
@@ -166,17 +167,17 @@ class ExecutionReconfigurationService(
       _ <- Either.cond(
         update.executionId.id == executionId,
         (),
-        s"the change is execution ${update.executionId.id}'s, not $executionId's"
+        s"The change is execution ${update.executionId.id}'s, not $executionId's."
       )
       _ <- Either.cond(
         update.updateId == updateId,
         (),
-        s"the change stored as $updateId names itself ${update.updateId}"
+        s"The change stored as $updateId names itself ${update.updateId}."
       )
       running <-
         workflow.physicalPlan.operators
           .find(_.id == update.opId)
-          .toRight(s"operator ${show(update.opId)} is not in the running plan")
+          .toRight(s"Operator ${show(update.opId)} is not in the running plan.")
       stored = running.copy(
         opExecInitInfo = update.opExecInitInfo,
         repositoryMounts = update.repositoryMounts

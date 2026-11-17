@@ -149,8 +149,9 @@ import scala.util.Try
   *     later has to be placed on one side of the gate here.
   *   - what becomes of a frame that is not done. A frame that binds to no request, a request that
   *     is refused and a request that fails are each answered to the session that sent them, and
-  *     to it alone: nothing is written into the run in flight, which every session on the
-  *     workflow sees, and nothing is thrown, which would have the container close the session.
+  *     to it alone, with a `RequestRefusedEvent`: nothing is written into the run in flight,
+  *     which every session on the workflow sees, and nothing is thrown, which would have the
+  *     container close the session.
   *   - the three-state distinction every command to a run has to make: no workflow, a workflow
   *     with no run yet, and a held run. `executionService` is a `BehaviorSubject` created without
   *     an initial value, so `getValue` is null until one is published, and reading it through
@@ -351,12 +352,12 @@ class WorkflowWebsocketResourceSpec
   ) extends ExecutionResultService(workflowId, computingUnitId, stateStore) {
     var captured: Option[ResultPaginationRequest] = None
 
-    /** When set, every read fails with it, as the real one fails when its storage does. */
-    var failure: Option[String] = None
+    /** When set, every read fails with what it makes, as the real one fails when its storage does. */
+    var failWith: Option[() => Throwable] = None
 
     override def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
       captured = Some(request)
-      failure.foreach(why => throw new IllegalStateException(why))
+      failWith.foreach(failure => throw failure())
       PaginatedResultEvent(
         request.requestID,
         request.operatorID,
@@ -432,23 +433,23 @@ class WorkflowWebsocketResourceSpec
       .map(_.get("message").asText())
 
   /**
-    * Fails unless `sent` holds one frame: the answer to a request that was refused, an error of
-    * no operator that says `why` and nothing more.
+    * Fails unless `sent` holds one frame: the answer to a request that was not done, which says
+    * `why` and names the type of the request and the execution it named, where it named them.
     */
-  private def assertRefused(sent: ArrayBuffer[String], why: String): Unit = {
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    val errors = objectMapper.readTree(sent.head).get("fatalErrors")
-    errors.size() shouldBe 1
-    // The scalapb enum does not serialize as a bare string: it becomes an object, so the client
-    // reads `type.name`. Pinning the nested shape is the point — flattening it would break the
-    // frontend's error panel silently.
-    errors.get(0).get("type").get("name").asText() shouldBe "EXECUTION_FAILURE"
-    errors.get(0).get("message").asText() shouldBe why
-    errors.get(0).get("details").asText() shouldBe ""
-    // No operator: the frontend's error panel offers a jump to the operator an error names.
-    errors.get(0).get("operatorId").asText() shouldBe ""
-    // A real clock reading, not `Timestamp.defaultInstance` — the panel orders errors by this.
-    errors.get(0).get("timestamp").get("seconds").asLong() should be > 0L
+  private def assertRefused(
+      sent: ArrayBuffer[String],
+      why: String,
+      request: Option[String],
+      executionId: Option[Long] = None
+  ): Unit = {
+    sentTypes(sent) shouldBe Seq("RequestRefusedEvent")
+    val refusal = objectMapper.readTree(sent.head)
+    refusal.get("message").asText() shouldBe why
+    Option(refusal.get("request")).map(_.asText()) shouldBe request
+    Option(refusal.get("executionId")).map(_.asLong()) shouldBe executionId
+    // Nothing else: a client reads no error of a run out of it.
+    refusal.fieldNames().asScala.toSet shouldBe
+      Set("type", "message") ++ request.map(_ => "request") ++ executionId.map(_ => "executionId")
   }
 
   // -- heartbeat ----------------------------------------------------------------
@@ -510,9 +511,9 @@ class WorkflowWebsocketResourceSpec
 
   it should "answer a request that fails to its sender alone, with the failure, leaving the run in flight as it was" in {
     // A read of results fails when its storage does, or when the results are in a warehouse this
-    // deployment no longer serves. The session that asked is told the failure whole, so the
-    // refusal of a disabled warehouse reaches it; the run in flight, which the read was of, is
-    // not touched, and the session stays open.
+    // deployment no longer serves. The session that asked is told the failure in its own words,
+    // so the refusal of a disabled warehouse reaches it; the run in flight, which the read was
+    // of, is not touched, and the session stays open.
     val (session, sent) = mockSession(uid = Some(42))
     val workflow = new TestWorkflowService(9105L)
     val execution = newExecution()
@@ -524,24 +525,38 @@ class WorkflowWebsocketResourceSpec
       )
     )
     val inFlight = store.getState
-    workflow.results.failure = Some("the results are in a warehouse this deployment does not serve")
+    workflow.results.failWith = Some(() =>
+      new IllegalStateException("the results are in a warehouse this deployment does not serve")
+    )
+
+    val logLines = texeraLogLinesOf {
+      noException should be thrownBy resource.myOnMsg(session, paginationFrame)
+    }
+
+    assertRefused(
+      sent,
+      "The request failed on this computing unit: the results are in a warehouse this " +
+        "deployment does not serve",
+      request = Some("ResultPaginationRequest")
+    )
+    // Where it failed is for the unit's log, not for the session.
+    logLines.count(_.contains("A ResultPaginationRequest failed.")) shouldBe 1
+    store.getState shouldBe inFlight
+  }
+
+  it should "name the kind of a failure that has no words of its own" in {
+    val (session, sent) = mockSession(uid = Some(42))
+    val workflow = new TestWorkflowService(9106L)
+    attach(session, PrivilegeEnum.READ, workflow)
+    workflow.results.failWith = Some(() => new NoSuchElementException)
 
     noException should be thrownBy resource.myOnMsg(session, paginationFrame)
 
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    val errors = objectMapper.readTree(sent.head).get("fatalErrors")
-    errors.size() shouldBe 1
-    errors.get(0).get("type").get("name").asText() shouldBe "EXECUTION_FAILURE"
-    errors.get(0).get("message").asText() shouldBe
-      "java.lang.IllegalStateException: the results are in a warehouse this deployment does not serve"
-    // `details` is what the frontend's error panel shows a developer, and it has to be the stack
-    // trace, not the message again: naming the throwing frame is what separates
-    // `getStackTraceWithAllCauses(failure)` from `failure.toString` / `failure.getMessage`, both of
-    // which would satisfy any "is non-empty" check.
-    errors.get(0).get("details").asText() should include("StubResultService.handleResultPagination")
-    errors.get(0).get("operatorId").asText() shouldBe ""
-    errors.get(0).get("timestamp").get("seconds").asLong() should be > 0L
-    store.getState shouldBe inFlight
+    assertRefused(
+      sent,
+      "The request failed on this computing unit: NoSuchElementException",
+      request = Some("ResultPaginationRequest")
+    )
   }
 
   // -- frames that bind to no request -------------------------------------------
@@ -552,43 +567,39 @@ class WorkflowWebsocketResourceSpec
     // the frame claims reaches the client, when it reads as a type's name: a generic "bad frame"
     // would leave a stale frontend with nothing to debug against. The mapper's own words, which
     // quote the frame, reach neither the client nor the log.
-    val unreadable = "the request could not be read"
-    val frames: Seq[(String, String, String)] = Seq(
-      (
-        "an unknown type",
-        """{"type":"NoSuchWebSocketRequest"}""",
-        s"$unreadable as a NoSuchWebSocketRequest"
-      ),
+    // Each frame, with the type it says it is, when it says one that reads as a type's name.
+    val frames: Seq[(String, String, Option[String])] = Seq(
+      ("an unknown type", """{"type":"NoSuchWebSocketRequest"}""", Some("NoSuchWebSocketRequest")),
       (
         "a logical plan to compile and run, which a unit does not take",
         """{"type":"WorkflowExecuteRequest","executionName":"exec","engineVersion":"v",
           |"logicalPlan":{"operators":[{"operatorType":"Limit","limit":7,"password":"hunter2"}],
           |"links":[],"opsToViewResult":[],"opsToReuseResult":[]},"workflowSettings":{},
           |"emailNotificationEnabled":false,"computingUnitId":1}""".stripMargin,
-        s"$unreadable as a WorkflowExecuteRequest"
+        Some("WorkflowExecuteRequest")
       ),
       (
         "an operator to change, sent whole, which a unit does not take",
         """{"type":"ModifyLogicRequest","operator":{"operatorType":"Limit","limit":7}}""",
-        s"$unreadable as a ModifyLogicRequest"
+        Some("ModifyLogicRequest")
       ),
       (
         // As the shipped client sends it: `workers`, where the request declares `workerIds`.
         "a known type whose fields do not bind",
         """{"type":"SkipTupleRequest","workers":["worker-a"]}""",
-        s"$unreadable as a SkipTupleRequest"
+        Some("SkipTupleRequest")
       ),
-      ("no type", """{"requestID":"req-1","operatorID":"op-2"}""", unreadable),
-      ("a type that is not text", """{"type":7}""", unreadable),
+      ("no type", """{"requestID":"req-1","operatorID":"op-2"}""", None),
+      ("a type that is not text", """{"type":7}""", None),
       (
         "a type that does not read as a type's name",
         """{"type":"WorkflowPauseRequest\nand a line of its own"}""",
-        unreadable
+        None
       ),
-      ("a type longer than any type's name", s"""{"type":"${"R" * 65}"}""", unreadable),
-      ("JSON that is no object", "null", unreadable),
-      ("no JSON at all", "pause the workflow", unreadable),
-      ("an empty frame", "", unreadable)
+      ("a type longer than any type's name", s"""{"type":"${"R" * 65}"}""", None),
+      ("JSON that is no object", "null", None),
+      ("no JSON at all", "pause the workflow", None),
+      ("an empty frame", "", None)
     )
     val service = new StoredStartService
     try {
@@ -599,7 +610,7 @@ class WorkflowWebsocketResourceSpec
       val (session, sent) = sessionOn(service)
       val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
       frames.foreach {
-        case (name, frame, why) =>
+        case (name, frame, kind) =>
           withClue(s"$name: ") {
             sent.clear()
             otherSent.clear()
@@ -612,7 +623,13 @@ class WorkflowWebsocketResourceSpec
             }
 
             statements shouldBe empty
-            assertRefused(sent, why)
+            assertRefused(
+              sent,
+              kind.fold("The request could not be read.")(kind =>
+                s"The request could not be read as a $kind."
+              ),
+              request = kind
+            )
             otherSent shouldBe empty
             commands shouldBe empty
             service.executionService.getValue should be theSameInstanceAs inFlight
@@ -643,7 +660,7 @@ class WorkflowWebsocketResourceSpec
       "ResultPaginationRequest"
     )
 
-    val noWriteAccess = "you do not have write access to the computing unit"
+    val noWriteAccess = "You do not have write access to the computing unit."
     val service = new StoredStartService
     try {
       val inFlight = runInFlight(service)
@@ -669,7 +686,13 @@ class WorkflowWebsocketResourceSpec
             modifyLogicResponses(sent) shouldBe Seq(("", false, noWriteAccess))
             sent should have size 1
           } else {
-            assertRefused(sent, noWriteAccess)
+            assertRefused(
+              sent,
+              noWriteAccess,
+              request = Some(kind),
+              // A start names its execution, which the refusal names in turn.
+              executionId = Some(974999L).filter(_ => kind == "WorkflowStartRequest")
+            )
           }
           otherSent shouldBe empty
           commands shouldBe empty
@@ -722,7 +745,11 @@ class WorkflowWebsocketResourceSpec
     noException should be thrownBy
       resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
 
-    assertRefused(sent, "workflow execution is not initialized")
+    assertRefused(
+      sent,
+      "No execution of this workflow is running here.",
+      request = Some("WorkflowPauseRequest")
+    )
   }
 
   it should "refuse a command that arrives with a workflow but no run, to its sender" in {
@@ -740,7 +767,11 @@ class WorkflowWebsocketResourceSpec
     noException should be thrownBy
       resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
 
-    assertRefused(sent, "workflow execution is not initialized")
+    assertRefused(
+      sent,
+      "No execution of this workflow is running here.",
+      request = Some("WorkflowPauseRequest")
+    )
   }
 
   // -- session lifecycle --------------------------------------------------------
@@ -1286,82 +1317,74 @@ class WorkflowWebsocketResourceSpec
           )
         )
     )
-    val refusals: Seq[(String, Option[Int], PrivilegeEnum, Int, String, String)] = Seq(
-      (
+
+    /**
+      * A start that is refused, saying `why`: the frame, and who sends it over which socket.
+      *
+      * @param names the execution the refusal names: the one the start names, when its frame binds
+      */
+    case class Refused(
+        name: String,
+        frame: String,
+        why: String,
+        uid: Option[Int] = Some(creatorUid),
+        access: PrivilegeEnum = PrivilegeEnum.WRITE,
+        cuid: Int = storedCuid,
+        names: Option[Long] = Some(execution.eid)
+    )
+    val refusals = Seq(
+      Refused(
         "no write access",
-        Some(creatorUid),
-        PrivilegeEnum.READ,
-        storedCuid,
         startFrame(execution.eid, execution.planUri),
-        "you do not have write access to the computing unit"
+        "You do not have write access to the computing unit.",
+        access = PrivilegeEnum.READ
       ),
-      (
+      Refused(
         "no user",
-        None,
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(execution.eid, execution.planUri),
-        "a signed-in user is required to start an execution"
+        "A signed-in user is required to start an execution.",
+        uid = None
       ),
-      (
+      Refused(
         "not a plan",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(execution.eid, s"vfs:///wid/$storedWid/eid/${execution.eid}/result"),
-        "not an execution plan"
+        "The request does not name an execution's plan."
       ),
-      (
+      Refused(
         "no URI",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":"::"}""",
-        "not an execution plan"
+        "The request does not name an execution's plan."
       ),
       // Frames that do not bind.
-      (
+      Refused(
         "no execution id",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         s"""{"type":"WorkflowStartRequest","executionId":"abc","planUri":"${execution.planUri}"}""",
-        "the request could not be read as a WorkflowStartRequest"
+        "The request could not be read as a WorkflowStartRequest.",
+        names = None
       ),
-      (
+      Refused(
         "a plan table that is not a string",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":{"x":1}}""",
-        "the request could not be read as a WorkflowStartRequest"
+        "The request could not be read as a WorkflowStartRequest.",
+        names = None
       ),
-      (
+      Refused(
         "another execution's plan",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(execution.eid, unknownFormat.planUri),
-        s"the plan is execution ${unknownFormat.eid}'s, not ${execution.eid}'s"
+        s"The plan is execution ${unknownFormat.eid}'s, not ${execution.eid}'s."
       ),
-      (
+      Refused(
         "another workflow's plan",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(
           execution.eid,
           ExecutionPlanStore
             .planUri(WorkflowIdentity(otherWid), ExecutionIdentity(execution.eid), None)
             .toString
         ),
-        s"the plan belongs to workflow $otherWid, not to this one"
+        s"The plan belongs to workflow $otherWid, not to this one."
       ),
-      (
+      Refused(
         "another user's warehouse",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(
           execution.eid,
           ExecutionPlanStore
@@ -1372,13 +1395,10 @@ class WorkflowWebsocketResourceSpec
             )
             .toString
         ),
-        "the plan is in another user's warehouse"
+        "The plan is in another user's warehouse."
       ),
-      (
+      Refused(
         "the user's own warehouse, which this deployment does not serve",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(
           execution.eid,
           ExecutionPlanStore
@@ -1389,57 +1409,46 @@ class WorkflowWebsocketResourceSpec
             )
             .toString
         ),
-        s"execution ${execution.eid} keeps its plan in warehouse 'user-$creatorUid-1', and " +
-          "per-user warehouses are disabled in this deployment"
+        s"Execution ${execution.eid} keeps its plan in warehouse 'user-$creatorUid-1', and " +
+          "per-user warehouses are disabled in this deployment."
       ),
-      (
+      Refused(
         "no stored plan",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(firstCreatedEid - 1L, noPlanUri.toString),
-        s"execution ${firstCreatedEid - 1} has no stored plan"
+        s"Execution ${firstCreatedEid - 1} has no stored plan.",
+        names = Some(firstCreatedEid - 1L)
       ),
-      (
+      Refused(
         "another format",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(unknownFormat.eid, unknownFormat.planUri),
         s"The plan is in format version $nextFormat, but this reader reads version " +
-          s"${PhysicalPlanCodec.FormatVersion}."
+          s"${PhysicalPlanCodec.FormatVersion}.",
+        names = Some(unknownFormat.eid)
       ),
-      (
+      Refused(
         "another user",
-        Some(otherUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(execution.eid, execution.planUri),
-        s"only the user who created execution ${execution.eid} may start it"
+        s"Only the user who created execution ${execution.eid} may start it.",
+        uid = Some(otherUid)
       ),
-      (
+      Refused(
         "another unit",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        secondCuid,
         startFrame(execution.eid, execution.planUri),
-        s"execution ${execution.eid} was created for computing unit $storedCuid, not $secondCuid"
+        s"Execution ${execution.eid} was created for computing unit $storedCuid, not $secondCuid.",
+        cuid = secondCuid
       ),
-      (
+      Refused(
         "another execution's plan in its plan table",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(mislabeled.eid, mislabeled.planUri),
-        "the plan's ids do not match its location"
+        "The plan's ids do not match its location.",
+        names = Some(mislabeled.eid)
       ),
-      (
+      Refused(
         "an expired input link",
-        Some(creatorUid),
-        PrivilegeEnum.WRITE,
-        storedCuid,
         startFrame(expired.eid, expired.planUri),
-        s"input links expired at ${Instant.ofEpochMilli(expiry)}; run the workflow again"
+        s"The plan's input links expired at ${Instant.ofEpochMilli(expiry)}. Run the workflow " +
+          "again.",
+        names = Some(expired.eid)
       )
     )
     val service = new StoredStartService
@@ -1447,23 +1456,22 @@ class WorkflowWebsocketResourceSpec
       val inFlight = runInFlight(service)
       val inFlightState = inFlight.executionStateStore.metadataStore.getState
       val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
-      refusals.foreach {
-        case (name, uid, access, cuid, frame, why) =>
-          withClue(s"$name: ") {
-            val (session, sent) = sessionOn(service, uid, access, cuid)
-            sent.clear()
-            otherSent.clear()
+      refusals.foreach { refused =>
+        withClue(s"${refused.name}: ") {
+          val (session, sent) = sessionOn(service, refused.uid, refused.access, refused.cuid)
+          sent.clear()
+          otherSent.clear()
 
-            val statements = recorder.record {
-              noException should be thrownBy resource.myOnMsg(session, frame)
-            }
-
-            statements shouldBe empty
-            assertRefused(sent, why)
-            otherSent shouldBe empty
-            service.executionService.getValue should be theSameInstanceAs inFlight
-            inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
+          val statements = recorder.record {
+            noException should be thrownBy resource.myOnMsg(session, refused.frame)
           }
+
+          statements shouldBe empty
+          assertRefused(sent, refused.why, Some("WorkflowStartRequest"), refused.names)
+          otherSent shouldBe empty
+          service.executionService.getValue should be theSameInstanceAs inFlight
+          inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
+        }
       }
       ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
       Seq(unknownFormatUri, mislabeledUri, expiredUri).foreach { uri =>
@@ -1479,7 +1487,26 @@ class WorkflowWebsocketResourceSpec
 
     noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "vfs:///x"))
 
-    assertRefused(sent, "workflow is not initialized")
+    assertRefused(
+      sent,
+      "This connection is not open on a workflow.",
+      Some("WorkflowStartRequest"),
+      Some(974998L)
+    )
+  }
+
+  it should "refuse a start on a socket with no computing unit, to that socket" in {
+    val (session, sent) = mockSession(uid = Some(creatorUid), wid = storedWid, cuid = storedCuid)
+    registerState(session, PrivilegeEnum.WRITE).subscribe(new TestWorkflowService(9109L))
+
+    noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "vfs:///x"))
+
+    assertRefused(
+      sent,
+      "This connection is not open on a computing unit.",
+      Some("WorkflowStartRequest"),
+      Some(974998L)
+    )
   }
 
   it should "refuse a second start of an execution to its sender alone, leaving the run started as it was" in {
@@ -1504,9 +1531,12 @@ class WorkflowWebsocketResourceSpec
             resource.myOnMsg(repeating, startFrame(execution.eid, execution.planUri))
           } shouldBe empty
 
-          fatalErrorMessages(repeatingSent) shouldBe
-            Seq(s"execution ${execution.eid} was already started")
-          sentTypes(repeatingSent) shouldBe Seq("WorkflowErrorEvent")
+          assertRefused(
+            repeatingSent,
+            s"Execution ${execution.eid} was already started.",
+            Some("WorkflowStartRequest"),
+            Some(execution.eid)
+          )
           (Seq(sent, otherSent, againSent).filterNot(_ eq repeatingSent).flatten) shouldBe empty
           service.executionService.getValue should be theSameInstanceAs run
           run.executionStateStore.metadataStore.getState.state shouldBe READY
@@ -1603,11 +1633,11 @@ class WorkflowWebsocketResourceSpec
       // user's and one of no user on the same run are refused, and queue nothing.
       Seq(
         sessionOn(service, access = PrivilegeEnum.READ) ->
-          "you do not have write access to the computing unit",
+          "You do not have write access to the computing unit.",
         sessionOn(service, uid = Some(otherUid)) ->
-          s"only the user who created execution ${execution.eid} may change its operators",
+          s"Only the user who created execution ${execution.eid} may change its operators.",
         sessionOn(service, uid = None) ->
-          s"only the user who created execution ${execution.eid} may change its operators"
+          s"Only the user who created execution ${execution.eid} may change its operators."
       ).foreach {
         case ((refusedSession, refusedSent), why) =>
           withClue(s"$why: ") {
@@ -1625,7 +1655,7 @@ class WorkflowWebsocketResourceSpec
 
       modifyLogicResponses(sent) shouldBe Seq(
         ("limit", true, ""),
-        ("", false, s"execution ${execution.eid} has no change update-unknown")
+        ("", false, s"Execution ${execution.eid} has no change update-unknown.")
       )
       // Queued for the resume: the running Limit, with the executor the change made.
       val queued =
@@ -1650,9 +1680,9 @@ class WorkflowWebsocketResourceSpec
       resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974999L, "update-1")))
 
       modifyLogicResponses(sent) shouldBe Seq(
-        ("", false, "execution 974997 is not running here"),
-        ("", false, "execution 974997 is not running here"),
-        ("", false, "execution 974999 is not running here")
+        ("", false, "Execution 974997 is not running here."),
+        ("", false, "Execution 974997 is not running here."),
+        ("", false, "Execution 974999 is not running here.")
       )
     } finally service.unsubscribeAll()
   }

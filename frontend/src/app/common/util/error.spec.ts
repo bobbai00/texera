@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { extractErrorMessage } from "./error";
+import { extractErrorMessage, readableError } from "./error";
 
 describe("extractErrorMessage", () => {
   it("should return the message from an Error instance", () => {
@@ -66,5 +66,24 @@ describe("extractErrorMessage", () => {
     const testError = { error: null };
     const result = extractErrorMessage(testError);
     expect(result).toBe("An unknown error occurred.");
+  });
+});
+
+describe("readableError", () => {
+  it("strips a Java exception's class name, qualified or not", () => {
+    expect(readableError("java.lang.RuntimeException: no column 'a'")).toBe("no column 'a'");
+    expect(readableError("IllegalArgumentException: bad value")).toBe("bad value");
+    expect(readableError("java.lang.StackOverflowError: too deep")).toBe("too deep");
+  });
+
+  it("strips a failed requirement's prefix, after the class name too", () => {
+    expect(readableError("requirement failed: A broke")).toBe("A broke");
+    expect(readableError("java.lang.IllegalArgumentException: requirement failed: A broke")).toBe("A broke");
+  });
+
+  it("leaves a message in a user's words, and no message, as they are", () => {
+    const message = "Python environment 'ml' could not be installed: No matching distribution found";
+    expect(readableError(message)).toBe(message);
+    expect(readableError("")).toBe("");
   });
 });

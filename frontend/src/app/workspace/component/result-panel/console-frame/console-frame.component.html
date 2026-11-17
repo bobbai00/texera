@@ -241,7 +241,7 @@
   <div>
     <button
       (click)="onClickSkipTuples()"
-      [disabled]="false"
+      [disabled]="!mayCommandRun"
       nzSize="small"
       nz-tooltip
       nzTooltipTitle="Skip the faulty Tuple"
@@ -255,7 +255,7 @@
     </button>
     <button
       (click)="onClickRetryTuples()"
-      [disabled]="false"
+      [disabled]="!mayCommandRun"
       nzSize="small"
       nz-tooltip
       nzTooltipTitle="Retry the faulty Tuple"
@@ -269,6 +269,7 @@
     </button>
     <button
       (click)="onClickStep()"
+      [disabled]="!mayCommandRun"
       nz-button
       nzSize="small"
       nz-tooltip
@@ -282,6 +283,7 @@
     </button>
     <button
       (click)="onClickContinue()"
+      [disabled]="!mayCommandRun"
       nz-button
       nz-tooltip
       nzTooltipTitle="Continue"
@@ -300,6 +302,7 @@
     nz-input
     style="width: calc(100% - 160px)"
     [(ngModel)]="command"
+    [disabled]="!mayCommandRun"
     (keyup.enter)="submitDebugCommand()" />
 </nz-input-group>
 

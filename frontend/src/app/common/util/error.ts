@@ -38,3 +38,11 @@ export function extractErrorMessage(err: unknown): string {
 
   return "An unknown error occurred.";
 }
+
+/** Strip a Java exception's class name and a failed requirement's prefix, which mean nothing to a user. */
+export function readableError(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/^\s*(?:(?:[a-zA-Z0-9_]+\.)*[a-zA-Z0-9_]+(?:Exception|Error)):\s*/, "")
+    .replace(/^\s*requirement failed:\s*/, "");
+}

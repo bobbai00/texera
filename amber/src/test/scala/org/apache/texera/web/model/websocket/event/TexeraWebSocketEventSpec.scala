@@ -70,7 +70,7 @@ import java.time.Instant
   *    1. key is the 'type' string, it must be the same as corresponding backend class name
   *    2. value is the payload this request/event needs"
   *
-  * Its `TexeraWebsocketEventTypeMap` keys include `HeartBeatResponse`,
+  * Its `TexeraWebsocketEventTypeMap` keys include `HeartBeatResponse`, `RequestRefusedEvent`,
   * `WorkflowStateEvent`, `OperatorStatisticsUpdateEvent`, `WebResultUpdateEvent`,
   * `WorkflowErrorEvent`, `ConsoleUpdateEvent`, `PaginatedResultEvent`,
   * `PythonExpressionEvaluateResponse`,
@@ -131,9 +131,10 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
 
   private val resultRow = objectMapper.createObjectNode().put("city", "Irvine")
 
-  /** The 11 events that ARE in `@JsonSubTypes`, one instance each. */
+  /** The events that ARE in `@JsonSubTypes`, one instance each. */
   private val registeredEvents: List[(String, TexeraWebSocketEvent)] = List(
     "HeartBeatResponse" -> HeartBeatResponse(),
+    "RequestRefusedEvent" -> RequestRefusedEvent(Some("WorkflowKillRequest"), Some(345L), "why"),
     "WorkflowErrorEvent" -> WorkflowErrorEvent(Seq(fatalError)),
     "WorkflowStateEvent" -> WorkflowStateEvent("Running", Some(345L)),
     "OperatorStatisticsUpdateEvent" -> OperatorStatisticsUpdateEvent(Map("op-stats" -> metrics)),
@@ -184,6 +185,7 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
   // and RecoveryStartedEvent.
   private val expectedTypeIds: Set[String] = Set(
     "HeartBeatResponse",
+    "RequestRefusedEvent",
     "WorkflowErrorEvent",
     "WorkflowStateEvent",
     "OperatorStatisticsUpdateEvent",
@@ -245,6 +247,7 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
     // cannot either: WebResultUpdate is a sealed abstract class with no @JsonTypeInfo.
     val symmetricIds = Set(
       "HeartBeatResponse",
+      "RequestRefusedEvent",
       "WorkflowStateEvent",
       "OperatorStatisticsUpdateEvent",
       "PaginatedResultEvent",
@@ -279,6 +282,24 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
       .readValue(write(WorkflowStateEvent("Paused", Some(345L))), classOf[WorkflowStateEvent])
       .executionId
       .map(_ + 1L) shouldBe Some(346L)
+  }
+
+  "RequestRefusedEvent" should "say why, and name the request and its execution only where there is one" in {
+    // An id past the Int range, so a narrowing on the way out shows.
+    val executionId = Int.MaxValue + 1L
+    val ofAStart = objectMapper.readTree(
+      write(RequestRefusedEvent(Some("WorkflowStartRequest"), Some(executionId), "why-1"))
+    )
+    ofAStart.get("request").asText() shouldBe "WorkflowStartRequest"
+    ofAStart.get("executionId").isIntegralNumber shouldBe true
+    ofAStart.get("executionId").asLong() shouldBe executionId
+    ofAStart.get("message").asText() shouldBe "why-1"
+    // The Angular RequestRefusedEvent declares `request?` and `executionId?`: a frame that reads
+    // as no request leaves both keys out.
+    val ofNoRequest = objectMapper.readTree(write(RequestRefusedEvent(None, None, "why-2")))
+    ofNoRequest.has("request") shouldBe false
+    ofNoRequest.has("executionId") shouldBe false
+    ofNoRequest.get("message").asText() shouldBe "why-2"
   }
 
   "WebResultUpdateEvent" should "emit empty maps rather than omitting the keys" in {

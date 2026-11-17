@@ -45,6 +45,11 @@ import org.apache.texera.web.model.websocket.request.python.{
 )
 trait TexeraWebSocketRequest {}
 
+/** A request that names the execution it is about. */
+sealed trait ExecutionRequest extends TexeraWebSocketRequest {
+  def executionId: Long
+}
+
 case class HeartBeatRequest() extends TexeraWebSocketRequest
 
 /**
@@ -52,7 +57,7 @@ case class HeartBeatRequest() extends TexeraWebSocketRequest
   *
   * @param planUri the execution's plan table, as `POST /api/executions` answered it
   */
-case class WorkflowStartRequest(executionId: Long, planUri: String) extends TexeraWebSocketRequest
+case class WorkflowStartRequest(executionId: Long, planUri: String) extends ExecutionRequest
 
 /**
   * Applies, when the paused run of execution `executionId` resumes, the change to one of its
@@ -60,7 +65,7 @@ case class WorkflowStartRequest(executionId: Long, planUri: String) extends Texe
   *
   * @param updateId the id `POST /api/executions/{eid}/updates` answered with
   */
-case class OperatorUpdateRequest(executionId: Long, updateId: String) extends TexeraWebSocketRequest
+case class OperatorUpdateRequest(executionId: Long, updateId: String) extends ExecutionRequest
 
 case class ResultPaginationRequest(
     requestID: String,

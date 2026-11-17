@@ -83,6 +83,10 @@ object WorkflowService extends LazyLogging {
       executionPlan: ExecutionPlan
   )
 
+  /** What a start is answered when its run could not even be built. */
+  def notStarted(executionId: Long): String =
+    s"Execution $executionId could not be started, because of an error on this computing unit."
+
   /**
     * Checks a request of `user` to start execution `executionId`, which the Dashboard service
     * created, on computing unit `cuid`, from the plan stored in its plan table at `planUri`, in
@@ -111,7 +115,7 @@ object WorkflowService extends LazyLogging {
       uid <- Option(user)
         .flatMap(user => Option(user.getUid))
         .map(_.intValue())
-        .toRight("a signed-in user is required to start an execution")
+        .toRight("A signed-in user is required to start an execution.")
       location <- StoredExecutionStart.checkUri(planUri, executionId, socketWorkflowId, uid)
       record <- storedPlanRow(executionId, planUri, readPlan)
       executionPlan <- StoredExecutionStart.checkRecord(
@@ -131,21 +135,17 @@ object WorkflowService extends LazyLogging {
   ): Either[String, PlanRecord] =
     try Right(readPlan(planUri))
     catch {
-      case _: NoStoredPlanException => Left(s"execution $executionId has no stored plan")
-      // The row is there and is not one a plan table holds, such as a row with no body: a
-      // second try reads the same row.
+      case _: NoStoredPlanException => Left(StoredExecutionStart.noStoredPlan(executionId))
+      // The row is there and is not one a plan table holds, such as a row with no body.
       case malformed @ (_: IllegalStateException | _: IllegalArgumentException) =>
         logger.warn(
           s"The plan row of execution $executionId at $planUri cannot be read.",
           malformed
         )
-        Left(
-          s"the stored plan of execution $executionId cannot be read" +
-            Option(malformed.getMessage).fold("")(why => s": $why")
-        )
+        Left(StoredExecutionStart.unreadablePlan(executionId, malformed))
       case NonFatal(failure) =>
         logger.warn(s"The plan of execution $executionId could not be read from $planUri.", failure)
-        Left(s"the plan of execution $executionId could not be read; try starting it again")
+        Left(s"The plan of execution $executionId could not be read. Run the workflow again.")
     }
 
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
@@ -350,7 +350,7 @@ class WorkflowService(
     */
   def startChecked(start: WorkflowService.CheckedStart): Either[String, WorkflowExecutionService] =
     if (start.workflowId != workflowId) {
-      Left(s"the plan belongs to workflow ${start.workflowId.id}, not to this one")
+      Left(StoredExecutionStart.ofAnotherWorkflow(start.workflowId.id))
     } else {
       val span = TexeraTracer.tracer
         .spanBuilder("WorkflowService.startStoredExecution")
@@ -373,18 +373,19 @@ class WorkflowService(
   private def claimForStart(executionId: Long, planUri: URI): Either[String, Unit] =
     try Right(claimStart(planUri))
     catch {
-      case started: ExecutionAlreadyStartedException => Left(started.getMessage)
-      case _: NoStoredPlanException                  => Left(s"execution $executionId has no stored plan")
+      case _: ExecutionAlreadyStartedException =>
+        Left(s"Execution $executionId was already started.")
+      case _: NoStoredPlanException => Left(StoredExecutionStart.noStoredPlan(executionId))
       // Every retry of the claim lost its commit to another commit on the plan table, such as a
-      // change to a paused operator: a later start can win.
+      // change to a paused operator.
       case _: CommitFailedException =>
         Left(
-          s"execution $executionId could not be claimed for its start, as its plan was being " +
-            "changed; try starting it again"
+          s"Execution $executionId could not be claimed for its start, as its plan was being " +
+            "changed. Run the workflow again."
         )
       case NonFatal(failure) =>
         logger.warn(s"Execution $executionId could not be claimed at $planUri.", failure)
-        Left(s"execution $executionId could not be claimed for its start; try starting it again")
+        Left(s"Execution $executionId could not be claimed for its start. Run the workflow again.")
     }
 
   /**
@@ -434,11 +435,7 @@ class WorkflowService(
             // The execution is claimed and will not start: its sessions are shown why.
             if (!published) executionService.onNext(execution)
             Right(execution)
-          case None =>
-            Left(
-              s"execution ${start.executionId} could not be started, because of an error on " +
-                "this computing unit"
-            )
+          case None => Left(WorkflowService.notStarted(start.executionId))
         }
     }
   }

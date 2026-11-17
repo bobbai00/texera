@@ -418,25 +418,25 @@ class ExecutionReconfigurationServiceSpec
       executionId = testExecutionId
     )
     val refusals: Seq[(String, ModifyLogicResponse)] = Seq(
-      "" -> ModifyLogicResponse("", isValid = false, "the request names no change to apply"),
+      "" -> ModifyLogicResponse("", isValid = false, "The request names no change to apply."),
       (null: String) -> ModifyLogicResponse(
         "",
         isValid = false,
-        "the request names no change to apply"
+        "The request names no change to apply."
       ),
       "update-unknown" ->
-        ModifyLogicResponse("", isValid = false, "execution 9232 has no change update-unknown"),
+        ModifyLogicResponse("", isValid = false, "Execution 9232 has no change update-unknown."),
       storeChange(changedLimit, ofExecution = ExecutionIdentity(9299L)) ->
         ModifyLogicResponse(
           "limit-a",
           isValid = false,
-          "the change is execution 9299's, not 9232's"
+          "The change is execution 9299's, not 9232's."
         ),
       storeChange(changedLimit, createdBy = creatorUid + 1) ->
         ModifyLogicResponse(
           "",
           isValid = false,
-          "only the user who created execution 9232 may change its operators"
+          "Only the user who created execution 9232 may change its operators."
         ),
       storeChange(changedLimit, body = Some(inNextFormat)) ->
         ModifyLogicResponse(
@@ -449,13 +449,13 @@ class ExecutionReconfigurationServiceSpec
         ModifyLogicResponse(
           "limit-a",
           isValid = false,
-          s"the change stored as $namedOtherwise names itself update-another"
+          s"The change stored as $namedOtherwise names itself update-another."
         ),
       storeChange(notInPlan) ->
         ModifyLogicResponse(
           "filter-z",
           isValid = false,
-          "operator filter-z-main is not in the running plan"
+          "Operator filter-z-main is not in the running plan."
         )
     )
 
@@ -485,7 +485,7 @@ class ExecutionReconfigurationServiceSpec
           ModifyLogicResponse(
             "",
             isValid = false,
-            "only the user who created execution 9232 may change its operators"
+            "Only the user who created execution 9232 may change its operators."
           )
       }
     }
@@ -553,7 +553,7 @@ class ExecutionReconfigurationServiceSpec
       planUri = ExecutionPlanStore.planUri(testWorkflowId, ExecutionIdentity(9298L), None)
     )
     noTable.applyStoredUpdate("update-1", asCreator) shouldBe
-      ModifyLogicResponse("", isValid = false, "execution 9232 has no stored plan")
+      ModifyLogicResponse("", isValid = false, "Execution 9232 has no stored plan.")
 
     val stateStore = new ExecutionStateStore
     val unanswered = new StoredChangeService(
@@ -564,7 +564,7 @@ class ExecutionReconfigurationServiceSpec
       ModifyLogicResponse(
         "",
         isValid = false,
-        "change update-1 of execution 9232 could not be read"
+        "Change update-1 of execution 9232 could not be read."
       )
     stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
   }

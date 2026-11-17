@@ -32,9 +32,11 @@ import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { CdkVirtualScrollViewport } from "@angular/cdk/scrolling";
 import { presetPalettes } from "@ant-design/colors";
 import { isDefined } from "../../../../common/util/predicate";
+import { readableError } from "../../../../common/util/error";
 import { WorkflowWebsocketService } from "../../../service/workflow-websocket/workflow-websocket.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { UdfDebugService } from "../../../service/operator-debug/udf-debug.service";
+import { ComputingUnitStatusService } from "../../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { NzDropdownDirective, NzDropdownMenuComponent } from "ng-zorro-antd/dropdown";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
 import { NzIconDirective } from "ng-zorro-antd/icon";
@@ -196,8 +198,14 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
     private notificationService: NotificationService,
     private udfDebugService: UdfDebugService,
     private workflowActionService: WorkflowActionService,
-    private workflowCompilingService: WorkflowCompilingService
+    private workflowCompilingService: WorkflowCompilingService,
+    private computingUnitStatusService: ComputingUnitStatusService
   ) {}
+
+  /** The console's commands change a run, which takes write access to the computing unit it is on. */
+  get mayCommandRun(): boolean {
+    return this.computingUnitStatusService.getSelectedComputingUnitValue()?.accessPrivilege === "WRITE";
+  }
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes.operatorId) this.operatorId = changes.operatorId.currentValue;
@@ -406,12 +414,4 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
     this.fatalErrorRows = rows;
     return messages;
   }
-}
-
-/** Strip a Java exception's class name and a failed requirement's prefix, which mean nothing to a user. */
-function readableError(text: string): string {
-  if (!text) return text;
-  return text
-    .replace(/^\s*(?:(?:[a-zA-Z0-9_]+\.)*[a-zA-Z0-9_]+(?:Exception|Error)):\s*/, "")
-    .replace(/^\s*requirement failed:\s*/, "");
 }

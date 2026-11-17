@@ -1821,9 +1821,11 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     if (this.isConnecting) {
       return { label: "Connecting", icon: "loading", disabled: true };
     }
-    // Stop is shown only while the socket can deliver the kill. A run on a unit that died or
-    // vanished mid-run falls through, so a later branch names the problem.
-    if (this.isRunning && this.workflowWebsocketService.isConnected) {
+    // Stop is shown only while the socket can deliver the kill, and the unit takes it from this
+    // reader: a unit shared read-only refuses it. A run on a unit that died or vanished mid-run
+    // falls through, so a later branch names the problem.
+    const mayStop = this.selectedUnit === null || this.hasUnitWriteAccess;
+    if (this.isRunning && this.workflowWebsocketService.isConnected && mayStop) {
       return { label: "Stop", icon: "stop", disabled: false };
     }
     if (!this.isWorkflowValid) {

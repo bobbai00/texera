@@ -2005,6 +2005,16 @@ describe("WorkflowFormComponent", () => {
       expect(component.runButtonState).toEqual({ label: "Stop", icon: "stop", disabled: false });
     });
 
+    it("offers no Stop on a unit shared read-only, which would refuse it", () => {
+      build(formViewWorkflow).ngOnInit();
+      makeReady();
+      (component as any).selectedUnit = { accessPrivilege: "READ" };
+      h.executionStateStream.next({ current: { state: ExecutionState.Running } });
+
+      expect(component.isRunning).toBe(true);
+      expect(component.runButtonState).toEqual({ label: "No access", icon: "lock", disabled: true });
+    });
+
     it("disables and says Invalid for a broken graph", () => {
       build(formViewWorkflow).ngOnInit();
       makeReady();

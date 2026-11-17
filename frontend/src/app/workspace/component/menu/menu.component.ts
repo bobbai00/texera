@@ -28,6 +28,7 @@ import { UndoRedoService } from "../../service/undo-redo/undo-redo.service";
 import { ValidationWorkflowService } from "../../service/validation/validation-workflow.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { ExecutionState } from "../../types/execute-workflow.interface";
+import { WorkflowFatalError } from "../../types/workflow-websocket.interface";
 import { HeatmapView } from "../../service/heatmap/heatmap-scoring";
 import { loadPersistedHeatmapView, savePersistedHeatmapView } from "../../service/heatmap/heatmap-overlay-persistence";
 import { WorkflowWebsocketService } from "../../service/workflow-websocket/workflow-websocket.service";
@@ -52,10 +53,10 @@ import { ComputingUnitStatusService } from "../../../common/service/computing-un
 import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { ComputingUnitState } from "../../../common/type/computing-unit-connection.interface";
 import { unavailableComputingUnitReason } from "../../../common/util/computing-unit.util";
+import { readableError } from "../../../common/util/error";
 import { ComputingUnitSelectionComponent } from "../power-button/computing-unit-selection.component";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { DashboardWorkflowComputingUnit } from "../../../common/type/workflow-computing-unit";
-import { Privilege } from "../../../dashboard/type/share-access.interface";
 import { MarkdownDescriptionComponent } from "../../../dashboard/component/user/markdown-description/markdown-description.component";
 import { NzSpaceCompactItemDirective, NzSpaceCompactComponent } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
@@ -101,6 +102,21 @@ import { CompilationState } from "../../types/workflow-compiling.interface";
 export const HANDOVER_DRAIN_TIMEOUT_MS = 10_000;
 /** What the bounded wait yields past the bound, in place of the drain. */
 const DRAIN_TIMED_OUT = "drain timed out" as const;
+
+/** How much of an error a notification shows: the console lists the error whole. */
+const NOTICE_ERROR_LENGTH = 200;
+
+/** What a user is told of a run that failed: its first error, and how many more the console lists. */
+function failedRunNotice(errors: ReadonlyArray<WorkflowFatalError>): string {
+  if (errors.length === 0) {
+    return "Run failed.";
+  }
+  const error = readableError(errors[0].message);
+  const shown = error.length > NOTICE_ERROR_LENGTH ? `${error.slice(0, NOTICE_ERROR_LENGTH)}…` : error;
+  const others = errors.length - 1;
+  const more = others === 0 ? "" : ` (and ${others} more ${others === 1 ? "error" : "errors"} in the console)`;
+  return `Run failed: ${shown}${more}`;
+}
 
 @UntilDestroy()
 @Component({
@@ -260,6 +276,10 @@ export class MenuComponent implements OnInit, OnDestroy {
       .getExecutionStateStream()
       .pipe(untilDestroyed(this))
       .subscribe(event => {
+        // A run that was going has failed: the button goes back to Run, and the user is told why.
+        if (!this.buttonStartsRun() && event.current.state === ExecutionState.Failed) {
+          this.notificationService.error(failedRunNotice(event.current.errorMessages));
+        }
         this.executionState = event.current.state;
         this.applyRunButtonBehavior(this.getRunButtonBehavior());
       });
@@ -420,6 +440,14 @@ export class MenuComponent implements OnInit, OnDestroy {
     this.runIcon = behavior.icon;
     this.runDisable = behavior.disable;
     this.onClickRunHandler = behavior.onClick;
+  }
+
+  /**
+   * Whether the user may not change runs on the selected computing unit: every control of a run is then
+   * disabled. With no unit selected there is none to be refused on.
+   */
+  public get lacksUnitWriteAccess(): boolean {
+    return this.selectedComputingUnit !== null && this.selectedComputingUnit.accessPrivilege !== "WRITE";
   }
 
   // the execution states in which the run button starts a new run rather than controlling one
@@ -1144,6 +1172,4 @@ export class MenuComponent implements OnInit, OnDestroy {
       this.config.env.workflowEmailNotificationEnabled
     );
   }
-
-  protected readonly Privilege = Privilege;
 }

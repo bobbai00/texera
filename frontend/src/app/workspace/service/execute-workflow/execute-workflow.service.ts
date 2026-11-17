@@ -43,6 +43,7 @@ import {
   OperatorCurrentTuples,
   RegionStateEvent,
   RegionUpdateEvent,
+  RequestRefusedEvent,
   TexeraWebsocketEvent,
   WorkflowFatalError,
 } from "../../types/workflow-websocket.interface";
@@ -68,28 +69,30 @@ import {
 // TODO: change this declaration
 export const FORM_DEBOUNCE_TIME_MS = 150;
 
+/** Why a run did not start, as an error of the run that belongs to no operator. */
+function startFailure(message: string): WorkflowFatalError {
+  const now = Date.now();
+  return {
+    type: { name: "EXECUTION_FAILURE" },
+    timestamp: { seconds: Math.floor(now / 1000), nanos: (now % 1000) * 1_000_000 },
+    message,
+    details: "",
+    operatorId: "",
+    workerId: "",
+  };
+}
+
 /**
  * The errors of a run of `plan` whose execution the Dashboard service did not create, `error` being how the
  * request for it failed. For a workflow that does not compile: each operator's error, an operator before
- * those downstream of it. For any other failure: its reason, as one error that belongs to no operator, which
- * is how the computing unit reports a start it refuses.
+ * those downstream of it. For any other failure: its reason, as one error that belongs to no operator.
  */
 function errorsOfFailedCreate(error: unknown, plan: LogicalPlan): ReadonlyArray<WorkflowFatalError> {
   const operatorErrors = operatorErrorsOf(error, plan);
   if (operatorErrors !== undefined) {
     return operatorErrors;
   }
-  const now = Date.now();
-  return [
-    {
-      type: { name: "EXECUTION_FAILURE" },
-      timestamp: { seconds: Math.floor(now / 1000), nanos: (now % 1000) * 1_000_000 },
-      message: failureMessage(error),
-      details: "",
-      operatorId: "",
-      workerId: "",
-    },
-  ];
+  return [startFailure(failureMessage(error))];
 }
 
 /**
@@ -155,6 +158,11 @@ export class ExecuteWorkflowService {
    * one a change to an operator is stored for while its run is paused, whichever page started the run.
    */
   private currentExecutionId?: number;
+  /**
+   * The execution this page asked the computing unit to start, until the unit answers: with the state of a
+   * run, which is the run on screen from then on, or by refusing the start.
+   */
+  private awaitedStart?: number;
 
   constructor(
     private workflowActionService: WorkflowActionService,
@@ -180,6 +188,9 @@ export class ExecuteWorkflowService {
           break;
         case "ExecutionDurationUpdateEvent":
           this.anchorDuration(event.duration, event.isRunning);
+          break;
+        case "RequestRefusedEvent":
+          this.handleRefusedRequest(event);
           break;
         default:
           // workflow status related event
@@ -220,11 +231,33 @@ export class ExecuteWorkflowService {
     }
   }
 
+  /**
+   * A request of this page that the computing unit did not do. The refusal says nothing about the run the unit
+   * holds, so the run on screen stays as it is and the user is told why in a notification. Only the start
+   * this page waits for is the run on screen itself: refused, that run has failed, with why as its error.
+   */
+  private handleRefusedRequest(refusal: RequestRefusedEvent): void {
+    const refusesAwaitedStart =
+      refusal.request === "WorkflowStartRequest" &&
+      this.awaitedStart !== undefined &&
+      refusal.executionId === this.awaitedStart;
+    if (refusesAwaitedStart) {
+      this.awaitedStart = undefined;
+      this.updateExecutionState({ state: ExecutionState.Failed, errorMessages: [startFailure(refusal.message)] });
+    } else {
+      this.notificationService.error(refusal.message);
+    }
+  }
+
   public handleExecutionEvent(event: TexeraWebsocketEvent): ExecutionStateInfo | undefined {
     switch (event.type) {
       case "WorkflowStateEvent":
         // The unit names the execution its state is of, and none with the state of no run.
         this.currentExecutionId = event.executionId;
+        if (event.executionId !== undefined) {
+          // The run the unit holds: the one this page asked for, or one another page started meanwhile.
+          this.awaitedStart = undefined;
+        }
         let newState = ExecutionState[event.state];
         switch (newState) {
           case ExecutionState.Paused:
@@ -408,8 +441,9 @@ export class ExecuteWorkflowService {
    * run's results, stay as they are.
    */
   private createThenStart(request: CreateExecutionRequest): void {
-    // The run asked for last is the one that starts.
+    // The run asked for last is the one that starts, and the one whose start is waited for.
     this.pendingRun.unsubscribe();
+    this.awaitedStart = undefined;
     // wait for the form debounce to complete, then create the execution
     this.pendingRun = timer(FORM_DEBOUNCE_TIME_MS)
       .pipe(
@@ -418,8 +452,10 @@ export class ExecuteWorkflowService {
         switchMap(() => this.executionApiService.create(request))
       )
       .subscribe({
-        next: ({ eid, planUri }) =>
-          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri }),
+        next: ({ eid, planUri }) => {
+          this.awaitedStart = eid;
+          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri });
+        },
         error: (error: unknown) =>
           this.updateExecutionState({
             state: ExecutionState.Failed,
@@ -580,6 +616,7 @@ export class ExecuteWorkflowService {
     // must not start in the next session, and the other is not the next session's to change.
     this.pendingRun.unsubscribe();
     this.currentExecutionId = undefined;
+    this.awaitedStart = undefined;
     this.updateExecutionState({ state: ExecutionState.Uninitialized });
     this.assignedWorkerIds.clear();
     // Leaving the workspace takes this path, not resetExecutionState, so the clock has to be

@@ -49,6 +49,18 @@ export type OperatorUpdateRequest = Readonly<{
   updateId: string;
 }>;
 
+/**
+ * Tells this session that a request it sent was not done, and why. It says nothing about the run the
+ * computing unit holds.
+ */
+export type RequestRefusedEvent = Readonly<{
+  /** The type of the request, as its frame named it; left out for a frame that named none. */
+  request?: string;
+  /** The execution the request named, when it named one. */
+  executionId?: number;
+  message: string;
+}>;
+
 export interface WorkflowFatalError
   extends Readonly<{
     message: string;
@@ -188,6 +200,7 @@ export type TexeraWebsocketRequestTypeMap = {
 
 export type TexeraWebsocketEventTypeMap = {
   HeartBeatResponse: {};
+  RequestRefusedEvent: RequestRefusedEvent;
   WorkflowStateEvent: WorkflowStateInfo;
   OperatorStatisticsUpdateEvent: OperatorStatsUpdate;
   WebResultUpdateEvent: WorkflowResultUpdateEvent;

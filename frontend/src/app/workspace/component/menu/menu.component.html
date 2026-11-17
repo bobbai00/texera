@@ -452,7 +452,8 @@
         executionState === ExecutionState.Completed ||
         executionState === ExecutionState.Killed ||
         executionState === ExecutionState.Failed ||
-        !workflowWebsocketService.isConnected
+        !workflowWebsocketService.isConnected ||
+        lacksUnitWriteAccess
       "
           nz-button
           nzDanger
@@ -468,7 +469,7 @@
           [nzPopoverTrigger]="'hover'"
           [nzPopoverContent]="executionSettings"
           nzPopoverPlacement="bottom"
-          [disabled]="runDisable || (!workflowWebsocketService.isConnected && computingUnitStatus !== ComputingUnitState.NoComputingUnit) || displayParticularWorkflowVersion || (selectedComputingUnit !== null && selectedComputingUnit.accessPrivilege !== Privilege.WRITE)"
+          [disabled]="runDisable || (!workflowWebsocketService.isConnected && computingUnitStatus !== ComputingUnitState.NoComputingUnit) || displayParticularWorkflowVersion || lacksUnitWriteAccess"
           id="run-button"
           nz-button
           nzType="primary">
@@ -481,7 +482,7 @@
           *ngIf="this.config.env.timetravelEnabled"
           (click)="handleCheckpoint()"
           title="take checkpoint"
-          [disabled]="executionState !== ExecutionState.Paused"
+          [disabled]="executionState !== ExecutionState.Paused || lacksUnitWriteAccess"
           id="checkpoint-button"
           nz-button
           nzType="primary">

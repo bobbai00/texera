@@ -178,9 +178,11 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "refuse a request that names none, or no URI" in {
-    StoredExecutionStart.planUriOf(null) shouldBe Left("not an execution plan")
+    StoredExecutionStart.planUriOf(null) shouldBe Left(
+      "The request does not name an execution's plan."
+    )
     StoredExecutionStart.planUriOf("vfs:///wid/1/eid/2/plan with spaces") shouldBe
-      Left("not an execution plan")
+      Left("The request does not name an execution's plan.")
   }
 
   // --- checkUri ---
@@ -214,18 +216,20 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       new URI(s"vfs:///wh/user-$uid-3%2Fx/wid/$wid/eid/$eid/plan")
     )
     notPlans.foreach { uri =>
-      withClue(s"$uri: ") { checkUri(uri) shouldBe Left("not an execution plan") }
+      withClue(s"$uri: ") {
+        checkUri(uri) shouldBe Left("The request does not name an execution's plan.")
+      }
     }
   }
 
   it should "refuse the plan table of another execution" in {
     checkUri(planUri(execution = eid + 1)) shouldBe
-      Left(s"the plan is execution ${eid + 1}'s, not $eid's")
+      Left(s"The plan is execution ${eid + 1}'s, not $eid's.")
   }
 
   it should "refuse, over a socket, the plan of another workflow" in {
     checkUri(planUri(workflow = wid + 1)) shouldBe
-      Left(s"the plan belongs to workflow ${wid + 1}, not to this one")
+      Left(s"The plan belongs to workflow ${wid + 1}, not to this one.")
   }
 
   it should "refuse a plan in another user's warehouse, before it asks whether warehouses are on" in {
@@ -240,7 +244,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       withClue(s"$warehouse: ") {
         Seq(true, false).foreach { enabled =>
           checkUri(planUri(warehouse = Some(warehouse)), warehousesEnabled = enabled) shouldBe
-            Left("the plan is in another user's warehouse")
+            Left("The plan is in another user's warehouse.")
         }
       }
     }
@@ -249,8 +253,8 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   it should "refuse a plan in the user's own warehouse while per-user warehouses are disabled" in {
     checkUri(planUri(warehouse = Some(ownWarehouse)), warehousesEnabled = false) shouldBe
       Left(
-        s"execution $eid keeps its plan in warehouse '$ownWarehouse', and per-user warehouses " +
-          "are disabled in this deployment"
+        s"Execution $eid keeps its plan in warehouse '$ownWarehouse', and per-user warehouses " +
+          "are disabled in this deployment."
       )
     // The default warehouse is read either way.
     checkUri(planUri(), warehousesEnabled = false).isRight shouldBe true
@@ -260,11 +264,11 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     val everythingWrong =
       planUri(workflow = wid + 1, execution = eid + 1, warehouse = Some("shared"))
     checkUri(everythingWrong, execution = eid) shouldBe
-      Left(s"the plan is execution ${eid + 1}'s, not $eid's")
+      Left(s"The plan is execution ${eid + 1}'s, not $eid's.")
     checkUri(everythingWrong, execution = eid + 1) shouldBe
-      Left(s"the plan belongs to workflow ${wid + 1}, not to this one")
+      Left(s"The plan belongs to workflow ${wid + 1}, not to this one.")
     checkUri(everythingWrong, execution = eid + 1, socketWorkflow = None) shouldBe
-      Left("the plan is in another user's warehouse")
+      Left("The plan is in another user's warehouse.")
   }
 
   // --- checkRecord ---
@@ -288,20 +292,20 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   it should "refuse anyone but the user who created the execution, without reading its plan" in {
     checkRecord(record(body = "not a plan"), user = uid + 1) shouldBe
-      Left(s"only the user who created execution $eid may start it")
+      Left(s"Only the user who created execution $eid may start it.")
   }
 
   it should "refuse a row made for another computing unit, without reading its plan" in {
     checkRecord(record(body = "not a plan"), unit = cuid + 1) shouldBe
-      Left(s"execution $eid was created for computing unit $cuid, not ${cuid + 1}")
+      Left(s"Execution $eid was created for computing unit $cuid, not ${cuid + 1}.")
   }
 
   it should "check the row's creator, then its unit" in {
     val everythingWrong = record(createdBy = uid + 1, computingUnitId = cuid + 1)
     checkRecord(everythingWrong) shouldBe
-      Left(s"only the user who created execution $eid may start it")
+      Left(s"Only the user who created execution $eid may start it.")
     checkRecord(everythingWrong.copy(createdBy = uid)) shouldBe
-      Left(s"execution $eid was created for computing unit ${cuid + 1}, not $cuid")
+      Left(s"Execution $eid was created for computing unit ${cuid + 1}, not $cuid.")
   }
 
   it should "refuse a plan it cannot read, in the codec's words" in {
@@ -326,11 +330,11 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       savedPlan(execution = eid + 1),
       savedPlan(warehouse = Some(ownWarehouse))
     ).foreach { body =>
-      checkRecord(record(body = body)) shouldBe Left("the plan's ids do not match its location")
+      checkRecord(record(body = body)) shouldBe Left("The plan's ids do not match its location.")
     }
     // and the plan of the default warehouse, found in the user's own
     checkRecord(record(), uri = planUri(warehouse = Some(ownWarehouse))) shouldBe
-      Left("the plan's ids do not match its location")
+      Left("The plan's ids do not match its location.")
   }
 
   it should "refuse a plan whose earliest input link has expired, naming when" in {
@@ -338,11 +342,14 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     checkRecord(
       record(body = savedPlan(inputs = Seq(input("b.csv", now + 60000), input("a.csv", earliest))))
     ) shouldBe Left(
-      s"input links expired at ${Instant.ofEpochMilli(earliest)}; run the workflow again"
+      s"The plan's input links expired at ${Instant.ofEpochMilli(earliest)}. Run the workflow " +
+        "again."
     )
     // A link that expires now has expired.
     checkRecord(record(body = savedPlan(inputs = Seq(input("a.csv", now))))) shouldBe
-      Left(s"input links expired at ${Instant.ofEpochMilli(now)}; run the workflow again")
+      Left(
+        s"The plan's input links expired at ${Instant.ofEpochMilli(now)}. Run the workflow again."
+      )
   }
 
   it should "pass a plan whose input links have not expired, and one that reads no input" in {
@@ -394,12 +401,12 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       case (log, shown) =>
         withClue(s"$log: ") {
           checkRecord(record(body = savedPlan(replay = Some(new URI(log))))) shouldBe Left(
-            s"the plan replays the log at $shown, outside where this computing unit keeps " +
-              "replay logs"
+            s"The plan replays the log at $shown, outside where this computing unit keeps " +
+              "replay logs."
           )
           checkRecord(record(body = savedPlan(replayLog = Some(new URI(log))))) shouldBe Left(
-            s"the plan writes its replay log to $shown, outside where this computing unit " +
-              "keeps replay logs"
+            s"The plan writes its replay log to $shown, outside where this computing unit " +
+              "keeps replay logs."
           )
         }
     }
@@ -409,9 +416,9 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     val log = Some(logRoot.resolve(s"$wid/$eid/"))
     val shown = s"file:/var/texera/replay-logs/$wid/$eid/"
     checkRecord(record(body = savedPlan(replay = log)), replayLogRoot = None) shouldBe
-      Left(s"the plan replays the log at $shown, and this computing unit keeps no replay logs")
+      Left(s"The plan replays the log at $shown, and this computing unit keeps no replay logs.")
     checkRecord(record(body = savedPlan(replayLog = log)), replayLogRoot = None) shouldBe Left(
-      s"the plan writes its replay log to $shown, and this computing unit keeps no replay logs"
+      s"The plan writes its replay log to $shown, and this computing unit keeps no replay logs."
     )
   }
 
@@ -421,7 +428,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       replayLog = Some(new URI("file:///etc/texera/"))
     )
     checkRecord(record(body = body)).left.getOrElse(fail("passed")) should
-      startWith("the plan writes its replay log to file:/etc/texera/")
+      startWith("The plan writes its replay log to file:/etc/texera/")
   }
 
   // --- withoutSecrets ---
@@ -493,10 +500,10 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     val service = new WorkflowService(WorkflowIdentity(wid), cuid, 3600)
     val catalog = new CountingCatalog
     val refusals = Seq(
-      new URI("vfs:///not/a/plan") -> "not an execution plan",
-      planUri(execution = eid + 1) -> s"the plan is execution ${eid + 1}'s, not $eid's",
-      planUri(workflow = wid + 1) -> s"the plan belongs to workflow ${wid + 1}, not to this one",
-      planUri(warehouse = Some(s"user-${uid + 1}-3")) -> "the plan is in another user's warehouse"
+      new URI("vfs:///not/a/plan") -> "The request does not name an execution's plan.",
+      planUri(execution = eid + 1) -> s"The plan is execution ${eid + 1}'s, not $eid's.",
+      planUri(workflow = wid + 1) -> s"The plan belongs to workflow ${wid + 1}, not to this one.",
+      planUri(warehouse = Some(s"user-${uid + 1}-3")) -> "The plan is in another user's warehouse."
     )
     withCatalog(catalog) {
       refusals.foreach {
@@ -508,14 +515,14 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       }
       // and a start with no user, however good its URI
       service.startStoredExecution(eid, planUri(), user(null), cuid) shouldBe
-        Left("a signed-in user is required to start an execution")
+        Left("A signed-in user is required to start an execution.")
       service.startStoredExecution(eid, planUri(), null, cuid) shouldBe
-        Left("a signed-in user is required to start an execution")
+        Left("A signed-in user is required to start an execution.")
       catalog.calls.get() shouldBe 0
 
       // The control: a URI that passes is looked up, and has no table here.
       service.startStoredExecution(eid, planUri(), user(uid), cuid) shouldBe
-        Left(s"execution $eid has no stored plan")
+        Left(s"Execution $eid has no stored plan.")
       catalog.calls.get() should be > 0
     }
     // Nothing was published: the service holds no run.

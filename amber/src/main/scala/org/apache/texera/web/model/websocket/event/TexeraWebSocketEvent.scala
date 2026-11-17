@@ -29,6 +29,7 @@ import org.apache.texera.web.model.websocket.response.{HeartBeatResponse, Modify
 @JsonSubTypes(
   Array(
     new Type(value = classOf[HeartBeatResponse]),
+    new Type(value = classOf[RequestRefusedEvent]),
     new Type(value = classOf[WorkflowErrorEvent]),
     new Type(value = classOf[WorkflowStateEvent]),
     new Type(value = classOf[OperatorStatisticsUpdateEvent]),

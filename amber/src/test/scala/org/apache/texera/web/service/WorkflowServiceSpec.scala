@@ -863,7 +863,7 @@ class WorkflowServiceSpec
     // started as it is.
     val again = recorder.record {
       service.startStoredExecution(startedEid, planUri, executingUser, storedCuid) shouldBe
-        Left(s"execution $startedEid was already started")
+        Left(s"Execution $startedEid was already started.")
     }
     again shouldBe empty
     service.executionService.getValue should be theSameInstanceAs started
@@ -877,11 +877,11 @@ class WorkflowServiceSpec
     val stranger = new User
     stranger.setUid(Integer.valueOf(testUid + 1000))
     val refusals = Seq(
-      (stranger, storedCuid, s"only the user who created execution $refusedEid may start it"),
+      (stranger, storedCuid, s"Only the user who created execution $refusedEid may start it."),
       (
         executingUser,
         testCuid,
-        s"execution $refusedEid was created for computing unit $storedCuid, not $testCuid"
+        s"Execution $refusedEid was created for computing unit $storedCuid, not $testCuid."
       )
     )
 
@@ -901,7 +901,7 @@ class WorkflowServiceSpec
         planUriOf(heldStoredEid),
         executingUser,
         storedCuid
-      ) shouldBe Left(s"execution $heldStoredEid has no stored plan")
+      ) shouldBe Left(s"Execution $heldStoredEid has no stored plan.")
     } shouldBe empty
     // A start checked for another workflow, which the agent's path would have asked another
     // service to start.
@@ -912,7 +912,7 @@ class WorkflowServiceSpec
     recorder.record {
       service.startChecked(
         checked.copy(workflowId = WorkflowIdentity(testWid.toLong + 1))
-      ) shouldBe Left(s"the plan belongs to workflow ${testWid + 1}, not to this one")
+      ) shouldBe Left(s"The plan belongs to workflow ${testWid + 1}, not to this one.")
     } shouldBe empty
 
     ExecutionPlanStore.isStarted(planUri) shouldBe false
@@ -922,7 +922,7 @@ class WorkflowServiceSpec
     held.executionStateStore.metadataStore.getState.fatalErrors shouldBe empty
   }
 
-  it should "answer a claim or a read the lake fails as a refusal, to try again unless the row is malformed, leaving the held run alone" in {
+  it should "answer a claim or a read the lake fails as a refusal, leaving the held run alone" in {
     val planUri = storePlanOf(unclaimedEid)
     def refusalOf(service: StoredStartService): Either[String, WorkflowExecutionService] = {
       val held = holdRunningRun(service, heldStoredEid)
@@ -938,19 +938,19 @@ class WorkflowServiceSpec
     refusalOf(
       new StoredStartService(claim = Some(_ => throw new CommitFailedException("lost the race")))
     ) shouldBe Left(
-      s"execution $unclaimedEid could not be claimed for its start, as its plan was being " +
-        "changed; try starting it again"
+      s"Execution $unclaimedEid could not be claimed for its start, as its plan was being " +
+        "changed. Run the workflow again."
     )
     refusalOf(
       new StoredStartService(claim = Some(_ => throw new IllegalStateException("catalog down")))
     ) shouldBe
-      Left(s"execution $unclaimedEid could not be claimed for its start; try starting it again")
+      Left(s"Execution $unclaimedEid could not be claimed for its start. Run the workflow again.")
     refusalOf(
       new StoredStartService(
         read = Some(_ => throw new UncheckedIOException(new IOException("catalog down")))
       )
     ) shouldBe
-      Left(s"the plan of execution $unclaimedEid could not be read; try starting it again")
+      Left(s"The plan of execution $unclaimedEid could not be read. Run the workflow again.")
     // A row the table holds that is no plan row, as `PlanRecord.fromTuple` refuses it: a second
     // try reads the same row.
     refusalOf(
@@ -959,11 +959,11 @@ class WorkflowServiceSpec
       )
     ) shouldBe
       Left(
-        s"the stored plan of execution $unclaimedEid cannot be read: a plan table row has no body"
+        s"The stored plan of execution $unclaimedEid cannot be read: a plan table row has no body"
       )
     refusalOf(
       new StoredStartService(read = Some(_ => throw new IllegalArgumentException()))
-    ) shouldBe Left(s"the stored plan of execution $unclaimedEid cannot be read")
+    ) shouldBe Left(s"The stored plan of execution $unclaimedEid cannot be read.")
     ExecutionPlanStore.isStarted(planUri) shouldBe false
   }
 
@@ -1075,7 +1075,7 @@ class WorkflowServiceSpec
 
     service.startStoredExecution(unbuiltEid, planUri, executingUser, storedCuid) shouldBe
       Left(
-        s"execution $unbuiltEid could not be started, because of an error on this computing unit"
+        s"Execution $unbuiltEid could not be started, because of an error on this computing unit."
       )
 
     // Claimed, so never to start, and recorded Failed; nothing is published, and the held run

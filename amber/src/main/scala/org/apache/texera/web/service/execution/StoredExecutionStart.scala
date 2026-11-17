@@ -48,7 +48,19 @@ import scala.util.control.NonFatal
 object StoredExecutionStart {
 
   /** Why a start that names anything but an execution's plan table is refused. */
-  val NotAPlan = "not an execution plan"
+  val NotAPlan = "The request does not name an execution's plan."
+
+  /** Why a request for an execution whose plan table holds no plan is refused. */
+  def noStoredPlan(executionId: Long): String = s"Execution $executionId has no stored plan."
+
+  /** Why a start from a plan of workflow `workflowId` is refused, asked of another workflow. */
+  def ofAnotherWorkflow(workflowId: Long): String =
+    s"The plan belongs to workflow $workflowId, not to this one."
+
+  /** Why a start is refused when `failure` keeps the stored plan from being read. */
+  def unreadablePlan(executionId: Long, failure: Throwable): String =
+    s"The stored plan of execution $executionId cannot be read" +
+      Option(failure.getMessage).fold(".")(why => s": $why")
 
   /** `text`, the plan table a start request names, as a URI; refused unless it is one. */
   def planUriOf(text: String): Either[String, URI] =
@@ -76,17 +88,17 @@ object StoredExecutionStart {
     ExecutionPlanStore.planTableOf(planUri).toRight(NotAPlan).flatMap { location =>
       val (workflowId, planExecutionId) = (location.workflowId.id, location.executionId.id)
       if (planExecutionId != executionId) {
-        Left(s"the plan is execution $planExecutionId's, not $executionId's")
+        Left(s"The plan is execution $planExecutionId's, not $executionId's.")
       } else if (socketWorkflowId.exists(_ != workflowId)) {
-        Left(s"the plan belongs to workflow $workflowId, not to this one")
+        Left(ofAnotherWorkflow(workflowId))
       } else if (location.warehouse.exists(!UserWarehouse.isOwnedBy(_, uid))) {
-        Left("the plan is in another user's warehouse")
+        Left("The plan is in another user's warehouse.")
       } else if (location.warehouse.isDefined && !warehousesEnabled) {
         // Opened while the switch is off, the user's warehouse would be the shared one, where
         // the plan is not: refused instead of answered as a plan that is not there (#6930).
         Left(
-          s"execution $executionId keeps its plan in warehouse '${location.warehouse.get}', and " +
-            "per-user warehouses are disabled in this deployment"
+          s"Execution $executionId keeps its plan in warehouse '${location.warehouse.get}', and " +
+            "per-user warehouses are disabled in this deployment."
         )
       } else {
         try {
@@ -128,11 +140,11 @@ object StoredExecutionStart {
   ): Either[String, ExecutionPlan] = {
     val executionId = location.executionId.id
     if (record.createdBy != uid) {
-      Left(s"only the user who created execution $executionId may start it")
+      Left(s"Only the user who created execution $executionId may start it.")
     } else if (record.computingUnitId != cuid) {
       Left(
-        s"execution $executionId was created for computing unit ${record.computingUnitId}, " +
-          s"not $cuid"
+        s"Execution $executionId was created for computing unit ${record.computingUnitId}, " +
+          s"not $cuid."
       )
     } else {
       planOf(record.body, executionId).flatMap { plan =>
@@ -142,12 +154,13 @@ object StoredExecutionStart {
           context.executionId != location.executionId ||
           context.warehouse != location.warehouse
         ) {
-          Left("the plan's ids do not match its location")
+          Left("The plan's ids do not match its location.")
         } else {
           misplacedReplayLog(plan, replayLogRoot)
             .orElse(
               plan.inputs.map(_.expiresAtMs).minOption.filter(_ <= nowMs).map { expiry =>
-                s"input links expired at ${Instant.ofEpochMilli(expiry)}; run the workflow again"
+                s"The plan's input links expired at ${Instant.ofEpochMilli(expiry)}. Run the " +
+                  "workflow again."
               }
             )
             .toLeft(plan)
@@ -163,18 +176,18 @@ object StoredExecutionStart {
     */
   private def misplacedReplayLog(plan: ExecutionPlan, root: Option[URI]): Option[String] = {
     val where = root match {
-      case Some(_) => "outside where this computing unit keeps replay logs"
-      case None    => "and this computing unit keeps no replay logs"
+      case Some(_) => "outside where this computing unit keeps replay logs."
+      case None    => "and this computing unit keeps no replay logs."
     }
     def misplaced(log: URI): Boolean = !root.exists(isBelow(_, log))
     plan.replay
       .map(_.logLocation)
       .filter(misplaced)
-      .map(log => s"the plan replays the log at ${withoutSecrets(log)}, $where")
+      .map(log => s"The plan replays the log at ${withoutSecrets(log)}, $where")
       .orElse(
         plan.replayLog
           .filter(misplaced)
-          .map(log => s"the plan writes its replay log to ${withoutSecrets(log)}, $where")
+          .map(log => s"The plan writes its replay log to ${withoutSecrets(log)}, $where")
       )
   }
 
@@ -223,7 +236,6 @@ object StoredExecutionStart {
     try Right(PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(body)))
     catch {
       case refused: IllegalArgumentException => Left(refused.getMessage)
-      case NonFatal(failure) =>
-        Left(s"the stored plan of execution $executionId cannot be read: $failure")
+      case NonFatal(failure)                 => Left(unreadablePlan(executionId, failure))
     }
 }
