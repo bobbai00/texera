@@ -25,7 +25,6 @@ import ch.qos.logback.core.read.ListAppender
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
-import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
 import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
@@ -585,24 +584,27 @@ class ExecutionsMetadataPersistServiceSpec
     workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe 1.toByte
   }
 
-  // -- ExecutionStateStore.updateWorkflowState --------------------------------
+  // -- ExecutionStateStore.transitionTo ---------------------------------------
   //
-  // updateWorkflowState writes the status through updateStatus and bumps the
+  // transitionTo writes the status through updateStatus and changes the
   // in-memory ExecutionMetadataStore's `state`. Exercising it here keeps the
   // DB-backed setup (workflow/version/execution rows) in one place; the
   // pure-logic ExecutionStateStoreSpec sibling has no DB dependency.
 
-  "ExecutionStateStore.updateWorkflowState" should "set status via maptoStatusCode and return the metadata store with new state" in {
+  /** The state store of a run of execution `eid`. */
+  private def stateStoreOf(eid: Long): ExecutionStateStore = {
+    val store = new ExecutionStateStore()
+    store.metadataStore.updateState(_.withExecutionId(ExecutionIdentity(eid)))
+    store
+  }
+
+  "ExecutionStateStore.transitionTo" should "set status via maptoStatusCode and change the state of the run" in {
     val eid = seedExecution(status = 0)
     val before = workflowExecutionsDao.fetchOneByEid(eid)
     val beforeTs = before.getLastUpdateTime
-    val store = ExecutionMetadataStore(
-      state = WorkflowAggregatedState.UNINITIALIZED,
-      executionId = ExecutionIdentity(eid.longValue())
-    )
-    val updated =
-      ExecutionStateStore.updateWorkflowState(WorkflowAggregatedState.COMPLETED, store)
-    updated.state shouldBe WorkflowAggregatedState.COMPLETED
+    val store = stateStoreOf(eid.longValue())
+    store.transitionTo(WorkflowAggregatedState.COMPLETED) shouldBe true
+    store.metadataStore.getState.state shouldBe WorkflowAggregatedState.COMPLETED
 
     val after = workflowExecutionsDao.fetchOneByEid(eid)
     after.getStatus shouldBe maptoStatusCode(WorkflowAggregatedState.COMPLETED)
@@ -618,9 +620,9 @@ class ExecutionsMetadataPersistServiceSpec
   it should "write a state change with one UPDATE and no SELECT" in {
     // A run reports its state as it starts; doing so must not read Postgres.
     val eid = seedExecution(status = 0)
-    val store = ExecutionMetadataStore(executionId = ExecutionIdentity(eid.longValue()))
+    val store = stateStoreOf(eid.longValue())
     val statements = recorder.record {
-      ExecutionStateStore.updateWorkflowState(WorkflowAggregatedState.RUNNING, store)
+      store.transitionTo(WorkflowAggregatedState.RUNNING)
     }
     statements.map(_.verb) shouldBe Seq("UPDATE")
     workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe
@@ -629,23 +631,34 @@ class ExecutionsMetadataPersistServiceSpec
 
   it should "write -1 for a state that has no code of its own" in {
     val eid = seedExecution(status = 1)
-    val store = ExecutionMetadataStore(executionId = ExecutionIdentity(eid.longValue()))
-    ExecutionStateStore.updateWorkflowState(WorkflowAggregatedState.PAUSING, store)
+    stateStoreOf(eid.longValue()).transitionTo(WorkflowAggregatedState.PAUSING)
     workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe (-1).toByte
   }
 
-  it should "still return a metadataStore with the new state when the eid is unknown" in {
-    // updateWorkflowState first calls updateStatus (an UPDATE that matches no
-    // row and swallows any failure) and then unconditionally returns
-    // metadataStore.withState(state). Document this so a future refactor
-    // that makes the failure surface (e.g. via Try / Either) has a spec to
-    // migrate.
-    val store = ExecutionMetadataStore(
-      state = WorkflowAggregatedState.UNINITIALIZED,
-      executionId = ExecutionIdentity(-1L)
-    )
-    val updated =
-      ExecutionStateStore.updateWorkflowState(WorkflowAggregatedState.FAILED, store)
-    updated.state shouldBe WorkflowAggregatedState.FAILED
+  it should "write nothing for a run that has ended, and leave its row as it ended" in {
+    val eid = seedExecution(status = 1)
+    val store = stateStoreOf(eid.longValue())
+    store.transitionTo(WorkflowAggregatedState.COMPLETED) shouldBe true
+    val ended = workflowExecutionsDao.fetchOneByEid(eid)
+
+    val statements = recorder.record {
+      store.transitionTo(WorkflowAggregatedState.PAUSING) shouldBe false
+      store.transitionTo(WorkflowAggregatedState.KILLED) shouldBe false
+    }
+
+    statements shouldBe empty
+    val after = workflowExecutionsDao.fetchOneByEid(eid)
+    after.getStatus shouldBe maptoStatusCode(WorkflowAggregatedState.COMPLETED)
+    after.getLastUpdateTime shouldBe ended.getLastUpdateTime
+  }
+
+  it should "still take the new state when the eid is unknown" in {
+    // transitionTo calls updateStatus (an UPDATE that matches no row and
+    // swallows any failure) and takes the state all the same. Document this
+    // so a future refactor that makes the failure surface (e.g. via Try /
+    // Either) has a spec to migrate.
+    val store = stateStoreOf(-1L)
+    store.transitionTo(WorkflowAggregatedState.FAILED) shouldBe true
+    store.metadataStore.getState.state shouldBe WorkflowAggregatedState.FAILED
   }
 }

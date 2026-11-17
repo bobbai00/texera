@@ -35,17 +35,15 @@ import org.apache.texera.amber.core.storage.{
   PlanRecord,
   RepositoryMountManager
 }
-import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, WorkflowContext}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
   FAILED,
-  KILLED,
-  TERMINATED
+  KILLED
 }
+import org.apache.texera.amber.engine.common.executionrecord.ExecutionRecorder
 import org.apache.texera.amber.error.ErrorUtils.{
   getOperatorFromActorIdOpt,
   getStackTraceWithAllCauses
@@ -55,7 +53,6 @@ import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.observability.WorkflowMetricsRecorder
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
 import org.apache.texera.web.service.execution.{ExecutionResources, StoredExecutionStart}
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
 
@@ -163,10 +160,6 @@ object WorkflowService extends LazyLogging {
 
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
-  /** The states a run ends in: a run in any other may still be running. */
-  private[service] val FinishedStates: Set[WorkflowAggregatedState] =
-    Set(COMPLETED, FAILED, KILLED, TERMINATED)
-
   def getAllWorkflowServices: Iterable[WorkflowService] = workflowServiceMapping.values().asScala
 
   def mkWorkflowStateId(workflowId: WorkflowIdentity): String = {
@@ -195,9 +188,10 @@ object WorkflowService extends LazyLogging {
   * The runs of one workflow on this computing unit, one at a time, and what outlives a run: the
   * workflow's sessions and its results.
   *
-  * @param readPlan   reads an execution's plan row from its plan table
-  * @param claimStart claims an execution for its one start, in its plan table
-  * @param newRun     builds the run of a plan read back from the lake, before it is started
+  * @param readPlan    reads an execution's plan row from its plan table
+  * @param claimStart  claims an execution for its one start, in its plan table
+  * @param newRun      builds the run of a plan read back from the lake, before it is started
+  * @param startRecord starts the record of a run that is about to be built, under its context
   */
 class WorkflowService(
     val workflowId: WorkflowIdentity,
@@ -206,7 +200,8 @@ class WorkflowService(
     readPlan: URI => PlanRecord = ExecutionPlanStore.readPlan,
     claimStart: URI => Unit = ExecutionPlanStore.claimStart,
     newRun: WorkflowService.NewRun =
-      new WorkflowExecutionService(_, _, _, _, RepositoryMountManager.mountRoot)
+      new WorkflowExecutionService(_, _, _, _, RepositoryMountManager.mountRoot),
+    startRecord: WorkflowContext => ExecutionRecorder = ExecutionRecorder.start
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -232,52 +227,52 @@ class WorkflowService(
   /**
     * What becomes of this service once nobody has used the workflow for the clean-up timeout: the
     * storage of the run it holds is cleared, and the service leaves the registry and lets go of
-    * every subscription, shutting that run's engine down. A service that holds no run clears
-    * nothing. The run is the one this service holds, not the newest of the workflow on its unit,
-    * which another service, or an execution made and not yet started, may own.
+    * every subscription, shutting that run's engine down. A run that has not ended is then
+    * recorded KILLED, as nobody watched it. A service that holds no run clears nothing. The run
+    * is the one this service holds, not the newest of the workflow on its unit, which another
+    * service, or an execution made and not yet started, may own.
     */
   private[service] def cleanUpAfterIdle(): Unit = {
-    Option(executionService.getValue).foreach(run =>
-      ExecutionResources.clearExecutionResources(run.workflowContext.executionId)
-    )
+    val held = Option(executionService.getValue)
+    held.foreach(run => ExecutionResources.clearExecutionResources(run.workflowContext.executionId))
     WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
     unsubscribeAll()
+    // Once the run is let go of, as when it is superseded: the kill does not arm the clean-up
+    // that records it.
+    held.foreach(
+      _.executionStateStore.transitionTo(
+        KILLED,
+        reason = Some(s"stopped: nobody watched it for $cleanUpTimeout s")
+      )
+    )
   }
 
   /**
-    * Lets go of the run this service holds, as a new run is about to take its place. A run that
-    * has not finished is killed: its engine is shut down, and the state KILLED and its end time
-    * are recorded, which writes its execution's row once. A finished run is only let go of, and so
-    * is a run that finishes while it is let go of: it keeps the state it finished in.
+    * Lets go of the run this service holds, as the run of execution `replacedBy` is about to
+    * take its place. A run that has not ended is killed: its engine is shut down, and it is
+    * recorded KILLED. A run that has ended is only let go of, and so is a run that ends while it
+    * is let go of: it keeps the state it ended in.
     *
     * The run is let go of before KILLED is recorded, so neither the sessions on the workflow nor
     * its idle clean-up hear of the kill: sessions see the new run take its place, and the kill
     * does not arm the clean-up. A run still being set up is let go of only once its setup is over
     * (see `runLock`).
     */
-  def supersedeCurrentRun(): Unit = {
+  def supersedeCurrentRun(replacedBy: ExecutionIdentity): Unit = {
     runLock.lock()
     try {
       Option(executionService.getValue).foreach { run =>
         // Shuts its engine down too, when it has one.
         run.unsubscribeAll()
-        val endTime = System.currentTimeMillis()
-        var killed = false
-        // Decided under the store's lock, against a state the engine may report at this moment.
-        run.executionStateStore.metadataStore.updateState { metadataStore =>
-          if (WorkflowService.FinishedStates.contains(metadataStore.state)) {
-            metadataStore
-          } else {
-            killed = true
-            updateWorkflowState(KILLED, metadataStore)
-          }
-        }
+        val killed = run.executionStateStore.transitionTo(
+          KILLED,
+          reason = Some(s"replaced by execution ${replacedBy.id}")
+        )
         if (killed) {
           logger.info(
             s"Execution ${run.workflowContext.executionId.id} of workflow ${workflowId.id} is " +
-              "killed, as a new run takes its place."
+              s"killed, as execution ${replacedBy.id} takes its place."
           )
-          run.executionStateStore.statsStore.updateState(_.withEndTimeStamp(endTime))
         }
       }
     } finally runLock.unlock()
@@ -405,7 +400,8 @@ class WorkflowService(
   ): Either[String, WorkflowExecutionService] = {
     val context = start.executionPlan.context
     val executionId = context.executionId
-    val executionStateStore = new ExecutionStateStore()
+    // Recorded from here on: whatever fails once the execution is claimed is in its log.
+    val executionStateStore = new ExecutionStateStore(startRecord(context))
     executionStateStore.metadataStore.updateState(_.withExecutionId(executionId))
     val errorHandler = runErrorHandler(executionStateStore)
     var built: Option[WorkflowExecutionService] = None
@@ -418,7 +414,7 @@ class WorkflowService(
         s"Execution ${executionId.id} of workflow ${workflowId.id} starts on computing unit " +
           s"${start.record.computingUnitId} from its plan at ${start.planUri}."
       )
-      supersedeCurrentRun()
+      supersedeCurrentRun(executionId)
       // Kept with the run, so the clean-up stops following it once the run is let go of.
       execution.addSubscription(lifeCycleManager.registerCleanUpOnStateChange(executionStateStore))
       executionService.onNext(execution)
@@ -446,7 +442,8 @@ class WorkflowService(
   /**
     * Records what fails in a run in its `executionStateStore`: the run ends FAILED, at the time it
     * failed, with the failure as its error, of the operator and worker that raised it when a
-    * worker did, which every session on the workflow is sent.
+    * worker did, which every session on the workflow is sent. What fails in a run that has ended
+    * is logged, and leaves the run as it ended.
     */
   private def runErrorHandler(executionStateStore: ExecutionStateStore): Throwable => Unit = { t =>
     {
@@ -464,11 +461,9 @@ class WorkflowService(
       // returned and its span has already ended, so recording onto it
       // would be a silent no-op. The failure is surfaced via the metadata
       // store below; setup-span errors are recorded where the run is set up.
-      executionStateStore.statsStore.updateState(stats =>
-        stats.withEndTimeStamp(System.currentTimeMillis())
-      )
-      executionStateStore.metadataStore.updateState { metadataStore =>
-        updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+      executionStateStore.transitionTo(
+        FAILED,
+        errors = Seq(
           WorkflowFatalError(
             EXECUTION_FAILURE,
             Timestamp(Instant.now),
@@ -478,7 +473,7 @@ class WorkflowService(
             workerId
           )
         )
-      }
+      )
     }
   }
 

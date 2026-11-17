@@ -19,13 +19,16 @@
 
 package org.apache.texera.web.service
 
+import org.apache.iceberg.catalog.TableIdentifier
 import org.apache.pekko.actor.{ActorSystem, Props}
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionLogStore,
   ExecutionPlanStore,
-  ExecutionResultUris
+  ExecutionResultUris,
+  IcebergCatalogInstance
 }
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
@@ -88,6 +91,7 @@ import java.sql.Timestamp
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, Future, Promise}
+import scala.jdk.CollectionConverters.IterableHasAsScala
 import scala.util.Try
 
 /**
@@ -101,7 +105,8 @@ import scala.util.Try
   * (`WorkflowService.startStoredExecution`), on a workflow service that a session is connected
   * to, and runs to its end on an engine of this suite's actor system. Every statement the unit
   * sends through jOOQ, from any thread, is recorded from the start until the session has been
-  * sent the results of the completed run, which is the last thing a unit does for a run.
+  * sent the results of the completed run, which is the last thing a unit does for a run. The
+  * run's record is kept in the lake as a unit keeps it, in the same catalog.
   *
   * A plan is bound to the fixtures (`TestUtils.fixtureBindings`), unless a suite binds it
   * otherwise: the files it reads are fixture files, linked to the fixture server, which stands in
@@ -196,6 +201,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
       created.foreach { execution =>
         Try(ExecutionResources.clearExecutionResources(ExecutionIdentity(execution.eid)))
         Try(ExecutionPlanStore.drop(new URI(execution.planUri)))
+        Try(ExecutionLogStore.drop(logUriOf(execution)))
       }
       StorageConfig.lakefsEndpoint = configuredLakefsEndpoint
       TestKit.shutdownActorSystem(system)
@@ -296,11 +302,14 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     * @param execution  the execution, as the Dashboard created it
     * @param statements what the unit sent to Postgres meanwhile, in the order it was sent
     * @param states     the states of the run a session on the workflow was told, in order
+    * @param recorded   whether the run's record had nothing left to write within a minute of
+    *                   the run's end
     */
   protected case class Run(
       execution: CreateExecutionResponse,
       statements: Seq[Statement],
-      states: Seq[String]
+      states: Seq[String],
+      recorded: Boolean
   ) {
 
     /** The rows the run stored as the result of operator `operatorId`. */
@@ -362,11 +371,47 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
           .foreach(why => fail(s"the start was refused: $why"))
         Await.result(session.ended, 3.minutes)
       }
-      Run(execution, statements, session.states)
+      val recorded =
+        service.executionService.getValue.executionStateStore.recorder.awaitIdle(1.minute)
+      Run(execution, statements, session.states, recorded)
     } finally {
       subscriptions.foreach(_.dispose())
       service.unsubscribeAll()
     }
+  }
+
+  private def logUriOf(execution: CreateExecutionResponse): URI =
+    ExecutionLogStore.logUri(WorkflowIdentity(wid.toLong), ExecutionIdentity(execution.eid), None)
+
+  /**
+    * Fails unless the lake holds the log of `run`: a row for each state the run was in, in
+    * order, with the label of the last, in a table tidied at the run's end, of one data file
+    * and one snapshot.
+    */
+  protected def assertLogged(run: Run): Unit = {
+    val logUri = logUriOf(run.execution)
+    withClue("the run's record had something left to write: ") { run.recorded shouldBe true }
+    val rows = ExecutionLogStore.read(logUri)
+    rows.map(row => (row.seq, row.state, row.reason)) shouldBe Seq(
+      (1L, Some("READY"), None),
+      (2L, Some("RUNNING"), None),
+      (3L, Some("COMPLETED"), None)
+    )
+    rows.map(_.timeMs) shouldBe sorted
+    val label = ExecutionLogStore.label(logUri).getOrElse(fail("the execution has no log"))
+    (label.state, label.stateSeq, label.stateTimeMs, label.reason, label.ended) shouldBe
+      ((Some("COMPLETED"), 3L, rows.last.timeMs, None, true))
+    label.beatEveryMs shouldBe StorageConfig.icebergTableCommitIntervalMs
+    val table = IcebergCatalogInstance
+      .getInstance()
+      .loadTable(
+        TableIdentifier.of(
+          StorageConfig.icebergTableExecutionLogNamespace,
+          s"wid_${wid}_eid_${run.execution.eid}_executionlog"
+        )
+      )
+    table.snapshots().asScala should have size 1
+    table.currentSnapshot().summary().get("total-data-files") shouldBe "1"
   }
 
   /** The tables a run's state is kept in: all that a unit may touch while it runs one. */

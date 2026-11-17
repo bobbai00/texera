@@ -80,7 +80,6 @@ import org.apache.texera.web.service.{
   PlanToRun,
   WorkflowExecutionService
 }
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpecLike
@@ -301,7 +300,7 @@ class PythonEnvironmentIntegrationSpec
     // What fails in the engine ends the run FAILED, as a unit records it.
     private def failed(error: Throwable): Unit = {
       errors.add(error)
-      store.metadataStore.updateState(updateWorkflowState(FAILED, _))
+      store.transitionTo(FAILED)
     }
 
     private val service = new WorkflowExecutionService(

@@ -90,6 +90,8 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   StateRestoreConfig
 }
 import org.apache.texera.amber.engine.common.Utils
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.StateChange
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.dao.MockTexeraDB
@@ -120,7 +122,6 @@ import org.apache.texera.web.model.websocket.request.{
 }
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpecLike
@@ -462,30 +463,28 @@ class WorkflowExecutionServiceSpec
     events.collect { case e: WorkflowStateEvent => e } shouldBe empty
   }
 
-  it should "report fatal errors recorded at successive phases through the same handler" in {
+  it should "report the error a run fails with through the same handler, and nothing that fails after it" in {
     val store = new ExecutionStateStore()
-    // Mirror WorkflowService's real errorHandler, which records into the
-    // metadata store. The service invokes this same handler at every phase
-    // (the start, runtime creation, startWorkflow failure), so invoking it
+    // Mirror WorkflowService's real errorHandler, which ends the run FAILED with
+    // the error. The service invokes this same handler at every phase (the
+    // start, runtime creation, startWorkflow failure), so invoking it
     // repeatedly here stands in for failures arising at different phases.
     val recordError: Throwable => Unit = t =>
-      store.metadataStore.updateState(metadataStore =>
-        updateWorkflowState(FAILED, metadataStore).addFatalErrors(
-          WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), t.toString, "", "", "")
-        )
+      store.transitionTo(
+        FAILED,
+        errors =
+          Seq(WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), t.toString, "", "", ""))
       )
     buildService(store, recordError)
     val events = collectEvents(store)
 
     recordError(new RuntimeException("init phase"))
+    // A run fails once: what fails in it after that is not another error of the run.
     recordError(new RuntimeException("runtime phase"))
 
-    val errorEvents = events.collect { case e: WorkflowErrorEvent => e }
-    errorEvents should have size 2
-    errorEvents.last.fatalErrors.map(_.message) should contain allOf (
-      "java.lang.RuntimeException: init phase",
-      "java.lang.RuntimeException: runtime phase"
-    )
+    events.collect { case e: WorkflowErrorEvent => e.fatalErrors.map(_.message) } shouldBe
+      Seq(Seq("java.lang.RuntimeException: init phase"))
+    events.collect { case e: WorkflowStateEvent => e } shouldBe Seq(stateEvent("Failed"))
   }
 
   it should "emit a WorkflowStateEvent that names its execution when the execution state changes" in {
@@ -645,7 +644,8 @@ class WorkflowExecutionServiceSpec
         testCuid,
         new WorkflowStateStore()
       )
-    val store = new ExecutionStateStore()
+    val recorder = new RecordingExecutionRecorder
+    val store = new ExecutionStateStore(recorder)
     store.metadataStore.updateState(_.withExecutionId(executionPlan.context.executionId))
     val service: WorkflowExecutionService = new WorkflowExecutionService(
       executionPlan.context,
@@ -728,8 +728,9 @@ class WorkflowExecutionServiceSpec
       )
       // Its status emails go where the plan row says.
       services.runtime.notification shouldBe Some(notification)
-      // The run is READY, and the engine was asked to start.
+      // The run is READY, which its record is told, and the engine was asked to start.
       run.store.metadataStore.getState.state shouldBe READY
+      run.recorder.states shouldBe Seq(("READY", None))
       run.engine.getOrElse(fail("no engine")).answers.keySet should contain("startWorkflow")
       // The run checkpoints into its replay log: a checkpoint request is taken.
       run.service.wsInput.onNext(WorkflowCheckpointRequest(), None)
@@ -896,6 +897,7 @@ class WorkflowExecutionServiceSpec
           answerStart(run)
 
           run.store.metadataStore.getState.state shouldBe ended
+          run.recorder.states shouldBe Seq(("READY", None))
         } finally run.close()
       }
     }
@@ -905,7 +907,58 @@ class WorkflowExecutionServiceSpec
       run.store.metadataStore.getState.state shouldBe READY
       answerStart(run)
       run.store.metadataStore.getState.state shouldBe RUNNING
+      run.recorder.states shouldBe Seq(("READY", None), ("RUNNING", None))
     } finally run.close()
+  }
+
+  "WorkflowExecutionService.end" should
+    "end a run in the state asked, with why, at the time it ends, and shut its engine down" in {
+    val executionPlan = readBack(storedSourcePlan())
+    val run = new StoredRun(executionPlan)
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+
+      val before = System.currentTimeMillis()
+      run.service.end(
+        COMPLETED,
+        reason = Some("stopped once its target operators finished")
+      ) shouldBe
+        true
+      val after = System.currentTimeMillis()
+
+      run.store.metadataStore.getState.state shouldBe COMPLETED
+      run.store.statsStore.getState.endTimeStamp should (be >= before and be <= after)
+      run.engine.get.shutdownCount shouldBe 1
+      run.recorder.states shouldBe
+        Seq(("READY", None), ("COMPLETED", Some("stopped once its target operators finished")))
+      executionStatus() shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+
+      // A run ends once: asked again, it stays as it ended.
+      val error =
+        WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), "too late", "", "", "")
+      run.service.end(FAILED, errors = Seq(error)) shouldBe false
+      run.service.end(KILLED, reason = Some("stopped by its caller")) shouldBe false
+      run.store.metadataStore.getState.state shouldBe COMPLETED
+      run.store.metadataStore.getState.fatalErrors shouldBe empty
+      run.recorder.changes should have size 2
+      executionStatus() shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+    } finally run.close()
+  }
+
+  it should "end a run that was never set up, which has no engine to shut down" in {
+    val recorder = new RecordingExecutionRecorder
+    val store = new ExecutionStateStore(recorder)
+    val service = buildService(store)
+    val error =
+      WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), "the node left", "", "", "")
+
+    service.end(FAILED, errors = Seq(error)) shouldBe true
+
+    store.metadataStore.getState.state shouldBe FAILED
+    store.metadataStore.getState.fatalErrors shouldBe Seq(error)
+    store.statsStore.getState.endTimeStamp should be > 0L
+    recorder.changes shouldBe Seq(StateChange("FAILED", Seq(error), None))
   }
 
   it should "give a change the Dashboard stored the directory this unit mounts its dataset at, as it gives the plan" in {
@@ -1134,6 +1187,9 @@ class WorkflowExecutionServiceSpec
       startWorkflowAsked(run) shouldBe false
       run.engine.get.shutdownCount shouldBe 1
       run.errors shouldBe empty
+      // Its record is told of this end as of any other, with the error.
+      run.recorder.changes shouldBe
+        Seq(StateChange("READY", Nil, None), StateChange("FAILED", Seq(error), None))
       // The failure is reported once, as the run's error: no console repeats it. The lake
       // keeps what the consoles were told of the install, although no engine reports the run's
       // end.
@@ -1160,6 +1216,7 @@ class WorkflowExecutionServiceSpec
       // Stop, while pip is at work.
       run.service.wsInput.onNext(WorkflowKillRequest(executionPlan.context.executionId.id), None)
       run.store.metadataStore.getState.state shouldBe KILLED
+      run.recorder.states shouldBe Seq(("READY", None), ("KILLED", Some("killed by the user")))
       held.letGo()
 
       // The install is the unit's, and goes on to its end.
@@ -1169,6 +1226,7 @@ class WorkflowExecutionServiceSpec
       Thread.sleep(300)
       run.store.metadataStore.getState.state shouldBe KILLED
       run.store.metadataStore.getState.fatalErrors shouldBe empty
+      run.recorder.changes should have size 2
       startWorkflowAsked(run) shouldBe false
       run.errors shouldBe empty
       titlesOn(run, "killed-first") shouldBe Seq("Installing Python environment 'ml' (1 package)")
@@ -1209,6 +1267,7 @@ class WorkflowExecutionServiceSpec
       Thread.sleep(300)
       run.store.metadataStore.getState.state shouldBe KILLED
       run.store.metadataStore.getState.fatalErrors shouldBe empty
+      run.recorder.states shouldBe Seq(("READY", None), ("KILLED", Some("killed by the user")))
       titlesOn(run, "killed-then-failed-first") should have size 1
       run.errors shouldBe empty
     } finally run.close()

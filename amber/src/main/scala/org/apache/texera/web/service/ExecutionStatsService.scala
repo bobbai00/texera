@@ -63,7 +63,6 @@ import org.apache.texera.web.model.websocket.event.{
 }
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.storage.ExecutionStateStore
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.time.Instant
 import java.util.concurrent.Executors
@@ -300,12 +299,10 @@ class ExecutionStatsService(
         .registerCallback[FatalError]((evt: FatalError) => {
           client.shutdown()
           val (operatorId, workerId) = getOperatorFromActorIdOpt(evt.fromActor)
-          stateStore.statsStore.updateState(stats =>
-            stats.withEndTimeStamp(System.currentTimeMillis())
-          )
-          stateStore.metadataStore.updateState { metadataStore =>
-            logger.error("error occurred in execution", evt.e)
-            updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+          logger.error("error occurred in execution", evt.e)
+          stateStore.transitionTo(
+            FAILED,
+            errors = Seq(
               WorkflowFatalError(
                 EXECUTION_FAILURE,
                 Timestamp(Instant.now),
@@ -315,7 +312,7 @@ class ExecutionStatsService(
                 workerId
               )
             )
-          }
+          )
         })
     )
   }

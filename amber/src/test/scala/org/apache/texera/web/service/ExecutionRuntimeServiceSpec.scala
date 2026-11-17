@@ -37,6 +37,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultToleranceConfig
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.web.WebsocketInput
 import org.apache.texera.web.model.websocket.request.{
   WorkflowCheckpointRequest,
@@ -102,7 +103,8 @@ class ExecutionRuntimeServiceSpec
       val wsInput: WebsocketInput,
       val reconfigurationService: RecordingReconfigurationService,
       val runtime: ExecutionRuntimeService,
-      val errors: ListBuffer[Throwable]
+      val errors: ListBuffer[Throwable],
+      val recorder: RecordingExecutionRecorder
   ) {
     def close(): Unit = {
       runtime.unsubscribeAll()
@@ -118,7 +120,8 @@ class ExecutionRuntimeServiceSpec
   ): Fixture = {
     val coordinator = mock[CoordinatorServiceFs2Grpc[Future, Unit]]
     val client = new RecordingExecutionClient(system, Some(coordinator))
-    val stateStore = new ExecutionStateStore
+    val recorder = new RecordingExecutionRecorder
+    val stateStore = new ExecutionStateStore(recorder)
     val errors = ListBuffer.empty[Throwable]
     val wsInput = new WebsocketInput(errors += _)
     val reconfigurationService = new RecordingReconfigurationService
@@ -139,7 +142,8 @@ class ExecutionRuntimeServiceSpec
       wsInput,
       reconfigurationService,
       runtime,
-      errors
+      errors,
+      recorder
     )
   }
 
@@ -180,6 +184,53 @@ class ExecutionRuntimeServiceSpec
     } finally f.close()
   }
 
+  it should "record a pause and a resume as the states the run reaches, not as the requests in flight" in {
+    val f = fixture()
+    try {
+      (f.coordinator.pauseWorkflow _)
+        .expects(EmptyRequest(), ())
+        .returning(Future.value(EmptyReturn()))
+      (f.coordinator.resumeWorkflow _)
+        .expects(EmptyRequest(), ())
+        .returning(Future.value(EmptyReturn()))
+      f.stateStore.transitionTo(RUNNING)
+
+      f.wsInput.onNext(WorkflowPauseRequest(executionId), None)
+      f.stateStore.metadataStore.getState.state shouldBe PAUSING
+      f.client.fire(ExecutionStateUpdate(PAUSED))
+      f.stateStore.metadataStore.getState.state shouldBe PAUSED
+      f.wsInput.onNext(WorkflowResumeRequest(executionId), None)
+      f.stateStore.metadataStore.getState.state shouldBe RUNNING
+
+      f.recorder.states shouldBe
+        Seq(("RUNNING", None), ("PAUSED", None), ("RUNNING", None))
+      f.errors shouldBe empty
+    } finally f.close()
+  }
+
+  it should "leave a run that already ended as it ended when a pause or a resume arrives late" in {
+    // Sent as the run ends, or by a page that still shows it running. The engine is asked
+    // nothing, which the coordinator, expecting no call, would report as an error; the run is
+    // not left PAUSING for good, and the changes queued for its operators are not applied.
+    Seq(COMPLETED, FAILED, KILLED, TERMINATED).foreach { ended =>
+      withClue(s"a run that is $ended: ") {
+        val f = fixture()
+        try {
+          f.stateStore.metadataStore.updateState(_.withState(ended))
+          val asItEnded = f.stateStore.metadataStore.getState
+
+          f.wsInput.onNext(WorkflowPauseRequest(executionId), None)
+          f.wsInput.onNext(WorkflowResumeRequest(executionId), None)
+
+          f.stateStore.metadataStore.getState shouldBe asItEnded
+          f.reconfigurationService.resumeCallCount shouldBe 0
+          f.recorder.changes shouldBe empty
+          f.errors shouldBe empty
+        } finally f.close()
+      }
+    }
+  }
+
   it should "kill the client and record a terminal timestamp when killed from the websocket" in {
     // A run in any state it has not ended in, the ones before its engine starts included.
     Seq(UNINITIALIZED, READY, RUNNING, PAUSING, PAUSED, RESUMING).foreach { live =>
@@ -195,6 +246,7 @@ class ExecutionRuntimeServiceSpec
           f.client.shutdownCount shouldBe 1
           f.stateStore.metadataStore.getState.state shouldBe KILLED
           f.stateStore.statsStore.getState.endTimeStamp should (be >= before and be <= after)
+          f.recorder.states shouldBe Seq(("KILLED", Some("killed by the user")))
           f.errors shouldBe empty
         } finally f.close()
       }
@@ -217,6 +269,7 @@ class ExecutionRuntimeServiceSpec
 
           f.stateStore.metadataStore.getState shouldBe asItEnded
           f.stateStore.statsStore.getState.endTimeStamp shouldBe endedAt
+          f.recorder.changes shouldBe empty
           f.errors shouldBe empty
         } finally f.close()
       }
@@ -234,6 +287,25 @@ class ExecutionRuntimeServiceSpec
 
       f.stateStore.metadataStore.getState.state shouldBe COMPLETED
       f.stateStore.statsStore.getState.endTimeStamp shouldBe completedAt
+      f.recorder.states shouldBe Seq(("COMPLETED", None))
+      f.errors shouldBe empty
+    } finally f.close()
+  }
+
+  it should "leave a run that was killed as killed when the engine's report of its end follows" in {
+    val f = fixture()
+    try {
+      f.stateStore.transitionTo(RUNNING)
+      f.wsInput.onNext(WorkflowKillRequest(executionId), None)
+      val killedAt = f.stateStore.statsStore.getState.endTimeStamp
+      // The end time of a later ending would differ.
+      Thread.sleep(5)
+
+      f.client.fire(ExecutionStateUpdate(COMPLETED))
+
+      f.stateStore.metadataStore.getState.state shouldBe KILLED
+      f.stateStore.statsStore.getState.endTimeStamp shouldBe killedAt
+      f.recorder.states shouldBe Seq(("RUNNING", None), ("KILLED", Some("killed by the user")))
       f.errors shouldBe empty
     } finally f.close()
   }

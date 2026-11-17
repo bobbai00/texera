@@ -74,6 +74,7 @@ class UnitStartReadsNoPostgresIntegrationSpec
     )
 
     assertStartedWithoutReading(ran)
+    assertLogged(ran)
     ran
       .resultOf("udf")
       .map(row =>

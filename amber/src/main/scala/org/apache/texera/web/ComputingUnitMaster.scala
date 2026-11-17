@@ -23,6 +23,7 @@ import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.Configuration
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
+import io.dropwizard.lifecycle.Managed
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
 import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
@@ -52,7 +53,7 @@ import org.apache.texera.web.resource.{
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
-import org.apache.texera.web.service.ExecutionsMetadataPersistService
+import org.apache.texera.web.service.{ExecutionsMetadataPersistService, WorkflowService}
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
@@ -77,6 +78,27 @@ object ComputingUnitMaster {
       conf,
       errorHandler
     )
+  }
+
+  /** How long a unit that is stopped waits for the ends of its runs to be recorded. */
+  private val StopPatience = 5.seconds
+
+  /**
+    * Ends the runs this unit holds when the unit is stopped: each that has not ended ends FAILED,
+    * saying that its unit was stopped, and the unit waits a moment for the ends of its runs to
+    * be recorded. So only a unit that died leaves a run with no ending.
+    */
+  private[web] object EndRunsOnStop extends Managed {
+    override def start(): Unit = ()
+
+    override def stop(): Unit = {
+      val runs = WorkflowService.getAllWorkflowServices
+        .flatMap(service => Option(service.executionService.getValue))
+        .toSeq
+      val deadline = StopPatience.fromNow
+      runs.foreach(_.end(FAILED, reason = Some("the computing unit was stopped")))
+      runs.foreach(_.executionStateStore.recorder.awaitIdle(deadline.timeLeft))
+    }
   }
 
   type OptionMap = Map[Symbol, Any]
@@ -198,6 +220,8 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
 
     environment.jersey.register(classOf[WorkflowExecutionsResource])
     environment.jersey.register(classOf[SyncExecutionResource])
+
+    environment.lifecycle().manage(ComputingUnitMaster.EndRunsOnStop)
 
     // Route request logs through SLF4J, controlled by TEXERA_SERVICE_LOG_LEVEL.
     // TODO: replace with RequestLoggingFilter.register() from common/auth once Dropwizard is upgraded to 4.x

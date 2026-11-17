@@ -52,7 +52,6 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.service.execution.StoredExecutionStart
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.ResultUris
 
 import java.net.URI
@@ -138,6 +137,9 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
   // Hard caps applied regardless of request — guard against runaway payloads.
   private val MAX_OPERATOR_RESULT_CHARS = 100000
   private val MAX_OPERATOR_RESULT_CELL_CHARS = 20000
+
+  // Why a run is killed at its caller's timeout, or when one of its operators logs an error.
+  private val StoppedByCaller = "stopped by its caller"
 
   /**
     * Runs execution `executionId`, which the Dashboard service created for the caller, on this
@@ -305,7 +307,7 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
             .blockingGet()
         } catch {
           case e: Exception if isCausedByTimeout(e) =>
-            killExecution(executionService)
+            executionService.end(KILLED, reason = Some(StoppedByCaller))
             return SyncExecutionResult(
               success = false,
               state = "Killed",
@@ -323,18 +325,18 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
         case TerminalStateReached(state) =>
           (state, false, false)
         case ConsoleErrorDetected(_) =>
-          killExecution(executionService)
+          executionService.end(KILLED, reason = Some(StoppedByCaller))
           (executionService.executionStateStore.metadataStore.getState, true, false)
         case TargetResultsReady(_) =>
           // RegionExecutionManager caches upstream results asynchronously after operators
           // complete; sleep gives that caching a chance to finish before we shut down the client.
           // TODO: replace with a synchronous signal from the engine.
           Thread.sleep(500)
-          killExecution(executionService)
-          // Override to COMPLETED — we have everything we asked for, even though the engine
-          // sees this as a kill.
-          executionService.executionStateStore.metadataStore.updateState(metadataStore =>
-            updateWorkflowState(COMPLETED, metadataStore)
+          // The run ends COMPLETED — we have everything we asked for, even though the engine
+          // is stopped short of its end.
+          executionService.end(
+            COMPLETED,
+            reason = Some("stopped once its target operators finished")
           )
           (executionService.executionStateStore.metadataStore.getState, false, true)
       }
@@ -379,23 +381,6 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
       operators = operatorInfos,
       errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
     )
-  }
-
-  private def killExecution(
-      executionService: WorkflowExecutionService
-  ): Unit = {
-    try {
-      executionService.services.foreach(_.client.shutdown())
-      executionService.executionStateStore.statsStore.updateState(stats =>
-        stats.withEndTimeStamp(System.currentTimeMillis())
-      )
-      executionService.executionStateStore.metadataStore.updateState(metadataStore =>
-        updateWorkflowState(KILLED, metadataStore)
-      )
-    } catch {
-      case e: Exception =>
-        logger.warn(s"Error killing execution: ${e.getMessage}")
-    }
   }
 
   private def collectOperatorInfos(

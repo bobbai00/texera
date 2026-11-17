@@ -48,6 +48,8 @@ import org.apache.texera.amber.engine.architecture.worker.statistics.{
   TupleMetrics
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.StateChange
 import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionStatsStore,
   OperatorMetrics,
@@ -196,7 +198,8 @@ class ExecutionStatsServiceSpec
   private final class Fixture(
       val client: TestAmberClient,
       val stateStore: ExecutionStateStore,
-      val service: ExecutionStatsService
+      val service: ExecutionStatsService,
+      val recorder: RecordingExecutionRecorder
   ) {
     def close(): Unit = {
       service.unsubscribeAll()
@@ -206,7 +209,8 @@ class ExecutionStatsServiceSpec
 
   private def withService(body: Fixture => Unit): Unit = {
     val client = new TestAmberClient
-    val stateStore = new ExecutionStateStore
+    val recorder = new RecordingExecutionRecorder
+    val stateStore = new ExecutionStateStore(recorder)
     val service = new ExecutionStatsService(
       client,
       stateStore,
@@ -215,7 +219,7 @@ class ExecutionStatsServiceSpec
         executionId = ExecutionIdentity(testEid.longValue())
       )
     )
-    val fixture = new Fixture(client, stateStore, service)
+    val fixture = new Fixture(client, stateStore, service, recorder)
     try body(fixture)
     finally fixture.close()
   }
@@ -490,6 +494,25 @@ class ExecutionStatsServiceSpec
       errors.head.workerId shouldBe "Worker:WF1-udf1-main-0"
       errors.head.message shouldBe cause.toString
       errors.head.details should include("stats-service-boom")
+      // The run's record is told of its end, with the error.
+      f.recorder.changes shouldBe Seq(StateChange("FAILED", errors, None))
+    }
+  }
+
+  it should "leave a run that has ended as it ended, though its engine reports a failure after that" in {
+    withService { f =>
+      f.stateStore.transitionTo(COMPLETED) shouldBe true
+      val asItEnded = f.stateStore.metadataStore.getState
+      val endedAt = f.stateStore.statsStore.getState.endTimeStamp
+      // The end time of a later ending would differ.
+      Thread.sleep(5)
+
+      f.client.fire(FatalError(new RuntimeException("after the end"), None))
+
+      f.client.shutdownCount shouldBe 1
+      f.stateStore.metadataStore.getState shouldBe asItEnded
+      f.stateStore.statsStore.getState.endTimeStamp shouldBe endedAt
+      f.recorder.states shouldBe Seq(("COMPLETED", None))
     }
   }
 

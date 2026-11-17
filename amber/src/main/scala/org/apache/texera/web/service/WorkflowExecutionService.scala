@@ -33,6 +33,7 @@ import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.PythonEnvironmentInstaller
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   FaultToleranceConfig,
@@ -52,7 +53,6 @@ import org.apache.texera.web.service.ExecutionEnvironmentService.EnvironmentNotI
 import org.apache.texera.web.service.WorkflowExecutionService.RunServices
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
 
 import java.net.URI
@@ -283,10 +283,7 @@ class WorkflowExecutionService(
       run.workflow.physicalPlan,
       run.client
     )
-    executionStateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(READY, metadataStore)
-        .withFatalErrors(Seq.empty)
-    )
+    executionStateStore.transitionTo(READY)
     executionStateStore.statsStore.updateState(stats =>
       stats.withStartTimeStamp(System.currentTimeMillis())
     )
@@ -314,8 +311,7 @@ class WorkflowExecutionService(
     * failed it since it was set up.
     */
   private def awaitsStart(run: RunServices): Boolean =
-    run.client.isActive &&
-      !WorkflowService.FinishedStates.contains(executionStateStore.metadataStore.getState.state)
+    run.client.isActive && !executionStateStore.hasEnded
 
   private def startEngine(run: RunServices): Unit =
     run.client.coordinatorInterface
@@ -323,17 +319,7 @@ class WorkflowExecutionService(
       .onFailure(err => {
         errorHandler(err)
       })
-      .onSuccess(resp =>
-        executionStateStore.metadataStore.updateState(metadataStore =>
-          // A run that ended before its start was answered (it failed, completed, was killed or
-          // was superseded) keeps the state it ended in.
-          if (WorkflowService.FinishedStates.contains(metadataStore.state)) {
-            metadataStore
-          } else {
-            updateWorkflowState(resp.workflowState, metadataStore)
-          }
-        )
-      )
+      .onSuccess(resp => executionStateStore.transitionTo(resp.workflowState))
 
   /**
     * Ends the run before its engine starts, as one of its Python environments could not be
@@ -342,34 +328,35 @@ class WorkflowExecutionService(
     * engine will report no end. A run that ended meanwhile keeps the state it ended in.
     */
   private def failBeforeStart(run: RunServices, notInstalled: EnvironmentNotInstalled): Unit = {
-    val failedAt = System.currentTimeMillis()
-    var failed = false
-    // Decided under the store's lock, against a kill that may arrive at this moment.
-    executionStateStore.metadataStore.updateState { metadataStore =>
-      if (WorkflowService.FinishedStates.contains(metadataStore.state)) {
-        metadataStore
-      } else {
-        failed = true
-        updateWorkflowState(FAILED, metadataStore).addFatalErrors(
-          WorkflowFatalError(
-            EXECUTION_FAILURE,
-            Timestamp(Instant.now),
-            notInstalled.getMessage,
-            notInstalled.details,
-            notInstalled.operators.head.id
-          )
-        )
-      }
-    }
-    if (failed) {
+    val error = WorkflowFatalError(
+      EXECUTION_FAILURE,
+      Timestamp(Instant.now),
+      notInstalled.getMessage,
+      notInstalled.details,
+      notInstalled.operators.head.id
+    )
+    if (end(FAILED, errors = Seq(error))) {
       logger.info(
         s"Execution ${workflowContext.executionId.id} fails before its engine starts: " +
           notInstalled.getMessage
       )
-      run.client.shutdown()
-      executionStateStore.statsStore.updateState(_.withEndTimeStamp(failedAt))
       run.console.commitMessages()
     }
+  }
+
+  /**
+    * Ends the run in `state`, because of `errors` or for `reason`: its engine, if one was built,
+    * is shut down. A run that has ended is left as it ended.
+    *
+    * @return whether this ended the run
+    */
+  def end(
+      state: WorkflowAggregatedState,
+      errors: Seq[WorkflowFatalError] = Nil,
+      reason: Option[String] = None
+  ): Boolean = {
+    services.foreach(_.client.shutdown())
+    executionStateStore.transitionTo(state, errors, reason)
   }
 
   override def unsubscribeAll(): Unit = {

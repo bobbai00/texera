@@ -126,6 +126,7 @@ class UnitStartReadsNoPostgresSpec
     )
 
     assertStartedWithoutReading(ran)
+    assertLogged(ran)
     ran.resultOf("filter").map(_.getField[Any]("Order ID").toString) should
       contain theSameElementsAs salesRows.filter(_("Region") == "Asia").map(_("Order ID"))
   }
@@ -137,6 +138,7 @@ class UnitStartReadsNoPostgresSpec
     val ran = run(List(scan), List.empty)
 
     assertStartedWithoutReading(ran)
+    assertLogged(ran)
     // The file as LakeFS names it is all the unit knows of it, and no LakeFS holds it: the
     // bytes came through the plan's link.
     ran.resultOf("notes").map(_.getFields.toList) should contain theSameElementsAs
@@ -152,6 +154,7 @@ class UnitStartReadsNoPostgresSpec
     val ran = run(List(lister, scan), List(link("lister", "scan")))
 
     assertStartedWithoutReading(ran)
+    assertLogged(ran)
     // Each line of each file the version lists, beside the file's name: a name of a dataset's
     // file, which the unit neither resolved nor asked anything about.
     ran.resultOf("scan").map(_.getFields.toList) should contain theSameElementsAs

@@ -29,16 +29,12 @@ import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
-  FAILED
-}
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.FAILED
 import org.apache.texera.amber.engine.common.AmberLogging
 import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
 import org.apache.texera.web.SessionState
 import org.apache.texera.web.model.websocket.response.ClusterStatusUpdateEvent
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.time.Instant
 import scala.collection.mutable.ArrayBuffer
@@ -81,13 +77,10 @@ class ClusterListener extends Actor with AmberLogging {
   }
 
   private def forcefullyStop(executionService: WorkflowExecutionService, cause: Throwable): Unit = {
-    executionService.services.foreach(_.client.shutdown())
-    executionService.executionStateStore.statsStore.updateState(stats =>
-      stats.withEndTimeStamp(System.currentTimeMillis())
-    )
-    executionService.executionStateStore.metadataStore.updateState { metadataStore =>
-      logger.error("forcefully stopping execution", cause)
-      updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+    logger.error("forcefully stopping execution", cause)
+    executionService.end(
+      FAILED,
+      errors = Seq(
         WorkflowFatalError(
           EXECUTION_FAILURE,
           Timestamp(Instant.now),
@@ -96,7 +89,7 @@ class ClusterListener extends Actor with AmberLogging {
           "unknown operator"
         )
       )
-    }
+    )
   }
 
   private def updateClusterStatus(evt: MemberEvent): Unit = {
@@ -106,9 +99,7 @@ class ClusterListener extends Actor with AmberLogging {
         val futures = new ArrayBuffer[Future[_]]
         WorkflowService.getAllWorkflowServices.foreach { workflow =>
           val executionService = workflow.executionService.getValue
-          if (
-            executionService != null && executionService.executionStateStore.metadataStore.getState.state != COMPLETED
-          ) {
+          if (executionService != null && !executionService.executionStateStore.hasEnded) {
             if (ApplicationConfig.isFaultToleranceEnabled) {
               logger.info(
                 s"Trigger recovery process for execution id = ${executionService.executionStateStore.metadataStore.getState.executionId.id}"

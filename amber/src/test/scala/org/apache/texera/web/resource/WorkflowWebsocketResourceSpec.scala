@@ -30,7 +30,12 @@ import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.ClusterListener
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionPlanStore, VFSURIFactory}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionLogStore,
+  ExecutionPlanStore,
+  VFSURIFactory
+}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -63,6 +68,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.engine.common.executionrecord.ExecutionRecorder
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
@@ -109,7 +115,6 @@ import org.apache.texera.web.service.{
   WorkflowExecutionService,
   WorkflowService
 }
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.concurrent.Eventually
@@ -127,6 +132,7 @@ import java.util.UUID
 import java.util.concurrent.{Future => JFuture}
 import javax.websocket.{RemoteEndpoint, Session}
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.duration.DurationInt
 import scala.jdk.CollectionConverters.{
   IteratorHasAsScala,
   ListHasAsScala,
@@ -973,9 +979,10 @@ class WorkflowWebsocketResourceSpec
   // A format this unit does not read yet: the one after its own.
   private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
 
-  /** Every plan and runtime-statistics table the start cases make, dropped after the suite. */
+  /** Every plan, runtime-statistics and log table the start cases make, dropped after the suite. */
   private val madePlans = ArrayBuffer.empty[URI]
   private val madeStatistics = ArrayBuffer.empty[URI]
+  private val madeLogs = ArrayBuffer.empty[URI]
 
   private var recorder: StatementRecorder = _
 
@@ -1036,6 +1043,7 @@ class WorkflowWebsocketResourceSpec
   override protected def afterAll(): Unit =
     try {
       madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
+      madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
       madeStatistics.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
       TestKit.shutdownActorSystem(system)
     } finally {
@@ -1161,10 +1169,11 @@ class WorkflowWebsocketResourceSpec
     * The workflow's service, as `getOrCreate` makes one for the first session on `serviceCuid`,
     * but for the engine of each run, which is a [[TestAmberClient]], and for the idle clean-up,
     * which it never arms. Sessions subscribe to it for real. `engines` is the workflow each run's
-    * engine was handed.
+    * engine was handed. Its runs keep no record in the lake unless `startRecord` starts one.
     */
   private class StoredStartService(
       serviceCuid: Int = storedCuid,
+      startRecord: WorkflowContext => ExecutionRecorder = _ => ExecutionRecorder.none,
       val engines: ArrayBuffer[EngineWorkflow] = ArrayBuffer.empty
   ) extends WorkflowService(
         WorkflowIdentity(storedWid),
@@ -1180,7 +1189,8 @@ class WorkflowWebsocketResourceSpec
             engines += EngineWorkflow(context, plan)
             new TestAmberClient
           }
-        )
+        ),
+        startRecord = startRecord
       ) {
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("WorkflowWebsocketResourceSpec", 3600, () => ()) {
@@ -1620,7 +1630,14 @@ class WorkflowWebsocketResourceSpec
 
   "WorkflowKillRequest" should "kill the run in flight, for every session on the workflow, and record it killed" in {
     val execution = created()
-    val service = new StoredStartService
+    val logUri = ExecutionLogStore.logUri(
+      WorkflowIdentity(storedWid),
+      ExecutionIdentity(execution.eid),
+      None
+    )
+    madeLogs += logUri
+    // Its runs keep their record in the lake, as a unit's do.
+    val service = new StoredStartService(startRecord = ExecutionRecorder.start)
     try {
       val (session, sent) = sessionOn(service)
       val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
@@ -1637,6 +1654,16 @@ class WorkflowWebsocketResourceSpec
       statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
       stateEvents(sent) shouldBe Seq(("Killed", Some(execution.eid)))
       stateEvents(otherSent) shouldBe Seq(("Killed", Some(execution.eid)))
+      // The execution's log, in the lake, holds the run from its start to its end, and why it
+      // ended; its label says the same to whoever loads the table.
+      run.executionStateStore.recorder.awaitIdle(1.minute) shouldBe true
+      ExecutionLogStore.read(logUri).map(row => (row.seq, row.state, row.reason)) shouldBe Seq(
+        (1L, Some("READY"), None),
+        (2L, Some("KILLED"), Some("killed by the user"))
+      )
+      val label = ExecutionLogStore.label(logUri).getOrElse(fail("the execution has no log"))
+      (label.state, label.stateSeq, label.reason, label.ended) shouldBe
+        ((Some("KILLED"), 2L, Some("killed by the user"), true))
     } finally service.unsubscribeAll()
   }
 
@@ -1651,7 +1678,7 @@ class WorkflowWebsocketResourceSpec
       awaitEngineUp(otherSent)
       val run = service.executionService.getValue
       // The run completes, as its engine reports it, while a client still shows it running.
-      run.executionStateStore.metadataStore.updateState(updateWorkflowState(COMPLETED, _))
+      run.executionStateStore.transitionTo(COMPLETED)
       statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
       val completed = run.executionStateStore.metadataStore.getState
       sent.clear()

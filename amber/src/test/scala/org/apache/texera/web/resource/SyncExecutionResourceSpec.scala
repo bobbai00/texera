@@ -58,6 +58,7 @@ import org.apache.texera.amber.engine.architecture.worker.statistics.{
   TupleMetrics
 }
 import org.apache.texera.amber.engine.common.Utils
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionConsoleStore,
   OperatorConsole,
@@ -94,10 +95,10 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
 import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
+import org.apache.texera.web.model.websocket.event.WorkflowStateEvent
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.{ExecutionStateStore, ResultUris}
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
@@ -105,6 +106,7 @@ import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
 import java.net.URI
 import java.sql.Timestamp
 import java.util.concurrent.{FutureTask, TimeUnit}
+import scala.collection.concurrent.TrieMap
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -132,17 +134,14 @@ import scala.util.Try
   * per-row size (`rowChars`) rather than round numbers, which land in a neighbouring branch.
   *
   * Deliberately NOT covered, and why:
-  *   - `killExecution`'s `client.shutdown()` line, and the engine shutdown of the run a sync run
-  *     supersedes. Both need an `AmberClient` test double; amber's test scope has no mocking
-  *     library, and `AmberClient`'s constructor needs a started `AmberRuntime`. What superseding
-  *     records, a live run KILLED, is pinned below on a run that never built its engine.
+  *   - the engine shutdown of the run a sync run stops or supersedes. The runs here have no
+  *     engine; that ending a run shuts its engine down is `WorkflowExecutionServiceSpec`'s. What
+  *     stopping and superseding record is pinned below.
   *   - the document-reading half of `collectConsoleLogs`. Reachable by the same fixture technique
   *     (a console-messages document whose single column holds ASCII-serialized `ConsoleMessage`
   *     protos), just not done here; its database half, `getConsoleMessageUri`, is pinned below.
-  *   - the `Observable.amb` wait and construction of its timeout/error responses, plus the
-  *     `ConsoleErrorDetected` / `TargetResultsReady` termination arms. Reaching them needs an
-  *     execution that is still non-terminal when `runStoredExecution` looks at it, i.e. a live
-  *     engine. Timeout cause classification is pinned independently below.
+  *   - a run that ends while `runStoredExecution` waits for it. The runs here are in the state
+  *     the wait ends on by the time it looks, or stay as they are until its timeout.
   */
 class SyncExecutionResourceSpec
     extends AnyFlatSpec
@@ -179,7 +178,6 @@ class SyncExecutionResourceSpec
   private val collectOperatorInfos =
     PrivateMethod[Map[String, OperatorInfo]](Symbol("collectOperatorInfos"))
   private val getConsoleMessageUri = PrivateMethod[Option[URI]](Symbol("getConsoleMessageUri"))
-  private val killExecution = PrivateMethod[Unit](Symbol("killExecution"))
 
   private type CollectedResult = (String, Option[Any], Option[Int], Option[Int], Option[Boolean])
   private val collectOperatorResult =
@@ -1042,24 +1040,6 @@ class SyncExecutionResourceSpec
     ) shouldBe None
   }
 
-  "killExecution" should "stamp an end time and mark the execution killed" in {
-    val stateStore = new ExecutionStateStore()
-    val execution = newExecution(stateStore)
-    stateStore.statsStore.getState.endTimeStamp shouldBe 0L
-
-    val before = System.currentTimeMillis()
-    resource invokePrivate killExecution(execution)
-    val after = System.currentTimeMillis()
-
-    // Bounded on both sides: a constant, or a stamp taken from somewhere other than the wall
-    // clock, would fall outside the window. The end time is what the UI shows as the run's
-    // duration, so it has to be the moment of the kill.
-    val endTimeStamp = stateStore.statsStore.getState.endTimeStamp
-    endTimeStamp should be >= before
-    endTimeStamp should be <= after
-    stateStore.metadataStore.getState.state shouldBe KILLED
-  }
-
   // -- running an execution the Dashboard created, by its id ---------------------------
 
   private object NoHints extends CostHintsLoader(1) {
@@ -1116,16 +1096,19 @@ class SyncExecutionResourceSpec
   }
 
   /**
-    * A service of the workflow, made for computing unit `serviceCuid`, whose runs end as soon as
-    * they are started, with no engine: they complete, or fail with `failure` when given, as a run
-    * that fails before its engine is built does. `WorkflowExecutionServiceSpec` owns what a run
-    * does with its plan. It records the plan each run is started from.
+    * A service of the workflow, made for computing unit `serviceCuid`, whose runs have no engine.
+    * As soon as one is started it is what `atStart` makes of its states, by default completed;
+    * or it fails with `failure` when given, as a run that cannot be set up does.
+    * `WorkflowExecutionServiceSpec` owns what a run does with its plan. `started` is the plan
+    * each run is started from, and `records` what each run's record is told, by execution.
     */
-  private class EndingService(
+  private class EnginelessService(
       serviceCuid: Int = testCuid,
       failure: Option[RuntimeException] = None,
+      atStart: ExecutionStateStore => Unit = _.transitionTo(COMPLETED),
       val started: scala.collection.mutable.ArrayBuffer[(ExecutionPlan, URI)] =
-        scala.collection.mutable.ArrayBuffer.empty
+        scala.collection.mutable.ArrayBuffer.empty,
+      val records: TrieMap[Long, RecordingExecutionRecorder] = TrieMap.empty
   ) extends WorkflowService(
         WorkflowIdentity(testWid.toLong),
         serviceCuid,
@@ -1140,14 +1123,13 @@ class SyncExecutionResourceSpec
               started += ((executionPlan, planUri))
               failure match {
                 case Some(failure) => errorHandler(failure)
-                case None =>
-                  this.executionStateStore.metadataStore.updateState(metadataStore =>
-                    updateWorkflowState(COMPLETED, metadataStore)
-                  )
+                case None          => atStart(this.executionStateStore)
               }
               failure
             }
-          }
+          },
+        startRecord = context =>
+          records.getOrElseUpdate(context.executionId.id, new RecordingExecutionRecorder)
       ) {
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("SyncExecutionResourceSpec", 3600, () => ()) {
@@ -1169,9 +1151,10 @@ class SyncExecutionResourceSpec
   private def runRequest(
       planUri: String,
       computingUnitId: Int = testCuid,
-      targets: List[String] = List("limit")
+      targets: List[String] = List("limit"),
+      timeoutSeconds: Int = 5
   ): SyncRunRequest =
-    SyncRunRequest(planUri, computingUnitId, targets, 5, 100000, 20000)
+    SyncRunRequest(planUri, computingUnitId, targets, timeoutSeconds, 100000, 20000)
 
   /** Why a run was refused, once the answer is found to be a refusal and nothing more. */
   private def refusalOf(result: SyncExecutionResult): String = {
@@ -1197,7 +1180,7 @@ class SyncExecutionResourceSpec
     val execution = createdExecution()
     // The workflow's service, made for another unit by an earlier caller (#7676): the run is on
     // the unit the request names, which the execution was created for.
-    val service = new EndingService(serviceCuid = fixtureCuid)
+    val service = new EnginelessService(serviceCuid = fixtureCuid)
     val resource = new ResourceOn(service)
     // A run of the workflow still going in that service, as a browser's would be, of an execution
     // with a row.
@@ -1232,12 +1215,99 @@ class SyncExecutionResourceSpec
     previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
     previous.executionStateStore.statsStore.getState.endTimeStamp should be > 0L
     statusOf(previousEid.toLong) shouldBe Utils.maptoStatusCode(KILLED).toInt
+    // The record of the run started is told how it went.
+    service.records(execution.eid).states shouldBe Seq(("COMPLETED", None))
+  }
+
+  it should "stop a run that outlasts the time its caller gives it, recording it killed by its caller" in {
+    val execution = createdExecution()
+    val service = new EnginelessService(atStart = _.transitionTo(RUNNING))
+
+    val before = System.currentTimeMillis()
+    val result = new ResourceOn(service).runStoredExecution(
+      execution.eid,
+      runRequest(execution.planUri, timeoutSeconds = 1),
+      syncUser()
+    )
+    val after = System.currentTimeMillis()
+
+    result.success shouldBe false
+    result.state shouldBe "Killed"
+    result.errors shouldBe Some(List("Timeout after 1 seconds"))
+    val run = service.executionService.getValue.executionStateStore
+    run.metadataStore.getState.state shouldBe KILLED
+    run.statsStore.getState.endTimeStamp should (be >= before + 1000 and be <= after)
+    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
+    service.records(execution.eid).states shouldBe
+      Seq(("RUNNING", None), ("KILLED", Some("stopped by its caller")))
+  }
+
+  it should "stop a run in which an operator logs an error, recording it killed by its caller" in {
+    val execution = createdExecution()
+    val service = new EnginelessService(atStart = store => {
+      store.transitionTo(RUNNING)
+      store.consoleStore.updateState(_ =>
+        ExecutionConsoleStore(Map("limit" -> console((ConsoleMessageType.ERROR, "boom", ""))))
+      )
+    })
+
+    val result = new ResourceOn(service).runStoredExecution(
+      execution.eid,
+      runRequest(execution.planUri),
+      syncUser()
+    )
+
+    result.success shouldBe false
+    result.state shouldBe "Failed"
+    result.operators("limit").error shouldBe Some("boom")
+    service.executionService.getValue.executionStateStore.metadataStore.getState.state shouldBe
+      KILLED
+    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
+    service.records(execution.eid).states shouldBe
+      Seq(("RUNNING", None), ("KILLED", Some("stopped by its caller")))
+  }
+
+  it should "end a run completed once its targets have completed, in one change of state" in {
+    val execution = createdExecution()
+    val service = new EnginelessService(atStart = store => {
+      store.transitionTo(RUNNING)
+      store.statsStore.updateState(
+        _.withOperatorInfo(Map("limit" -> metrics(COMPLETED, Seq(0 -> 2L), Seq(0 -> 2L))))
+      )
+    })
+    // Every state a session on the workflow is told of the run.
+    val told = scala.collection.mutable.ArrayBuffer.empty[String]
+    val session = service.connectToExecution {
+      case WorkflowStateEvent(state, _) => told.synchronized(told += state)
+      case _                            =>
+    }
+
+    val result =
+      try new ResourceOn(service).runStoredExecution(
+        execution.eid,
+        runRequest(execution.planUri),
+        syncUser()
+      )
+      finally session.dispose()
+
+    result.success shouldBe true
+    result.state shouldBe "Completed"
+    result.errors shouldBe None
+    val run = service.executionService.getValue.executionStateStore
+    run.metadataStore.getState.state shouldBe COMPLETED
+    run.statsStore.getState.endTimeStamp should be > 0L
+    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+    // The run is stopped short of its end, and is not killed on the way: its record holds one
+    // ending, and no session saw it Killed.
+    service.records(execution.eid).states shouldBe
+      Seq(("RUNNING", None), ("COMPLETED", Some("stopped once its target operators finished")))
+    told.synchronized(told.toList) shouldBe List("Running", "Completed")
   }
 
   it should "answer a run that fails once it is started as failed, with its error and the target asked about" in {
     val execution = createdExecution()
     val service =
-      new EndingService(failure = Some(new IllegalStateException("the engine is gone")))
+      new EnginelessService(failure = Some(new IllegalStateException("the engine is gone")))
 
     val result = new ResourceOn(service).runStoredExecution(
       execution.eid,
@@ -1262,7 +1332,7 @@ class SyncExecutionResourceSpec
   it should "refuse a run for another user, on another unit, of another plan, or a second time" in {
     val execution = createdExecution()
     val other = createdExecution()
-    val service = new EndingService
+    val service = new EnginelessService
     val resource = new ResourceOn(service)
     val eid = execution.eid
 

@@ -32,7 +32,6 @@ import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
-import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 
 import java.util.UUID
@@ -63,59 +62,37 @@ class ExecutionRuntimeService(
 
   // Receive execution state update from Amber
   addSubscription(client.registerCallback[ExecutionStateUpdate]((evt: ExecutionStateUpdate) => {
-    stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(evt.state, metadataStore)
-    )
+    stateStore.transitionTo(evt.state)
 
     emailNotificationService.foreach(_.processEmailNotificationIfNeeded(evt.state))
 
     if (evt.state == COMPLETED) {
       client.shutdown()
-      stateStore.statsStore.updateState(stats => stats.withEndTimeStamp(System.currentTimeMillis()))
     }
   }))
 
-  // Receive Pause
+  // Receive Pause. A run that has ended is not asked to pause.
   addSubscription(wsInput.subscribe((req: WorkflowPauseRequest, uidOpt) => {
-    stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(PAUSING, metadataStore)
-    )
-    client.coordinatorInterface.pauseWorkflow(EmptyRequest(), ())
+    if (stateStore.transitionTo(PAUSING)) {
+      client.coordinatorInterface.pauseWorkflow(EmptyRequest(), ())
+    }
   }))
 
-  // Receive Resume
+  // Receive Resume. A run that has ended is not asked to resume, and takes no change to its
+  // operators.
   addSubscription(wsInput.subscribe((req: WorkflowResumeRequest, uidOpt) => {
-    reconfigurationService.performReconfigurationOnResume()
-    stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(RESUMING, metadataStore)
-    )
-    client.coordinatorInterface
-      .resumeWorkflow(EmptyRequest(), ())
-      .onSuccess(_ =>
-        stateStore.metadataStore.updateState(metadataStore =>
-          updateWorkflowState(RUNNING, metadataStore)
-        )
-      )
+    if (stateStore.transitionTo(RESUMING)) {
+      reconfigurationService.performReconfigurationOnResume()
+      client.coordinatorInterface
+        .resumeWorkflow(EmptyRequest(), ())
+        .onSuccess(_ => stateStore.transitionTo(RUNNING))
+    }
   }))
 
   // Receive Kill
   addSubscription(wsInput.subscribe((req: WorkflowKillRequest, uidOpt) => {
     client.shutdown()
-    val endTime = System.currentTimeMillis()
-    var killed = false
-    // A run that already ended keeps the state and the end time it ended with. Decided under the
-    // store's lock, against a state the engine may report at this moment.
-    stateStore.metadataStore.updateState { metadataStore =>
-      if (WorkflowService.FinishedStates.contains(metadataStore.state)) {
-        metadataStore
-      } else {
-        killed = true
-        updateWorkflowState(KILLED, metadataStore)
-      }
-    }
-    if (killed) {
-      stateStore.statsStore.updateState(stats => stats.withEndTimeStamp(endTime))
-    }
+    stateStore.transitionTo(KILLED, reason = Some("killed by the user"))
   }))
 
   // Receive Interaction

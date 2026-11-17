@@ -28,6 +28,7 @@ import io.dropwizard.Configuration
 import io.dropwizard.auth.{AuthDynamicFeature, AuthValueFactoryProvider}
 import io.dropwizard.configuration.SubstitutingSourceProvider
 import io.dropwizard.jersey.validation.Validators
+import io.dropwizard.lifecycle.JettyManaged
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
 import org.apache.commons.jcs3.access.exception.InvalidArgumentException
@@ -35,9 +36,18 @@ import org.apache.pekko.actor.{ActorRef, ActorSystem}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  COMPLETED,
+  FAILED,
+  PAUSED,
+  READY,
+  RUNNING
+}
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultToleranceConfig
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
 import org.apache.texera.amber.operator.TestOperators
@@ -62,6 +72,8 @@ import org.apache.texera.web.resource.{
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
+import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
+import org.apache.texera.web.storage.ExecutionStateStore
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
@@ -83,7 +95,7 @@ import javax.servlet.{DispatcherType, FilterChain, ServletContext, ServletContex
 import javax.websocket.server.ServerContainer
 import javax.websocket.{RemoteEndpoint, Session}
 import scala.concurrent.Await
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -662,6 +674,12 @@ class ComputingUnitMasterSpec
     jersey.statusOf("POST", "/execution/12/3/run") shouldBe 404
   }
 
+  it should "have the server end the unit's runs as it stops" in {
+    ranEnvironment.lifecycle().getManagedObjects.asScala.collect {
+      case managed: JettyManaged => managed.getManaged
+    } should contain(ComputingUnitMaster.EndRunsOnStop)
+  }
+
   it should "serve no Python environment route: a run's environments come in its plan" in {
     val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
 
@@ -726,6 +744,81 @@ class ComputingUnitMasterSpec
 
     mapping.getPathSpecs.toSeq shouldBe Seq("/*")
     mapping.getDispatcherTypes shouldBe java.util.EnumSet.allOf(classOf[DispatcherType])
+  }
+
+  /**
+    * A recorder that keeps what it is told, and how long it was given each time it was waited
+    * for. A wait takes it a moment, as a wait for the lake does.
+    */
+  private final class AwaitedRecorder extends RecordingExecutionRecorder {
+    val awaited = new ConcurrentLinkedQueue[FiniteDuration]()
+    override def awaitIdle(timeout: FiniteDuration): Boolean = {
+      awaited.add(timeout)
+      Thread.sleep(50)
+      true
+    }
+  }
+
+  /**
+    * A run in `state`, held by the service of workflow `wid` in the unit's registry, which is
+    * the JVM's: the run stays in it, so a case gives it a workflow of its own.
+    */
+  private def heldRun(
+      wid: Long,
+      state: WorkflowAggregatedState
+  ): (ExecutionStateStore, AwaitedRecorder) = {
+    val recorder = new AwaitedRecorder
+    val store = new ExecutionStateStore(recorder)
+    store.metadataStore.updateState(_.withState(state))
+    val context =
+      new WorkflowContext(workflowId = WorkflowIdentity(wid), executionId = ExecutionIdentity(wid))
+    WorkflowService
+      .getOrCreate(WorkflowIdentity(wid), computingUnitId = 1)
+      .executionService
+      .onNext(new WorkflowExecutionService(context, null, store, _ => (), None))
+    (store, recorder)
+  }
+
+  "EndRunsOnStop" should "end as failed each run the unit holds that has not ended, saying that the unit was stopped" in {
+    val live = Seq(READY, RUNNING, PAUSED).zipWithIndex.map {
+      case (state, index) => heldRun(970701L + index, state)
+    }
+    val (completed, completedRecorder) = heldRun(970711L, COMPLETED)
+    // A workflow whose service holds no run.
+    WorkflowService.getOrCreate(WorkflowIdentity(970712L), computingUnitId = 1)
+
+    val before = System.currentTimeMillis()
+    ComputingUnitMaster.EndRunsOnStop.stop()
+    val after = System.currentTimeMillis()
+
+    live.foreach {
+      case (store, recorder) =>
+        store.metadataStore.getState.state shouldBe FAILED
+        store.statsStore.getState.endTimeStamp should (be >= before and be <= after)
+        recorder.states shouldBe Seq(("FAILED", Some("the computing unit was stopped")))
+    }
+    // A run that had ended is left as it ended.
+    completed.metadataStore.getState.state shouldBe COMPLETED
+    completed.statsStore.getState.endTimeStamp shouldBe 0L
+    completedRecorder.changes shouldBe empty
+  }
+
+  it should "wait for the end of every run to be recorded, five seconds in all" in {
+    // One that had ended too: its end may still be on its way to the lake.
+    val recorders =
+      Seq(RUNNING, PAUSED, COMPLETED, RUNNING).zipWithIndex.map {
+        case (state, index) => heldRun(970721L + index, state)._2
+      }
+
+    ComputingUnitMaster.EndRunsOnStop.stop()
+
+    // Each record is given what the waits before it left of the five seconds.
+    val waits = recorders.flatMap(_.awaited.asScala).sorted.reverse
+    waits should have size 4
+    waits.head should (be > 1.second and be <= 5.seconds)
+    waits.sliding(2).foreach {
+      case Seq(earlier, later) => (earlier - later) should be >= 40.millis
+    }
   }
 
   "the request-logging filter" should "forward the request and log one access line at info" in {
