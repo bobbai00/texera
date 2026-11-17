@@ -270,7 +270,7 @@ object PhysicalPlanCodec {
       updateId = updateId,
       opId = Some(op.id),
       opExecInitInfo = op.opExecInitInfo,
-      repositoryMounts = op.repositoryMounts.map(encodeMounts)
+      repositoryMounts = encodeMounts(op.repositoryMounts)
     )
   }
 
@@ -293,7 +293,7 @@ object PhysicalPlanCodec {
       updateId = stored.updateId,
       opId = opId,
       opExecInitInfo = stored.opExecInitInfo,
-      repositoryMounts = stored.repositoryMounts.map(decodeMounts(name))
+      repositoryMounts = decodeMounts(name, stored.repositoryMounts)
     )
   }
 
@@ -470,7 +470,7 @@ object PhysicalPlanCodec {
       requiresMaterializedExecution = op.requiresMaterializedExecution,
       isLoopStart = op.isLoopStart,
       suggestedWorkerNum = op.suggestedWorkerNum,
-      repositoryMounts = op.repositoryMounts.map(encodeMounts),
+      repositoryMounts = encodeMounts(op.repositoryMounts),
       // a name never resolved is not saved: requireRunnableUnder refused the plan
       pythonEnvironment = op.pythonEnvironment match {
         case PythonEnvironmentRef.Resolved(environment) =>
@@ -479,8 +479,8 @@ object PhysicalPlanCodec {
       }
     )
 
-  private def encodeMounts(mounts: RepositoryMounts): StoredRepositoryMounts =
-    StoredRepositoryMounts(mounts.root, mounts.locators.toSeq)
+  private def encodeMounts(mounts: Option[RepositoryMounts]): Seq[String] =
+    mounts.fold(Seq.empty[String])(_.locators.toSeq.sorted)
 
   private def encodeReplay(replay: ReplaySource): StoredReplaySource = {
     val sourceExecutionId = replay.sourceExecutionId.id
@@ -625,7 +625,7 @@ object PhysicalPlanCodec {
       pythonEnvironment = stored.pythonEnvironment
         .map(decodeEnvironment(name))
         .getOrElse(PythonEnvironmentRef.EngineDefault),
-      repositoryMounts = stored.repositoryMounts.map(decodeMounts(name))
+      repositoryMounts = decodeMounts(name, stored.repositoryMounts)
     )
   }
 
@@ -642,10 +642,10 @@ object PhysicalPlanCodec {
         refuse(s"Operator $operator cannot run in the environment it names: ${e.getMessage}", e)
     }
 
-  /** The mounts of operator `operator`, as [[RepositoryMounts]] takes them. */
-  private def decodeMounts(operator: String)(mounts: StoredRepositoryMounts): RepositoryMounts = {
-    requireDistinct(mounts.locators)(locator => s"Repository $locator of operator $operator")
-    try RepositoryMounts(mounts.root, mounts.locators.toSet)
+  /** The mounts of operator `operator`, as [[RepositoryMounts]] takes them; none for no locator. */
+  private def decodeMounts(operator: String, locators: Seq[String]): Option[RepositoryMounts] = {
+    requireDistinct(locators)(locator => s"Repository $locator of operator $operator")
+    try Option.when(locators.nonEmpty)(RepositoryMounts(locators.toSet))
     catch {
       case e: IllegalArgumentException =>
         refuse(s"Operator $operator cannot mount what it names: ${e.getMessage}", e)

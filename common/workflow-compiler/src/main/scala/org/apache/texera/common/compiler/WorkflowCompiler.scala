@@ -55,7 +55,6 @@ import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.StackTraceUtils.getStackTraceWithAllCauses
-import org.apache.texera.common.config.EnvironmentalVariable
 
 import java.time.Instant
 import scala.collection.immutable.VectorMap
@@ -269,32 +268,22 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
 
   /**
     * Pins the datasets and models `op` names, as a Strict compile does for every operator: its
-    * executor becomes the final one, with each version's mount directory in place; it names the
-    * repositories to mount and the root its code reads them under; and it no longer holds a
-    * binding. An operator that names none is returned as it is.
+    * executor names each version by the repository commit behind it, which it lists as what to
+    * mount, and it no longer holds a binding. An operator that names none is returned as it is.
     *
     * This is the only place a binding is forced. A paused execution's edited operator goes
     * through it too, so it is bound the way the rest of its plan was.
     *
     * @throws org.apache.commons.vfs2.FileNotFoundException if a version does not exist, or the
     *                                                       plan's user cannot read it
-    * @throws IllegalStateException if there is no mount root to write the code against
     */
   def bindResources(op: PhysicalOp): PhysicalOp =
     op.resourceBinding.fold(op) { binding =>
-      val root = bindings.mountRoot.getOrElse(
-        throw new IllegalStateException(
-          s"Operator ${op.id.logicalOpId.id} reads a dataset or model, but there is no " +
-            s"directory to mount it under: ${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is " +
-            "not set."
-        )
-      )
-      val bound = binding.bind(bindings.repositories, root)
+      val bound = binding.bind(bindings.repositories)
       op.copy(
         opExecInitInfo = bound.opExecInitInfo,
-        repositoryMounts = Option.when(bound.mountLocators.nonEmpty)(
-          RepositoryMounts(root.toString, bound.mountLocators)
-        ),
+        repositoryMounts =
+          Option.when(bound.mountLocators.nonEmpty)(RepositoryMounts(bound.mountLocators)),
         resourceBinding = None
       )
     }
@@ -302,9 +291,9 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
   /**
     * Pins what the operators of `plan` name, as [[bindResources]] does, each operator by itself,
     * so that every operator's binding error is found. An operator's own error -- a version that
-    * does not exist or that the plan's user may not read, or no mount root to write the code
-    * against -- leaves it as it was, and is appended to `errors`. Any other failure, such as the
-    * database not answering, is no error of the operator's, and is thrown as it is.
+    * does not exist or that the plan's user may not read, or no resolver to pin it with -- leaves
+    * it as it was, and is appended to `errors`. Any other failure, such as the database not
+    * answering, is no error of the operator's, and is thrown as it is.
     */
   private def bindPlanResources(
       plan: PhysicalPlan,

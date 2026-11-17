@@ -160,8 +160,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       isOneToManyOp = true,
       suggestedWorkerNum = Some(3),
       pythonEnvironment = PythonEnvironmentRef.Resolved(fullEnvironment),
-      repositoryMounts =
-        Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:d4t4", "model-1:m0d3l")))
+      repositoryMounts = Some(RepositoryMounts(Set("dataset-1:d4t4", "model-1:m0d3l")))
     ),
     inputs = Seq(
       InputPort(PortIdentity(0), "left", disallowMultiLinks = true) -> everyType,
@@ -333,7 +332,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       operator("op").withPythonEnvironment(
         PythonEnvironmentRef.Resolved(PythonEnvironment("bare", Seq.empty))
       ),
-      operator("op").copy(repositoryMounts = Some(RepositoryMounts("/m", Set("r:c"))))
+      operator("op").copy(repositoryMounts = Some(RepositoryMounts(Set("r:c"))))
     ).foreach { op =>
       withClue(s"$op: ") {
         assertRoundTrips(contextOf(), planOf(Seq(op), Nil))
@@ -850,8 +849,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       pythonEnvironment = PythonEnvironmentRef.Resolved(
         PythonEnvironment("ml", Seq("numpy>=2.1.0", "tabulate==0.9.0"))
       ),
-      repositoryMounts =
-        Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:d4t4", "model-2:m0d3l")))
+      repositoryMounts = Some(RepositoryMounts(Set("dataset-1:d4t4", "model-2:m0d3l")))
     ),
     inputs = Seq(
       InputPort(PortIdentity(0), "in") -> goldenRow,
@@ -1064,7 +1062,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   }
 
   it should "refuse to save an operator that still holds a resource binding" in {
-    val binding: ResourceBinding = (_, _) => fail("saving a plan must not bind anything")
+    val binding: ResourceBinding = _ => fail("saving a plan must not bind anything")
     assertRefused(
       save(fullContext, fullPlanWithUdf(_.withResourceBinding(Some(binding))))
     )("udf-main", "never resolved")
@@ -1493,7 +1491,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "output port 0 of operator udf-main appears twice"
     )
     assertUnreadable(
-      withStoredOp(udf.id)(_.update(_.repositoryMounts.locators :+= "dataset-1:d4t4"))
+      withStoredOp(udf.id)(_.update(_.repositoryMounts :+= "dataset-1:d4t4"))
     )(
       "Repository dataset-1:d4t4 of operator udf-main appears twice"
     )
@@ -1528,21 +1526,15 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
-  it should "refuse mounts that RepositoryMounts refuses" in {
-    assertUnreadable(withStoredOp(udf.id)(_.update(_.repositoryMounts.root := " ")))(
-      "udf-main cannot mount",
-      "no directory"
-    )
-    assertUnreadable(withStoredOp(udf.id)(_.update(_.repositoryMounts.locators := Nil)))(
-      "udf-main cannot mount",
-      "name no repository"
-    )
-    assertUnreadable(
-      withStoredOp(udf.id)(_.update(_.repositoryMounts.locators := Seq("no-commit")))
-    )(
-      "udf-main cannot mount",
-      "Invalid mount locator 'no-commit'"
-    )
+  it should "refuse mounts that RepositoryMounts refuses, and read an operator that names none as mounting none" in {
+    Seq("no-commit", "../..:d4t4", "dataset-1:../etc").foreach { locator =>
+      assertUnreadable(withStoredOp(udf.id)(_.update(_.repositoryMounts := Seq(locator))))(
+        "udf-main cannot mount",
+        s"Invalid mount locator '$locator'"
+      )
+    }
+    val none = PhysicalPlanCodec.decode(withStoredOp(udf.id)(_.update(_.repositoryMounts := Nil)))
+    assert(none.plan.getOperator(udf.id).repositoryMounts.isEmpty)
   }
 
   it should "refuse a Python environment pip may not read" in {
@@ -1714,6 +1706,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "\"isLoopStart\":true",
       "\"warehouse\":\"lake-wh\"",
       "\"suggestedWorkerNum\":3",
+      "\"repositoryMounts\":[\"dataset-1:d4t4\",\"model-1:m0d3l\"]",
       "\"pythonEnvironment\":{\"name\":\"ml ünï\",\"requirements\":[\"numpy>=2.1.0\"," +
         "\"tabulate==0.9.0\",\"typing-extensions\"]}",
       "\"replay\":{\"sourceExecutionId\":\"40\",\"logLocation\":\"file:///var/texera/logs/7/40/\"," +
@@ -1953,7 +1946,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   }
 
   it should "refuse to save a change to an operator that holds a resource binding, has no executor or belongs to another execution, or under a blank id" in {
-    val binding: ResourceBinding = (_, _) => fail("saving a change must not bind anything")
+    val binding: ResourceBinding = _ => fail("saving a change must not bind anything")
     assertRefused(
       PhysicalPlanCodec.encodeUpdate(
         executionId,
@@ -1995,16 +1988,18 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertUpdateUnreadable(validUpdate.withOpExecInitInfo(OpExecInitInfo.Empty))(
       "The update of operator udf-main gives it no executor."
     )
-    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts.locators := Nil))(
+    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts := Seq("../..:d4t4")))(
       "udf-main cannot mount",
-      "name no repository"
+      "Invalid mount locator '../..:d4t4'"
     )
-    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts.root := ""))(
-      "udf-main cannot mount",
-      "no directory"
-    )
-    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts.locators :+= "dataset-1:d4t4"))(
+    assertUpdateUnreadable(validUpdate.update(_.repositoryMounts :+= "dataset-1:d4t4"))(
       "Repository dataset-1:d4t4 of operator udf-main appears twice"
+    )
+    assert(
+      PhysicalPlanCodec
+        .decodeUpdate(validUpdate.update(_.repositoryMounts := Nil))
+        .repositoryMounts
+        .isEmpty
     )
   }
 

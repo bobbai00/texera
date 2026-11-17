@@ -31,7 +31,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 
-import java.nio.file.Path
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 class PhysicalOpSpec extends AnyFlatSpec {
@@ -197,13 +196,13 @@ class PhysicalOpSpec extends AnyFlatSpec {
   /** A binding that counts how often it is forced. */
   private class CountingBinding extends ResourceBinding {
     var forced = 0
-    override def bind(resolver: RepositoryVersionResolver, mountRoot: Path): BoundResources = {
+    override def bind(resolver: RepositoryVersionResolver): BoundResources = {
       forced += 1
       BoundResources(OpExecWithCode("bound", "python"), Set("dataset-1:abc123"))
     }
   }
 
-  private val mounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
+  private val mounts = RepositoryMounts(Set("dataset-1:abc123"))
 
   "PhysicalOp" should "name nothing to mount and hold no binding by default" in {
     val op = newOp("a")
@@ -309,7 +308,6 @@ class PhysicalOpSpec extends AnyFlatSpec {
       .withResourceBinding(Some(binding))
     val json = objectMapper.readTree(objectMapper.writeValueAsString(op))
     val written = json.get("repositoryMounts")
-    assert(written.get("root").asText() == "/mnt/texera-mounts", s"no root in $json")
     assert(
       written.get("locators").elements().asScala.map(_.asText()).toList == List(
         "dataset-1:abc123"

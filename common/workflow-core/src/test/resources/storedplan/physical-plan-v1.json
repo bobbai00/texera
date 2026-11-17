@@ -381,13 +381,10 @@
         }
       ],
       "suggestedWorkerNum": 2,
-      "repositoryMounts": {
-        "root": "/mnt/texera-mounts",
-        "locators": [
-          "dataset-1:d4t4",
-          "model-2:m0d3l"
-        ]
-      },
+      "repositoryMounts": [
+        "dataset-1:d4t4",
+        "model-2:m0d3l"
+      ],
       "pythonEnvironment": {
         "name": "ml",
         "requirements": [

@@ -22,10 +22,8 @@ package org.apache.texera.amber.operator.udf
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.executor.OpExecWithCode
-import org.apache.texera.amber.core.storage.{RepositoryMountManager, RepositoryVersionResolver}
+import org.apache.texera.amber.core.storage.RepositoryVersionResolver
 import org.apache.texera.amber.core.workflow.{BoundResources, RepositoryMounts, ResourceBinding}
-
-import _root_.java.nio.file.Path
 
 /** Shared serialized UI-parameter property, and the datasets and models its values name. */
 trait UdfUiParameterSupport {
@@ -51,7 +49,8 @@ trait UdfUiParameterSupport {
   /**
     * What the plan made to run pins for this UDF, None when no parameter names a dataset or
     * model: each version path resolved to its repository commit, and the code rebuilt with the
-    * directory that commit is mounted at in the path's place.
+    * commit's locator in the path's place. The computing unit that runs the plan puts the
+    * directory it mounts the commit at there ([[UdfRepositoryDirectories]]).
     */
   protected final def resourceBinding(code: String): Option[ResourceBinding] =
     Option.when(resourceParameters(uiParameters).nonEmpty) {
@@ -59,21 +58,18 @@ trait UdfUiParameterSupport {
       val parameters = uiParameters
       val language = uiParameterLanguage
       new ResourceBinding {
-        override def bind(
-            resolver: RepositoryVersionResolver,
-            mountRoot: Path
-        ): BoundResources = {
+        override def bind(resolver: RepositoryVersionResolver): BoundResources = {
           val bound = parameters.map { parameter =>
             if (!isResource(parameter)) (parameter, None)
             else {
               val (repositoryName, commitHash) =
                 resolver.resolve(selectedVersionPath(parameter))
               val locator = RepositoryMounts.locator(repositoryName, commitHash)
-              val mounted = new UiUDFParameter
-              mounted.attribute = parameter.attribute
-              mounted.inputType = parameter.inputType
-              mounted.value = RepositoryMountManager.mountPoint(mountRoot, locator).toString
-              (mounted, Some(locator))
+              val pinned = new UiUDFParameter
+              pinned.attribute = parameter.attribute
+              pinned.inputType = parameter.inputType
+              pinned.value = locator
+              (pinned, Some(locator))
             }
           }
           BoundResources(

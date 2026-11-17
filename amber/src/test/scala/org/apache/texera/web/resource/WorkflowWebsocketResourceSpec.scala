@@ -64,7 +64,6 @@ import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.Coordi
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.e2e.TestUtils
-import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -1100,7 +1099,7 @@ class WorkflowWebsocketResourceSpec
         resultService,
         executionStateStore,
         errorHandler,
-        Some(TestOperators.fixtureMountRoot)
+        Some(TestUtils.fixtureUnitMountRoot)
       ) {
         override protected def createAmberRuntime(
             workflow: EngineWorkflow,

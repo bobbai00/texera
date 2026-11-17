@@ -51,7 +51,7 @@ class RepositoryMountManager(
 
   /**
     * The directory this computing unit mounts repositories under, or None when it can mount
-    * none. A plan made here writes its code against it.
+    * none. The code it runs reads each repository from a directory below it.
     */
   def mountRoot: Option[Path] =
     env(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
@@ -71,23 +71,14 @@ class RepositoryMountManager(
     RepositoryMountManager.mountPoint(inPodMountRoot, locator)
 
   /**
-    * Mount every repository an operator's code reads, deduplicated, in one place rather than
-    * once per worker — after checking that the code expects the mounts where this pod puts them
-    * (see [[RepositoryMountManager.requireMountableUnder]]).
+    * Mount every locator, deduplicated, in one place rather than once per worker.
     *
     * Warning: a FUSE mount is visible only in the mount namespace of the process that receives
     * it, which is fine while a region's controller and workers share one pod. Were workers ever
     * to become separate pods, this step — and only this step — would have to be dispatched to
     * each of them.
-    *
-    * @param mounts the repositories to mount, and the root the operators' code reads them under
-    * @throws IllegalStateException if this pod mounts no repository, or mounts them under another
-    *                               root than the code reads them under
     */
-  def ensureAllMounted(mounts: RepositoryMounts): Unit = {
-    RepositoryMountManager.requireMountableUnder(mounts, mountRoot)
-    mounts.locators.foreach(ensureMounted)
-  }
+  def ensureAllMounted(locators: Set[String]): Unit = locators.foreach(ensureMounted)
 
   /** Mount `locator` if it is not already mounted, and return its in-pod path. */
   def ensureMounted(locator: String): Path =
@@ -142,40 +133,14 @@ object RepositoryMountManager
 
   /**
     * Where `locator` is, or will be, readable on a computing unit that mounts repositories under
-    * `root`. Pure: it neither mounts nor checks anything, because a plan writes this path into an
-    * operator's code long before the mount happens.
+    * `root`. Pure: it neither mounts nor checks anything, because an operator's code is given
+    * this path before the region is launched and the mount actually happens.
     *
     * @throws IllegalArgumentException if `locator` is not "<repositoryName>:<commitHash>"
     */
   def mountPoint(root: Path, locator: String): Path = {
     val (repository, commit) = RepositoryMounts.parseLocator(locator)
     root.resolve(repository).resolve(commit)
-  }
-
-  /**
-    * Fails unless code that reads `mounts` under their root finds them on a computing unit that
-    * mounts repositories under `unitRoot`. The code was written when its plan was made, so a unit
-    * with another root would hand the operator directories that never appear. Two spellings of
-    * one directory are the same root.
-    *
-    * @throws IllegalStateException if the unit mounts no repository, or mounts them elsewhere
-    */
-  def requireMountableUnder(mounts: RepositoryMounts, unitRoot: Option[Path]): Unit = {
-    val expected = Paths.get(mounts.root).normalize()
-    val root = unitRoot
-      .map(_.normalize())
-      .getOrElse(
-        throw new IllegalStateException(
-          s"${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT} is not set in this computing unit, " +
-            s"so it cannot mount ${mounts.locators.toSeq.sorted.mkString(", ")}."
-        )
-      )
-    if (root != expected) {
-      throw new IllegalStateException(
-        s"The plan's code reads its datasets and models under $expected, but this computing " +
-          s"unit mounts them under $root (${EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT})."
-      )
-    }
   }
 }
 

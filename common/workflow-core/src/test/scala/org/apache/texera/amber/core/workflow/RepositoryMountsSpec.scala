@@ -24,53 +24,51 @@ import org.scalatest.flatspec.AnyFlatSpec
 
 class RepositoryMountsSpec extends AnyFlatSpec {
 
-  private val root = "/mnt/texera-mounts"
   private val badLocators = Seq("dataset-1", "", ":abc", "dataset-1:", null)
 
-  "RepositoryMounts" should "hold the root and the repositories read under it" in {
-    val mounts = RepositoryMounts(root, Set("dataset-1:abc123", "model-1:def456"))
-    assert(mounts.root == root)
+  // What would name a directory outside the one a repository is mounted at, or read as an option.
+  private val unsafeLocators = Seq(
+    "../..:abc123",
+    "/etc:abc123",
+    "dataset-1:../../etc",
+    "dataset-1:abc/123",
+    "data set:abc123",
+    "..:abc123",
+    "dataset-1:.",
+    "-o:abc123",
+    "dataset-1:abc:123",
+    "dataset-1:abc\n123",
+    "datasét-1:abc123"
+  )
+
+  "RepositoryMounts" should "hold the repositories an operator's code reads" in {
+    val mounts = RepositoryMounts(Set("dataset-1:abc123", "model-1:def456"))
     assert(mounts.locators == Set("dataset-1:abc123", "model-1:def456"))
   }
 
-  it should "refuse repositories with no root to read them under" in {
-    for (blank <- Seq("", "   ", null)) {
-      val failure = intercept[IllegalArgumentException] {
-        RepositoryMounts(blank, Set("dataset-1:abc123"))
-      }
-      assert(failure.getMessage.contains("dataset-1:abc123"), failure.getMessage)
-    }
-  }
-
-  it should "refuse a root with no repository under it" in {
+  it should "refuse to name no repository" in {
     for (nothing <- Seq(Set.empty[String], null)) {
-      val failure = intercept[IllegalArgumentException](RepositoryMounts(root, nothing))
-      assert(failure.getMessage.contains(root), failure.getMessage)
+      val failure = intercept[IllegalArgumentException](RepositoryMounts(nothing))
+      assert(failure.getMessage == "requirement failed: Mounts name no repository.")
     }
   }
 
   it should "refuse anything among its repositories that is not a locator" in {
-    for (bad <- badLocators) {
+    for (bad <- badLocators ++ unsafeLocators) {
       val failure = intercept[IllegalArgumentException] {
-        RepositoryMounts(root, Set("dataset-1:abc123", bad))
+        RepositoryMounts(Set("dataset-1:abc123", bad))
       }
       assert(failure.getMessage.contains(s"'$bad'"), failure.getMessage)
     }
   }
 
-  it should "read back from JSON as written, and refuse JSON that names no root" in {
-    val mounts = RepositoryMounts(root, Set("dataset-1:abc123", "model-1:def456"))
+  it should "read back from JSON as written, and refuse JSON that names no repository" in {
+    val mounts = RepositoryMounts(Set("dataset-1:abc123", "model-1:def456"))
     val json = objectMapper.writeValueAsString(mounts)
     assert(objectMapper.readValue(json, classOf[RepositoryMounts]) == mounts)
 
     // A reader builds the value through its constructor, so it cannot make one the type refuses.
-    for (
-      invalid <- Seq(
-        """{"root":"","locators":["dataset-1:abc123"]}""",
-        """{"locators":["dataset-1:abc123"]}""",
-        s"""{"root":"$root","locators":[]}"""
-      )
-    ) {
+    for (invalid <- Seq("""{"locators":[]}""", """{"locators":["../..:abc123"]}""")) {
       val failure = intercept[Exception](objectMapper.readValue(invalid, classOf[RepositoryMounts]))
       val causes = Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).toList
       assert(causes.exists(_.isInstanceOf[IllegalArgumentException]), s"$invalid: $failure")
@@ -83,8 +81,13 @@ class RepositoryMountsSpec extends AnyFlatSpec {
     assert(RepositoryMounts.parseLocator(locator) == (("dataset-1", "abc123")))
   }
 
-  "RepositoryMounts.parseLocator" should "split at the first colon only" in {
-    assert(RepositoryMounts.parseLocator("dataset-1:abc:123") == (("dataset-1", "abc:123")))
+  "RepositoryMounts.parseLocator" should
+    "take the names repositories and commits have: letters, digits, '.', '_' and '-'" in {
+    assert(
+      RepositoryMounts
+        .parseLocator("Model_7.v2-a:0f3c9A_b.1-2") == (("Model_7.v2-a", "0f3c9A_b.1-2"))
+    )
+    assert(RepositoryMounts.parseLocator("d:c") == (("d", "c")))
   }
 
   it should "reject a locator that is not <repositoryName>:<commitHash>" in {
@@ -93,25 +96,14 @@ class RepositoryMountsSpec extends AnyFlatSpec {
     }
   }
 
-  "RepositoryMounts.byRoot" should
-    "name each root once, with every repository read under it" in {
-    val merged = RepositoryMounts.byRoot(
-      Seq(
-        RepositoryMounts(root, Set("dataset-1:abc123")),
-        RepositoryMounts("/plan/root", Set("model-1:def456")),
-        RepositoryMounts(root, Set("dataset-1:abc123", "dataset-2:fed321"))
+  it should "reject a repository or a commit that would name another directory, or an option" in {
+    for (unsafe <- unsafeLocators) {
+      val failure = intercept[IllegalArgumentException](RepositoryMounts.parseLocator(unsafe))
+      assert(
+        failure.getMessage == s"Invalid mount locator '$unsafe'; expected " +
+          "<repositoryName>:<commitHash>, each of letters, digits, '.', '_' and '-', starting " +
+          "with a letter or digit."
       )
-    )
-    assert(
-      merged.toSet == Set(
-        RepositoryMounts(root, Set("dataset-1:abc123", "dataset-2:fed321")),
-        RepositoryMounts("/plan/root", Set("model-1:def456"))
-      )
-    )
-    assert(merged.size == 2)
-  }
-
-  it should "merge nothing into nothing" in {
-    assert(RepositoryMounts.byRoot(Seq.empty).isEmpty)
+    }
   }
 }

@@ -48,6 +48,12 @@ object PythonUdfUiParameterInjector {
     pyb"${parameter.attribute.getName}: $encodedValue"
   }
 
+  /** The expression the hook holds for a parameter whose value is `value`. */
+  private[udf] def stringExpression(value: String): String = {
+    val encodedValue: EncodableString = value
+    pyb"$encodedValue".encode
+  }
+
   private def buildInjectedParametersMap(
       uiParameters: List[UiUDFParameter]
   ): PythonTemplateBuilder = {

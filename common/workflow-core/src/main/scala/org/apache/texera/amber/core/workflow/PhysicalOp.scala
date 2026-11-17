@@ -220,8 +220,8 @@ case class PhysicalOp(
     // the Python environment the operator's workers run in; one the operator asks for by name is
     // resolved by the compile that makes a plan to run (see PythonEnvironmentRef)
     pythonEnvironment: PythonEnvironmentRef = PythonEnvironmentRef.EngineDefault,
-    // the repositories opExecInitInfo's code reads, and the directory it reads them under:
-    // fixed when the plan was made, and mounted by the engine before the operator runs
+    // the repositories opExecInitInfo's code reads: named when the plan was made, and mounted
+    // by the computing unit that runs it before the operator runs
     repositoryMounts: Option[RepositoryMounts] = None,
     // datasets and models the operator names that no plan has pinned yet: a compile-time
     // callback, forced and cleared by the compile that makes a plan to run (see ResourceBinding)

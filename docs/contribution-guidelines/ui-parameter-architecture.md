@@ -32,7 +32,7 @@ UI parameters use one metadata contract with language-specific syntax and runtim
 | Declaration parsers | `python-ui-udf-parameters-parser.ts`, `r-ui-udf-parameters-parser.ts`, `java-ui-udf-parameters-parser.ts` | Read and edit each language's syntax; delegate metadata policy |
 | Editor synchronization | `UiUdfParametersSyncService` | Observe Yjs and preserve user values by name and resource kind |
 | Compilation | Python/R/Java injector adapters | Validate the shared model and encode values using the appropriate runtime API |
-| Resource binding | `UdfUiParameterSupport` | Resolve selected versions into mount directories at execution time |
+| Resource binding | `UdfUiParameterSupport`, `UdfRepositoryDirectories` | Pin selected versions to repository commits when a plan is made to run; the computing unit that runs it gives the code each commit's mount directory |
 | Runtime | PyTexera SDK / `texera-rudf` SDK / JVM | Construct native values and maintain per-operator state |
 
 ```text

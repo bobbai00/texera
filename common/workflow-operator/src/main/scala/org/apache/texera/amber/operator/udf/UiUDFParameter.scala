@@ -47,8 +47,8 @@ class UiUDFParameter {
   /**
     * The Texera resource the value names — "model" or "dataset" — or empty for free text.
     * Inferred from the UDF's source (`value=Resource.MODEL`), like `attribute`. A resource value
-    * is a version path; the plan made to run gives the code the directory that version is
-    * mounted at in its place.
+    * is a version path; the code that runs is given the directory that version is mounted at in
+    * its place.
     */
   @JsonProperty()
   @JsonSchemaTitle("Input type")

@@ -26,8 +26,6 @@ import org.apache.texera.amber.core.storage.{
   ScanFileResolver
 }
 
-import java.nio.file.Path
-
 /**
   * What a compile binds a plan to, on behalf of the user and the deployment the plan is made
   * for: the files, datasets, models and Python environments its operators name, and the site's
@@ -42,13 +40,6 @@ import java.nio.file.Path
   *                     them. Only a compile that makes a plan to run asks it.
   * @param repositories pins the dataset and model versions operators name, for the plan's user.
   *                     Only a compile that makes a plan to run asks it.
-  * @param mountRoot    the directory computing units mount repositories under. The plan's code
-  *                     reads each version from below it, and the plan records it, as text,
-  *                     beside what to mount
-  *                     ([[org.apache.texera.amber.core.workflow.RepositoryMounts.root]]): the
-  *                     engine checks its own root against that before mounting. None where
-  *                     nothing is mounted: a plan made to run that reads a dataset or model
-  *                     then fails.
   * @param settings     the site's settings the plan is compiled under.
   * @param environments resolves the Python environments operators name to what the plan's user
   *                     keeps under those names. Only a compile that makes a plan to run asks it.
@@ -58,7 +49,6 @@ final case class RunBindings(
     inputLinker: InputLinker,
     lister: DatasetVersionLister,
     repositories: RepositoryVersionResolver,
-    mountRoot: Option[Path],
     settings: CompileSettings,
     environments: PythonEnvironmentResolver
 )
@@ -69,8 +59,8 @@ object RunBindings {
     * The bindings of a compile that makes no plan to run, as the editor's is: it resolves files
     * and applies the site's settings, links no file ([[InputLinker.Unavailable]]), lists no
     * dataset version ([[DatasetVersionLister.Unavailable]]), pins no dataset or model version
-    * ([[RepositoryVersionResolver.Unavailable]], and no mount root) and resolves no Python
-    * environment ([[PythonEnvironmentResolver.Unavailable]]).
+    * ([[RepositoryVersionResolver.Unavailable]]) and resolves no Python environment
+    * ([[PythonEnvironmentResolver.Unavailable]]).
     */
   def forEditing(files: ScanFileResolver, settings: CompileSettings): RunBindings =
     RunBindings(
@@ -78,7 +68,6 @@ object RunBindings {
       inputLinker = InputLinker.Unavailable,
       lister = DatasetVersionLister.Unavailable,
       repositories = RepositoryVersionResolver.Unavailable,
-      mountRoot = None,
       settings = settings,
       environments = PythonEnvironmentResolver.Unavailable
     )

@@ -21,8 +21,9 @@ package org.apache.texera.web.service
 
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ExecutionIdentity,
@@ -44,6 +45,8 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   UpdateExecutorRequest,
   WorkflowReconfigureRequest
 }
+import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.response.{
   ModifyLogicCompletedEvent,
@@ -163,10 +166,10 @@ class ExecutionReconfigurationServiceSpec
         mountRoot = None
       ) {
     val captured: mutable.ArrayBuffer[WorkflowReconfigureRequest] = mutable.ArrayBuffer.empty
-    val mounted: mutable.ArrayBuffer[RepositoryMounts] = mutable.ArrayBuffer.empty
+    val mounted: mutable.ArrayBuffer[Set[String]] = mutable.ArrayBuffer.empty
     override protected def dispatch(request: WorkflowReconfigureRequest): Unit =
       captured += request
-    override protected def ensureMounted(mounts: RepositoryMounts): Unit = mounted += mounts
+    override protected def ensureMounted(locators: Set[String]): Unit = mounted += locators
     override protected def registerWorkerCompletionCallback(): Unit = ()
     override protected def registerCompletionDiffHandler(): Unit = ()
   }
@@ -236,11 +239,45 @@ class ExecutionReconfigurationServiceSpec
     ).withInputPorts(List(InputPort())).withOutputPorts(List(OutputPort()))
 
   private val changedExecutor = OpExecWithClassName("limit.Class", """{"limit":7}""")
-  private val changedMounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
 
-  /** The change the Dashboard makes of `runningLimit`: a new executor, reading a dataset. */
-  private val changedLimit: PhysicalOp =
-    runningLimit.copy(opExecInitInfo = changedExecutor, repositoryMounts = Some(changedMounts))
+  /** The change the Dashboard makes of `runningLimit`: a new executor. */
+  private val changedLimit: PhysicalOp = runningLimit.copy(opExecInitInfo = changedExecutor)
+
+  private val udfCode =
+    """from pytexera import *
+      |
+      |class ProcessTupleOperator(UDFOperatorV2):
+      |    def process_tuple(self, tuple_, port):
+      |        yield tuple_
+      |""".stripMargin
+
+  /** A running UDF that reads no dataset, as the plan read back holds it. */
+  private val runningUdf: PhysicalOp =
+    PhysicalOp(
+      id = PhysicalOpIdentity(OperatorIdentity("udf-a"), "main"),
+      workflowId = testWorkflowId,
+      executionId = testExecutionId,
+      opExecInitInfo = OpExecWithCode(udfCode, "python")
+    ).withInputPorts(List(InputPort())).withOutputPorts(List(OutputPort()))
+
+  private val datasetLocator = "dataset-1:abc123"
+  private val unitMountRoot = Paths.get("/mnt/texera-mounts")
+
+  /** The UDF's code with a parameter DATA, whose value, as the injector writes it, is `data`. */
+  private def udfReading(data: String): OpExecWithCode = {
+    val parameter = new UiUDFParameter
+    parameter.attribute = new Attribute("DATA", AttributeType.STRING)
+    parameter.inputType = "dataset"
+    parameter.value = data
+    OpExecWithCode(PythonUdfUiParameterInjector.inject(udfCode, List(parameter)), "python")
+  }
+
+  /** The change the Dashboard makes of `runningUdf`: code that reads a dataset it pinned. */
+  private val changedUdf: PhysicalOp =
+    runningUdf.copy(
+      opExecInitInfo = udfReading(datasetLocator),
+      repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
+    )
 
   /** The plan table, holding the plan row the Dashboard writes when it creates the execution. */
   private lazy val storedPlanTable: URI = {
@@ -302,10 +339,10 @@ class ExecutionReconfigurationServiceSpec
     */
   private class StoredChangeService(
       stateStore: ExecutionStateStore,
-      physicalOps: Set[PhysicalOp] = Set(runningLimit),
+      physicalOps: Set[PhysicalOp] = Set(runningLimit, runningUdf),
       planUri: URI = planTable,
       read: Option[String => PlanRecord] = None,
-      mountRoot: Option[Path] = Some(Paths.get(changedMounts.root))
+      mountRoot: Option[Path] = Some(unitMountRoot)
   ) extends ExecutionReconfigurationService(
         client = null,
         stateStore,
@@ -315,10 +352,10 @@ class ExecutionReconfigurationServiceSpec
         mountRoot
       ) {
     val captured: mutable.ArrayBuffer[WorkflowReconfigureRequest] = mutable.ArrayBuffer.empty
-    val mounted: mutable.ArrayBuffer[RepositoryMounts] = mutable.ArrayBuffer.empty
+    val mounted: mutable.ArrayBuffer[Set[String]] = mutable.ArrayBuffer.empty
     override protected def dispatch(request: WorkflowReconfigureRequest): Unit =
       captured += request
-    override protected def ensureMounted(mounts: RepositoryMounts): Unit = mounted += mounts
+    override protected def ensureMounted(locators: Set[String]): Unit = mounted += locators
     override protected def registerWorkerCompletionCallback(): Unit = ()
     override protected def registerCompletionDiffHandler(): Unit = ()
     override protected def readUpdate(planUri: URI, updateId: String): PlanRecord =
@@ -332,34 +369,33 @@ class ExecutionReconfigurationServiceSpec
     "queue a change the Dashboard stored, which resuming dispatches with its executor and mounts" in {
     val stateStore = new ExecutionStateStore
     val service = new StoredChangeService(stateStore)
-    val first = storeChange(changedLimit)
-    val second =
-      storeChange(runningLimit.copy(opExecInitInfo = OpExecWithClassName("limit.Class", "{}")))
+    val first = storeChange(changedUdf)
+    val second = storeChange(changedLimit)
 
-    val accepted = ModifyLogicResponse("limit-a", isValid = true, "")
-    service.applyStoredUpdate(first, asCreator) shouldBe accepted
-    service.applyStoredUpdate(second, asCreator) shouldBe accepted
+    service.applyStoredUpdate(first, asCreator) shouldBe
+      ModifyLogicResponse("udf-a", isValid = true, "")
+    service.applyStoredUpdate(second, asCreator) shouldBe
+      ModifyLogicResponse("limit-a", isValid = true, "")
 
     // The running operator, with the change's executor and what its code reads, in the order the
     // changes came: a user can change several operators during one pause, so the queue has to
-    // accumulate. The rest of the operator stays as the running plan has it.
+    // accumulate. The rest of the operator stays as the running plan has it, and the code holds
+    // the directory this unit mounts the dataset at where the change names the dataset.
+    val readingMounted = udfReading(unitMountRoot.resolve("dataset-1").resolve("abc123").toString)
     val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
-    queued should have size 2
-    queued.head shouldBe changedLimit
+    queued shouldBe List(changedUdf.copy(opExecInitInfo = readingMounted), changedLimit)
     queued.head.copy(
-      opExecInitInfo = runningLimit.opExecInitInfo,
-      repositoryMounts = runningLimit.repositoryMounts
-    ) shouldBe runningLimit
-    queued(1).opExecInitInfo shouldBe OpExecWithClassName("limit.Class", "{}")
-    queued(1).repositoryMounts shouldBe None
+      opExecInitInfo = runningUdf.opExecInitInfo,
+      repositoryMounts = None
+    ) shouldBe runningUdf
 
     service.performReconfigurationOnResume()
 
-    service.mounted shouldBe Seq(changedMounts)
+    service.mounted shouldBe Seq(Set(datasetLocator))
     service.captured should have size 1
     service.captured.head.reconfiguration shouldBe Seq(
-      UpdateExecutorRequest(runningLimit.id, changedExecutor),
-      UpdateExecutorRequest(runningLimit.id, OpExecWithClassName("limit.Class", "{}"))
+      UpdateExecutorRequest(runningUdf.id, readingMounted),
+      UpdateExecutorRequest(runningLimit.id, changedExecutor)
     )
   }
 
@@ -456,44 +492,59 @@ class ExecutionReconfigurationServiceSpec
     stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
   }
 
-  it should "refuse a change whose code reads datasets where this unit does not mount them" in {
-    val change = storeChange(changedLimit)
-    Seq(
-      Some(Paths.get("/mnt/elsewhere")) -> (
-        "The plan's code reads its datasets and models under /mnt/texera-mounts, but this " +
-          "computing unit mounts them under /mnt/elsewhere (TEXERA_MOUNT_IN_POD_ROOT)."
+  it should "refuse a change that reads a dataset this unit cannot give its code" in {
+    val mounts = Some(RepositoryMounts(Set(datasetLocator)))
+    val refusals: Seq[(PhysicalOp, Option[Path], ModifyLogicResponse)] = Seq(
+      // On a unit that mounts none.
+      (
+        changedUdf,
+        None,
+        ModifyLogicResponse(
+          "udf-a",
+          isValid = false,
+          "Operator udf-a reads datasets or models (dataset-1:abc123), which this computing " +
+            "unit cannot mount."
+        )
       ),
-      None -> (
-        "TEXERA_MOUNT_IN_POD_ROOT is not set in this computing unit, so it cannot mount " +
-          "dataset-1:abc123."
+      // Whose code does not name the dataset the change says it reads.
+      (
+        runningUdf.copy(repositoryMounts = mounts),
+        Some(unitMountRoot),
+        ModifyLogicResponse(
+          "udf-a",
+          isValid = false,
+          "The code of operator udf-a does not name dataset-1:abc123, which its plan says it " +
+            "reads."
+        )
+      ),
+      // Of an operator that has no code to name it.
+      (
+        changedLimit.copy(repositoryMounts = mounts),
+        Some(unitMountRoot),
+        ModifyLogicResponse(
+          "limit-a",
+          isValid = false,
+          "Operator limit-a reads datasets or models (dataset-1:abc123), but it is no UDF " +
+            "whose code names them."
+        )
       )
-    ).foreach {
-      case (unitRoot, why) =>
-        withClue(s"$unitRoot: ") {
+    )
+    refusals.foreach {
+      case (change, unitRoot, refusal) =>
+        withClue(s"${change.id.logicalOpId.id} under $unitRoot: ") {
           val stateStore = new ExecutionStateStore
           val service = new StoredChangeService(stateStore, mountRoot = unitRoot)
 
-          service.applyStoredUpdate(change, asCreator) shouldBe
-            ModifyLogicResponse("limit-a", isValid = false, why)
+          service.applyStoredUpdate(storeChange(change), asCreator) shouldBe refusal
           // Nothing is queued, so a resume does not fail the run on it.
           stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
           service.performReconfigurationOnResume()
           service.captured shouldBe empty
         }
     }
-    // Two spellings of the unit's root are one root; a change that reads nothing needs none.
-    val trailing = new StoredChangeService(
-      new ExecutionStateStore,
-      mountRoot = Some(Paths.get("/mnt/texera-mounts/"))
-    )
-    trailing.applyStoredUpdate(change, asCreator).isValid shouldBe true
+    // A change that reads nothing needs no mount.
     val nowhere = new StoredChangeService(new ExecutionStateStore, mountRoot = None)
-    nowhere
-      .applyStoredUpdate(
-        storeChange(runningLimit.copy(opExecInitInfo = changedExecutor)),
-        asCreator
-      )
-      .isValid shouldBe true
+    nowhere.applyStoredUpdate(storeChange(changedLimit), asCreator).isValid shouldBe true
   }
 
   it should "refuse a change of an execution with no plan table, or one the lake cannot answer" in {
@@ -532,20 +583,22 @@ class ExecutionReconfigurationServiceSpec
     state.completedReconfigurations shouldBe empty
   }
 
-  it should "mount what a changed operator names, under its plan's root, and send its bound code" in {
+  it should "mount what a changed operator names, and send its bound code" in {
     val stateStore = new ExecutionStateStore()
     val service = new RecordingService(stateStore)
     val bound = OpExecWithClassName("bound.Class", "")
-    val mounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
     // As an accepted change queues it: bound already, holding only data.
-    val op = mkPhysicalOp("op-1").copy(opExecInitInfo = bound, repositoryMounts = Some(mounts))
+    val op = mkPhysicalOp("op-1").copy(
+      opExecInitInfo = bound,
+      repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
+    )
     stateStore.reconfigurationStore.updateState(_ =>
       ExecutionReconfigurationStore(unscheduledReconfigurations = List(op))
     )
 
     service.performReconfigurationOnResume()
 
-    service.mounted shouldBe Seq(mounts)
+    service.mounted shouldBe Seq(Set(datasetLocator))
     service.captured.head.reconfiguration.map(_.newExecInitInfo) shouldBe Seq(bound)
   }
 

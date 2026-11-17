@@ -23,7 +23,7 @@ import com.twitter.util.{Future, JavaTimer, Time, Timer}
 import org.apache.pekko.actor.{ActorSystem, Props}
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.{RepositoryMountManager, VFSURIFactory}
+import org.apache.texera.amber.core.storage.VFSURIFactory
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
 import org.apache.texera.amber.core.workflow.{
   GlobalPortIdentity,
@@ -50,7 +50,6 @@ import org.apache.texera.amber.engine.architecture.scheduling.config.{
 import org.apache.texera.amber.engine.architecture.worker.statistics.WorkerState
 import org.apache.texera.amber.engine.common.{AmberRuntime, RecordingInlineTimer}
 import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
-import org.apache.texera.common.config.EnvironmentalVariable
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 
@@ -108,40 +107,37 @@ class RegionExecutionManagerSpec
     assertControlChannelsAreRemoved(fixture)
   }
 
-  /** An operator as a plan made to run holds it: final code, what to mount, and where. */
+  /** An operator as a computing unit runs it: its code, and what the code reads mounted. */
   private def boundSourceOp(
       name: String = "test-op",
-      mountRoot: String = "/mnt/texera-mounts",
       locators: Set[String] = Set("dataset-1:abc123")
   ): PhysicalOp =
     createSourceOp(name).copy(
       opExecInitInfo = OpExecWithClassName("bound"),
-      repositoryMounts = Some(RepositoryMounts(mountRoot, locators))
+      repositoryMounts = Some(RepositoryMounts(locators))
     )
 
   it should "mount the region's repositories before initializing any executor" in {
     // What had been sent to workers at the moment the mount was asked for.
-    val mounts = mutable.ArrayBuffer[(RepositoryMounts, Seq[String])]()
+    val mounts = mutable.ArrayBuffer[(Set[String], Seq[String])]()
     var probe: CoordinatorRpcProbe = null
     val fixture = createSingleRegionFixture(
       endWorkerResponse = _ => None,
       physicalOp = boundSourceOp(),
-      ensureMounted = requested => mounts += ((requested, probe.methodTrace))
+      ensureMounted = locators => mounts += ((locators, probe.methodTrace))
     )
     probe = fixture.rpcProbe
 
     launchRegion(fixture.manager)
 
-    assert(
-      mounts.map(_._1) == Seq(RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123")))
-    )
+    assert(mounts.map(_._1) == Seq(Set("dataset-1:abc123")))
     assert(!mounts.head._2.contains(InitializeExecutor))
     assert(fixture.rpcProbe.methodTrace.contains(InitializeExecutor))
   }
 
-  it should "mount each root once, with every repository its operators read under it" in {
-    // Two operators read under one root, one reads nothing: one mount request, for both.
-    val mounts = mutable.ArrayBuffer[(RepositoryMounts, Seq[String])]()
+  it should "ask once for every repository the region's operators name" in {
+    // Two operators read repositories, one reads none: one request, for what both name.
+    val mounts = mutable.ArrayBuffer[(Set[String], Seq[String])]()
     var probe: CoordinatorRpcProbe = null
     val fixture = createMultiOpRegionFixture(
       Seq(
@@ -149,43 +145,15 @@ class RegionExecutionManagerSpec
         boundSourceOp("reads-b", locators = Set("dataset-1:abc123", "model-1:def456")),
         createSourceOp("reads-nothing")
       ),
-      ensureMounted = requested => mounts += ((requested, probe.methodTrace))
+      ensureMounted = locators => mounts += ((locators, probe.methodTrace))
     )
     probe = fixture.rpcProbe
 
     launchRegion(fixture.manager)
 
-    assert(
-      mounts.map(_._1) == Seq(
-        RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123", "model-1:def456"))
-      )
-    )
+    assert(mounts.map(_._1) == Seq(Set("dataset-1:abc123", "model-1:def456")))
     assert(!mounts.head._2.contains(InitializeExecutor))
     assert(fixture.rpcProbe.initializedWorkers.toSet == fixture.workerIds.toSet)
-  }
-
-  it should "mount each of several roots apart, before initializing any executor" in {
-    val mounts = mutable.ArrayBuffer[(RepositoryMounts, Seq[String])]()
-    var probe: CoordinatorRpcProbe = null
-    val fixture = createMultiOpRegionFixture(
-      Seq(
-        boundSourceOp("reads-a", locators = Set("dataset-1:abc123")),
-        boundSourceOp("reads-b", mountRoot = "/plan/root", locators = Set("model-1:def456"))
-      ),
-      ensureMounted = requested => mounts += ((requested, probe.methodTrace))
-    )
-    probe = fixture.rpcProbe
-
-    launchRegion(fixture.manager)
-
-    assert(
-      mounts.map(_._1).toSet == Set(
-        RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123")),
-        RepositoryMounts("/plan/root", Set("model-1:def456"))
-      )
-    )
-    assert(mounts.size == 2)
-    assert(mounts.forall(!_._2.contains(InitializeExecutor)))
   }
 
   it should "initialize executors with the code the plan holds" in {
@@ -213,31 +181,8 @@ class RegionExecutionManagerSpec
     assert(!fixture.rpcProbe.methodTrace.contains(InitializeExecutor))
   }
 
-  it should "fail the region before mounting when the plan's mount root is not this unit's" in {
-    val posted = mutable.ArrayBuffer[String]()
-    // This unit mounts under /mnt/texera-mounts, the plan's code reads /plan/root.
-    val unitMounts = new RepositoryMountManager(
-      Map(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT -> "/mnt/texera-mounts").get,
-      (url, _, _) => posted += url,
-      _ => false,
-      0
-    )
-    val fixture = createSingleRegionFixture(
-      endWorkerResponse = _ => None,
-      physicalOp = boundSourceOp(mountRoot = "/plan/root"),
-      ensureMounted = unitMounts.ensureAllMounted
-    )
-
-    val failure = intercept[IllegalStateException](launchRegion(fixture.manager))
-
-    assert(failure.getMessage.contains("/plan/root"), failure.getMessage)
-    assert(failure.getMessage.contains("/mnt/texera-mounts"), failure.getMessage)
-    assert(posted.isEmpty)
-    assert(!fixture.rpcProbe.methodTrace.contains(InitializeExecutor))
-  }
-
   it should "not mount anything for a region whose operators name nothing" in {
-    val mounts = mutable.ArrayBuffer[RepositoryMounts]()
+    val mounts = mutable.ArrayBuffer[Set[String]]()
     val fixture =
       createSingleRegionFixture(endWorkerResponse = _ => None, ensureMounted = mounts += _)
 
@@ -652,7 +597,7 @@ class RegionExecutionManagerSpec
       killRetryTimer: Timer = new JavaTimer(true),
       terminationTimeoutMs: Long = RegionExecutionManager.DefaultTerminationTimeoutMs,
       physicalOp: PhysicalOp = createSourceOp("test-op"),
-      ensureMounted: RepositoryMounts => Unit = _ => (),
+      ensureMounted: Set[String] => Unit = _ => (),
       beforeCleanup: () => Unit = () => ()
   ): SingleRegionFixture = {
     val workerId = createWorkerId(physicalOp)
@@ -710,7 +655,7 @@ class RegionExecutionManagerSpec
     */
   private def createMultiOpRegionFixture(
       ops: Seq[PhysicalOp],
-      ensureMounted: RepositoryMounts => Unit
+      ensureMounted: Set[String] => Unit
   ): MultiWorkerFixture = {
     val workerIds = ops.map(createWorkerId)
     def regionOf(regionId: Long): Region =

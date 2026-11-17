@@ -22,7 +22,12 @@ package org.apache.texera.amber.operator.udf
 import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalOp, PortIdentity, UnknownPartition}
+import org.apache.texera.amber.core.workflow.{
+  PhysicalOp,
+  PortIdentity,
+  RepositoryMounts,
+  UnknownPartition
+}
 import org.apache.texera.amber.operator.{LogicalOp, PortDescription}
 import org.apache.texera.amber.operator.metadata.OperatorInfo
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -137,8 +142,9 @@ private[udf] trait UdfDescriptorSpecSupport extends Matchers {
   /**
     * What compiling leaves when a parameter names a dataset or model: the compile-time view, whose
     * code holds each version path, nothing to mount, and a binding for the plan made to run.
-    * Forcing that binding, as the plan does, gives `code` in `language` with each version's mount
-    * directory in its path's place, and the repositories to mount.
+    * Forcing that binding, as the plan does, gives `code` in `language` with each version's
+    * locator in its path's place, and the repositories to mount. A computing unit then gives the
+    * code the directory it mounts each repository at, in the locator's place.
     *
     * @param inject the injector of the descriptor's language
     */
@@ -155,27 +161,46 @@ private[udf] trait UdfDescriptorSpecSupport extends Matchers {
       fail("an operator that names a dataset or model must leave a binding to the plan")
     )
 
-    // Each version pinned to a repository and commit of its own, under a root no pod uses.
+    // Each version pinned to a repository and commit of its own.
     val resources = desc.uiParameters.filter(p => Set("dataset", "model").contains(p.inputType))
     val pinned = resources.zipWithIndex.map {
       case (parameter, i) => parameter.value -> ((s"repository-$i", s"commit-$i"))
     }.toMap
-    val root = Paths.get("/plan/root")
+    def naming(resource: ((String, String)) => String): List[UiUDFParameter] =
+      desc.uiParameters.map { parameter =>
+        if (!resources.contains(parameter)) parameter
+        else {
+          val named = new UiUDFParameter
+          named.attribute = parameter.attribute
+          named.inputType = parameter.inputType
+          named.value = resource(pinned(parameter.value))
+          named
+        }
+      }
 
-    val bound = binding.bind(versionPath => pinned(versionPath), root)
+    val bound = binding.bind(versionPath => pinned(versionPath))
 
     bound.mountLocators shouldBe pinned.values.map { case (r, c) => s"$r:$c" }.toSet
-    val mounted = desc.uiParameters.map { parameter =>
-      if (!resources.contains(parameter)) parameter
-      else {
-        val (repository, commit) = pinned(parameter.value)
-        val atMount = new UiUDFParameter
-        atMount.attribute = parameter.attribute
-        atMount.inputType = parameter.inputType
-        atMount.value = root.resolve(repository).resolve(commit).toString
-        atMount
-      }
-    }
-    bound.opExecInitInfo shouldBe OpExecWithCode(inject(code, mounted), language)
+    bound.opExecInitInfo shouldBe OpExecWithCode(
+      inject(code, naming { case (repository, commit) => s"$repository:$commit" }),
+      language
+    )
+
+    val unitRoot = Paths.get("/unit/root")
+    val running = UdfRepositoryDirectories.mountedUnder(Some(unitRoot))(
+      physical.copy(
+        opExecInitInfo = bound.opExecInitInfo,
+        repositoryMounts = Some(RepositoryMounts(bound.mountLocators))
+      )
+    )
+    running.opExecInitInfo shouldBe OpExecWithCode(
+      inject(
+        code,
+        naming {
+          case (repository, commit) => unitRoot.resolve(repository).resolve(commit).toString
+        }
+      ),
+      language
+    )
   }
 }

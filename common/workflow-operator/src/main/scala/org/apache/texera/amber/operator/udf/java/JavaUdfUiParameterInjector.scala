@@ -66,7 +66,7 @@ object JavaUdfUiParameterInjector {
     .withResolverStyle(ResolverStyle.STRICT)
 
   private def refuse(message: String): Nothing = throw new RuntimeException(s"UiParameter $message")
-  private def stringExpression(text: String): String = {
+  private[udf] def stringExpression(text: String): String = {
     val encoded = Base64.getEncoder.encodeToString(text.getBytes(StandardCharsets.UTF_8))
     s"""new String(java.util.Base64.getDecoder().decode("$encoded"), java.nio.charset.StandardCharsets.UTF_8)"""
   }

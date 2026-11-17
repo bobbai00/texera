@@ -234,7 +234,6 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
             inputLinker = InputLinker.Unavailable,
             lister = DatasetVersionLister.Unavailable,
             repositories = RepositoryVersionResolver.Unavailable,
-            mountRoot = Some(TestOperators.fixtureMountRoot),
             settings = CompileSettings.Default,
             environments = PythonEnvironmentResolver.Unavailable
           )

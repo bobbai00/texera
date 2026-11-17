@@ -20,34 +20,25 @@
 package org.apache.texera.amber.core.workflow
 
 /**
-  * The repositories an operator's code reads, and the directory it reads them under: fixed when
-  * a plan to run is made, so the engine only has to mount them.
+  * The repositories an operator's code reads, named when a plan to run is made, so the computing
+  * unit that runs the plan only has to mount them. An operator that reads none holds no value at
+  * all.
   *
-  * The two go together. The code was written against `root`, so naming a repository without it
-  * would leave the engine unable to check that it mounts where the code looks; an operator that
-  * reads no repository holds no value at all. Neither part may be empty.
-  *
-  * @param root     the directory a computing unit mounts repositories under, as the code names
-  *                 it: each repository is read from `<root>/<repositoryName>/<commitHash>`
   * @param locators the repositories to mount, each "<repositoryName>:<commitHash>"
-  * @throws IllegalArgumentException if `root` is blank, or `locators` is empty or holds
-  *                                  something that is not a locator
+  * @throws IllegalArgumentException if `locators` is empty or holds something that is not a
+  *                                  locator
   */
-final case class RepositoryMounts(root: String, locators: Set[String]) {
-  require(
-    root != null && root.trim.nonEmpty,
-    s"Repositories ${Option(locators)
-      .getOrElse(Set.empty)
-      .map(String.valueOf)
-      .toSeq
-      .sorted
-      .mkString(", ")} name no directory their code reads them under."
-  )
-  require(locators != null && locators.nonEmpty, s"Mounts under $root name no repository.")
+final case class RepositoryMounts(locators: Set[String]) {
+  require(locators != null && locators.nonEmpty, "Mounts name no repository.")
   locators.foreach(RepositoryMounts.parseLocator)
 }
 
 object RepositoryMounts {
+
+  // A repository's name and a commit's hash each name a directory where the repository is
+  // mounted, so each is letters, digits, '.', '_' and '-' after a first letter or digit, as the
+  // mount authority takes them: no path separator, ".." or option is one.
+  private val Segment = "[A-Za-z0-9][A-Za-z0-9._-]*".r
 
   /** The locator of a repository pinned to one commit. */
   def locator(repositoryName: String, commitHash: String): String =
@@ -56,24 +47,18 @@ object RepositoryMounts {
   /**
     * The repository name and commit hash `locator` names.
     *
-    * @throws IllegalArgumentException if it is not "<repositoryName>:<commitHash>"
+    * @throws IllegalArgumentException if it is not "<repositoryName>:<commitHash>", each of
+    *                                  letters, digits, '.', '_' and '-', starting with a letter
+    *                                  or digit
     */
   def parseLocator(locator: String): (String, String) =
     Option(locator).getOrElse("").split(":", 2) match {
-      case Array(repository, commit) if repository.nonEmpty && commit.nonEmpty =>
+      case Array(repository, commit) if Segment.matches(repository) && Segment.matches(commit) =>
         (repository, commit)
       case _ =>
         throw new IllegalArgumentException(
-          s"Invalid mount locator '$locator'; expected <repositoryName>:<commitHash>."
+          s"Invalid mount locator '$locator'; expected <repositoryName>:<commitHash>, each of " +
+            "letters, digits, '.', '_' and '-', starting with a letter or digit."
         )
     }
-
-  /**
-    * `mounts` with each root once, naming every repository read under it: what operators that
-    * run together need mounted, one request per root.
-    */
-  def byRoot(mounts: Iterable[RepositoryMounts]): Iterable[RepositoryMounts] =
-    mounts
-      .groupMapReduce(_.root)(_.locators)(_ ++ _)
-      .map { case (root, locators) => RepositoryMounts(root, locators) }
 }

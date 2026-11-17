@@ -28,13 +28,14 @@ import org.apache.texera.amber.core.storage.{
   RepositoryMountManager
 }
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, PhysicalOpIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalPlanCodec, RepositoryMounts}
+import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   UpdateExecutorRequest,
   WorkflowReconfigureRequest
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.operator.udf.UdfRepositoryDirectories
 import org.apache.texera.web.SubscriptionManager
 import org.apache.texera.web.model.websocket.response.{
   ModifyLogicCompletedEvent,
@@ -57,7 +58,8 @@ import scala.util.control.NonFatal
   * @param creator   the user who created the execution: only the changes they stored apply, when
   *                  they ask for them
   * @param mountRoot the directory this computing unit mounts datasets and models under, which the
-  *                  code of a stored change must read them from
+  *                  code of a stored change is given to read them from; None on a unit that
+  *                  mounts none
   */
 class ExecutionReconfigurationService(
     client: AmberClient,
@@ -82,10 +84,10 @@ class ExecutionReconfigurationService(
     * ([[performReconfigurationOnResume]]).
     *
     * Only the execution's creator may ask for it, and the change must be one they stored, for
-    * this execution, of an operator the running plan has, whose code reads its datasets and
-    * models where this unit mounts them. The operator queued is the
-    * running one with the change's executor and what its code reads; the rest of it, its ports
-    * and links included, stays as the running plan has it.
+    * this execution, of an operator the running plan has, which reads no dataset or model unless
+    * this unit mounts them. The operator queued is the running one with the change's executor,
+    * its code given where this unit mounts what it reads; the rest of it, its ports and links
+    * included, stays as the running plan has it.
     *
     * @param requester the user who asks for the change; None for a request of no user
     * @return valid, naming the logical operator that changes; or invalid, saying why the change is
@@ -134,19 +136,18 @@ class ExecutionReconfigurationService(
     workflow.physicalPlan.operators.find(_.id == update.opId) match {
       case None => refuse(operator, s"operator ${show(update.opId)} is not in the running plan")
       case Some(running) =>
-        val changed = running.copy(
+        val stored = running.copy(
           opExecInitInfo = update.opExecInitInfo,
           repositoryMounts = update.repositoryMounts
         )
-        // The Dashboard wrote the change's code against the root its deployment mounts under:
-        // refused here when this unit mounts elsewhere, rather than failing the run on resume.
-        try changed.repositoryMounts.foreach(
-          RepositoryMountManager.requireMountableUnder(_, mountRoot)
-        )
-        catch {
-          case refused @ (_: IllegalStateException | _: IllegalArgumentException) =>
-            return refuse(operator, refused.getMessage)
-        }
+        // A change that reads what this unit cannot mount is refused here, rather than failing
+        // the run on resume.
+        val changed =
+          try UdfRepositoryDirectories.mountedUnder(mountRoot)(stored)
+          catch {
+            case refused @ (_: IllegalStateException | _: IllegalArgumentException) =>
+              return refuse(operator, refused.getMessage)
+          }
         stateStore.reconfigurationStore.updateState(old =>
           old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
         )
@@ -175,7 +176,7 @@ class ExecutionReconfigurationService(
     val reconfigurationId = UUID.randomUUID().toString
     val updateExecutorRequests = reconfigurations.map { op =>
       // A changed UDF may now name a repository, and its code already refers to the mount.
-      op.repositoryMounts.foreach(ensureMounted)
+      op.repositoryMounts.foreach(mounts => ensureMounted(mounts.locators))
       UpdateExecutorRequest(op.id, op.opExecInitInfo)
     }
     dispatch(
@@ -192,8 +193,8 @@ class ExecutionReconfigurationService(
   }
 
   // Seam for unit testing without a computing unit to mount into.
-  protected def ensureMounted(mounts: RepositoryMounts): Unit =
-    RepositoryMountManager.ensureAllMounted(mounts)
+  protected def ensureMounted(locators: Set[String]): Unit =
+    RepositoryMountManager.ensureAllMounted(locators)
 
   // Seam for unit testing the dispatch path without spinning up an AmberClient.
   protected def dispatch(request: WorkflowReconfigureRequest): Unit = {

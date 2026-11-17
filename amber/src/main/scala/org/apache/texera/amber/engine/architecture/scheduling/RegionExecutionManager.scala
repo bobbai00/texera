@@ -25,12 +25,7 @@ import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.storage.{DocumentFactory, RepositoryMountManager, VFSURIFactory}
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.{
-  GlobalPortIdentity,
-  PhysicalLink,
-  PhysicalOp,
-  RepositoryMounts
-}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
 import org.apache.texera.amber.engine.architecture.common.{
   PekkoActorRefMappingService,
   PekkoActorService,
@@ -132,9 +127,8 @@ class RegionExecutionManager(
     // port's BASE materialization URI), shipped to every worker in
     // InitializeExecutorRequest. See WorkflowExecutionManager.loopStartPortUris.
     loopStartPortUris: Map[String, String] = Map.empty,
-    // Mounts repositories a region's operators read, under the root their code reads them
-    // under; a parameter so a test can observe it.
-    ensureMounted: RepositoryMounts => Unit = RepositoryMountManager.ensureAllMounted
+    // Mounts the repositories a region's operators name; a parameter so a test can observe it.
+    ensureMounted: Set[String] => Unit = RepositoryMountManager.ensureAllMounted
 ) extends AmberLogging {
 
   initRegionExecution()
@@ -390,17 +384,14 @@ class RegionExecutionManager(
     * Mount every repository this region's operators name before any of them receives its code,
     * which already refers to the mount paths. It happens here rather than in a worker because
     * workers are created before either phase launches. Operators carry no mount code: they only
-    * name what they need, and the root their code reads it under, through
-    * `PhysicalOp.repositoryMounts`, fixed when the plan was made. Each root is mounted once, with
-    * every repository the region's operators read under it.
+    * name what they need, through `PhysicalOp.repositoryMounts`.
     */
   private def mountRegionRepositories(): Future[Unit] = {
     val mount = Promise[Unit]()
     if (mountFutureRef.compareAndSet(null, mount)) {
       mount.become(Future {
-        RepositoryMounts
-          .byRoot(region.getOperators.flatMap(_.repositoryMounts))
-          .foreach(ensureMounted)
+        val locators = region.getOperators.flatMap(_.repositoryMounts).flatMap(_.locators)
+        if (locators.nonEmpty) ensureMounted(locators)
       })
     }
     mountFutureRef.get

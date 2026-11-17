@@ -19,15 +19,19 @@
 
 package org.apache.texera.amber.operator.udf.python
 
-import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.{UdfRepositoryDirectories, UiUDFParameter}
 
 import org.apache.commons.vfs2.FileNotFoundException
-import org.apache.texera.amber.core.executor.{OpExecWithCode, JavaRuntimeCompilation}
+import org.apache.texera.amber.core.executor.{
+  JavaRuntimeCompilation,
+  OpExecInitInfo,
+  OpExecWithCode
+}
 import org.apache.texera.amber.operator.udf.java.JavaUDFOpDesc
 import org.apache.texera.amber.core.storage.FileResolver
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{BoundResources, PhysicalOp}
+import org.apache.texera.amber.core.workflow.{BoundResources, PhysicalOp, RepositoryMounts}
 import org.apache.texera.amber.operator.udf.r.{
   RUDFOpDesc,
   RUDFSourceOpDesc,
@@ -172,14 +176,32 @@ class PythonUdfUiParameterSupportSpec
   private def modelParameter(value: String = modelPath): UiUDFParameter =
     parameter("MODEL", AttributeType.STRING, "model", value)
 
-  // The root the chart passes to each computing-unit pod, which a plan made today writes against.
-  private val podMountRoot = Paths.get("/mnt/texera-mounts")
+  // The root the chart passes to each computing-unit pod.
+  private val unitMountRoot = Paths.get("/mnt/texera-mounts")
 
   /** Binds `op` as a plan made to run for `user` does. */
-  private def bindFor(user: User, op: PhysicalOp, mountRoot: Path = podMountRoot): BoundResources =
+  private def bindFor(user: User, op: PhysicalOp): BoundResources =
     op.resourceBinding
       .getOrElse(fail("an operator that names a dataset or model must hold a binding"))
-      .bind(FileResolver.repositoryVersionResolverForUser(user.getUid), mountRoot)
+      .bind(FileResolver.repositoryVersionResolverForUser(user.getUid))
+
+  /** What a worker of a unit that mounts under `root` is handed for `op`, bound as `bound`. */
+  private def handedToWorkers(
+      op: PhysicalOp,
+      bound: BoundResources,
+      root: Path = unitMountRoot
+  ): OpExecInitInfo =
+    UdfRepositoryDirectories
+      .mountedUnder(Some(root))(
+        op.copy(
+          opExecInitInfo = bound.opExecInitInfo,
+          repositoryMounts = Some(RepositoryMounts(bound.mountLocators))
+        )
+      )
+      .opExecInitInfo
+
+  private def pinned(name: String, inputType: String, locator: String): UiUDFParameter =
+    parameter(name, AttributeType.STRING, inputType, locator)
 
   private def mounted(name: String, inputType: String, directory: String): UiUDFParameter =
     parameter(name, AttributeType.STRING, inputType, Paths.get(directory).toString)
@@ -201,7 +223,19 @@ class PythonUdfUiParameterSupportSpec
     val bound = bindFor(owner, op)
 
     bound.mountLocators shouldBe Set("dataset-1:d4t4", "model-1:m0d3l")
+    // The plan names each repository commit, wherever a unit mounts it.
     bound.opExecInitInfo shouldBe OpExecWithCode(
+      PythonUdfUiParameterInjector.inject(
+        code,
+        List(
+          pinned("DATA", "dataset", "dataset-1:d4t4"),
+          pinned("MODEL", "model", "model-1:m0d3l"),
+          count
+        )
+      ),
+      "python"
+    )
+    handedToWorkers(op, bound) shouldBe OpExecWithCode(
       PythonUdfUiParameterInjector.inject(
         code,
         List(
@@ -219,13 +253,13 @@ class PythonUdfUiParameterSupportSpec
     )
   }
 
-  it should "write each mount directory under the root the plan is made against" in {
-    val bound = bindFor(owner, compile(udfWith(data())), Paths.get("/plan/root"))
+  it should "hand workers each mount directory under the root of the unit that runs them" in {
+    val op = compile(udfWith(data()))
 
-    bound.opExecInitInfo shouldBe OpExecWithCode(
+    handedToWorkers(op, bindFor(owner, op), Paths.get("/unit/root")) shouldBe OpExecWithCode(
       PythonUdfUiParameterInjector.inject(
         code,
-        List(mounted("DATA", "dataset", "/plan/root/dataset-1/d4t4"))
+        List(mounted("DATA", "dataset", "/unit/root/dataset-1/d4t4"))
       ),
       "python"
     )
@@ -279,7 +313,7 @@ class PythonUdfUiParameterSupportSpec
         Nil // A later edit must not change the compiled binding's parameters.
       val bound = bindFor(owner, op)
       bound.mountLocators shouldBe Set("dataset-1:d4t4", "model-1:m0d3l")
-      bound.opExecInitInfo shouldBe OpExecWithCode(
+      handedToWorkers(op, bound) shouldBe OpExecWithCode(
         RUdfUiParameterInjector.inject(
           rCode,
           List(
@@ -308,7 +342,7 @@ class PythonUdfUiParameterSupportSpec
       descriptor.uiParameters = Nil
       val bound = bindFor(owner, op)
       bound.mountLocators shouldBe Set("dataset-1:d4t4", "model-1:m0d3l")
-      val OpExecWithCode(code, language) = bound.opExecInitInfo: @unchecked
+      val OpExecWithCode(code, language) = handedToWorkers(op, bound): @unchecked
       language shouldBe "java"
       val cls = JavaRuntimeCompilation.compileCode(code)
       val instance = cls.getDeclaredConstructor().newInstance()

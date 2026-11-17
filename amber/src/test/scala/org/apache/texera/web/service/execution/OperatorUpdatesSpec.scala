@@ -113,7 +113,6 @@ import org.scalatest.matchers.should.Matchers
 
 import java.lang.reflect.Proxy
 import java.net.URI
-import java.nio.file.Path
 import java.sql.Timestamp
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
@@ -306,14 +305,13 @@ class OperatorUpdatesSpec
   private type Reconfiguration = Try[(PhysicalOp, Option[StateTransferFunc])]
 
   /**
-    * The updates under test, bound to the fixtures but for `resolver`, `root` and `environments`
-    * (the fixtures', unless a case gives others), and with seams set as the case needs:
+    * The updates under test, bound to the fixtures but for `resolver` and `environments` (the
+    * fixtures', unless a case gives others), and with seams set as the case needs:
     * `reconfiguration` stands in for the answer of the operator a change is made to.
     * `resolverUsers` records the user each change was bound for: bindings are made for every
     * change that reaches the binding, whether or not it names a dataset or a model.
     */
   private class FixtureUpdates(
-      root: Option[Path] = Some(TestOperators.fixtureMountRoot),
       warehouses: Boolean = false,
       failAppend: Option[RuntimeException] = None,
       resolver: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
@@ -323,11 +321,7 @@ class OperatorUpdatesSpec
     val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
     override protected def bindingsFor(uid: Integer): RunBindings = {
       resolverUsers += uid
-      TestUtils.fixtureBindings.copy(
-        repositories = resolver,
-        mountRoot = root,
-        environments = environments
-      )
+      TestUtils.fixtureBindings.copy(repositories = resolver, environments = environments)
     }
     override protected def warehousesEnabled: Boolean = warehouses
     override protected def appendUpdate(planUri: URI, record: PlanRecord, logical: String): Unit =
@@ -688,17 +682,12 @@ class OperatorUpdatesSpec
 
     val update = decoded(readUpdate(execution, stored(post(execution.eid, changed)).updateId))
 
-    update.repositoryMounts shouldBe Some(
-      RepositoryMounts(TestOperators.fixtureMountRoot.toString, Set("dataset-1:d4t4"))
-    )
+    update.repositoryMounts shouldBe Some(RepositoryMounts(Set("dataset-1:d4t4")))
+    // The code names the repository commit: the unit that runs it knows where it mounts it.
     update.opExecInitInfo shouldBe OpExecWithCode(
       PythonUdfUiParameterInjector.inject(
         changedCode("v2"),
-        List(
-          datasetParameter(
-            TestOperators.fixtureMountRoot.resolve("dataset-1").resolve("d4t4").toString
-          )
-        )
+        List(datasetParameter("dataset-1:d4t4"))
       ),
       "python"
     )
@@ -946,20 +935,13 @@ class OperatorUpdatesSpec
     updateRows(execution.planUri) shouldBe List(update.updateId)
   }
 
-  it should "refuse a dataset version the creator cannot read, or with no root to mount it under" in {
+  it should "refuse a dataset version the creator cannot read" in {
     val execution = created()
     val unreadable = "/dataset/owner@x.com/secret/v1"
 
     refused(400) {
       post(execution.eid, udf(parameters = List(datasetParameter(unreadable))))
     } should include(unreadable)
-    refused(400) {
-      post(
-        execution.eid,
-        udf(parameters = List(datasetParameter("/dataset/owner@x.com/sales/v1"))),
-        updates = new FixtureUpdates(root = None)
-      )
-    } should include("no directory to mount it under")
     updateRows(execution.planUri) shouldBe empty
   }
 

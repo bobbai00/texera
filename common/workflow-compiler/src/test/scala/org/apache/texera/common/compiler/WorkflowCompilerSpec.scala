@@ -83,10 +83,9 @@ import org.apache.texera.amber.operator.{
   TestOperators
 }
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.common.config.EnvironmentalVariable
 import org.scalatest.flatspec.AnyFlatSpec
 
-import java.nio.file.{Path, Paths}
+import java.nio.file.Paths
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 
@@ -126,7 +125,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         inputLinker = inputLinker,
         lister = lister,
         repositories = TestOperators.fixtureRepositoryResolver,
-        mountRoot = Some(TestOperators.fixtureMountRoot),
         settings = settings,
         environments = environments
       )
@@ -1172,7 +1170,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
   private val datasetVersionPath = "/dataset/owner@x.com/sales/v1"
   private val modelVersionPath = "/model/owner@x.com/iris/v2"
-  private val planMountRoot = TestOperators.fixtureMountRoot
 
   /**
     * The fixture resolver, recording every path it is asked for; it also refuses `refused`, as
@@ -1188,10 +1185,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     }
   }
 
-  private def bindingCompiler(
-      resolver: RepositoryVersionResolver,
-      mountRoot: Option[Path] = Some(planMountRoot)
-  ): WorkflowCompiler =
+  private def bindingCompiler(resolver: RepositoryVersionResolver): WorkflowCompiler =
     new WorkflowCompiler(
       newContext(),
       RunBindings(
@@ -1199,7 +1193,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         inputLinker = TestOperators.fixtureInputLinker,
         lister = TestOperators.fixtureDatasetVersionLister,
         repositories = resolver,
-        mountRoot = mountRoot,
         settings = CompileSettings.Default,
         environments = PythonEnvironmentResolver.Unavailable
       )
@@ -1272,8 +1265,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   private def physicalOpOf(result: WorkflowCompilationResult, op: LogicalOp): PhysicalOp =
     result.physicalPlan.get.getPhysicalOpsOfLogicalOp(op.operatorIdentifier).head
 
-  private def mountedAt(name: String, inputType: String, directory: String): UiUDFParameter =
-    uiParameter(name, inputType, Paths.get(directory).toString)
+  private def pinnedTo(name: String, inputType: String, locator: String): UiUDFParameter =
+    uiParameter(name, inputType, locator)
 
   "WorkflowCompiler in strict mode" should
     "pin what each UDF names and keep only the result on the operator" in {
@@ -1288,17 +1281,16 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(result.physicalPlan.get.operators.forall(_.resourceBinding.isEmpty))
     val sourceOp = physicalOpOf(result, source)
     assert(
-      sourceOp.repositoryMounts.contains(
-        RepositoryMounts(planMountRoot.toString, Set("dataset-1:d4t4", "model-1:m0d3l"))
-      )
+      sourceOp.repositoryMounts.contains(RepositoryMounts(Set("dataset-1:d4t4", "model-1:m0d3l")))
     )
+    // The code names each repository commit: the plan is made for no unit's mount directory.
     assert(
       sourceOp.opExecInitInfo == OpExecWithCode(
         PythonUdfUiParameterInjector.inject(
           sourceUdfCode,
           List(
-            mountedAt("DATA", "dataset", "/mnt/texera-mounts/dataset-1/d4t4"),
-            mountedAt("MODEL", "model", "/mnt/texera-mounts/model-1/m0d3l"),
+            pinnedTo("DATA", "dataset", "dataset-1:d4t4"),
+            pinnedTo("MODEL", "model", "model-1:m0d3l"),
             uiParameter("count", "", "7", AttributeType.INTEGER)
           )
         ),
@@ -1306,16 +1298,12 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       )
     )
     val downstreamOp = physicalOpOf(result, downstream)
-    assert(
-      downstreamOp.repositoryMounts.contains(
-        RepositoryMounts(planMountRoot.toString, Set("dataset-1:d4t4"))
-      )
-    )
+    assert(downstreamOp.repositoryMounts.contains(RepositoryMounts(Set("dataset-1:d4t4"))))
     assert(
       downstreamOp.opExecInitInfo == OpExecWithCode(
         PythonUdfUiParameterInjector.inject(
           tupleUdfCode,
-          List(mountedAt("DATA", "dataset", "/mnt/texera-mounts/dataset-1/d4t4"))
+          List(pinnedTo("DATA", "dataset", "dataset-1:d4t4"))
         ),
         "python"
       )
@@ -1441,20 +1429,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(failure.getMessage == messageListing(failure, 2, List(source, downstream)))
   }
 
-  it should "fail, before resolving anything, when there is no mount root to write the code against" in {
-    val resolver = new RecordingResolver
-    val source = resourceSourceUdf()
-
-    val message = onlyErrorOf(
-      strictFailure(pojo(List(source), List.empty), bindingCompiler(resolver, mountRoot = None)),
-      source
-    )
-    assert(message.startsWith(classOf[IllegalStateException].getName), message)
-    assert(message.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), message)
-    assert(message.contains(source.operatorIdentifier.id), message)
-    assert(resolver.asked.isEmpty)
-  }
-
   it should "pin nothing unchecked when it is given the resolver for compiles that make no plan" in {
     val source = resourceSourceUdf()
 
@@ -1524,7 +1498,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(bindings.inputLinker eq InputLinker.Unavailable)
     assert(bindings.lister eq DatasetVersionLister.Unavailable)
     assert(bindings.repositories eq RepositoryVersionResolver.Unavailable)
-    assert(bindings.mountRoot.isEmpty)
     assert(bindings.environments eq PythonEnvironmentResolver.Unavailable)
     // A plan made to run with them, which lists a dataset version, fails rather than run with
     // no listing: with a failure of the compile's own, as no File Lister is at fault.
@@ -1551,7 +1524,13 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       strictFailure(pojo(List(source), List.empty), new WorkflowCompiler(newContext(), bindings)),
       source
     )
-    assert(message.contains(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT), message)
+    assert(
+      message.contains(
+        "No resolver for dataset and model versions was given, so " +
+          s"$datasetVersionPath cannot be resolved."
+      ),
+      message
+    )
     // A plan made to run with them, whose UDF names an environment, fails rather than run the
     // UDF in another: with a failure of the compile's own, as no UDF is at fault.
     val unresolved = intercept[IllegalStateException] {
@@ -1731,7 +1710,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         inputLinker = TestOperators.fixtureInputLinker,
         lister = TestOperators.fixtureDatasetVersionLister,
         repositories = refusing,
-        mountRoot = Some(planMountRoot),
         settings = CompileSettings.Default,
         environments = new RecordingEnvironments
       )

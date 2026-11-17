@@ -24,7 +24,7 @@ import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
@@ -32,7 +32,7 @@ import org.apache.texera.amber.core.storage.{
   PlanRecord,
   VFSURIFactory
 }
-import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -91,6 +91,8 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
 }
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.operator.udf.UiUDFParameter
+import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
@@ -114,7 +116,6 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
-import org.apache.texera.common.config.EnvironmentalVariable
 import org.apache.texera.web.model.websocket.request.{
   WorkflowCheckpointRequest,
   WorkflowKillRequest
@@ -233,6 +234,25 @@ class WorkflowExecutionServiceSpec
 
   /** The directory the computing unit of the runs below mounts datasets and models under. */
   private val unitMountRoot = Paths.get("/mnt/texera-mounts")
+
+  /** Where that unit mounts the dataset version. */
+  private val datasetDirectory = "/mnt/texera-mounts/dataset-9221/5ha7ed01"
+
+  /** A UDF source's code with a parameter DATA, whose value, as the injector writes it, is `data`. */
+  private def udfReading(data: String): OpExecWithCode = {
+    val parameter = new UiUDFParameter
+    parameter.attribute = new Attribute("DATA", AttributeType.STRING)
+    parameter.inputType = "dataset"
+    parameter.value = data
+    val code =
+      """from pytexera import *
+        |
+        |class GenerateOperator(UDFSourceOperator):
+        |    def produce(self):
+        |        yield {"line": "a"}
+        |""".stripMargin
+    OpExecWithCode(PythonUdfUiParameterInjector.inject(code, List(parameter)), "python")
+  }
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
@@ -651,7 +671,8 @@ class WorkflowExecutionServiceSpec
     */
   private final class StoredRun(
       executionPlan: ExecutionPlan,
-      installer: Option[PythonEnvironmentInstaller] = None
+      installer: Option[PythonEnvironmentInstaller] = None,
+      mountRoot: Option[Path] = Some(unitMountRoot)
   ) {
     val errors: ListBuffer[Throwable] = ListBuffer.empty
     var engineWorkflow: Option[EngineWorkflow] = None
@@ -671,7 +692,7 @@ class WorkflowExecutionServiceSpec
       resultService,
       store,
       errors += _,
-      Some(unitMountRoot)
+      mountRoot
     ) {
       override protected def createAmberRuntime(
           workflow: EngineWorkflow,
@@ -737,7 +758,7 @@ class WorkflowExecutionServiceSpec
       // was read back with. Read back, not compiled: no operator keeps a schema function a
       // compile gave it, which the saved text does not hold.
       val engineWorkflow = run.engineWorkflow.getOrElse(fail("the engine was handed no workflow"))
-      engineWorkflow.physicalPlan should be theSameInstanceAs executionPlan.plan
+      engineWorkflow.physicalPlan shouldBe executionPlan.plan
       engineWorkflow.physicalPlan.operators.map(_.propagateSchema) shouldBe
         Set(PhysicalPlanCodec.ReadBackSchemaPropagation)
       engineWorkflow.context should be theSameInstanceAs executionPlan.context
@@ -781,20 +802,41 @@ class WorkflowExecutionServiceSpec
     } finally run.close()
   }
 
-  it should "refuse a plan this unit cannot run, through the error handler, before it builds the engine" in {
-    val mounting = storedSource.copy(repositoryMounts =
-      Some(RepositoryMounts("/mnt/another-root", Set(datasetLocator)))
+  /** A plan of `storedSource` alone, a UDF whose code reads the dataset version. */
+  private def datasetReadingPlan(): ExecutionPlan = {
+    val reading = storedSource.copy(
+      opExecInitInfo = udfReading(datasetLocator),
+      repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
     )
-    val executionPlan =
-      readBack(ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(mounting), Set.empty)))
+    readBack(ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(reading), Set.empty)))
+  }
+
+  it should "run a plan's code with the directory this unit mounts each dataset at" in {
+    val executionPlan = datasetReadingPlan()
     val run = new StoredRun(executionPlan)
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      run.errors shouldBe empty
+      // The engine and the services around the run hold the one plan, which names the mount.
+      val started = run.engineWorkflow.getOrElse(fail("the engine was not built")).physicalPlan
+      started.getOperator(storedSource.id).opExecInitInfo shouldBe udfReading(datasetDirectory)
+      started.getOperator(storedSource.id).repositoryMounts shouldBe
+        Some(RepositoryMounts(Set(datasetLocator)))
+      run.service.workflow.physicalPlan shouldBe started
+    } finally run.close()
+  }
+
+  it should "refuse a plan that reads a dataset on a unit that mounts none, through the error handler, before it builds the engine" in {
+    val executionPlan = datasetReadingPlan()
+    val run = new StoredRun(executionPlan, mountRoot = None)
     try {
       val failure = run.service
         .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
         .getOrElse(fail("the run started"))
       failure shouldBe an[IllegalStateException]
-      failure.getMessage should include("under /mnt/another-root")
-      failure.getMessage should include(s"mounts them under $unitMountRoot")
+      failure.getMessage shouldBe s"Operator stored-text reads datasets or models " +
+        s"($datasetLocator), which this computing unit cannot mount."
       run.errors shouldBe Seq(failure)
       run.engineWorkflow shouldBe None
       run.service.workflow shouldBe null
@@ -821,8 +863,8 @@ class WorkflowExecutionServiceSpec
       run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
         None
       run.errors shouldBe empty
-      run.engineWorkflow.getOrElse(fail("the engine was handed no workflow")).physicalPlan should
-        be theSameInstanceAs executionPlan.plan
+      run.engineWorkflow.getOrElse(fail("the engine was handed no workflow")).physicalPlan shouldBe
+        executionPlan.plan
       run.engine.getOrElse(fail("no engine")).answers.keySet should contain("startWorkflow")
     } finally run.close()
   }
@@ -883,47 +925,38 @@ class WorkflowExecutionServiceSpec
     } finally run.close()
   }
 
-  it should "check a change the Dashboard stored against this unit's mount root, as it checks the plan" in {
+  it should "give a change the Dashboard stored the directory this unit mounts its dataset at, as it gives the plan" in {
     val executionPlan = readBack(storedSourcePlan())
     val record = planRowOf(executionPlan)
-    // The plan table, holding the plan row and the changes, in the catalog the build's tests use.
+    // The plan table, holding the plan row and the change, in the catalog the build's tests use.
     ExecutionPlanStore.writePlan(storedPlanTable, record, "{}")
-    def storedChange(mountRoot: String): String = {
-      val updateId = s"update-${UUID.randomUUID()}"
-      val changed = storedSource.copy(
-        opExecInitInfo = OpExecWithClassName("changed"),
-        repositoryMounts = Some(RepositoryMounts(mountRoot, Set(datasetLocator)))
-      )
-      ExecutionPlanStore.appendUpdate(
-        storedPlanTable,
-        PlanRecord(
-          entryId = updateId,
-          body = PhysicalPlanCodec.updateToJson(
-            PhysicalPlanCodec
-              .encodeUpdate(ExecutionIdentity(testEid.longValue()), updateId, changed)
-          ),
-          createdBy = testUid,
-          computingUnitId = testCuid,
-          notification = None
+    val updateId = s"update-${UUID.randomUUID()}"
+    val changed = storedSource.copy(
+      opExecInitInfo = udfReading(datasetLocator),
+      repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
+    )
+    ExecutionPlanStore.appendUpdate(
+      storedPlanTable,
+      PlanRecord(
+        entryId = updateId,
+        body = PhysicalPlanCodec.updateToJson(
+          PhysicalPlanCodec.encodeUpdate(ExecutionIdentity(testEid.longValue()), updateId, changed)
         ),
-        "{}"
-      )
-      updateId
-    }
+        createdBy = testUid,
+        computingUnitId = testCuid,
+        notification = None
+      ),
+      "{}"
+    )
     val run = new StoredRun(executionPlan)
     try {
       run.service.startStored(executionPlan, record, storedPlanTable) shouldBe None
-      val reconfiguration = run.service.executionReconfigurationService
-      val creator = Some(testUid.intValue())
 
-      reconfiguration
-        .applyStoredUpdate(storedChange(unitMountRoot.toString), creator)
+      run.service.executionReconfigurationService
+        .applyStoredUpdate(updateId, Some(testUid.intValue()))
         .isValid shouldBe true
-      val elsewhere = reconfiguration.applyStoredUpdate(storedChange("/mnt/another-root"), creator)
-      elsewhere.isValid shouldBe false
-      elsewhere.errorMessage should include("under /mnt/another-root")
-      elsewhere.errorMessage should include(s"mounts them under $unitMountRoot")
-      run.store.reconfigurationStore.getState.unscheduledReconfigurations should have size 1
+      run.store.reconfigurationStore.getState.unscheduledReconfigurations
+        .map(_.opExecInitInfo) shouldBe List(udfReading(datasetDirectory))
     } finally run.close()
   }
 
@@ -1253,46 +1286,44 @@ class WorkflowExecutionServiceSpec
     ) shouldBe CoordinatorConfig.default
   }
 
-  "WorkflowExecutionService.requireRunnableUnder" should
-    "accept a plan whose operators hold only data, reading under this unit's root" in {
+  "WorkflowExecutionService.mountedUnder" should
+    "give each operator's code the directory this unit mounts what it reads at, and leave the rest of the plan as it is" in {
+    val readsNothing = sourceOp("reads-nothing")
+    val readsADataset = sourceOp("reads-a-dataset").copy(
+      opExecInitInfo = udfReading(datasetLocator),
+      repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
+    )
+    val plan = PhysicalPlan(Set(readsNothing, readsADataset), Set.empty)
+
+    WorkflowExecutionService.mountedUnder(plan, Some(unitMountRoot)) shouldBe
+      PhysicalPlan(
+        Set(readsNothing, readsADataset.copy(opExecInitInfo = udfReading(datasetDirectory))),
+        Set.empty
+      )
+  }
+
+  it should "return a plan that mounts nothing as it is, on a unit that mounts nothing" in {
+    val plan = PhysicalPlan(Set(sourceOp("reads-nothing")), Set.empty)
+
+    WorkflowExecutionService.mountedUnder(plan, None) shouldBe plan
+  }
+
+  it should "refuse a plan that reads a dataset on a unit that mounts nothing" in {
     val plan = PhysicalPlan(
       Set(
-        sourceOp("reads-nothing"),
         sourceOp("reads-a-dataset").copy(
-          repositoryMounts = Some(RepositoryMounts("/mnt/texera-mounts/", Set(datasetLocator)))
+          opExecInitInfo = udfReading(datasetLocator),
+          repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
         )
       ),
       Set.empty
     )
-    noException should be thrownBy
-      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
-  }
 
-  it should "accept a plan that mounts nothing on a unit that mounts nothing" in {
-    noException should be thrownBy WorkflowExecutionService.requireRunnableUnder(
-      PhysicalPlan(Set(sourceOp("reads-nothing")), Set.empty),
-      None
-    )
-  }
-
-  it should "refuse a plan whose code reads its datasets under another root" in {
-    val plan = PhysicalPlan(
-      Set(
-        sourceOp("reads-a-dataset").copy(
-          repositoryMounts = Some(RepositoryMounts("/plan/root", Set(datasetLocator)))
-        )
-      ),
-      Set.empty
-    )
     val failure = the[IllegalStateException] thrownBy
-      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
-    failure.getMessage should include("/plan/root")
-    failure.getMessage should include(unitMountRoot.toString)
-    // Nor can a unit that mounts nothing run it.
-    val nowhere = the[IllegalStateException] thrownBy
-      WorkflowExecutionService.requireRunnableUnder(plan, None)
-    nowhere.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
-    nowhere.getMessage should include(datasetLocator)
+      WorkflowExecutionService.mountedUnder(plan, None)
+
+    failure.getMessage shouldBe s"Operator reads-a-dataset reads datasets or models " +
+      s"($datasetLocator), which this computing unit cannot mount."
   }
 
   // The companion's one expression, exercised directly rather than only through the two result

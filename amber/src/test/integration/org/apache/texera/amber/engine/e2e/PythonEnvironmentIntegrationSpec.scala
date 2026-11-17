@@ -62,12 +62,12 @@ import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMeta
 import org.apache.texera.amber.engine.e2e.TestUtils.{
   cleanupWorkflowExecutionData,
   fixtureBindings,
+  fixtureUnitMountRoot,
   initiateTexeraDBForTestCases,
   readMaterializedResults,
   setUpWorkflowExecutionData,
   workflowContext
 }
-import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.python.PythonUDFOpDescV2
 import org.apache.texera.amber.tags.IntegrationTest
@@ -311,7 +311,7 @@ class PythonEnvironmentIntegrationSpec
       resultService,
       store,
       failed,
-      Some(TestOperators.fixtureMountRoot)
+      Some(fixtureUnitMountRoot)
     ) {
       override protected def createAmberRuntime(
           workflow: Workflow,

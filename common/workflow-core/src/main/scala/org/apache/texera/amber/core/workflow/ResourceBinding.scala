@@ -22,33 +22,30 @@ package org.apache.texera.amber.core.workflow
 import org.apache.texera.amber.core.executor.OpExecInitInfo
 import org.apache.texera.amber.core.storage.RepositoryVersionResolver
 
-import java.nio.file.Path
-
 /**
   * The datasets and models an operator's code names, left for the plan made to run to pin.
   *
   * A compile-time callback, like the schema propagation function. Pinning a version is a
   * database lookup with an access check, and the editing-time compile runs on every edit, so
   * that compile leaves the binding alone. The compile that makes a plan to run forces it once
-  * and keeps only what it gives, as data on the operator: the final executor, and the
-  * repositories to mount with the root its code reads them under ([[RepositoryMounts]]). The
-  * engine is never handed a binding, and never forces one.
+  * and keeps only what it gives, as data on the operator: the executor, and the repositories to
+  * mount ([[RepositoryMounts]]). The engine is never handed a binding, and never forces one.
   */
 trait ResourceBinding {
 
   /**
-    * @param resolver  pins a version path to the repository commit behind it, for the user the
-    *                  plan is made for
-    * @param mountRoot the directory repositories are mounted under on a computing unit; the
-    *                  final code reads each one from a directory below it
+    * @param resolver pins a version path to the repository commit behind it, for the user the
+    *                 plan is made for
     */
-  def bind(resolver: RepositoryVersionResolver, mountRoot: Path): BoundResources
+  def bind(resolver: RepositoryVersionResolver): BoundResources
 }
 
 /**
   * What a [[ResourceBinding]] gives.
   *
-  * @param opExecInitInfo the executor, with each version's mount directory in its path's place
+  * @param opExecInitInfo the executor, with each version's locator in its path's place: the
+  *                       computing unit that runs the plan puts the directory it mounts that
+  *                       repository at there
   * @param mountLocators  the repositories to mount, each "<repositoryName>:<commitHash>"
   *                       ([[RepositoryMounts.locator]])
   */

@@ -26,7 +26,7 @@ import java.nio.charset.StandardCharsets
 /** Emits calls to the R plugin SDK; metadata policy is shared and runtime behavior stays in texera-rudf. */
 object RUdfUiParameterInjector {
   // Encode names and values as UTF-8 bytes so user-entered text never becomes executable R syntax.
-  private def rString(value: String): String = {
+  private[udf] def rString(value: String): String = {
     val bytes = Option(value).getOrElse("").getBytes(StandardCharsets.UTF_8)
     s".texera_decode(c(${bytes.map(byte => f"0x${byte & 0xff}%02x").mkString(",")}))"
   }

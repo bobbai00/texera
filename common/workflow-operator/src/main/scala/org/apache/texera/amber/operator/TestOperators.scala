@@ -176,9 +176,6 @@ object TestOperators {
       throw new FileNotFoundException(s"Version $versionPath not found.")
     )
 
-  /** The directory a plan compiled in tests reads its datasets and models under. */
-  val fixtureMountRoot: Path = Paths.get("/mnt/texera-mounts")
-
   val parentDir = Path
     .of(sys.env.getOrElse("TEXERA_HOME", "."))
     .resolve("common")

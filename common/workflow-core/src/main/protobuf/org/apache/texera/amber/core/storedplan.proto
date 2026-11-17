@@ -111,8 +111,10 @@ message StoredPhysicalOp {
   bool isLoopStart = 11;
   // How many workers to run. Absent: the engine's default.
   optional int32 suggestedWorkerNum = 12;
-  // The datasets and models the operator's code reads. Absent: none.
-  StoredRepositoryMounts repositoryMounts = 13;
+  // The datasets and models the operator's code reads, each once, as
+  // "<repositoryName>:<commitHash>". The code names each by this locator, where the computing
+  // unit that runs the plan puts the directory it mounts the repository at.
+  repeated string repositoryMounts = 13;
   // The Python environment the operator's workers run in. Absent: the engine's own interpreter.
   StoredPythonEnvironment pythonEnvironment = 14;
 }
@@ -188,13 +190,6 @@ message StoredAttribute {
   AttributeType attributeType = 2;
 }
 
-message StoredRepositoryMounts {
-  // The directory the operator's code reads the repositories under.
-  string root = 1;
-  // Each repository once, as "<repositoryName>:<commitHash>".
-  repeated string locators = 2;
-}
-
 // A Python environment: the packages a computing unit installs, beside the engine's own, for the
 // workers of the operators that run in it.
 message StoredPythonEnvironment {
@@ -255,6 +250,6 @@ message StoredOperatorUpdate {
   // The operator that changes: one of the execution's plan.
   PhysicalOpIdentity opId = 4;
   OpExecInitInfo opExecInitInfo = 5;
-  // The datasets and models the new code reads. Absent: none.
-  StoredRepositoryMounts repositoryMounts = 6;
+  // The datasets and models the new code reads, as StoredPhysicalOp.repositoryMounts has them.
+  repeated string repositoryMounts = 6;
 }

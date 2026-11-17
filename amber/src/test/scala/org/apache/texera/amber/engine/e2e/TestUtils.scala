@@ -86,6 +86,8 @@ import org.apache.texera.common.compiler.{
 }
 import org.scalatest.Assertions
 
+import java.nio.file.{Path, Paths}
+
 object TestUtils {
 
   /**
@@ -111,27 +113,29 @@ object TestUtils {
     * What a plan compiled in a spec is bound to: its scan sources read fixture files on the local
     * disk, through links to the fixture server, as a run reads a dataset's files through links
     * to the object store; its File Listers list the fixture dataset version, whose files are
-    * read through such links too; a UDF's datasets and models are the fixture versions, read
-    * under the fixture mount root; the site's settings are the defaults; and a UDF's Python
-    * environment is the fixture's, the only one there is.
+    * read through such links too; a UDF's datasets and models are the fixture versions; the
+    * site's settings are the defaults; and a UDF's Python environment is the fixture's, the only
+    * one there is.
     */
   val fixtureBindings: RunBindings = RunBindings(
     files = TestOperators.fixtureFileResolver,
     inputLinker = TestOperators.fixtureInputLinker,
     lister = TestOperators.fixtureDatasetVersionLister,
     repositories = TestOperators.fixtureRepositoryResolver,
-    mountRoot = Some(TestOperators.fixtureMountRoot),
     settings = CompileSettings.Default,
     environments = name =>
       if (name == fixtureEnvironment.name) fixtureEnvironment
       else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
   )
 
+  /** The directory the computing unit of a spec mounts datasets and models under. */
+  val fixtureUnitMountRoot: Path = Paths.get("/mnt/texera-mounts")
+
   /**
     * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
-    * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that and
-    * checked to be one the engine can run (`WorkflowExecutionService.requireRunnableUnder`), so a
-    * spec runs what a run would. `context` takes the settings and cost hints saved with the plan,
+    * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that as the
+    * fixture unit runs it (`WorkflowExecutionService.mountedUnder`), so a spec runs what a run
+    * would. `context` takes the settings and cost hints saved with the plan,
     * the ports whose results are stored among them. The text stays in memory: the Dashboard writes
     * it to the execution's plan table and a computing unit reads it back from there, which these
     * specs need no catalog for.
@@ -150,13 +154,12 @@ object TestUtils {
     if (fromSavedPlan) {
       val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan).savedPlan
       val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
-      WorkflowExecutionService.requireRunnableUnder(
-        readBack.plan,
-        Some(TestOperators.fixtureMountRoot)
-      )
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints
-      Workflow(context, readBack.plan)
+      Workflow(
+        context,
+        WorkflowExecutionService.mountedUnder(readBack.plan, Some(fixtureUnitMountRoot))
+      )
     } else {
       // The compile PlanToRun.make makes a run's plan with, but not saved: strict, so an error
       // throws rather than leaving no physical plan.

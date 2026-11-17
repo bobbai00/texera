@@ -92,8 +92,7 @@ final case class PlanInput(logicalOperatorId: OperatorIdentity, name: String, ex
   * @param updateId         names the change among the execution's changes
   * @param opId             the operator that changes
   * @param opExecInitInfo   the operator's new executor
-  * @param repositoryMounts the datasets and models the new code reads, under the root it reads
-  *                         them from; None when it reads none
+  * @param repositoryMounts the datasets and models the new code reads; None when it reads none
   */
 final case class OperatorUpdate(
     executionId: ExecutionIdentity,

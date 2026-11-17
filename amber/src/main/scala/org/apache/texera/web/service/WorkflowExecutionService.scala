@@ -21,7 +21,7 @@ package org.apache.texera.web.service
 
 import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{PlanRecord, RepositoryMountManager}
+import org.apache.texera.amber.core.storage.PlanRecord
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -42,6 +42,7 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
+import org.apache.texera.amber.operator.udf.UdfRepositoryDirectories
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
   WorkflowErrorEvent,
@@ -88,17 +89,17 @@ object WorkflowExecutionService extends LazyLogging {
     )
 
   /**
-    * Fails unless the engine can run `plan` on a computing unit that mounts datasets and models
-    * under `unitMountRoot`: every operator reads what it mounts under that root. Checked once,
-    * when the plan is handed to the engine, so a plan the engine cannot run fails before any
-    * region runs rather than partway through; each region checks again before it mounts.
+    * `plan` as a computing unit that mounts datasets and models under `unitMountRoot` runs it:
+    * the code of each operator that reads any holds the directory the unit mounts it at
+    * ([[UdfRepositoryDirectories]]). Done once, when the plan is handed to the engine, so a plan
+    * that reads what the unit cannot mount fails before any region runs.
     *
-    * @throws IllegalStateException if the engine cannot run the plan here
+    * @param unitMountRoot None on a unit that mounts none
+    * @throws IllegalStateException if an operator reads a dataset or model, and the unit mounts
+    *                               none
     */
-  def requireRunnableUnder(plan: PhysicalPlan, unitMountRoot: Option[Path]): Unit =
-    plan.operators.foreach(
-      _.repositoryMounts.foreach(RepositoryMountManager.requireMountableUnder(_, unitMountRoot))
-    )
+  def mountedUnder(plan: PhysicalPlan, unitMountRoot: Option[Path]): PhysicalPlan =
+    plan.copy(operators = plan.operators.map(UdfRepositoryDirectories.mountedUnder(unitMountRoot)))
 }
 
 /**
@@ -109,10 +110,10 @@ object WorkflowExecutionService extends LazyLogging {
   * the plan names are installed on this unit before the engine starts. Its operators change,
   * while it is paused, only by the changes the Dashboard stored in its plan table.
   *
-  * @param mountRoot the directory this computing unit mounts datasets and models under: the
-  *                  plan's code reads them from below it, and the plan, and every change to an
-  *                  operator of it, is checked against it before it runs. Production reads the
-  *                  unit's environment; a parameter so a test can name one.
+  * @param mountRoot the directory this computing unit mounts datasets and models under, which
+  *                  the code of the plan, and of every change to an operator of it, is given to
+  *                  read them from; None on a unit that mounts none. Production reads the unit's
+  *                  environment; a parameter so a test can name one.
   */
 class WorkflowExecutionService(
     val workflowContext: WorkflowContext,
@@ -168,10 +169,11 @@ class WorkflowExecutionService(
   /**
     * Starts the run from `executionPlan`, the plan the plan row `record` of the plan table at
     * `planUri` holds, read back. The execution was claimed for this start, and the run's context
-    * is the one the plan was read back with. The engine must be able to run the plan on this unit
-    * ([[WorkflowExecutionService.requireRunnableUnder]]). The run replays what the plan replays,
-    * writes its replay log where the plan says, and sends its status emails where the row says.
-    * The engine and every service around the run are built on the plan read back, and the run
+    * is the one the plan was read back with. The plan's code is given the directories this unit
+    * mounts the datasets and models it reads at ([[WorkflowExecutionService.mountedUnder]]): a
+    * plan that reads any fails here on a unit that mounts none. The run replays what the plan
+    * replays, writes its replay log where the plan says, and sends its status emails where the
+    * row says. The engine and every service around the run are built on that plan, and the run
     * is READY. The engine is asked to start once the Python environments the plan names are
     * ready on this unit: at once when it names none, and otherwise on a thread of the unit's
     * installer, after this has returned, and only if the run still waits for it then. A run that
@@ -187,18 +189,20 @@ class WorkflowExecutionService(
       record: PlanRecord,
       planUri: URI
   ): Option[Throwable] = {
-    val notification =
+    val (plan, notification) =
       try {
-        WorkflowExecutionService.requireRunnableUnder(executionPlan.plan, mountRoot)
-        record.notification.map(Notification.fromJson)
+        (
+          WorkflowExecutionService.mountedUnder(executionPlan.plan, mountRoot),
+          record.notification.map(Notification.fromJson)
+        )
       } catch {
         case err: Throwable =>
           // The run ends here, reported, before anything is built for it.
           errorHandler(err)
           return Some(err)
       }
-    // The run, and every service built around it below, use the plan read back.
-    workflow = Workflow(workflowContext, executionPlan.plan)
+    // The run, and every service built around it below, use the plan as this unit runs it.
+    workflow = Workflow(workflowContext, plan)
     val coordinatorConfig = WorkflowExecutionService.coordinatorConfigOf(executionPlan)
 
     client = createAmberRuntime(workflow, coordinatorConfig)

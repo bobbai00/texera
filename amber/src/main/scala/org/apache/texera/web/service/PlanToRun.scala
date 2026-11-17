@@ -22,8 +22,7 @@ package org.apache.texera.web.service
 import org.apache.texera.amber.core.storage.{
   FileResolver,
   LakeFSDatasetVersionLister,
-  LakeFSInputLinker,
-  RepositoryMountManager
+  LakeFSInputLinker
 }
 import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
@@ -80,8 +79,8 @@ object PlanToRun {
   /**
     * What a plan made to run for user `uid` is bound to: the files, datasets and models that
     * user may read, links to those files that this deployment's computing units can read them
-    * through, the directory the units mount datasets and models under, the site's settings as
-    * they stand now, and the Python environments that user keeps.
+    * through, the site's settings as they stand now, and the Python environments that user
+    * keeps.
     */
   def bindingsFor(uid: Integer): RunBindings =
     RunBindings(
@@ -89,7 +88,6 @@ object PlanToRun {
       inputLinker = LakeFSInputLinker.forDeployment,
       lister = LakeFSDatasetVersionLister.forUser(uid),
       repositories = FileResolver.repositoryVersionResolverForUser(uid),
-      mountRoot = RepositoryMountManager.mountRoot,
       settings = CompileSettings.fromSiteSettings(),
       environments = new UserEnvironmentResolver(uid)
     )
@@ -108,9 +106,8 @@ object PlanToRun {
     * through links as its inputs, with when each link expires.
     *
     * @param compiler  the run's compiler, bound for the run's user ([[bindingsFor]]): it resolves
-    *                  files, datasets, models and Python environments as that user may, links
-    *                  the files, and writes code against the root the deployment's computing
-    *                  units mount datasets and models under
+    *                  files, datasets, models and Python environments as that user may, and
+    *                  links the files
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors

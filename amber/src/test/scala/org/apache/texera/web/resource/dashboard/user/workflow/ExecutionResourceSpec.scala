@@ -399,9 +399,9 @@ class ExecutionResourceSpec
   }
 
   /**
-    * The creator under test, bound to the fixture files, links, versions and mount root in place
-    * of a user's, and with seams set as the case needs. `resolvedFor` records the user each plan
-    * was bound for. The site's settings stay the ones the database holds.
+    * The creator under test, bound to the fixture files, links and versions in place of a
+    * user's, and with seams set as the case needs. `resolvedFor` records the user each plan was
+    * bound for. The site's settings stay the ones the database holds.
     *
     * @param bindings what a plan is bound to, given what the deployment binds it to for its
     *                 user; the fixtures', unless a case gives another

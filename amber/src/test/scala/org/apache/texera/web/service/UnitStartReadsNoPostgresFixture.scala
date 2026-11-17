@@ -46,7 +46,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.e2e.TestUtils
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.common.compiler.RunBindings
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
@@ -244,7 +244,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         resultService,
         executionStateStore,
         onError,
-        Some(TestOperators.fixtureMountRoot)
+        Some(TestUtils.fixtureUnitMountRoot)
       ) {
         override protected def createAmberRuntime(
             workflow: Workflow,

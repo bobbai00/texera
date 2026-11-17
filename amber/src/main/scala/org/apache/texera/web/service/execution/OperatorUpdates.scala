@@ -387,16 +387,14 @@ class OperatorUpdates extends LazyLogging {
   /**
     * `op` with the datasets and models it names pinned for user `uid`, as the compile that made
     * `running` pinned the plan's ([[WorkflowCompiler.bindResources]]). A version that does not
-    * exist or that the user may not read, or no mount root to write the code against, is the
-    * change's error (400); any other failure, such as the database not answering, is thrown as it
-    * is.
+    * exist or that the user may not read is the change's error (400); any other failure, such as
+    * the database not answering, is thrown as it is.
     */
   private def boundFor(uid: Integer, running: ExecutionPlan, op: PhysicalOp): PhysicalOp = {
     val compiler = new WorkflowCompiler(running.context, bindingsFor(uid))
     try compiler.bindResources(op)
     catch {
-      case error @ (_: FileNotFoundException | _: IllegalStateException) =>
-        throw new BadRequestException(error.getMessage)
+      case error: FileNotFoundException => throw new BadRequestException(error.getMessage)
     }
   }
 }

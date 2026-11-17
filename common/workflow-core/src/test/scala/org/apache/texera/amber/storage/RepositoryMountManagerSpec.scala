@@ -21,7 +21,6 @@ package org.apache.texera.amber.storage
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.texera.amber.core.storage.{InPodMount, RepositoryMountManager}
-import org.apache.texera.amber.core.workflow.RepositoryMounts
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -68,10 +67,8 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
     )
   }
 
-  private val badLocators = Seq("dataset-1", "", ":abc", "dataset-1:", null)
-
-  private def mountsUnder(root: String, locators: String*): RepositoryMounts =
-    RepositoryMounts(root, locators.toSet)
+  private val badLocators =
+    Seq("dataset-1", "", ":abc", "dataset-1:", null, "../..:abc123", "dataset-1:../etc")
 
   "mountRoot" should "be the pod's mount root, trimmed" in {
     new Fixture().manager.mountRoot shouldBe Some(Paths.get("/mnt/texera-mounts"))
@@ -89,81 +86,27 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
   }
 
   "RepositoryMountManager.mountPoint" should "place a locator under whatever root it is given" in {
-    // A plan writes this path into an operator's code, against the plan's root, not a pod's.
-    RepositoryMountManager.mountPoint(Paths.get("/plan/root"), locator) shouldBe
-      Paths.get("/plan/root/dataset-1/abc123")
+    RepositoryMountManager.mountPoint(Paths.get("/unit/root"), locator) shouldBe
+      Paths.get("/unit/root/dataset-1/abc123")
   }
 
   it should "reject a locator that is not <repositoryName>:<commitHash>" in {
     badLocators.foreach { bad =>
       an[IllegalArgumentException] should be thrownBy
-        RepositoryMountManager.mountPoint(Paths.get("/plan/root"), bad)
+        RepositoryMountManager.mountPoint(Paths.get("/unit/root"), bad)
     }
   }
 
-  "RepositoryMountManager.requireMountableUnder" should
-    "accept code that reads its mounts under the unit's root, however either spells it" in {
-    for (
-      planRoot <- Seq("/mnt/texera-mounts", "/mnt/texera-mounts/", "/mnt/./texera-mounts");
-      unitRoot <- Seq("/mnt/texera-mounts", "/mnt/texera-mounts/")
-    ) {
-      noException should be thrownBy RepositoryMountManager.requireMountableUnder(
-        mountsUnder(planRoot, locator),
-        Some(Paths.get(unitRoot))
-      )
-    }
-  }
-
-  it should "refuse code that reads its mounts under another root, naming both" in {
-    val failure = the[IllegalStateException] thrownBy RepositoryMountManager
-      .requireMountableUnder(
-        mountsUnder("/plan/root", locator),
-        Some(Paths.get("/mnt/texera-mounts"))
-      )
-    failure.getMessage should include("/plan/root")
-    failure.getMessage should include("/mnt/texera-mounts")
-  }
-
-  it should "refuse every mount on a unit that mounts nothing, naming what was asked for" in {
-    val failure = the[IllegalStateException] thrownBy RepositoryMountManager
-      .requireMountableUnder(mountsUnder("/mnt/texera-mounts", locator), None)
-    failure.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
-    failure.getMessage should include(locator)
-  }
-
-  "ensureAllMounted" should "mount what the plan names when its root is this pod's" in {
+  "ensureAllMounted" should "ask for every repository it is given, each once" in {
     val fixture = new Fixture()
-    // The same directory, however the plan spelled it.
-    for (root <- Seq("/mnt/texera-mounts", "/mnt/texera-mounts/", "/mnt/./texera-mounts")) {
-      fixture.manager.ensureAllMounted(mountsUnder(root, locator))
-    }
-    fixture.requests should have size 1
-  }
-
-  it should "ask for every repository the plan names under its root" in {
-    val fixture = new Fixture()
-    fixture.manager.ensureAllMounted(mountsUnder("/mnt/texera-mounts", locator, "model-1:def456"))
+    fixture.manager.ensureAllMounted(Set(locator, "model-1:def456"))
     fixture.requests.map(_._2) should contain theSameElementsAs Seq(
       """{"repositoryName":"dataset-1","commitHash":"abc123"}""",
       """{"repositoryName":"model-1","commitHash":"def456"}"""
     )
-  }
-
-  it should "refuse, before asking for any mount, a plan whose code reads another root" in {
-    val fixture = new Fixture()
-    val failure = the[IllegalStateException] thrownBy
-      fixture.manager.ensureAllMounted(mountsUnder("/plan/root", locator))
-    failure.getMessage should include("/plan/root")
-    failure.getMessage should include("/mnt/texera-mounts")
-    fixture.requests shouldBe empty
-  }
-
-  it should "say the pod has no mount root when the plan needs mounts" in {
-    val fixture = new Fixture(env = podEnv - EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
-    val failure = the[IllegalStateException] thrownBy
-      fixture.manager.ensureAllMounted(mountsUnder("/mnt/texera-mounts", locator))
-    failure.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
-    fixture.requests shouldBe empty
+    // What is mounted is not asked for again.
+    fixture.manager.ensureAllMounted(Set(locator))
+    fixture.requests should have size 2
   }
 
   "ensureMounted" should "ask the authority and return the in-pod path" in {
