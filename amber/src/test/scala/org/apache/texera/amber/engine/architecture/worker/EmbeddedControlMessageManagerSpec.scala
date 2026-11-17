@@ -38,6 +38,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   EmbeddedControlMessageType
 }
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.DPInputQueueElement
+import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -171,5 +172,87 @@ class EmbeddedControlMessageManagerSpec extends AnyFlatSpec with Matchers {
     val ecm = mkEcm(EmbeddedControlMessageType.ALL_ALIGNMENT, Seq(inScope, foreign))
 
     mgr.isECMAligned(inScope, ecm) shouldBe true
+  }
+
+  // The coordinator starts a global checkpoint, a state retrieval and a reconfiguration by
+  // sending the ECM to workers on its control channel. A control channel never belongs to an
+  // input port, so only PORT_ALIGNMENT may ask which port the ECM arrived on.
+  private val fromCoordinator = ChannelIdentity(COORDINATOR, actorId, isControl = true)
+  private val toCoordinator = ChannelIdentity(actorId, COORDINATOR, isControl = true)
+
+  it should "align NO_ALIGNMENT received by a source worker on the coordinator's control channel" in {
+    val gateway = mkGateway
+    val inputManager = mkInputManager
+
+    // a source worker's channels: the coordinator's control channel, which has no port, and
+    // the virtual data channel that kicks it off (see StartHandler)
+    val sourceStarter =
+      ChannelIdentity(ActorVirtualIdentity("SOURCE_STARTER"), actorId, isControl = false)
+    gateway.getChannel(fromCoordinator)
+    gateway.getChannel(sourceStarter).setPortId(PortIdentity())
+
+    val mgr = new EmbeddedControlMessageManager(actorId, gateway, inputManager)
+    // the scope a global checkpoint gives a source worker: its control channels and its output
+    val toDownstream = ChannelIdentity(actorId, senderA, isControl = false)
+    val ecm = mkEcm(
+      EmbeddedControlMessageType.NO_ALIGNMENT,
+      Seq(fromCoordinator, toCoordinator, toDownstream)
+    )
+
+    mgr.isECMAligned(fromCoordinator, ecm) shouldBe true
+  }
+
+  it should "align NO_ALIGNMENT once when it arrives on the control channel and then on a data channel" in {
+    val gateway = mkGateway
+    val inputManager = mkInputManager
+
+    val chA = ChannelIdentity(senderA, actorId, isControl = false)
+    gateway.getChannel(fromCoordinator)
+    gateway.getChannel(chA).setPortId(PortIdentity())
+
+    val mgr = new EmbeddedControlMessageManager(actorId, gateway, inputManager)
+    val ecm = mkEcm(
+      EmbeddedControlMessageType.NO_ALIGNMENT,
+      Seq(fromCoordinator, toCoordinator, chA)
+    )
+
+    // first arrival, from the coordinator: triggers
+    mgr.isECMAligned(fromCoordinator, ecm) shouldBe true
+    // the same ECM forwarded by the upstream worker afterwards does not trigger again
+    mgr.isECMAligned(chA, ecm) shouldBe false
+  }
+
+  it should "align ALL_ALIGNMENT whose scope includes the coordinator's control channel" in {
+    val gateway = mkGateway
+    val inputManager = mkInputManager
+
+    val chA = ChannelIdentity(senderA, actorId, isControl = false)
+    gateway.getChannel(fromCoordinator)
+    gateway.getChannel(chA).setPortId(PortIdentity())
+
+    val mgr = new EmbeddedControlMessageManager(actorId, gateway, inputManager)
+    val ecm = mkEcm(
+      EmbeddedControlMessageType.ALL_ALIGNMENT,
+      Seq(fromCoordinator, toCoordinator, chA)
+    )
+
+    // received from the coordinator only: the data channel in scope is still missing
+    mgr.isECMAligned(fromCoordinator, ecm) shouldBe false
+    // received on every channel in scope: aligned
+    mgr.isECMAligned(chA, ecm) shouldBe true
+  }
+
+  it should "still refuse PORT_ALIGNMENT received on a channel that has no port" in {
+    val gateway = mkGateway
+    val inputManager = mkInputManager
+    gateway.getChannel(fromCoordinator)
+
+    val mgr = new EmbeddedControlMessageManager(actorId, gateway, inputManager)
+    val ecm = mkEcm(EmbeddedControlMessageType.PORT_ALIGNMENT, Seq(fromCoordinator))
+
+    val ex = intercept[IllegalStateException] {
+      mgr.isECMAligned(fromCoordinator, ecm)
+    }
+    ex.getMessage should include("portId has not been set")
   }
 }

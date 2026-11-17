@@ -59,7 +59,6 @@ class EmbeddedControlMessageManager(
       from: ChannelIdentity,
       ecm: EmbeddedControlMessage
   ): Boolean = {
-    val portId = inputGateway.getChannel(from).getPortId
     if (!ecmReceived.contains(ecm.id)) {
       ecmReceived(ecm.id) = Set()
     }
@@ -71,6 +70,10 @@ class EmbeddedControlMessageManager(
       case ALL_ALIGNMENT =>
         ecmReceivedFromAllChannels
       case PORT_ALIGNMENT =>
+        // Only this alignment depends on the port the ECM arrived on. The other two must not
+        // ask for it: the coordinator sends its ECMs (a global checkpoint, a reconfiguration)
+        // on its control channel, which belongs to no port.
+        val portId = inputGateway.getChannel(from).getPortId
         inputManager.getPort(portId).channels.subsetOf(ecmReceived(ecm.id))
       case NO_ALIGNMENT =>
         ecmReceived(ecm.id).size == 1 // only the first ECM triggers
