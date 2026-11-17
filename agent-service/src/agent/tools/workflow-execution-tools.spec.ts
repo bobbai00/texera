@@ -621,19 +621,32 @@ describe("executeOperatorAndFormat - execution failures", () => {
     expect(info.errorMessages[0].message).toContain("kaboom");
   });
 
-  test("reports a timeout when the workflow was KILLED, ignoring any accompanying errors", async () => {
+  test("reports why the unit killed the run, when it says", async () => {
     const { state, target } = makeLinearState();
     const summary: WorkflowExecutionSummary = {
       state: WorkflowExecutionState.KILLED,
       operators: {},
-      errors: [makeFatal("ignored")],
+      errors: [makeFatal("Timeout after 5 seconds")],
     };
     setFetchResolving(jsonResponse(summary));
 
     const out = await executeOperatorAndFormat(state, makeConfig(), target);
-    expect(out).toContain("[ERROR]");
-    expect(out).toContain("Workflow execution was killed (timeout).");
-    expect(out).not.toContain("ignored");
+
+    expect(out).toBe("[ERROR] Execution failed due to the following error:\nError:\n  Timeout after 5 seconds");
+  });
+
+  test("says that a run killed for no stated reason was stopped or replaced, not that it timed out", async () => {
+    const { state, target } = makeLinearState();
+    // What a unit answers for a run that another run of the workflow took the place of.
+    const summary: WorkflowExecutionSummary = { state: WorkflowExecutionState.KILLED, operators: {}, errors: [] };
+    setFetchResolving(jsonResponse(summary));
+
+    const out = await executeOperatorAndFormat(state, makeConfig(), target);
+
+    expect(out).toBe(
+      "[ERROR] Execution failed due to the following error:\nError:\n" +
+        "  The run was stopped, or replaced by another run of the workflow."
+    );
   });
 
   test("surfaces general errors when the HTTP request itself fails (ERROR state)", async () => {

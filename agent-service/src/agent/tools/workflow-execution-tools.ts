@@ -463,9 +463,11 @@ export async function executeOperatorAndFormat(
               .filter(({ error }) => error)
           : undefined;
 
+      // A unit says why it killed a run it gave up on, such as a timeout. It gives no reason for a
+      // run that was stopped, or that another run of the workflow took the place of.
       const generalErrors =
-        result.state === WorkflowExecutionState.KILLED
-          ? [makeExecutionFailure("Workflow execution was killed (timeout).", "")]
+        result.state === WorkflowExecutionState.KILLED && result.errors.length === 0
+          ? [makeExecutionFailure("The run was stopped, or replaced by another run of the workflow.", "")]
           : result.errors;
 
       const errorText = formatExecutionError(operatorErrors, generalErrors);
