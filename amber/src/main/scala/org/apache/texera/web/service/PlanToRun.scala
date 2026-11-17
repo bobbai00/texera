@@ -44,7 +44,7 @@ import org.apache.texera.web.service.execution.UserEnvironmentResolver
 import java.net.URI
 
 /**
-  * The plan of a run as the engine is handed it: saved, as text.
+  * Makes the plan of a run as the engine is handed it: saved, as text.
   *
   * Starting a run has two halves. [[PlanToRun.make]] compiles the run's workflow and saves the
   * physical plan, with the settings it runs under, as the JSON [[PhysicalPlanCodec]] writes: the
@@ -54,15 +54,7 @@ import java.net.URI
   * there ([[WorkflowService.checkStoredStart]]) and runs the physical plan it holds, under the
   * settings, replay and replay log saved with it: the engine never sees the plan the compile
   * made.
-  *
-  * @param savedPlan the physical plan to run, its settings and what else the run needs (an
-  *                  [[org.apache.texera.amber.core.workflow.ExecutionPlan]]), as JSON text. It
-  *                  holds what each operator's executor is given, so it holds the credentials an
-  *                  operator is set up with (a SQL source's password, say) and the links its
-  *                  operators read their files through: keep it where they may be kept.
   */
-final case class PlanToRun(savedPlan: String)
-
 object PlanToRun {
 
   /**
@@ -110,6 +102,11 @@ object PlanToRun {
     *                  links the files
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
+    * @return the physical plan to run, its settings and what else the run needs (an
+    *         [[ExecutionPlan]]), as JSON text. It holds what each operator's executor is given,
+    *         so it holds the credentials an operator is set up with (a SQL source's password,
+    *         say) and the links its operators read their files through: keep it where they may
+    *         be kept, and out of logs.
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors
     * @throws IllegalArgumentException if the run's settings are ones it cannot run under
     *                                  ([[settingsProblem]]), its cost hints are not ones a plan
@@ -125,7 +122,7 @@ object PlanToRun {
       logicalPlan: LogicalPlanPojo,
       replay: Option[ReplaySource] = None,
       replayLog: Option[URI] = None
-  ): PlanToRun = {
+  ): String = {
     val run = compiler.context
     // Checked first, in the words of the editor's settings; the codec refuses such a plan too.
     settingsProblem(run.workflowSettings).foreach(problem =>
@@ -143,11 +140,9 @@ object PlanToRun {
       )
     val result = compiler.compile(logicalPlan, CompilationErrorHandling.Strict)
     val compiled = Workflow.fromCompilationResult(savedUnder, result)
-    PlanToRun(
-      PhysicalPlanCodec.toJson(
-        PhysicalPlanCodec.encode(
-          ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog, result.inputs)
-        )
+    PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec.encode(
+        ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog, result.inputs)
       )
     )
   }

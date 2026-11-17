@@ -262,7 +262,6 @@ class PythonEnvironmentIntegrationSpec
           List()
         )
       )
-      .savedPlan
     private val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
     private val context = executionPlan.context
     written ++= executionPlan.plan.operators.flatMap(op =>

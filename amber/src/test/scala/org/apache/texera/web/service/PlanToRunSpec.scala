@@ -106,7 +106,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val operators = searches(1)
     val context = newContext()
 
-    val planToRun = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+    val savedPlan = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
 
     // The plan as the compile makes it, and the ports whose results are stored.
     val compiledContext = newContext()
@@ -120,7 +120,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val storedPorts = compiledContext.workflowSettings.outputPortsNeedingStorage
     storedPorts should not be empty
 
-    val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+    val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
     val planContext = executionPlan.context
     planContext.workflowId shouldBe context.workflowId
     planContext.executionId shouldBe context.executionId
@@ -145,9 +145,9 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val text = new TextInputSourceOpDesc()
     text.textInput = "north\nsouth"
 
-    val planToRun = PlanToRun.make(newCompiler(newContext()), pojo(List(text), List.empty))
+    val savedPlan = PlanToRun.make(newCompiler(newContext()), pojo(List(text), List.empty))
 
-    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan)).inputs shouldBe empty
+    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan)).inputs shouldBe empty
   }
 
   it should "save the run's cost hints with the plan, whatever operators they name" in {
@@ -159,10 +159,10 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     )
     context.costHints = Some(hints)
 
-    val planToRun = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+    val savedPlan = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
 
     PhysicalPlanCodec
-      .decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+      .decode(PhysicalPlanCodec.fromJson(savedPlan))
       .context
       .costHints shouldBe Some(hints)
     context.costHints shouldBe Some(hints)
@@ -189,7 +189,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val made = List.fill(2) {
       PlanToRun.make(newCompiler(newContext()), pojo(operators, chain(operators: _*)))
     }
-    made.map(_.savedPlan).distinct should have size 1
+    made.distinct should have size 1
   }
 
   it should "fail with each operator's error on a workflow that does not compile" in {
@@ -212,21 +212,21 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     )
     val replayLog = new URI("file:///var/texera/logs/31/32/")
 
-    val planToRun = PlanToRun.make(
+    val savedPlan = PlanToRun.make(
       newCompiler(newContext()),
       pojo(operators, chain(operators: _*)),
       Some(replay),
       Some(replayLog)
     )
 
-    val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planToRun.savedPlan))
+    val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
     executionPlan.replay shouldBe Some(replay)
     executionPlan.replayLog shouldBe Some(replayLog)
   }
 
   it should "refuse to save a replay or a replay log the engine could not find" in {
     val operators = searches(1)
-    def make(replay: Option[ReplaySource], replayLog: Option[URI]): PlanToRun =
+    def make(replay: Option[ReplaySource], replayLog: Option[URI]): String =
       PlanToRun.make(
         newCompiler(newContext()),
         pojo(operators, chain(operators: _*)),

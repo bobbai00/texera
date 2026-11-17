@@ -152,7 +152,7 @@ object TestUtils {
     val workflowCompiler = new WorkflowCompiler(context, fixtureBindings)
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
     if (fromSavedPlan) {
-      val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan).savedPlan
+      val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan)
       val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints

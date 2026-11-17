@@ -224,7 +224,7 @@ class ExecutionCreator extends LazyLogging {
               List.empty
             )
           )
-        case Right(planToRun) =>
+        case Right(savedPlan) =>
           val planUri = ExecutionPlanStore.planUri(wid, eid, warehouse)
           val notification = notificationFor(checked, user, requestUri)
           try {
@@ -232,7 +232,7 @@ class ExecutionCreator extends LazyLogging {
               planUri,
               PlanRecord(
                 entryId = ExecutionPlanStore.PlanEntryId,
-                body = planToRun.savedPlan,
+                body = savedPlan,
                 createdBy = uid.intValue(),
                 computingUnitId = checked.computingUnitId,
                 notification = notification.map(Notification.toJson)
