@@ -44,7 +44,7 @@ Python comes from a uv-managed venv at `.venv` (created on first use from
 | `driver/tests/` | Offline tests: `fake_texera.py` (a fake Texera speaking the step-2 design's protocol), `test_transport.py`, `test_scenarios.py`, `test_evidence.py` (a fake `docker` and a synthetic Postgres log), `test_scenario_evidence.py` (scenarios and evidence together on the fake stack) |
 | `run-baseline.sh` | `up`, then wait until healthy, run the driver, print results, then `down` unless `--keep` |
 | `run-negative-control.sh` | The step-2 negative control (H5) on the published images |
-| `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B6, with the page's requests and websocket frames recorded |
+| `driver/browser_smoke.py` | The browser smoke: the real workflow editor in headless Chromium (Playwright), cases B1-B8, with the page's requests and websocket frames recorded |
 | `run-browser-smoke.sh` | The browser smoke end to end: lock, `up`, the smoke, API scenario a on the same stack, `down` |
 | `stack/localdev-stack.sh`, `stack/localdev/localdev_stack.py` | Local-dev mode: local-dev's infrastructure (renamed, shifted ports), its schema step, the JVM services as host processes, `ng serve`; `generate`, `build`, `up`, `down`, `reset`, `status`, `logs`, `post-run`, `venv` |
 | `driver/localdev_unit.py` | The driver's local-dev mode (`--target localdev`): the dev server as `--base`, local-dev's local unit |
@@ -572,7 +572,7 @@ The page is signed in by putting the driver's token where the frontend keeps it
 frontend remembers for the workflow (localStorage `computing-unit-of-workflow-<wid>`,
 `ComputingUnitSelectionComponent`). Both are set by an init script before the page's
 own code runs; the warehouse is the one the page preselects (the user's first). Every
-case gets a fresh browser context.
+case gets a fresh browser context; B8's second tab is a second page of its case's context.
 
 **Cases.** Expected rows are computed from the CSV files, as in the scenarios.
 
@@ -584,6 +584,8 @@ case gets a fresh browser context.
 | B4 | `numbers.csv` → a UDF tagging `"v" + str(VERSION)`, 0.1 s per tuple, `VERSION = 1` as its last line; Run, Pause; in the property editor Unlock for Logic Change, Edit code content, in the code editor a click behind the last line, End, Backspace, `2`; close; Confirm Change; Resume | `POST /api/executions/{eid}/updates` 200 with `{updateId, operatorId}`, its body the UDF with `VERSION = 2`; `OperatorUpdateRequest{executionId, updateId}`; `ModifyLogicResponse.isValid`; the toast "reconfiguration registered"; Completed; `ModifyLogicCompletedEvent`; the result table's first page `v1`, its last page `v2`; all 300 rows read back over a second socket (the driver's transport): every `v1` before every `v2`; status 3 |
 | B5 | `people.csv` → a UDF stamping its rows with the time its module was loaded; Run, read the table, Run again, read the table | each run: 201, the start with its own eid and planUri, Completed, one stamp on all 10 people; two executions with two plans; the second stamp is later (the first run's rows are gone from the table); two start frames |
 | B6 (extra) | Run with the create's answer kept from the page (the request reaches the Dashboard; only the 201 is delivered late, as on a slow network); Stop while the button says Submitting; then Run again | the Dashboard created the execution; Stop is offered while Submitting; after Stop the run button is Run; no frame at all for the run that was given up, also after its 201 arrives (the page had dropped the request); the second Run: 201, its start, Completed; the only start frame is the second run's |
+| B7 | B4's workflow: Run, Pause; then the page is loaded again (the browser's reload: the page's code starts from nothing and holds no answer of its own create); then B4's change, Confirm Change, Resume | after the reload: run button Resume, stop enabled; the reloaded page's socket was sent `WorkflowStateEvent{state: Paused, executionId}` of the run's eid; no `POST /api/executions*` and no `WorkflowStartRequest` since the reload; then B4's checks, on that eid: the update's path, 200, `OperatorUpdateRequest{executionId, updateId}`, the rows, status 3 |
+| B8 | B4's workflow: Run, Pause in one page; the workflow opened in a second tab (a second page of the same browser context); B4's change, Confirm Change and Resume in that tab | in the second tab: the three checks B7 makes after its reload, then B4's checks on the tab's own requests and frames; the first page sent no update and no `WorkflowResumeRequest`, and shows the run Completed |
 
 Every case also checks that the page never sent `WorkflowExecuteRequest` or
 `ModifyLogicRequest` and that the page raised no uncaught error.
@@ -592,7 +594,8 @@ Every case also checks that the page never sent `WorkflowExecuteRequest` or
 `/api/executions*` with its status and a short view of the bodies
 (`network.executions_requests`); every websocket the page opened and, for the workflow
 websocket, every frame it sent, whole and timed (`network.websockets[].sent`, heartbeats
-counted in `sent_types`), the states the unit reported and the `WorkflowErrorEvent`,
+counted in `sent_types`), the states the unit reported, each with the execution it named
+(`states[].executionId`), and the `WorkflowErrorEvent`,
 `ModifyLogicResponse` and `ModifyLogicCompletedEvent` it sent; every HTTP answer of 400
 and up; the run button's text, as it changed (`run_button_timeline`); toasts; console
 errors and uncaught page errors. `summary` adds the frames of all pages by type and
@@ -616,6 +619,13 @@ errors and uncaught page errors. `summary` adds the frames of all pages by type 
 - The code editor is Monaco behind the property editor's "Edit code content" button,
   which exists only after "Unlock for Logic Change". Typing a whole program into it
   would be indented and completed by the editor; the case changes one character.
+- B7's reload is `page.reload()`. The init script runs again in the new document, so the token
+  and the unit are where the frontend looks for them, as after a user's reload; the run
+  button's texts and the toasts of the earlier load are kept, with a `(page reloaded)` entry
+  between. The page's requests and sockets before and after are one record: the socket of the
+  first load has no `closed_at` (the browser reports no close for a document that goes away),
+  and the answers of the first load are read before the reload, while the browser still
+  holds their bodies. B8's tab writes its files as `B8-tab-*`.
 - `workflow.py` puts the first operator at x = 80, which in the page is under the
   dashboard's sidebar; the smoke moves its own workflows right and down.
 - Noise that is not the change's: `GET /user/workflow/<wid>` answers 404 with the app
