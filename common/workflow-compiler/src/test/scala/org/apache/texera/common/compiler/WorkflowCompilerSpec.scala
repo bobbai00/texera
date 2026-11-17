@@ -1656,7 +1656,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         assert(error.operatorId == op.id)
         assert(
           error.message == s"${classOf[PythonEnvironmentNotResolved].getName}: You have no " +
-            "Python environment named 'someone-elses'."
+            "Python environment named 'someone-elses'. Each user keeps their own environments, " +
+            "so to run this workflow, create one with this name."
         )
     }
     assert(failure.getCause.isInstanceOf[PythonEnvironmentNotResolved], failure.getCause)

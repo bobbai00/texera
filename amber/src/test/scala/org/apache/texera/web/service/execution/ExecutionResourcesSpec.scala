@@ -311,7 +311,7 @@ class ExecutionResourcesSpec
     val error = intercept[IllegalArgumentException] {
       ExecutionResources.resolveLakekeeperWarehouseName(None, testUid, enabled = true)
     }
-    error.getMessage shouldBe "a warehouse must be selected for this execution"
+    error.getMessage shouldBe "A warehouse must be selected for this execution."
   }
 
   it should "keep the shared default warehouse when nothing is picked and the feature is off" in {
@@ -327,7 +327,7 @@ class ExecutionResourcesSpec
     val error = intercept[IllegalArgumentException] {
       ExecutionResources.resolveLakekeeperWarehouseName(Some(whid), intruderUid, enabled = true)
     }
-    error.getMessage shouldBe s"no warehouse with id $whid owned by this user"
+    error.getMessage shouldBe s"You have no warehouse with id $whid."
   }
 
   it should "refuse an explicit pick while warehouses are disabled" in {
@@ -335,7 +335,7 @@ class ExecutionResourcesSpec
     val error = intercept[IllegalArgumentException] {
       ExecutionResources.resolveLakekeeperWarehouseName(Some(whid), testUid, enabled = false)
     }
-    error.getMessage shouldBe "per-user warehouses are disabled in this deployment"
+    error.getMessage shouldBe "Per-user warehouses are disabled in this deployment."
   }
 
   "ExecutionResources.planUriOf" should "find the plan table of an execution that names no warehouse in the default one" in {

@@ -158,7 +158,7 @@ class OperatorUpdates(
       executionOf(eid).getOrElse(throw new NotFoundException(s"There is no execution $eid."))
     val cuid = requireAllowed(eid, execution, uid)
     if (WorkflowExecutionStatus.Ended.contains(execution.status)) {
-      throw new WebApplicationException(s"execution $eid has ended", Response.Status.CONFLICT)
+      throw new WebApplicationException(s"Execution $eid has ended.", Response.Status.CONFLICT)
     }
     // Opened while the switch is off, a per-user warehouse would be the shared one, where the plan
     // is not: refused instead of answered as a plan there is not (#6930).
@@ -202,7 +202,7 @@ class OperatorUpdates(
       // The execution was deleted, and its plan table dropped, after its plan was read and before
       // the append loaded the table. A drop after that load fails the write instead: 500.
       case _: NoStoredPlanException =>
-        throw new NotFoundException(s"execution $eid has no stored plan")
+        throw new NotFoundException(s"Execution $eid has no stored plan.")
       case tooLarge: PlanTooLargeException => throw new BadRequestException(tooLarge.getMessage)
       case NonFatal(failure) =>
         throw new InternalServerErrorException(
@@ -304,7 +304,7 @@ class OperatorUpdates(
       try ExecutionPlanStore.readPlanWithLogical(planUri)
       catch {
         case _: NoStoredPlanException =>
-          throw new NotFoundException(s"execution $eid has no stored plan")
+          throw new NotFoundException(s"Execution $eid has no stored plan.")
         case NonFatal(failure) =>
           throw new InternalServerErrorException(
             s"The plan of execution $eid could not be read from the lake.",
@@ -384,7 +384,7 @@ class OperatorUpdates(
     if (
       reconfigured.pythonEnvironment.environmentName != runningOp.pythonEnvironment.environmentName
     ) {
-      refuse("the operator's Python environment cannot change while the run is paused")
+      refuse("The operator's Python environment cannot change while the run is paused.")
     }
     reconfigured
   }

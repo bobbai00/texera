@@ -58,7 +58,10 @@ object PythonEnvironmentNotResolved {
 
   /** The plan's user keeps no environment under `name`: environments are each user's own. */
   def noSuchEnvironment(name: String): PythonEnvironmentNotResolved =
-    new PythonEnvironmentNotResolved(s"You have no Python environment named '$name'.")
+    new PythonEnvironmentNotResolved(
+      s"You have no Python environment named '$name'. Each user keeps their own environments, " +
+        "so to run this workflow, create one with this name."
+    )
 
   /** The environment the plan's user keeps under `name` holds packages pip may not read. */
   def notInstallable(name: String, problem: String): PythonEnvironmentNotResolved =

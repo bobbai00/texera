@@ -890,7 +890,7 @@ class OperatorUpdatesSpec
   it should "refuse a change of the Python environment the operator runs in" in {
     val inDefault = created()
     val inMl = created(plan = udfPlan(environment = Some("ml")))
-    val refusal = "the operator's Python environment cannot change while the run is paused"
+    val refusal = "The operator's Python environment cannot change while the run is paused."
 
     refused(400)(post(inDefault.eid, udf(environment = Some("ml")))) shouldBe refusal
     refused(400)(post(inMl.eid, udf())) shouldBe refusal
@@ -1043,7 +1043,7 @@ class OperatorUpdatesSpec
       setStatus(execution.eid, status)
       withClue(s"status $status: ") {
         refused(409)(post(execution.eid, limit("limit", 7))) shouldBe
-          s"execution ${execution.eid} has ended"
+          s"Execution ${execution.eid} has ended."
       }
     }
     updateRows(execution.planUri) shouldBe empty
@@ -1063,7 +1063,7 @@ class OperatorUpdatesSpec
     insertExecution(noPlanEid, status = 2)
 
     refused(404)(post(noPlanEid, limit("limit", 7))) shouldBe
-      s"execution $noPlanEid has no stored plan"
+      s"Execution $noPlanEid has no stored plan."
   }
 
   // --- refused: malformed ---
@@ -1153,7 +1153,7 @@ class OperatorUpdatesSpec
         limit("limit", 7),
         updates = new FixtureUpdates(failAppend = Some(dropped))
       )
-    } shouldBe s"execution ${execution.eid} has no stored plan"
+    } shouldBe s"Execution ${execution.eid} has no stored plan."
   }
 
   it should "answer 500 when the stored plan was made for another user or computing unit" in {

@@ -1011,7 +1011,6 @@ class WorkflowWebsocketResourceSpec
         userOf(creatorUid),
         new URI("http://texera.example/api/executions")
       )
-      .getOrElse(fail("the execution was not created"))
     madePlans += new URI(response.planUri)
     madeStatistics += VFSURIFactory.createRuntimeStatisticsURI(
       WorkflowIdentity(storedWid),

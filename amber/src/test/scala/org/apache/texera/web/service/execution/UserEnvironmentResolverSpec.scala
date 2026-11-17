@@ -109,13 +109,17 @@ class UserEnvironmentResolverSpec
     save(other, "theirs", """{"tabulate": "==0.9.0"}""")
     save(owner, "ml", """{"tabulate": "==0.9.0"}""")
 
-    refusal(owner, "theirs") shouldBe "You have no Python environment named 'theirs'."
-    refusal(owner, "kept-by-nobody") shouldBe
-      "You have no Python environment named 'kept-by-nobody'."
+    // The message says why a name another user keeps finds nothing: a collaborator who runs a
+    // shared workflow needs an environment of their own under the name it uses.
+    def none(name: String): String =
+      s"You have no Python environment named '$name'. Each user keeps their own environments, " +
+        "so to run this workflow, create one with this name."
+    refusal(owner, "theirs") shouldBe none("theirs")
+    refusal(owner, "kept-by-nobody") shouldBe none("kept-by-nobody")
     // A name is the one saved, to the letter.
-    refusal(owner, "ML") shouldBe "You have no Python environment named 'ML'."
-    refusal(owner, "ml ") shouldBe "You have no Python environment named 'ml '."
-    refusal(owner, "") shouldBe "You have no Python environment named ''."
+    refusal(owner, "ML") shouldBe none("ML")
+    refusal(owner, "ml ") shouldBe none("ml ")
+    refusal(owner, "") shouldBe none("")
   }
 
   it should "refuse an environment whose packages pip may not read, naming the package" in {

@@ -25,7 +25,12 @@ import org.apache.texera.web.model.http.request.execution.{
   CreateExecutionRequest,
   OperatorUpdateRequestBody
 }
-import org.apache.texera.web.service.execution.{ExecutionCreator, OperatorUpdates}
+import org.apache.texera.web.model.http.response.execution.CreateExecutionFailure
+import org.apache.texera.web.service.execution.{
+  ExecutionCreator,
+  OperatorUpdates,
+  WorkflowNotCompiled
+}
 
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs.core.{Context, MediaType, Response, UriInfo}
@@ -76,9 +81,15 @@ class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
       @Auth user: SessionUser,
       @Context uriInfo: UriInfo
   ): Response =
-    creator.create(request, user.getUser, uriInfo.getRequestUri) match {
-      case Right(created) => Response.status(Response.Status.CREATED).entity(created).build()
-      case Left(failed)   => Response.status(Response.Status.BAD_REQUEST).entity(failed).build()
+    try {
+      val created = creator.create(request, user.getUser, uriInfo.getRequestUri)
+      Response.status(Response.Status.CREATED).entity(created).build()
+    } catch {
+      case failed: WorkflowNotCompiled =>
+        Response
+          .status(Response.Status.BAD_REQUEST)
+          .entity(CreateExecutionFailure(failed.eid, failed.operatorErrors, List.empty))
+          .build()
     }
 
   /**

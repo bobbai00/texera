@@ -1110,7 +1110,6 @@ class SyncExecutionResourceSpec
         syncUser().getUser,
         new URI("http://texera.example/api/executions")
       )
-      .getOrElse(fail("the execution was not created"))
     madePlans += new URI(response.planUri)
     response
   }

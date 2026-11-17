@@ -363,7 +363,6 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         creator,
         new URI("http://texera.example/api/executions")
       )
-      .fold(failure => fail(s"the workflow does not compile: ${failure.operatorErrors}"), identity)
     created += execution
 
     val service = new UnitWorkflowService

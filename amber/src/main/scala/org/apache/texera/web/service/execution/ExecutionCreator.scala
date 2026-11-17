@@ -23,6 +23,7 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord, PlanTooLargeException}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{RunBindings, WorkflowCompilationFailed, WorkflowCompiler}
@@ -39,10 +40,7 @@ import org.apache.texera.web.model.http.request.execution.{
   CreateExecutionRequest,
   ReplayExecutionInfo
 }
-import org.apache.texera.web.model.http.response.execution.{
-  CreateExecutionFailure,
-  CreateExecutionResponse
-}
+import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.{
@@ -103,11 +101,19 @@ object ExecutionCreator {
       warehouseId: Option[Int],
       replay: Option[ReplayExecutionInfo]
   )
-
-  /** A failure after the execution's row exists, with what to tell the user about it. */
-  private final class ExecutionNotCreated(message: String, cause: Throwable)
-      extends RuntimeException(message, cause)
 }
+
+/**
+  * The workflow of a create does not compile (400): execution `eid` is recorded as failed.
+  *
+  * @param operatorErrors the first error of each operator that has one, by the operator's id, in
+  *                       the order of the workflow: an operator before those downstream of it
+  */
+final class WorkflowNotCompiled(
+    val eid: Long,
+    val operatorErrors: Map[String, WorkflowFatalError],
+    message: String
+) extends BadRequestException(message)
 
 /**
   * Creates executions: what `POST /api/executions` on the Dashboard service does. No computing
@@ -130,9 +136,9 @@ object ExecutionCreator {
   *     an operator names is one the user keeps, and the plan carries its packages for the unit
   *     to install. A workflow that does not compile, a scan of a file the user may not read or
   *     an operator in an environment the user does not have among them, marks the row FAILED and
-  *     is answered with each operator's error (400). A plan that cannot be made for another
-  *     reason, such as the database or the storage not answering while a file is resolved or
-  *     linked, marks the row FAILED too (500).
+  *     is answered with each operator's error ([[WorkflowNotCompiled]], 400). A plan that cannot
+  *     be made for another reason, such as the database or the storage not answering while a file
+  *     is resolved or linked, marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
   *     from (as JSON that parses back to it, without what a compile sets,
   *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A plan larger
@@ -141,8 +147,8 @@ object ExecutionCreator {
   *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
   *     new execution replaces none until a unit runs it.
   *
-  * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
-  * `{"code", "message"}`.
+  * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
+  * as `{"code", "message"}`.
   *
   * @param bindingsFor       what a plan is bound to, for a user
   * @param replayLogRoot     where runs keep their replay logs; None when they keep none
@@ -160,31 +166,23 @@ class ExecutionCreator(
     writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan,
     background: Executor = ExecutionCreator.daemonThreads("execution-clearing", threads = 1)
 ) extends LazyLogging {
-  import ExecutionCreator.{CheckedRequest, ExecutionNotCreated, MaxColumnLength}
+  import ExecutionCreator.{CheckedRequest, MaxColumnLength}
 
   /**
-    * Creates the execution `request` asks for, for `user`.
+    * Creates the execution `request` asks for, for `user`, in the steps this class describes.
     *
     * @param requestUri the URI the request came to: the email notification links to the workflow
     *                   on its host
-    * @return the execution created (Right), or, for a workflow that does not compile, the
-    *         execution recorded as failed with each operator's error (Left)
-    * @throws BadRequestException          (400) for a request that is malformed, names a warehouse
-    *                                      the user may not write into, or a replay log there is
-    *                                      not; and for a workflow whose plan is larger than a plan
-    *                                      may be, whose execution is recorded as failed
-    * @throws ForbiddenException           (403) unless the user may read the workflow and run
-    *                                      workflows on the computing unit
-    * @throws WebApplicationException      (409) if the computing unit is terminated
-    * @throws InternalServerErrorException (500) if the plan could not be made or written for a
-    *                                      reason other than the workflow's: the execution is
-    *                                      recorded as failed
+    * @return the execution created
+    * @throws WebApplicationException with the status of the step that refused the request or
+    *                                 failed; a [[WorkflowNotCompiled]] when the workflow does not
+    *                                 compile
     */
   def create(
       request: CreateExecutionRequest,
       user: User,
       requestUri: URI
-  ): Either[CreateExecutionFailure, CreateExecutionResponse] = {
+  ): CreateExecutionResponse = {
     val uid = Option(user).flatMap(u => Option(u.getUid)).getOrElse {
       throw new ForbiddenException("An execution is created for a signed-in user.")
     }
@@ -203,13 +201,14 @@ class ExecutionCreator(
       }
     val replay = checked.replay.map(replaySourceOf(checked.wid, _))
 
-    val eid = ExecutionsMetadataPersistService.insertCreatedExecution(
+    val (eid, replayLog) = ExecutionsMetadataPersistService.insertCreatedExecution(
       wid,
       uid,
       checked.executionName,
       checked.environmentVersion,
       checked.computingUnitId,
-      checked.warehouseId
+      checked.warehouseId,
+      replayLogRoot
     )
     logger.info(
       s"Execution ${eid.id} of workflow ${checked.wid} is created for user $uid on computing " +
@@ -217,84 +216,29 @@ class ExecutionCreator(
     )
     // From here the row exists: whatever fails marks it FAILED, so it does not stay Created
     // although no unit can ever start it.
-    failingTheExecution(eid) {
-      val replayLog = replayLogRoot.map { root =>
-        val location = root.resolve(s"${checked.wid}/${eid.id}/")
-        ExecutionsMetadataPersistService.updateLogLocation(eid, location.toString)
-        location
-      }
-      val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
-      // How long each operator took in the user's newest completed run of the workflow, for the
-      // scheduler's cost model: saved with the plan, which the engine takes them from.
-      context.costHints = costHints.load(checked.wid, uid)
-      // The plan compiled, as an editor sends it, loop-variable references included: written
-      // before the compile resolves its operators in place, and without what a compile sets,
-      // whatever the request sent there.
-      val logical = checked.plan.toJson
-      val compiler = new WorkflowCompiler(context, bindingsFor(uid))
-      val made =
-        try Right(PlanToRun.make(compiler, checked.plan, replay, replayLog))
-        catch { case failed: WorkflowCompilationFailed => Left(failed) }
-      made match {
-        case Left(failed) =>
-          ExecutionsMetadataPersistService.markFailed(eid)
-          logger.info(
-            s"Execution ${eid.id} failed: the workflow does not compile. ${failed.getMessage}"
-          )
-          Left(
-            CreateExecutionFailure(
-              eid.id,
-              failed.operatorErrors.map { case (operator, error) => operator.id -> error },
-              List.empty
-            )
-          )
-        case Right(savedPlan) =>
-          val planUri = ExecutionPlanStore.planUri(wid, eid, warehouse)
-          val notification = notificationFor(checked, user, requestUri)
-          try {
-            writePlan(
-              planUri,
-              PlanRecord(
-                entryId = ExecutionPlanStore.PlanEntryId,
-                body = savedPlan,
-                createdBy = uid.intValue(),
-                computingUnitId = checked.computingUnitId,
-                notification = notification.map(Notification.toJson)
-              ),
-              logical
-            )
-          } catch {
-            // The workflow's doing, not the lake's: answered as such below.
-            case tooLarge: PlanTooLargeException => throw tooLarge
-            case NonFatal(failure) =>
-              throw new ExecutionNotCreated(
-                s"Execution ${eid.id} could not be created: its plan could not be written to " +
-                  "the lake.",
-                failure
-              )
-          }
-          background.execute(() =>
-            ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
-          )
-          Right(
-            CreateExecutionResponse(eid.id, checked.wid, checked.computingUnitId, planUri.toString)
-          )
-      }
-    }
-  }
-
-  /**
-    * `body`, which runs once execution `eid`'s row exists: any failure marks the row FAILED. A
-    * plan too large to store is answered 400, with how large it is and may be. Any other failure
-    * the JVM can go on after is answered 500, with the reason for the user when it is an
-    * [[ExecutionNotCreated]]; a failure it cannot go on after is thrown as it is.
-    */
-  private def failingTheExecution[T](eid: ExecutionIdentity)(body: => T): T =
-    try body
-    catch {
-      case failure: Throwable =>
-        ExecutionsMetadataPersistService.markFailed(eid)
-        failure match {
+    val planUri =
+      try {
+        val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
+        // How long each operator took in the user's newest completed run of the workflow, for the
+        // scheduler's cost model: saved with the plan, which the engine takes them from.
+        context.costHints = costHints.load(checked.wid, uid)
+        // The plan compiled, as an editor sends it, loop-variable references included: written
+        // before the compile resolves its operators in place, and without what a compile sets,
+        // whatever the request sent there.
+        val logical = checked.plan.toJson
+        val compiler = new WorkflowCompiler(context, bindingsFor(uid))
+        val savedPlan = PlanToRun.make(compiler, checked.plan, replay, replayLog)
+        val planUri = ExecutionPlanStore.planUri(wid, eid, warehouse)
+        val record = PlanRecord(
+          entryId = ExecutionPlanStore.PlanEntryId,
+          body = savedPlan,
+          createdBy = uid.intValue(),
+          computingUnitId = checked.computingUnitId,
+          notification = notificationFor(checked, user, requestUri).map(Notification.toJson)
+        )
+        try writePlan(planUri, record, logical)
+        catch {
+          // The workflow's doing, not the lake's.
           case tooLarge: PlanTooLargeException =>
             throw new BadRequestException(
               s"Execution ${eid.id} could not be created. ${tooLarge.getMessage} A plan holds a " +
@@ -302,15 +246,48 @@ class ExecutionCreator(
                 "makes a smaller plan.",
               tooLarge
             )
-          case notCreated: ExecutionNotCreated =>
-            throw new InternalServerErrorException(notCreated.getMessage, notCreated.getCause)
-          case NonFatal(other) =>
+          case NonFatal(failure) =>
             throw new InternalServerErrorException(
-              s"Execution ${eid.id} could not be created: its plan could not be made.",
-              other
+              s"Execution ${eid.id} could not be created: its plan could not be written to " +
+                "the lake.",
+              failure
             )
-          case fatal => throw fatal
         }
+        planUri
+      } catch {
+        case NonFatal(failure) =>
+          ExecutionsMetadataPersistService.markFailed(eid)
+          throw answerTo(eid, failure)
+      }
+    background.execute(() =>
+      ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
+    )
+    CreateExecutionResponse(eid.id, checked.wid, checked.computingUnitId, planUri.toString)
+  }
+
+  /**
+    * What a create answers when `failure` stops it after execution `eid`'s row exists: each
+    * operator's error for a workflow that does not compile (400), the refusal of the step that
+    * refused it (400 for a plan too large to store), and otherwise 500, with the failure as its
+    * cause.
+    */
+  private def answerTo(eid: ExecutionIdentity, failure: Throwable): WebApplicationException =
+    failure match {
+      case failed: WorkflowCompilationFailed =>
+        logger.info(
+          s"Execution ${eid.id} failed: the workflow does not compile. ${failed.getMessage}"
+        )
+        new WorkflowNotCompiled(
+          eid.id,
+          failed.operatorErrors.map { case (operator, error) => operator.id -> error },
+          failed.getMessage
+        )
+      case answer: WebApplicationException => answer
+      case other =>
+        new InternalServerErrorException(
+          s"Execution ${eid.id} could not be created: its plan could not be made.",
+          other
+        )
     }
 
   /**
@@ -322,10 +299,10 @@ class ExecutionCreator(
     def refuse(message: String): Nothing = throw new BadRequestException(message)
     if (request == null) refuse("The request has no body.")
     if (request.wid < 1 || request.wid > Int.MaxValue) {
-      refuse(s"The request names no workflow: wid is ${request.wid}.")
+      refuse("The request names no workflow.")
     }
     if (request.computingUnitId < 1) {
-      refuse(s"The request names no computing unit: computingUnitId is ${request.computingUnitId}.")
+      refuse("The request names no computing unit to run the workflow on.")
     }
     val executionName = Option(request.executionName).getOrElse("")
     if (executionName.length > MaxColumnLength) {
@@ -336,7 +313,11 @@ class ExecutionCreator(
     }
     val environmentVersion = ExecutionsMetadataPersistService.environmentVersionOf(engineVersion)
     if (environmentVersion.length > MaxColumnLength) {
-      refuse("The request's engine version is too long.")
+      refuse(
+        "The request's engine version is longer than the " +
+          s"${MaxColumnLength - ExecutionsMetadataPersistService.environmentVersionOf("").length} " +
+          "characters an execution keeps."
+      )
     }
     val sent = Option(request.logicalPlan).getOrElse(refuse("The request has no logical plan."))
     sent.listProblem().foreach(problem => refuse(problem))
@@ -403,7 +384,7 @@ class ExecutionCreator(
       )
     if (terminated) {
       throw new WebApplicationException(
-        s"computing unit $cuid is terminated",
+        s"Computing unit $cuid is terminated.",
         Response.Status.CONFLICT
       )
     }

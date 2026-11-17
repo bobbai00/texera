@@ -44,13 +44,15 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowVersion
 }
 import org.apache.texera.web.storage.ExecutionStateStore
-import org.jooq.impl.{DSL, DefaultConfiguration}
-import org.jooq.{ConnectionProvider, SQLDialect}
+import org.jooq.exception.DataAccessException
+import org.jooq.impl.{DSL, DefaultConfiguration, DefaultExecuteListenerProvider}
+import org.jooq.{ConnectionProvider, ExecuteContext, ExecuteListener, SQLDialect}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.slf4j.LoggerFactory
 
+import java.net.URI
 import java.sql.{Connection, SQLException, Timestamp}
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
@@ -188,13 +190,14 @@ class ExecutionsMetadataPersistServiceSpec
   "insertCreatedExecution" should
     "record an execution as Created, not the column's default, Running, and starting now" in {
     val before = System.currentTimeMillis()
-    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+    val (id, _) = ExecutionsMetadataPersistService.insertCreatedExecution(
       WorkflowIdentity(testWid.toLong),
       testUid,
       executionName = "created-execution",
       environmentVersion = """{"engine_version":"1.4.0"}""",
       computingUnitId = seededCuid,
-      warehouseId = None
+      warehouseId = None,
+      replayLogRoot = None
     )
     val after = System.currentTimeMillis()
 
@@ -214,13 +217,14 @@ class ExecutionsMetadataPersistServiceSpec
   }
 
   it should "keep the column's default name for an empty name" in {
-    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+    val (id, _) = ExecutionsMetadataPersistService.insertCreatedExecution(
       WorkflowIdentity(testWid.toLong),
       testUid,
       executionName = "",
       environmentVersion = "env",
       computingUnitId = seededCuid,
-      warehouseId = None
+      warehouseId = None,
+      replayLogRoot = None
     )
 
     workflowExecutionsDao.fetchOneByEid(id.id.toInt).getName shouldBe "Untitled Execution"
@@ -235,13 +239,14 @@ class ExecutionsMetadataPersistServiceSpec
     row.setFlavor(UserWarehouseFlavorEnum.local)
     row.store()
 
-    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+    val (id, _) = ExecutionsMetadataPersistService.insertCreatedExecution(
       WorkflowIdentity(testWid.toLong),
       testUid,
       executionName = "warehouse-run",
       environmentVersion = "env",
       computingUnitId = seededCuid,
-      warehouseId = Some(row.getWhid)
+      warehouseId = Some(row.getWhid),
+      replayLogRoot = None
     )
 
     workflowExecutionsDao.fetchOneByEid(id.id.toInt).getWhid shouldBe row.getWhid
@@ -256,19 +261,71 @@ class ExecutionsMetadataPersistServiceSpec
 
     var id: ExecutionIdentity = null
     val statements = recorder.record {
-      id = ExecutionsMetadataPersistService.insertCreatedExecution(
-        WorkflowIdentity(testWid.toLong),
-        testUid,
-        executionName = "newest",
-        environmentVersion = "env",
-        computingUnitId = seededCuid,
-        warehouseId = None
-      )
+      id = ExecutionsMetadataPersistService
+        .insertCreatedExecution(
+          WorkflowIdentity(testWid.toLong),
+          testUid,
+          executionName = "newest",
+          environmentVersion = "env",
+          computingUnitId = seededCuid,
+          warehouseId = None,
+          replayLogRoot = None
+        )
+        ._1
     }
 
     workflowExecutionsDao.fetchOneByEid(id.id.toInt).getVid shouldBe newer.getVid
     // The latest version is looked up, then the row is inserted and its id returned.
     statements.map(_.verb) shouldBe Seq("SELECT", "INSERT")
+  }
+
+  it should "record where the execution writes its replay log with its row" in {
+    val root = new URI("file:///tmp/texera-spec-replay-logs/")
+    var created: (ExecutionIdentity, Option[URI]) = null
+    val statements = recorder.record {
+      created = ExecutionsMetadataPersistService.insertCreatedExecution(
+        WorkflowIdentity(testWid.toLong),
+        testUid,
+        executionName = "logged",
+        environmentVersion = "env",
+        computingUnitId = seededCuid,
+        warehouseId = None,
+        replayLogRoot = Some(root)
+      )
+    }
+
+    val (id, replayLog) = created
+    // <root>/<wid>/<eid>/, as the root resolves it (java.net.URI drops the empty authority).
+    replayLog shouldBe Some(new URI(s"file:/tmp/texera-spec-replay-logs/$testWid/${id.id}/"))
+    workflowExecutionsDao.fetchOneByEid(id.id.toInt).getLogLocation shouldBe replayLog.get.toString
+    statements.map(_.verb) shouldBe Seq("SELECT", "INSERT", "UPDATE")
+  }
+
+  it should "leave no row when the location of its replay log cannot be recorded" in {
+    val before = workflowExecutionsDao.fetchByVid(seededVid).size()
+    val refusingUpdates = getDSLContext
+      .configuration()
+      .derive(new DefaultExecuteListenerProvider(new ExecuteListener {
+        override def executeStart(ctx: ExecuteContext): Unit =
+          if (ctx.sql().trim.toLowerCase.startsWith("update")) {
+            throw new DataAccessException("the update is refused")
+          }
+      }))
+    SqlServer.getInstance().replaceDSLContext(DSL.using(refusingUpdates))
+    try {
+      a[DataAccessException] should be thrownBy
+        ExecutionsMetadataPersistService.insertCreatedExecution(
+          WorkflowIdentity(testWid.toLong),
+          testUid,
+          executionName = "unlogged",
+          environmentVersion = "env",
+          computingUnitId = seededCuid,
+          warehouseId = None,
+          replayLogRoot = Some(new URI("file:///tmp/texera-spec-replay-logs/"))
+        )
+    } finally SqlServer.getInstance().replaceDSLContext(getDSLContext)
+
+    workflowExecutionsDao.fetchByVid(seededVid).size() shouldBe before
   }
 
   it should "keep execution history when its warehouse is deleted (whid SET NULL)" in {
@@ -280,13 +337,14 @@ class ExecutionsMetadataPersistServiceSpec
     row.setFlavor(UserWarehouseFlavorEnum.local)
     row.store()
 
-    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+    val (id, _) = ExecutionsMetadataPersistService.insertCreatedExecution(
       WorkflowIdentity(testWid.toLong),
       testUid,
       executionName = "history-run",
       environmentVersion = "env",
       computingUnitId = seededCuid,
-      warehouseId = Some(row.getWhid)
+      warehouseId = Some(row.getWhid),
+      replayLogRoot = None
     )
 
     getDSLContext.deleteFrom(USER_WAREHOUSE).where(USER_WAREHOUSE.WHID.eq(row.getWhid)).execute()
@@ -299,14 +357,15 @@ class ExecutionsMetadataPersistServiceSpec
   it should "refuse a computing unit that does not exist, and write nothing" in {
     val before = workflowExecutionsDao.fetchByVid(seededVid).size()
 
-    a[org.jooq.exception.DataAccessException] should be thrownBy
+    a[DataAccessException] should be thrownBy
       ExecutionsMetadataPersistService.insertCreatedExecution(
         WorkflowIdentity(testWid.toLong),
         testUid,
         executionName = "nowhere",
         environmentVersion = "env",
         computingUnitId = Int.MaxValue,
-        warehouseId = None
+        warehouseId = None,
+        replayLogRoot = None
       )
 
     workflowExecutionsDao.fetchByVid(seededVid).size() shouldBe before
@@ -358,10 +417,10 @@ class ExecutionsMetadataPersistServiceSpec
     after.getStatus shouldBe 1.toByte
   }
 
-  // -- updateStatus / updateLogLocation ---------------------------------------
+  // -- updateStatus -------------------------------------------------------------
   //
-  // The unit records a run's state with these while the run starts and goes on, so each is one
-  // UPDATE by eid that reads nothing first.
+  // The unit records a run's state with it while the run starts and goes on, so it is one UPDATE
+  // by eid that reads nothing first.
 
   // A whole second, so the time read back compares equal at any precision the column keeps.
   private val changedAt = Timestamp.valueOf("2026-11-15 10:20:30")
@@ -524,60 +583,6 @@ class ExecutionsMetadataPersistServiceSpec
     logged.head.getFormattedMessage should startWith(s"Unable to update execution $eid.")
     logged.head.getFormattedMessage should include("database unavailable")
     workflowExecutionsDao.fetchOneByEid(eid).getStatus shouldBe 1.toByte
-  }
-
-  "updateLogLocation" should "write the location in one UPDATE by eid" in {
-    val eid = seedExecution(status = 1)
-    val other = seedExecution(status = 1)
-    val statements = recorder.record {
-      ExecutionsMetadataPersistService.updateLogLocation(
-        ExecutionIdentity(eid.longValue()),
-        "file:///logs/wid/eid/"
-      )
-    }
-    statements.map(_.verb) shouldBe Seq("UPDATE")
-    statements.head.sql.toLowerCase should not include "select"
-    val after = workflowExecutionsDao.fetchOneByEid(eid)
-    after.getLogLocation shouldBe "file:///logs/wid/eid/"
-    after.getStatus shouldBe 1.toByte
-    workflowExecutionsDao.fetchOneByEid(other).getLogLocation shouldBe null
-  }
-
-  it should "write no other column of the row" in {
-    val eid = seedExecution(status = 1)
-    fillEveryColumn(eid)
-    val changed = columnsChangedBy(eid) {
-      ExecutionsMetadataPersistService.updateLogLocation(
-        ExecutionIdentity(eid.longValue()),
-        "file:///logs/wid/eid/"
-      )
-    }
-    changed shouldBe Set("log_location")
-  }
-
-  it should "update nothing and not fail for an unknown eid" in {
-    val eid = seedExecution(status = 1)
-    noException should be thrownBy
-      ExecutionsMetadataPersistService.updateLogLocation(ExecutionIdentity(-1L), "file:///x/")
-    workflowExecutionsDao.fetchOneByEid(eid).getLogLocation shouldBe null
-  }
-
-  it should "log and swallow a failure" in {
-    val eid = seedExecution(status = 1)
-    val (attempts, logged) = loggedByService {
-      whileDatabaseUnreachable {
-        noException should be thrownBy
-          ExecutionsMetadataPersistService.updateLogLocation(
-            ExecutionIdentity(eid.longValue()),
-            "file:///x/"
-          )
-      }
-    }
-    attempts should be > 0
-    logged.map(_.getLevel) shouldBe Seq(Level.WARN)
-    logged.head.getFormattedMessage should startWith(s"Unable to update execution $eid.")
-    logged.head.getFormattedMessage should include("database unavailable")
-    workflowExecutionsDao.fetchOneByEid(eid).getLogLocation shouldBe null
   }
 
   // -- ExecutionStateStore.updateWorkflowState --------------------------------

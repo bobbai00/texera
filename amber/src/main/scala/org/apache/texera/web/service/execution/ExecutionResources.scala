@@ -77,14 +77,14 @@ object ExecutionResources extends LazyLogging {
     if (!enabled) {
       warehouseId.foreach(_ =>
         throw new IllegalArgumentException(
-          "per-user warehouses are disabled in this deployment"
+          "Per-user warehouses are disabled in this deployment."
         )
       )
       return None
     }
     if (warehouseId.isEmpty) {
       throw new IllegalArgumentException(
-        "a warehouse must be selected for this execution"
+        "A warehouse must be selected for this execution."
       )
     }
     warehouseId.map(id => {
@@ -96,7 +96,7 @@ object ExecutionResources extends LazyLogging {
         .where(USER_WAREHOUSE.WHID.eq(id).and(USER_WAREHOUSE.UID.eq(uid)))
         .fetchOne(USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME)
       if (lakekeeperWarehouseName == null) {
-        throw new IllegalArgumentException(s"no warehouse with id $id owned by this user")
+        throw new IllegalArgumentException(s"You have no warehouse with id $id.")
       }
       lakekeeperWarehouseName
     })

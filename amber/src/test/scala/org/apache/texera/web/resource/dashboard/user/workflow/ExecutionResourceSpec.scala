@@ -978,7 +978,8 @@ class ExecutionResourceSpec
         error.`type` shouldBe COMPILATION_ERROR
         error.operatorId shouldBe "udf"
         error.message shouldBe "org.apache.texera.common.compiler.PythonEnvironmentNotResolved: " +
-          s"You have no Python environment named '$name'."
+          s"You have no Python environment named '$name'. Each user keeps their own " +
+          "environments, so to run this workflow, create one with this name."
         // No plan is made to run in another environment, or in none.
         row(failure.eid).getStatus shouldBe 4.toByte
         a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
@@ -1695,7 +1696,7 @@ class ExecutionResourceSpec
   it should "refuse a terminated unit with 409" in {
     refused(409) {
       post(request(cuid = terminatedCuid))
-    } shouldBe s"computing unit $terminatedCuid is terminated"
+    } shouldBe s"Computing unit $terminatedCuid is terminated."
   }
 
   // --- refused: warehouse ---
@@ -1703,16 +1704,16 @@ class ExecutionResourceSpec
   it should "refuse a warehouse the run may not write into, by each rule" in {
     refused(400) {
       post(request(warehouseId = None), creator = new FixtureCreator(warehouses = true))
-    } shouldBe "a warehouse must be selected for this execution"
+    } shouldBe "A warehouse must be selected for this execution."
     refused(400) {
       post(
         request(warehouseId = Some(strangerWhid)),
         creator = new FixtureCreator(warehouses = true)
       )
-    } shouldBe s"no warehouse with id $strangerWhid owned by this user"
+    } shouldBe s"You have no warehouse with id $strangerWhid."
     refused(400) {
       post(request(warehouseId = Some(creatorWhid)), creator = new FixtureCreator())
-    } shouldBe "per-user warehouses are disabled in this deployment"
+    } shouldBe "Per-user warehouses are disabled in this deployment."
   }
 
   // --- refused: replay ---
@@ -1761,11 +1762,11 @@ class ExecutionResourceSpec
 
   it should "refuse a request that names no workflow, unit, engine version or plan" in {
     refused(400)(post(null)) shouldBe "The request has no body."
-    refused(400)(post(request(wid = 0))) shouldBe "The request names no workflow: wid is 0."
+    refused(400)(post(request(wid = 0))) shouldBe "The request names no workflow."
     refused(400)(post(request(wid = Int.MaxValue.toLong + 1))) shouldBe
-      s"The request names no workflow: wid is ${Int.MaxValue.toLong + 1}."
+      "The request names no workflow."
     refused(400)(post(request(cuid = 0))) shouldBe
-      "The request names no computing unit: computingUnitId is 0."
+      "The request names no computing unit to run the workflow on."
     refused(400)(post(request().copy(engineVersion = null))) shouldBe
       "The request names no engine version."
     refused(400)(post(request(plan = null))) shouldBe "The request has no logical plan."
@@ -1775,7 +1776,7 @@ class ExecutionResourceSpec
     refused(400)(post(request().copy(executionName = "n" * 129))) shouldBe
       s"The execution's name is longer than ${ExecutionCreator.MaxColumnLength} characters."
     refused(400)(post(request().copy(engineVersion = "v" * 120))) shouldBe
-      "The request's engine version is too long."
+      "The request's engine version is longer than the 107 characters an execution keeps."
     // The longest name the row keeps is taken.
     row(created(post(request().copy(executionName = "n" * 128))).eid).getName shouldBe "n" * 128
   }

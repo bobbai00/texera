@@ -21,6 +21,7 @@ package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
@@ -28,6 +29,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
 import play.api.libs.json.Json
 
+import java.net.URI
 import java.sql.Timestamp
 
 /**
@@ -54,17 +56,21 @@ object ExecutionsMetadataPersistService extends LazyLogging {
 
   /**
     * Records a new execution of the latest version of workflow `workflowId`, created by user `uid`
-    * to run on computing unit `computingUnitId`, and returns its id: the row the Dashboard inserts
-    * when it creates an execution, before the execution's plan is made.
+    * to run on computing unit `computingUnitId`: the row the Dashboard inserts when it creates an
+    * execution, before the execution's plan is made.
     *
     * The row's status is Created, set here rather than left to the column's default, which is
     * Running: no unit has started the execution, and the unit that does records it as
     * Initializing. Its starting time is now. An empty `executionName` keeps the column's default
-    * name.
+    * name. With a `replayLogRoot` the execution writes its replay log to `<root>/<wid>/<eid>/`,
+    * which is recorded in the transaction that inserts the row: no row is left without the
+    * location its plan names.
     *
     * @param environmentVersion what the row keeps as the version of the engine that asked for it
     * @param warehouseId        the user_warehouse the execution writes into; None for the shared
     *                           default warehouse
+    * @param replayLogRoot      where runs keep their replay logs; None when they keep none
+    * @return the execution's id, and where it writes its replay log
     */
   def insertCreatedExecution(
       workflowId: WorkflowIdentity,
@@ -72,21 +78,33 @@ object ExecutionsMetadataPersistService extends LazyLogging {
       executionName: String,
       environmentVersion: String,
       computingUnitId: Integer,
-      warehouseId: Option[Int]
-  ): ExecutionIdentity = {
+      warehouseId: Option[Int],
+      replayLogRoot: Option[URI]
+  ): (ExecutionIdentity, Option[URI]) = {
     val vid = getLatestVersion(Math.toIntExact(workflowId.id))
-    val insert = context
-      .insertInto(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.VID, vid)
-      .set(WORKFLOW_EXECUTIONS.UID, uid)
-      .set(WORKFLOW_EXECUTIONS.CUID, computingUnitId)
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
-      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
-      .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
-      .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)
-    val named =
-      if (executionName.nonEmpty) insert.set(WORKFLOW_EXECUTIONS.NAME, executionName) else insert
-    ExecutionIdentity(named.returning(WORKFLOW_EXECUTIONS.EID).fetchOne().getEid.longValue())
+    withTransaction(context) { transaction =>
+      val insert = transaction
+        .insertInto(WORKFLOW_EXECUTIONS)
+        .set(WORKFLOW_EXECUTIONS.VID, vid)
+        .set(WORKFLOW_EXECUTIONS.UID, uid)
+        .set(WORKFLOW_EXECUTIONS.CUID, computingUnitId)
+        .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
+        .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
+        .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
+        .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)
+      val named =
+        if (executionName.nonEmpty) insert.set(WORKFLOW_EXECUTIONS.NAME, executionName) else insert
+      val eid = named.returning(WORKFLOW_EXECUTIONS.EID).fetchOne().getEid
+      val replayLog = replayLogRoot.map(_.resolve(s"${workflowId.id}/$eid/"))
+      replayLog.foreach { location =>
+        transaction
+          .update(WORKFLOW_EXECUTIONS)
+          .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, location.toString)
+          .where(WORKFLOW_EXECUTIONS.EID.eq(eid))
+          .execute()
+      }
+      (ExecutionIdentity(eid.longValue()), replayLog)
+    }
   }
 
   /**
@@ -126,18 +144,8 @@ object ExecutionsMetadataPersistService extends LazyLogging {
         .execute()
     }
 
-  /** Records where an execution writes its replay log, the way [[updateStatus]] records status. */
-  def updateLogLocation(eid: ExecutionIdentity, location: String): Unit =
-    tryUpdate(eid) {
-      context
-        .update(WORKFLOW_EXECUTIONS)
-        .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, location)
-        .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
-        .execute()
-    }
-
-  // A failure leaves the row with a stale status or location, which an operator should see, so it
-  // is a warning. It is never routine: an unknown eid matches no row instead of failing.
+  // A failure leaves the row with a stale status, which an operator should see, so it is a
+  // warning. It is never routine: an unknown eid matches no row instead of failing.
   private def tryUpdate(eid: ExecutionIdentity)(update: => Unit): Unit =
     try update
     catch {
