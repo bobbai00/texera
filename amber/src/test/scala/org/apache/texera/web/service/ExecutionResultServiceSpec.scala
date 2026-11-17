@@ -309,9 +309,9 @@ class ExecutionResultServiceSpec
   //     once the execution reaches RUNNING. AmberRuntime holds its ActorSystem
   //     in a private var that only a started pekko cluster fills in, so the
   //     service's own private field is set directly (`setPollingCancellable`)
-  //     to reproduce the post-RUNNING state that the terminal-state, fatal-error
-  //     and re-attach paths all assume. Nothing global is mutated, and no
-  //     RUNNING state is ever pushed through the metadata store.
+  //     to reproduce the post-RUNNING state, in which the terminal-state,
+  //     fatal-error and re-attach paths have a poll to stop. Nothing global is
+  //     mutated, and no RUNNING state is ever pushed through the metadata store.
   //
   // The result documents are real Iceberg tables. Their storage key is derived
   // from the URI path, and creating one overwrites whatever is already there, so
@@ -640,7 +640,6 @@ class ExecutionResultServiceSpec
 
     withAttached(plan, executionId) { fixture =>
       // No ResultEvents: the run finishes after its browser tab has closed (#8994).
-      setPollingCancellable(fixture.service, new RecordingCancellable)
       fixture.client.fire(ExecutionStateUpdate(WorkflowAggregatedState.COMPLETED))
 
       storedResultCount(executionId, "erss-snapshot-count") shouldBe 3L
@@ -667,7 +666,6 @@ class ExecutionResultServiceSpec
     )
 
     withAttached(plan, executionId) { fixture =>
-      setPollingCancellable(fixture.service, new RecordingCancellable)
       fixture.client.fire(ExecutionStateUpdate(WorkflowAggregatedState.COMPLETED))
 
       // A visualization is shown whole, never paged, so it has no count to record.
@@ -891,14 +889,46 @@ class ExecutionResultServiceSpec
     )
 
     withAttached(plan, executionId) { fixture =>
-      setPollingCancellable(fixture.service, new RecordingCancellable)
-
       fixture.client.fire(ExecutionStateUpdate(WorkflowAggregatedState.COMPLETED))
 
       // The update for an operator reads its first port, so its count has to come from there
       // too; the second port's 8 rows must not stand in for the first port's 3.
       val resultInfo = fixture.workflowStateStore.resultStore.getState.resultInfo
       resultInfo(OperatorIdentity("erss-final-two-ports")).tupleCount shouldBe 3
+    }
+  }
+
+  it should "run the final update of an execution that ends before its polling started" in {
+    // Should the engine report the end of a run this service never saw RUNNING, there is no
+    // polling to stop, and the run's results are still read once.
+    val executionId = newExecution()
+    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
+    storeResult(
+      executionId,
+      "erss-final-unpolled",
+      schema,
+      (0 until 4).map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
+    )
+    val plan = planOf(
+      physicalOp(executionId, "erss-final-unpolled", PortIdentity() -> OutputMode.SET_SNAPSHOT)
+    )
+
+    withAttached(plan, executionId) { fixture =>
+      Seq(
+        WorkflowAggregatedState.COMPLETED,
+        WorkflowAggregatedState.FAILED,
+        WorkflowAggregatedState.KILLED,
+        WorkflowAggregatedState.TERMINATED
+      ).foreach { ended =>
+        withClue(s"$ended: ") {
+          fixture.workflowStateStore.resultStore.updateState(_ => WorkflowResultStore())
+
+          noException should be thrownBy fixture.client.fire(ExecutionStateUpdate(ended))
+
+          val resultInfo = fixture.workflowStateStore.resultStore.getState.resultInfo
+          resultInfo(OperatorIdentity("erss-final-unpolled")).tupleCount shouldBe 4
+        }
+      }
     }
   }
 
@@ -931,8 +961,8 @@ class ExecutionResultServiceSpec
     val executionId = newExecution()
     withAttached(planOf(), executionId) { fixture =>
       // A workflow can fail during initialization, i.e. before it reaches RUNNING
-      // and creates a polling handle. Without the null guard this is an NPE
-      // inside the error path, which would mask the original failure.
+      // and creates a polling handle: there is no polling to stop, and nothing in
+      // the error path may fail on that and mask the original failure.
       noException should be thrownBy fixture.client.fire(FatalError(new RuntimeException("boom")))
     }
   }
@@ -1223,7 +1253,7 @@ class ExecutionResultServiceSpec
     * Sets the private polling handle. AmberRuntime creates it once the execution
     * reaches RUNNING, from an ActorSystem it keeps in a private var that only a
     * started pekko cluster fills in; the terminal-state, fatal-error and re-attach
-    * paths are all defined by what they do to an already-created handle.
+    * paths then have a poll to stop.
     */
   private def setPollingCancellable(
       service: ExecutionResultService,

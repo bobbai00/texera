@@ -267,7 +267,8 @@ class ExecutionResultService(
 ) extends SubscriptionManager
     with LazyLogging {
   private val resultPullingFrequency = ApplicationConfig.executionResultPollingInSecs
-  private var resultUpdateCancellable: Cancellable = _
+  // The poll of a running execution's results; cancelled while no execution is running.
+  private var resultUpdateCancellable: Cancellable = Cancellable.alreadyCancelled
 
   // The execution whose results this service shows: the one it last attached to. Read by the
   // websocket's pagination requests, on another thread than the run's start.
@@ -279,7 +280,7 @@ class ExecutionResultService(
       physicalPlan: PhysicalPlan,
       client: AmberClient
   ): Unit = {
-    if (resultUpdateCancellable != null && !resultUpdateCancellable.isCancelled) {
+    if (!resultUpdateCancellable.isCancelled) {
       resultUpdateCancellable.cancel()
     }
 
@@ -290,7 +291,7 @@ class ExecutionResultService(
       newState: ExecutionMetadataStore =>
         {
           if (newState.state == RUNNING) {
-            if (resultUpdateCancellable == null || resultUpdateCancellable.isCancelled) {
+            if (resultUpdateCancellable.isCancelled) {
               resultUpdateCancellable = AmberRuntime
                 .scheduleRecurringCallThroughActorSystem(
                   2.seconds,
@@ -300,7 +301,7 @@ class ExecutionResultService(
                 }
             }
           } else {
-            if (resultUpdateCancellable != null) resultUpdateCancellable.cancel()
+            resultUpdateCancellable.cancel()
           }
         }
     })
@@ -321,11 +322,7 @@ class ExecutionResultService(
     )
 
     addSubscription(
-      client.registerCallback[FatalError](_ =>
-        if (resultUpdateCancellable != null) {
-          resultUpdateCancellable.cancel()
-        }
-      )
+      client.registerCallback[FatalError](_ => resultUpdateCancellable.cancel())
     )
 
     // Must be registered before the workflow starts. The engine fires
