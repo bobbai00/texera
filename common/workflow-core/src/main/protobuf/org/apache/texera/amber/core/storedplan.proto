@@ -22,17 +22,11 @@
 // operator of a paused run (StoredOperatorUpdate), saved in the same format version.
 // PhysicalPlanCodec writes both and reads them back, as JSON with these field names.
 //
-// - Lists keep the order the plan iterates its links, ports and operators in, since scheduling
-//   can depend on it; only a plan of more than four operators lists them by id instead. A list
-//   the plan holds in no order of its own (cost hints, inputs) is sorted, so a plan is always
-//   written as the same text.
-// - Every field is written, defaults included, except one whose comment says what its absence
-//   means. A reader refuses text in any other form: a field missing or given twice, a value
-//   written another way (an enum as a number, say), or anything after the plan. Only the order
-//   of an object's fields, and the spacing, are free.
-// - Every enum defined here starts with an UNSPECIFIED value that no plan holds, and a oneof is
-//   always set: a reader refuses either, so a plan cut short or edited by hand fails instead of
-//   defaulting.
+// - A plan is always written as the same text: its operators, cost hints and inputs are sorted,
+//   and its links are in an order that the plan's ports give.
+// - A field at its default value is left out, as proto3 JSON leaves it out, and a reader takes a
+//   field left out as its default. Every enum defined here starts with an UNSPECIFIED value that
+//   no plan holds, and a oneof is always set: a reader refuses either.
 // - The format takes in the messages it reuses from workflow.proto, executor.proto and
 //   virtualidentity.proto. A change to a message here, or to one it reuses, comes with a new
 //   formatVersion and new golden files (PhysicalPlanCodecSpec).
@@ -54,18 +48,19 @@ option (scalapb.options) = {
 };
 
 message StoredPhysicalPlan {
-  // The version of this format the plan is written in; a reader refuses one it does not read.
+  // The version of this format the plan is written in; a reader refuses another.
   int32 formatVersion = 1;
   WorkflowIdentity workflowId = 2;
   ExecutionIdentity executionId = 3;
   StoredWorkflowSettings settings = 4;
   // The warehouse the execution writes its results into. Absent: the shared default one.
   optional string warehouse = 5;
-  // Every operator once: in the order the plan iterates them, or, if there are more than four,
-  // in the order of their ids. Each carries no workflow or execution id: a reader gives it the
-  // plan's.
+  // Every operator once, in the order of their ids. Each carries no workflow or execution id: a
+  // reader gives it the plan's.
   repeated StoredPhysicalOp operators = 6;
-  // Every link once. Each is also listed on the two ports it joins, in that port's own order.
+  // Every link once. A port lists the links that join it in the order they have here, so the
+  // links are in an order that gives each port its own; where the ports leave the order of two
+  // links open, in the order of their ends.
   repeated PhysicalLink links = 7;
   // Where the run replays from. Absent: it replays nothing.
   StoredReplaySource replay = 8;
@@ -116,13 +111,10 @@ message StoredPhysicalOp {
   bool isLoopStart = 11;
   // How many workers to run. Absent: the engine's default.
   optional int32 suggestedWorkerNum = 12;
-  // Format versions 1 and 2 named a Python environment here, by its name on one computing unit.
-  reserved 13;
-  reserved "pveName";
   // The datasets and models the operator's code reads. Absent: none.
-  StoredRepositoryMounts repositoryMounts = 14;
+  StoredRepositoryMounts repositoryMounts = 13;
   // The Python environment the operator's workers run in. Absent: the engine's own interpreter.
-  StoredPythonEnvironment pythonEnvironment = 15;
+  StoredPythonEnvironment pythonEnvironment = 14;
 }
 
 message StoredPartitionRequirement {
@@ -167,19 +159,12 @@ message StoredPartitionRule {
 message StoredInputPort {
   // Its dependencies name input ports of the same operator.
   InputPort port = 1;
-  // The links into the port, in the order the operator lists them: exactly the plan's links into
-  // the port, each once. They are written here as well as in the plan's links because that order
-  // is the operator's own and the plan read back keeps it; it need not be the order of the plan's
-  // links, which a plan of more than four iterates by hash.
-  repeated PhysicalLink links = 2;
-  StoredSchema schema = 3;
+  StoredSchema schema = 2;
 }
 
 message StoredOutputPort {
   OutputPort port = 1;
-  // The links out of the port, in the order the operator lists them (see StoredInputPort.links).
-  repeated PhysicalLink links = 2;
-  StoredSchema schema = 3;
+  StoredSchema schema = 2;
 }
 
 message StoredSchema {
@@ -218,8 +203,6 @@ message StoredPythonEnvironment {
   // The packages, as canonical requirement lines ("tabulate==0.9.0"): a package name in its
   // normalized form, then nothing or ==, >= or <= and a version. Sorted, each once.
   repeated string requirements = 2;
-  // Names the package list: the lowercase hex SHA-256 of the lines joined by "\n".
-  string digest = 3;
 }
 
 // An earlier execution's replay log, read up to one interaction.
@@ -248,32 +231,22 @@ message StoredOperatorCost {
   double seconds = 2;
 }
 
-// Something a logical operator of the plan reads from outside the run.
+// A file a logical operator of the plan reads from outside the run, through a link made when the
+// plan was made.
 message StoredPlanInput {
   // An operator of the plan.
   string logicalOperatorId = 1;
-  // The name the operator's executor knows the input by; not empty.
+  // The name the operator's executor knows the file by; not empty.
   string name = 2;
-  oneof source {
-    // A file, read through a link made when the plan was made.
-    StoredInputFile file = 3;
-    // 4 is kept for a result an earlier execution stored, read in place of running the operators
-    // that would produce it again.
-  }
-}
-
-message StoredInputFile {
   // When the link stops working, in milliseconds since the epoch; after the epoch.
-  int64 expiresAtMs = 1;
-  // The file's size in bytes; at least 0.
-  int64 sizeBytes = 2;
+  int64 expiresAtMs = 3;
 }
 
 // A change to one operator of a paused run, which the engine applies when the run resumes: the
 // operator's new executor, and what its new code reads. Saved and read in the plan's format
 // version, as its own text.
 message StoredOperatorUpdate {
-  // The version of this format the change is written in; a reader refuses one it does not read.
+  // The version of this format the change is written in; a reader refuses another.
   int32 formatVersion = 1;
   // The execution whose operator changes.
   ExecutionIdentity executionId = 2;

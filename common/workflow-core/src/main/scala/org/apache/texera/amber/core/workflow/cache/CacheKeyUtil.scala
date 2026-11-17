@@ -21,6 +21,7 @@ package org.apache.texera.amber.core.workflow.cache
 
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.google.common.hash.Hashing
 import org.apache.texera.amber.core.executor.OpExecInitInfo
 import org.apache.texera.amber.core.workflow.{
   GlobalPortIdentity,
@@ -31,7 +32,6 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.util.JSONUtils
 
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 
 /**
   * The cache key of an output port.
@@ -182,11 +182,8 @@ object CacheKeyUtil {
   private val objectMapper =
     JSONUtils.objectMapper.copy().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
 
-  private def sha256Hex(value: String): String = {
-    val digest = MessageDigest.getInstance("SHA-256")
-    val bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8))
-    bytes.map("%02x".format(_)).mkString
-  }
+  private def sha256Hex(value: String): String =
+    Hashing.sha256().hashString(value, StandardCharsets.UTF_8).toString
 
   /**
     * Serialize the operator's exec init info deterministically via its proto string.

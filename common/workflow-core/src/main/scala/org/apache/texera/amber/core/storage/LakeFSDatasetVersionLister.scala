@@ -68,12 +68,6 @@ class LakeFSDatasetVersionLister(versions: RepositoryVersionResolver) extends Da
     val (repositoryName, versionHash) = versions.resolve(canonicalPath)
     LakeFSStorageClient
       .retrieveObjectsOfVersion(repositoryName, versionHash, atMost)
-      .map(file =>
-        ListedFile(
-          s"$canonicalPath/${file.getPath}",
-          file.getPhysicalAddress,
-          file.getSizeBytes.longValue()
-        )
-      )
+      .map(file => ListedFile(s"$canonicalPath/${file.getPath}", file.getPhysicalAddress))
   }
 }

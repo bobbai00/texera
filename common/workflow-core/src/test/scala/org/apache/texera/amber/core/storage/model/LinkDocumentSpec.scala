@@ -131,7 +131,7 @@ class LinkDocumentSpec
 
   /** A link to `url` that expires `lastsMs` from now. */
   private def linkTo(url: String, lastsMs: Long = hourMs): InputLink =
-    InputLink(url, System.currentTimeMillis() + lastsMs, content.length.toLong)
+    InputLink(url, System.currentTimeMillis() + lastsMs)
 
   /** A document over the store's `path`, by a link that expires `lastsMs` from now. */
   private def document(path: String, lastsMs: Long = hourMs): LinkDocument =
@@ -262,7 +262,7 @@ class LinkDocumentSpec
   /** A document over the store's `path`, by a link that expires at `expiresAtMs`. */
   private def expiringAt(expiresAtMs: Long, path: String = "/datasets/people.csv"): LinkDocument =
     new LinkDocument(
-      InputLink(s"$storeEndpoint$path?$query", expiresAtMs, content.length.toLong),
+      InputLink(s"$storeEndpoint$path?$query", expiresAtMs),
       "people.csv",
       Seq(storeEndpoint)
     )

@@ -102,7 +102,6 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
     val before = System.currentTimeMillis()
     val link = linkerFor(objectStoreEndpoint).link(resolved(fileRelativePath))
 
-    link.sizeBytes shouldBe content.length
     link.expiresAtMs should be > before + Duration.ofMinutes(59).toMillis
     link.expiresAtMs should be <= System.currentTimeMillis() + Duration.ofHours(1).toMillis
     val url = new URI(link.url)
@@ -131,8 +130,7 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
 
     val repointed = InputLink(
       lakefsLink.replace(s"localhost:$port", s"127.0.0.1:$port"),
-      System.currentTimeMillis() + Duration.ofMinutes(10).toMillis,
-      content.length.toLong
+      System.currentTimeMillis() + Duration.ofMinutes(10).toMillis
     )
 
     intercept[java.io.IOException](readThrough(repointed, unitsEndpoint)).getMessage shouldBe
@@ -150,13 +148,12 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
   }
 
   "A listing of a dataset version" should
-    "hold each file of the version, with its size and the object LakeFS keeps it in" in {
+    "hold each file of the version, with the object LakeFS keeps it in" in {
     val listed = lister.list(versionPath, atMost = 100)
 
     // In the order of the files' paths, each named under the version's path.
     listed.map(_.logicalPath) shouldBe
       Seq(s"$versionPath/$fileRelativePath", s"$versionPath/$notesRelativePath")
-    listed.map(_.sizeBytes) shouldBe Seq(content.length, notes.length)
     every(listed.map(_.physicalAddress)) should
       startWith(s"s3://${StorageConfig.lakefsBucketName}/$repositoryName/")
     // Asked for fewer files than the version holds, it lists the first.
@@ -169,7 +166,6 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
     val links = lister.list(versionPath, atMost = 100).map(linker.linkListed)
 
     links.map(readThrough(_, objectStoreEndpoint)) shouldBe Seq(content, notes)
-    links.map(_.sizeBytes) shouldBe Seq(content.length, notes.length)
     // To the object LakeFS names when asked for the file by itself.
     new URI(links.head.url).getPath shouldBe
       new URI(linker.link(resolved(fileRelativePath)).url).getPath

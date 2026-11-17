@@ -66,7 +66,7 @@ class PresignedLinkObjectStoreSpec
   /** A document over `url`, as a computing unit that reads links from both addresses opens it. */
   private def document(url: String): LinkDocument =
     new LinkDocument(
-      InputLink(url, System.currentTimeMillis() + 3600L * 1000, content.length.toLong),
+      InputLink(url, System.currentTimeMillis() + 3600L * 1000),
       "people.csv",
       Seq(unitsEndpoint, otherEndpoint)
     )

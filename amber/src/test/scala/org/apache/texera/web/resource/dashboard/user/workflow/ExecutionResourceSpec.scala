@@ -46,7 +46,6 @@ import org.apache.texera.amber.core.workflow.{
   ExecutionMode,
   ExecutionPlan,
   GlobalPortIdentity,
-  InputFile,
   PhysicalPlanCodec,
   PlanInput,
   PortIdentity,
@@ -126,7 +125,6 @@ import org.scalatest.matchers.should.Matchers
 
 import java.lang.reflect.Proxy
 import java.net.URI
-import java.nio.file.{Files, Paths}
 import java.sql.Timestamp
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
@@ -424,10 +422,10 @@ class ExecutionResourceSpec
     override protected def replayLogRoot: Option[URI] = logRoot
     override protected def warehousesEnabled: Boolean = warehouses
     override protected def costHintsLoader: CostHintsLoader = hints
-    override protected def writePlan(planUri: URI, record: PlanRecord): Unit =
+    override protected def writePlan(planUri: URI, record: PlanRecord, logical: String): Unit =
       failWrite match {
         case Some(failure) => throw failure
-        case None          => super.writePlan(planUri, record)
+        case None          => super.writePlan(planUri, record, logical)
       }
   }
 
@@ -540,6 +538,10 @@ class ExecutionResourceSpec
     (record, PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(record.body)))
   }
 
+  /** The logical plan kept beside the plan row of `execution`: what its plan was compiled from. */
+  private def logicalPlanOf(execution: CreateExecutionResponse): String =
+    ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))._2
+
   /** The id of the execution created last. */
   private def newestEid: Int =
     getDSLContext
@@ -591,8 +593,7 @@ class ExecutionResourceSpec
   /** A link as the deployment's linker signs one. */
   private val signedLink = InputLink(
     "http://texera-rustfs:9000/texera-dataset/dataset-9631/data/gdm5?X-Amz-Signature=5ecr3t",
-    System.currentTimeMillis() + 3600L * 1000,
-    1234
+    System.currentTimeMillis() + 3600L * 1000
   )
 
   /** A linker of the files resolvers resolve, each as `link` links it, and of no listed file. */
@@ -625,9 +626,9 @@ class ExecutionResourceSpec
     )
   }
 
-  /** The operators of the logical plan `record` keeps, as JSON objects. */
-  private def logicalOperators(record: PlanRecord): List[JsonNode] =
-    objectMapper.readTree(record.logical).get("operators").elements().asScala.toList
+  /** The operators of the logical plan kept for `execution`, as JSON objects. */
+  private def logicalOperators(execution: CreateExecutionResponse): List[JsonNode] =
+    objectMapper.readTree(logicalPlanOf(execution)).get("operators").elements().asScala.toList
 
   /**
     * The message of the refusal `body` throws, which answers `status`; the refusal must leave no
@@ -679,14 +680,12 @@ class ExecutionResourceSpec
 
     val (record, plan) = storedPlan(execution)
     record.entryId shouldBe ExecutionPlanStore.PlanEntryId
-    record.kind shouldBe ExecutionPlanStore.PlanKind
-    record.formatVersion shouldBe PhysicalPlanCodec.FormatVersion
     record.createdBy shouldBe creatorUid
     record.computingUnitId shouldBe unitCuid
     record.notification shouldBe None
     // The logical plan as the request sent it, before the compile resolved its scan's file.
-    objectMapper.readTree(record.logical) shouldBe sentPlan
-    record.logical should include(TestOperators.CountrySalesSmallCsvPath)
+    objectMapper.readTree(logicalPlanOf(execution)) shouldBe sentPlan
+    logicalPlanOf(execution) should include(TestOperators.CountrySalesSmallCsvPath)
 
     plan.context.workflowId shouldBe WorkflowIdentity(testWid)
     plan.context.executionId shouldBe ExecutionIdentity(execution.eid)
@@ -708,11 +707,7 @@ class ExecutionResourceSpec
     val link = links(scanned.toASCIIString)
     link.expiresAtMs should be > System.currentTimeMillis()
     plan.inputs shouldBe Seq(
-      PlanInput(
-        OperatorIdentity("scan"),
-        scanned.toASCIIString,
-        InputFile(link.expiresAtMs, Files.size(Paths.get(scanned)))
-      )
+      PlanInput(OperatorIdentity("scan"), scanned.toASCIIString, link.expiresAtMs)
     )
 
     // Compiled as the creator may read files, datasets and models.
@@ -814,24 +809,21 @@ class ExecutionResourceSpec
       signedLink
     }
 
-    val (record, plan) = storedPlan(created(post(request(plan = notesPlan()), creator = creator)))
+    val execution = created(post(request(plan = notesPlan()), creator = creator))
+    val (record, plan) = storedPlan(execution)
 
     // Resolved for the creator, by the name as typed, and that file linked.
     linked.toList shouldBe List(notesUri)
     linksOf(plan, "notes") shouldBe Map(notesUri.toASCIIString -> signedLink)
     descriptorOf(plan, "notes").get("fileName").asText() shouldBe notesUri.toASCIIString
     plan.inputs shouldBe Seq(
-      PlanInput(
-        OperatorIdentity("notes"),
-        notesUri.toASCIIString,
-        InputFile(signedLink.expiresAtMs, signedLink.sizeBytes)
-      )
+      PlanInput(OperatorIdentity("notes"), notesUri.toASCIIString, signedLink.expiresAtMs)
     )
     // The link is a secret of the plan to run. The logical plan beside it is the workflow as
     // its user wrote it: the file by its name, and no link.
     record.body should include("X-Amz-Signature=5ecr3t")
-    record.logical should not include "X-Amz-Signature"
-    val logical = logicalOperators(record).head
+    logicalPlanOf(execution) should not include "X-Amz-Signature"
+    val logical = logicalOperators(execution).head
     logical.get("fileName").asText() shouldBe notesPath
     logical.has("inputLinks") shouldBe false
   }
@@ -931,16 +923,15 @@ class ExecutionResourceSpec
     // The creator's, as canonical lines: what the unit that runs the plan installs.
     val creators = PythonEnvironment("shared-name", Seq("tabulate==0.9.0", "typing-extensions"))
     environmentOf(execution) shouldBe PythonEnvironmentRef.Resolved(creators)
-    val (record, plan) = storedPlan(execution)
-    record.body should include(s""""digest": "${creators.digest}"""")
+    val (_, plan) = storedPlan(execution)
     // Its workers run where the unit installs environments.
     plan.plan
       .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
       .locationPreference shouldBe Some(PreferCoordinator)
     // The logical plan beside it is the workflow as its user wrote it: the name alone.
-    val logical = logicalOperators(record).find(_.get("operatorID").asText() == "udf").get
+    val logical = logicalOperators(execution).find(_.get("operatorID").asText() == "udf").get
     logical.get("envName").asText() shouldBe "shared-name"
-    record.logical should not include "tabulate"
+    logicalPlanOf(execution) should not include "tabulate"
     // The reader, who may run the workflow on a unit of their own, gets their own environment
     // of that name.
     val readers = created(
@@ -1025,14 +1016,15 @@ class ExecutionResourceSpec
   it should "keep nothing a request sent for what a compile sets, in the plan or beside it" in {
     // As a request could send them: a column limit of its own, and links to a place of its own
     // choosing, under the scan's file as typed and as it resolves.
-    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue)
     val resolved = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath).toASCIIString
     val scan = named(TestOperators.smallCsvScanOpDesc(), "scan")
     scan.maxColumns = Some(100000)
     scan.inputLinks = Map(resolved -> sentLink, TestOperators.CountrySalesSmallCsvPath -> sentLink)
     val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
 
-    val (record, plan) = storedPlan(created(post(request(plan = sent))))
+    val execution = created(post(request(plan = sent)))
+    val (record, plan) = storedPlan(execution)
 
     // The executor is given the compile's own link, to the fixture's server, and the site's
     // limit.
@@ -1043,8 +1035,8 @@ class ExecutionResourceSpec
       CSVScanSourceOpDesc.DefaultMaxColumns
     record.body should not include "169.254.169.254"
     // And the logical plan kept beside it holds neither property, whatever was sent for it.
-    record.logical should not include "169.254.169.254"
-    val logical = logicalOperators(record).head
+    logicalPlanOf(execution) should not include "169.254.169.254"
+    val logical = logicalOperators(execution).head
     logical.has("fileName") shouldBe true
     logical.has("maxColumns") shouldBe false
     logical.has("inputLinks") shouldBe false
@@ -1053,7 +1045,7 @@ class ExecutionResourceSpec
   it should "list each File Lister's dataset version and link the files listed, in the plan it stores and nowhere else" in {
     // As a request could send it: with a listing and a link of its own choosing.
     val sent = listedPlan(TestOperators.fixtureDatasetVersionPath)
-    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue)
     sent.operators.head.asInstanceOf[FileListerSourceOpDesc].listing =
       Some(List("/dataset/another@example.com/secrets/v1/keys.txt"))
     sent.operators(1).asInstanceOf[FileScanOpDesc].inputLinks =
@@ -1062,7 +1054,8 @@ class ExecutionResourceSpec
       case (file, _) => s"${TestOperators.fixtureDatasetVersionPath}/$file"
     }
 
-    val (record, plan) = storedPlan(created(post(request(plan = sent))))
+    val execution = created(post(request(plan = sent)))
+    val (record, plan) = storedPlan(execution)
 
     // The File Lister's executor is given the version's listing, and the File Scan From Input's
     // a link to each file listed: the compile's own, to the fixture's server.
@@ -1071,21 +1064,17 @@ class ExecutionResourceSpec
     val links = linksOf(plan, "scan")
     links.keySet shouldBe files.toSet
     links.values.foreach(_.url should startWith("http://127.0.0.1:"))
-    plan.inputs shouldBe files.map { file =>
-      PlanInput(
-        OperatorIdentity("scan"),
-        file,
-        InputFile(links(file).expiresAtMs, links(file).sizeBytes)
-      )
-    }
+    plan.inputs shouldBe
+      files.map(file => PlanInput(OperatorIdentity("scan"), file, links(file).expiresAtMs))
     record.body should not include "169.254.169.254"
     record.body should not include "secrets"
     // The logical plan kept beside it is the workflow as its user wrote it: the dataset version
     // by its path, and neither what it lists nor a link.
-    record.logical should not include "169.254.169.254"
-    record.logical should not include "secrets"
-    files.foreach(file => record.logical should not include file)
-    val List(lister, scan) = logicalOperators(record)
+    val logicalPlan = logicalPlanOf(execution)
+    logicalPlan should not include "169.254.169.254"
+    logicalPlan should not include "secrets"
+    files.foreach(file => logicalPlan should not include file)
+    val List(lister, scan) = logicalOperators(execution)
     lister.get("datasetVersionPath").asText() shouldBe TestOperators.fixtureDatasetVersionPath
     lister.has("listing") shouldBe false
     scan.has("inputLinks") shouldBe false
@@ -1168,14 +1157,15 @@ class ExecutionResourceSpec
       List.empty
     )
 
-    val (record, plan) = storedPlan(created(post(request(plan = whole, targets = List("search")))))
+    val execution = created(post(request(plan = whole, targets = List("search"))))
+    val (_, plan) = storedPlan(execution)
 
     plan.plan.operators.map(_.id.logicalOpId) shouldBe
       Set(OperatorIdentity("scan"), OperatorIdentity("search"))
     plan.context.workflowSettings.outputPortsNeedingStorage.map(_.opId.logicalOpId) shouldBe
       Set(OperatorIdentity("search"))
     // The logical plan kept is the one compiled.
-    val logical = objectMapper.readTree(record.logical)
+    val logical = objectMapper.readTree(logicalPlanOf(execution))
     logical.get("operators").elements().asScala.map(_.get("operatorID").asText()).toList shouldBe
       List("scan", "search")
     logical.get("opsToViewResult").elements().asScala.map(_.asText()).toList shouldBe
@@ -1305,16 +1295,17 @@ class ExecutionResourceSpec
     )
     limit.stateReferences shouldBe Map("/limit" -> "n")
 
-    val (record, _) = storedPlan(created(post(request(plan = sent))))
+    val execution = created(post(request(plan = sent)))
 
-    val written = logicalOperators(record)
+    val written = logicalOperators(execution)
     written.map(_.get("operatorID").asText()) shouldBe ids
     written.find(_.get("operatorID").asText() == "limit").map(_.get("limit").asText()) shouldBe
       Some("$n")
     written.filter(_.has(StateReferencing.SIDECAR_PROPERTY)) shouldBe empty
     // Parsed again, as a change to a paused operator is compiled against it, the plan has the
     // reference: written as it is, it would have read back "limit": 0 and no reference.
-    val parsedBack = objectMapper.readValue(record.logical, classOf[LogicalPlanPojo]).operators
+    val parsedBack =
+      objectMapper.readValue(logicalPlanOf(execution), classOf[LogicalPlanPojo]).operators
     parsedBack.map(_.operatorIdentifier.id) shouldBe ids
     parsedBack.map(_.stateReferences) shouldBe
       List(Map.empty, Map.empty, Map.empty, Map("/limit" -> "n"), Map.empty)

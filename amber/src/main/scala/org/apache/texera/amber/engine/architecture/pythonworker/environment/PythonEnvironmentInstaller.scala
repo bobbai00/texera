@@ -21,7 +21,7 @@ package org.apache.texera.amber.engine.architecture.pythonworker.environment
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.lang3.SystemUtils
-import org.apache.texera.amber.core.workflow.{PythonEnvironment, PythonEnvironmentRef}
+import org.apache.texera.amber.core.workflow.PythonEnvironment
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.EngineInterpreter.sha256Hex
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.PythonEnvironmentInstaller._
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -113,27 +113,20 @@ final class PythonEnvironmentInstaller(
   }
 
   /**
-    * The interpreter a worker of an operator in `environment` runs: the engine's own, or the
-    * environment's, installed here. A worker runs in its operator's environment or not at all.
+    * The interpreter a worker of an operator in `environment` runs: the environment's, installed
+    * here, or, for an operator in none, the engine's own. A worker runs in its operator's
+    * environment or not at all.
     *
-    * @throws IllegalStateException if the environment is not installed on this unit, or is a name
-    *                               that no plan resolved
+    * @throws IllegalStateException if the environment is not installed on this unit
     */
-  def interpreterFor(environment: PythonEnvironmentRef): String =
-    environment match {
-      case PythonEnvironmentRef.EngineDefault => engine.executable
-      case PythonEnvironmentRef.Resolved(resolved) =>
-        installedIn(directoryOf(resolved))
-          .map(_.interpreter.toString)
-          .getOrElse(
-            throw new IllegalStateException(
-              s"Python environment '${resolved.name}' is not installed on this computing unit."
-            )
+  def interpreterFor(environment: Option[PythonEnvironment]): String =
+    environment.fold(engine.executable) { environment =>
+      installedIn(directoryOf(environment))
+        .map(_.interpreter.toString)
+        .getOrElse(
+          throw new IllegalStateException(
+            s"Python environment '${environment.name}' is not installed on this computing unit."
           )
-      case PythonEnvironmentRef.Named(name) =>
-        throw new IllegalStateException(
-          s"Python environment '$name' was never resolved: only a plan made to run says what " +
-            "its operators run in."
         )
     }
 

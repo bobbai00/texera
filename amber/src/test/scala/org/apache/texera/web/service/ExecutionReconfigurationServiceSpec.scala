@@ -31,14 +31,12 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{
-  BoundResources,
   InputPort,
   OutputPort,
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
   RepositoryMounts,
-  ResourceBinding,
   WorkflowContext
 }
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
@@ -62,7 +60,6 @@ import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 import java.nio.file.{Path, Paths}
-import java.sql.Timestamp
 import java.util.UUID
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
@@ -251,15 +248,12 @@ class ExecutionReconfigurationServiceSpec
       planTable,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = "{}", // a change is applied without the plan
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = creatorUid,
         computingUnitId = 9234,
         notification = None
-      )
+      ),
+      "{}"
     )
     planTable
   }
@@ -276,15 +270,12 @@ class ExecutionReconfigurationServiceSpec
       ofExecution: ExecutionIdentity = testExecutionId,
       namedInBody: Option[String] = None,
       createdBy: Int = creatorUid,
-      formatVersion: Int = PhysicalPlanCodec.FormatVersion,
       body: Option[String] = None
   ): String = {
     ExecutionPlanStore.appendUpdate(
       storedPlanTable,
       PlanRecord(
         entryId = updateId,
-        kind = ExecutionPlanStore.UpdateKind,
-        formatVersion = formatVersion,
         body = body.getOrElse(
           PhysicalPlanCodec.updateToJson(
             PhysicalPlanCodec.encodeUpdate(
@@ -294,12 +285,11 @@ class ExecutionReconfigurationServiceSpec
             )
           )
         ),
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = createdBy,
         computingUnitId = 9234,
         notification = None
-      )
+      ),
+      "{}"
     )
     updateId
   }
@@ -381,6 +371,12 @@ class ExecutionReconfigurationServiceSpec
       ExecutionReconfigurationStore(unscheduledReconfigurations = List(alreadyQueued))
     )
     val namedOtherwise = storeChange(changedLimit, namedInBody = Some("update-another"))
+    val inNextFormat = PhysicalPlanCodec
+      .updateToJson(PhysicalPlanCodec.encodeUpdate(testExecutionId, "update-later", changedLimit))
+      .replaceFirst(
+        s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
+        s""""formatVersion": $nextFormat,"""
+      )
     val notInPlan = mkPhysicalOp("filter-z").copy(
       workflowId = testWorkflowId,
       executionId = testExecutionId
@@ -406,11 +402,12 @@ class ExecutionReconfigurationServiceSpec
           isValid = false,
           "only the user who created execution 9232 may change its operators"
         ),
-      storeChange(changedLimit, formatVersion = nextFormat) ->
+      storeChange(changedLimit, body = Some(inNextFormat)) ->
         ModifyLogicResponse(
           "",
           isValid = false,
-          s"unknown update format $nextFormat; this unit reads ${PhysicalPlanCodec.FormatVersion}"
+          s"The operator update is in format version $nextFormat, but this reader reads version " +
+            s"${PhysicalPlanCodec.FormatVersion}."
         ),
       namedOtherwise ->
         ModifyLogicResponse(
@@ -550,34 +547,6 @@ class ExecutionReconfigurationServiceSpec
 
     service.mounted shouldBe Seq(mounts)
     service.captured.head.reconfiguration.map(_.newExecInitInfo) shouldBe Seq(bound)
-  }
-
-  it should "refuse a queued operator that still holds a binding, without forcing it" in {
-    // An accepted change is always bound; resuming never binds one itself, so one that is not
-    // bound stops the resume before anything is mounted or sent.
-    val stateStore = new ExecutionStateStore()
-    val service = new RecordingService(stateStore)
-    var forced = 0
-    val binding: ResourceBinding = (_, _) => {
-      forced += 1
-      BoundResources(OpExecWithClassName("bound.Class", ""), Set("dataset-1:abc123"))
-    }
-    val boundChange = mkPhysicalOp("op-1").copy(
-      repositoryMounts = Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-2:def456")))
-    )
-    val unbound = mkPhysicalOp("op-2").withResourceBinding(Some(binding))
-    val pending = List(boundChange, unbound)
-    stateStore.reconfigurationStore.updateState(_ =>
-      ExecutionReconfigurationStore(unscheduledReconfigurations = pending)
-    )
-
-    val failure = the[IllegalStateException] thrownBy service.performReconfigurationOnResume()
-
-    failure.getMessage should include("op-2")
-    forced shouldBe 0
-    service.mounted shouldBe empty
-    service.captured shouldBe empty
-    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe pending
   }
 
   it should "dispatch one request carrying every pending reconfiguration and reset the store" in {

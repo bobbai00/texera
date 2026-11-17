@@ -21,7 +21,6 @@ package org.apache.texera.web.resource.dashboard.file
 
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -1308,15 +1307,12 @@ class WorkflowResourceSpec
       uri,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = "{}",
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = testUser.getUid,
         computingUnitId = 1,
         notification = None
-      )
+      ),
+      "{}"
     )
     uri
   }

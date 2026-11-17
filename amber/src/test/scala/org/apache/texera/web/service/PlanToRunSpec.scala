@@ -24,7 +24,6 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Workflow
 import org.apache.texera.amber.core.workflow.{
   CostHints,
   ExecutionMode,
-  InputFile,
   PhysicalPlanCodec,
   PlanInput,
   PortIdentity,
@@ -134,15 +133,11 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None
     // The file its scan reads is its one input: read through a link, of which the plan lists
-    // when it expires, beside the file's size.
+    // when it expires.
     val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
     val link = TestOperators.fixtureInputLinker.link(scanned)
     executionPlan.inputs shouldBe Seq(
-      PlanInput(
-        operators.head.operatorIdentifier,
-        scanned.toASCIIString,
-        InputFile(link.expiresAtMs, link.sizeBytes)
-      )
+      PlanInput(operators.head.operatorIdentifier, scanned.toASCIIString, link.expiresAtMs)
     )
   }
 

@@ -39,7 +39,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.core.workflow.{
   ExecutionMode,
   ExecutionPlan,
-  InputFile,
   OutputPort,
   PhysicalOp,
   PhysicalPlan,
@@ -55,7 +54,6 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
-import java.sql.Timestamp
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -73,9 +71,6 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   private val uid = 9752
   private val cuid = 9753
   private val ownWarehouse = s"user-$uid-3"
-  // A format this unit does not read yet: the one after its own.
-  private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
-
   private def planUri(
       workflow: Long = wid,
       execution: Long = eid,
@@ -135,18 +130,12 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   private def record(
       body: String = savedPlan(),
-      kind: String = ExecutionPlanStore.PlanKind,
-      formatVersion: Int = PhysicalPlanCodec.FormatVersion,
       createdBy: Int = uid,
       computingUnitId: Int = cuid
   ): PlanRecord =
     PlanRecord(
       entryId = ExecutionPlanStore.PlanEntryId,
-      kind = kind,
-      formatVersion = formatVersion,
       body = body,
-      logical = "{}",
-      createdAt = new Timestamp(0L),
       createdBy = createdBy,
       computingUnitId = computingUnitId,
       notification = None
@@ -164,7 +153,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     StoredExecutionStart.checkRecord(planRecord, VFSURIFactory.decodeURI(uri), user, unit, nowMs)
 
   private def input(name: String, expiresAtMs: Long): PlanInput =
-    PlanInput(OperatorIdentity("lines"), name, InputFile(expiresAtMs, sizeBytes = 412))
+    PlanInput(OperatorIdentity("lines"), name, expiresAtMs)
 
   // --- planUriOf ---
 
@@ -281,20 +270,6 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     inOwnWarehouse.context.warehouse shouldBe Some(ownWarehouse)
   }
 
-  it should "refuse a row that is not a plan row" in {
-    checkRecord(record(kind = ExecutionPlanStore.UpdateKind)) shouldBe
-      Left(s"execution $eid has no stored plan")
-  }
-
-  it should "refuse a row in a format it does not read, without reading its plan" in {
-    Seq(PhysicalPlanCodec.FormatVersion - 1, nextFormat).foreach { version =>
-      withClue(s"format $version: ") {
-        checkRecord(record(body = "not a plan", formatVersion = version)) shouldBe
-          Left(s"unknown plan format $version; this unit reads ${PhysicalPlanCodec.FormatVersion}")
-      }
-    }
-  }
-
   it should "refuse anyone but the user who created the execution, without reading its plan" in {
     checkRecord(record(body = "not a plan"), user = uid + 1) shouldBe
       Left(s"only the user who created execution $eid may start it")
@@ -305,31 +280,27 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       Left(s"execution $eid was created for computing unit $cuid, not ${cuid + 1}")
   }
 
-  it should "check the row's format, then its creator, then its unit" in {
-    val everythingWrong =
-      record(formatVersion = nextFormat, createdBy = uid + 1, computingUnitId = cuid + 1)
+  it should "check the row's creator, then its unit" in {
+    val everythingWrong = record(createdBy = uid + 1, computingUnitId = cuid + 1)
     checkRecord(everythingWrong) shouldBe
-      Left(s"unknown plan format $nextFormat; this unit reads ${PhysicalPlanCodec.FormatVersion}")
-    checkRecord(everythingWrong.copy(formatVersion = PhysicalPlanCodec.FormatVersion)) shouldBe
       Left(s"only the user who created execution $eid may start it")
-    checkRecord(
-      everythingWrong.copy(formatVersion = PhysicalPlanCodec.FormatVersion, createdBy = uid)
-    ) shouldBe
+    checkRecord(everythingWrong.copy(createdBy = uid)) shouldBe
       Left(s"execution $eid was created for computing unit ${cuid + 1}, not $cuid")
   }
 
   it should "refuse a plan it cannot read, in the codec's words" in {
     checkRecord(record(body = "not a plan")).left.getOrElse(fail("read")) should
       startWith("The plan is not JSON")
-    // A row that says it is in this format, holding a plan in another.
-    val formatOne = savedPlan().replaceFirst(
-      s""""formatVersion": ${PhysicalPlanCodec.FormatVersion}""",
-      """"formatVersion": 1"""
+    // A plan in a format this unit does not read yet is refused for its format, whatever it
+    // holds that this unit does not know.
+    val nextFormat = savedPlan().replaceFirst(
+      s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
+      s""""formatVersion": ${PhysicalPlanCodec.FormatVersion + 1}, "aFieldOfTheNextFormat": 1,"""
     )
-    formatOne should not be savedPlan()
-    checkRecord(record(body = formatOne)) shouldBe Left(
-      "The plan is in format version 1, but this reader reads version " +
-        s"${PhysicalPlanCodec.FormatVersion}."
+    nextFormat should not be savedPlan()
+    checkRecord(record(body = nextFormat)) shouldBe Left(
+      s"The plan is in format version ${PhysicalPlanCodec.FormatVersion + 1}, but this reader " +
+        s"reads version ${PhysicalPlanCodec.FormatVersion}."
     )
   }
 

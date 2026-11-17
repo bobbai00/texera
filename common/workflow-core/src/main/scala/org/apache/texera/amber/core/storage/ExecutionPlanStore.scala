@@ -30,86 +30,36 @@ import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.common.config.StorageConfig
 
 import java.net.URI
-import java.sql.Timestamp
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters._
-import scala.util.Using
+import scala.util.{Try, Using}
 
 /**
-  * One row of an execution's plan table: the plan row, written when the execution is created
-  * (entry id and kind "plan"), or the row of one change to a paused operator (kind "update",
-  * entry id "update-<id>").
+  * One row of an execution's plan table, without what its body was compiled from: the plan row,
+  * written when the execution is created (entry id "plan"), or the row of one change to a paused
+  * operator (entry id "update-<id>").
   *
-  * `body` is the engine's input, a stored plan or a stored update. `logical` is the JSON of what
-  * `body` was compiled from, as the user sent it (on the plan row, the logical plan, or the part
-  * of it up to the one operator the execution runs to), written so that it parses back with its
-  * loop-variable references, and without what a compile sets on an operator, such as the links
-  * its executor reads files through: the execution's provenance, and, on the plan row, what the
-  * Dashboard compiles a change to a paused operator against. Who created the execution, the
+  * `body` is the engine's input, a stored plan or a stored update. Who created the execution, the
   * computing unit it was created for and its email notification are columns, not fields of the
   * plan: they are what the unit's web layer checks and uses, and a plan names neither a user nor
   * a unit.
   *
-  * @param createdAt    wall-clock time, like every Texera Iceberg timestamp.
   * @param notification JSON `{"email", "workflowName", "workflowUrl"}`; None sends no email.
   */
 final case class PlanRecord(
     entryId: String,
-    kind: String,
-    formatVersion: Int,
     body: String,
-    logical: String,
-    createdAt: Timestamp,
     createdBy: Int,
     computingUnitId: Int,
     notification: Option[String]
 ) {
-  Seq(
-    "entryId" -> entryId,
-    "kind" -> kind,
-    "body" -> body,
-    "logical" -> logical,
-    "createdAt" -> createdAt,
-    "notification" -> notification
-  ).foreach { case (name, value) => require(value != null, s"a plan record needs its $name") }
-
-  def toTuple: Tuple =
-    Tuple(
-      executionPlanSchema,
-      Array(
-        entryId,
-        kind,
-        formatVersion,
-        body,
-        logical,
-        createdAt,
-        createdBy,
-        computingUnitId,
-        notification.orNull
-      )
-    )
-}
-
-object PlanRecord {
-
-  /** Reads a row of the plan table; only `notification` may be empty. */
-  def fromTuple(tuple: Tuple): PlanRecord = {
-    def required[T <: AnyRef](column: String): T =
-      Option(tuple.getField[T](column)).getOrElse(
-        throw new IllegalStateException(s"a plan table row has no $column")
-      )
-    PlanRecord(
-      entryId = required[String]("entryId"),
-      kind = required[String]("kind"),
-      formatVersion = required[Integer]("formatVersion").intValue(),
-      body = required[String]("body"),
-      logical = required[String]("logical"),
-      createdAt = required[Timestamp]("createdAt"),
-      createdBy = required[Integer]("createdBy").intValue(),
-      computingUnitId = required[Integer]("computingUnitId").intValue(),
-      notification = Option(tuple.getField[String]("notification"))
-    )
+  Seq("entryId" -> entryId, "body" -> body, "notification" -> notification).foreach {
+    case (name, value) => require(value != null, s"a plan record needs its $name")
   }
+
+  /** Without the body, which holds the credentials and links the plan's operators are given. */
+  override def toString: String =
+    s"PlanRecord($entryId, createdBy=$createdBy, computingUnitId=$computingUnitId)"
 }
 
 /** The execution's plan table does not exist, or it holds no plan row. */
@@ -133,6 +83,14 @@ final class ExecutionAlreadyStartedException(val executionId: ExecutionIdentity)
   * current when the execution started. Every catalog refuses a second ref of one name, so an
   * execution starts at most once, whoever asks and from wherever.
   *
+  * Beside its record, a row keeps the JSON of what its body was compiled from, as the user sent
+  * it (`logical`): on the plan row, the logical plan, or the part of it up to the one operator the
+  * execution runs to; on an update row, the operator as changed. It is written so that it parses
+  * back with its loop-variable references, and without what a compile sets on an operator, such
+  * as the links its executor reads files through. It is the execution's provenance, and, on the
+  * plan row, what the Dashboard compiles a change to a paused operator against; a computing unit
+  * has no use for it, and does not read it.
+  *
   * Every method takes only a URI [[planUri]] could have built, and refuses any other. A table
   * that is not there is a [[NoStoredPlanException]]; any other failure of the catalog is thrown
   * as it is, so a catalog that cannot answer is never taken for a missing plan.
@@ -140,8 +98,6 @@ final class ExecutionAlreadyStartedException(val executionId: ExecutionIdentity)
 object ExecutionPlanStore {
 
   val PlanEntryId = "plan"
-  val PlanKind = "plan"
-  val UpdateKind = "update"
   val UpdateEntryIdPrefix = "update-"
   val StartedTag = "started"
 
@@ -149,25 +105,43 @@ object ExecutionPlanStore {
   // plain file name: the prefix, then 1 to 64 letters, digits or hyphens (a UUID fits).
   private val UpdateEntryIdPattern = s"$UpdateEntryIdPrefix[A-Za-z0-9-]{1,64}".r
 
+  // The columns of a record, which is every column but `logical`.
+  private val RecordColumns = executionPlanSchema.getAttributeNames.filterNot(_ == "logical")
+
   /** The plan table of execution `eid` of workflow `wid`, in `warehouse` (None: the default). */
   def planUri(wid: WorkflowIdentity, eid: ExecutionIdentity, warehouse: Option[String]): URI =
     VFSURIFactory.createPlanURI(wid, eid, warehouse)
 
   /**
+    * What `uri` decodes to, when it is a plan table's URI exactly as [[planUri]] builds one:
+    * anything more (another segment, a query, a fragment) would name another table.
+    */
+  def planTableOf(uri: URI): Option[VFSUriComponents] =
+    Option(uri)
+      .flatMap(uri => Try(VFSURIFactory.decodeURI(uri)).toOption)
+      .filter { location =>
+        location.resourceType == VFSResourceType.PLAN &&
+        Try(planUri(location.workflowId, location.executionId, location.warehouse)).toOption
+          .contains(uri)
+      }
+
+  /**
     * Writes the plan row as a new table. A table already at this URI can only be stale, since an
     * execution id is written once, so it is replaced, with its rows and its tag.
+    *
+    * @param logical the logical plan `record`'s body was compiled from
     */
-  def writePlan(uri: URI, record: PlanRecord): Unit = {
+  def writePlan(uri: URI, record: PlanRecord, logical: String): Unit = {
     requirePlanUri(uri)
     require(
-      record.entryId == PlanEntryId && record.kind == PlanKind,
-      s"a plan row has entry id and kind '$PlanEntryId', " +
-        s"not '${record.entryId}' and '${record.kind}'"
+      record.entryId == PlanEntryId,
+      s"a plan row has entry id '$PlanEntryId', not '${record.entryId}'"
     )
+    requireLogical(logical)
     val document = DocumentFactory
       .createDocument(uri, executionPlanSchema)
       .asInstanceOf[VirtualDocument[Tuple]]
-    writeRow(document, PlanEntryId, record)
+    writeRow(document, record, logical)
   }
 
   /**
@@ -177,7 +151,24 @@ object ExecutionPlanStore {
     */
   def readPlan(uri: URI): PlanRecord = {
     requirePlanUri(uri)
-    recordsWithEntryId(loadPlanTable(uri), PlanEntryId).headOption
+    rowsWithEntryId(loadPlanTable(uri), PlanEntryId, RecordColumns).headOption
+      .map(recordOf)
+      .getOrElse(throw new NoStoredPlanException(uri))
+  }
+
+  /**
+    * The plan row, and the logical plan its body was compiled from.
+    *
+    * @throws NoStoredPlanException if the table does not exist or holds no plan row.
+    */
+  def readPlanWithLogical(uri: URI): (PlanRecord, String) = {
+    requirePlanUri(uri)
+    rowsWithEntryId(
+      loadPlanTable(uri),
+      PlanEntryId,
+      executionPlanSchema.getAttributeNames
+    ).headOption
+      .map(row => (recordOf(row), required[String](row, "logical")))
       .getOrElse(throw new NoStoredPlanException(uri))
   }
 
@@ -189,22 +180,24 @@ object ExecutionPlanStore {
     * before the write, so it cannot stop two appends of one entry id that run at once; entry ids
     * are unique because the caller makes each from a UUID.
     *
+    * @param logical the operator as changed, which `record`'s body was compiled from
     * @throws NoStoredPlanException if the table does not exist.
     */
-  def appendUpdate(uri: URI, record: PlanRecord): Unit = {
+  def appendUpdate(uri: URI, record: PlanRecord, logical: String): Unit = {
     requirePlanUri(uri)
     require(
-      record.kind == UpdateKind && UpdateEntryIdPattern.matches(record.entryId),
-      s"an update row has kind '$UpdateKind' and an entry id of '$UpdateEntryIdPrefix' followed " +
-        s"by 1 to 64 letters, digits or hyphens, not '${record.kind}' and '${record.entryId}'"
+      UpdateEntryIdPattern.matches(record.entryId),
+      s"an update row has an entry id of '$UpdateEntryIdPrefix' followed by 1 to 64 letters, " +
+        s"digits or hyphens, not '${record.entryId}'"
     )
+    requireLogical(logical)
     val table = loadPlanTable(uri)
     require(
       rowsWithEntryId(table, record.entryId, Seq("entryId")).isEmpty,
       s"the stored plan at $uri already holds ${record.entryId}"
     )
     val document = DocumentFactory.openDocument(uri)._1.asInstanceOf[VirtualDocument[Tuple]]
-    writeRow(document, record.entryId, record)
+    writeRow(document, record, logical)
   }
 
   /**
@@ -215,8 +208,12 @@ object ExecutionPlanStore {
     */
   def readUpdate(uri: URI, updateId: String): PlanRecord = {
     requirePlanUri(uri)
-    recordsWithEntryId(loadPlanTable(uri), updateId)
-      .find(_.kind == UpdateKind)
+    val table = loadPlanTable(uri)
+    // The plan row is no update, whatever is asked for by its entry id.
+    Option
+      .when(UpdateEntryIdPattern.matches(updateId))(updateId)
+      .flatMap(rowsWithEntryId(table, _, RecordColumns).headOption)
+      .map(recordOf)
       .getOrElse(throw new NoSuchUpdateException(uri, updateId))
   }
 
@@ -291,21 +288,13 @@ object ExecutionPlanStore {
     DocumentFactory.dropTable(uri)
   }
 
-  private def requirePlanUri(uri: URI): VFSUriComponents = {
-    val components = VFSURIFactory.decodeURI(uri)
-    // Rebuilding the URI from what it decodes to refuses extra segments, which would address a
-    // different table name in the plan namespace.
-    require(
-      components.resourceType == VFSResourceType.PLAN &&
-        uri == VFSURIFactory.createPlanURI(
-          components.workflowId,
-          components.executionId,
-          components.warehouse
-        ),
-      s"not an execution plan URI: $uri"
+  private def requireLogical(logical: String): Unit =
+    require(logical != null, "a plan table row needs what its body was compiled from")
+
+  private def requirePlanUri(uri: URI): VFSUriComponents =
+    planTableOf(uri).getOrElse(
+      throw new IllegalArgumentException(s"not an execution plan URI: $uri")
     )
-    components
-  }
 
   private def loadPlanTable(uri: URI): Table =
     DocumentFactory.icebergTableOf(uri).getOrElse(throw new NoStoredPlanException(uri))
@@ -313,8 +302,20 @@ object ExecutionPlanStore {
   private def hasStartedTag(table: Table): Boolean =
     Option(table.refs().get(StartedTag)).exists(_.isTag)
 
-  private def recordsWithEntryId(table: Table, entryId: String): List[PlanRecord] =
-    rowsWithEntryId(table, entryId, executionPlanSchema.getAttributeNames).map(PlanRecord.fromTuple)
+  /** Reads a row of the plan table; only `notification` may be empty. */
+  private def recordOf(row: Tuple): PlanRecord =
+    PlanRecord(
+      entryId = required[String](row, "entryId"),
+      body = required[String](row, "body"),
+      createdBy = required[Integer](row, "createdBy").intValue(),
+      computingUnitId = required[Integer](row, "computingUnitId").intValue(),
+      notification = Option(row.getField[String]("notification"))
+    )
+
+  private def required[T <: AnyRef](row: Tuple, column: String): T =
+    Option(row.getField[T](column)).getOrElse(
+      throw new IllegalStateException(s"a plan table row has no $column")
+    )
 
   /**
     * The rows with this entry id, as of the snapshot `table` was loaded at, with only `columns`
@@ -337,14 +338,27 @@ object ExecutionPlanStore {
     rows.filter(_.getField[String]("entryId") == entryId)
   }
 
+  /** Writes `record` and `logical` as one row, to a data file named after the entry id. */
   private def writeRow(
       document: VirtualDocument[Tuple],
-      writerIdentifier: String,
-      record: PlanRecord
+      record: PlanRecord,
+      logical: String
   ): Unit = {
-    val writer = document.writer(writerIdentifier)
+    val writer = document.writer(record.entryId)
     writer.open()
-    writer.putOne(record.toTuple)
+    writer.putOne(
+      Tuple(
+        executionPlanSchema,
+        Array(
+          record.entryId,
+          record.body,
+          logical,
+          record.createdBy,
+          record.computingUnitId,
+          record.notification.orNull
+        )
+      )
+    )
     writer.close()
   }
 }

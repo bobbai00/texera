@@ -41,11 +41,9 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{
-  BoundResources,
   ExecutionMode,
   ExecutionPlan,
   GlobalPortIdentity,
-  InputFile,
   InputPort,
   OutputPort,
   PhysicalLink,
@@ -58,7 +56,6 @@ import org.apache.texera.amber.core.workflow.{
   PythonEnvironmentRef,
   ReplaySource,
   RepositoryMounts,
-  ResourceBinding,
   WorkflowContext,
   WorkflowSettings
 }
@@ -703,11 +700,7 @@ class WorkflowExecutionServiceSpec
   ): PlanRecord =
     PlanRecord(
       entryId = ExecutionPlanStore.PlanEntryId,
-      kind = ExecutionPlanStore.PlanKind,
-      formatVersion = PhysicalPlanCodec.FormatVersion,
       body = PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(executionPlan)),
-      logical = "{}",
-      createdAt = new SqlTimestamp(System.currentTimeMillis()),
       createdBy = testUid,
       computingUnitId = testCuid,
       notification = notification
@@ -813,7 +806,7 @@ class WorkflowExecutionServiceSpec
     // The links are the operators' own, in the descriptors their executors are built from: the
     // run reads nothing of an input but that the plan lists it.
     def input(name: String): PlanInput =
-      PlanInput(OperatorIdentity("stored-text"), name, InputFile(Long.MaxValue, 3))
+      PlanInput(OperatorIdentity("stored-text"), name, Long.MaxValue)
     val executionPlan = readBack(
       ExecutionPlan(
         savedPlanContext(),
@@ -894,7 +887,7 @@ class WorkflowExecutionServiceSpec
     val executionPlan = readBack(storedSourcePlan())
     val record = planRowOf(executionPlan)
     // The plan table, holding the plan row and the changes, in the catalog the build's tests use.
-    ExecutionPlanStore.writePlan(storedPlanTable, record)
+    ExecutionPlanStore.writePlan(storedPlanTable, record, "{}")
     def storedChange(mountRoot: String): String = {
       val updateId = s"update-${UUID.randomUUID()}"
       val changed = storedSource.copy(
@@ -905,18 +898,15 @@ class WorkflowExecutionServiceSpec
         storedPlanTable,
         PlanRecord(
           entryId = updateId,
-          kind = ExecutionPlanStore.UpdateKind,
-          formatVersion = PhysicalPlanCodec.FormatVersion,
           body = PhysicalPlanCodec.updateToJson(
             PhysicalPlanCodec
               .encodeUpdate(ExecutionIdentity(testEid.longValue()), updateId, changed)
           ),
-          logical = "{}",
-          createdAt = new SqlTimestamp(System.currentTimeMillis()),
           createdBy = testUid,
           computingUnitId = testCuid,
           notification = None
-        )
+        ),
+        "{}"
       )
       updateId
     }
@@ -1160,7 +1150,7 @@ class WorkflowExecutionServiceSpec
       held.letGo()
 
       // The install is the unit's, and goes on to its end.
-      eventually(installer.interpreterFor(PythonEnvironmentRef.Resolved(ml)) should not be empty)
+      eventually(installer.interpreterFor(Some(ml)) should not be empty)
       // The run stays as it was killed: its engine is never asked to start, nothing of the
       // install is its failure, and its consoles are told nothing more.
       Thread.sleep(300)
@@ -1226,31 +1216,11 @@ class WorkflowExecutionServiceSpec
       run.service.unsubscribeAll()
       held.letGo()
 
-      eventually(installer.interpreterFor(PythonEnvironmentRef.Resolved(ml)) should not be empty)
+      eventually(installer.interpreterFor(Some(ml)) should not be empty)
       Thread.sleep(300)
       startWorkflowAsked(run) shouldBe false
       run.errors shouldBe empty
       run.store.metadataStore.getState.fatalErrors shouldBe empty
-    } finally run.close()
-  }
-
-  it should "refuse a plan that names an environment no plan resolved, before it builds the engine" in {
-    // No saved plan holds one: this plan was not read back.
-    val python = new FakePython()
-    val executionPlan = environmentPlan("named", PythonEnvironmentRef.Named("ml"))
-    val run = new StoredRun(executionPlan, Some(installerOn(python)))
-    try {
-      val failure = run.service
-        .startStored(executionPlan, planRowOf(readBack(storedSourcePlan())), storedPlanTable)
-        .getOrElse(fail("the run started"))
-
-      failure shouldBe an[IllegalStateException]
-      failure.getMessage shouldBe
-        "Operator named-first names the Python environment 'ml', which was never resolved: " +
-          "only a plan made to run can run it."
-      run.errors shouldBe Seq(failure)
-      run.engineWorkflow shouldBe None
-      python.runs shouldBe empty
     } finally run.close()
   }
 
@@ -1323,45 +1293,6 @@ class WorkflowExecutionServiceSpec
       WorkflowExecutionService.requireRunnableUnder(plan, None)
     nowhere.getMessage should include(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
     nowhere.getMessage should include(datasetLocator)
-  }
-
-  it should "refuse a plan with an operator that names a Python environment no plan resolved" in {
-    val plan = PhysicalPlan(
-      Set(
-        sourceOp("resolved-udf")
-          .withPythonEnvironment(PythonEnvironmentRef.Resolved(ml)),
-        sourceOp("named-udf").withPythonEnvironment(PythonEnvironmentRef.Named("ml"))
-      ),
-      Set.empty
-    )
-    val failure = the[IllegalStateException] thrownBy
-      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
-    failure.getMessage should include("named-udf")
-    failure.getMessage should include("'ml', which was never resolved")
-    // An environment a plan resolved is one the unit installs.
-    noException should be thrownBy WorkflowExecutionService.requireRunnableUnder(
-      PhysicalPlan(
-        Set(sourceOp("resolved-udf").withPythonEnvironment(PythonEnvironmentRef.Resolved(ml))),
-        Set.empty
-      ),
-      Some(unitMountRoot)
-    )
-  }
-
-  it should "refuse a plan with an operator left to bind, without binding it" in {
-    var forced = 0
-    val binding: ResourceBinding = (_, _) => {
-      forced += 1
-      BoundResources(OpExecWithClassName("bound"), Set(datasetLocator))
-    }
-    val plan = PhysicalPlan(
-      Set(sourceOp("unbound-udf").withResourceBinding(Some(binding))),
-      Set.empty
-    )
-    val failure = the[IllegalStateException] thrownBy
-      WorkflowExecutionService.requireRunnableUnder(plan, Some(unitMountRoot))
-    failure.getMessage should include("unbound-udf")
-    forced shouldBe 0
   }
 
   // The companion's one expression, exercised directly rather than only through the two result

@@ -93,7 +93,6 @@ import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
 import java.security.MessageDigest
-import java.sql.Timestamp
 import java.util.concurrent.{CopyOnWriteArrayList, ExecutionException, TimeUnit}
 import java.util.{Comparator, HexFormat}
 import scala.collection.mutable
@@ -325,11 +324,7 @@ class PythonEnvironmentIntegrationSpec
     def end(): ExecutionMetadataStore = {
       val planRow = PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = savedPlan,
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = specId,
         computingUnitId = specId,
         notification = None

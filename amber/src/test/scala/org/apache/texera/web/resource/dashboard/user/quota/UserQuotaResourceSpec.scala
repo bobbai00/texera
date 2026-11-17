@@ -21,7 +21,6 @@ package org.apache.texera.web.resource.dashboard.user.quota
 
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -373,15 +372,12 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
       planUri,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = "{}",
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = testUid,
         computingUnitId = 1,
         notification = None
-      )
+      ),
+      "{}"
     )
     ExecutionPlanStore.claimStart(planUri)
 

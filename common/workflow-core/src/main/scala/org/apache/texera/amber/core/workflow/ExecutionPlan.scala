@@ -74,21 +74,14 @@ final case class CostHints(
 )
 
 /**
-  * Something a logical operator of the plan reads from outside the run.
+  * A file a logical operator of the plan reads from outside the run, through a link made when the
+  * plan was made.
   *
   * @param logicalOperatorId the operator that reads it
   * @param name              the name the operator's executor knows it by
-  * @param file              the file it is
+  * @param expiresAtMs       when the link stops working, in milliseconds since the epoch
   */
-final case class PlanInput(logicalOperatorId: OperatorIdentity, name: String, file: InputFile)
-
-/**
-  * A file read through a link made when the plan was made.
-  *
-  * @param expiresAtMs when the link stops working, in milliseconds since the epoch
-  * @param sizeBytes   the file's size in bytes
-  */
-final case class InputFile(expiresAtMs: Long, sizeBytes: Long)
+final case class PlanInput(logicalOperatorId: OperatorIdentity, name: String, expiresAtMs: Long)
 
 /**
   * A change to one operator of a paused run, which the engine applies when the run resumes: the

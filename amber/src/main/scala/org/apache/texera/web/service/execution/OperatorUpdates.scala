@@ -44,7 +44,6 @@ import org.apache.texera.web.model.http.response.execution.OperatorUpdateRespons
 import org.apache.texera.web.service.PlanToRun
 
 import java.net.URI
-import java.sql.Timestamp
 import java.util.UUID
 import javax.ws.rs.core.Response
 import javax.ws.rs.{
@@ -103,8 +102,8 @@ class OperatorUpdates extends LazyLogging {
   protected def warehousesEnabled: Boolean = StorageConfig.warehouseEnabled
 
   /** Appends the update row. A seam, so a spec can make the write fail. */
-  protected def appendUpdate(planUri: URI, record: PlanRecord): Unit =
-    ExecutionPlanStore.appendUpdate(planUri, record)
+  protected def appendUpdate(planUri: URI, record: PlanRecord, logical: String): Unit =
+    ExecutionPlanStore.appendUpdate(planUri, record, logical)
 
   /**
     * Has `current`, an operator of the workflow the execution runs, build the operator it becomes
@@ -186,17 +185,14 @@ class OperatorUpdates extends LazyLogging {
         planUri,
         PlanRecord(
           entryId = updateId,
-          kind = ExecutionPlanStore.UpdateKind,
-          formatVersion = PhysicalPlanCodec.FormatVersion,
           body = PhysicalPlanCodec.updateToJson(
             PhysicalPlanCodec.encodeUpdate(executionId, updateId, bound)
           ),
-          logical = logical,
-          createdAt = new Timestamp(System.currentTimeMillis()),
           createdBy = uid.intValue(),
           computingUnitId = cuid,
           notification = None
-        )
+        ),
+        logical
       )
     } catch {
       // The execution was deleted, and its plan table dropped, after its plan was read and before
@@ -299,8 +295,8 @@ class OperatorUpdates extends LazyLogging {
       creator: Int,
       cuid: Int
   ): (LogicalPlan, ExecutionPlan) = {
-    val record =
-      try ExecutionPlanStore.readPlan(planUri)
+    val (record, logical) =
+      try ExecutionPlanStore.readPlanWithLogical(planUri)
       catch {
         case _: NoStoredPlanException =>
           throw new NotFoundException(s"execution $eid has no stored plan")
@@ -323,7 +319,7 @@ class OperatorUpdates extends LazyLogging {
     }
     try {
       // The workflow modules of this mapper give each typed loop-variable reference back.
-      val workflow = objectMapper.readValue(record.logical, classOf[LogicalPlanPojo])
+      val workflow = objectMapper.readValue(logical, classOf[LogicalPlanPojo])
       workflow.graphProblem().foreach(problem => throw new IllegalStateException(problem))
       (LogicalPlan(workflow), PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(record.body)))
     } catch {

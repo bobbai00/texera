@@ -26,13 +26,11 @@ import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.storage.{RepositoryMountManager, VFSURIFactory}
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
 import org.apache.texera.amber.core.workflow.{
-  BoundResources,
   GlobalPortIdentity,
   OutputPort,
   PhysicalOp,
   PortIdentity,
-  RepositoryMounts,
-  ResourceBinding
+  RepositoryMounts
 }
 import org.apache.texera.amber.core.workflow.WorkflowContext.{
   DEFAULT_EXECUTION_ID,
@@ -235,28 +233,6 @@ class RegionExecutionManagerSpec
     assert(failure.getMessage.contains("/plan/root"), failure.getMessage)
     assert(failure.getMessage.contains("/mnt/texera-mounts"), failure.getMessage)
     assert(posted.isEmpty)
-    assert(!fixture.rpcProbe.methodTrace.contains(InitializeExecutor))
-  }
-
-  it should "refuse an operator that still holds a binding, without forcing it" in {
-    // The engine runs what the plan holds; binding is the compiler's.
-    var forced = 0
-    val binding: ResourceBinding = (_, _) => {
-      forced += 1
-      BoundResources(OpExecWithClassName("bound"), Set("dataset-1:abc123"))
-    }
-    val mounts = mutable.ArrayBuffer[RepositoryMounts]()
-    val fixture = createSingleRegionFixture(
-      endWorkerResponse = _ => None,
-      physicalOp = createSourceOp("test-op").withResourceBinding(Some(binding)),
-      ensureMounted = mounts += _
-    )
-
-    val failure = intercept[IllegalStateException](launchRegion(fixture.manager))
-
-    assert(failure.getMessage.contains("test-op"), failure.getMessage)
-    assert(forced == 0)
-    assert(mounts.isEmpty)
     assert(!fixture.rpcProbe.methodTrace.contains(InitializeExecutor))
   }
 

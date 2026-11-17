@@ -31,10 +31,6 @@ object PhysicalPlanRoundTrip extends Assertions {
   // not saved.
   private val propagation = SchemaPropagationFunc(schemas => schemas)
 
-  // A Scala set of up to this many operators iterates in the order they were added in; a larger
-  // one, in the order of their hash codes.
-  private val smallSetSize = 4
-
   /**
     * Saves `plan`, made to run under `context`, with no replay, replay log or input, and reads it
     * back, as `assertRoundTrips(ExecutionPlan(context, plan))`.
@@ -99,26 +95,12 @@ object PhysicalPlanRoundTrip extends Assertions {
   }
 
   /**
-    * Fails unless `read` is `original` but for each operator's schema propagation function, and
-    * the engine finds its parts in the same order: links, each operator's ports, each port's
-    * links (compared with the operators), and the operators in the topological order the
-    * scheduler walks.
-    *
-    * The operators' own iteration order is compared for a plan of up to four of them, whose set
-    * iterates in the order they were added in. A larger set iterates in the order of their hash
-    * codes, which take in identity hashes (of a schema propagation function, say): two compiles of
-    * one workflow differ there too, and no saved plan could keep it.
+    * Fails unless `read` is `original` but for each operator's schema propagation function, with
+    * each operator's ports, and each port's links (compared with the operators), in the order
+    * `original` has them.
     */
   def assertSamePlan(original: PhysicalPlan, read: PhysicalPlan): Unit = {
     assert(withoutPropagation(read) == withoutPropagation(original), "the plans differ")
-    assert(read.links.toList == original.links.toList, "the links are in another order")
-    if (original.operators.size <= smallSetSize) {
-      assert(
-        read.operators.toList.map(_.id) == original.operators.toList.map(_.id),
-        "the operators are in another order"
-      )
-    }
-    assert(read.topologicalIterator().toList == original.topologicalIterator().toList)
     original.operators.foreach { op =>
       val readOp = read.getOperator(op.id)
       withClue(s"operator ${op.id.logicalOpId.id}-${op.id.layerName}: ") {

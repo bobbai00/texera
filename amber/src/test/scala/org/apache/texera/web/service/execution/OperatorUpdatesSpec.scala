@@ -330,10 +330,10 @@ class OperatorUpdatesSpec
       )
     }
     override protected def warehousesEnabled: Boolean = warehouses
-    override protected def appendUpdate(planUri: URI, record: PlanRecord): Unit =
+    override protected def appendUpdate(planUri: URI, record: PlanRecord, logical: String): Unit =
       failAppend match {
         case Some(failure) => throw failure
-        case None          => super.appendUpdate(planUri, record)
+        case None          => super.appendUpdate(planUri, record, logical)
       }
     override protected def reconfigure(
         current: LogicalOp,
@@ -555,16 +555,27 @@ class OperatorUpdatesSpec
     refusal.getMessage
   }
 
-  /** Every update row of the plan table at `planUri`. */
-  private def updateRows(planUri: String): List[PlanRecord] =
+  /** Every row of the plan table at `planUri`. */
+  private def rowsOf(planUri: String): List[Tuple] =
     DocumentFactory
       .openDocument(new URI(planUri))
       ._1
       .asInstanceOf[VirtualDocument[Tuple]]
       .get()
-      .map(PlanRecord.fromTuple)
-      .filter(_.kind == ExecutionPlanStore.UpdateKind)
       .toList
+
+  /** The entry id of every update row of the plan table at `planUri`. */
+  private def updateRows(planUri: String): List[String] =
+    rowsOf(planUri)
+      .map(_.getField[String]("entryId"))
+      .filter(_.startsWith(ExecutionPlanStore.UpdateEntryIdPrefix))
+
+  /** What the body of row `entryId` of `execution`'s plan table was compiled from. */
+  private def logicalOf(execution: CreateExecutionResponse, entryId: String): String =
+    rowsOf(execution.planUri)
+      .find(_.getField[String]("entryId") == entryId)
+      .map(_.getField[String]("logical"))
+      .getOrElse(fail(s"the plan table of execution ${execution.eid} has no row $entryId"))
 
   /**
     * The JSON text of a stored plan, `json`, with every id of operator `operatorId`'s layer "main"
@@ -616,7 +627,6 @@ class OperatorUpdatesSpec
     val execution = created()
     val planBefore = ExecutionPlanStore.readPlan(new URI(execution.planUri))
     val updates = new FixtureUpdates()
-    val before = System.currentTimeMillis()
 
     val update = stored(post(execution.eid, udf(code = changedCode("v2")), updates = updates))
 
@@ -624,12 +634,9 @@ class OperatorUpdatesSpec
     update.updateId should fullyMatch regex "update-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     val record = readUpdate(execution, update.updateId)
     record.entryId shouldBe update.updateId
-    record.kind shouldBe ExecutionPlanStore.UpdateKind
-    record.formatVersion shouldBe PhysicalPlanCodec.FormatVersion
     record.createdBy shouldBe creatorUid
     record.computingUnitId shouldBe unitCuid
     record.notification shouldBe None
-    record.createdAt.getTime should be >= (before - 1000)
     // What the unit applies: the new code for the running operator, of this execution.
     decoded(record) shouldBe OperatorUpdate(
       ExecutionIdentity(execution.eid),
@@ -639,15 +646,16 @@ class OperatorUpdatesSpec
       None
     )
     // The change as the editor sent it.
-    val logical = objectMapper.readValue(record.logical, classOf[LogicalOp])
+    val sent = logicalOf(execution, update.updateId)
+    val logical = objectMapper.readValue(sent, classOf[LogicalOp])
     logical shouldBe a[PythonUDFOpDescV2]
     logical.operatorIdentifier shouldBe OperatorIdentity("udf")
     logical.asInstanceOf[PythonUDFOpDescV2].code shouldBe changedCode("v2")
-    objectMapper.readTree(record.logical).has(StateReferencing.SIDECAR_PROPERTY) shouldBe false
+    objectMapper.readTree(sent).has(StateReferencing.SIDECAR_PROPERTY) shouldBe false
     // Bound as the creator may read, and the plan row left as it was.
     updates.resolverUsers.toSet shouldBe Set(Integer.valueOf(creatorUid))
     ExecutionPlanStore.readPlan(new URI(execution.planUri)) shouldBe planBefore
-    updateRows(execution.planUri).map(_.entryId) shouldBe List(update.updateId)
+    updateRows(execution.planUri) shouldBe List(update.updateId)
   }
 
   it should "keep each change of a pause as a row of its own" in {
@@ -657,7 +665,7 @@ class OperatorUpdatesSpec
     val second = stored(post(execution.eid, limit("limit", 9)))
 
     first.updateId should not be second.updateId
-    updateRows(execution.planUri).map(_.entryId).toSet shouldBe
+    updateRows(execution.planUri).toSet shouldBe
       Set(first.updateId, second.updateId)
     decoded(readUpdate(execution, first.updateId)).opExecInitInfo shouldBe
       OpExecWithCode(changedCode("v2"), "python")
@@ -732,7 +740,7 @@ class OperatorUpdatesSpec
     val literal = stored(post(execution.eid, filter("pre", "$y")))
 
     objectMapper
-      .readTree(readUpdate(execution, literal.updateId).logical)
+      .readTree(logicalOf(execution, literal.updateId))
       .get("predicates")
       .get(0)
       .get("value")
@@ -752,7 +760,7 @@ class OperatorUpdatesSpec
 
     update.operatorId shouldBe "limit"
     objectMapper
-      .readTree(readUpdate(execution, update.updateId).logical)
+      .readTree(logicalOf(execution, update.updateId))
       .get("limit")
       .asInt() shouldBe 7
   }
@@ -785,7 +793,7 @@ class OperatorUpdatesSpec
     // it as the string it is, with no sidecar (a parse records only typed references), so only
     // the operator's place in the block tells that it refers to a loop variable.
     val workflow = objectMapper.readValue(
-      ExecutionPlanStore.readPlan(new URI(execution.planUri)).logical,
+      logicalOf(execution, ExecutionPlanStore.PlanEntryId),
       classOf[LogicalPlanPojo]
     )
     workflow.operators.find(_.operatorIdentifier.id == "bound").get.stateReferences shouldBe empty
@@ -810,7 +818,7 @@ class OperatorUpdatesSpec
 
     refused(400)(post(execution.eid, lambda("tuple_['Units Sold'] * 3"))) shouldBe
       "operator PythonLambdaFunctionOpDesc does not support reconfiguration"
-    updateRows(execution.planUri).map(_.entryId) shouldBe List(earlier.updateId)
+    updateRows(execution.planUri) shouldBe List(earlier.updateId)
   }
 
   it should "refuse a change its operator fails on, in the failure's words or by its type" in {
@@ -830,7 +838,7 @@ class OperatorUpdatesSpec
         val updates = new FixtureUpdates(reconfiguration = Some(outcome))
         refused(400)(post(execution.eid, limit("limit", 7), updates = updates)) shouldBe refusal
     }
-    updateRows(execution.planUri).map(_.entryId) shouldBe List(earlier.updateId)
+    updateRows(execution.planUri) shouldBe List(earlier.updateId)
   }
 
   it should "throw, as it is, a fatal error of the operator a change is made to" in {
@@ -866,7 +874,7 @@ class OperatorUpdatesSpec
     // A plan whose Limit runs as the layer "other": a change builds it as "main", which the unit
     // would refuse to apply.
     val execution = created()
-    val plan = ExecutionPlanStore.readPlan(new URI(execution.planUri))
+    val (plan, logical) = ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))
     insertExecution(otherLayerEid, status = 2)
     val uri =
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(otherLayerEid), None)
@@ -887,7 +895,7 @@ class OperatorUpdatesSpec
       .plan
       .operators
       .map(_.id) should contain(PhysicalOpIdentity(OperatorIdentity("limit"), "other"))
-    ExecutionPlanStore.writePlan(uri, plan.copy(body = body))
+    ExecutionPlanStore.writePlan(uri, plan.copy(body = body), logical)
     madePlans += uri
 
     refused(400)(post(otherLayerEid, limit("limit", 7))) shouldBe
@@ -935,7 +943,7 @@ class OperatorUpdatesSpec
     )
 
     asked shouldBe empty
-    updateRows(execution.planUri).map(_.entryId) shouldBe List(update.updateId)
+    updateRows(execution.planUri) shouldBe List(update.updateId)
   }
 
   it should "refuse a dataset version the creator cannot read, or with no root to mount it under" in {
@@ -1103,17 +1111,17 @@ class OperatorUpdatesSpec
 
   it should "answer 500 when the stored plan cannot be read" in {
     val execution = created()
-    val plan = ExecutionPlanStore.readPlan(new URI(execution.planUri))
+    val (plan, logical) = ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))
     insertExecution(badBodyEid, status = 2)
     insertExecution(badLogicalEid, status = 2)
     Seq(
-      badBodyEid -> plan.copy(body = "{}"),
-      badLogicalEid -> plan.copy(logical = "[]")
+      badBodyEid -> (plan.copy(body = "{}"), logical),
+      badLogicalEid -> (plan, "[]")
     ).foreach {
-      case (eid, record) =>
+      case (eid, (record, compiledFrom)) =>
         val uri =
           ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
-        ExecutionPlanStore.writePlan(uri, record)
+        ExecutionPlanStore.writePlan(uri, record, compiledFrom)
         madePlans += uri
     }
 
@@ -1165,7 +1173,7 @@ class OperatorUpdatesSpec
     // The unit runs the plan for the user and on the unit its plan row names, and would refuse
     // a change stored for the ones the execution's row names.
     val execution = created()
-    val plan = ExecutionPlanStore.readPlan(new URI(execution.planUri))
+    val (plan, logical) = ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))
     insertExecution(otherCreatorEid, status = 2)
     insertExecution(otherUnitEid, status = 2)
     val plans = Seq(
@@ -1175,7 +1183,7 @@ class OperatorUpdatesSpec
       case (eid, record) =>
         val uri =
           ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
-        ExecutionPlanStore.writePlan(uri, record)
+        ExecutionPlanStore.writePlan(uri, record, logical)
         madePlans += uri
         eid -> uri
     }

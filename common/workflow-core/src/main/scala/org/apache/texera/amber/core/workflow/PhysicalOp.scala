@@ -238,33 +238,6 @@ case class PhysicalOp(
       .distinct
 
   /**
-    * Fails if this operator still holds a binding. The engine checks this before it runs an
-    * operator: it runs only what a plan made to run holds, and never binds an operator itself.
-    */
-  def requireResourcesBound(): Unit =
-    if (resourceBinding.isDefined) {
-      throw new IllegalStateException(
-        s"Operator ${id.logicalOpId.id} names datasets or models that were never resolved: " +
-          "only a plan made to run can run it."
-      )
-    }
-
-  /**
-    * Fails if this operator names a Python environment that no plan resolved. The engine checks
-    * this before it runs an operator: it installs only what a plan made to run says to, and never
-    * looks an environment up by its name.
-    */
-  def requireEnvironmentResolved(): Unit =
-    pythonEnvironment match {
-      case PythonEnvironmentRef.Named(name) =>
-        throw new IllegalStateException(
-          s"Operator ${id.logicalOpId.id} names the Python environment '$name', which was never " +
-            "resolved: only a plan made to run can run it."
-        )
-      case _ =>
-    }
-
-  /**
     * Helper functions related to compile-time operations
     */
   @JsonIgnore

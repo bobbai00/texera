@@ -126,16 +126,14 @@ class OperatorMetadataGeneratorSpec extends AnyFlatSpec with Matchers {
       "dataset:///dataset-12/9f3c/people.jsonl" ->
         InputLink(
           "http://texera-rustfs:9000/texera-dataset/k?X-Amz-Signature=5ecr3t",
-          1763856000000L,
-          412
+          1763856000000L
         )
     )
     val json = objectMapper.writeValueAsString(compiled)
     objectMapper.readTree(json).get("inputLinks") shouldBe objectMapper.readTree(
       """{"dataset:///dataset-12/9f3c/people.jsonl": {
         |  "url": "http://texera-rustfs:9000/texera-dataset/k?X-Amz-Signature=5ecr3t",
-        |  "expiresAtMs": 1763856000000,
-        |  "sizeBytes": 412}}""".stripMargin
+        |  "expiresAtMs": 1763856000000}}""".stripMargin
     )
     objectMapper.readValue(json, classOf[JSONLScanSourceOpDesc]).inputLinks shouldBe
       compiled.inputLinks

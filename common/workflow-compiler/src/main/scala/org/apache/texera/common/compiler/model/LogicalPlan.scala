@@ -29,7 +29,7 @@ import org.apache.texera.amber.core.storage.{
   ScanFileResolver
 }
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
-import org.apache.texera.amber.core.workflow.{InputFile, PlanInput}
+import org.apache.texera.amber.core.workflow.PlanInput
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
@@ -213,11 +213,7 @@ case class LogicalPlan(
             linker.map(_.link(file)).map { link =>
               val resolvedName = scan.fileName.get
               scan.inputLinks = Map(resolvedName -> link)
-              PlanInput(
-                scan.operatorIdentifier,
-                resolvedName,
-                InputFile(link.expiresAtMs, link.sizeBytes)
-              )
+              PlanInput(scan.operatorIdentifier, resolvedName, link.expiresAtMs)
             }
           } catch {
             case notFound: FileNotFoundException =>
@@ -299,12 +295,7 @@ case class LogicalPlan(
         val links = files.map(file => file.logicalPath -> linker.linkListed(file))
         fileScan.inputLinks = links.toMap
         links.map {
-          case (file, link) =>
-            PlanInput(
-              fileScan.operatorIdentifier,
-              file,
-              InputFile(link.expiresAtMs, link.sizeBytes)
-            )
+          case (file, link) => PlanInput(fileScan.operatorIdentifier, file, link.expiresAtMs)
         }
       }
     }

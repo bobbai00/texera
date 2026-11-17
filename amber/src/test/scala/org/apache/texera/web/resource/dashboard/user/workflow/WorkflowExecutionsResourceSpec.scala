@@ -36,7 +36,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.common.config.StorageConfig
@@ -670,15 +670,12 @@ class WorkflowExecutionsResourceSpec
       uri,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = "{}",
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = testUser.getUid,
         computingUnitId = 1,
         notification = None
-      )
+      ),
+      "{}"
     )
     uri
   }

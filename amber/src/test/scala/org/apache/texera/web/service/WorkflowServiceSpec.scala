@@ -546,17 +546,14 @@ class WorkflowServiceSpec
       planUri,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = PhysicalPlanCodec.toJson(
           PhysicalPlanCodec.encode(ExecutionPlan(context, PhysicalPlan(Set(lines), Set.empty)))
         ),
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = testUid,
         computingUnitId = storedCuid,
         notification = None
-      )
+      ),
+      "{}"
     )
     planUri
   }

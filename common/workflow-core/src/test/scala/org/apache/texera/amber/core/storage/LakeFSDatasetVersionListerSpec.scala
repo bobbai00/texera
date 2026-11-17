@@ -216,22 +216,17 @@ class LakeFSDatasetVersionListerSpec
     })
 
   "LakeFSDatasetVersionLister" should
-    "list the files of a version, each by its logical path, with where LakeFS keeps it and its size" in {
+    "list the files of a version, each by its logical path, with where LakeFS keeps it" in {
     val listed = listerOf("dataset-12").list(lettersPath, atMost = 100)
 
     // In LakeFS's order, which is the order of the files' paths as it keeps them.
     listed shouldBe Seq(
       ListedFile(
         s"$lettersPath/2024/q1/sales report.csv",
-        physicalAddress("dataset-12", "2024/q1/sales report.csv"),
-        8192
+        physicalAddress("dataset-12", "2024/q1/sales report.csv")
       ),
-      ListedFile(s"$lettersPath/a.txt", physicalAddress("dataset-12", "a.txt"), 3),
-      ListedFile(
-        s"$lettersPath/données/été.csv",
-        physicalAddress("dataset-12", "données/été.csv"),
-        0
-      )
+      ListedFile(s"$lettersPath/a.txt", physicalAddress("dataset-12", "a.txt")),
+      ListedFile(s"$lettersPath/données/été.csv", physicalAddress("dataset-12", "données/été.csv"))
     )
     // One request: the commit that backs the version, asked for no more than is wanted.
     hits shouldBe List(Hit(lsPath("dataset-12"), Map("amount" -> "100")))
@@ -363,8 +358,7 @@ class LakeFSDatasetVersionListerSpec
     listed shouldBe Seq(
       ListedFile(
         "/dataset/ada@texera.io/almanac/v1/public.txt",
-        physicalAddress("dataset-13", "public.txt"),
-        7
+        physicalAddress("dataset-13", "public.txt")
       )
     )
   }

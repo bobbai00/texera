@@ -19,9 +19,10 @@
 
 package org.apache.texera.amber.core.workflow
 
+import com.google.common.hash.Hashing
+
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-import java.util.{HexFormat, Locale}
+import java.util.Locale
 import scala.util.matching.Regex
 
 /**
@@ -103,13 +104,7 @@ object PythonRequirements {
 
   /** The lowercase hex SHA-256 of `lines` joined by '\n': the name of a canonical package list. */
   def digest(lines: Seq[String]): String =
-    HexFormat
-      .of()
-      .formatHex(
-        MessageDigest
-          .getInstance("SHA-256")
-          .digest(lines.mkString("\n").getBytes(StandardCharsets.UTF_8))
-      )
+    Hashing.sha256().hashString(lines.mkString("\n"), StandardCharsets.UTF_8).toString
 
   /**
     * `line` if it is a canonical requirement line, as `canonicalLines` writes them: a normalized

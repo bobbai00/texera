@@ -25,6 +25,7 @@ import org.apache.iceberg.exceptions.{CommitFailedException, ServiceUnavailableE
 import org.apache.iceberg.inmemory.InMemoryFileIO
 import org.apache.iceberg.jdbc.JdbcCatalog
 import org.apache.iceberg.{CatalogProperties, Table}
+import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{
@@ -39,7 +40,6 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
-import java.sql.Timestamp
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Callable, CyclicBarrier, Executors, TimeUnit}
@@ -122,20 +122,16 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
       warehouse
     )
 
-  // Microseconds: the precision an Iceberg timestamp keeps.
-  private val createdAt = Timestamp.valueOf("2026-11-15 09:30:15.123456")
+  private val logicalPlan =
+    """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
 
   private def planRow(
-      body: String = """{"formatVersion":2,"operators":[]}""",
+      body: String = """{"formatVersion":1,"operators":[]}""",
       notification: Option[String] = None
   ): PlanRecord =
     PlanRecord(
       entryId = ExecutionPlanStore.PlanEntryId,
-      kind = ExecutionPlanStore.PlanKind,
-      formatVersion = 2,
       body = body,
-      logical = """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}""",
-      createdAt = createdAt,
       createdBy = 1,
       computingUnitId = 3,
       notification = notification
@@ -144,15 +140,18 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
   private def updateRow(updateId: String, code: String = "print(1)"): PlanRecord =
     PlanRecord(
       entryId = updateId,
-      kind = ExecutionPlanStore.UpdateKind,
-      formatVersion = 2,
       body = s"""{"updateId":"$updateId","code":"$code"}""",
-      logical = s"""{"operatorID":"PythonUDFV2-operator-1","code":"$code"}""",
-      createdAt = Timestamp.valueOf("2026-11-15 09:41:02.5"),
       createdBy = 1,
       computingUnitId = 3,
       notification = None
     )
+
+  /** The operator an update row's body was compiled from, as its row keeps it. */
+  private def changedOperator(code: String = "print(1)"): String =
+    s"""{"operatorID":"PythonUDFV2-operator-1","code":"$code"}"""
+
+  private def appendUpdate(uri: URI, record: PlanRecord): Unit =
+    ExecutionPlanStore.appendUpdate(uri, record, changedOperator())
 
   private val notification = Some(
     """{"email":"texera@example.com","workflowName":"Iris","workflowUrl":"http://localhost:4200/user/workspace/12"}"""
@@ -160,8 +159,22 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
 
   private def writtenPlan(warehouse: Option[String] = None): URI = {
     val uri = freshPlanUri(warehouse)
-    ExecutionPlanStore.writePlan(uri, planRow())
+    ExecutionPlanStore.writePlan(uri, planRow(), logicalPlan)
     uri
+  }
+
+  /** Writes one row straight to a new plan table at `uri`, `column` left empty. */
+  private def writeRowWithout(uri: URI, column: String): Unit = {
+    val schema = ResultSchema.executionPlanSchema
+    val fields: Array[Any] = Array("plan", "{}", logicalPlan, 1, 3, null)
+    fields(schema.getIndex(column)) = null
+    val writer = DocumentFactory
+      .createDocument(uri, schema)
+      .asInstanceOf[VirtualDocument[Tuple]]
+      .writer("plan")
+    writer.open()
+    writer.putOne(Tuple(schema, fields))
+    writer.close()
   }
 
   private def currentSnapshotId(uri: URI): Long =
@@ -174,36 +187,15 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
   // PlanRecord
   // ---------------------------------------------------------------------------
 
-  "PlanRecord" should "survive a round trip through a row of the plan table's schema" in {
-    Seq(planRow(), planRow(notification = notification), updateRow("update-1")).foreach { record =>
-      val tuple = record.toTuple
-      tuple.getSchema shouldBe ResultSchema.executionPlanSchema
-      PlanRecord.fromTuple(tuple) shouldBe record
-    }
-  }
-
-  it should "need every value but the notification" in {
+  "PlanRecord" should "need every value but the notification" in {
     an[IllegalArgumentException] should be thrownBy planRow().copy(entryId = null)
-    an[IllegalArgumentException] should be thrownBy planRow().copy(kind = null)
     an[IllegalArgumentException] should be thrownBy planRow(body = null)
-    an[IllegalArgumentException] should be thrownBy planRow().copy(logical = null)
-    an[IllegalArgumentException] should be thrownBy planRow().copy(createdAt = null)
     an[IllegalArgumentException] should be thrownBy planRow().copy(notification = null)
   }
 
-  it should "refuse a row without a required value" in {
-    // Every column but the notification: a missing number must not read as 0.
-    ResultSchema.executionPlanSchema.getAttributeNames.filterNot(_ == "notification").foreach {
-      column =>
-        val fields = planRow().toTuple.getFields.clone()
-        fields(ResultSchema.executionPlanSchema.getIndex(column)) = null
-        withClue(s"$column: ") {
-          val thrown = intercept[IllegalStateException] {
-            PlanRecord.fromTuple(Tuple(ResultSchema.executionPlanSchema, fields))
-          }
-          thrown.getMessage should include(column)
-        }
-    }
+  it should "leave its body out of its text" in {
+    val record = planRow(body = """{"password":"5ecr3t"}""", notification = notification)
+    record.toString shouldBe "PlanRecord(plan, createdBy=1, computingUnitId=3)"
   }
 
   // ---------------------------------------------------------------------------
@@ -217,15 +209,31 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
       new URI(s"vfs:///wh/$warehouse/wid/12/eid/345/plan")
   }
 
+  "planTableOf" should "give the workflow, execution and warehouse of a plan table's URI" in {
+    Seq(None, Some(warehouse)).foreach { inWarehouse =>
+      val uri = ExecutionPlanStore.planUri(workflowId, ExecutionIdentity(345), inWarehouse)
+      val location = ExecutionPlanStore.planTableOf(uri).get
+      (location.workflowId, location.executionId, location.warehouse) shouldBe
+        ((workflowId, ExecutionIdentity(345), inWarehouse))
+    }
+  }
+
+  it should "give nothing for any other URI" in {
+    (notPlanUris :+ null).foreach { uri =>
+      withClue(s"$uri: ") { ExecutionPlanStore.planTableOf(uri) shouldBe None }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // writePlan / readPlan
   // ---------------------------------------------------------------------------
 
-  "writePlan and readPlan" should "keep every column of the plan row, with and without a notification" in {
+  "writePlan and readPlan" should "keep the plan row, with and without a notification" in {
     Seq(planRow(), planRow(notification = notification)).foreach { record =>
       val uri = freshPlanUri()
-      ExecutionPlanStore.writePlan(uri, record)
+      ExecutionPlanStore.writePlan(uri, record, logicalPlan)
       ExecutionPlanStore.readPlan(uri) shouldBe record
+      ExecutionPlanStore.readPlanWithLogical(uri) shouldBe ((record, logicalPlan))
       ExecutionPlanStore.isStarted(uri) shouldBe false
     }
   }
@@ -236,7 +244,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     val body = "{\"note\":\"Grüße 日本語 😀\",\"padding\":\"" +
       ("x" * (4 * 1024 * 1024)) + "\"}"
     val uri = freshPlanUri()
-    ExecutionPlanStore.writePlan(uri, planRow(body = body))
+    ExecutionPlanStore.writePlan(uri, planRow(body = body), logicalPlan)
     ExecutionPlanStore.readPlan(uri).body shouldBe body
   }
 
@@ -248,28 +256,28 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
 
   it should "replace a stale table at the same execution, with its rows and its tag" in {
     val uri = writtenPlan()
-    ExecutionPlanStore.appendUpdate(uri, updateRow("update-stale"))
+    appendUpdate(uri, updateRow("update-stale"))
     ExecutionPlanStore.claimStart(uri)
 
-    val replacement = planRow(body = """{"formatVersion":2,"replacement":true}""")
-    ExecutionPlanStore.writePlan(uri, replacement)
+    val replacement = planRow(body = """{"formatVersion":1,"replacement":true}""")
+    val replacementLogical = """{"operators":[],"links":[]}"""
+    ExecutionPlanStore.writePlan(uri, replacement, replacementLogical)
 
-    ExecutionPlanStore.readPlan(uri) shouldBe replacement
+    ExecutionPlanStore.readPlanWithLogical(uri) shouldBe ((replacement, replacementLogical))
     a[NoSuchUpdateException] should be thrownBy ExecutionPlanStore.readUpdate(uri, "update-stale")
     ExecutionPlanStore.isStarted(uri) shouldBe false
   }
 
-  "writePlan" should "refuse a row that is not a plan row, and write nothing" in {
+  "writePlan" should "refuse a row that is not the plan row, or has no logical plan, and write nothing" in {
     val uri = freshPlanUri()
-    Seq(
-      updateRow("update-1"),
-      planRow().copy(kind = ExecutionPlanStore.UpdateKind),
-      planRow().copy(entryId = "update-1")
-    ).foreach { record =>
-      withClue(s"${record.entryId}/${record.kind}: ") {
-        an[IllegalArgumentException] should be thrownBy ExecutionPlanStore.writePlan(uri, record)
+    Seq(updateRow("update-1"), planRow().copy(entryId = "plan-2")).foreach { record =>
+      withClue(s"${record.entryId}: ") {
+        an[IllegalArgumentException] should be thrownBy
+          ExecutionPlanStore.writePlan(uri, record, logicalPlan)
       }
     }
+    an[IllegalArgumentException] should be thrownBy
+      ExecutionPlanStore.writePlan(uri, planRow(), null)
     DocumentFactory.documentExists(uri) shouldBe false
   }
 
@@ -283,11 +291,33 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     val empty = freshPlanUri()
     DocumentFactory.createDocument(empty, ResultSchema.executionPlanSchema)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(empty)
+    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlanWithLogical(empty)
 
     val updatesOnly = freshPlanUri()
     DocumentFactory.createDocument(updatesOnly, ResultSchema.executionPlanSchema)
-    ExecutionPlanStore.appendUpdate(updatesOnly, updateRow("update-1"))
+    appendUpdate(updatesOnly, updateRow("update-1"))
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(updatesOnly)
+  }
+
+  it should "refuse a row without a value a record needs" in {
+    // A missing number must not read as 0.
+    Seq("body", "createdBy", "computingUnitId").foreach { column =>
+      val uri = freshPlanUri()
+      writeRowWithout(uri, column)
+      withClue(s"$column: ") {
+        val thrown = intercept[IllegalStateException](ExecutionPlanStore.readPlan(uri))
+        thrown.getMessage shouldBe s"a plan table row has no $column"
+      }
+    }
+  }
+
+  it should "read the row without the logical plan, which only readPlanWithLogical needs" in {
+    val uri = freshPlanUri()
+    writeRowWithout(uri, "logical")
+
+    ExecutionPlanStore.readPlan(uri) shouldBe planRow(body = "{}")
+    val thrown = intercept[IllegalStateException](ExecutionPlanStore.readPlanWithLogical(uri))
+    thrown.getMessage shouldBe "a plan table row has no logical"
   }
 
   // ---------------------------------------------------------------------------
@@ -298,8 +328,8 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     val uri = writtenPlan()
     val first = updateRow("update-4f6c", code = "print(1)")
     val second = updateRow("update-9a1b", code = "print(2)")
-    ExecutionPlanStore.appendUpdate(uri, first)
-    ExecutionPlanStore.appendUpdate(uri, second)
+    appendUpdate(uri, first)
+    appendUpdate(uri, second)
 
     ExecutionPlanStore.readUpdate(uri, "update-4f6c") shouldBe first
     ExecutionPlanStore.readUpdate(uri, "update-9a1b") shouldBe second
@@ -308,7 +338,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
 
   "readUpdate" should "fail with NoSuchUpdateException for an update the table does not hold" in {
     val uri = writtenPlan()
-    ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))
+    appendUpdate(uri, updateRow("update-1"))
 
     val thrown = intercept[NoSuchUpdateException](ExecutionPlanStore.readUpdate(uri, "update-2"))
     thrown.uri shouldBe uri
@@ -325,7 +355,6 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     val uri = writtenPlan()
     val refused = Seq(
       planRow(),
-      updateRow("update-1").copy(kind = ExecutionPlanStore.PlanKind),
       updateRow("plan"),
       updateRow("update-"),
       updateRow("4f6c"),
@@ -338,10 +367,12 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
       updateRow("update-" + "a" * 65)
     )
     refused.foreach { record =>
-      withClue(s"${record.entryId}/${record.kind}: ") {
-        an[IllegalArgumentException] should be thrownBy ExecutionPlanStore.appendUpdate(uri, record)
+      withClue(s"${record.entryId}: ") {
+        an[IllegalArgumentException] should be thrownBy appendUpdate(uri, record)
       }
     }
+    an[IllegalArgumentException] should be thrownBy
+      ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"), null)
     ExecutionPlanStore.readPlan(uri) shouldBe planRow()
     refused.map(_.entryId).distinct.foreach { entryId =>
       withClue(s"$entryId: ") {
@@ -354,7 +385,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     val uri = writtenPlan()
     Seq(s"update-${UUID.randomUUID()}", "update-" + "a" * 64, "update-Z-9").foreach { entryId =>
       withClue(s"$entryId: ") {
-        ExecutionPlanStore.appendUpdate(uri, updateRow(entryId))
+        appendUpdate(uri, updateRow(entryId))
         ExecutionPlanStore.readUpdate(uri, entryId) shouldBe updateRow(entryId)
       }
     }
@@ -363,10 +394,10 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
   it should "refuse an entry id the table already holds, keeping the first row" in {
     val uri = writtenPlan()
     val first = updateRow("update-1", code = "print(1)")
-    ExecutionPlanStore.appendUpdate(uri, first)
+    appendUpdate(uri, first)
 
     val thrown = intercept[IllegalArgumentException] {
-      ExecutionPlanStore.appendUpdate(uri, updateRow("update-1", code = "print(2)"))
+      appendUpdate(uri, updateRow("update-1", code = "print(2)"))
     }
     thrown.getMessage should include("already holds update-1")
     ExecutionPlanStore.readUpdate(uri, "update-1") shouldBe first
@@ -374,8 +405,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
 
   it should "fail with NoStoredPlanException where there is no table, and create none" in {
     val uri = freshPlanUri()
-    a[NoStoredPlanException] should be thrownBy
-      ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))
+    a[NoStoredPlanException] should be thrownBy appendUpdate(uri, updateRow("update-1"))
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readUpdate(uri, "update-1")
     DocumentFactory.documentExists(uri) shouldBe false
   }
@@ -395,7 +425,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     startedTagSnapshotId(uri) shouldBe claimed
 
     // Updates still land after the claim, and the tag stays on the snapshot it marked.
-    ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))
+    appendUpdate(uri, updateRow("update-1"))
     ExecutionPlanStore.readUpdate(uri, "update-1") shouldBe updateRow("update-1")
     currentSnapshotId(uri) should not be claimed
     startedTagSnapshotId(uri) shouldBe claimed
@@ -471,7 +501,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
       uri,
       beforeCommit = () => {
         attempts += 1
-        if (attempts == 1) ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))
+        if (attempts == 1) appendUpdate(uri, updateRow("update-1"))
       }
     )
     attempts shouldBe 2
@@ -488,7 +518,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
       uri,
       beforeCommit = () => {
         attempts += 1
-        ExecutionPlanStore.appendUpdate(uri, updateRow(s"update-$attempts"))
+        appendUpdate(uri, updateRow(s"update-$attempts"))
       }
     )
     attempts shouldBe 1 + StorageConfig.icebergTableCommitNumRetries
@@ -517,7 +547,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
 
   "drop" should "remove the table with its rows and its tag" in {
     val uri = writtenPlan()
-    ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))
+    appendUpdate(uri, updateRow("update-1"))
     ExecutionPlanStore.claimStart(uri)
 
     ExecutionPlanStore.drop(uri)
@@ -526,7 +556,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(uri)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.isStarted(uri)
     // A plan written at the URI again starts out unclaimed.
-    ExecutionPlanStore.writePlan(uri, planRow())
+    ExecutionPlanStore.writePlan(uri, planRow(), logicalPlan)
     ExecutionPlanStore.isStarted(uri) shouldBe false
     noException should be thrownBy ExecutionPlanStore.claimStart(uri)
   }
@@ -544,10 +574,11 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
 
   "Reading, adding, claiming and dropping" should "pass on a catalog failure, not take it for a missing plan" in {
     val uri = writtenPlan(Some(warehouse))
-    ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))
+    appendUpdate(uri, updateRow("update-1"))
     val operations: Seq[(String, () => Any)] = Seq(
       "readPlan" -> (() => ExecutionPlanStore.readPlan(uri)),
-      "appendUpdate" -> (() => ExecutionPlanStore.appendUpdate(uri, updateRow("update-2"))),
+      "readPlanWithLogical" -> (() => ExecutionPlanStore.readPlanWithLogical(uri)),
+      "appendUpdate" -> (() => appendUpdate(uri, updateRow("update-2"))),
       "readUpdate" -> (() => ExecutionPlanStore.readUpdate(uri, "update-1")),
       "claimStart" -> (() => ExecutionPlanStore.claimStart(uri)),
       "isStarted" -> (() => ExecutionPlanStore.isStarted(uri)),
@@ -576,33 +607,38 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAft
   // URIs that are not an execution's plan URI
   // ---------------------------------------------------------------------------
 
+  /** URIs that are no execution's plan table, though the first five are of this deployment. */
+  private val notPlanUris = Seq(
+    VFSURIFactory.createRuntimeStatisticsURI(workflowId, ExecutionIdentity(1)),
+    VFSURIFactory.createConsoleMessagesURI(
+      workflowId,
+      ExecutionIdentity(1),
+      OperatorIdentity("op")
+    ),
+    // Segments the store did not write would address another table in the plan namespace.
+    new URI("vfs:///wid/12/eid/1/opid/op/plan"),
+    new URI("vfs:///wid/12/eid/1/PLAN"),
+    // A warehouse name that does not decode, so the URI would fall back to the default.
+    new URI("vfs:///wh/user-1%2D7/wid/12/eid/1/plan"),
+    new URI("file:///wid/12/eid/1/plan")
+  )
+
   "Every operation" should "refuse a URI that is not an execution's plan URI, touching no table" in {
-    val executionId = ExecutionIdentity(1)
-    val otherTables = Seq(
-      VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId),
-      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, OperatorIdentity("op")),
-      // Segments the store did not write would address another table in the plan namespace.
-      new URI("vfs:///wid/12/eid/1/opid/op/plan"),
-      new URI("vfs:///wid/12/eid/1/PLAN"),
-      // A warehouse name that does not decode, so the URI would fall back to the default.
-      new URI("vfs:///wh/user-1%2D7/wid/12/eid/1/plan")
-    )
     val operations: Seq[(String, URI => Any)] = Seq(
-      "writePlan" -> (uri => ExecutionPlanStore.writePlan(uri, planRow())),
+      "writePlan" -> (uri => ExecutionPlanStore.writePlan(uri, planRow(), logicalPlan)),
       "readPlan" -> (uri => ExecutionPlanStore.readPlan(uri)),
-      "appendUpdate" -> (uri => ExecutionPlanStore.appendUpdate(uri, updateRow("update-1"))),
+      "readPlanWithLogical" -> (uri => ExecutionPlanStore.readPlanWithLogical(uri)),
+      "appendUpdate" -> (uri => appendUpdate(uri, updateRow("update-1"))),
       "readUpdate" -> (uri => ExecutionPlanStore.readUpdate(uri, "update-1")),
       "claimStart" -> (uri => ExecutionPlanStore.claimStart(uri)),
       "isStarted" -> (uri => ExecutionPlanStore.isStarted(uri)),
       "drop" -> (uri => ExecutionPlanStore.drop(uri))
     )
-    for (
-      (name, operation) <- operations; uri <- otherTables :+ new URI("file:///wid/12/eid/1/plan")
-    )
+    for ((name, operation) <- operations; uri <- notPlanUris)
       withClue(s"$name($uri): ") {
         an[IllegalArgumentException] should be thrownBy operation(uri)
       }
-    otherTables.foreach { uri =>
+    notPlanUris.init.foreach { uri =>
       withClue(s"$uri: ") { DocumentFactory.documentExists(uri) shouldBe false }
     }
   }

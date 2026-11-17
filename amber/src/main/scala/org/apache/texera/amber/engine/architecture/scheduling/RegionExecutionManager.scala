@@ -392,16 +392,15 @@ class RegionExecutionManager(
     * workers are created before either phase launches. Operators carry no mount code: they only
     * name what they need, and the root their code reads it under, through
     * `PhysicalOp.repositoryMounts`, fixed when the plan was made. Each root is mounted once, with
-    * every repository the region's operators read under it. An operator that still holds a
-    * binding fails the region here: the engine runs a plan, it never binds one.
+    * every repository the region's operators read under it.
     */
   private def mountRegionRepositories(): Future[Unit] = {
     val mount = Promise[Unit]()
     if (mountFutureRef.compareAndSet(null, mount)) {
       mount.become(Future {
-        val operators = region.getOperators
-        operators.foreach(_.requireResourcesBound())
-        RepositoryMounts.byRoot(operators.flatMap(_.repositoryMounts)).foreach(ensureMounted)
+        RepositoryMounts
+          .byRoot(region.getOperators.flatMap(_.repositoryMounts))
+          .foreach(ensureMounted)
       })
     }
     mountFutureRef.get

@@ -132,11 +132,7 @@ object TestOperators {
         _ => {
           val path = s"/${linksMade.incrementAndGet()}"
           files.put(path, file)
-          InputLink(
-            endpoint + path,
-            System.currentTimeMillis() + TimeUnit.DAYS.toMillis(1),
-            Files.size(file)
-          )
+          InputLink(endpoint + path, System.currentTimeMillis() + TimeUnit.DAYS.toMillis(1))
         }
       )
     }
@@ -228,11 +224,7 @@ object TestOperators {
     }
     fixtureDatasetFiles.take(atMost).map {
       case (file, localPath) =>
-        ListedFile(
-          s"$versionPath/$file",
-          Paths.get(localPath).toUri.toString,
-          Files.size(Paths.get(localPath))
-        )
+        ListedFile(s"$versionPath/$file", Paths.get(localPath).toUri.toString)
     }
   }
 

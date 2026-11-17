@@ -22,12 +22,7 @@ package org.apache.texera.web.service.execution
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{
-  PhysicalPlanCodec,
-  ReplaySource,
-  WorkflowContext,
-  WorkflowSettings
-}
+import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext, WorkflowSettings}
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{RunBindings, WorkflowCompilationFailed, WorkflowCompiler}
@@ -57,7 +52,6 @@ import org.apache.texera.web.service.{
 }
 
 import java.net.URI
-import java.sql.Timestamp
 import javax.ws.rs.core.Response
 import javax.ws.rs.{
   BadRequestException,
@@ -141,8 +135,8 @@ class ExecutionCreator extends LazyLogging {
   protected def costHintsLoader: CostHintsLoader = CostHintsLoader
 
   /** Writes the plan row. A seam, so a spec can make the write fail. */
-  protected def writePlan(planUri: URI, record: PlanRecord): Unit =
-    ExecutionPlanStore.writePlan(planUri, record)
+  protected def writePlan(planUri: URI, record: PlanRecord, logical: String): Unit =
+    ExecutionPlanStore.writePlan(planUri, record, logical)
 
   /**
     * Creates the execution `request` asks for, for `user`.
@@ -236,15 +230,12 @@ class ExecutionCreator extends LazyLogging {
               planUri,
               PlanRecord(
                 entryId = ExecutionPlanStore.PlanEntryId,
-                kind = ExecutionPlanStore.PlanKind,
-                formatVersion = PhysicalPlanCodec.FormatVersion,
                 body = planToRun.savedPlan,
-                logical = logical,
-                createdAt = new Timestamp(System.currentTimeMillis()),
                 createdBy = uid.intValue(),
                 computingUnitId = checked.computingUnitId,
                 notification = notification.map(Notification.toJson)
-              )
+              ),
+              logical
             )
           } catch {
             case NonFatal(failure) =>

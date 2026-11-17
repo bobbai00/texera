@@ -180,7 +180,6 @@ class PhysicalOpSpec extends AnyFlatSpec {
 
   "PhysicalOp" should "run in the engine's own Python environment by default" in {
     assert(newOp("a").pythonEnvironment == PythonEnvironmentRef.EngineDefault)
-    newOp("a").requireEnvironmentResolved()
   }
 
   "PhysicalOp.withPythonEnvironment" should "copy the environment the operator runs in" in {
@@ -191,23 +190,6 @@ class PhysicalOpSpec extends AnyFlatSpec {
     assert(resolved.pythonEnvironment == PythonEnvironmentRef.Resolved(environment))
     // Nothing else of the operator changes.
     assert(resolved.withPythonEnvironment(PythonEnvironmentRef.EngineDefault) == op)
-  }
-
-  "PhysicalOp.requireEnvironmentResolved" should
-    "refuse an operator that names an environment no plan resolved" in {
-    val op = newOp("named-udf").withPythonEnvironment(PythonEnvironmentRef.Named("ml"))
-    val failure = intercept[IllegalStateException](op.requireEnvironmentResolved())
-    assert(
-      failure.getMessage ==
-        "Operator named-udf names the Python environment 'ml', which was never resolved: only a " +
-          "plan made to run can run it."
-    )
-  }
-
-  it should "accept an operator whose environment a plan resolved" in {
-    newOp("a")
-      .withPythonEnvironment(PythonEnvironmentRef.Resolved(environment))
-      .requireEnvironmentResolved()
   }
 
   // ----- datasets and models -----
@@ -227,7 +209,6 @@ class PhysicalOpSpec extends AnyFlatSpec {
     val op = newOp("a")
     assert(op.repositoryMounts.isEmpty)
     assert(op.resourceBinding.isEmpty)
-    op.requireResourcesBound()
   }
 
   "PhysicalOp.withResourceBinding" should "hold the binding without forcing it" in {
@@ -239,19 +220,6 @@ class PhysicalOpSpec extends AnyFlatSpec {
     assert(op.opExecInitInfo == OpExecInitInfo.Empty)
     assert(op.repositoryMounts.isEmpty)
     assert(op.withResourceBinding(None).resourceBinding.isEmpty)
-  }
-
-  "PhysicalOp.requireResourcesBound" should
-    "refuse an operator that still holds a binding, without forcing it" in {
-    val binding = new CountingBinding
-    val op = newOp("unbound-udf").withResourceBinding(Some(binding))
-    val failure = intercept[IllegalStateException](op.requireResourcesBound())
-    assert(failure.getMessage.contains("unbound-udf"), failure.getMessage)
-    assert(binding.forced == 0)
-  }
-
-  it should "accept a bound operator, whatever it mounts" in {
-    newOp("a").copy(repositoryMounts = Some(mounts)).requireResourcesBound()
   }
 
   // ----- propagateSchema -----

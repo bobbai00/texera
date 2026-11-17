@@ -1,5 +1,5 @@
 {
-  "formatVersion": 3,
+  "formatVersion": 1,
   "workflowId": {
     "id": "7"
   },
@@ -16,12 +16,7 @@
             "id": "source"
           },
           "layerName": "main"
-        },
-        "portId": {
-          "id": 0,
-          "internal": false
-        },
-        "input": false
+        }
       }
     ]
   },
@@ -41,24 +36,12 @@
       },
       "parallelizable": true,
       "locationPreference": "NO_PREFERENCE",
-      "partitionRequirement": [],
       "outputPartitionRule": {
         "firstInput": {}
       },
-      "inputPorts": [],
       "outputPorts": [
         {
-          "port": {
-            "id": {
-              "id": 0,
-              "internal": false
-            },
-            "displayName": "",
-            "blocking": false,
-            "mode": "SET_SNAPSHOT",
-            "reuseStorage": false
-          },
-          "links": [],
+          "port": {},
           "schema": {
             "attributes": [
               {
@@ -68,12 +51,7 @@
             ]
           }
         }
-      ],
-      "isOneToManyOp": false,
-      "requiresMaterializedExecution": false,
-      "isLoopStart": false
+      ]
     }
-  ],
-  "links": [],
-  "inputs": []
+  ]
 }

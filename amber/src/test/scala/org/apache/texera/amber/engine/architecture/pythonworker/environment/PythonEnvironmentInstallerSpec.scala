@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.engine.architecture.pythonworker.environment
 
-import org.apache.texera.amber.core.workflow.{PythonEnvironment, PythonEnvironmentRef}
+import org.apache.texera.amber.core.workflow.PythonEnvironment
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.PythonEnvironmentInstaller.{
   InstallFailed,
   Installed,
@@ -286,10 +286,10 @@ class PythonEnvironmentInstallerSpec
     def askedAfter(left: => Unit): Ready = {
       left
       a[IllegalStateException] should be thrownBy
-        installer.interpreterFor(PythonEnvironmentRef.Resolved(ml))
+        installer.interpreterFor(Some(ml))
       val ready = await(installer.ensure(ml, _ => ()))
       Files.exists(directory.resolve("left-behind.txt")) shouldBe false
-      installer.interpreterFor(PythonEnvironmentRef.Resolved(ml)) shouldBe interpreter.toString
+      installer.interpreterFor(Some(ml)) shouldBe interpreter.toString
       ready
     }
 
@@ -439,7 +439,7 @@ class PythonEnvironmentInstallerSpec
     Files.exists(directory) shouldBe false
     entriesOf(root) shouldBe Set(s"${directory.getFileName}.lock")
     a[IllegalStateException] should be thrownBy
-      installer.interpreterFor(PythonEnvironmentRef.Resolved(ml))
+      installer.interpreterFor(Some(ml))
     // A later caller installs again, and can succeed.
     python.pipInstall = succeed
     await(installer.ensure(ml, _ => ())) shouldBe an[Installed]
@@ -525,7 +525,7 @@ class PythonEnvironmentInstallerSpec
 
     python
       .installer(newRoot(), FakePython.SameThread)
-      .interpreterFor(PythonEnvironmentRef.EngineDefault) shouldBe python.executable
+      .interpreterFor(None) shouldBe python.executable
     // Asked of nothing: the engine's own interpreter is not even described.
     python.runs shouldBe empty
   }
@@ -536,12 +536,11 @@ class PythonEnvironmentInstallerSpec
     val installer = python.installer(root, FakePython.SameThread)
     val installed = await(installer.ensure(ml, _ => ()))
 
-    installer.interpreterFor(PythonEnvironmentRef.Resolved(ml)) shouldBe
+    installer.interpreterFor(Some(ml)) shouldBe
       installed.interpreter.toString
     // The same packages under another name are the same install.
-    installer.interpreterFor(
-      PythonEnvironmentRef.Resolved(PythonEnvironment("renamed", ml.requirements))
-    ) shouldBe installed.interpreter.toString
+    installer.interpreterFor(Some(PythonEnvironment("renamed", ml.requirements))) shouldBe
+      installed.interpreter.toString
   }
 
   it should "refuse an environment that is not installed here, rather than give another interpreter" in {
@@ -550,19 +549,8 @@ class PythonEnvironmentInstallerSpec
     await(installer.ensure(ml, _ => ()))
 
     val missing = the[IllegalStateException] thrownBy
-      installer.interpreterFor(PythonEnvironmentRef.Resolved(plots))
+      installer.interpreterFor(Some(plots))
     missing.getMessage shouldBe "Python environment 'plots' is not installed on this computing unit."
   }
 
-  it should "refuse a name that no plan resolved" in {
-    val python = new FakePython()
-    val installer = python.installer(newRoot(), FakePython.SameThread)
-    await(installer.ensure(ml, _ => ()))
-
-    val unresolved = the[IllegalStateException] thrownBy
-      installer.interpreterFor(PythonEnvironmentRef.Named("ml"))
-    unresolved.getMessage shouldBe
-      "Python environment 'ml' was never resolved: only a plan made to run says what its " +
-        "operators run in."
-  }
 }

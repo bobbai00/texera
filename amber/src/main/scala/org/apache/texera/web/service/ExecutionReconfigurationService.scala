@@ -81,9 +81,9 @@ class ExecutionReconfigurationService(
     * table of the execution this run runs, to be applied when the run resumes
     * ([[performReconfigurationOnResume]]).
     *
-    * Only the execution's creator may ask for it, and the change must be one they stored, in the
-    * format this unit reads, for this execution, of an operator the running plan has, whose code
-    * reads its datasets and models where this unit mounts them. The operator queued is the
+    * Only the execution's creator may ask for it, and the change must be one they stored, for
+    * this execution, of an operator the running plan has, whose code reads its datasets and
+    * models where this unit mounts them. The operator queued is the
     * running one with the change's executor and what its code reads; the rest of it, its ports
     * and links included, stays as the running plan has it.
     *
@@ -115,13 +115,6 @@ class ExecutionReconfigurationService(
           logger.warn(s"Change $updateId of execution $executionId could not be read.", failure)
           return refuse("", s"change $updateId of execution $executionId could not be read")
       }
-    if (record.formatVersion != PhysicalPlanCodec.FormatVersion) {
-      return refuse(
-        "",
-        s"unknown update format ${record.formatVersion}; this unit reads " +
-          s"${PhysicalPlanCodec.FormatVersion}"
-      )
-    }
     if (record.createdBy != creator) {
       return refuse("", onlyTheCreator)
     }
@@ -145,16 +138,12 @@ class ExecutionReconfigurationService(
           opExecInitInfo = update.opExecInitInfo,
           repositoryMounts = update.repositoryMounts
         )
-        try {
-          // The running operator's resources were bound when its plan was made, and a change
-          // keeps them, so this holds on every started run; the queue takes bound operators only.
-          changed.requireResourcesBound()
-          // The Dashboard wrote the change's code against the root its deployment mounts under:
-          // refused here when this unit mounts elsewhere, rather than failing the run on resume.
-          changed.repositoryMounts.foreach(
-            RepositoryMountManager.requireMountableUnder(_, mountRoot)
-          )
-        } catch {
+        // The Dashboard wrote the change's code against the root its deployment mounts under:
+        // refused here when this unit mounts elsewhere, rather than failing the run on resume.
+        try changed.repositoryMounts.foreach(
+          RepositoryMountManager.requireMountableUnder(_, mountRoot)
+        )
+        catch {
           case refused @ (_: IllegalStateException | _: IllegalArgumentException) =>
             return refuse(operator, refused.getMessage)
         }
@@ -182,9 +171,6 @@ class ExecutionReconfigurationService(
     if (reconfigurations.isEmpty) {
       return
     }
-
-    // Each queued operator was bound when its change was made; none is bound here.
-    reconfigurations.foreach(_.requireResourcesBound())
 
     val reconfigurationId = UUID.randomUUID().toString
     val updateExecutorRequests = reconfigurations.map { op =>

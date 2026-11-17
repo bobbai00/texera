@@ -89,19 +89,16 @@ object WorkflowExecutionService extends LazyLogging {
 
   /**
     * Fails unless the engine can run `plan` on a computing unit that mounts datasets and models
-    * under `unitMountRoot`: no operator is left to bind or names a Python environment that was
-    * never resolved, and every operator reads what it mounts under that root. Checked once, when
-    * the plan is handed to the engine, so a plan the engine cannot run fails before any region
-    * runs rather than partway through; each region checks again before it mounts.
+    * under `unitMountRoot`: every operator reads what it mounts under that root. Checked once,
+    * when the plan is handed to the engine, so a plan the engine cannot run fails before any
+    * region runs rather than partway through; each region checks again before it mounts.
     *
     * @throws IllegalStateException if the engine cannot run the plan here
     */
   def requireRunnableUnder(plan: PhysicalPlan, unitMountRoot: Option[Path]): Unit =
-    plan.operators.foreach { op =>
-      op.requireResourcesBound()
-      op.requireEnvironmentResolved()
-      op.repositoryMounts.foreach(RepositoryMountManager.requireMountableUnder(_, unitMountRoot))
-    }
+    plan.operators.foreach(
+      _.repositoryMounts.foreach(RepositoryMountManager.requireMountableUnder(_, unitMountRoot))
+    )
 }
 
 /**

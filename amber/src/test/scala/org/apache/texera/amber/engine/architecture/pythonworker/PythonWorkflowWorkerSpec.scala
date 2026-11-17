@@ -23,7 +23,7 @@ import com.twitter.util.Promise
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit}
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
-import org.apache.texera.amber.core.workflow.{PythonEnvironment, PythonEnvironmentRef}
+import org.apache.texera.amber.core.workflow.PythonEnvironment
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.{NetworkAck, NetworkMessage}
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.{
@@ -120,9 +120,7 @@ class PythonWorkflowWorkerSpec
   private def newWorker(config: WorkerConfig): TestActorRef[InertPythonWorkflowWorker] =
     TestActorRef[InertPythonWorkflowWorker](new InertPythonWorkflowWorker(config))
 
-  private def config(
-      environment: PythonEnvironmentRef = PythonEnvironmentRef.EngineDefault
-  ): WorkerConfig =
+  private def config(environment: Option[PythonEnvironment] = None): WorkerConfig =
     WorkerConfig(ActorVirtualIdentity("python-worker-spec"), pythonEnvironment = environment)
 
   private def readPrivate[T](actor: PythonWorkflowWorker, name: String): T = {
@@ -206,19 +204,18 @@ class PythonWorkflowWorkerSpec
   }
 
   it should "run the interpreter of its operator's environment, as the unit installed it" in {
-    val worker = newWorker(config(PythonEnvironmentRef.Resolved(installed)))
+    val worker = newWorker(config(Some(installed)))
 
     val interpreter = chosenPythonBin(worker.underlyingActor)
 
-    interpreter shouldBe
-      unitEnvironments.interpreterFor(PythonEnvironmentRef.Resolved(installed))
+    interpreter shouldBe unitEnvironments.interpreterFor(Some(installed))
     interpreter should not be python.executable
     Files.isExecutable(Path.of(interpreter)) shouldBe true
     Path.of(interpreter).startsWith(environmentsRoot) shouldBe true
   }
 
   it should "fail, rather than run another interpreter, when its operator's environment is not installed on the unit" in {
-    val worker = newWorker(config(PythonEnvironmentRef.Resolved(absent)))
+    val worker = newWorker(config(Some(absent)))
 
     val failure = failureOf(chosenPythonBin(worker.underlyingActor))
 
@@ -227,19 +224,8 @@ class PythonWorkflowWorkerSpec
       "Python environment 'absent' is not installed on this computing unit."
   }
 
-  it should "fail for an environment that was never resolved, by whatever name" in {
-    // Not even the name of an environment the unit holds picks its interpreter: only a plan made
-    // to run says what an operator runs in.
-    val worker = newWorker(config(PythonEnvironmentRef.Named(installed.name)))
-
-    val failure = failureOf(chosenPythonBin(worker.underlyingActor))
-
-    failure shouldBe an[IllegalStateException]
-    failure.getMessage should include("Python environment 'installed' was never resolved")
-  }
-
   it should "start no process when it has no interpreter to run" in {
-    val worker = newWorker(config(PythonEnvironmentRef.Resolved(absent)))
+    val worker = newWorker(config(Some(absent)))
     val actor = worker.underlyingActor
 
     val failure = failureOf(readPrivate[Unit](actor, "startPythonProcess"))

@@ -148,7 +148,6 @@ class LakeFSInputLinkerSpec
     url.getPath shouldBe "/texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
     url.getRawQuery should include("X-Amz-Signature=")
     url.getRawQuery should include("X-Amz-Expires=7200")
-    link.sizeBytes shouldBe 412
     // The link lasts the two hours it was made to, to the second the link itself names.
     link.expiresAtMs should be > before + Duration.ofHours(2).toMillis - 1000
     link.expiresAtMs should be <= after + Duration.ofHours(2).toMillis
@@ -215,8 +214,7 @@ class LakeFSInputLinkerSpec
   it should "link a listed file to the object its listing names, asking LakeFS nothing" in {
     val listed = ListedFile(
       "/dataset/ada@texera.io/letters/v1/2024/q1/sales report.csv",
-      "s3://texera-dataset/dataset-12/data/gdm5/c8a,_Zs",
-      8192
+      "s3://texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
     )
     val before = System.currentTimeMillis()
     val link = linker.linkListed(listed)
@@ -227,8 +225,6 @@ class LakeFSInputLinkerSpec
     url.getPath shouldBe "/texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
     url.getRawQuery should include("X-Amz-Signature=")
     url.getRawQuery should include("X-Amz-Expires=7200")
-    // The size is the listing's: nothing was asked that could give another.
-    link.sizeBytes shouldBe 8192
     link.expiresAtMs should be > before + Duration.ofHours(2).toMillis - 1000
     link.expiresAtMs should be <= after + Duration.ofHours(2).toMillis
     hits shouldBe empty
@@ -236,14 +232,13 @@ class LakeFSInputLinkerSpec
 
   it should "link the files of a whole listing, each to its own object, asking LakeFS nothing" in {
     val listing = (1 to 10000).map { i =>
-      ListedFile(s"/dataset/ada@texera.io/letters/v1/file-$i.txt", s"s3://texera-dataset/k/$i", i)
+      ListedFile(s"/dataset/ada@texera.io/letters/v1/file-$i.txt", s"s3://texera-dataset/k/$i")
     }
 
     val links = listing.map(linker.linkListed)
 
     links.map(link => new URI(link.url).getPath) shouldBe
       (1 to 10000).map(i => s"/texera-dataset/k/$i")
-    links.map(_.sizeBytes) shouldBe (1 to 10000)
     hits shouldBe empty
   }
 
@@ -252,8 +247,7 @@ class LakeFSInputLinkerSpec
       linker.linkListed(
         ListedFile(
           "/dataset/ada@texera.io/letters/v1/on-disk.csv",
-          "local:///data/dataset-12/on-disk.csv",
-          412
+          "local:///data/dataset-12/on-disk.csv"
         )
       )
     }
@@ -270,7 +264,7 @@ class LakeFSInputLinkerSpec
     }
     val listed = intercept[IllegalStateException] {
       InputLinker.Unavailable.linkListed(
-        ListedFile("/dataset/ada@texera.io/letters/v1/a.txt", "s3://texera-dataset/k/a", 1)
+        ListedFile("/dataset/ada@texera.io/letters/v1/a.txt", "s3://texera-dataset/k/a")
       )
     }
 

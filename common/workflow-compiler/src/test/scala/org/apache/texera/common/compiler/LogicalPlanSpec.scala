@@ -28,7 +28,7 @@ import org.apache.texera.amber.core.storage.{
   ScanFileResolver
 }
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
-import org.apache.texera.amber.core.workflow.{InputFile, PlanInput, PortIdentity}
+import org.apache.texera.amber.core.workflow.{PlanInput, PortIdentity}
 import org.apache.texera.amber.operator.aggregate.AggregateOpDesc
 import org.apache.texera.amber.operator.hashJoin.HashJoinOpDesc
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
@@ -585,11 +585,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
 
   /** The link `recordingLinker` makes for `file`. */
   private def linkOf(file: URI): InputLink =
-    InputLink(
-      s"http://texera-rustfs:9000/bucket${file.getPath}?X-Amz-Signature=5ecr3t",
-      86400000L,
-      412
-    )
+    InputLink(s"http://texera-rustfs:9000/bucket${file.getPath}?X-Amz-Signature=5ecr3t", 86400000L)
 
   /**
     * A linker of the files resolvers resolve, each as `linkFile` links it. It is asked for no
@@ -610,7 +606,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
     }
 
   /** A link a request could send with an operator, to a place of the sender's choosing. */
-  private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+  private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue)
 
   "LogicalPlan.bindScanFiles" should
     "append a per-operator error for every failing scan source instead of throwing" in {
@@ -691,16 +687,12 @@ class LogicalPlanSpec extends AnyFlatSpec {
     // The executor looks its link up by the name it knows its file by.
     assert(scanCsv.inputLinks == Map(scanCsv.fileName.get -> linkOf(csvFile)))
     assert(scanJsonl.inputLinks == Map(scanJsonl.fileName.get -> linkOf(jsonlFile)))
-    // What the plan lists as read from outside the run: each file, with its link's expiry and
-    // the file's size, and never the link.
+    // What the plan lists as read from outside the run: each file, with its link's expiry, and
+    // never the link.
     assert(
       inputs == Seq(
-        PlanInput(OperatorIdentity("scan-csv"), csvFile.toASCIIString, InputFile(86400000L, 412)),
-        PlanInput(
-          OperatorIdentity("scan-jsonl"),
-          jsonlFile.toASCIIString,
-          InputFile(86400000L, 412)
-        )
+        PlanInput(OperatorIdentity("scan-csv"), csvFile.toASCIIString, 86400000L),
+        PlanInput(OperatorIdentity("scan-jsonl"), jsonlFile.toASCIIString, 86400000L)
       )
     )
   }
@@ -837,16 +829,11 @@ class LogicalPlanSpec extends AnyFlatSpec {
   private val almanacPath = "/dataset/ada@texera.io/almanac/v2"
 
   /** The file at `path` within the version at `versionPath`, as a listing holds it. */
-  private def listedFile(versionPath: String, path: String, sizeBytes: Long = 412): ListedFile =
-    ListedFile(
-      s"$versionPath/$path",
-      s"s3://texera-dataset/${path.hashCode.toHexString}",
-      sizeBytes
-    )
+  private def listedFile(versionPath: String, path: String): ListedFile =
+    ListedFile(s"$versionPath/$path", s"s3://texera-dataset/${path.hashCode.toHexString}")
 
-  private val letters =
-    Seq(listedFile(lettersPath, "b.txt", 2), listedFile(lettersPath, "a.txt", 1))
-  private val almanac = Seq(listedFile(almanacPath, "2024/moon.csv", 3))
+  private val letters = Seq(listedFile(lettersPath, "b.txt"), listedFile(lettersPath, "a.txt"))
+  private val almanac = Seq(listedFile(almanacPath, "2024/moon.csv"))
 
   /**
     * A lister of `versions`: it lists the first files of each, as many as it is asked for, and
@@ -869,8 +856,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
   private def linkOf(file: ListedFile): InputLink =
     InputLink(
       s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}?X-Amz-Signature=5ecr3t",
-      86400000L,
-      file.sizeBytes
+      86400000L
     )
 
   /**
@@ -904,9 +890,7 @@ class LogicalPlanSpec extends AnyFlatSpec {
 
   /** The inputs a File Scan From Input of id `id` reads when `files` are linked for it. */
   private def inputsOf(id: String, files: Seq[ListedFile]): Seq[PlanInput] =
-    files.map(file =>
-      PlanInput(OperatorIdentity(id), file.logicalPath, InputFile(86400000L, file.sizeBytes))
-    )
+    files.map(file => PlanInput(OperatorIdentity(id), file.logicalPath, 86400000L))
 
   private val noFileListerUpstream =
     "java.lang.IllegalArgumentException: File Scan From Input reads only the files a File " +

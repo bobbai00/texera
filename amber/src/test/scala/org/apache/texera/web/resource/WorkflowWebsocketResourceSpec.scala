@@ -40,7 +40,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{
   CostHints,
-  InputFile,
   PhysicalPlan,
   PhysicalPlanCodec,
   PlanInput,
@@ -1020,6 +1019,12 @@ class WorkflowWebsocketResourceSpec
     response
   }
 
+  /** Writes the plan row at `planUri` again, with the body `change` makes of its own. */
+  private def rewritePlan(planUri: URI, change: String => String): Unit = {
+    val (record, logical) = ExecutionPlanStore.readPlanWithLogical(planUri)
+    ExecutionPlanStore.writePlan(planUri, record.copy(body = change(record.body)), logical)
+  }
+
   /**
     * An engine on this suite's actor system that answers nothing: the run it is built for is set
     * up in full, every service around its plan, and never starts.
@@ -1253,40 +1258,34 @@ class WorkflowWebsocketResourceSpec
     val execution = created()
     val unknownFormat = created()
     val unknownFormatUri = new URI(unknownFormat.planUri)
-    ExecutionPlanStore.writePlan(
+    rewritePlan(
       unknownFormatUri,
-      ExecutionPlanStore.readPlan(unknownFormatUri).copy(formatVersion = nextFormat)
+      _.replaceFirst(
+        s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
+        s""""formatVersion": $nextFormat,"""
+      )
     )
     val noPlanUri = ExecutionPlanStore
       .planUri(WorkflowIdentity(storedWid), ExecutionIdentity(firstCreatedEid - 1L), None)
     // An execution whose plan table holds the plan of another execution.
     val mislabeled = created()
     val mislabeledUri = new URI(mislabeled.planUri)
-    ExecutionPlanStore.writePlan(
-      mislabeledUri,
-      ExecutionPlanStore
-        .readPlan(mislabeledUri)
-        .copy(body = ExecutionPlanStore.readPlan(new URI(execution.planUri)).body)
-    )
+    rewritePlan(mislabeledUri, _ => ExecutionPlanStore.readPlan(new URI(execution.planUri)).body)
     // An execution whose plan reads a file through a link that expired long ago, encoded by hand
     // until the Dashboard makes links (sub-part 16).
     val expired = created()
     val expiredUri = new URI(expired.planUri)
-    val expiredRow = ExecutionPlanStore.readPlan(expiredUri)
     val expiry = 1000L
-    ExecutionPlanStore.writePlan(
+    rewritePlan(
       expiredUri,
-      expiredRow.copy(body =
+      body =>
         PhysicalPlanCodec.toJson(
           PhysicalPlanCodec.encode(
             PhysicalPlanCodec
-              .decode(PhysicalPlanCodec.fromJson(expiredRow.body))
-              .copy(inputs =
-                Seq(PlanInput(OperatorIdentity("lines"), "lines.txt", InputFile(expiry, 3)))
-              )
+              .decode(PhysicalPlanCodec.fromJson(body))
+              .copy(inputs = Seq(PlanInput(OperatorIdentity("lines"), "lines.txt", expiry)))
           )
         )
-      )
     )
     val refusals: Seq[(String, Option[Int], PrivilegeEnum, Int, String, String)] = Seq(
       (
@@ -1408,7 +1407,8 @@ class WorkflowWebsocketResourceSpec
         PrivilegeEnum.WRITE,
         storedCuid,
         startFrame(unknownFormat.eid, unknownFormat.planUri),
-        s"unknown plan format $nextFormat; this unit reads ${PhysicalPlanCodec.FormatVersion}"
+        s"The plan is in format version $nextFormat, but this reader reads version " +
+          s"${PhysicalPlanCodec.FormatVersion}."
       ),
       (
         "another user",

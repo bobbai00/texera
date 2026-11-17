@@ -30,7 +30,6 @@ import org.apache.texera.amber.core.storedplan.StoredPartitionRule.Rule
 import org.apache.texera.amber.core.storedplan.StoredPhysicalOp.{
   LocationPreference => StoredLocation
 }
-import org.apache.texera.amber.core.storedplan.StoredPlanInput.Source
 import org.apache.texera.amber.core.storedplan.StoredWorkflowSettings.{ExecutionMode => StoredMode}
 import org.apache.texera.amber.core.storedplan._
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
@@ -43,12 +42,12 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.jgrapht.graph.DirectedAcyclicGraph
 import org.jgrapht.util.SupplierUtil
 import org.json4s.jackson.JsonMethods
-import org.json4s.{JArray, JInt, JNull, JObject, JValue}
-import scalapb.descriptors.{PEmpty, PMessage, PRepeated, ScalaType}
+import org.json4s.{JInt, JNull, JObject, JValue}
 import scalapb.json4s.{Parser, Printer}
 import scalapb.{GeneratedEnum, GeneratedMessage, GeneratedMessageCompanion}
 
 import java.net.{URI, URISyntaxException}
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 /**
@@ -59,16 +58,12 @@ import scala.util.control.NonFatal
   * A plan is saved as a [[StoredPhysicalPlan]] message (storedplan.proto), and the message as
   * JSON text. Reading it back gives the plan the engine runs: the same operators, executors,
   * ports, schemas, links and settings, with the run's cost hints, where it replays from, where
-  * it writes its replay log, and what its operators read from outside it. The plan read back is
-  * built by inserting in the order the message lists things, so it iterates its links, each
-  * operator's ports, each port's links and the ports whose results are stored in the order the
-  * saved plan did, since the engine's scheduling can depend on it; and its operators too, when
-  * there are at most four. A set of more than four operators iterates in the order of their hash
-  * codes, which take in identity hashes (of a schema propagation function, say): that order
-  * differs between two compiles of a workflow, and no order saved could bring it back. Such
-  * operators are saved in the order of their ids instead, and the cost hints and inputs, which
-  * the plan holds in no order, by their operators' ids and the inputs' names, so a plan is saved
-  * as the same text every time.
+  * it writes its replay log, and what its operators read from outside it. Each operator read
+  * back iterates its ports, and each port its links, in the order the saved plan did.
+  *
+  * A plan is saved as the same text every time. Its operators are saved in the order of their
+  * ids, and its cost hints and inputs by their operators' ids and the inputs' names. Its links are
+  * saved once, in an order every port finds its own links in.
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding or names a
   * Python environment that was never resolved, every port has its schema, and the links form no
@@ -77,15 +72,11 @@ import scala.util.control.NonFatal
   *
   * A change to an operator is saved as a [[StoredOperatorUpdate]], in the same format version:
   * only what the engine applies to the running operator, its executor and what its code reads.
-  *
-  * Text is read only in the form [[toJson]] and [[updateToJson]] write, but for the order of an
-  * object's fields and the spacing: a plan cut short, edited by hand, or written by another
-  * writer that differs is refused, rather than read with defaults in place of what it leaves out.
   */
 object PhysicalPlanCodec {
 
   /** The version of the format this codec writes, and the only one it reads. */
-  val FormatVersion: Int = 3
+  val FormatVersion: Int = 1
 
   /**
     * The schema propagation function of every operator read back. A saved plan holds each port's
@@ -117,11 +108,8 @@ object PhysicalPlanCodec {
   private val storedTypeOf: Map[AttributeType, StoredType] = attributeTypes.toMap
   private val attributeTypeOf: Map[StoredType, AttributeType] = attributeTypes.map(_.swap).toMap
 
-  // A Scala set of up to this many elements iterates in the order they were added in.
-  private val smallSetSize = 4
-
-  // Field names as the proto writes them, and every field written out, defaults included.
-  private val printer = new Printer().includingDefaultValueFields.preservingProtoFieldNames
+  // Field names as the proto writes them.
+  private val printer = new Printer().preservingProtoFieldNames
   // Refuses a field the format does not have.
   private val parser = new Parser()
   // Two-space indents, `"name": value`, a line per array item, and "\n" on every platform.
@@ -150,8 +138,8 @@ object PhysicalPlanCodec {
     .`with`(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 
   /**
-    * A kind of message the codec saves as text, for what is shared between them: the version
-    * check, and reading and writing JSON.
+    * A kind of message the codec saves as text, for what is shared between them: reading and
+    * writing JSON.
     *
     * @param noun      what messages call one: "plan", say
     * @param title     what it is, for a message that says text is not one
@@ -167,34 +155,26 @@ object PhysicalPlanCodec {
   private val SavedUpdate = Saved("operator update", "saved operator update", StoredOperatorUpdate)
 
   /**
-    * Saves `plan`. The ids, settings, warehouse and cost hints come from its context. Its cost
-    * hints are saved in the order of their operators' ids, and its inputs in the order of their
-    * operators' ids, then their names.
+    * Saves `plan`. The ids, settings, warehouse and cost hints come from its context.
     *
     * @throws IllegalArgumentException if the physical plan is not one made to run under the
-    *                                  context: an operator still holds a resource binding, names
-    *                                  a Python environment that was never resolved, has no
-    *                                  executor, belongs to another workflow or execution, or has
-    *                                  a port with no schema; its links and ports disagree, its
-    *                                  links form a cycle, or a port depends on one its operator
-    *                                  does not have; or the settings store the results of a port
-    *                                  it does not have, or send batches of fewer than one tuple.
-    *                                  Or if what else the run needs is not one [[decode]] reads
-    *                                  back: see [[decode]].
+    *                                  context, or what else the run needs is not what [[decode]]
+    *                                  reads back
     */
   def encode(plan: ExecutionPlan): StoredPhysicalPlan = {
     val context = plan.context
     val physicalPlan = plan.plan
     physicalPlan.operators.foreach(requireRunnableUnder(context, _))
     requireConsistent(physicalPlan, context.workflowSettings.outputPortsNeedingStorage)
+    requirePortsListTheirLinks(physicalPlan)
     StoredPhysicalPlan(
       formatVersion = FormatVersion,
       workflowId = Some(context.workflowId),
       executionId = Some(context.executionId),
       settings = Some(encodeSettings(context.workflowSettings)),
       warehouse = context.warehouse,
-      operators = storedOrder(physicalPlan.operators).map(encodeOperator),
-      links = physicalPlan.links.toSeq,
+      operators = physicalPlan.operators.toSeq.sortBy(op => orderOf(op.id)).map(encodeOperator),
+      links = linksInPortOrder(physicalPlan),
       replay = plan.replay.map(encodeReplay),
       replayLogLocation = plan.replayLog.map(requireAbsolute(writesReplayLogTo, _)).map(_.toString),
       costHints = context.costHints.map(encodeCostHints),
@@ -212,30 +192,20 @@ object PhysicalPlanCodec {
     * link to it, leaves each output port it reaches with that function's error instead of a
     * schema. Operators and links are built as saved, with no schema propagated.
     *
-    * @throws IllegalArgumentException if the plan is in another format version, leaves out
-    *                                  something it must have, holds a value this version does
-    *                                  not know, or is not a plan [[encode]] saves. Of an
-    *                                  operator's Python environment, that is: a blank name,
-    *                                  requirements that are not canonical lines, sorted, each
-    *                                  once, or a digest that is not theirs. Of what the run
-    *                                  needs besides the physical plan: a replay or cost hints
-    *                                  from an execution whose id is below 1; a replay up to a
-    *                                  blank interaction; a log not at an absolute URI; cost hints
-    *                                  for an operator with no id, or with a cost that is not a
-    *                                  finite number of seconds, at least 0; cost hints or inputs
-    *                                  out of order, or given twice; or an input of an operator
-    *                                  the plan does not have, with no name or source, or of a
-    *                                  file whose link expires at the epoch or before, or whose
-    *                                  size is below 0
+    * @throws IllegalArgumentException if the plan leaves out something it must have, holds a
+    *                                  value this version does not know, or is not a plan
+    *                                  [[encode]] saves
     */
   def decode(stored: StoredPhysicalPlan): ExecutionPlan = {
-    requireVersion(SavedPlan, stored.formatVersion)
     val workflowId = stored.workflowId.getOrElse(refuse("The plan names no workflow."))
     val executionId = stored.executionId.getOrElse(refuse("The plan names no execution."))
     val settings = decodeSettings(stored.settings.getOrElse(refuse("The plan has no settings.")))
-    val operators = stored.operators.map(decodeOperator(workflowId, executionId))
-    requireDistinct(operators.map(_.id))(id => s"Operator ${show(id)}")
     requireDistinct(stored.links)(link => s"Link ${show(link)}")
+    val linksInto = stored.links.groupBy(link => (link.toOpId, link.toPortId))
+    val linksOutOf = stored.links.groupBy(link => (link.fromOpId, link.fromPortId))
+    val operators =
+      stored.operators.map(decodeOperator(workflowId, executionId, linksInto, linksOutOf))
+    requireDistinct(operators.map(_.id))(id => s"Operator ${show(id)}")
     val plan = PhysicalPlan(operators.toSet, stored.links.toSet)
     requireConsistent(plan, settings.outputPortsNeedingStorage)
     ExecutionPlan(
@@ -257,13 +227,11 @@ object PhysicalPlanCodec {
   def toJson(stored: StoredPhysicalPlan): String = write(SavedPlan, stored)
 
   /**
-    * Parses the JSON text of a saved plan, refusing one in another format version, or one not in
-    * the form [[toJson]] writes; [[decode]] checks the rest.
+    * Parses the JSON text of a saved plan; [[decode]] checks what it holds.
     *
-    * @throws IllegalArgumentException if the text is not one JSON object, or has a field twice;
-    *                                  is in another format version; has a field the format does
-    *                                  not have; or leaves out a field, or writes one, otherwise
-    *                                  than [[toJson]] does
+    * @throws IllegalArgumentException if the text is not one JSON object, has a field twice or a
+    *                                  field the format does not have, or is in another format
+    *                                  version
     */
   def fromJson(json: String): StoredPhysicalPlan = read(SavedPlan, json)
 
@@ -309,12 +277,11 @@ object PhysicalPlanCodec {
   /**
     * Reads a saved change to an operator back.
     *
-    * @throws IllegalArgumentException if the change is in another format version, names no
-    *                                  execution or operator, has a blank id, gives the operator
-    *                                  no executor, or names mounts [[RepositoryMounts]] refuses
+    * @throws IllegalArgumentException if the change names no execution or operator, has a blank
+    *                                  id, gives the operator no executor, or names mounts
+    *                                  [[RepositoryMounts]] refuses
     */
   def decodeUpdate(stored: StoredOperatorUpdate): OperatorUpdate = {
-    requireVersion(SavedUpdate, stored.formatVersion)
     val executionId =
       stored.executionId.getOrElse(refuse("The operator update names no execution."))
     requireUpdateId(stored.updateId)
@@ -334,8 +301,8 @@ object PhysicalPlanCodec {
   def updateToJson(stored: StoredOperatorUpdate): String = write(SavedUpdate, stored)
 
   /**
-    * Parses the JSON text of a saved change to an operator, as strictly as [[fromJson]] parses
-    * a plan's; [[decodeUpdate]] checks the rest.
+    * Parses the JSON text of a saved change to an operator, as [[fromJson]] parses a plan's;
+    * [[decodeUpdate]] checks what it holds.
     *
     * @throws IllegalArgumentException as [[fromJson]] does, for a change to an operator
     */
@@ -387,12 +354,80 @@ object PhysicalPlanCodec {
   }
 
   /**
-    * The operators in the order they are saved in: the order the set iterates them in, which the
-    * plan read back keeps, or, for a set too large to keep it, the order of their ids.
+    * Fails unless each port lists exactly the plan's links that join it, each once. A plan is
+    * saved with its links alone, and a port read back lists those that join it.
     */
-  private def storedOrder(operators: Set[PhysicalOp]): Seq[PhysicalOp] =
-    if (operators.size <= smallSetSize) operators.toSeq
-    else operators.toSeq.sortBy(op => (op.id.logicalOpId.id, op.id.layerName))
+  private def requirePortsListTheirLinks(plan: PhysicalPlan): Unit =
+    for (op <- plan.operators; input <- Seq(true, false)) {
+      val listed =
+        if (input) op.inputPorts.map { case (id, (_, links, _)) => id -> links }
+        else op.outputPorts.map { case (id, (_, links, _)) => id -> links }
+      listed.foreach {
+        case (portId, links) =>
+          val joining = plan.links.filter(link =>
+            if (input) link.toOpId == op.id && link.toPortId == portId
+            else link.fromOpId == op.id && link.fromPortId == portId
+          )
+          if (links.size != joining.size || links.toSet != joining) {
+            def shown(links: Iterable[PhysicalLink]) = links.map(show).toSeq.sorted.mkString(", ")
+            refuse(
+              s"The ${portName(op.id, portId, input)} lists its links as [${shown(links)}], but " +
+                s"the plan's links that join it are [${shown(joining)}]."
+            )
+          }
+      }
+    }
+
+  /** What operators are saved in the order of. */
+  private def orderOf(id: PhysicalOpIdentity): (String, String) = (id.logicalOpId.id, id.layerName)
+
+  /** The order links are saved in where the ports that list them leave it open: by their ends. */
+  private val linkOrder: Ordering[PhysicalLink] = Ordering.by(link =>
+    (
+      orderOf(link.fromOpId),
+      (link.fromPortId.id, link.fromPortId.internal),
+      orderOf(link.toOpId),
+      (link.toPortId.id, link.toPortId.internal)
+    )
+  )
+
+  /**
+    * The plan's links in the order they are saved in: one in which every port finds its links in
+    * the order it lists them, since a port read back lists its links in the saved order. A link
+    * comes next once it is the first left on both ports it joins; of such links, the least.
+    *
+    * `plan`'s ports list exactly its links that join them ([[requirePortsListTheirLinks]]).
+    */
+  private def linksInPortOrder(plan: PhysicalPlan): Seq[PhysicalLink] = {
+    // what each port still lists: an output port by false, an input port by true
+    val left = mutable.Map.empty[(PhysicalOpIdentity, PortIdentity, Boolean), List[PhysicalLink]]
+    plan.operators.foreach { op =>
+      op.outputPorts.foreach { case (id, (_, links, _)) => left((op.id, id, false)) = links }
+      op.inputPorts.foreach { case (id, (_, links, _)) => left((op.id, id, true)) = links }
+    }
+    def portsOf(link: PhysicalLink) =
+      Seq((link.fromOpId, link.fromPortId, false), (link.toOpId, link.toPortId, true))
+    def isNext(link: PhysicalLink) = portsOf(link).forall(left(_).headOption.contains(link))
+    val next = mutable.TreeSet.from(plan.links.filter(isNext))(linkOrder)
+    val ordered = Seq.newBuilder[PhysicalLink]
+    while (next.nonEmpty) {
+      val link = next.head
+      next -= link
+      ordered += link
+      portsOf(link).foreach { port =>
+        left(port) = left(port).tail
+        next ++= left(port).headOption.filter(isNext)
+      }
+    }
+    val links = ordered.result()
+    if (links.size < plan.links.size) {
+      refuse(
+        "The plan's ports list their links in orders that no one order of the links gives: " +
+          left.values.flatten.toSeq.distinct.map(show).sorted.mkString(", ") + "."
+      )
+    }
+    links
+  }
 
   private def encodeSettings(settings: WorkflowSettings): StoredWorkflowSettings = {
     requireBatchSize(settings.dataTransferBatchSize)
@@ -426,12 +461,10 @@ object PhysicalPlanCodec {
       outputPartitionRule = Some(encodeRule(op.outputPartitionRule)),
       // every schema is a Right: requireRunnableUnder refused the plan otherwise
       inputPorts = op.inputPorts.values.toSeq.map {
-        case (port, links, schema) =>
-          StoredInputPort(Some(port), links, schema.toOption.map(encodeSchema))
+        case (port, _, schema) => StoredInputPort(Some(port), schema.toOption.map(encodeSchema))
       },
       outputPorts = op.outputPorts.values.toSeq.map {
-        case (port, links, schema) =>
-          StoredOutputPort(Some(port), links, schema.toOption.map(encodeSchema))
+        case (port, _, schema) => StoredOutputPort(Some(port), schema.toOption.map(encodeSchema))
       },
       isOneToManyOp = op.isOneToManyOp,
       requiresMaterializedExecution = op.requiresMaterializedExecution,
@@ -441,9 +474,7 @@ object PhysicalPlanCodec {
       // a name never resolved is not saved: requireRunnableUnder refused the plan
       pythonEnvironment = op.pythonEnvironment match {
         case PythonEnvironmentRef.Resolved(environment) =>
-          Some(
-            StoredPythonEnvironment(environment.name, environment.requirements, environment.digest)
-          )
+          Some(StoredPythonEnvironment(environment.name, environment.requirements))
         case _ => None
       }
     )
@@ -474,13 +505,7 @@ object PhysicalPlanCodec {
 
   private def encodeInputs(inputs: Seq[PlanInput], plan: PhysicalPlan): Seq[StoredPlanInput] = {
     val stored = inputs
-      .map { input =>
-        StoredPlanInput(
-          logicalOperatorId = input.logicalOperatorId.id,
-          name = input.name,
-          source = Source.File(StoredInputFile(input.file.expiresAtMs, input.file.sizeBytes))
-        )
-      }
+      .map(input => StoredPlanInput(input.logicalOperatorId.id, input.name, input.expiresAtMs))
       .sortBy(input => (input.logicalOperatorId, input.name))
     requireInputs(stored, plan)
     stored
@@ -530,9 +555,16 @@ object PhysicalPlanCodec {
     )
   }
 
-  private def decodeOperator(workflowId: WorkflowIdentity, executionId: ExecutionIdentity)(
-      stored: StoredPhysicalOp
-  ): PhysicalOp = {
+  /**
+    * @param linksInto  the plan's links into each input port, in the order they are saved in
+    * @param linksOutOf the plan's links out of each output port, likewise
+    */
+  private def decodeOperator(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      linksInto: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]],
+      linksOutOf: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]]
+  )(stored: StoredPhysicalOp): PhysicalOp = {
     val id = stored.id.getOrElse(refuse("An operator of the plan has no id."))
     val name = show(id)
     if (stored.opExecInitInfo.isEmpty) refuse(s"Operator $name has no executor.")
@@ -577,20 +609,14 @@ object PhysicalPlanCodec {
       locationPreference = locationPreference,
       partitionRequirement = partitionRequirement,
       outputPartitionRule = outputPartitionRule,
-      inputPorts = decodePorts(
-        name,
-        "input",
-        stored.inputPorts.map { port =>
-          (port.port, port.links, port.schema)
-        }
-      )(_.id),
-      outputPorts = decodePorts(
-        name,
-        "output",
-        stored.outputPorts.map { port =>
-          (port.port, port.links, port.schema)
-        }
-      )(_.id),
+      inputPorts = decodePorts(name, "input", stored.inputPorts.map(p => (p.port, p.schema)))(
+        _.id,
+        portId => linksInto.getOrElse((id, portId), Nil)
+      ),
+      outputPorts = decodePorts(name, "output", stored.outputPorts.map(p => (p.port, p.schema)))(
+        _.id,
+        portId => linksOutOf.getOrElse((id, portId), Nil)
+      ),
       propagateSchema = ReadBackSchemaPropagation,
       isOneToManyOp = stored.isOneToManyOp,
       requiresMaterializedExecution = stored.requiresMaterializedExecution,
@@ -605,25 +631,16 @@ object PhysicalPlanCodec {
 
   /**
     * The environment operator `operator` runs in, as [[PythonEnvironment]] takes it: only what
-    * pip may read, under the digest of its requirements.
+    * pip may read.
     */
   private def decodeEnvironment(
       operator: String
-  )(stored: StoredPythonEnvironment): PythonEnvironmentRef = {
-    val environment =
-      try PythonEnvironment(stored.name, stored.requirements)
-      catch {
-        case e: IllegalArgumentException =>
-          refuse(s"Operator $operator cannot run in the environment it names: ${e.getMessage}", e)
-      }
-    if (stored.digest != environment.digest) {
-      refuse(
-        s"The Python environment '${environment.name}' of operator $operator is saved under the " +
-          s"digest '${stored.digest}', but its requirements have the digest ${environment.digest}."
-      )
+  )(stored: StoredPythonEnvironment): PythonEnvironmentRef =
+    try PythonEnvironmentRef.Resolved(PythonEnvironment(stored.name, stored.requirements))
+    catch {
+      case e: IllegalArgumentException =>
+        refuse(s"Operator $operator cannot run in the environment it names: ${e.getMessage}", e)
     }
-    PythonEnvironmentRef.Resolved(environment)
-  }
 
   /** The mounts of operator `operator`, as [[RepositoryMounts]] takes them. */
   private def decodeMounts(operator: String)(mounts: StoredRepositoryMounts): RepositoryMounts = {
@@ -654,27 +671,25 @@ object PhysicalPlanCodec {
 
   private def decodeInputs(stored: Seq[StoredPlanInput], plan: PhysicalPlan): Seq[PlanInput] = {
     requireInputs(stored, plan)
-    stored.map { input =>
-      // a file: requireInputs refused an input that names nothing it reads
-      val file = input.getFile
-      PlanInput(
-        OperatorIdentity(input.logicalOperatorId),
-        input.name,
-        InputFile(file.expiresAtMs, file.sizeBytes)
-      )
-    }
+    stored.map(input =>
+      PlanInput(OperatorIdentity(input.logicalOperatorId), input.name, input.expiresAtMs)
+    )
   }
 
-  /** An operator's ports on one side, keyed by port id, built in the order they are stored. */
+  /**
+    * An operator's ports on one side, keyed by port id, built in the order they are stored, each
+    * with the plan's links that join it.
+    */
   private def decodePorts[P](
       operator: String,
       side: String,
-      stored: Seq[(Option[P], Seq[PhysicalLink], Option[StoredSchema])]
+      stored: Seq[(Option[P], Option[StoredSchema])]
   )(
-      idOf: P => PortIdentity
+      idOf: P => PortIdentity,
+      linksOf: PortIdentity => Seq[PhysicalLink]
   ): Map[PortIdentity, (P, List[PhysicalLink], Either[Throwable, Schema])] = {
     val ports = stored.map {
-      case (port, links, schema) =>
+      case (port, schema) =>
         val definedPort = port.getOrElse(refuse(s"An $side port of operator $operator is empty."))
         val id = idOf(definedPort)
         val where = s"$side port ${show(id)} of operator $operator"
@@ -689,7 +704,7 @@ object PhysicalPlanCodec {
           )
           new Attribute(attribute.attributeName, attributeType)
         })
-        id -> (definedPort, links.toList, Right(decoded): Either[Throwable, Schema])
+        id -> (definedPort, linksOf(id).toList, Right(decoded): Either[Throwable, Schema])
     }
     requireDistinct(ports.map(_._1))(id => s"The $side port ${show(id)} of operator $operator")
     ports.toMap
@@ -716,10 +731,9 @@ object PhysicalPlanCodec {
     }
 
   /**
-    * Fails unless every link joins an output port and an input port the plan has, each port
-    * lists exactly the plan's links that join it, each once, the links form no cycle, every
-    * input port depends only on input ports of its own operator, and every port whose results
-    * are stored is an output port the plan has. No operator id appears twice.
+    * Fails unless every link joins an output port and an input port the plan has, the links form
+    * no cycle, every input port depends only on input ports of its own operator, and every port
+    * whose results are stored is an output port the plan has. No operator id appears twice.
     */
   private def requireConsistent(
       plan: PhysicalPlan,
@@ -730,48 +744,20 @@ object PhysicalPlanCodec {
         if (ops.size > 1) refuse(s"The plan has ${ops.size} operators ${show(id)}.")
         id -> ops.head
     }
-    // the links each port of an operator lists, by side
-    def listed(op: PhysicalOp, input: Boolean): Map[PortIdentity, List[PhysicalLink]] =
-      if (input) op.inputPorts.map { case (id, (_, links, _)) => id -> links }
-      else op.outputPorts.map { case (id, (_, links, _)) => id -> links }
-    def portName(opId: PhysicalOpIdentity, portId: PortIdentity, input: Boolean): String =
-      s"${if (input) "input" else "output"} port ${show(portId)} of operator ${show(opId)}"
 
     plan.links.foreach { link =>
       val name = s"Link ${show(link)}"
-      val ends = Seq(
-        (link.fromOpId, link.fromPortId, false),
-        (link.toOpId, link.toPortId, true)
-      ).map {
+      Seq((link.fromOpId, link.fromPortId, false), (link.toOpId, link.toPortId, true)).foreach {
         case (opId, portId, input) =>
           val op = operators.getOrElse(
             opId,
             refuse(s"$name names operator ${show(opId)}, which the plan does not have.")
           )
-          val port = portName(opId, portId, input)
-          val links = listed(op, input).getOrElse(
-            portId,
-            refuse(s"$name joins the $port, which the operator does not have.")
-          )
-          (port, links)
-      }
-      ends.foreach {
-        case (port, links) =>
-          val times = links.count(_ == link)
-          if (times != 1) refuse(s"$name is listed $times times on the $port, not once.")
-      }
-    }
-
-    for (op <- plan.operators; input <- Seq(true, false); (portId, links) <- listed(op, input)) {
-      val port = portName(op.id, portId, input)
-      links.foreach { link =>
-        if (!plan.links.contains(link)) {
-          refuse(s"The $port lists link ${show(link)}, which is not one of the plan's.")
-        }
-        val joins =
-          if (input) link.toOpId == op.id && link.toPortId == portId
-          else link.fromOpId == op.id && link.fromPortId == portId
-        if (!joins) refuse(s"The $port lists link ${show(link)}, which does not join it.")
+          if (!(if (input) op.inputPorts else op.outputPorts).contains(portId)) {
+            refuse(
+              s"$name joins the ${portName(opId, portId, input)}, which the operator does not have."
+            )
+          }
       }
     }
 
@@ -910,8 +896,8 @@ object PhysicalPlanCodec {
 
   /**
     * Fails unless each input is of an operator of `plan`, has a name, is given once and in the
-    * order of the operators' ids, then the names, and is of a file whose link expires after the
-    * epoch and whose size is at least 0.
+    * order of the operators' ids, then the names, and is read through a link that expires after
+    * the epoch.
     */
   private def requireInputs(inputs: Seq[StoredPlanInput], plan: PhysicalPlan): Unit = {
     val operators = plan.operators.map(_.id.logicalOpId.id)
@@ -925,21 +911,11 @@ object PhysicalPlanCodec {
             "not have."
         )
       }
-      input.source match {
-        case Source.File(file) =>
-          if (file.expiresAtMs < 1) {
-            refuse(
-              s"The link to the ${show(input)} expires at ${file.expiresAtMs} ms since the epoch, " +
-                "which is not after it."
-            )
-          }
-          if (file.sizeBytes < 0) {
-            refuse(
-              s"The ${show(input)} is a file of ${file.sizeBytes} bytes, but a file's size is at " +
-                "least 0."
-            )
-          }
-        case Source.Empty => refuse(s"The ${show(input)} names nothing it reads.")
+      if (input.expiresAtMs < 1) {
+        refuse(
+          s"The link to the input ${input.name} of operator ${input.logicalOperatorId} expires " +
+            s"at ${input.expiresAtMs} ms since the epoch, which is not after it."
+        )
       }
     }
     val keys = inputs.map(input => (input.logicalOperatorId, input.name))
@@ -955,15 +931,11 @@ object PhysicalPlanCodec {
 
   // ----- JSON -----
 
-  /** The JSON text of `message`, every field written out (see [[withDefaultMessages]]). */
   private def write[M <: GeneratedMessage](saved: Saved[M], message: M): String =
-    jsonWriter.writeValueAsString(
-      withDefaultMessages(saved.companion, message.toPMessage, printer.toJson(message))
-    )
+    jsonWriter.writeValueAsString(printer.toJson(message))
 
   /**
-    * Parses JSON text into a message of `saved`'s kind, refusing text in another format version,
-    * or not in the form [[write]] writes.
+    * Parses JSON text into a message of `saved`'s kind, refusing text in another format version.
     */
   private def read[M <: GeneratedMessage](saved: Saved[M], json: String): M = {
     val noun = saved.noun
@@ -974,116 +946,23 @@ object PhysicalPlanCodec {
       case JObject(fields) => fields
       case other           => refuse(s"The $noun is not a JSON object: ${excerpt(other)}")
     }
-    // Checked first, so text in another version is refused for its version rather than for a
-    // field this version does not have.
+    // Checked before the fields are read, so text in another version is refused for its version
+    // rather than for a field this version does not have.
     fields.collectFirst { case ("formatVersion", version) => version } match {
-      case None                                            => refuseNoVersion(saved)
       case Some(JInt(version)) if version == FormatVersion =>
-      case Some(JInt(version))                             => refuseVersion(saved, version.toString)
       case Some(version) =>
         refuse(
-          s"The $noun's format version is ${excerpt(version)}, not a whole number; this reader " +
-            s"reads version $FormatVersion."
+          s"The $noun is in format version ${excerpt(version)}, but this reader reads version " +
+            s"$FormatVersion."
         )
+      case None =>
+        refuse(s"The $noun names no format version; this reader reads version $FormatVersion.")
     }
-    val message =
-      try parser.fromJson[M](value)(saved.companion)
-      catch {
-        case NonFatal(e) => refuse(s"The $noun is not a ${saved.title}: ${e.getMessage}", e)
-      }
-    // The parser takes a field left out as its default, and reads some values written another
-    // way (an enum as a number); text is read only as it is written.
-    difference(value, jsonReader.readValue[JValue](write(saved, message)), "", noun).foreach {
-      where => refuse(s"The $noun is not written as a saved $noun is: $where.")
+    try parser.fromJson[M](value)(saved.companion)
+    catch {
+      case NonFatal(e) => refuse(s"The $noun is not a ${saved.title}: ${e.getMessage}", e)
     }
-    message
   }
-
-  /**
-    * scalapb-json4s leaves a message field out when it holds the default instance of a message
-    * declared no_box (InputPort's PortIdentity, say), as it cannot tell that from an unset field.
-    * This writes each such field out, so a saved plan shows every port number, 0 included.
-    *
-    * @param companion the companion of the message `value` and `json` are
-    * @param value     the message, as its field values; a no_box field always has one
-    * @param json      the message as scalapb-json4s prints it
-    */
-  private def withDefaultMessages(
-      companion: GeneratedMessageCompanion[_],
-      value: PMessage,
-      json: JValue
-  ): JValue =
-    json match {
-      case JObject(printed) =>
-        val printedFields = printed.toMap
-        JObject(companion.scalaDescriptor.fields.toList.flatMap { field =>
-          val printedValue = printedFields.get(field.name)
-          def nested = companion.messageCompanionForFieldNumber(field.number)
-          val filled = (field.scalaType, value.value.getOrElse(field, PEmpty), printedValue) match {
-            case (ScalaType.Message(_), PRepeated(items), Some(JArray(printedItems)))
-                if !field.isMapField =>
-              Some(JArray(items.toList.zip(printedItems).map {
-                case (item: PMessage, printedItem) => withDefaultMessages(nested, item, printedItem)
-                case (_, printedItem)              => printedItem
-              }))
-            case (ScalaType.Message(_), item: PMessage, Some(printedItem)) =>
-              Some(withDefaultMessages(nested, item, printedItem))
-            case (ScalaType.Message(_), item: PMessage, None) =>
-              val default = nested.defaultInstance.asInstanceOf[GeneratedMessage]
-              Some(withDefaultMessages(nested, item, printer.toJson(default)))
-            case _ => printedValue
-          }
-          filled.map(field.name -> _)
-        })
-      case other => other
-    }
-
-  /**
-    * Where `read` differs from `written`, the form [[write]] gives the message read from it, if
-    * anywhere: the path to the first difference, and what it is. An object's fields are compared
-    * by name, in any order, and an array's items in order.
-    *
-    * @param noun what the messages name the text, "plan" say
-    */
-  private def difference(
-      read: JValue,
-      written: JValue,
-      path: String,
-      noun: String
-  ): Option[String] =
-    (read, written) match {
-      case (JObject(readFields), JObject(writtenFields)) =>
-        val readValues = readFields.toMap
-        val writtenNames = writtenFields.map(_._1).toSet
-        writtenFields.iterator
-          .map {
-            case (name, writtenValue) =>
-              readValues.get(name) match {
-                case Some(readValue) => difference(readValue, writtenValue, s"$path/$name", noun)
-                case None            => Some(s"$path/$name is missing")
-              }
-          }
-          .collectFirst { case Some(found) => found }
-          .orElse(readFields.collectFirst {
-            case (name, readValue) if !writtenNames.contains(name) =>
-              s"$path/$name is ${excerpt(readValue)}, but a saved $noun leaves it out"
-          })
-      case (JArray(readItems), JArray(writtenItems)) if readItems.size == writtenItems.size =>
-        readItems.iterator
-          .zip(writtenItems)
-          .zipWithIndex
-          .map {
-            case ((readItem, writtenItem), index) =>
-              difference(readItem, writtenItem, s"$path/$index", noun)
-          }
-          .collectFirst { case Some(found) => found }
-      case _ if read == written => None
-      case _ =>
-        Some(
-          s"${if (path.isEmpty) "/" else path} is ${excerpt(read)}, which a saved $noun writes " +
-            s"as ${excerpt(written)}"
-        )
-    }
 
   // ----- messages -----
 
@@ -1102,32 +981,13 @@ object PhysicalPlanCodec {
     s"${show(link.fromOpId)}[${show(link.fromPortId)}] -> " +
       s"${show(link.toOpId)}[${show(link.toPortId)}]"
 
-  private def show(port: GlobalPortIdentity): String =
-    s"${if (port.input) "input" else "output"} port ${show(port.portId)} of operator " +
-      show(port.opId)
+  private def show(port: GlobalPortIdentity): String = portName(port.opId, port.portId, port.input)
 
-  private def show(input: StoredPlanInput): String =
-    s"input ${input.name} of operator ${input.logicalOperatorId}"
+  private def portName(opId: PhysicalOpIdentity, portId: PortIdentity, input: Boolean): String =
+    s"${if (input) "input" else "output"} port ${show(portId)} of operator ${show(opId)}"
 
   private def refuse(message: String, cause: Throwable = null): Nothing =
     throw new IllegalArgumentException(message, cause)
-
-  /** Fails unless `version` is the one this codec reads. */
-  private def requireVersion(saved: Saved[_], version: Int): Unit =
-    version match {
-      case FormatVersion =>
-      case 0             => refuseNoVersion(saved)
-      case other         => refuseVersion(saved, other.toString)
-    }
-
-  private def refuseNoVersion(saved: Saved[_]): Nothing =
-    refuse(s"The ${saved.noun} names no format version; this reader reads version $FormatVersion.")
-
-  private def refuseVersion(saved: Saved[_], version: String): Nothing =
-    refuse(
-      s"The ${saved.noun} is in format version $version, but this reader reads version " +
-        s"$FormatVersion."
-    )
 
   private def refuseEnum(what: String, value: GeneratedEnum): Nothing =
     if (value.isUnrecognized) refuse(s"$what is ${value.value}, which this version does not know.")

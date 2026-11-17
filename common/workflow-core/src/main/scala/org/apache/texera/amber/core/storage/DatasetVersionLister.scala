@@ -27,9 +27,8 @@ package org.apache.texera.amber.core.storage
   *                        (/dataset/ownerEmail/datasetName/versionName/directory/file.csv)
   * @param physicalAddress the object that holds the file's bytes, in the store that keeps the
   *                        dataset's files (s3://bucket/key)
-  * @param sizeBytes       the file's size in bytes
   */
-final case class ListedFile(logicalPath: String, physicalAddress: String, sizeBytes: Long)
+final case class ListedFile(logicalPath: String, physicalAddress: String)
 
 /**
   * Lists the files of dataset versions, when a plan is made to run. A plan carries what a

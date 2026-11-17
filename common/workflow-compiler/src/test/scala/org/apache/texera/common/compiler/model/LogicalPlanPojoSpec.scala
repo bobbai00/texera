@@ -330,7 +330,7 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
       s"""{"operatorID":"csv","operatorType":"CSVFileScan","fileName":"$fileName",
          |"maxColumns":100000,"inputLinks":{"$fileName":{
          |"url":"http://169.254.169.254/latest?X-Amz-Signature=5ecr3t",
-         |"expiresAtMs":4102444800000,"sizeBytes":1}}}""".stripMargin,
+         |"expiresAtMs":4102444800000}}}""".stripMargin,
       classOf[LogicalOp]
     )
     csv.asInstanceOf[CSVScanSourceOpDesc].maxColumns shouldBe Some(100000)
@@ -340,7 +340,7 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
     jsonl.setOperatorId("jsonl")
     jsonl.inputLinks = Map(
       "dataset:///dataset-12/9f3c/100.jsonl" ->
-        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L, 412)
+        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L)
     )
     val sent = plan(List(csv, jsonl, op("search")), List(link("csv", "search")))
 
@@ -384,7 +384,7 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
     scan.setOperatorId("scan")
     scan.inputLinks = Map(
       s"$versionPath/a.txt" ->
-        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L, 412)
+        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L)
     )
     val sent = plan(List(lister, scan), List(link("lister", "scan")))
 

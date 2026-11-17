@@ -86,15 +86,15 @@ class LakeFSInputLinker(presigner: ObjectStorePresigner, lifetime: Duration) ext
         case missing: ApiException if missing.getCode == HttpURLConnection.HTTP_NOT_FOUND =>
           throw new FileNotFoundException(fileUri)
       }
-    linkTo(fileUri.toString, file.getPhysicalAddress, file.getSizeBytes.longValue())
+    linkTo(fileUri.toString, file.getPhysicalAddress)
   }
 
   /** Links `file` from the address its listing gives, with no request to LakeFS. */
   override def linkListed(file: ListedFile): InputLink =
-    linkTo(file.logicalPath, file.physicalAddress, file.sizeBytes)
+    linkTo(file.logicalPath, file.physicalAddress)
 
   /** Signs a GET of the object at `physicalAddress`, which holds the file called `name`. */
-  private def linkTo(name: String, physicalAddress: String, sizeBytes: Long): InputLink = {
+  private def linkTo(name: String, physicalAddress: String): InputLink = {
     if (!physicalAddress.startsWith("s3://")) {
       throw new IllegalStateException(
         s"$name is kept at $physicalAddress, which is not in an S3 object store, so no link " +
@@ -103,6 +103,6 @@ class LakeFSInputLinker(presigner: ObjectStorePresigner, lifetime: Duration) ext
     }
     val (bucket, key) = LakeFSStorageClient.parsePhysicalAddress(physicalAddress)
     val signed = presigner.presignGet(bucket, key, lifetime)
-    InputLink(signed.url, signed.expiresAt.toEpochMilli, sizeBytes)
+    InputLink(signed.url, signed.expiresAt.toEpochMilli)
   }
 }

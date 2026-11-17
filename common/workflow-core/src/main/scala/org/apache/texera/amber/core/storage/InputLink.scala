@@ -32,12 +32,11 @@ import java.net.URI
   *
   * @param url         where the file is read from: a presigned GET on the object store
   * @param expiresAtMs when the link stops working, in milliseconds since the epoch
-  * @param sizeBytes   the file's size in bytes
   */
-final case class InputLink(url: String, expiresAtMs: Long, sizeBytes: Long) {
+final case class InputLink(url: String, expiresAtMs: Long) {
 
   override def toString: String =
-    s"InputLink(${InputLink.withoutQuery(url)}, expiresAtMs=$expiresAtMs, sizeBytes=$sizeBytes)"
+    s"InputLink(${InputLink.withoutQuery(url)}, expiresAtMs=$expiresAtMs)"
 }
 
 object InputLink {
@@ -69,8 +68,8 @@ trait InputLinker {
 
   /**
     * Links `file`, a file a [[DatasetVersionLister]] listed. Its listing says where the file is
-    * kept and how large it is, so nothing is asked about it: thousands of listed files are
-    * linked without a lookup for each.
+    * kept, so nothing is asked about it: thousands of listed files are linked without a lookup
+    * for each.
     */
   def linkListed(file: ListedFile): InputLink
 }

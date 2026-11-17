@@ -22,8 +22,6 @@ package org.apache.texera.web.service.execution
 import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   PlanRecord,
-  VFSResourceType,
-  VFSURIFactory,
   VFSUriComponents,
   WarehouseReadGuard,
   WarehouseUnavailableException
@@ -74,7 +72,7 @@ object StoredExecutionStart {
       uid: Int,
       warehousesEnabled: Boolean = StorageConfig.warehouseEnabled
   ): Either[String, VFSUriComponents] =
-    planTableOf(planUri).toRight(NotAPlan).flatMap { location =>
+    ExecutionPlanStore.planTableOf(planUri).toRight(NotAPlan).flatMap { location =>
       val (workflowId, planExecutionId) = (location.workflowId.id, location.executionId.id)
       if (planExecutionId != executionId) {
         Left(s"the plan is execution $planExecutionId's, not $executionId's")
@@ -103,14 +101,11 @@ object StoredExecutionStart {
   /**
     * Checks the plan row `record`, read from the plan table at `location` (which [[checkUri]]
     * passed), before the execution is started from it, and reads the plan it holds. The row must
-    * be a plan row in the format this unit reads, made for user `uid` and for computing unit
-    * `cuid`; its plan must be one this unit reads, of the workflow, execution and warehouse the
-    * table is of; and none of the links the plan reads its inputs through may have expired by
-    * `nowMs`.
+    * be made for user `uid` and for computing unit `cuid`; its plan must be one this unit reads,
+    * of the workflow, execution and warehouse the table is of; and none of the links the plan
+    * reads its inputs through may have expired by `nowMs`.
     *
-    * The plan is read only once the row was found to be one the user may start here, and in a
-    * format this unit reads: a plan in another format is refused for its format, not for whatever
-    * in it this unit does not know.
+    * The plan is read only once the row was found to be one the user may start here.
     *
     * @param location the plan table's workflow, execution and warehouse, as [[checkUri]] gave them
     * @param uid      the user who asks to start the execution
@@ -126,14 +121,7 @@ object StoredExecutionStart {
       nowMs: Long
   ): Either[String, ExecutionPlan] = {
     val executionId = location.executionId.id
-    if (record.kind != ExecutionPlanStore.PlanKind) {
-      Left(s"execution $executionId has no stored plan")
-    } else if (record.formatVersion != PhysicalPlanCodec.FormatVersion) {
-      Left(
-        s"unknown plan format ${record.formatVersion}; this unit reads " +
-          s"${PhysicalPlanCodec.FormatVersion}"
-      )
-    } else if (record.createdBy != uid) {
+    if (record.createdBy != uid) {
       Left(s"only the user who created execution $executionId may start it")
     } else if (record.computingUnitId != cuid) {
       Left(
@@ -150,7 +138,7 @@ object StoredExecutionStart {
         ) {
           Left("the plan's ids do not match its location")
         } else {
-          plan.inputs.map(_.file.expiresAtMs).minOption.filter(_ <= nowMs) match {
+          plan.inputs.map(_.expiresAtMs).minOption.filter(_ <= nowMs) match {
             case Some(expiry) =>
               Left(
                 s"input links expired at ${Instant.ofEpochMilli(expiry)}; run the workflow again"
@@ -185,21 +173,6 @@ object StoredExecutionStart {
         }.toOption
       }
       .getOrElse(new URI(null, null, null, null, null))
-
-  /**
-    * What `planUri` decodes to, when it is a plan table's URI exactly as
-    * [[ExecutionPlanStore.planUri]] builds one: anything more (another segment, a query, a
-    * fragment) would name a table the store does not.
-    */
-  private def planTableOf(planUri: URI): Option[VFSUriComponents] =
-    Option(planUri)
-      .flatMap(uri => Try(VFSURIFactory.decodeURI(uri)).toOption)
-      .filter { location =>
-        location.resourceType == VFSResourceType.PLAN &&
-        Try(
-          ExecutionPlanStore.planUri(location.workflowId, location.executionId, location.warehouse)
-        ).toOption.contains(planUri)
-      }
 
   /** Whether `warehouse` is one of user `uid`'s own, as the Dashboard names them. */
   private def isOwnWarehouse(warehouse: String, uid: Int): Boolean =

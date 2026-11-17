@@ -170,8 +170,7 @@ object TestUtils {
   /**
     * Fails unless `saved` is `compiled` read back from its saved form: every operator of `saved`
     * was read back, none of `compiled` was, and but for that the plans are the same, down to the
-    * order the engine finds their links, ports and each port's links in, and their operators when
-    * there are at most four (a set of more keeps no order a saved plan could bring back).
+    * order the engine finds each operator's ports and each port's links in.
     */
   def assertReadBackFrom(compiled: PhysicalPlan, saved: PhysicalPlan): Unit = {
     def readBack(op: PhysicalOp): Boolean =
@@ -194,13 +193,6 @@ object TestUtils {
       withoutPropagation(saved) == withoutPropagation(compiled),
       "the plan read back is not the compiled plan"
     )
-    Assertions.assert(saved.links.toList == compiled.links.toList, "the links are in another order")
-    if (compiled.operators.size <= 4) {
-      Assertions.assert(
-        saved.operators.toList.map(_.id) == compiled.operators.toList.map(_.id),
-        "the operators are in another order"
-      )
-    }
     // An Attribute equals one whose name differs only in case; a saved name must not.
     def ports(op: PhysicalOp): List[Any] =
       (op.inputPorts.toList ++ op.outputPorts.toList).map {

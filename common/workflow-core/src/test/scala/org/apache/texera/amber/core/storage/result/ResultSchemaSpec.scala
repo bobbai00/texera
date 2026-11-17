@@ -65,21 +65,17 @@ class ResultSchemaSpec extends AnyFlatSpec with Matchers {
     val schema = ResultSchema.executionPlanSchema
     schema.getAttributeNames shouldBe List(
       "entryId",
-      "kind",
-      "formatVersion",
       "body",
       "logical",
-      "createdAt",
       "createdBy",
       "computingUnitId",
       "notification"
     )
-    List("entryId", "kind", "body", "logical", "notification").foreach(name =>
+    List("entryId", "body", "logical", "notification").foreach(name =>
       schema.getAttribute(name).getType shouldBe AttributeType.STRING
     )
-    List("formatVersion", "createdBy", "computingUnitId").foreach(name =>
+    List("createdBy", "computingUnitId").foreach(name =>
       schema.getAttribute(name).getType shouldBe AttributeType.INTEGER
     )
-    schema.getAttribute("createdAt").getType shouldBe AttributeType.TIMESTAMP
   }
 }

@@ -42,7 +42,6 @@ import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tup
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
 import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
-  InputFile,
   OutputPort,
   PhysicalOp,
   PhysicalPlanCodec,
@@ -1655,7 +1654,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(physicalOpOf(result, plain).locationPreference.isEmpty)
     // The plan is saved with what each environment holds.
     val saved = assertSavable(result)
-    assert(saved.contains("\"tabulate==0.9.0\"") && saved.contains(mlEnvironment.digest))
+    assert(saved.contains("\"tabulate==0.9.0\""))
   }
 
   it should "report an environment its user does not have as the error of each UDF naming it" in {
@@ -1896,7 +1895,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   private val linksNothing: InputLinker = linkerOf(file => fail(s"asked to link $file"))
 
   /** A link a request could send with an operator, to a place of the sender's choosing. */
-  private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue, 1)
+  private val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue)
 
   "WorkflowCompiler" should
     "link the file of every scan source of a plan made to run, and list each as its input" in {
@@ -1928,17 +1927,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(
       result.inputs == Seq(small, medium, again).zip(made).map {
         case (scan, (file, link)) =>
-          PlanInput(
-            scan.operatorIdentifier,
-            file.toASCIIString,
-            InputFile(link.expiresAtMs, link.sizeBytes)
-          )
+          PlanInput(scan.operatorIdentifier, file.toASCIIString, link.expiresAtMs)
       }
-    )
-    assert(
-      result.inputs.map(_.file.sizeBytes) == Seq(smallUri, mediumUri, smallUri).map(file =>
-        java.nio.file.Files.size(java.nio.file.Paths.get(file))
-      )
     )
     // The saved plan lists the inputs, and the links are in it only where the executors read
     // them: in the scans' own descriptors.
@@ -1981,7 +1971,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     val links = linksOf(strict, run)
     assert(links.keySet == Set(run.asInstanceOf[CSVScanSourceOpDesc].fileName.get))
     assert(!links.values.exists(_ == sentLink))
-    assert(strict.inputs.map(_.file.expiresAtMs) == links.values.map(_.expiresAtMs).toSeq)
+    assert(strict.inputs.map(_.expiresAtMs) == links.values.map(_.expiresAtMs).toSeq)
   }
 
   it should "link no file its user may not read, and fail the plan with the scan's error" in {
@@ -2080,11 +2070,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
         .take(atMost)
         .map {
           case (file, localPath) =>
-            ListedFile(
-              s"$versionPath/$file",
-              Paths.get(localPath).toUri.toString,
-              java.nio.file.Files.size(Paths.get(localPath))
-            )
+            ListedFile(s"$versionPath/$file", Paths.get(localPath).toUri.toString)
         }
 
   /** A lister that lists nothing, for a compile that must ask for no listing. */
@@ -2111,19 +2097,10 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     // The File Scan From Input's executor finds a link under each name the File Lister outputs.
     val links = linksOf(result, scan)
     assert(links.keySet == fixtureFiles.toSet)
-    assert(
-      fixtureFiles.map(links(_).sizeBytes) == TestOperators.fixtureDatasetFiles.map {
-        case (_, localPath) => java.nio.file.Files.size(Paths.get(localPath))
-      }
-    )
     // The plan lists each file as an input of the operator that reads it, and of no other.
     assert(
       result.inputs == fixtureFiles.map { file =>
-        PlanInput(
-          scan.operatorIdentifier,
-          file,
-          InputFile(links(file).expiresAtMs, links(file).sizeBytes)
-        )
+        PlanInput(scan.operatorIdentifier, file, links(file).expiresAtMs)
       }
     )
     val saved = PhysicalPlanCodec.fromJson(assertSavable(result))
@@ -2252,9 +2229,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       val scan = parsed(
         s"""{"operatorType":"FileScanOp","inputLinks":{
            |"/dataset/another@x.com/secrets/v1/keys.txt":
-           |  {"url":"${sentLink.url}","expiresAtMs":${sentLink.expiresAtMs},"sizeBytes":1},
+           |  {"url":"${sentLink.url}","expiresAtMs":${sentLink.expiresAtMs}},
            |"${fixtureFiles.head}":
-           |  {"url":"${sentLink.url}","expiresAtMs":${sentLink.expiresAtMs},"sizeBytes":1}}}""".stripMargin
+           |  {"url":"${sentLink.url}","expiresAtMs":${sentLink.expiresAtMs}}}}""".stripMargin
       )
       assert(lister.asInstanceOf[FileListerSourceOpDesc].listing.exists(_.nonEmpty))
       assert(scan.asInstanceOf[FileScanOpDesc].inputLinks.size == 2)
@@ -2396,15 +2373,14 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     def versionOf(files: Int): DatasetVersionLister =
       (_, atMost) =>
         (1 to files).take(atMost).map { i =>
-          ListedFile(f"$versionPath/part-$i%05d.csv", s"s3://texera-dataset/archive/$i", i)
+          ListedFile(f"$versionPath/part-$i%05d.csv", s"s3://texera-dataset/archive/$i")
         }
     val linker = new InputLinker {
       override def link(fileUri: java.net.URI): InputLink = fail(s"asked to link $fileUri")
       override def linkListed(file: ListedFile): InputLink =
         InputLink(
           s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}?X-Amz-Signature=5ecr3t",
-          86400000L,
-          file.sizeBytes
+          86400000L
         )
     }
     def compilerOf(files: Int): WorkflowCompiler =

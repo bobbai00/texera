@@ -37,7 +37,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -287,15 +287,12 @@ class ExecutionResourcesSpec
       uri,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
         body = "{}",
-        logical = "{}",
-        createdAt = new Timestamp(System.currentTimeMillis()),
         createdBy = testUid,
         computingUnitId = 1,
         notification = None
-      )
+      ),
+      "{}"
     )
 
   private def hasPlanTable(uri: URI): Boolean =

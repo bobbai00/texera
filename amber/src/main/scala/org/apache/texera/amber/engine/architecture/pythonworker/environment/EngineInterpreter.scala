@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.engine.architecture.pythonworker.environment
 
+import com.google.common.hash.Hashing
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.EngineInterpreter.{
   DescribeLimit,
   DescribeScript,
@@ -29,8 +30,6 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-import java.util.HexFormat
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 import scala.util.Try
@@ -121,9 +120,7 @@ object EngineInterpreter {
 
   /** The lowercase hex SHA-256 of `text`. */
   private[environment] def sha256Hex(text: String): String =
-    HexFormat
-      .of()
-      .formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)))
+    Hashing.sha256().hashString(text, StandardCharsets.UTF_8).toString
 
   // Prints one line of JSON. It reads the distributions' own metadata, so it needs no pip: an
   // interpreter need not have one. A version outside PEP 440, as some system packages have, is
