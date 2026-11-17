@@ -419,15 +419,17 @@ class WorkflowExecutionServiceSpec
 
   /** A source whose one output port, of one string column, has its results stored. */
   private val storedSource: PhysicalOp =
-    sourceOp("stored-text").copy(outputPorts =
-      Map(
-        PortIdentity() -> (
-          OutputPort(),
-          List.empty,
-          Right(Schema().add("line", AttributeType.STRING))
+    sourceOp("stored-text")
+      .copy(outputPorts =
+        Map(
+          PortIdentity() -> (
+            OutputPort(),
+            List.empty,
+            Right(Schema().add("line", AttributeType.STRING))
+          )
         )
       )
-    )
+      .withStorageLocations(None)
 
   /** The context the Dashboard saves a plan of `storedSource` alone under. */
   private def savedPlanContext(): WorkflowContext =
@@ -1002,6 +1004,7 @@ class WorkflowExecutionServiceSpec
         outputPorts = Map(PortIdentity() -> (OutputPort(), List(link), Right(lines))),
         pythonEnvironment = environment
       )
+      .withStorageLocations(None)
     val second = PhysicalOp
       .oneToOnePhysicalOp(secondId, workflowId, executionId, OpExecWithClassName("unused"))
       .copy(
@@ -1009,6 +1012,7 @@ class WorkflowExecutionServiceSpec
         outputPorts = Map(PortIdentity() -> (OutputPort(), List.empty, Right(lines))),
         pythonEnvironment = environment
       )
+      .withStorageLocations(None)
     writtenConsoles ++= Seq(firstId, secondId).map(id => consoleUriOf(id.logicalOpId.id))
     ExecutionPlan(
       new WorkflowContext(

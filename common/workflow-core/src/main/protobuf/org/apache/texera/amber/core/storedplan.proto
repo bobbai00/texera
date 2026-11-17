@@ -167,6 +167,11 @@ message StoredInputPort {
 message StoredOutputPort {
   OutputPort port = 1;
   StoredSchema schema = 2;
+  // Where the port is stored when the run stores it, for a user to view or for a later region to
+  // read: the URI its result and its state hang off. A location of the plan's execution, in its
+  // warehouse, that names this port. An input port that reads stored data reads the location of
+  // the output port its link comes from.
+  string storageLocation = 3;
 }
 
 message StoredSchema {

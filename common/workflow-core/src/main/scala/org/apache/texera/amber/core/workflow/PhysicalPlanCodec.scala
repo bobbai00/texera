@@ -32,6 +32,7 @@ import org.apache.texera.amber.core.storedplan.StoredPhysicalOp.{
 }
 import org.apache.texera.amber.core.storedplan.StoredWorkflowSettings.{ExecutionMode => StoredMode}
 import org.apache.texera.amber.core.storedplan._
+import org.apache.texera.amber.core.storage.VFSURIFactory
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -57,18 +58,20 @@ import scala.util.control.NonFatal
   *
   * A plan is saved as a [[StoredPhysicalPlan]] message (storedplan.proto), and the message as
   * JSON text. Reading it back gives the plan the engine runs: the same operators, executors,
-  * ports, schemas, links and settings, with the run's cost hints, where it replays from, where
-  * it writes its replay log, and what its operators read from outside it. Each operator read
-  * back iterates its ports, and each port its links, in the order the saved plan did.
+  * ports, schemas, links and settings, with where each output port is stored, the run's cost
+  * hints, where it replays from, where it writes its replay log, and what its operators read
+  * from outside it. Each operator read back iterates its ports, and each port its links, in the
+  * order the saved plan did.
   *
   * A plan is saved as the same text every time. Its operators are saved in the order of their
   * ids, and its cost hints and inputs by their operators' ids and the inputs' names. Its links are
   * saved once, in an order every port finds its own links in.
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding or names a
-  * Python environment that was never resolved, every port has its schema, and the links form no
-  * cycle. A plan read back can be run but not compiled again: each port keeps its schema, but no
-  * operator keeps the function that derived it ([[ReadBackSchemaPropagation]] takes its place).
+  * Python environment that was never resolved, every port has its schema, every output port its
+  * storage location, and the links form no cycle. A plan read back can be run but not compiled
+  * again: each port keeps its schema, but no operator keeps the function that derived it
+  * ([[ReadBackSchemaPropagation]] takes its place).
   *
   * A change to an operator is saved as a [[StoredOperatorUpdate]], in the same format version:
   * only what the engine applies to the running operator, its executor and what its code reads.
@@ -203,8 +206,9 @@ object PhysicalPlanCodec {
     requireDistinct(stored.links)(link => s"Link ${show(link)}")
     val linksInto = stored.links.groupBy(link => (link.toOpId, link.toPortId))
     val linksOutOf = stored.links.groupBy(link => (link.fromOpId, link.fromPortId))
-    val operators =
-      stored.operators.map(decodeOperator(workflowId, executionId, linksInto, linksOutOf))
+    val operators = stored.operators.map(
+      decodeOperator(workflowId, executionId, stored.warehouse, linksInto, linksOutOf)
+    )
     requireDistinct(operators.map(_.id))(id => s"Operator ${show(id)}")
     val plan = PhysicalPlan(operators.toSet, stored.links.toSet)
     requireConsistent(plan, settings.outputPortsNeedingStorage)
@@ -351,6 +355,23 @@ object PhysicalPlanCodec {
           refuse(s"The $side port ${show(id)} of operator $name has no schema: ${error.getMessage}")
         }
     }
+    op.storageLocations.keys.find(!op.outputPorts.contains(_)).foreach { id =>
+      refuse(
+        s"Operator $name has a storage location for its output port ${show(id)}, which it does " +
+          "not have."
+      )
+    }
+    op.outputPorts.keys.foreach { id =>
+      val port = GlobalPortIdentity(op.id, id)
+      val location = op.storageLocations.getOrElse(
+        id,
+        refuse(s"The ${show(port)} has no storage location: only a plan made to run can be saved.")
+      )
+      requireStorageLocation(context.workflowId, context.executionId, context.warehouse)(
+        port,
+        location
+      )
+    }
   }
 
   /**
@@ -463,8 +484,14 @@ object PhysicalPlanCodec {
       inputPorts = op.inputPorts.values.toSeq.map {
         case (port, _, schema) => StoredInputPort(Some(port), schema.toOption.map(encodeSchema))
       },
+      // and every output port has its location
       outputPorts = op.outputPorts.values.toSeq.map {
-        case (port, _, schema) => StoredOutputPort(Some(port), schema.toOption.map(encodeSchema))
+        case (port, _, schema) =>
+          StoredOutputPort(
+            Some(port),
+            schema.toOption.map(encodeSchema),
+            op.storageLocations(port.id).toString
+          )
       },
       isOneToManyOp = op.isOneToManyOp,
       requiresMaterializedExecution = op.requiresMaterializedExecution,
@@ -562,6 +589,7 @@ object PhysicalPlanCodec {
   private def decodeOperator(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity,
+      warehouse: Option[String],
       linksInto: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]],
       linksOutOf: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]]
   )(stored: StoredPhysicalOp): PhysicalOp = {
@@ -600,6 +628,19 @@ object PhysicalPlanCodec {
         refuseEnum(s"The mode of output port ${show(port.id)} of operator $name", port.mode)
       }
     }
+    val outputPorts =
+      decodePorts(name, "output", stored.outputPorts.map(p => (p.port, p.schema)))(
+        _.id,
+        portId => linksOutOf.getOrElse((id, portId), Nil)
+      )
+    // every stored port has a port: decodePorts refused the operator otherwise
+    val storageLocations = stored.outputPorts.map { storedPort =>
+      val port = GlobalPortIdentity(id, storedPort.port.get.id)
+      if (storedPort.storageLocation.isEmpty) refuse(s"The ${show(port)} has no storage location.")
+      val location = uriOf(s"The ${show(port)} is stored at", storedPort.storageLocation)
+      requireStorageLocation(workflowId, executionId, warehouse)(port, location)
+      port.portId -> location
+    }.toMap
     PhysicalOp(
       id = id,
       workflowId = workflowId,
@@ -613,10 +654,7 @@ object PhysicalPlanCodec {
         _.id,
         portId => linksInto.getOrElse((id, portId), Nil)
       ),
-      outputPorts = decodePorts(name, "output", stored.outputPorts.map(p => (p.port, p.schema)))(
-        _.id,
-        portId => linksOutOf.getOrElse((id, portId), Nil)
-      ),
+      outputPorts = outputPorts,
       propagateSchema = ReadBackSchemaPropagation,
       isOneToManyOp = stored.isOneToManyOp,
       requiresMaterializedExecution = stored.requiresMaterializedExecution,
@@ -625,7 +663,8 @@ object PhysicalPlanCodec {
       pythonEnvironment = stored.pythonEnvironment
         .map(decodeEnvironment(name))
         .getOrElse(PythonEnvironmentRef.EngineDefault),
-      repositoryMounts = decodeMounts(name, stored.repositoryMounts)
+      repositoryMounts = decodeMounts(name, stored.repositoryMounts),
+      storageLocations = storageLocations
     )
   }
 
@@ -837,15 +876,46 @@ object PhysicalPlanCodec {
     location
   }
 
+  /** The URI `text` is, unless it is none. */
+  private def uriOf(what: String, text: String): URI =
+    try new URI(text)
+    catch {
+      case e: URISyntaxException =>
+        refuse(s"$what '$text', which is not a URI: ${e.getMessage}", e)
+    }
+
   /** The URI `text` is, unless it is none or not an absolute one. */
-  private def absoluteUriOf(what: String, text: String): URI = {
-    val location =
-      try new URI(text)
+  private def absoluteUriOf(what: String, text: String): URI =
+    requireAbsolute(what, uriOf(what, text))
+
+  /**
+    * Fails unless `location` is where the output port `port` of the plan's execution is stored:
+    * a location of that workflow and execution, in the plan's warehouse, that names the port. A
+    * unit stores a port where its plan says, so a plan cannot have it write into another
+    * execution's tables, or another warehouse's.
+    */
+  private def requireStorageLocation(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      warehouse: Option[String]
+  )(port: GlobalPortIdentity, location: URI): Unit = {
+    val what = s"The ${show(port)} is stored at '$location'"
+    if (location.isOpaque) refuse(s"$what, which is not the location of a port.")
+    val named =
+      try VFSURIFactory.decodeURI(VFSURIFactory.resultURI(location))
       catch {
-        case e: URISyntaxException =>
-          refuse(s"$what '$text', which is not a URI: ${e.getMessage}", e)
+        case e: IllegalArgumentException =>
+          refuse(s"$what, which is not the location of a port: ${e.getMessage}", e)
       }
-    requireAbsolute(what, location)
+    if (
+      named.workflowId != workflowId || named.executionId != executionId ||
+      named.warehouse != warehouse || !named.globalPortId.contains(port)
+    ) {
+      refuse(
+        s"$what, which is not that port's location in execution ${executionId.id} of workflow " +
+          s"${workflowId.id}" + warehouse.fold(".")(name => s", in warehouse '$name'.")
+      )
+    }
   }
 
   /** Fails unless a replay is from an execution and up to an interaction it names. */

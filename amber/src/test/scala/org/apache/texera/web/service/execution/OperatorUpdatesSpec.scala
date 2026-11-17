@@ -568,7 +568,8 @@ class OperatorUpdatesSpec
 
   /**
     * The JSON text of a stored plan, `json`, with every id of operator `operatorId`'s layer "main"
-    * (the operator's own, its links' and its stored ports') naming the layer `layer` instead.
+    * (the operator's own, its links', its stored ports' and those where its ports are stored
+    * name) naming the layer `layer` instead.
     */
   private def renamedLayer(json: String, operatorId: String, layer: String): String = {
     val tree = objectMapper.readTree(json)
@@ -583,7 +584,12 @@ class OperatorUpdatesSpec
         case _ => // a value: no id
       }
     rename(tree)
-    objectMapper.writeValueAsString(tree)
+    objectMapper
+      .writeValueAsString(tree)
+      .replace(
+        s"(logicalOpId=$operatorId,layerName=main,",
+        s"(logicalOpId=$operatorId,layerName=$layer,"
+      )
   }
 
   private def readUpdate(execution: CreateExecutionResponse, updateId: String): PlanRecord =
@@ -862,13 +868,15 @@ class OperatorUpdatesSpec
     insertExecution(otherLayerEid, status = 2)
     val uri =
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(otherLayerEid), None)
-    // The plan of this execution, as its own.
+    // The plan of this execution, as its own, its ports stored as its own are.
     val ownId = "\"id\": \"" + execution.eid + "\""
     plan.body should include(ownId)
     val body = PhysicalPlanCodec.toJson(
       PhysicalPlanCodec.fromJson(
         renamedLayer(
-          plan.body.replace(ownId, "\"id\": \"" + otherLayerEid + "\""),
+          plan.body
+            .replace(ownId, "\"id\": \"" + otherLayerEid + "\"")
+            .replace(s"/eid/${execution.eid}/", s"/eid/$otherLayerEid/"),
           "limit",
           "other"
         )

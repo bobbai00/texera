@@ -36,12 +36,14 @@ import org.apache.texera.amber.core.storage.{
   InputLinker,
   ListedFile,
   RepositoryVersionResolver,
-  ScanFileResolver
+  ScanFileResolver,
+  VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
-import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
+  GlobalPortIdentity,
   OutputPort,
   PhysicalOp,
   PhysicalPlanCodec,
@@ -116,10 +118,11 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       settings: CompileSettings = CompileSettings.Default,
       inputLinker: InputLinker = TestOperators.fixtureInputLinker,
       lister: DatasetVersionLister = TestOperators.fixtureDatasetVersionLister,
-      environments: PythonEnvironmentResolver = PythonEnvironmentResolver.Unavailable
+      environments: PythonEnvironmentResolver = PythonEnvironmentResolver.Unavailable,
+      context: WorkflowContext = newContext()
   ): WorkflowCompiler =
     new WorkflowCompiler(
-      newContext(),
+      context,
       RunBindings(
         files = fileResolver,
         inputLinker = inputLinker,
@@ -952,6 +955,61 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assertSavable(result)
   }
 
+  it should "name where every output port of a plan made to run is stored, in the run's warehouse" in {
+    // A scan and an aggregate, whose two physical operators an internal port joins: every port
+    // is named, as which of them a run stores is decided when the run is scheduled.
+    val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+    val count =
+      TestOperators.aggregateAndGroupByDesc("Region", AggregationFunction.COUNT, List[String]())
+    val workflow = pojo(List(csv, count), chain(csv, count))
+    val (workflowId, executionId) = (WorkflowIdentity(3), ExecutionIdentity(8))
+    def planIn(warehouse: Option[String], errorHandling: CompilationErrorHandling) =
+      newCompiler(context = new WorkflowContext(workflowId, executionId, warehouse = warehouse))
+        .compile(workflow, errorHandling)
+        .physicalPlan
+        .get
+
+    Seq(Some("user-5-2"), None).foreach { warehouse =>
+      val plan = planIn(warehouse, CompilationErrorHandling.Strict)
+      assert(plan.operators.size == 3)
+      assert(plan.operators.exists(_.outputPorts.keys.exists(_.internal)))
+      plan.operators.foreach { op =>
+        assert(op.outputPorts.nonEmpty)
+        assert(op.storageLocations == op.outputPorts.keys.map { port =>
+          port -> VFSURIFactory.createPortBaseURI(
+            workflowId,
+            executionId,
+            GlobalPortIdentity(op.id, port),
+            warehouse
+          )
+        }.toMap)
+      }
+    }
+    // The editor's compile makes no plan to run, and names no location.
+    assert(
+      planIn(Some("user-5-2"), CompilationErrorHandling.Lenient).operators
+        .forall(_.storageLocations.isEmpty)
+    )
+  }
+
+  it should "report an operator whose id cannot name where its results are stored, as its error" in {
+    Seq("scan_1" -> "must not contain '_'", "scan 1" -> "Illegal character").foreach {
+      case (id, why) =>
+        withClue(s"$id: ") {
+          val csv = csvOp(TestOperators.CountrySalesSmallCsvPath)
+          csv.setOperatorId(id)
+          val limit = limitOp(3)
+          val workflow = pojo(List(csv, limit), chain(csv, limit))
+
+          val error = onlyErrorOf(strictFailure(workflow), csv)
+          assert(error.contains("The operator's id cannot name where its results are stored"))
+          assert(error.contains(why), error)
+          // The editor's compile, which names no location, takes the id.
+          assert(newCompiler().compile(workflow).operatorIdToError.isEmpty)
+        }
+    }
+  }
+
   it should "fail on schema-propagation errors, as the operator's error" in {
     // A projection on a missing column fails schema *propagation*, not plan
     // expansion: `propagateSchema` stores a Left on the output port instead of
@@ -1157,7 +1215,14 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       }
       plan
     }
-    val (savedStrict, savedLenient) = (assertSavable(strict), assertSavable(lenient))
+    // A plan the editing compile makes names no location for its ports, so it is saved with
+    // those of the plan to run.
+    val located = lenient.copy(physicalPlan =
+      lenient.physicalPlan.map(plan =>
+        plan.copy(operators = plan.operators.map(_.withStorageLocations(None)))
+      )
+    )
+    val (savedStrict, savedLenient) = (assertSavable(strict), assertSavable(located))
     assert(savedStrict != savedLenient)
     assert(withoutInputs(savedStrict) == withoutInputs(savedLenient))
   }

@@ -158,7 +158,8 @@
                 "attributeType": "INTEGER"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=join,layerName=main,portId=0,isInternal=false,isInput=false)"
         }
       ],
       "isOneToManyOp": true,
@@ -226,7 +227,8 @@
                 "attributeType": "ANY"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=scan,layerName=main,portId=0,isInternal=false,isInput=false)"
         }
       ]
     },
@@ -377,7 +379,8 @@
                 "attributeType": "INTEGER"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=udf,layerName=main,portId=1,isInternal=false,isInput=false)"
         }
       ],
       "suggestedWorkerNum": 2,

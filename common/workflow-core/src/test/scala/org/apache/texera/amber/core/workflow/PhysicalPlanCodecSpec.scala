@@ -79,7 +79,10 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   ): PhysicalOp =
     PhysicalOp(opId(name, layer), workflowId, executionId, executor)
 
-  /** `op` with these ports, in this order, each with a schema and no link yet. */
+  /**
+    * `op` with these ports, in this order, each with a schema and no link yet, and each output
+    * port stored where a run in no warehouse of its own stores it.
+    */
   private def withPorts(
       op: PhysicalOp,
       inputs: Seq[(InputPort, Schema)] = Seq.empty,
@@ -92,13 +95,18 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       outputPorts = outputs.map {
         case (port, schema) => port.id -> (port, List.empty[PhysicalLink], Right(schema))
       }.toMap
-    )
+    ).withStorageLocations(None)
 
   /**
     * A plan of `operators` and `links`, in this order, each link listed on the two ports it joins
     * in the order of `links` — as the compiler's addLink lists them, though no schema propagates.
+    * Its output ports are stored in `warehouse`.
     */
-  private def planOf(operators: Seq[PhysicalOp], links: Seq[PhysicalLink]): PhysicalPlan = {
+  private def planOf(
+      operators: Seq[PhysicalOp],
+      links: Seq[PhysicalLink],
+      warehouse: Option[String] = None
+  ): PhysicalPlan = {
     def into(op: PhysicalOp, port: PortIdentity) =
       links.filter(l => l.toOpId == op.id && l.toPortId == port).toList
     def outOf(op: PhysicalOp, port: PortIdentity) =
@@ -112,7 +120,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
           outputPorts = op.outputPorts.map {
             case (id, (port, _, schema)) => id -> (port, outOf(op, id), schema)
           }
-        )
+        ).withStorageLocations(warehouse)
       }.toSet,
       links.toSet
     )
@@ -202,7 +210,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   private val fullLinks =
     Seq(link(scan, udf), link(scan, udf, toPort = 1), link(udf, localAgg), internalLink)
 
-  private val fullPlan = planOf(Seq(scan, udf, localAgg, globalAgg), fullLinks)
+  private val fullWarehouse = Some("lake-wh")
+
+  private val fullPlan = planOf(Seq(scan, udf, localAgg, globalAgg), fullLinks, fullWarehouse)
 
   private val fullContext = contextOf(
     WorkflowSettings(
@@ -213,7 +223,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         GlobalPortIdentity(udf.id, PortIdentity(0))
       )
     ),
-    warehouse = Some("lake-wh"),
+    warehouse = fullWarehouse,
     // An operator the plan no longer has among them, as the workflow may have changed since.
     costHints = Some(
       CostHints(
@@ -403,15 +413,16 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     Seq(
       contextOf(WorkflowSettings(1, ExecutionMode.PIPELINED)),
       contextOf(WorkflowSettings(Int.MaxValue, ExecutionMode.MATERIALIZED), Some("lake-wh")),
-      // a warehouse named by an empty string is still one
-      contextOf(WorkflowSettings(400, ExecutionMode.PIPELINED, stored.take(2).toSet), Some("")),
+      contextOf(WorkflowSettings(400, ExecutionMode.PIPELINED, stored.take(2).toSet), Some("w")),
       // more stored ports than a small set holds, so they iterate in hash order
       contextOf(WorkflowSettings(400, ExecutionMode.MATERIALIZED, stored.toSet))
     ).foreach { context =>
       withClue(s"${context.workflowSettings}, ${context.warehouse}: ") {
-        assertRoundTrips(context, planOf(Seq(op), Nil))
+        assertRoundTrips(context, planOf(Seq(op), Nil, context.warehouse))
       }
     }
+    // a warehouse named by an empty string is still one, though no port can be stored in it
+    assertRoundTrips(contextOf(warehouse = Some("")), planOf(Seq(operator("op")), Nil))
   }
 
   it should "save and read back the largest ids" in {
@@ -609,9 +620,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   // ----- what a run needs besides its plan -----
 
   it should "save and read back a replay, a replay log, cost hints and inputs, each one alone or absent" in {
-    val bare = ExecutionPlan(contextOf(), fullPlan)
+    val bare = ExecutionPlan(contextOf(warehouse = fullWarehouse), fullPlan)
     val withHints = ExecutionPlan(
-      contextOf(costHints = fullContext.costHints),
+      contextOf(warehouse = fullWarehouse, costHints = fullContext.costHints),
       fullPlan
     )
     Seq(
@@ -639,7 +650,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       )
     }
 
-    assertRoundTrips(ExecutionPlan(contextOf(), fullPlan, inputs = inputs.reverse))
+    assertRoundTrips(
+      ExecutionPlan(contextOf(warehouse = fullWarehouse), fullPlan, inputs = inputs.reverse)
+    )
   }
 
   it should "save and read back cost hints that name no operator, and costs of 0 and of the largest finite number" in {
@@ -647,7 +660,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       seconds =>
         withClue(s"$seconds: ") {
           val hints = CostHints(ExecutionIdentity(Long.MaxValue), seconds)
-          assertRoundTrips(ExecutionPlan(contextOf(costHints = Some(hints)), fullPlan))
+          assertRoundTrips(
+            ExecutionPlan(contextOf(warehouse = fullWarehouse, costHints = Some(hints)), fullPlan)
+          )
         }
     }
   }
@@ -663,7 +678,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         val uri = new URI(location)
         assertRoundTrips(
           ExecutionPlan(
-            contextOf(),
+            contextOf(warehouse = fullWarehouse),
             fullPlan,
             replay = Some(ReplaySource(ExecutionIdentity(1), uri, "ünï")),
             replayLog = Some(uri)
@@ -738,7 +753,8 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "isLoopStart",
         "suggestedWorkerNum",
         "pythonEnvironment",
-        "repositoryMounts"
+        "repositoryMounts",
+        "storageLocations"
       ),
       leftOut = Map(
         "workflowId" -> "every operator's is the plan's, saved once",
@@ -805,6 +821,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "suggestedWorkerNum" -> keptRunning,
         "pythonEnvironment" ->
           "a worker's interpreter is fixed when it starts; the running operator's stays",
+        "storageLocations" -> keptRunning,
         "resourceBinding" -> "an operator made to run holds none, and saving one is refused"
       )
     )
@@ -893,7 +910,8 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       link(goldenScan, goldenUdf),
       link(goldenUdf, goldenJoin, fromPort = 1),
       link(goldenScan, goldenJoin, toPort = 1)
-    )
+    ),
+    warehouse = Some("wh-1")
   )
   private val goldenContext = contextOf(
     WorkflowSettings(
@@ -1118,6 +1136,62 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )("output port 0", "udf-main", "no schema")
   }
 
+  it should "refuse to save an output port with no storage location, or one that is not its own in the plan's execution and warehouse" in {
+    def storedAt(location: String)(op: PhysicalOp): PhysicalOp =
+      op.copy(storageLocations = Map(PortIdentity(0) -> new URI(location)))
+    assertRefused(
+      save(fullContext, fullPlanWithUdf(_.copy(storageLocations = Map.empty)))
+    )("output port 0 of operator udf-main has no storage location", "made to run")
+    // the plan's own location for the port, in each case below with one part of it changed
+    val own = fullPlan.getOperator(udf.id).storageLocation(PortIdentity(0)).toString
+    assert(
+      own == "vfs:///wh/lake-wh/wid/7/eid/42/globalportid/" +
+        "(logicalOpId=udf,layerName=main,portId=0,isInternal=false,isInput=false)"
+    )
+    Seq(
+      "another workflow's" -> own.replace("/wid/7/", "/wid/8/"),
+      "another execution's" -> own.replace("/eid/42/", "/eid/41/"),
+      "another warehouse's" -> own.replace("/wh/lake-wh/", "/wh/other-wh/"),
+      "the default warehouse's" -> own.replace("/wh/lake-wh", ""),
+      "another operator's" -> own.replace("logicalOpId=udf", "logicalOpId=scan"),
+      "another port's" -> own.replace("portId=0", "portId=1"),
+      "an input port's" -> own.replace("isInput=false", "isInput=true")
+    ).foreach {
+      case (whose, location) =>
+        withClue(s"$whose: ") {
+          assertRefused(save(fullContext, fullPlanWithUdf(storedAt(location))))(
+            s"output port 0 of operator udf-main is stored at '$location'",
+            "not that port's location in execution 42 of workflow 7, in warehouse 'lake-wh'"
+          )
+        }
+    }
+    Seq(
+      "file:///tmp/udf/0",
+      "vfs:udf",
+      "vfs:///wid/seven/eid/42/globalportid/x",
+      own.replace("/eid/42", "")
+    ).foreach { location =>
+      withClue(s"$location: ") {
+        assertRefused(save(fullContext, fullPlanWithUdf(storedAt(location))))(
+          s"is stored at '$location', which is not the location of a port"
+        )
+      }
+    }
+    // A location that names the port, with more to its path, is still the port's.
+    assertRoundTrips(
+      fullContext,
+      fullPlanWithUdf(storedAt(own.replace("/wid/7/", "/results/wid/7/")))
+    )
+    assertRefused(
+      save(
+        fullContext,
+        fullPlanWithUdf(op =>
+          op.copy(storageLocations = op.storageLocations + (PortIdentity(3) -> new URI(own)))
+        )
+      )
+    )("udf-main has a storage location for its output port 3, which it does not have")
+  }
+
   it should "refuse to save an operator with no executor, or a port under another id" in {
     assertRefused(
       save(
@@ -1185,7 +1259,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertRefused(
       save(
         fullContext,
-        planOf(Seq(scan, udf, localAgg, globalAgg), fullLinks :+ back)
+        planOf(Seq(scan, udf, localAgg, globalAgg), fullLinks :+ back, fullWarehouse)
       )
     )("closes a cycle")
   }
@@ -1207,7 +1281,8 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         400,
         ExecutionMode.PIPELINED,
         Set(GlobalPortIdentity(udf.id, PortIdentity(4)))
-      )
+      ),
+      fullWarehouse
     )
     assertRefused(save(context, fullPlan))("output port 4 of operator udf-main")
   }
@@ -1410,6 +1485,37 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
     assertUnreadable(withStoredOp(udf.id)(_.update(_.outputPorts(0).optionalSchema := None)))(
       "output port 0 of operator udf-main has no schema"
+    )
+  }
+
+  it should "refuse an output port with no storage location, or one that is not its own in the plan's execution and warehouse" in {
+    def storedAt(location: String) =
+      withStoredOp(udf.id)(_.update(_.outputPorts(0).storageLocation := location))
+    val own = valid.operators(indexOf(udf.id)).outputPorts(0).storageLocation
+    assertUnreadable(storedAt(""))("output port 0 of operator udf-main has no storage location")
+    assertUnreadable(storedAt("vfs:///wid/7/eid/42/a b"))(
+      "output port 0 of operator udf-main is stored at 'vfs:///wid/7/eid/42/a b'",
+      "which is not a URI"
+    )
+    assertUnreadable(storedAt("s3://bucket/udf/0"))(
+      "is stored at 's3://bucket/udf/0', which is not the location of a port"
+    )
+    Seq(
+      own.replace("/eid/42/", "/eid/43/"),
+      own.replace("/wh/lake-wh/", "/wh/user-9-1/"),
+      own.replace("layerName=main", "layerName=other")
+    ).foreach { location =>
+      withClue(s"$location: ") {
+        assertUnreadable(storedAt(location))(
+          s"is stored at '$location'",
+          "not that port's location in execution 42 of workflow 7, in warehouse 'lake-wh'"
+        )
+      }
+    }
+    // Every port of the plan is stored in the plan's warehouse: named by none, it is the
+    // shared one, where none of this plan's ports is.
+    assertUnreadable(valid.copy(warehouse = None))(
+      "not that port's location in execution 42 of workflow 7."
     )
   }
 
@@ -1839,11 +1945,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     assertUnreadable(without("sourceExecutionId"))(
       "execution 0, but an execution's id is at least 1"
     )
+    assertUnreadable(without("storageLocation"))("has no storage location")
     // A field a plan may leave out reads as the plan without it.
-    assert(
-      PhysicalPlanCodec.decode(without("replay")).replay.isEmpty &&
-        PhysicalPlanCodec.decode(without("warehouse")).context.warehouse.isEmpty
-    )
+    assert(PhysicalPlanCodec.decode(without("replay")).replay.isEmpty)
   }
 
   it should "read a cost that is no number, or a replay log left empty, and refuse each" in {

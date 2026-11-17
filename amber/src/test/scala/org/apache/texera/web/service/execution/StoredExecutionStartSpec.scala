@@ -125,7 +125,10 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
             WorkflowSettings(dataTransferBatchSize = 77, executionMode = ExecutionMode.PIPELINED),
             warehouse = warehouse
           ),
-          PhysicalPlan(Set(source("lines", workflow, execution)), Set.empty),
+          PhysicalPlan(
+            Set(source("lines", workflow, execution).withStorageLocations(warehouse)),
+            Set.empty
+          ),
           replay = replay.map(ReplaySource(ExecutionIdentity(execution - 1), _, "interaction-1")),
           replayLog = replayLog,
           inputs = inputs

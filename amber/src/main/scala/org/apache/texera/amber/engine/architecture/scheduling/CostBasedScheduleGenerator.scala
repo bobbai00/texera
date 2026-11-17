@@ -20,7 +20,6 @@
 package org.apache.texera.amber.engine.architecture.scheduling
 
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.amber.core.storage.VFSURIFactory.createPortBaseURI
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, PhysicalOpIdentity}
 import org.apache.texera.amber.core.workflow._
 import org.apache.texera.amber.engine.architecture.scheduling.SchedulingUtils.replaceVertex
@@ -125,10 +124,11 @@ class CostBasedScheduleGenerator(
     *     Remove all materialized edges from the DAG and compute undirected connected
     *     components. The resulting “Region Graph” may contain directed cycles.</li>
     *   <li><strong>Pass 1 – Output URIs:</strong>
-    *     For each Region, allocate storage URIs on every output port of materialized edges.</li>
+    *     For each Region, take the storage URI the plan names for every output port of
+    *     materialized edges.</li>
     *   <li><strong>Pass 2 – Input URIs:</strong>
     *     Re-traverse the same Regions and attach reader URIs on input ports using
-    *     the URIs created in Pass 1.</li>
+    *     the URIs taken in Pass 1.</li>
     * </ol>
     *
     * <p><strong>Why two passes?</strong></p>
@@ -188,16 +188,12 @@ class CostBasedScheduleGenerator(
             .map(e => GlobalPortIdentity(e.fromOpId, e.fromPortId)) ++
             outputPortIdsToViewResult
 
-        // Allocate an URI for each of these output ports
+        // The plan names the URI of each of these output ports
         val outputPortConfigs: Map[GlobalPortIdentity, OutputPortConfig] =
           outputPortIdsNeedingStorage.map { gpid =>
-            val portBaseURI = createPortBaseURI(
-              workflowId = workflowContext.workflowId,
-              executionId = workflowContext.executionId,
-              globalPortId = gpid,
-              warehouse = workflowContext.warehouse
+            gpid -> OutputPortConfig(
+              physicalPlan.getOperator(gpid.opId).storageLocation(gpid.portId)
             )
-            gpid -> OutputPortConfig(portBaseURI)
           }.toMap
 
         val resourceConfig = ResourceConfig(portConfigs = outputPortConfigs)

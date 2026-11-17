@@ -56,6 +56,7 @@ import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.StackTraceUtils.getStackTraceWithAllCauses
 
+import java.net.URISyntaxException
 import java.time.Instant
 import scala.collection.immutable.VectorMap
 import scala.collection.mutable
@@ -351,6 +352,37 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
   }
 
   /**
+    * Names where each output port of `plan` is stored when the run stores it, in the run's
+    * warehouse. Every port of every operator is named: which of them a run stores, for its user
+    * to view or for a later region to read, is decided when the run is scheduled, and whatever
+    * runs the plan stores a port where the plan says.
+    *
+    * An operator whose id cannot be part of a location is left as it was, and its error
+    * appended to `errors`.
+    */
+  private def locateOutputPorts(
+      plan: PhysicalPlan,
+      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
+  ): PhysicalPlan =
+    plan.operators.foldLeft(plan) { (locatedPlan, op) =>
+      Try(op.withStorageLocations(context.warehouse)) match {
+        case Success(located) => locatedPlan.setOperator(located)
+        case Failure(error @ (_: IllegalArgumentException | _: URISyntaxException)) =>
+          errors.append(
+            (
+              op.id.logicalOpId,
+              new IllegalArgumentException(
+                "The operator's id cannot name where its results are stored: " + error.getMessage,
+                error
+              )
+            )
+          )
+          locatedPlan
+        case Failure(other) => throw other
+      }
+    }
+
+  /**
     * Fails a Strict compile with `errors`: each operator's first, listed in the order of
     * `logicalPlan`, an operator before those downstream of it, so that the cause of a chain of
     * errors comes first. The error of the operator listed first is the failure's cause, so that
@@ -552,11 +584,15 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
         expandedPlan
       case CompilationErrorHandling.Strict =>
         if (errors.nonEmpty) failWith(logicalPlan, errors)
-        // 6. a plan made to run resolves the Python environments its operators name and pins
-        // their datasets and models, last, once the plan is otherwise valid: the engine is handed
-        // what to install, the final code and the repositories to mount, never a name to look up
-        // or a binding.
-        val boundPlan = bindPlanResources(bindPlanEnvironments(expandedPlan, errors), errors)
+        // 6. a plan made to run resolves the Python environments its operators name, pins
+        // their datasets and models and names where its output ports are stored, last, once the
+        // plan is otherwise valid: the engine is handed what to install, the final code, the
+        // repositories to mount and the locations to write to, never a name to look up, a
+        // binding or a location to make up.
+        val boundPlan = locateOutputPorts(
+          bindPlanResources(bindPlanEnvironments(expandedPlan, errors), errors),
+          errors
+        )
         if (errors.nonEmpty) failWith(logicalPlan, errors)
         boundPlan
     }

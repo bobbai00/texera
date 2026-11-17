@@ -540,6 +540,7 @@ class WorkflowServiceSpec
           )
         )
       )
+      .withStorageLocations(None)
     val planUri = planUriOf(eid)
     madePlans += planUri
     ExecutionPlanStore.writePlan(
