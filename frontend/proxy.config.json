@@ -75,12 +75,6 @@
     "secure": false,
     "changeOrigin": true
   },
-  "/api/execution[s]": {
-    "target": "http://localhost:8080",
-    "secure": false,
-    "changeOrigin": false,
-    "proxyTimeout": 120000
-  },
   "/api": {
     "target": "http://localhost:8080",
     "secure": false,

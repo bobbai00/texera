@@ -144,7 +144,9 @@ spec:
           port: 3000
     # Creating an execution compiles the workflow, reads the files it scans and writes its plan
     # to the lake, which can take longer than Envoy's 15s default. An exact match outranks the
-    # /api catch-all below, and the method keeps the other /api/executions routes on it.
+    # /api catch-all below, and the method keeps the other /api/executions routes on it. The
+    # gateway sets no limit on the size of the body, the workflow, here or on any other route;
+    # the single-node nginx accepts one megabyte.
     - matches:
         - path:
             type: Exact
