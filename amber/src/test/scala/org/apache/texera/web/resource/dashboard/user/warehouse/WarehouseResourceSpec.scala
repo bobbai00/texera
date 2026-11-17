@@ -19,16 +19,14 @@
 
 package org.apache.texera.web.resource.dashboard.user.warehouse
 
+import org.apache.texera.amber.core.storage.UserWarehouse
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{USER, USER_WAREHOUSE}
 import org.apache.texera.dao.jooq.generated.tables.daos.UserDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource.{
-  lakekeeperWarehouseName,
-  CreateWarehouseRequest
-}
+import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource.CreateWarehouseRequest
 import org.apache.texera.web.service.LakekeeperClient
 import org.jooq.{ExecuteContext, ExecuteListener}
 import org.jooq.impl.{DefaultConfiguration, DefaultExecuteListenerProvider}
@@ -168,13 +166,13 @@ class WarehouseResourceSpec
     val created = resource.create(CreateWarehouseRequest("mybucket"), sessionUser)
 
     created.name shouldBe "mybucket"
-    created.lakekeeperWarehouseName shouldBe lakekeeperWarehouseName(
+    created.lakekeeperWarehouseName shouldBe UserWarehouse.nameOf(
       sessionUser.getUid,
       created.whid
     )
     created.lakekeeperWarehouseName should not include "mybucket"
     created.flavor shouldBe "local"
-    createdNames.toList shouldBe List(lakekeeperWarehouseName(sessionUser.getUid, created.whid))
+    createdNames.toList shouldBe List(UserWarehouse.nameOf(sessionUser.getUid, created.whid))
     created.ownerName shouldBe "warehouse_spec_user"
     // The fixture user has no avatar set; the DTO carries null, not "" (#7743).
     created.ownerAvatar shouldBe null
@@ -237,7 +235,7 @@ class WarehouseResourceSpec
     squatter.setName(squatterDisplayName)
     val takenWhid = WarehouseResource.drawNextWhid(getDSLContext)
     squatter.setWhid(takenWhid)
-    squatter.setLakekeeperWarehouseName(lakekeeperWarehouseName(sessionUser.getUid, takenWhid + 1))
+    squatter.setLakekeeperWarehouseName(UserWarehouse.nameOf(sessionUser.getUid, takenWhid + 1))
     squatter.setLakekeeperWarehouseId(UUID.randomUUID())
     squatter.setFlavor(
       org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum.local

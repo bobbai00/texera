@@ -22,6 +22,7 @@ package org.apache.texera.web.service.execution
 import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   PlanRecord,
+  UserWarehouse,
   VFSUriComponents,
   WarehouseReadGuard,
   WarehouseUnavailableException
@@ -57,7 +58,7 @@ object StoredExecutionStart {
     * Checks the plan table a request to start execution `executionId` names, before anything is
     * read from it: it must be a plan table, as [[ExecutionPlanStore.planUri]] builds one, of that
     * execution; of the socket's workflow when the request came over a socket; and in the default
-    * warehouse or in one of the user's own (`user-<uid>-<digits>`), which this deployment serves.
+    * warehouse or in one of the user's own ([[UserWarehouse]]), which this deployment serves.
     *
     * @param socketWorkflowId the workflow of the socket the request came over; None for a request
     *                         that came another way, which starts the workflow the URI names
@@ -78,7 +79,7 @@ object StoredExecutionStart {
         Left(s"the plan is execution $planExecutionId's, not $executionId's")
       } else if (socketWorkflowId.exists(_ != workflowId)) {
         Left(s"the plan belongs to workflow $workflowId, not to this one")
-      } else if (location.warehouse.exists(warehouse => !isOwnWarehouse(warehouse, uid))) {
+      } else if (location.warehouse.exists(!UserWarehouse.isOwnedBy(_, uid))) {
         Left("the plan is in another user's warehouse")
       } else if (location.warehouse.isDefined && !warehousesEnabled) {
         // Opened while the switch is off, the user's warehouse would be the shared one, where
@@ -216,10 +217,6 @@ object StoredExecutionStart {
         }.toOption
       }
       .getOrElse(new URI(null, null, null, null, null))
-
-  /** Whether `warehouse` is one of user `uid`'s own, as the Dashboard names them. */
-  private def isOwnWarehouse(warehouse: String, uid: Int): Boolean =
-    warehouse.matches(s"user-$uid-[0-9]+")
 
   /** The plan `body` holds, or why it cannot be read. */
   private def planOf(body: String, executionId: Long): Either[String, ExecutionPlan] =

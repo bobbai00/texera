@@ -22,5 +22,8 @@ package org.apache.texera.web.model.http.response.execution
 /**
   * An execution created by `POST /api/executions` (201): its id, the workflow and the computing
   * unit it was created for, and its plan table, which the unit is to start it from.
+  *
+  * @param planUri names the plan table to the computing unit. To a client it is opaque: it hands
+  *                the text to the unit as it got it, and reads nothing from it.
   */
 case class CreateExecutionResponse(eid: Long, wid: Long, computingUnitId: Int, planUri: String)

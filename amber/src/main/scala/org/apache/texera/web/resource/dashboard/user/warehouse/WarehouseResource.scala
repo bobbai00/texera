@@ -22,7 +22,7 @@ package org.apache.texera.web.resource.dashboard.user.warehouse
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
 import org.apache.commons.lang3.StringUtils
-import org.apache.texera.amber.core.storage.VFSURIFactory
+import org.apache.texera.amber.core.storage.{UserWarehouse, VFSURIFactory}
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.SqlServer
@@ -51,11 +51,6 @@ object WarehouseResource {
   // layer's own constraint.
   private[warehouse] def isValidWarehouseName(name: String): Boolean =
     name.length <= 64 && VFSURIFactory.isValidWarehouseName(name)
-
-  // The Lakekeeper catalog name minted for a warehouse row: stable, short, and
-  // mapping straight back to the row.
-  private[warehouse] def lakekeeperWarehouseName(uid: Integer, whid: Integer): String =
-    s"user-$uid-$whid"
 
   // Draws the id the next insert will use from the table's sequence, without consuming
   // an insert. The sequence is looked up rather than named literally -- its generated
@@ -190,7 +185,7 @@ class WarehouseResource(client: LakekeeperClient, enabled: Boolean) extends Lazy
     // component of every result URI an execution wrote, so a name-derived one could
     // never change again. Drawing the id up front keeps the creation order below intact.
     val whid: Integer = drawNextWhid(context)
-    val mintedName = lakekeeperWarehouseName(uid, whid)
+    val mintedName = UserWarehouse.nameOf(uid, whid)
     // Create in Lakekeeper first, record after: a failed creation leaves no orphaned row.
     val lakekeeperWarehouseId =
       try {
