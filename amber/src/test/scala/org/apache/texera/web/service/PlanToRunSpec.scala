@@ -19,13 +19,13 @@
 
 package org.apache.texera.web.service
 
+import org.apache.texera.amber.core.executor.{InputFile, OperatorInputs}
 import org.apache.texera.amber.core.storage.{LakeFSDatasetVersionLister, LakeFSInputLinker}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   CostHints,
   ExecutionMode,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   ReplaySource,
   WorkflowContext,
@@ -132,22 +132,27 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     // Given no replay or replay log, the plan replays nothing and writes no replay log.
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None
-    // The file its scan reads is its one input: read through a link, of which the plan lists
-    // when it expires.
+    // The file its scan reads is the one file the plan reads through a link: the scan's own.
     val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
     val link = TestOperators.fixtureInputLinker.link(scanned)
-    executionPlan.inputs shouldBe Seq(
-      PlanInput(operators.head.operatorIdentifier, scanned.toASCIIString, link.expiresAtMs)
-    )
+    executionPlan.plan.operators.flatMap(op => op.inputs.files.map(op.id.logicalOpId -> _)) shouldBe
+      Set(
+        operators.head.operatorIdentifier ->
+          InputFile(scanned.toASCIIString, link.url, link.expiresAtMs)
+      )
   }
 
-  it should "save a plan that reads no file with no input" in {
+  it should "save a plan that reads nothing from outside the run with no input" in {
     val text = new TextInputSourceOpDesc()
     text.textInput = "north\nsouth"
 
     val savedPlan = PlanToRun.make(newCompiler(newContext()), pojo(List(text), List.empty))
 
-    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan)).inputs shouldBe empty
+    PhysicalPlanCodec
+      .decode(PhysicalPlanCodec.fromJson(savedPlan))
+      .plan
+      .operators
+      .map(_.inputs) shouldBe Set(OperatorInputs.defaultInstance)
   }
 
   it should "save the run's cost hints with the plan, whatever operators they name" in {

@@ -22,7 +22,7 @@ package org.apache.texera.web.service.execution
 import org.apache.iceberg.Table
 import org.apache.iceberg.catalog.{Catalog, Namespace, TableIdentifier}
 import org.apache.iceberg.exceptions.NoSuchTableException
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{InputFile, OpExecWithClassName, OperatorInputs}
 import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   IcebergCatalogInstance,
@@ -43,7 +43,6 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   ReplaySource,
   WorkflowContext,
@@ -107,12 +106,16 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
         )
       )
 
-  /** The plan of a run of `lines` alone, saved as the Dashboard saves it. */
+  /**
+    * The plan of a run of the sources `reads` names, each with the files it reads through links,
+    * saved as the Dashboard saves it: of `lines` alone, which reads none, unless a case gives
+    * others.
+    */
   private def savedPlan(
       workflow: Long = wid,
       execution: Long = eid,
       warehouse: Option[String] = None,
-      inputs: Seq[PlanInput] = Seq.empty,
+      reads: Map[String, Seq[InputFile]] = Map("lines" -> Seq.empty),
       replay: Option[URI] = None,
       replayLog: Option[URI] = None
   ): String =
@@ -126,12 +129,16 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
             warehouse = warehouse
           ),
           PhysicalPlan(
-            Set(source("lines", workflow, execution).withStorageLocations(warehouse)),
+            reads.map {
+              case (name, files) =>
+                source(name, workflow, execution)
+                  .withStorageLocations(warehouse)
+                  .withInputs(OperatorInputs(files = files))
+            }.toSet,
             Set.empty
           ),
           replay = replay.map(ReplaySource(ExecutionIdentity(execution - 1), _, "interaction-1")),
-          replayLog = replayLog,
-          inputs = inputs
+          replayLog = replayLog
         )
       )
     )
@@ -171,8 +178,9 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       replayLogRoot
     )
 
-  private def input(name: String, expiresAtMs: Long): PlanInput =
-    PlanInput(OperatorIdentity("lines"), name, expiresAtMs)
+  /** The file `name` as a plan's operator reads it, through a link that lasts to `expiresAtMs`. */
+  private def file(name: String, expiresAtMs: Long): InputFile =
+    InputFile(name, s"http://texera-rustfs:9000/texera-dataset/$name", expiresAtMs)
 
   // --- planUriOf ---
 
@@ -338,21 +346,26 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   it should "refuse a plan whose earliest input link has expired, naming when" in {
     val earliest = now - 1000
-    checkRecord(
-      record(body = savedPlan(inputs = Seq(input("b.csv", now + 60000), input("a.csv", earliest))))
-    ) shouldBe Left(
+    // Whichever operator reads through the link, and wherever it is among the operator's files.
+    val reads = Map(
+      "lines" -> Seq(file("a.csv", now + 60000)),
+      "numbers" -> Seq(file("b.csv", now + 30000), file("c.csv", earliest))
+    )
+    checkRecord(record(body = savedPlan(reads = reads))) shouldBe Left(
       s"input links expired at ${Instant.ofEpochMilli(earliest)}; run the workflow again"
     )
     // A link that expires now has expired.
-    checkRecord(record(body = savedPlan(inputs = Seq(input("a.csv", now))))) shouldBe
-      Left(s"input links expired at ${Instant.ofEpochMilli(now)}; run the workflow again")
+    checkRecord(
+      record(body = savedPlan(reads = Map("lines" -> Seq(file("a.csv", now)))))
+    ) shouldBe Left(s"input links expired at ${Instant.ofEpochMilli(now)}; run the workflow again")
   }
 
   it should "pass a plan whose input links have not expired, and one that reads no input" in {
-    val plan = checkRecord(record(body = savedPlan(inputs = Seq(input("a.csv", now + 1)))))
-      .getOrElse(fail("refused"))
-    plan.inputs.map(_.name) shouldBe Seq("a.csv")
-    checkRecord(record()).map(_.inputs) shouldBe Right(Seq.empty)
+    val reads = Map("lines" -> Seq(file("a.csv", now + 1)))
+    val plan = checkRecord(record(body = savedPlan(reads = reads))).getOrElse(fail("refused"))
+    plan.plan.operators.map(_.inputs) shouldBe Set(OperatorInputs(files = reads("lines")))
+    checkRecord(record()).map(_.plan.operators.map(_.inputs)) shouldBe
+      Right(Set(OperatorInputs.defaultInstance))
   }
 
   it should "pass a plan that replays and writes replay logs where this unit keeps them" in {
@@ -420,7 +433,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   it should "check the plan's replay logs before its input links" in {
     val body = savedPlan(
-      inputs = Seq(input("a.csv", now - 1000)),
+      reads = Map("lines" -> Seq(file("a.csv", now - 1000))),
       replayLog = Some(new URI("file:///etc/texera/"))
     )
     checkRecord(record(body = body)).left.getOrElse(fail("passed")) should

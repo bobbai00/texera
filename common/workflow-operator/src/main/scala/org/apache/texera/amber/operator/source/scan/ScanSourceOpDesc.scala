@@ -22,7 +22,7 @@ package org.apache.texera.amber.operator.source.scan
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyDescription}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
-import org.apache.texera.amber.core.storage.model.{LinkDocument, ReadonlyVirtualDocument}
+import org.apache.texera.amber.core.storage.model.ReadonlyVirtualDocument
 import org.apache.texera.amber.core.storage.{DocumentFactory, FileResolver}
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.workflow.OutputPort
@@ -32,7 +32,7 @@ import org.apache.commons.lang3.builder.EqualsBuilder
 
 import java.net.URI
 
-abstract class ScanSourceOpDesc extends SourceOperatorDescriptor with ReadsInputFiles {
+abstract class ScanSourceOpDesc extends SourceOperatorDescriptor {
 
   /** in the case we do not want to read the entire large file, but only
     * the first a few lines of it to do the type inference.
@@ -119,9 +119,6 @@ abstract class ScanSourceOpDesc extends SourceOperatorDescriptor with ReadsInput
     EqualsBuilder.reflectionEquals(this, that, "context", "fileHandle")
 
   def fileResolved(): Boolean = fileName.isDefined && FileResolver.isFileResolved(fileName.get)
-
-  /** Opens the file this scan reads, for its executor to read: through the plan's link to it. */
-  def openInputFile(): LinkDocument = openInputFile(fileName.get)
 
   /**
     * Opens the file this scan reads, for a compile to infer its schema from. A compile reads the

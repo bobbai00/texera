@@ -19,18 +19,19 @@
 
 package org.apache.texera.amber.operator.source.scan.file
 
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.io.IOException
 
 class FileScanSourceOpExec private[scan] (
-    descString: String
+    descString: String,
+    inputs: ExecutorInputs
 ) extends SourceOperatorExecutor {
   private val desc: FileScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[FileScanSourceOpDesc])
-  private val input = desc.openInputFile()
+  private val input = inputs.open(desc.fileName.get)
 
   @throws[IOException]
   override def produceTuple(): Iterator[TupleLike] = {

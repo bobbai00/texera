@@ -23,6 +23,7 @@ import com.fasterxml.jackson.core.StreamReadFeature
 import com.fasterxml.jackson.core.util.{DefaultIndenter, DefaultPrettyPrinter, Separators}
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.google.protobuf.empty.Empty
+import org.apache.texera.amber.core.executor.OperatorInputs
 import org.apache.texera.amber.core.storedplan.StoredAttribute.{AttributeType => StoredType}
 import org.apache.texera.amber.core.storedplan.StoredPartitionInfo.Kind
 import org.apache.texera.amber.core.storedplan.StoredPartitionRequirement.Requirement
@@ -36,7 +37,6 @@ import org.apache.texera.amber.core.storage.VFSURIFactory
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
-  OperatorIdentity,
   PhysicalOpIdentity,
   WorkflowIdentity
 }
@@ -58,14 +58,14 @@ import scala.util.control.NonFatal
   *
   * A plan is saved as a [[StoredPhysicalPlan]] message (storedplan.proto), and the message as
   * JSON text. Reading it back gives the plan the engine runs: the same operators, executors,
-  * ports, schemas, links and settings, with where each output port is stored, the run's cost
-  * hints, where it replays from, where it writes its replay log, and what its operators read
-  * from outside it. Each operator read back iterates its ports, and each port its links, in the
+  * ports, schemas, links and settings, with what each operator reads from outside the run, where
+  * each output port is stored, the run's cost hints, where it replays from and where it writes
+  * its replay log. Each operator read back iterates its ports, and each port its links, in the
   * order the saved plan did.
   *
-  * A plan is saved as the same text every time. Its operators are saved in the order of their
-  * ids, and its cost hints and inputs by their operators' ids and the inputs' names. Its links are
-  * saved once, in an order every port finds its own links in.
+  * A plan is saved as the same text every time. Its operators and its cost hints are saved in
+  * the order of their operators' ids, and the files an operator reads in the order of their
+  * names. Its links are saved once, in an order every port finds its own links in.
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding or names a
   * Python environment that was never resolved, every port has its schema, every output port its
@@ -180,8 +180,7 @@ object PhysicalPlanCodec {
       links = linksInPortOrder(physicalPlan),
       replay = plan.replay.map(encodeReplay),
       replayLogLocation = plan.replayLog.map(requireAbsolute(writesReplayLogTo, _)).map(_.toString),
-      costHints = context.costHints.map(encodeCostHints),
-      inputs = encodeInputs(plan.inputs, physicalPlan)
+      costHints = context.costHints.map(encodeCostHints)
     )
   }
 
@@ -222,8 +221,7 @@ object PhysicalPlanCodec {
       ),
       plan = plan,
       replay = stored.replay.map(decodeReplay),
-      replayLog = stored.replayLogLocation.map(absoluteUriOf(writesReplayLogTo, _)),
-      inputs = decodeInputs(stored.inputs, plan)
+      replayLog = stored.replayLogLocation.map(absoluteUriOf(writesReplayLogTo, _))
     )
   }
 
@@ -355,6 +353,7 @@ object PhysicalPlanCodec {
           refuse(s"The $side port ${show(id)} of operator $name has no schema: ${error.getMessage}")
         }
     }
+    requireInputs(name, op.inputs)
     op.storageLocations.keys.find(!op.outputPorts.contains(_)).foreach { id =>
       refuse(
         s"Operator $name has a storage location for its output port ${show(id)}, which it does " +
@@ -503,7 +502,8 @@ object PhysicalPlanCodec {
         case PythonEnvironmentRef.Resolved(environment) =>
           Some(StoredPythonEnvironment(environment.name, environment.requirements))
         case _ => None
-      }
+      },
+      inputs = Option.when(op.inputs != OperatorInputs.defaultInstance)(op.inputs)
     )
 
   private def encodeMounts(mounts: Option[RepositoryMounts]): Seq[String] =
@@ -527,14 +527,6 @@ object PhysicalPlanCodec {
       }
     )
     requireCostHints(stored)
-    stored
-  }
-
-  private def encodeInputs(inputs: Seq[PlanInput], plan: PhysicalPlan): Seq[StoredPlanInput] = {
-    val stored = inputs
-      .map(input => StoredPlanInput(input.logicalOperatorId.id, input.name, input.expiresAtMs))
-      .sortBy(input => (input.logicalOperatorId, input.name))
-    requireInputs(stored, plan)
     stored
   }
 
@@ -641,6 +633,8 @@ object PhysicalPlanCodec {
       requireStorageLocation(workflowId, executionId, warehouse)(port, location)
       port.portId -> location
     }.toMap
+    val inputs = stored.inputs.getOrElse(OperatorInputs.defaultInstance)
+    requireInputs(name, inputs)
     PhysicalOp(
       id = id,
       workflowId = workflowId,
@@ -664,6 +658,7 @@ object PhysicalPlanCodec {
         .map(decodeEnvironment(name))
         .getOrElse(PythonEnvironmentRef.EngineDefault),
       repositoryMounts = decodeMounts(name, stored.repositoryMounts),
+      inputs = inputs,
       storageLocations = storageLocations
     )
   }
@@ -705,13 +700,6 @@ object PhysicalPlanCodec {
     CostHints(
       ExecutionIdentity(stored.sourceExecutionId),
       stored.operators.map(cost => cost.logicalOperatorId -> cost.seconds).toMap
-    )
-  }
-
-  private def decodeInputs(stored: Seq[StoredPlanInput], plan: PhysicalPlan): Seq[PlanInput] = {
-    requireInputs(stored, plan)
-    stored.map(input =>
-      PlanInput(OperatorIdentity(input.logicalOperatorId), input.name, input.expiresAtMs)
     )
   }
 
@@ -965,35 +953,32 @@ object PhysicalPlanCodec {
   }
 
   /**
-    * Fails unless each input is of an operator of `plan`, has a name, is given once and in the
-    * order of the operators' ids, then the names, and is read through a link that expires after
-    * the epoch.
+    * Fails unless each file operator `operator` reads has a name, is given once and in the order
+    * of the names, and is read through a link that expires after the epoch; and the operator
+    * reads a CSV file, if it reads one, under a limit of at least one column.
     */
-  private def requireInputs(inputs: Seq[StoredPlanInput], plan: PhysicalPlan): Unit = {
-    val operators = plan.operators.map(_.id.logicalOpId.id)
-    inputs.foreach { input =>
-      if (input.name.isEmpty) {
-        refuse(s"An input of operator ${input.logicalOperatorId} has no name.")
-      }
-      if (!operators.contains(input.logicalOperatorId)) {
+  private def requireInputs(operator: String, inputs: OperatorInputs): Unit = {
+    inputs.files.foreach { file =>
+      if (file.name.isEmpty) refuse(s"A file operator $operator reads has no name.")
+      if (file.url.isEmpty) refuse(s"Operator $operator has no link to its file ${file.name}.")
+      if (file.expiresAtMs < 1) {
         refuse(
-          s"Input ${input.name} names operator '${input.logicalOperatorId}', which the plan does " +
-            "not have."
-        )
-      }
-      if (input.expiresAtMs < 1) {
-        refuse(
-          s"The link to the input ${input.name} of operator ${input.logicalOperatorId} expires " +
-            s"at ${input.expiresAtMs} ms since the epoch, which is not after it."
+          s"The link to the file ${file.name} of operator $operator expires at " +
+            s"${file.expiresAtMs} ms since the epoch, which is not after it."
         )
       }
     }
-    val keys = inputs.map(input => (input.logicalOperatorId, input.name))
-    requireDistinct(keys) { case (operator, name) => s"Input $name of operator $operator" }
+    val names = inputs.files.map(_.name)
+    requireDistinct(names)(name => s"The file $name of operator $operator")
     requireOrdered(
-      keys,
-      "The plan's inputs are not in the order of their operators' ids, then their names"
-    ) { case (operator, name) => s"input $name of operator $operator" }
+      names,
+      s"The files operator $operator reads are not in the order of their names"
+    )(name => s"file $name")
+    inputs.csvParserMaxColumns.filter(_ < 1).foreach { limit =>
+      refuse(
+        s"Operator $operator reads CSV files of at most $limit columns, but a row has at least 1."
+      )
+    }
   }
 
   private def requireUpdateId(updateId: String): Unit =

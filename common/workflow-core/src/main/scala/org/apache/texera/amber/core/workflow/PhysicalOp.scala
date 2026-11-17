@@ -21,7 +21,7 @@ package org.apache.texera.amber.core.workflow
 
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties}
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithCode}
+import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithCode, OperatorInputs}
 import org.apache.texera.amber.core.storage.VFSURIFactory
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{
@@ -172,6 +172,7 @@ object PhysicalOp {
     "locationPreference", // ignore it for the deserialization
     "partitionRequirement", // ignore it for deserialization
     "pythonEnvironment", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
+    "inputs", // may hold links, which are secrets; a saved plan carries them (PhysicalPlanCodec)
     "storageLocations", // of a plan made to run only; a saved plan carries them
     "resourceBinding" // function type, so ignore it; see ResourceBinding
   )
@@ -226,6 +227,9 @@ case class PhysicalOp(
     // the repositories opExecInitInfo's code reads: named when the plan was made, and mounted
     // by the computing unit that runs it before the operator runs
     repositoryMounts: Option[RepositoryMounts] = None,
+    // what the operator reads from outside the run, which a compile finds for it: its executor
+    // is handed this beside its descriptor, and reads nothing else from outside
+    inputs: OperatorInputs = OperatorInputs.defaultInstance,
     // where each output port is stored when the run stores it: the base URI its result and state
     // hang off (VFSURIFactory.resultURI / stateURI), named when the plan is made to run
     storageLocations: Map[PortIdentity, URI] = Map.empty,
@@ -415,6 +419,13 @@ case class PhysicalOp(
 
   def withResourceBinding(binding: Option[ResourceBinding]): PhysicalOp = {
     this.copy(resourceBinding = binding)
+  }
+
+  /**
+    * creates a copy that reads the given inputs from outside the run
+    */
+  def withInputs(inputs: OperatorInputs): PhysicalOp = {
+    this.copy(inputs = inputs)
   }
 
   /**

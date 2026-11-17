@@ -238,6 +238,41 @@ class CoreExecutorReflectionSpec extends AnyFlatSpec {
     assert(typed.workerCount == 4)
   }
 
+  it should "hand a constructor that takes them what the operator reads from outside the run" in {
+    val inputs = new ExecutorInputs(OperatorInputs(csvParserMaxColumns = Some(9)), Seq.empty)
+    val alone = ExecFactory
+      .newExecFromJavaClassName(
+        classOf[CoreExecutorReflectionSpec.ReadingExec].getName,
+        descString = "hi",
+        inputs = inputs
+      )
+      .asInstanceOf[CoreExecutorReflectionSpec.ReadingExec]
+    assert(alone.desc == "hi")
+    assert(alone.inputs eq inputs)
+
+    val parallel = ExecFactory
+      .newExecFromJavaClassName(
+        classOf[CoreExecutorReflectionSpec.ReadingIdxCountExec].getName,
+        descString = "hi",
+        idx = 1,
+        workerCount = 4,
+        inputs = inputs
+      )
+      .asInstanceOf[CoreExecutorReflectionSpec.ReadingIdxCountExec]
+    assert((parallel.desc, parallel.idx, parallel.workerCount) == ("hi", 1, 4))
+    assert(parallel.inputs eq inputs)
+  }
+
+  it should "hand an executor of an operator that reads nothing outside the run no inputs" in {
+    val exec = ExecFactory
+      .newExecFromJavaClassName(
+        classOf[CoreExecutorReflectionSpec.ReadingExec].getName,
+        descString = "hi"
+      )
+      .asInstanceOf[CoreExecutorReflectionSpec.ReadingExec]
+    assert(exec.inputs eq ExecutorInputs.none)
+  }
+
   it should "raise ClassNotFoundException for unknown class names" in {
     assertThrows[ClassNotFoundException] {
       ExecFactory.newExecFromJavaClassName("does.not.exist.AtAll")
@@ -254,6 +289,19 @@ class CoreExecutorReflectionSpec extends AnyFlatSpec {
         classOf[CoreExecutorReflectionSpec.LongArgExec].getName
       )
     }
+    // With a descriptor, it names the constructors an executor may have.
+    val described = intercept[NoSuchMethodException] {
+      ExecFactory.newExecFromJavaClassName(
+        classOf[CoreExecutorReflectionSpec.LongArgExec].getName,
+        descString = "hi"
+      )
+    }
+    assert(
+      described.getMessage.endsWith(
+        "LongArgExec has none of the constructors an executor is built with: (String), " +
+          "(String, int, int), (String, ExecutorInputs), (String, ExecutorInputs, int, int)"
+      )
+    )
   }
 
   it should "throw what the executor's constructor throws, as it is" in {
@@ -476,6 +524,25 @@ private object CoreExecutorReflectionSpec {
 
   class StringIdxCountExec(val desc: String, val idx: Int, val workerCount: Int)
       extends OperatorExecutor {
+    override def processTuple(
+        tuple: org.apache.texera.amber.core.tuple.Tuple,
+        port: Int
+    ): Iterator[org.apache.texera.amber.core.tuple.TupleLike] = Iterator.empty
+  }
+
+  class ReadingExec(val desc: String, val inputs: ExecutorInputs) extends OperatorExecutor {
+    override def processTuple(
+        tuple: org.apache.texera.amber.core.tuple.Tuple,
+        port: Int
+    ): Iterator[org.apache.texera.amber.core.tuple.TupleLike] = Iterator.empty
+  }
+
+  class ReadingIdxCountExec(
+      val desc: String,
+      val inputs: ExecutorInputs,
+      val idx: Int,
+      val workerCount: Int
+  ) extends OperatorExecutor {
     override def processTuple(
         tuple: org.apache.texera.amber.core.tuple.Tuple,
         port: Int

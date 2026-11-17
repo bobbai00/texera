@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.architecture.worker
 import org.apache.pekko.actor.{ActorSystem, Props}
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit, TestProbe}
 import org.apache.texera.amber.clustering.SingleNodeListener
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorInputs}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ChannelIdentity,
@@ -119,7 +119,8 @@ class WorkflowWorkerSpec
           "org.apache.texera.amber.engine.architecture.worker.DummyOperatorExecutor"
         ),
         isSource = false,
-        loopStartPortUris = Map.empty
+        loopStartPortUris = Map.empty,
+        inputs = OperatorInputs.defaultInstance
       )
     )
 

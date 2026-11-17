@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.json
 
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.parseField
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
@@ -31,12 +31,13 @@ import scala.util.{Failure, Success, Try}
 
 class JSONLScanSourceOpExec private[json] (
     descString: String,
+    inputs: ExecutorInputs,
     idx: Int = 0,
     workerCount: Int = 1
 ) extends SourceOperatorExecutor {
   private val desc: JSONLScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[JSONLScanSourceOpDesc])
-  private val input = desc.openInputFile()
+  private val input = inputs.open(desc.fileName.get)
   private var rows: Iterator[String] = _
   private var reader: BufferedReader = _
   // 0-based line offset of this worker's first row, captured in open() so skipped

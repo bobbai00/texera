@@ -19,14 +19,15 @@
 
 package org.apache.texera.amber.operator.source.scan.file
 
-import org.apache.texera.amber.core.executor.OperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, OperatorExecutor}
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.io.FileNotFoundException
 
 class FileScanOpExec private[scan] (
-    descString: String
+    descString: String,
+    inputs: ExecutorInputs
 ) extends OperatorExecutor {
   private val desc: FileScanOpDesc =
     objectMapper.readValue(descString, classOf[FileScanOpDesc])
@@ -41,14 +42,14 @@ class FileScanOpExec private[scan] (
     */
   override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = {
     val fileName = tuple.getFields.collectFirst { case s: String => s }.get
-    if (!desc.inputLinks.contains(fileName)) {
+    if (!inputs.hasFile(fileName)) {
       throw new FileNotFoundException(
         s"${desc.operatorInfo.userFriendlyName} reads only files listed by a File Lister " +
           s"upstream of it; $fileName is not one of them."
       )
     }
     FileScanUtils.createTuplesFromFile(
-      document = desc.openInputFile(fileName),
+      document = inputs.open(fileName),
       displayFileName = fileName,
       attributeType = desc.attributeType,
       fileEncoding = desc.fileEncoding,

@@ -30,7 +30,7 @@ import org.apache.texera.common.compiler.WorkflowCompiler.{
   unbindableStateReferences
 }
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
-import org.apache.texera.amber.core.executor.OpExecWithCode
+import org.apache.texera.amber.core.executor.{OpExecWithCode, OperatorInputs}
 import org.apache.texera.amber.core.state.StateReferencing.{
   literalReferences,
   noLoopVariableReferences
@@ -42,7 +42,6 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalLink,
   PhysicalOp,
   PhysicalPlan,
-  PlanInput,
   PortIdentity,
   PreferCoordinator,
   PythonEnvironment,
@@ -234,9 +233,7 @@ case class WorkflowCompilationResult(
     physicalPlan: Option[PhysicalPlan], // if physicalPlan is None, compilation failed
     operatorIdToOutputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]],
     operatorIdToError: Map[OperatorIdentity, WorkflowFatalError],
-    outputPortsNeedingStorage: Set[GlobalPortIdentity],
-    // what a plan made to run reads from outside the run; empty for any other compile
-    inputs: Seq[PlanInput]
+    outputPortsNeedingStorage: Set[GlobalPortIdentity]
 )
 
 /**
@@ -404,12 +401,14 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
   }
 
   /**
-    * Expands the logical plan to a physical plan. An operator's error is appended to `errors`,
-    * and the expansion goes on with the operators after it.
+    * Expands the logical plan to a physical plan, each physical operator with what its logical
+    * operator reads from outside the run (`inputs`). An operator's error is appended to
+    * `errors`, and the expansion goes on with the operators after it.
     * @return the expanded physical plan and a set of output ports that need storage
     */
   private def expandLogicalPlan(
       logicalPlan: LogicalPlan,
+      inputs: Map[OperatorIdentity, OperatorInputs],
       logicalOpsToViewResult: List[String],
       errors: ArrayBuffer[(OperatorIdentity, Throwable)]
   ): (PhysicalPlan, Set[GlobalPortIdentity]) = {
@@ -439,7 +438,9 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
         }
         // Before the physical plan: the descriptor serializes its sidecar into its descString.
         normalizeStateReferences(logicalOp, logicalPlan).foreach(report)
-        val subPlan = logicalOp.getPhysicalPlan(context.workflowId, context.executionId)
+        val read = inputs.getOrElse(logicalOpId, OperatorInputs.defaultInstance)
+        val subPlan =
+          logicalOp.getPhysicalPlan(context.workflowId, context.executionId, read)
         // Before the code-generation check below: the first error per operator is reported, and
         // code generated from a placeholder may fail on it with a less specific message.
         unbindableStateReferences(logicalOp, subPlan).foreach(report)
@@ -477,7 +478,7 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
               val internalLinks = subPlan.getUpstreamPhysicalLinks(physicalOp.id)
 
               // Add the operator to the physical plan
-              physicalPlan = physicalPlan.addOperator(physicalOp.propagateSchema())
+              physicalPlan = physicalPlan.addOperator(physicalOp.withInputs(read).propagateSchema())
 
               // Add all the links to the physical plan
               physicalPlan = (externalLinks ++ internalLinks)
@@ -547,31 +548,23 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
     // 1. convert the pojo to logical plan
     val logicalPlan: LogicalPlan = LogicalPlan(logicalPlanPojo)
 
-    // 2. give each operator the site's settings the plan is compiled under, in place of
-    // whatever it arrived with
-    logicalPlan.applyCompileSettings(bindings.settings)
-
-    // 3. bind the files the operators read: resolve the file each scan source reads, and, for
-    // a plan made to run, which only a Strict compile makes, link it, list the dataset version
-    // of each File Lister, and link the files listed upstream of each File Scan From Input
+    // 2. find what each operator reads from outside the run: the file of each scan source,
+    // resolved, and the site's settings it is read under; and, for a plan made to run, which
+    // only a Strict compile makes, the link to that file, the listing of each File Lister's
+    // dataset version, and the links to the files listed upstream of each File Scan From Input
     val makesPlanToRun = errorHandling == CompilationErrorHandling.Strict
-    val scannedFiles = logicalPlan.bindScanFiles(
+    val inputs = new InputBinder(
       bindings.files,
-      Option.when(makesPlanToRun)(bindings.inputLinker),
+      bindings.settings,
+      Option.when(makesPlanToRun)((bindings.inputLinker, bindings.lister)),
       errors
-    )
-    val listedFiles = logicalPlan.bindListedFiles(
-      Option.when(makesPlanToRun)(bindings.lister),
-      bindings.inputLinker,
-      bindings.settings.maxListedFiles,
-      errors
-    )
+    ).inputsOf(logicalPlan)
 
-    // 4. expand the logical plan to the physical plan, and get the output ports that need storage
+    // 3. expand the logical plan to the physical plan, and get the output ports that need storage
     val (expandedPlan, outputPortsNeedingStorage) =
-      expandLogicalPlan(logicalPlan, logicalPlanPojo.opsToViewResult, errors)
+      expandLogicalPlan(logicalPlan, inputs, logicalPlanPojo.opsToViewResult, errors)
 
-    // 5. collect the output schema for each logical op
+    // 4. collect the output schema for each logical op
     // even if an error is encountered during logical => physical expansion, we still want to
     // collect the output schemas of the remaining no-error operators. Schema-propagation failures
     // are errors of their operators too (e.g. a Projection on a missing column, which would
@@ -584,7 +577,7 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
         expandedPlan
       case CompilationErrorHandling.Strict =>
         if (errors.nonEmpty) failWith(logicalPlan, errors)
-        // 6. a plan made to run resolves the Python environments its operators name, pins
+        // 5. a plan made to run resolves the Python environments its operators name, pins
         // their datasets and models and names where its output ports are stored, last, once the
         // plan is otherwise valid: the engine is handed what to install, the final code, the
         // repositories to mount and the locations to write to, never a name to look up, a
@@ -602,8 +595,7 @@ class WorkflowCompiler(val context: WorkflowContext, bindings: RunBindings) exte
       operatorIdToOutputSchemas = opIdToOutputSchema,
       // map each error from OpId to WorkflowFatalError, and report them via logger
       operatorIdToError = convertErrorListToWorkflowFatalErrorMap(logger, errors.toList),
-      outputPortsNeedingStorage = outputPortsNeedingStorage,
-      inputs = scannedFiles ++ listedFiles
+      outputPortsNeedingStorage = outputPortsNeedingStorage
     )
   }
 }

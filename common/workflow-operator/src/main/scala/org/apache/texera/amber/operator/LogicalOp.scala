@@ -22,7 +22,7 @@ package org.apache.texera.amber.operator
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type
 import com.fasterxml.jackson.annotation._
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.texera.amber.core.executor.OperatorExecutor
+import org.apache.texera.amber.core.executor.{OperatorExecutor, OperatorInputs}
 import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{
@@ -151,11 +151,8 @@ import org.apache.texera.amber.operator.sklearn.testing.SklearnTestingOpDesc
 import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
 import org.apache.texera.amber.operator.visualization.stripChart.StripChartOpDesc
 import org.apache.texera.amber.operator.visualization.carpetPlot.CarpetPlotOpDesc
-import org.apache.texera.amber.operator.metadata.annotations.SetByCompiler
-import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.util.UUID
-import scala.jdk.CollectionConverters.ListHasAsScala
 import scala.util.Try
 
 trait StateTransferFunc
@@ -470,6 +467,18 @@ abstract class LogicalOp extends PortDescriptor with StateReferencing with Seria
     )
   }
 
+  /**
+    * The physical plan of the operator while a workflow is compiled, when `inputs` is what the
+    * compile found the operator reads from outside the run. The compile gives them to the
+    * plan's operators itself, for their executors to read; an operator that reads some of them
+    * while it is compiled, to tell its schema, overrides this.
+    */
+  def getPhysicalPlan(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      inputs: OperatorInputs
+  ): PhysicalPlan = getPhysicalPlan(workflowId, executionId)
+
   def operatorInfo: OperatorInfo
 
   /**
@@ -544,20 +553,4 @@ abstract class LogicalOp extends PortDescriptor with StateReferencing with Seria
       }
       .toMap
   }
-}
-
-object LogicalOp {
-
-  /**
-    * The JSON names of `opDescClass`'s properties marked `SetByCompiler`, a trait's or a
-    * superclass's included: what a compile sets on the operator, and no editor sends for it.
-    */
-  def propertiesSetByCompiler(opDescClass: Class[_ <: LogicalOp]): Set[String] =
-    objectMapper.getSerializationConfig
-      .introspect(objectMapper.constructType(opDescClass))
-      .findProperties()
-      .asScala
-      .filter(property => Option(property.getField).exists(_.hasAnnotation(classOf[SetByCompiler])))
-      .map(_.getName)
-      .toSet
 }

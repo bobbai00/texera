@@ -29,13 +29,13 @@ import java.nio.file.Files
 
 class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
 
-  private def descString(
+  private def executorOf(
       content: String,
       header: Boolean = true,
       delimiter: String = ",",
       limit: Option[Int] = None,
       offset: Option[Int] = None
-  ): String = {
+  ): CSVOldScanSourceOpExec = {
     val file = Files.createTempFile("csvold-", ".csv")
     file.toFile.deleteOnExit()
     Files.write(file, content.getBytes(StandardCharsets.UTF_8))
@@ -46,7 +46,7 @@ class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
     desc.fileEncoding = FileDecodingMethod.UTF_8
     desc.limit = limit
     desc.offset = offset
-    objectMapper.writeValueAsString(TestOperators.linked(desc))
+    new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(desc), TestOperators.inputsOf(desc))
   }
 
   private def drain(exec: CSVOldScanSourceOpExec): List[Seq[Any]] = {
@@ -56,13 +56,13 @@ class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
   }
 
   "CSVOldScanSourceOpExec" should "infer the schema from the header at construction" in {
-    val exec = new CSVOldScanSourceOpExec(descString("a,b\n1,2\n3,4\n", header = true))
+    val exec = executorOf("a,b\n1,2\n3,4\n", header = true)
     assert(exec.desc.hasHeader)
     assert(exec.schema.getAttributeNames == List("a", "b"))
   }
 
   it should "read every data row, skipping the header" in {
-    val exec = new CSVOldScanSourceOpExec(descString("a,b\n1,2\n3,4\n", header = true))
+    val exec = executorOf("a,b\n1,2\n3,4\n", header = true)
     val rows = drain(exec)
     assert(rows.size == 2)
     assert(rows.head == Seq(1, 2))
@@ -70,17 +70,17 @@ class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
   }
 
   it should "not skip the first row when the file has no header" in {
-    val exec = new CSVOldScanSourceOpExec(descString("1,2\n3,4\n", header = false))
+    val exec = executorOf("1,2\n3,4\n", header = false)
     assert(drain(exec).size == 2)
   }
 
   it should "honor the row limit" in {
-    val exec = new CSVOldScanSourceOpExec(descString("a,b\n1,2\n3,4\n5,6\n", limit = Some(1)))
+    val exec = executorOf("a,b\n1,2\n3,4\n5,6\n", limit = Some(1))
     assert(drain(exec).size == 1)
   }
 
   it should "treat close before open as a no-op" in {
-    val exec = new CSVOldScanSourceOpExec(descString("a\n1\n"))
+    val exec = executorOf("a\n1\n")
     exec.close() // reader is still null -> guarded, no exception
   }
 
@@ -88,7 +88,7 @@ class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
     // 100 clean integer rows fix the column type at INTEGER (INFER_READ_LIMIT=100);
     // data row 101 holds a non-integer and must be skipped but reported.
     val clean = (1 to 100).map(_.toString).mkString("\n")
-    val exec = new CSVOldScanSourceOpExec(descString(s"a\n$clean\noops\n"))
+    val exec = executorOf(s"a\n$clean\noops\n")
     val rows = drain(exec)
 
     assert(rows.size == 100)
@@ -106,7 +106,7 @@ class CSVOldScanSourceOpExecSpec extends AnyFlatSpec {
     // (rows 3..102) is all integers, so "oops" at data row 103 is skipped. The
     // reported number must count from the start of the data, not from the offset.
     val clean = (1 to 102).map(_.toString).mkString("\n")
-    val exec = new CSVOldScanSourceOpExec(descString(s"a\n$clean\noops\n", offset = Some(2)))
+    val exec = executorOf(s"a\n$clean\noops\n", offset = Some(2))
     val rows = drain(exec)
 
     assert(rows.size == 100)

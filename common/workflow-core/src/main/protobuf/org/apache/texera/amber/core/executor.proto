@@ -47,3 +47,36 @@ message OpExecInitInfo {
     OpExecWithCode opExecWithCode = 2;
   }
 }
+
+// What an operator reads from outside the run, as the plan made to run it states it. The
+// operator's executor is handed this beside its descriptor, and reads nothing else from outside.
+// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
+message OperatorInputs {
+  // The files the operator reads, each once, in the order of their names.
+  repeated InputFile files = 1;
+  // The files a File Lister outputs. Absent: the operator lists none.
+  FileListing listing = 2;
+  // The most columns a row of a CSV file the operator reads may have: the site's limit when the
+  // plan was made; at least 1. Absent: the operator reads no CSV file.
+  optional int32 csvParserMaxColumns = 3;
+}
+
+// A file an operator reads, through a link made when its plan was made.
+// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
+message InputFile {
+  option (scalapb.message).extends = "org.apache.texera.amber.core.executor.LinkedFile";
+  // The name the operator's executor knows the file by; not empty.
+  string name = 1;
+  // The link: where a GET reads the file from the object store. A secret, as whoever holds it
+  // reads the file until it expires; not empty.
+  string url = 2;
+  // When the link stops working, in milliseconds since the epoch; after the epoch.
+  int64 expiresAtMs = 3;
+}
+
+// The files of a dataset version, as the version was listed when the plan was made.
+// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
+message FileListing {
+  // Each file by its path: /dataset/ownerEmail/datasetName/versionName/file.
+  repeated string files = 1;
+}

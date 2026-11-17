@@ -26,6 +26,7 @@ import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.InitializeExecutorRequest
 import org.apache.texera.amber.engine.common.{AmberLogging, CheckpointState, CheckpointSupport}
 import org.apache.texera.amber.util.VirtualIdentityUtils
+import org.apache.texera.common.config.StorageConfig
 
 class SerializationManager(val actorId: ActorVirtualIdentity) extends AmberLogging {
 
@@ -49,7 +50,13 @@ class SerializationManager(val actorId: ActorVirtualIdentity) extends AmberLoggi
     val workerCount = execInitMsg.totalWorkerCount
     val executor = execInitMsg.opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>
-        ExecFactory.newExecFromJavaClassName(className, descString, workerIdx, workerCount)
+        ExecFactory.newExecFromJavaClassName(
+          className,
+          descString,
+          workerIdx,
+          workerCount,
+          new ExecutorInputs(execInitMsg.inputs, StorageConfig.inputLinksAllowedEndpoints)
+        )
       case OpExecWithCode(code, language) => ExecFactory.newExecFromJavaCode(code)
       case _                              => throw new UnsupportedOperationException("Unsupported OpExec type")
     }

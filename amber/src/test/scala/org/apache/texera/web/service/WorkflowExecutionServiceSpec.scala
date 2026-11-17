@@ -24,7 +24,12 @@ import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.executor.{
+  InputFile,
+  OpExecWithClassName,
+  OpExecWithCode,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
@@ -50,7 +55,6 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   PythonEnvironment,
   PythonEnvironmentRef,
@@ -847,19 +851,22 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "start a plan that reads files through links, handing the engine the plan as it is" in {
-    // The links are the operators' own, in the descriptors their executors are built from: the
-    // run reads nothing of an input but that the plan lists it.
-    def input(name: String): PlanInput =
-      PlanInput(OperatorIdentity("stored-text"), name, Long.MaxValue)
+    // The links are the operator's own, among what the plan says it reads: the engine hands
+    // them to the operator's executors, and the run does nothing else with them.
+    def file(name: String): InputFile =
+      InputFile(
+        s"dataset:///dataset-12/9f3c/$name",
+        s"http://texera-rustfs:9000/texera-dataset/$name?X-Amz-Signature=5ecr3t",
+        Long.MaxValue
+      )
+    val reads = OperatorInputs(files = Seq(file("a.csv"), file("b.csv")))
     val executionPlan = readBack(
       ExecutionPlan(
         savedPlanContext(),
-        PhysicalPlan(Set(storedSource), Set.empty),
-        inputs =
-          Seq(input("dataset:///dataset-12/9f3c/a.csv"), input("dataset:///dataset-12/9f3c/b.csv"))
+        PhysicalPlan(Set(storedSource.withInputs(reads)), Set.empty)
       )
     )
-    executionPlan.inputs should have size 2
+    executionPlan.plan.getOperator(storedSource.id).inputs shouldBe reads
     val run = new StoredRun(executionPlan)
     try {
       run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe

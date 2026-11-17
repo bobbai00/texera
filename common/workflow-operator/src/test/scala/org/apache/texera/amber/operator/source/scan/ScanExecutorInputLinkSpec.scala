@@ -24,7 +24,10 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.ipc.ArrowFileWriter
 import org.apache.texera.amber.core.executor.{
   ExecFactory,
+  ExecutorInputs,
+  InputFile,
   OpExecWithClassName,
+  OperatorInputs,
   SourceOperatorExecutor
 }
 import org.apache.texera.amber.core.storage.InputLink
@@ -57,13 +60,13 @@ import java.sql.{Connection, SQLException}
 import java.time.Instant
 
 /**
-  * Every scan source's executor reads its file through the link its plan carries, and through
+  * Every scan source's executor reads its file through the link its plan gives it, and through
   * nothing else: what lets a computing unit run a plan with no service to ask for a file.
   *
   * Each scan here is of a dataset's file, named as a user's resolver names one
   * (`dataset:///<repository>/<commit>/<file>`), which only LakeFS could find. Its bytes are
   * those of a local file, which its link leads to; the executor is the one a worker builds, from
-  * the executor a plan's operator carries.
+  * the executor a plan's operator carries and what the plan says the operator reads.
   */
 class ScanExecutorInputLinkSpec
     extends AnyFlatSpec
@@ -74,13 +77,11 @@ class ScanExecutorInputLinkSpec
   /**
     * A scan of one kind.
     *
-    * @param name          what the scan calls itself
     * @param newDescriptor its descriptor, set up but for its file
     * @param file          the local file whose bytes are the dataset file's
     * @param rows          what it reads from the file
     */
   private case class Scan(
-      name: String,
       newDescriptor: () => ScanSourceOpDesc,
       file: Path,
       rows: List[List[Any]]
@@ -91,13 +92,26 @@ class ScanExecutorInputLinkSpec
     /** A link to the file's bytes, as a plan made to run carries one. */
     def link: InputLink = TestOperators.fixtureInputLinker.link(file.toUri)
 
-    /** The descriptor as a compile leaves it, with `links` as the links of its plan. */
-    def planned(links: Map[String, InputLink]): ScanSourceOpDesc = {
+    /** The scan's descriptor, of the dataset's file. */
+    def descriptor: ScanSourceOpDesc = {
       val descriptor = newDescriptor()
       descriptor.fileName = Some(fileName)
-      descriptor.inputLinks = links
       descriptor
     }
+
+    /**
+      * What a plan made to run gives the scan's executor, with `links` as the links to the files
+      * it names: for a CSV scan, the column limit too.
+      */
+    def inputs(links: (String, InputLink)*): ExecutorInputs =
+      TestOperators.executorInputs(
+        OperatorInputs(
+          files = links.map { case (name, link) => InputFile(name, link.url, link.expiresAtMs) },
+          csvParserMaxColumns = Option.when(newDescriptor().isInstanceOf[CSVScanSourceOpDesc])(
+            CSVScanSourceOpDesc.DefaultMaxColumns
+          )
+        )
+      )
   }
 
   private var recorder: StatementRecorder = _
@@ -153,18 +167,15 @@ class ScanExecutorInputLinkSpec
     val people = List(List(1, "Ada"), List(2, "Grace"))
     scans = Seq(
       Scan(
-        "CSV File Scan",
         () => {
           val descriptor = new CSVScanSourceOpDesc
           descriptor.customDelimiter = Some(",")
-          descriptor.maxColumns = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
           descriptor
         },
         written("people.csv", "id,name\n1,Ada\n2,Grace\n"),
         people
       ),
       Scan(
-        "CSV File Scan",
         () => {
           val descriptor = new ParallelCSVScanSourceOpDesc
           descriptor.customDelimiter = Some(",")
@@ -174,25 +185,21 @@ class ScanExecutorInputLinkSpec
         people
       ),
       Scan(
-        "CSVOld File Scan",
         () => new CSVOldScanSourceOpDesc,
         written("people-old.csv", "id,name\n1,Ada\n2,Grace\n"),
         people
       ),
       Scan(
-        "JSONL File Scan",
         () => new JSONLScanSourceOpDesc,
         written("people.jsonl", """{"id":1,"name":"Ada"}""" + "\n" + """{"id":2,"name":"Grace"}"""),
         people
       ),
       Scan(
-        "Arrow File Scan",
         () => new ArrowSourceOpDesc,
         arrowFile("people.arrow", "Ada", "Grace"),
         List(List("Ada"), List("Grace"))
       ),
       Scan(
-        "File Scan",
         () => new FileScanSourceOpDesc,
         written("people.txt", "Ada\nGrace"),
         List(List("Ada"), List("Grace"))
@@ -207,20 +214,29 @@ class ScanExecutorInputLinkSpec
     closeConnectionPool()
   }
 
-  /** The executor a worker builds for `descriptor`, from what its plan's operator carries. */
-  private def executorOf(descriptor: ScanSourceOpDesc): SourceOperatorExecutor =
+  /**
+    * The executor a worker builds for `descriptor`, from what its plan's operator carries and
+    * the `inputs` the plan gives the operator.
+    */
+  private def executorOf(
+      descriptor: ScanSourceOpDesc,
+      inputs: ExecutorInputs
+  ): SourceOperatorExecutor =
     descriptor.getPhysicalOp(WorkflowIdentity(1), ExecutionIdentity(1)).opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>
         ExecFactory
-          .newExecFromJavaClassName(className, descString)
+          .newExecFromJavaClassName(className, descString, inputs = inputs)
           .asInstanceOf[SourceOperatorExecutor]
       case other =>
         fail(s"${descriptor.getClass.getSimpleName} runs no executor of a class: $other")
     }
 
-  /** The rows the executor of `descriptor` reads, from when it is built to when it is closed. */
-  private def rowsOf(descriptor: ScanSourceOpDesc): List[List[Any]] = {
-    val executor = executorOf(descriptor)
+  /**
+    * The rows the executor of `descriptor` reads when given `inputs`, from when it is built to
+    * when it is closed.
+    */
+  private def rowsOf(descriptor: ScanSourceOpDesc, inputs: ExecutorInputs): List[List[Any]] = {
+    val executor = executorOf(descriptor, inputs)
     executor.open()
     try executor.produceTuple().map(_.getFields.toList).toList
     finally executor.close()
@@ -255,7 +271,7 @@ class ScanExecutorInputLinkSpec
       withClue(s"${scan.newDescriptor().getClass.getSimpleName}: ") {
         val copiesBefore = copies
         val statements = whileDatabaseUnreachable {
-          rowsOf(scan.planned(Map(scan.fileName -> scan.link))) shouldBe scan.rows
+          rowsOf(scan.descriptor, scan.inputs(scan.fileName -> scan.link)) shouldBe scan.rows
         }
 
         statements shouldBe empty
@@ -265,23 +281,25 @@ class ScanExecutorInputLinkSpec
     }
   }
 
-  it should "refuse a file its plan carries no link to, wherever the file is" in {
+  it should "refuse a file its plan gives it no link to, wherever the file is" in {
     scans.foreach { scan =>
       withClue(s"${scan.newDescriptor().getClass.getSimpleName}: ") {
-        def refused(descriptor: ScanSourceOpDesc): String =
-          intercept[IllegalStateException](rowsOf(descriptor)).getMessage
+        def refused(descriptor: ScanSourceOpDesc, inputs: ExecutorInputs): String =
+          intercept[IllegalStateException](rowsOf(descriptor, inputs)).getMessage
 
-        refused(scan.planned(Map.empty)) shouldBe
-          s"${scan.name} has no link to ${scan.fileName}: its plan was not made to run."
+        refused(scan.descriptor, scan.inputs()) shouldBe
+          s"The operator has no link to ${scan.fileName}: its plan was not made to run."
         // A link to another file is none to this one.
-        refused(scan.planned(Map("dataset:///dataset-12/c0ffee/other" -> scan.link))) shouldBe
-          s"${scan.name} has no link to ${scan.fileName}: its plan was not made to run."
+        refused(
+          scan.descriptor,
+          scan.inputs("dataset:///dataset-12/c0ffee/other" -> scan.link)
+        ) shouldBe s"The operator has no link to ${scan.fileName}: its plan was not made to run."
         // Nor is a file on the executor's own disk read without one.
         val local = scan.newDescriptor()
         local.setResolvedFileName(scan.file.toUri)
-        refused(local) shouldBe
-          s"${scan.name} has no link to ${scan.file.toUri.toASCIIString}: its plan was not made " +
-            "to run."
+        refused(local, scan.inputs()) shouldBe
+          s"The operator has no link to ${scan.file.toUri.toASCIIString}: its plan was not " +
+            "made to run."
       }
     }
   }
@@ -292,7 +310,9 @@ class ScanExecutorInputLinkSpec
       withClue(s"${scan.newDescriptor().getClass.getSimpleName}: ") {
         val expired = scan.link.copy(expiresAtMs = expiredAt.toEpochMilli)
 
-        val thrown = intercept[IOException](rowsOf(scan.planned(Map(scan.fileName -> expired))))
+        val thrown = intercept[IOException] {
+          rowsOf(scan.descriptor, scan.inputs(scan.fileName -> expired))
+        }
 
         thrown.getMessage shouldBe
           s"The link to ${scan.fileName} expired at 2024-02-29T12:00:00Z; run the workflow again."
@@ -305,8 +325,10 @@ class ScanExecutorInputLinkSpec
     // has expired, when it reads the file again for its rows.
     val scan = scans.head
     val expiresAtMs = System.currentTimeMillis() + 1500
-    val executor =
-      executorOf(scan.planned(Map(scan.fileName -> scan.link.copy(expiresAtMs = expiresAtMs))))
+    val executor = executorOf(
+      scan.descriptor,
+      scan.inputs(scan.fileName -> scan.link.copy(expiresAtMs = expiresAtMs))
+    )
     Thread.sleep(math.max(0L, expiresAtMs + 50 - System.currentTimeMillis()))
 
     val thrown = intercept[IOException](executor.open())
@@ -322,7 +344,7 @@ class ScanExecutorInputLinkSpec
         val elsewhere = scan.link.copy(url = "http://169.254.169.254/latest/meta-data/")
 
         val thrown = intercept[IllegalArgumentException] {
-          executorOf(scan.planned(Map(scan.fileName -> elsewhere)))
+          executorOf(scan.descriptor, scan.inputs(scan.fileName -> elsewhere))
         }
 
         thrown.getMessage should startWith(

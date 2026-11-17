@@ -108,10 +108,10 @@ final class PlanTooLargeException(what: String, val bytes: Int)
   * Beside its record, a row keeps the JSON of what its body was compiled from, as the user sent
   * it (`logical`): on the plan row, the logical plan, or the part of it up to the one operator the
   * execution runs to; on an update row, the operator as changed. It is written so that it parses
-  * back with its loop-variable references, and without what a compile sets on an operator, such
-  * as the links its executor reads files through. It is the execution's provenance, and, on the
-  * plan row, what the Dashboard compiles a change to a paused operator against; a computing unit
-  * has no use for it, and does not read it.
+  * back with its loop-variable references, and holds nothing a compile found for an operator:
+  * the links an executor reads files through are in the body alone. It is the execution's
+  * provenance, and, on the plan row, what the Dashboard compiles a change to a paused operator
+  * against; a computing unit has no use for it, and does not read it.
   *
   * Every method takes only a URI [[planUri]] could have built, and refuses any other. A table
   * that is not there is a [[NoStoredPlanException]]; any other failure of the catalog is thrown
@@ -126,7 +126,7 @@ object ExecutionPlanStore {
   /**
     * The most bytes of UTF-8 a row's body may be: 16 MiB. A plan holds a link to each file its
     * operators read, so it grows with the files it lists: at the default of
-    * `constants.max-listed-files`, with links of 600 characters, it is about 10 MiB. The limit
+    * `constants.max-listed-files`, with links of 600 characters, it is about 9 MiB. The limit
     * is below the longest string a JSON reader takes (20 million characters) and the largest
     * message between the nodes of a computing unit (30 MiB), so a body that was stored can be
     * read back, and each operator of its plan handed its executor.

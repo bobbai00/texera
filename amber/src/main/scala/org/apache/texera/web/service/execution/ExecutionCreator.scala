@@ -170,9 +170,9 @@ final class WorkflowNotCompiled(
   *     A plan that cannot be made for another reason, such as the database or the storage not
   *     answering while a file is resolved or linked, marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
-  *     from (as JSON that parses back to it, without what a compile sets,
-  *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A plan larger
-  *     than the table keeps marks the row FAILED (400); so does a write that fails (500).
+  *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
+  *     the email notification. A plan larger than the table keeps marks the row FAILED (400); so
+  *     does a write that fails (500).
   *  1. Off the request's thread, the results of the workflow's ended executions on the unit that
   *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
   *     new execution replaces none until a unit runs it.
@@ -264,9 +264,8 @@ class ExecutionCreator(
         // How long each operator took in the user's newest completed run of the workflow, for the
         // scheduler's cost model: saved with the plan, which the engine takes them from.
         context.costHints = costHints.load(checked.wid, uid)
-        // The plan compiled, as an editor sends it, loop-variable references included: written
-        // before the compile resolves its operators in place, and without what a compile sets,
-        // whatever the request sent there.
+        // The plan compiled, as the request sent it, loop-variable references included: written
+        // before the compile resolves its operators in place.
         val logical = checked.plan.toJson
         val compiler = new WorkflowCompiler(context, bindingsFor(uid))
         val savedPlan = withinDeadline(eid) {

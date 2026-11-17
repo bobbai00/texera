@@ -34,25 +34,20 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.operator.StandaloneCodeGenerator
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.operator.source.SourceOperatorDescriptor
-import org.apache.texera.amber.operator.source.scan.{
-  FileAttributeType,
-  FileDecodingMethod,
-  ReadsInputFiles
-}
+import org.apache.texera.amber.operator.source.scan.{FileAttributeType, FileDecodingMethod}
 import org.apache.texera.amber.operator.source.scan.text.TextSourceOpDesc
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 /**
   * Scans the files its input tuples name. A file is read only if a File Lister upstream of the
-  * operator lists it: the names arrive while the plan runs, and the plan carries a link
-  * (`inputLinks`) to each file listed upstream when it was made, and to no other.
+  * operator lists it: the names arrive while the plan runs, and the plan carries a link to each
+  * file listed upstream when it was made, and to no other.
   */
 class FileScanOpDesc
     extends SourceOperatorDescriptor
     with TextSourceOpDesc
-    with StandaloneCodeGenerator
-    with ReadsInputFiles {
+    with StandaloneCodeGenerator {
   @JsonProperty(defaultValue = "UTF_8", required = true)
   @JsonSchemaTitle("Encoding")
   var fileEncoding: FileDecodingMethod = FileDecodingMethod.UTF_8

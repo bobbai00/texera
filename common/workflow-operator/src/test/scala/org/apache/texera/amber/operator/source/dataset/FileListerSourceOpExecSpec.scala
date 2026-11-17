@@ -21,7 +21,10 @@ package org.apache.texera.amber.operator.source.dataset
 
 import org.apache.texera.amber.core.executor.{
   ExecFactory,
+  ExecutorInputs,
+  FileListing,
   OpExecWithClassName,
+  OperatorInputs,
   SourceOperatorExecutor
 }
 import org.apache.texera.amber.core.tuple.SchemaEnforceable
@@ -37,7 +40,7 @@ import org.scalatest.matchers.should.Matchers
 import java.sql.{Connection, SQLException}
 
 /**
-  * A File Lister's executor outputs the listing its plan carries, and lists no dataset version
+  * A File Lister's executor outputs the listing its plan gives it, and lists no dataset version
   * itself: a computing unit runs a plan without asking Postgres which version a path names, or
   * LakeFS which files the version holds. The executor is the one a worker builds, from what the
   * plan's operator carries.
@@ -58,28 +61,35 @@ class FileListerSourceOpExecSpec
 
   override protected def afterAll(): Unit = closeConnectionPool()
 
-  /** A File Lister of the version at `versionPath`, as a compile leaves it with `listing`. */
-  private def planned(listing: Option[List[String]]): FileListerSourceOpDesc = {
+  /** A File Lister of the version at `versionPath`. */
+  private def fileLister(): FileListerSourceOpDesc = {
     val descriptor = new FileListerSourceOpDesc
     descriptor.datasetVersionPath = versionPath
-    descriptor.listing = listing
     descriptor
   }
 
-  /** The executor a worker builds for `descriptor`, from what its plan's operator carries. */
-  private def executorOf(descriptor: FileListerSourceOpDesc): SourceOperatorExecutor =
-    descriptor.getPhysicalOp(WorkflowIdentity(1), ExecutionIdentity(1)).opExecInitInfo match {
+  /**
+    * The executor a worker builds for a File Lister whose plan gives it `listing`, from what the
+    * plan's operator carries.
+    */
+  private def executorOf(listing: Option[Seq[String]]): SourceOperatorExecutor =
+    fileLister().getPhysicalOp(WorkflowIdentity(1), ExecutionIdentity(1)).opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>
         ExecFactory
-          .newExecFromJavaClassName(className, descString)
+          .newExecFromJavaClassName(
+            className,
+            descString,
+            inputs =
+              new ExecutorInputs(OperatorInputs(listing = listing.map(FileListing(_))), Seq.empty)
+          )
           .asInstanceOf[SourceOperatorExecutor]
       case other => fail(s"a File Lister runs no executor of a class: $other")
     }
 
-  /** The file names the executor of `descriptor` outputs, from its tuples' `filename` column. */
-  private def outputOf(descriptor: FileListerSourceOpDesc): List[String] = {
-    val schema = descriptor.getExternalOutputSchemas(Map.empty)(PortIdentity())
-    val executor = executorOf(descriptor)
+  /** The file names a File Lister given `listing` outputs, from its tuples' `filename` column. */
+  private def outputOf(listing: Seq[String]): List[String] = {
+    val schema = fileLister().getExternalOutputSchemas(Map.empty)(PortIdentity())
+    val executor = executorOf(Some(listing))
     executor.open()
     try {
       executor
@@ -114,26 +124,26 @@ class FileListerSourceOpExecSpec
       s"$versionPath/données/été.csv"
     )
 
-    outputOf(planned(Some(listing))) shouldBe listing
+    outputOf(listing) shouldBe listing
   }
 
   it should "output nothing for a version that was listed and holds no file" in {
-    outputOf(planned(Some(Nil))) shouldBe empty
+    outputOf(Nil) shouldBe empty
   }
 
   it should "list while the database cannot be reached, without trying to reach it" in {
     val listing = List(s"$versionPath/a.txt", s"$versionPath/b.txt")
 
     val statements = whileDatabaseUnreachable {
-      outputOf(planned(Some(listing))) shouldBe listing
+      outputOf(listing) shouldBe listing
     }
 
     statements shouldBe empty
   }
 
-  it should "refuse a descriptor that carries no listing, rather than list the version itself" in {
+  it should "refuse a plan that gives it no listing, rather than list the version itself" in {
     val statements = recorder.record {
-      val thrown = intercept[IllegalStateException](executorOf(planned(None)))
+      val thrown = intercept[IllegalStateException](executorOf(None))
 
       thrown.getMessage shouldBe "File Lister has no listing: its plan was not made to run."
     }

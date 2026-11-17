@@ -64,9 +64,11 @@ class CSVScanSourceOpExecNoDatabaseSpec
   private def scanned(maxColumns: Int): List[List[Any]] = {
     val desc = new CSVScanSourceOpDesc()
     desc.customDelimiter = Some(",")
-    desc.maxColumns = Some(maxColumns)
     desc.setResolvedFileName(threeColumns.toUri)
-    val exec = new CSVScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
+    val exec = new CSVScanSourceOpExec(
+      objectMapper.writeValueAsString(desc),
+      TestOperators.inputsOf(desc, Some(maxColumns))
+    )
     exec.open()
     try exec.produceTuple().map(_.getFields.toList).toList
     finally exec.close()

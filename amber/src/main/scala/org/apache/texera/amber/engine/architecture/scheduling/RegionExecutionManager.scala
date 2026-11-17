@@ -510,7 +510,8 @@ class RegionExecutionManager(
                     workerConfigs.length,
                     physicalOp.opExecInitInfo,
                     physicalOp.isSourceOperator,
-                    loopStartPortUris
+                    loopStartPortUris,
+                    physicalOp.inputs
                   ),
                   asyncRPCClient.mkContext(workerId)
                 )

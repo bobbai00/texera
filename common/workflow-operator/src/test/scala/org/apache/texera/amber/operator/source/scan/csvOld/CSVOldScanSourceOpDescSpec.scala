@@ -133,7 +133,8 @@ class CSVOldScanSourceOpDescSpec extends AnyFlatSpec with Matchers {
     d.hasHeader = false
     d.offset = Some(10)
 
-    val exec = new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(d)))
+    val exec =
+      new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(d), TestOperators.inputsOf(d))
     exec.open()
     val engineRows =
       try exec.produceTuple().toList
@@ -169,7 +170,8 @@ class CSVOldScanSourceOpDescSpec extends AnyFlatSpec with Matchers {
     val d = describing(writeCsv("w\n1.5\nNaN\n2d\n0x1p3\n-Infinity\n0x1p1024\n-0x1p1024\n"))
     d.sourceSchema().getAttribute("w").getType shouldBe AttributeType.DOUBLE
 
-    val exec = new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(d)))
+    val exec =
+      new CSVOldScanSourceOpExec(objectMapper.writeValueAsString(d), TestOperators.inputsOf(d))
     exec.open()
     val engineText =
       try exec.produceTuple().map(_.getFields.head.toString).toList

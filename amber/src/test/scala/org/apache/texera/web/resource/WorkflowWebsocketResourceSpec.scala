@@ -29,7 +29,7 @@ import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.ClusterListener
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{InputFile, OpExecWithClassName, OperatorInputs}
 import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionPlanStore, VFSURIFactory}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -42,7 +42,6 @@ import org.apache.texera.amber.core.workflow.{
   CostHints,
   PhysicalPlan,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   WorkflowContext
 }
@@ -1276,16 +1275,18 @@ class WorkflowWebsocketResourceSpec
     val expired = created()
     val expiredUri = new URI(expired.planUri)
     val expiry = 1000L
+    val expiredFile =
+      InputFile("lines.txt", "http://texera-rustfs:9000/texera-dataset/lines.txt", expiry)
     rewritePlan(
       expiredUri,
-      body =>
+      body => {
+        val saved = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(body))
+        val reading =
+          saved.plan.operators.map(_.withInputs(OperatorInputs(files = Seq(expiredFile))))
         PhysicalPlanCodec.toJson(
-          PhysicalPlanCodec.encode(
-            PhysicalPlanCodec
-              .decode(PhysicalPlanCodec.fromJson(body))
-              .copy(inputs = Seq(PlanInput(OperatorIdentity("lines"), "lines.txt", expiry)))
-          )
+          PhysicalPlanCodec.encode(saved.copy(plan = saved.plan.copy(operators = reading)))
         )
+      }
     )
     val refusals: Seq[(String, Option[Int], PrivilegeEnum, Int, String, String)] = Seq(
       (

@@ -32,7 +32,7 @@ object PhysicalPlanRoundTrip extends Assertions {
   private val propagation = SchemaPropagationFunc(schemas => schemas)
 
   /**
-    * Saves `plan`, made to run under `context`, with no replay, replay log or input, and reads it
+    * Saves `plan`, made to run under `context`, with no replay and no replay log, and reads it
     * back, as `assertRoundTrips(ExecutionPlan(context, plan))`.
     *
     * @return the JSON text
@@ -66,18 +66,13 @@ object PhysicalPlanRoundTrip extends Assertions {
 
   /**
     * Fails unless `read` is `original` as a saved plan reads back: the same context (see
-    * [[assertSameContext]]) and physical plan (see [[assertSamePlan]]), replay and replay log,
-    * and inputs, in the order a saved plan lists them: by the operator's id, then the name.
+    * [[assertSameContext]]) and physical plan (see [[assertSamePlan]]), replay and replay log.
     */
   def assertSameExecutionPlan(original: ExecutionPlan, read: ExecutionPlan): Unit = {
     assertSameContext(original.context, read.context)
     assertSamePlan(original.plan, read.plan)
     assert(read.replay == original.replay)
     assert(read.replayLog == original.replayLog)
-    assert(
-      read.inputs == original.inputs.sortBy(input => (input.logicalOperatorId.id, input.name)),
-      "the inputs differ, or are not in the order of their operators' ids, then their names"
-    )
   }
 
   /** Fails unless `read` has the ids, settings, warehouse and cost hints of `original`. */

@@ -82,7 +82,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
-        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        objectMapper.writeValueAsString(fileScanSourceOpDesc),
+        TestOperators.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -105,7 +106,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.fileScanOffset = Option(5)
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
-        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        objectMapper.writeValueAsString(fileScanSourceOpDesc),
+        TestOperators.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -131,7 +133,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
-        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        objectMapper.writeValueAsString(fileScanSourceOpDesc),
+        TestOperators.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -153,7 +156,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.attributeType = FileAttributeType.SINGLE_STRING
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
-        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        objectMapper.writeValueAsString(fileScanSourceOpDesc),
+        TestOperators.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -180,7 +184,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
-        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        objectMapper.writeValueAsString(fileScanSourceOpDesc),
+        TestOperators.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -209,7 +214,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     fileScanSourceOpDesc.fileScanLimit = Option(5)
     val FileScanSourceOpExec =
       new FileScanSourceOpExec(
-        objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+        objectMapper.writeValueAsString(fileScanSourceOpDesc),
+        TestOperators.inputsOf(fileScanSourceOpDesc)
       )
     FileScanSourceOpExec.open()
     val processedTuple: Iterator[Tuple] = FileScanSourceOpExec
@@ -252,7 +258,8 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
       val fileScanSourceOpExec =
         new FileScanSourceOpExec(
-          objectMapper.writeValueAsString(TestOperators.linked(fileScanSourceOpDesc))
+          objectMapper.writeValueAsString(fileScanSourceOpDesc),
+          TestOperators.inputsOf(fileScanSourceOpDesc)
         )
       fileScanSourceOpExec.open()
       val processedTuple: Iterator[Tuple] = fileScanSourceOpExec
@@ -323,7 +330,10 @@ class FileScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
       val desc = describing(utf16BeFile, """"encoding":"UTF_16"""")
       desc.attributeType = FileAttributeType.STRING
       val exec =
-        new FileScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
+        new FileScanSourceOpExec(
+          objectMapper.writeValueAsString(desc),
+          TestOperators.inputsOf(desc)
+        )
       exec.open()
       assert(exec.produceTuple().toList.map(_.getFields.head) == List("line1", "line2"))
       exec.close()

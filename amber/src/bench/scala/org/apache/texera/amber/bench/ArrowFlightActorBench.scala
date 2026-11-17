@@ -22,7 +22,7 @@ package org.apache.texera.amber.bench
 import org.apache.pekko.actor.{Actor, ActorRef, ActorSystem, PoisonPill, Props}
 import org.apache.pekko.testkit.TestProbe
 import org.apache.texera.amber.clustering.SingleNodeListener
-import org.apache.texera.amber.core.executor.OpExecWithCode
+import org.apache.texera.amber.core.executor.{OpExecWithCode, OperatorInputs}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
@@ -287,7 +287,8 @@ object ArrowFlightActorBench {
             1,
             OpExecWithCode(IdentityPythonCode, "python"),
             isSource = false,
-            loopStartPortUris = Map.empty
+            loopStartPortUris = Map.empty,
+            inputs = OperatorInputs.defaultInstance
           ),
           ctx,
           0L

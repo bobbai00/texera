@@ -94,8 +94,7 @@ object PlanToRun {
     * environments and pins the datasets and models the operators name, and finds the output
     * ports whose results are stored, which are saved with the settings. The run's context is
     * left as it is; the engine takes the settings and cost hints from the saved plan. The plan
-    * saved replays `replay`, writes its replay log to `replayLog`, and lists the files it reads
-    * through links as its inputs, with when each link expires.
+    * saved replays `replay` and writes its replay log to `replayLog`.
     *
     * @param compiler  the run's compiler, bound for the run's user ([[bindingsFor]]): it resolves
     *                  files, datasets, models and Python environments as that user may, and
@@ -142,7 +141,7 @@ object PlanToRun {
     val compiled = Workflow.fromCompilationResult(savedUnder, result)
     PhysicalPlanCodec.toJson(
       PhysicalPlanCodec.encode(
-        ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog, result.inputs)
+        ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog)
       )
     )
   }

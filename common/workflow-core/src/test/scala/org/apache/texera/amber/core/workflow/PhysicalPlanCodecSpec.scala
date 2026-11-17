@@ -19,7 +19,14 @@
 
 package org.apache.texera.amber.core.workflow
 
-import org.apache.texera.amber.core.executor.{OpExecInitInfo, OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.executor.{
+  FileListing,
+  InputFile,
+  OpExecInitInfo,
+  OpExecWithClassName,
+  OpExecWithCode,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.storage.ExecutionPlanStore
 import org.apache.texera.amber.core.storedplan.StoredAttribute.{AttributeType => StoredType}
 import org.apache.texera.amber.core.storedplan.StoredPartitionInfo.Kind
@@ -148,11 +155,30 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   // ----- a plan that sets every field -----
 
+  /** A link to `file`, signed as an object store signs one. */
+  private def linkTo(file: String): String =
+    s"http://texera-rustfs:9000/texera-dataset/$file?X-Amz-Signature=5ecr3t"
+
+  // Every kind of thing an operator reads from outside the run: files in the order of their
+  // names, a listing in the order it was listed, and a limit of the site's.
+  private val scanInputs = OperatorInputs(
+    files = Seq(
+      InputFile("dataset:///ds-1/d4t4/a.csv", linkTo("a"), Long.MaxValue),
+      InputFile("dataset:///ds-1/d4t4/résumé.csv", linkTo("r%C3%A9sum%C3%A9"), 1763856000000L)
+    ),
+    listing = Some(FileListing(Seq("/dataset/a@x.io/ds/v1/b.txt", "/dataset/a@x.io/ds/v1/a.txt"))),
+    csvParserMaxColumns = Some(731)
+  )
+
   private val scan = withPorts(
     operator(
       "scan",
       executor = OpExecWithClassName("org.example.ScanOpExec", """{"fileName":"résumé.csv"}""")
-    ).copy(parallelizable = false, locationPreference = Some(PreferCoordinator)),
+    ).copy(
+      parallelizable = false,
+      locationPreference = Some(PreferCoordinator),
+      inputs = scanInputs
+    ),
     outputs = Seq(OutputPort(PortIdentity(0), "rows") -> everyType)
   )
 
@@ -182,7 +208,8 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   private val localAgg = withPorts(
     operator("agg", "localAgg").copy(
       outputPartitionRule = PartitionRule.KeepKeyedInput,
-      requiresMaterializedExecution = true
+      requiresMaterializedExecution = true,
+      inputs = OperatorInputs(files = Seq(InputFile("a", linkTo("a"), 1L)))
     ),
     inputs = Seq(InputPort(PortIdentity(0)) -> keyed),
     outputs = Seq(OutputPort(PortIdentity(0, internal = true), blocking = true) -> keyed)
@@ -233,13 +260,6 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   )
 
-  // Out of the order they are saved in, by the operator's id and then the name.
-  private val fullInputs = Seq(
-    PlanInput(OperatorIdentity("scan"), "dataset:///ds-1/d4t4/résumé.csv", 1763856000000L),
-    PlanInput(OperatorIdentity("agg"), "a", 1L),
-    PlanInput(OperatorIdentity("scan"), "dataset:///ds-1/d4t4/a.csv", Long.MaxValue)
-  )
-
   private val fullReplay =
     ReplaySource(ExecutionIdentity(40), new URI("file:///var/texera/logs/7/40/"), "interaction-3")
 
@@ -247,8 +267,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     fullContext,
     fullPlan,
     replay = Some(fullReplay),
-    replayLog = Some(new URI("hdfs://namenode:8020/texera/logs/7/42/")),
-    inputs = fullInputs
+    replayLog = Some(new URI("hdfs://namenode:8020/texera/logs/7/42/"))
   )
 
   "PhysicalPlanCodec" should "save a plan that sets every field and read the same plan back" in {
@@ -347,6 +366,26 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     ).foreach { op =>
       withClue(s"$op: ") {
         assertRoundTrips(contextOf(), planOf(Seq(op), Nil))
+      }
+    }
+  }
+
+  it should "save and read back what an operator reads from outside the run, each kind alone, all of them or none" in {
+    val file = InputFile("dataset:///ds-1/d4t4/a.csv", linkTo("a"), 1763856000000L)
+    Seq(
+      OperatorInputs(),
+      OperatorInputs(files = Seq(file)),
+      OperatorInputs(listing = Some(FileListing(Seq("/dataset/a@x.io/ds/v1/a.txt")))),
+      // a version that holds no file is listed all the same, apart from no listing
+      OperatorInputs(listing = Some(FileListing())),
+      OperatorInputs(csvParserMaxColumns = Some(1)),
+      scanInputs
+    ).foreach { inputs =>
+      withClue(s"$inputs: ") {
+        val json =
+          assertRoundTrips(contextOf(), planOf(Seq(operator("op").withInputs(inputs)), Nil))
+        val read = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(json)).plan
+        assert(read.getOperator(opId("op")).inputs == inputs)
       }
     }
   }
@@ -619,7 +658,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   // ----- what a run needs besides its plan -----
 
-  it should "save and read back a replay, a replay log, cost hints and inputs, each one alone or absent" in {
+  it should "save and read back a replay, a replay log and cost hints, each one alone or absent" in {
     val bare = ExecutionPlan(contextOf(warehouse = fullWarehouse), fullPlan)
     val withHints = ExecutionPlan(
       contextOf(warehouse = fullWarehouse, costHints = fullContext.costHints),
@@ -630,7 +669,6 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       "a replay" -> bare.copy(replay = Some(fullReplay)),
       "a replay log" -> bare.copy(replayLog = fullExecutionPlan.replayLog),
       "cost hints" -> withHints,
-      "inputs" -> bare.copy(inputs = fullInputs),
       "all of them" -> fullExecutionPlan
     ).foreach {
       case (what, plan) =>
@@ -640,19 +678,15 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
-  it should "save and read back ten thousand inputs of one operator" in {
-    // A plan lists every file its operators read through links, however many.
-    val inputs = (1 to 10000).map { part =>
-      PlanInput(
-        OperatorIdentity("scan"),
-        f"dataset:///ds-1/d4t4/part-$part%05d.csv",
-        1763856000000L + part
-      )
+  it should "save and read back ten thousand files of one operator" in {
+    // An operator's block holds every file the operator reads through a link, however many.
+    val files = (1 to 10000).map { part =>
+      val name = f"dataset:///ds-1/d4t4/part-$part%05d.csv"
+      InputFile(name, linkTo(name), 1763856000000L + part)
     }
+    val reading = operator("op").withInputs(OperatorInputs(files = files))
 
-    assertRoundTrips(
-      ExecutionPlan(contextOf(warehouse = fullWarehouse), fullPlan, inputs = inputs.reverse)
-    )
+    assertRoundTrips(contextOf(), planOf(Seq(reading), Nil))
   }
 
   it should "save and read back cost hints that name no operator, and costs of 0 and of the largest finite number" in {
@@ -688,30 +722,20 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
-  it should "save cost hints and inputs in the order of their operators' ids, then the names, the same text whatever order they come in" in {
+  it should "save cost hints in the order of their operators' ids, the same text whatever order they come in" in {
     val stored = PhysicalPlanCodec.encode(fullExecutionPlan)
     assert(
       stored.getCostHints.operators.map(_.logicalOperatorId) ==
         Seq("agg", "removed-since", "scan", "udf")
     )
-    assert(
-      stored.inputs.map(input => (input.logicalOperatorId, input.name)) == Seq(
-        ("agg", "a"),
-        ("scan", "dataset:///ds-1/d4t4/a.csv"),
-        ("scan", "dataset:///ds-1/d4t4/résumé.csv")
-      )
+    val hints = fullContext.costHints.map(hints =>
+      hints.copy(secondsByLogicalOperator = hints.secondsByLogicalOperator.toSeq.reverse.toMap)
     )
-    val texts = fullInputs.permutations.map { inputs =>
-      val hints = fullContext.costHints.map(hints =>
-        hints.copy(secondsByLogicalOperator = hints.secondsByLogicalOperator.toSeq.reverse.toMap)
-      )
-      val context = contextOf(fullContext.workflowSettings, fullContext.warehouse, hints)
-      PhysicalPlanCodec.toJson(
-        PhysicalPlanCodec.encode(fullExecutionPlan.copy(context = context, inputs = inputs))
-      )
-    }.toSeq
-    assert(texts.size == 6)
-    assert(texts.distinct == Seq(PhysicalPlanCodec.toJson(stored)))
+    val context = contextOf(fullContext.workflowSettings, fullContext.warehouse, hints)
+    assert(
+      PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(fullExecutionPlan.copy(context = context)))
+        == PhysicalPlanCodec.toJson(stored)
+    )
   }
 
   // ----- what a saved plan holds -----
@@ -754,6 +778,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "suggestedWorkerNum",
         "pythonEnvironment",
         "repositoryMounts",
+        "inputs",
         "storageLocations"
       ),
       leftOut = Map(
@@ -782,14 +807,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "save every field of what a run needs besides its plan, and of a change to an operator" in {
     val update = OperatorUpdate(executionId, "update-1", udf.id, udf.opExecInitInfo, None)
     Seq[(String, Product, Set[String])](
-      ("ExecutionPlan", fullExecutionPlan, Set("context", "plan", "replay", "replayLog", "inputs")),
+      ("ExecutionPlan", fullExecutionPlan, Set("context", "plan", "replay", "replayLog")),
       ("ReplaySource", fullReplay, Set("sourceExecutionId", "logLocation", "interaction")),
       (
         "CostHints",
         fullContext.costHints.get,
         Set("sourceExecutionId", "secondsByLogicalOperator")
       ),
-      ("PlanInput", fullInputs.head, Set("logicalOperatorId", "name", "expiresAtMs")),
       (
         "OperatorUpdate",
         update,
@@ -821,6 +845,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "suggestedWorkerNum" -> keptRunning,
         "pythonEnvironment" ->
           "a worker's interpreter is fixed when it starts; the running operator's stays",
+        "inputs" -> keptRunning,
         "storageLocations" -> keptRunning,
         "resourceBinding" -> "an operator made to run holds none, and saving one is refused"
       )
@@ -855,7 +880,14 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       executor = OpExecWithClassName("org.example.ScanOpExec", """{"file":"a.csv"}""")
     )
       .withParallelizable(false)
-      .withLocationPreference(Some(PreferCoordinator)),
+      .withLocationPreference(Some(PreferCoordinator))
+      .withInputs(
+        OperatorInputs(
+          files = Seq(InputFile("dataset:///ds-1/d4t4/a.csv", linkTo("a"), 1763856000000L)),
+          listing = Some(FileListing(Seq("/dataset/a@x.io/ds/v1/a.csv"))),
+          csvParserMaxColumns = Some(512)
+        )
+      ),
     outputs = Seq(OutputPort(PortIdentity(0), "out") -> goldenRow)
   )
   private val goldenUdf = withPorts(
@@ -931,8 +963,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     replay = Some(
       ReplaySource(ExecutionIdentity(40), new URI("file:///var/texera/logs/7/40/"), "replay-to")
     ),
-    replayLog = Some(new URI("file:///var/texera/logs/7/42/")),
-    inputs = Seq(PlanInput(OperatorIdentity("scan"), "dataset:///ds-1/d4t4/a.csv", 1763856000000L))
+    replayLog = Some(new URI("file:///var/texera/logs/7/42/"))
   )
 
   private val goldenSource = withPorts(
@@ -1361,26 +1392,35 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )("cost hints name an operator with no id")
   }
 
-  it should "refuse to save inputs of an operator the plan does not have, with no name, given twice, or whose link expires at the epoch or before" in {
-    def reading(inputs: PlanInput*) =
-      PhysicalPlanCodec.encode(fullExecutionPlan.copy(inputs = fullInputs ++ inputs))
-    val input = fullInputs.head
-    assertRefused(reading(input.copy(logicalOperatorId = OperatorIdentity("ghost"))))(
-      s"Input ${input.name} names operator 'ghost', which the plan does not have"
+  it should "refuse to save a file with no name or no link, given twice or out of the order of the names, or whose link expires at the epoch or before; and a column limit below 1" in {
+    val file = scanInputs.files.head
+    def reading(files: InputFile*) =
+      save(fullContext, fullPlanWithUdf(_.withInputs(OperatorInputs(files = files))))
+    assertRefused(reading(file.copy(name = "")))("A file operator udf-main reads has no name")
+    assertRefused(reading(file.copy(url = "")))(
+      s"Operator udf-main has no link to its file ${file.name}"
     )
-    assertRefused(reading(input.copy(logicalOperatorId = OperatorIdentity(""))))(
-      "names operator '', which the plan does not have"
+    // the same name, wherever its link leads and whenever it expires
+    assertRefused(reading(file, file.copy(url = linkTo("b"), expiresAtMs = 5L)))(
+      s"The file ${file.name} of operator udf-main appears twice"
     )
-    assertRefused(reading(input.copy(name = "")))("An input of operator scan has no name")
-    // the same operator and name, whenever its link expires
-    assertRefused(reading(input.copy(expiresAtMs = 5L)))(
-      s"Input ${input.name} of operator scan appears twice"
+    assertRefused(reading(file.copy(name = "b"), file.copy(name = "a")))(
+      "The files operator udf-main reads are not in the order of their names: file b comes " +
+        "before file a."
     )
     Seq(0L, -1L).foreach { expiresAtMs =>
-      assertRefused(reading(input.copy(name = "late.csv", expiresAtMs = expiresAtMs)))(
-        s"The link to the input late.csv of operator scan expires at $expiresAtMs ms since the " +
-          "epoch, which is not after it"
+      assertRefused(reading(file.copy(expiresAtMs = expiresAtMs)))(
+        s"The link to the file ${file.name} of operator udf-main expires at $expiresAtMs ms " +
+          "since the epoch, which is not after it"
       )
+    }
+    Seq(0, -3).foreach { limit =>
+      assertRefused(
+        save(
+          fullContext,
+          fullPlanWithUdf(_.withInputs(OperatorInputs(csvParserMaxColumns = Some(limit))))
+        )
+      )(s"Operator udf-main reads CSV files of at most $limit columns, but a row has at least 1")
     }
   }
 
@@ -1742,40 +1782,38 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     }
   }
 
-  it should "refuse inputs out of order, given twice, of an operator the plan does not have, with no name, or whose link expires at the epoch or before" in {
-    val inputs = valid.inputs
+  it should "refuse a file with no name or no link, given twice or out of the order of the names, or whose link expires at the epoch or before; and a column limit below 1" in {
+    def reading(edit: OperatorInputs => OperatorInputs) =
+      withStoredOp(scan.id)(_.update(_.inputs.modify(edit)))
+    val files = valid.operators(indexOf(scan.id)).getInputs.files
     assert(
-      inputs.map(input => (input.logicalOperatorId, input.name)) == Seq(
-        ("agg", "a"),
-        ("scan", "dataset:///ds-1/d4t4/a.csv"),
-        ("scan", "dataset:///ds-1/d4t4/résumé.csv")
-      )
+      files.map(_.name) == Seq("dataset:///ds-1/d4t4/a.csv", "dataset:///ds-1/d4t4/résumé.csv")
     )
-    assertUnreadable(valid.update(_.inputs := Seq(inputs(0), inputs(2), inputs(1))))(
-      "The plan's inputs are not in the order of their operators' ids, then their names: input " +
-        "dataset:///ds-1/d4t4/résumé.csv of operator scan comes before input " +
-        "dataset:///ds-1/d4t4/a.csv of operator scan."
+    assertUnreadable(reading(_.update(_.files(0).name := "")))(
+      "A file operator scan-main reads has no name"
     )
-    assertUnreadable(valid.update(_.inputs := Seq(inputs(1), inputs(0))))(
-      "input dataset:///ds-1/d4t4/a.csv of operator scan comes before input a of operator agg"
+    assertUnreadable(reading(_.update(_.files(1).url := "")))(
+      "Operator scan-main has no link to its file dataset:///ds-1/d4t4/résumé.csv"
     )
-    assertUnreadable(valid.update(_.inputs :+= inputs.last))(
-      "Input dataset:///ds-1/d4t4/résumé.csv of operator scan appears twice"
+    assertUnreadable(reading(_.withFiles(files :+ files.last)))(
+      "The file dataset:///ds-1/d4t4/résumé.csv of operator scan-main appears twice"
     )
-    assertUnreadable(valid.update(_.inputs(0).logicalOperatorId := "ghost"))(
-      "Input a names operator 'ghost', which the plan does not have"
+    assertUnreadable(reading(_.withFiles(files.reverse)))(
+      "The files operator scan-main reads are not in the order of their names: file " +
+        "dataset:///ds-1/d4t4/résumé.csv comes before file dataset:///ds-1/d4t4/a.csv."
     )
-    // an operator's logical id, not a physical operator's
-    assertUnreadable(valid.update(_.inputs(0).logicalOperatorId := "agg-localAgg"))(
-      "names operator 'agg-localAgg', which the plan does not have"
-    )
-    assertUnreadable(valid.update(_.inputs(0).name := ""))("An input of operator agg has no name")
     Seq(0L, Long.MinValue).foreach { expiresAtMs =>
-      assertUnreadable(valid.update(_.inputs(0).expiresAtMs := expiresAtMs))(
-        s"The link to the input a of operator agg expires at $expiresAtMs ms since the epoch, " +
-          "which is not after it"
+      assertUnreadable(reading(_.update(_.files(0).expiresAtMs := expiresAtMs)))(
+        s"The link to the file dataset:///ds-1/d4t4/a.csv of operator scan-main expires at " +
+          s"$expiresAtMs ms since the epoch, which is not after it"
       )
     }
+    assertUnreadable(reading(_.withCsvParserMaxColumns(0)))(
+      "Operator scan-main reads CSV files of at most 0 columns, but a row has at least 1"
+    )
+    // An operator that reads nothing has no inputs: saved with empty ones, it reads none.
+    val empty = PhysicalPlanCodec.decode(withStoredOp(udf.id)(_.withInputs(OperatorInputs())))
+    assert(empty.plan.getOperator(udf.id).inputs == OperatorInputs.defaultInstance)
   }
 
   // ----- its JSON -----
@@ -1823,7 +1861,10 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         "\"seconds\":0.001},",
       // a cost of 0 is a cost at its default
       "{\"logicalOperatorId\":\"scan\"}",
-      "\"inputs\":[{\"logicalOperatorId\":\"agg\",\"name\":\"a\",\"expiresAtMs\":\"1\"},"
+      "\"inputs\":{\"files\":[{\"name\":\"a\",\"url\":\"http://texera-rustfs:9000/" +
+        "texera-dataset/a?X-Amz-Signature=5ecr3t\",\"expiresAtMs\":\"1\"}]}",
+      "\"listing\":{\"files\":[\"/dataset/a@x.io/ds/v1/b.txt\",\"/dataset/a@x.io/ds/v1/a.txt\"]}," +
+        "\"csvParserMaxColumns\":731}"
     ).foreach(field => assert(written.contains(field), s"[$field] is not in $written"))
     // A plan with nothing but one operator names only what is not a default.
     val noneOfThem = PhysicalPlanCodec.toJson(

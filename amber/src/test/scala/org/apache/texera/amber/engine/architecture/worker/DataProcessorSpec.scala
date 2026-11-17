@@ -20,7 +20,12 @@
 package org.apache.texera.amber.engine.architecture.worker
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName, OperatorExecutor}
+import org.apache.texera.amber.core.executor.{
+  ExecFactory,
+  OpExecWithClassName,
+  OperatorExecutor,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.state.{State, StateReferencing}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple, TupleLike}
 import org.apache.texera.amber.core.virtualidentity._
@@ -497,7 +502,8 @@ class DataProcessorSpec extends AnyFlatSpec with MockFactory with Matchers with 
           totalWorkerCount = 1,
           opExecInitInfo = OpExecWithClassName(classOf[LoopLimitExec].getName, descString),
           isSource = false,
-          loopStartPortUris = Map.empty
+          loopStartPortUris = Map.empty,
+          inputs = OperatorInputs.defaultInstance
         ),
         AsyncRPCContext(COORDINATOR, testWorkerId),
         0

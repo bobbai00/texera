@@ -269,6 +269,9 @@ message InitializeExecutorRequest {
   //     through the loop body.
   // Empty for plans without loops.
   map<string, string> loopStartPortUris = 4;
+  // What the operator reads from outside the run, as its plan states it: handed to the executor
+  // beside its descriptor.
+  core.OperatorInputs inputs = 5 [(scalapb.field).no_box = true];
 }
 
 message UpdateExecutorRequest {

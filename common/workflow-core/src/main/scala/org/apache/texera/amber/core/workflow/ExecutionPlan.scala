@@ -20,11 +20,7 @@
 package org.apache.texera.amber.core.workflow
 
 import org.apache.texera.amber.core.executor.OpExecInitInfo
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  PhysicalOpIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, PhysicalOpIdentity}
 
 import java.net.URI
 
@@ -34,18 +30,16 @@ import java.net.URI
   * reads it back.
   *
   * @param context   the run's ids, settings, warehouse and cost hints
-  * @param plan      the physical plan, made to run
+  * @param plan      the physical plan, made to run: each operator says what it reads from
+  *                  outside the run, and where each of its output ports is stored
   * @param replay    where the run replays from; None when it replays nothing
   * @param replayLog where the run writes its replay log, an absolute URI; None when it writes none
-  * @param inputs    what the operators read from outside the run, each (operator, name) once. A
-  *                  saved plan lists them in the order of the operator's id, then the name.
   */
 final case class ExecutionPlan(
     context: WorkflowContext,
     plan: PhysicalPlan,
     replay: Option[ReplaySource] = None,
-    replayLog: Option[URI] = None,
-    inputs: Seq[PlanInput] = Seq.empty
+    replayLog: Option[URI] = None
 )
 
 /**
@@ -72,16 +66,6 @@ final case class CostHints(
     sourceExecutionId: ExecutionIdentity,
     secondsByLogicalOperator: Map[String, Double]
 )
-
-/**
-  * A file a logical operator of the plan reads from outside the run, through a link made when the
-  * plan was made.
-  *
-  * @param logicalOperatorId the operator that reads it
-  * @param name              the name the operator's executor knows it by
-  * @param expiresAtMs       when the link stops working, in milliseconds since the epoch
-  */
-final case class PlanInput(logicalOperatorId: OperatorIdentity, name: String, expiresAtMs: Long)
 
 /**
   * A change to one operator of a paused run, which the engine applies when the run resumes: the

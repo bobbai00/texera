@@ -20,29 +20,15 @@
 package org.apache.texera.common.compiler.model
 
 import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.state.StateReferencing.literalReferences
-import org.apache.texera.amber.core.storage.{
-  DatasetVersionLister,
-  InputLinker,
-  ListedFile,
-  ScanFileResolver
-}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
-import org.apache.texera.amber.core.workflow.PlanInput
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
-import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.common.compiler.CompileSettings
 import org.jgrapht.graph.DirectedAcyclicGraph
 import org.jgrapht.util.SupplierUtil
 
 import java.util
-import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters.{IteratorHasAsScala, SetHasAsScala}
 
 object LogicalPlan {
@@ -99,6 +85,10 @@ case class LogicalPlan(
   def getUpstreamLinks(opId: OperatorIdentity): List[LogicalLink] = {
     links.filter(l => l.toOpId == opId)
   }
+
+  /** The operators upstream of `opId`, through any path of links. */
+  def getAncestorOpIds(opId: OperatorIdentity): Set[OperatorIdentity] =
+    jgraphtDag.getAncestors(opId).asScala.toSet
 
   /**
     * The operators inside some loop block, on a path LoopStart -> ... -> operator -> ... -> LoopEnd
@@ -157,192 +147,4 @@ case class LogicalPlan(
       operatorsInsideLoopBlocks.contains(op.operatorIdentifier) &&
         literalReferences(objectMapper.valueToTree[ObjectNode](op)).nonEmpty
     )
-
-  /**
-    * Sets, on each operator that reads one, the site's setting its plan is compiled under: the
-    * column limit of each CSV scan. A value the operator arrived with is replaced, so a request
-    * cannot choose one.
-    */
-  def applyCompileSettings(settings: CompileSettings): Unit =
-    operators.foreach {
-      case csvScan: CSVScanSourceOpDesc =>
-        csvScan.maxColumns = Some(settings.csvParserMaxColumns)
-      case _ => // reads no setting of the site's
-    }
-
-  /**
-    * Binds each scan source to the file it reads. Its file name is resolved to the URI of a file
-    * the plan's user may read, which is set on the operator (`setResolvedFileName`). For a plan
-    * made to run, the file is then linked, and the link, through which the scan's executor
-    * reads the file, is set on the operator too.
-    *
-    * An operator keeps no link it arrived with, so a request cannot hand an executor one: the
-    * only links an operator holds are to files this compile resolved for the plan's user.
-    *
-    * An operator's own error -- it names no file, or one that does not exist or that the user
-    * may not read -- is appended to `errors`, and the operator is left without a link. Any other
-    * failure, such as the database or the storage not answering, is no error of the operator's,
-    * and is thrown as it is.
-    *
-    * @param linker makes the links of a plan made to run; None for a compile that makes no plan
-    *               to run, which links nothing
-    * @return what the plan reads from outside the run: each file linked
-    */
-  def bindScanFiles(
-      resolver: ScanFileResolver,
-      linker: Option[InputLinker],
-      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
-  ): Seq[PlanInput] =
-    operators.collect { case scan: ScanSourceOpDesc => scan }.flatMap { scan =>
-      scan.inputLinks = Map.empty
-      scan.fileName match {
-        case None =>
-          errors.append(
-            (
-              scan.operatorIdentifier,
-              new RuntimeException(
-                "No file selected. Please select a file from the 'File' dropdown in the right panel."
-              )
-            )
-          )
-          None
-        case Some(name) =>
-          try {
-            val file = resolver.resolve(name)
-            scan.setResolvedFileName(file)
-            linker.map(_.link(file)).map { link =>
-              val resolvedName = scan.fileName.get
-              scan.inputLinks = Map(resolvedName -> link)
-              PlanInput(scan.operatorIdentifier, resolvedName, link.expiresAtMs)
-            }
-          } catch {
-            case notFound: FileNotFoundException =>
-              errors.append((scan.operatorIdentifier, notFound))
-              None
-          }
-      }
-    }
-
-  /**
-    * Binds the operators that read the files of dataset versions: each File Lister to the
-    * listing of its version, and each File Scan From Input to the files listed upstream of it.
-    *
-    * A File Scan From Input reads the files its input tuples name, and the names arrive only
-    * while the plan runs, when nothing resolves a name any more. So it reads only what the File
-    * Listers upstream of it list, through any path of operators, and one with no File Lister
-    * upstream is an error, in every compile.
-    *
-    * For a plan made to run, each File Lister's dataset version is listed, as the plan's user
-    * may read it, and the listing is set on the operator, which outputs it when the plan runs
-    * and lists nothing then. Each File Scan From Input is linked to the files listed upstream
-    * of it, from where the listings say they are kept, and the links, through which its
-    * executor reads the files, are set on the operator.
-    *
-    * An operator keeps no listing and no link it arrived with, so a request cannot hand an
-    * executor either.
-    *
-    * An operator's own error is appended to `errors`: a File Lister that names no dataset
-    * version, or one that does not exist or that the plan's user may not read, or one that
-    * holds more than `maxFiles` files; a File Scan From Input with no File Lister upstream, or
-    * with more than `maxFiles` files listed upstream of it. Any other failure, such as the
-    * database or the storage not answering, is no error of the operator's, and is thrown as it
-    * is.
-    *
-    * @param lister   lists the dataset versions of a plan made to run; None for a compile that
-    *                 makes no plan to run, which lists and links nothing
-    * @param linker   links the files listed
-    * @param maxFiles the most files a File Lister may list, and a File Scan From Input may read
-    * @return what the plan reads from outside the run: each file linked
-    */
-  def bindListedFiles(
-      lister: Option[DatasetVersionLister],
-      linker: InputLinker,
-      maxFiles: Int,
-      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
-  ): Seq[PlanInput] = {
-    val fileListers = operators.collect { case fileLister: FileListerSourceOpDesc => fileLister }
-    // What each File Lister lists; one with an error, or of a plan not made to run, lists none.
-    val listings: Map[OperatorIdentity, Seq[ListedFile]] = fileListers.flatMap { fileLister =>
-      fileLister.listing = None
-      listingOf(fileLister, lister, maxFiles, errors).map { files =>
-        fileLister.listing = Some(files.map(_.logicalPath).toList)
-        fileLister.operatorIdentifier -> files
-      }
-    }.toMap
-
-    operators.collect { case fileScan: FileScanOpDesc => fileScan }.flatMap { fileScan =>
-      def refuse(why: String): Seq[PlanInput] = {
-        errors.append((fileScan.operatorIdentifier, new IllegalArgumentException(why)))
-        Nil
-      }
-      fileScan.inputLinks = Map.empty
-      val name = fileScan.operatorInfo.userFriendlyName
-      val upstream = jgraphtDag.getAncestors(fileScan.operatorIdentifier).asScala
-      val upstreamListers = fileListers.map(_.operatorIdentifier).filter(upstream.contains)
-      // A file two File Listers list is one file.
-      val files = upstreamListers.flatMap(listings.getOrElse(_, Nil)).distinctBy(_.logicalPath)
-      if (upstreamListers.isEmpty) {
-        refuse(
-          s"$name reads only the files a File Lister upstream of it lists. Link a File Lister " +
-            "to its input, directly or through other operators."
-        )
-      } else if (files.size > maxFiles) {
-        refuse(
-          s"The File Listers upstream of $name list ${files.size} files, and it can read at " +
-            s"most $maxFiles."
-        )
-      } else {
-        val links = files.map(file => file.logicalPath -> linker.linkListed(file))
-        fileScan.inputLinks = links.toMap
-        links.map {
-          case (file, link) => PlanInput(fileScan.operatorIdentifier, file, link.expiresAtMs)
-        }
-      }
-    }
-  }
-
-  /**
-    * The files of the dataset version `fileLister` names, as `lister` lists them: None when
-    * there is no `lister`, or the operator has an error of its own, which is appended to
-    * `errors`.
-    */
-  private def listingOf(
-      fileLister: FileListerSourceOpDesc,
-      lister: Option[DatasetVersionLister],
-      maxFiles: Int,
-      errors: ArrayBuffer[(OperatorIdentity, Throwable)]
-  ): Option[Seq[ListedFile]] = {
-    def refuse(why: String, cause: Throwable = null): Option[Seq[ListedFile]] = {
-      errors.append((fileLister.operatorIdentifier, new IllegalArgumentException(why, cause)))
-      None
-    }
-    Option(fileLister.datasetVersionPath).map(_.trim).filter(_.nonEmpty) match {
-      case None =>
-        refuse(
-          "No dataset version selected. Please select one in the 'Dataset' field in the right " +
-            "panel."
-        )
-      case Some(versionPath) =>
-        lister.flatMap { lister =>
-          try {
-            // One file more than may be listed is asked for, to tell a version that holds more.
-            val files =
-              lister.list(versionPath, if (maxFiles < Int.MaxValue) maxFiles + 1 else maxFiles)
-            if (files.size <= maxFiles) Some(files)
-            else
-              refuse(
-                s"Dataset version $versionPath holds more files than the $maxFiles a " +
-                  s"${fileLister.operatorInfo.userFriendlyName} can list."
-              )
-          } catch {
-            case notFound: FileNotFoundException =>
-              refuse(
-                s"Dataset version $versionPath was not found: it does not exist, or you do not " +
-                  "have access to it.",
-                notFound
-              )
-          }
-        }
-    }
-  }
 }

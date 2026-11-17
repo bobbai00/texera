@@ -21,6 +21,7 @@ package org.apache.texera.amber.operator
 
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import org.apache.commons.vfs2.FileNotFoundException
+import org.apache.texera.amber.core.executor.{ExecutorInputs, InputFile, OperatorInputs}
 import org.apache.texera.amber.core.storage.{
   DatasetVersionLister,
   FileResolver,
@@ -88,15 +89,31 @@ object TestOperators {
   }
 
   /**
-    * `scan` with the file it reads linked by [[fixtureInputLinker]], as a compile that makes a
-    * plan to run links it: for a test that builds a scan's executor from a descriptor it did
-    * not compile.
+    * What a plan made to run hands the executor of `scan`: its file, linked by
+    * [[fixtureInputLinker]], and for a CSV scan the default column limit. For a test that builds
+    * a scan's executor from a descriptor it did not compile.
     */
-  def linked[T <: ScanSourceOpDesc](scan: T): T = {
+  def inputsOf(scan: ScanSourceOpDesc): ExecutorInputs =
+    inputsOf(
+      scan,
+      Option.when(scan.isInstanceOf[CSVScanSourceOpDesc])(CSVScanSourceOpDesc.DefaultMaxColumns)
+    )
+
+  /** As `inputsOf(scan)`, with the column limit a plan gives, or none. */
+  def inputsOf(scan: ScanSourceOpDesc, csvParserMaxColumns: Option[Int]): ExecutorInputs = {
     val fileName = scan.fileName.get
-    scan.inputLinks = Map(fileName -> fixtureInputLinker.link(new URI(fileName)))
-    scan
+    val link = fixtureInputLinker.link(new URI(fileName))
+    executorInputs(
+      OperatorInputs(
+        files = Seq(InputFile(fileName, link.url, link.expiresAtMs)),
+        csvParserMaxColumns = csvParserMaxColumns
+      )
+    )
   }
+
+  /** `inputs` as an executor of this JVM reads them: its files through links to the fixture. */
+  def executorInputs(inputs: OperatorInputs): ExecutorInputs =
+    new ExecutorInputs(inputs, StorageConfig.inputLinksAllowedEndpoints)
 
   private lazy val fixtureFileServer = new FixtureFileServer
 

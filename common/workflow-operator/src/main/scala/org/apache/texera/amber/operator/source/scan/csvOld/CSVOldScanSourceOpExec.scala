@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.source.scan.csvOld
 
 import com.github.tototoshi.csv.{CSVReader, DefaultCSVFormat}
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeTypeUtils, Schema, TupleLike}
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -28,11 +28,12 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import scala.collection.compat.immutable.ArraySeq
 
 class CSVOldScanSourceOpExec private[csvOld] (
-    descString: String
+    descString: String,
+    inputs: ExecutorInputs
 ) extends SourceOperatorExecutor {
   val desc: CSVOldScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[CSVOldScanSourceOpDesc])
-  private val input = desc.openInputFile()
+  private val input = inputs.open(desc.fileName.get)
   var reader: CSVReader = _
   var rows: Iterator[Seq[String]] = _
   val schema: Schema = desc.inferSchemaFrom(input)

@@ -104,8 +104,8 @@ object StoredExecutionStart {
     * passed), before the execution is started from it, and reads the plan it holds. The row must
     * be made for user `uid` and for computing unit `cuid`; its plan must be one this unit reads,
     * of the workflow, execution and warehouse the table is of; the replay log it replays and the
-    * one it writes must be where this unit keeps replay logs; and none of the links the plan
-    * reads its inputs through may have expired by `nowMs`.
+    * one it writes must be where this unit keeps replay logs; and none of the links its
+    * operators read their files through may have expired by `nowMs`.
     *
     * The plan is read only once the row was found to be one the user may start here.
     *
@@ -146,9 +146,14 @@ object StoredExecutionStart {
         } else {
           misplacedReplayLog(plan, replayLogRoot)
             .orElse(
-              plan.inputs.map(_.expiresAtMs).minOption.filter(_ <= nowMs).map { expiry =>
-                s"input links expired at ${Instant.ofEpochMilli(expiry)}; run the workflow again"
-              }
+              plan.plan.operators.iterator
+                .flatMap(_.inputs.files)
+                .map(_.expiresAtMs)
+                .minOption
+                .filter(_ <= nowMs)
+                .map { expiry =>
+                  s"input links expired at ${Instant.ofEpochMilli(expiry)}; run the workflow again"
+                }
             )
             .toLeft(plan)
         }

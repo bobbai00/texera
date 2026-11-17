@@ -22,7 +22,14 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import io.dropwizard.setup.Bootstrap
-import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName}
+import org.apache.texera.amber.core.executor.{
+  ExecFactory,
+  ExecutorInputs,
+  FileListing,
+  InputFile,
+  OpExecWithClassName,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
@@ -47,7 +54,6 @@ import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
   GlobalPortIdentity,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   PreferCoordinator,
   PythonEnvironment,
@@ -581,16 +587,13 @@ class ExecutionResourceSpec
       .intValue()
 
   /**
-    * `plan` as an editor sends it, written as JSON: but for each operator's loop-variable sidecar,
-    * which a parse sets from scratch, and for what a compile sets on an operator (a scan's column
-    * limit, the links to the files it reads, a File Lister's listing), all of which the plan row
-    * leaves out.
+    * `plan` as a request sends it, written as JSON, but for each operator's loop-variable sidecar,
+    * which a parse sets from scratch and the plan row leaves out.
     */
   private def asSent(plan: LogicalPlanPojo): JsonNode = {
     val tree = objectMapper.readTree(objectMapper.writeValueAsString(plan))
-    tree.get("operators").elements().asScala.foreach { operator =>
-      Seq(StateReferencing.SIDECAR_PROPERTY, "maxColumns", "inputLinks", "listing")
-        .foreach(operator.asInstanceOf[ObjectNode].remove)
+    tree.get("operators").elements().asScala.foreach {
+      _.asInstanceOf[ObjectNode].remove(StateReferencing.SIDECAR_PROPERTY)
     }
     tree
   }
@@ -602,14 +605,9 @@ class ExecutionResourceSpec
       case other                              => fail(s"the executor of $id is $other")
     }
 
-  /** The links the stored `plan` gives the executor of scan `id`, by the name of each file. */
-  private def linksOf(plan: ExecutionPlan, id: String): Map[String, InputLink] =
-    descriptorOf(plan, id)
-      .get("inputLinks")
-      .fields()
-      .asScala
-      .map(entry => entry.getKey -> objectMapper.treeToValue(entry.getValue, classOf[InputLink]))
-      .toMap
+  /** What the stored `plan` says operator `id` reads from outside the run. */
+  private def inputsOf(plan: ExecutionPlan, id: String): OperatorInputs =
+    plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity(id)).head.inputs
 
   /** A scan of the creator's private dataset file, which reads nothing of it to compile. */
   private def notesPlan(): LogicalPlanPojo = {
@@ -623,6 +621,12 @@ class ExecutionResourceSpec
     "http://texera-rustfs:9000/texera-dataset/dataset-9631/data/gdm5?X-Amz-Signature=5ecr3t",
     System.currentTimeMillis() + 3600L * 1000
   )
+
+  /** What a scan of the creator's dataset file reads in a plan whose linker made `signedLink`. */
+  private def readThroughSignedLink: OperatorInputs =
+    OperatorInputs(files =
+      Seq(InputFile(notesUri.toASCIIString, signedLink.url, signedLink.expiresAtMs))
+    )
 
   /** A linker of the files resolvers resolve, each as `link` links it, and of no listed file. */
   private def linkerOf(linkFile: URI => InputLink): InputLinker =
@@ -726,16 +730,13 @@ class ExecutionResourceSpec
       Set(OperatorIdentity("scan"), OperatorIdentity("search"))
     plan.replay shouldBe None
     plan.replayLog shouldBe None
-    // The scan's file is the plan's one input, read through the link the scan's executor is
-    // given, which lasts as long as the plan says.
+    // The scan's file is the one file the plan reads through a link, which the plan gives the
+    // scan to read and which has not expired.
     val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
-    val links = linksOf(plan, "scan")
-    links.keySet shouldBe Set(scanned.toASCIIString)
-    val link = links(scanned.toASCIIString)
-    link.expiresAtMs should be > System.currentTimeMillis()
-    plan.inputs shouldBe Seq(
-      PlanInput(OperatorIdentity("scan"), scanned.toASCIIString, link.expiresAtMs)
-    )
+    val files = inputsOf(plan, "scan").files
+    files.map(_.name) shouldBe Seq(scanned.toASCIIString)
+    files.head.expiresAtMs should be > System.currentTimeMillis()
+    inputsOf(plan, "search") shouldBe OperatorInputs.defaultInstance
 
     // Compiled as the creator may read files, datasets and models.
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(creatorUid))
@@ -805,22 +806,17 @@ class ExecutionResourceSpec
       Set(OperatorIdentity("search"))
   }
 
-  it should "save the plan under the site's CSV column limit as it stands, whatever the request says" in {
+  it should "save the plan under the site's CSV column limit as it stands" in {
     // The limit is fixed in the plan when the execution is created: the unit that runs it asks
     // the site for none.
     val scan = named(TestOperators.smallCsvScanOpDesc(), "scan")
-    scan.maxColumns = Some(100000)
     SiteSettings.upsert(getDSLContext, "csv_parser_max_columns", "731", "spec")
     try {
       val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
 
       val (_, plan) = storedPlan(created(post(request(plan = sent))))
 
-      plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity("scan")).head.opExecInitInfo match {
-        case OpExecWithClassName(_, descString) =>
-          objectMapper.readTree(descString).get("maxColumns").asInt() shouldBe 731
-        case other => fail(s"the scan's executor is $other")
-      }
+      inputsOf(plan, "scan").csvParserMaxColumns shouldBe Some(731)
     } finally {
       getDSLContext
         .deleteFrom(SITE_SETTINGS)
@@ -841,18 +837,15 @@ class ExecutionResourceSpec
 
     // Resolved for the creator, by the name as typed, and that file linked.
     linked.toList shouldBe List(notesUri)
-    linksOf(plan, "notes") shouldBe Map(notesUri.toASCIIString -> signedLink)
+    inputsOf(plan, "notes") shouldBe readThroughSignedLink
     descriptorOf(plan, "notes").get("fileName").asText() shouldBe notesUri.toASCIIString
-    plan.inputs shouldBe Seq(
-      PlanInput(OperatorIdentity("notes"), notesUri.toASCIIString, signedLink.expiresAtMs)
-    )
-    // The link is a secret of the plan to run. The logical plan beside it is the workflow as
-    // its user wrote it: the file by its name, and no link.
-    record.body should include("X-Amz-Signature=5ecr3t")
+    // The link is a secret of the plan to run, which holds it once: in what the scan reads, and
+    // not in the scan's descriptor. The logical plan beside it is the workflow as its user
+    // wrote it: the file by its name, and no link.
+    record.body.split("X-Amz-Signature=5ecr3t", -1) should have length 2
+    descriptorOf(plan, "notes").toString should not include "X-Amz-Signature"
     logicalPlanOf(execution) should not include "X-Amz-Signature"
-    val logical = logicalOperators(execution).head
-    logical.get("fileName").asText() shouldBe notesPath
-    logical.has("inputLinks") shouldBe false
+    logicalOperators(execution).head.get("fileName").asText() shouldBe notesPath
   }
 
   it should "refuse a file its creator may not read as the scan's error, and make no link to it" in {
@@ -890,7 +883,7 @@ class ExecutionResourceSpec
       val (_, plan) = storedPlan(created(createdByReader()))
 
       linked.toList shouldBe List(notesUri)
-      linksOf(plan, "notes") shouldBe Map(notesUri.toASCIIString -> signedLink)
+      inputsOf(plan, "notes") shouldBe readThroughSignedLink
     } finally {
       getDSLContext
         .deleteFrom(DATASET_USER_ACCESS)
@@ -1041,71 +1034,30 @@ class ExecutionResourceSpec
     row(newestEid.toLong).getStatus shouldBe 4.toByte
   }
 
-  it should "keep nothing a request sent for what a compile sets, in the plan or beside it" in {
-    // As a request could send them: a column limit of its own, and links to a place of its own
-    // choosing, under the scan's file as typed and as it resolves.
-    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue)
-    val resolved = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath).toASCIIString
-    val scan = named(TestOperators.smallCsvScanOpDesc(), "scan")
-    scan.maxColumns = Some(100000)
-    scan.inputLinks = Map(resolved -> sentLink, TestOperators.CountrySalesSmallCsvPath -> sentLink)
-    val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
-
-    val execution = created(post(request(plan = sent)))
-    val (record, plan) = storedPlan(execution)
-
-    // The executor is given the compile's own link, to the fixture's server, and the site's
-    // limit.
-    val links = linksOf(plan, "scan")
-    links.keySet shouldBe Set(resolved)
-    links(resolved).url should startWith("http://127.0.0.1:")
-    descriptorOf(plan, "scan").get("maxColumns").asInt() shouldBe
-      CSVScanSourceOpDesc.DefaultMaxColumns
-    record.body should not include "169.254.169.254"
-    // And the logical plan kept beside it holds neither property, whatever was sent for it.
-    logicalPlanOf(execution) should not include "169.254.169.254"
-    val logical = logicalOperators(execution).head
-    logical.has("fileName") shouldBe true
-    logical.has("maxColumns") shouldBe false
-    logical.has("inputLinks") shouldBe false
-  }
-
   it should "list each File Lister's dataset version and link the files listed, in the plan it stores and nowhere else" in {
-    // As a request could send it: with a listing and a link of its own choosing.
-    val sent = listedPlan(TestOperators.fixtureDatasetVersionPath)
-    val sentLink = InputLink("http://169.254.169.254/latest/meta-data", Long.MaxValue)
-    sent.operators.head.asInstanceOf[FileListerSourceOpDesc].listing =
-      Some(List("/dataset/another@example.com/secrets/v1/keys.txt"))
-    sent.operators(1).asInstanceOf[FileScanOpDesc].inputLinks =
-      Map("/dataset/another@example.com/secrets/v1/keys.txt" -> sentLink)
     val files = TestOperators.fixtureDatasetFiles.map {
       case (file, _) => s"${TestOperators.fixtureDatasetVersionPath}/$file"
     }
 
-    val execution = created(post(request(plan = sent)))
-    val (record, plan) = storedPlan(execution)
+    val execution =
+      created(post(request(plan = listedPlan(TestOperators.fixtureDatasetVersionPath))))
+    val (_, plan) = storedPlan(execution)
 
-    // The File Lister's executor is given the version's listing, and the File Scan From Input's
-    // a link to each file listed: the compile's own, to the fixture's server.
-    descriptorOf(plan, "lister").get("listing").elements().asScala.map(_.asText()).toList shouldBe
-      files
-    val links = linksOf(plan, "scan")
-    links.keySet shouldBe files.toSet
-    links.values.foreach(_.url should startWith("http://127.0.0.1:"))
-    plan.inputs shouldBe
-      files.map(file => PlanInput(OperatorIdentity("scan"), file, links(file).expiresAtMs))
-    record.body should not include "169.254.169.254"
-    record.body should not include "secrets"
-    // The logical plan kept beside it is the workflow as its user wrote it: the dataset version
-    // by its path, and neither what it lists nor a link.
-    val logicalPlan = logicalPlanOf(execution)
-    logicalPlan should not include "169.254.169.254"
-    logicalPlan should not include "secrets"
-    files.foreach(file => logicalPlan should not include file)
-    val List(lister, scan) = logicalOperators(execution)
-    lister.get("datasetVersionPath").asText() shouldBe TestOperators.fixtureDatasetVersionPath
-    lister.has("listing") shouldBe false
-    scan.has("inputLinks") shouldBe false
+    // The File Lister is given the version's listing to output, and the File Scan From Input a
+    // link to each file listed, to the fixture's server.
+    inputsOf(plan, "lister") shouldBe OperatorInputs(listing = Some(FileListing(files)))
+    val read = inputsOf(plan, "scan")
+    read.files.map(_.name) shouldBe files
+    read.files.foreach(_.url should startWith("http://127.0.0.1:"))
+    read.listing shouldBe None
+    // Neither is in a descriptor. The logical plan kept beside the plan is the workflow as its
+    // user wrote it: the dataset version by its path, and neither what it lists nor a link.
+    Seq(descriptorOf(plan, "lister").toString, logicalPlanOf(execution)).foreach { written =>
+      written should include(TestOperators.fixtureDatasetVersionPath)
+      written should not include "http://127.0.0.1:"
+      files.foreach(file => written should not include file)
+    }
+    descriptorOf(plan, "scan").toString should not include "http://127.0.0.1:"
   }
 
   it should "refuse a dataset version its creator may not read as the File Lister's error, and list nothing of it" in {
@@ -1215,7 +1167,7 @@ class ExecutionResourceSpec
     )
     val planUri = new URI(execution.planUri)
 
-    // About 10 MiB for the 10,000 files an operator may list by default.
+    // About 9 MiB for the 10,000 files an operator may list by default.
     val stored = ExecutionPlanStore.readPlan(planUri)
     stored.body.getBytes(StandardCharsets.UTF_8).length should be <=
       ExecutionPlanStore.MaxBodyBytes
@@ -1229,14 +1181,17 @@ class ExecutionResourceSpec
         Some(testWid.toLong)
       )
       .fold(why => fail(s"the start was refused: $why"), _.executionPlan)
-    plan.inputs should have size files
-    val links = linksOf(plan, "scan")
-    links should have size files
-    links.values.map(_.url.length).toSet shouldBe Set(600)
-    // A worker builds the scan's executor from the descriptor it is handed.
+    val read = inputsOf(plan, "scan")
+    read.files should have size files
+    read.files.map(_.url.length).toSet shouldBe Set(600)
+    // A worker builds the scan's executor from the descriptor and the inputs it is handed.
     val OpExecWithClassName(className, descriptor) =
       plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity("scan")).head.opExecInitInfo: @unchecked
-    noException should be thrownBy ExecFactory.newExecFromJavaClassName(className, descriptor)
+    noException should be thrownBy ExecFactory.newExecFromJavaClassName(
+      className,
+      descriptor,
+      inputs = new ExecutorInputs(read, Seq("http://texera-rustfs:9000"))
+    )
   }
 
   it should "compile only the target and what is upstream of it, given a target" in {

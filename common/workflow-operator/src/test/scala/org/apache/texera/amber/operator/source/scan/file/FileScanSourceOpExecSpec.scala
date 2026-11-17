@@ -148,7 +148,7 @@ class FileScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     desc.setResolvedFileName(URI.create(testFile.toUri.toString))
 
     val executor =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
+      new FileScanSourceOpExec(objectMapper.writeValueAsString(desc), TestOperators.inputsOf(desc))
 
     // FileScanUtils mints each LARGE_BINARY field through LargeBinaryManager.create(), which
     // reads a per-execution base URI off the calling thread. Seed it the way the coordinator
