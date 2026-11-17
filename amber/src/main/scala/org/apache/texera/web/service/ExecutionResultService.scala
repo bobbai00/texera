@@ -26,7 +26,6 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionResultUris,
-  VFSURIFactory,
   WarehouseReadGuard
 }
 import org.apache.texera.amber.core.tuple.TupleUtils.convertTuplesToJson
@@ -70,8 +69,9 @@ import org.apache.texera.web.model.websocket.event.{
 import org.apache.texera.web.model.websocket.request.ResultPaginationRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowExecutionService.getLatestExecutionId
-import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
+import org.apache.texera.web.storage.{ExecutionStateStore, ResultUris, WorkflowStateStore}
 
+import java.net.URI
 import java.util.UUID
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
@@ -137,11 +137,13 @@ object ExecutionResultService {
     *   - for insert-retract delta: the union of all delta outputs, not compacted to a snapshot
     *
     * Produces the WebResultUpdate to send to frontend from a result update from the engine.
+    *
+    * @param storageUri where the operator's result is stored; None until its storage is made
     */
   private def convertWebResultUpdate(
       workflowIdentity: WorkflowIdentity,
-      executionId: ExecutionIdentity,
       physicalOps: List[PhysicalOp],
+      storageUri: Option[URI],
       oldTupleCount: Int,
       newTupleCount: Int
   ): WebResultUpdate = {
@@ -172,15 +174,10 @@ object ExecutionResultService {
 
     // Cannot assume the storage is available at this point. The storage object is only available
     // after a region is scheduled to execute.
-    val storageUriOption = ExecutionResultUris.getResultUriByLogicalPortId(
-      executionId,
-      physicalOps.head.id.logicalOpId,
-      PortIdentity()
-    )
-    storageUriOption match {
-      case Some(storageUri) =>
+    storageUri match {
+      case Some(uri) =>
         val storage: VirtualDocument[Tuple] =
-          DocumentFactory.openDocument(storageUri)._1.asInstanceOf[VirtualDocument[Tuple]]
+          DocumentFactory.openDocument(uri)._1.asInstanceOf[VirtualDocument[Tuple]]
         val webUpdate = webOutputMode match {
           case PaginationMode() =>
             val numTuples = storage.getCount
@@ -270,9 +267,9 @@ class ExecutionResultService(
   // The poll of a running execution's results; cancelled while no execution is running.
   private var resultUpdateCancellable: Cancellable = Cancellable.alreadyCancelled
 
-  // The execution whose results this service shows: the one it last attached to. Read by the
-  // websocket's pagination requests, on another thread than the run's start.
-  @volatile private var attachedExecutionId: Option[ExecutionIdentity] = None
+  // Where the results of the run this service shows are: the run it last attached to. Read by
+  // the websocket's pagination requests, on another thread than the run's start.
+  @volatile private var attachedResultUris: Option[ResultUris] = None
 
   def attachToExecution(
       executionId: ExecutionIdentity,
@@ -285,7 +282,8 @@ class ExecutionResultService(
     }
 
     unsubscribeAll()
-    attachedExecutionId = Some(executionId)
+    val resultUris = stateStore.resultUris
+    attachedResultUris = Some(resultUris)
 
     addSubscription(stateStore.metadataStore.getStateObservable.subscribe {
       newState: ExecutionMetadataStore =>
@@ -297,7 +295,7 @@ class ExecutionResultService(
                   2.seconds,
                   resultPullingFrequency.seconds
                 ) {
-                  onResultUpdate(executionId, physicalPlan)
+                  onResultUpdate(executionId, resultUris, physicalPlan)
                 }
             }
           } else {
@@ -315,7 +313,7 @@ class ExecutionResultService(
             logger.info("Workflow execution terminated. Stop update results.")
             if (resultUpdateCancellable.cancel() || resultUpdateCancellable.isCancelled) {
               // immediately perform final update
-              onResultUpdate(executionId, physicalPlan)
+              onResultUpdate(executionId, resultUris, physicalPlan)
             }
           }
         })
@@ -328,14 +326,15 @@ class ExecutionResultService(
     // Must be registered before the workflow starts. The engine fires
     // OperatorPortResultUriAvailable as soon as each port's storage doc
     // is materialized; if no subscriber is attached at that point the
-    // URI is silently never persisted to operator_port_executions, which
-    // means the dashboard can later compute results just fine but can
-    // never look them up. Today the WS and sync REST entry points both
-    // call attachToExecution before startWorkflow — keep that ordering.
+    // URI is silently never kept, here or in operator_port_executions,
+    // which means the results are computed just fine but can never be
+    // looked up. Today the WS and sync REST entry points both call
+    // attachToExecution before startWorkflow — keep that ordering.
     addSubscription(
-      client.registerCallback[OperatorPortResultUriAvailable](evt =>
+      client.registerCallback[OperatorPortResultUriAvailable] { evt =>
+        resultUris.add(evt.globalPortId, evt.uri)
         ExecutionResultService.persistOperatorPortResultUri(executionId, evt)
-      )
+      }
     )
 
     addSubscription(
@@ -351,14 +350,15 @@ class ExecutionResultService(
           .foreach {
             case (opId, info) =>
               val oldInfo = oldState.resultInfo.getOrElse(opId, OperatorResultMetadata())
+              // using the first port for now. TODO: support multiple ports
+              val storageUri = resultUris.of(opId, PortIdentity())
               buf(opId.id) = ExecutionResultService.convertWebResultUpdate(
                 workflowIdentity,
-                executionId,
                 physicalPlan.getPhysicalOpsOfLogicalOp(opId),
+                storageUri,
                 oldInfo.tupleCount,
                 info.tupleCount
               )
-              // using the first port for now. TODO: support multiple ports
               val outputPortsMap = physicalPlan
                 .getPhysicalOpsOfLogicalOp(opId)
                 .headOption
@@ -371,17 +371,8 @@ class ExecutionResultService(
               }
 
               if (!hasSingleSnapshot) {
-                val storageUri = ExecutionResultUris
-                  .getResultUriByLogicalPortId(
-                    executionId,
-                    opId,
-                    PortIdentity()
-                  )
-
-                if (storageUri.nonEmpty) {
-                  val opStorage = DocumentFactory.openDocument(storageUri.get)._1
-
-                  allTableStats(opId.id) = opStorage.getTableStatistics
+                storageUri.foreach { uri =>
+                  allTableStats(opId.id) = DocumentFactory.openDocument(uri)._1.getTableStatistics
                   WorkflowExecutionsResource.updateRuntimeStatsSize(executionId)
                   WorkflowExecutionsResource.updateConsoleMessageSize(executionId, opId)
                 }
@@ -404,22 +395,22 @@ class ExecutionResultService(
   }
 
   /**
-    * A page of a result of the execution this service last attached to. Before it attaches to
-    * any, as on a unit that restarted since the workflow last ran, a page of the newest execution
-    * of the workflow on this unit.
+    * A page of a result of the run this service last attached to, found where the run's engine
+    * reported it. Before it attaches to any, as on a unit that restarted since the workflow last
+    * ran, a page of the newest execution of the workflow on this unit, found in the database.
     */
   def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
     // calculate from index (pageIndex starts from 1 instead of 0)
     val from = request.pageSize * (request.pageIndex - 1)
-    val executionId = attachedExecutionId
-      .orElse(getLatestExecutionId(workflowIdentity, computingUnitId))
-      .getOrElse(throw new IllegalStateException("No execution is recorded"))
-
-    val storageUriOption = ExecutionResultUris.getResultUriByLogicalPortId(
-      executionId,
-      OperatorIdentity(request.operatorID),
-      PortIdentity(request.portIndex)
-    )
+    val operatorId = OperatorIdentity(request.operatorID)
+    val portId = PortIdentity(request.portIndex)
+    val storageUriOption = attachedResultUris match {
+      case Some(resultUris) => resultUris.of(operatorId, portId)
+      case None =>
+        val executionId = getLatestExecutionId(workflowIdentity, computingUnitId)
+          .getOrElse(throw new IllegalStateException("No execution is recorded"))
+        ExecutionResultUris.getResultUriByLogicalPortId(executionId, operatorId, portId)
+    }
 
     // Refuse to read a per-user-warehouse result while the feature is off (#6930).
     storageUriOption.foreach(WarehouseReadGuard.assertReadable(_))
@@ -466,26 +457,24 @@ class ExecutionResultService(
     }
   }
 
-  private def onResultUpdate(executionId: ExecutionIdentity, physicalPlan: PhysicalPlan): Unit = {
+  private def onResultUpdate(
+      executionId: ExecutionIdentity,
+      resultUris: ResultUris,
+      physicalPlan: PhysicalPlan
+  ): Unit = {
     workflowStateStore.resultStore.updateState { _ =>
-      val newInfo: Map[OperatorIdentity, OperatorResultMetadata] = {
-        ExecutionResultUris
-          .getResultUrisByExecutionId(executionId)
+      val newInfo: Map[OperatorIdentity, OperatorResultMetadata] =
+        resultUris.all.collect {
           // One entry per operator, so it follows the first output port, as the result updates do.
           // Keyed by operator, a second port's count would otherwise replace the first's.
-          .filter(uri =>
-            VFSURIFactory.decodeURI(uri).globalPortId.exists(_.portId == PortIdentity())
-          )
-          .map(uri => {
+          case (globalPortId, uri) if globalPortId.portId == PortIdentity() =>
             val document = DocumentFactory.openDocument(uri)._1
             val count = document.getCount
 
-            val globalPortIdOption = VFSURIFactory.decodeURI(uri).globalPortId
-
             // Retrieve the mode of the specified output port
             val mode = physicalPlan
-              .getPhysicalOpsOfLogicalOp(globalPortIdOption.get.opId.logicalOpId)
-              .flatMap(_.outputPorts.get(globalPortIdOption.get.portId))
+              .getPhysicalOpsOfLogicalOp(globalPortId.opId.logicalOpId)
+              .flatMap(_.outputPorts.get(globalPortId.portId))
               .map(_._1.mode)
               .head
 
@@ -494,7 +483,7 @@ class ExecutionResultService(
             if (mode != OutputMode.SINGLE_SNAPSHOT) {
               WorkflowExecutionsResource.updateResultSizeAndCount(
                 executionId,
-                globalPortIdOption.get,
+                globalPortId,
                 document.getTotalFileSize,
                 count
               )
@@ -504,13 +493,8 @@ class ExecutionResultService(
               if (mode == OutputMode.SET_SNAPSHOT) {
                 UUID.randomUUID.toString
               } else ""
-            (
-              globalPortIdOption.get.opId.logicalOpId,
-              OperatorResultMetadata(count.toInt, changeDetector)
-            )
-          })
-          .toMap
-      }
+            globalPortId.opId.logicalOpId -> OperatorResultMetadata(count.toInt, changeDetector)
+        }
       WorkflowResultStore(newInfo)
     }
   }

@@ -96,7 +96,7 @@ import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
 import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
-import org.apache.texera.web.storage.ExecutionStateStore
+import org.apache.texera.web.storage.{ExecutionStateStore, ResultUris}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -123,9 +123,9 @@ import scala.util.Try
   *
   * `collectOperatorResult` needs the most of those fixtures, and gets a real one: `storeResult`
   * below writes an actual Iceberg result table through `DocumentFactory` on the ambient catalog
-  * and registers its URI in `operator_port_executions`, which is all the method needs — it takes
-  * the `ExecutionIdentity` as a parameter and resolves storage from the database, so no engine,
-  * coordinator or client is involved. Two things to know before touching those tests: its
+  * and keeps its URI as a run keeps what its engine reports (`ResultUris`), which is all the
+  * method needs — it takes the run's result URIs as a parameter, so no engine, coordinator,
+  * client or registry row is involved. Two things to know before touching those tests: its
   * outermost `catch` turns any storage failure into a well-formed `("table", None, ...)`, so an
   * assertion weaker than the row contents passes on a fixture that never opened a document; and
   * its front/back split is exact arithmetic, so the char budgets are multiples of a measured
@@ -191,8 +191,11 @@ class SyncExecutionResourceSpec
   /** A second eid, so the query's execution-id predicate is not vacuous. */
   private var otherEid: Int = 0
 
-  /** eid the `collectOperatorResult` fixtures register their result URIs under. */
+  /** eid of the execution the `collectOperatorResult` fixtures' result URIs name. */
   private var resultEid: Int = 0
+
+  /** Where the results of that execution's run are, as its engine would have reported them. */
+  private val resultUris = new ResultUris
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
@@ -285,7 +288,7 @@ class SyncExecutionResourceSpec
       input = false
     )
 
-  /** The external-output result URI shape `getResultUriByLogicalPortId` decodes and matches. */
+  /** The result URI of the first external output port of `opId`. */
   private def resultUriOf(opId: String): URI =
     VFSURIFactory.resultURI(
       VFSURIFactory.createPortBaseURI(
@@ -295,16 +298,9 @@ class SyncExecutionResourceSpec
       )
     )
 
-  private def registerResultUri(uri: URI): Unit =
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .set(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(resultEid))
-      .set(
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
-        VFSURIFactory.decodeURI(uri).globalPortId.get.serializeAsString
-      )
-      .set(OPERATOR_PORT_EXECUTIONS.RESULT_URI, uri.toString)
-      .execute()
+  /** Keeps `uri` as the result of `opId`'s first output port, as the engine's report does. */
+  private def reportResultUri(opId: String, uri: URI): Unit =
+    resultUris.add(globalPortIdOf(opId), uri)
 
   private val rowSchema = new Schema(List(new Attribute("v", AttributeType.STRING)))
 
@@ -319,8 +315,8 @@ class SyncExecutionResourceSpec
   private val rowChars = 29
 
   /**
-    * Creates a real Iceberg result table holding `tuples`, and registers its URI so
-    * `getResultUriByLogicalPortId` finds it. Operator ids are prefixed `serc-` and hang off
+    * Creates a real Iceberg result table holding `tuples`, and reports its URI so
+    * `collectOperatorResult` finds it. Operator ids are prefixed `serc-` and hang off
     * workflow 9317, because an Iceberg table's identity derives from its URI path and sbt runs
     * amber's suites in one unforked JVM: an id another suite also uses would truncate its table.
     */
@@ -333,12 +329,12 @@ class SyncExecutionResourceSpec
     writer.open()
     tuples.foreach(writer.putOne)
     writer.close()
-    registerResultUri(uri)
+    reportResultUri(opId, uri)
   }
 
   private def collect(opId: String, charLimit: Int, cellCharLimit: Int): CollectedResult =
     resource invokePrivate collectOperatorResult(
-      ExecutionIdentity(resultEid.toLong),
+      resultUris,
       opId,
       charLimit,
       cellCharLimit
@@ -683,8 +679,8 @@ class SyncExecutionResourceSpec
     neverRan.outputTuples shouldBe 0L
     neverRan.inputPortShapes shouldBe None
 
-    // No result URI is registered for this execution, so every entry reports an absent table
-    // rather than an empty one — the caller distinguishes the two.
+    // The run reported no result URI, so every entry reports an absent table rather than an
+    // empty one — the caller distinguishes the two.
     infos.values.foreach { info =>
       info.resultMode shouldBe "table"
       info.result shouldBe None
@@ -833,6 +829,11 @@ class SyncExecutionResourceSpec
     result._3 shouldBe Some(3)
     result._4 shouldBe Some(3)
     result._5 shouldBe Some(false)
+    // Found where the run's engine reported it: the registry holds no row of the execution.
+    getDSLContext.fetchCount(
+      OPERATOR_PORT_EXECUTIONS,
+      OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(resultEid)
+    ) shouldBe 0
   }
 
   it should "report an empty result as zero rows rather than as an absent one" in {
@@ -977,7 +978,8 @@ class SyncExecutionResourceSpec
     // flag state, so this does not depend on how the deployment has the switch set. Built by hand
     // because VFSURIFactory rejects a name it could not parse back.
     val opId = "serc-guarded"
-    registerResultUri(
+    reportResultUri(
+      opId,
       new URI(
         s"vfs:///wh/a%2Fb/wid/$testWid/eid/$resultEid" +
           s"/globalportid/${globalPortIdOf(opId).serializeAsString}/result"
@@ -987,11 +989,11 @@ class SyncExecutionResourceSpec
     a[WarehouseUnavailableException] should be thrownBy collect(opId, 100000, 20000)
   }
 
-  it should "degrade to an absent result when the registered URI has no document behind it" in {
-    // The execution row records a result URI before anything is written to it, so a report asked
-    // for in that window must still come back — as an absent result, not as an exception.
+  it should "degrade to an absent result when the reported URI has no document behind it" in {
+    // A report asked for of a result whose table is gone must still come back — as an absent
+    // result, not as an exception.
     val opId = "serc-no-document"
-    registerResultUri(resultUriOf(opId))
+    reportResultUri(opId, resultUriOf(opId))
 
     val result = collect(opId, 100000, 20000)
 

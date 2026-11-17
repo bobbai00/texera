@@ -343,7 +343,7 @@ class PythonEnvironmentIntegrationSpec
 
     /** The tuples the UDF gave. */
     def results: List[Tuple] =
-      readMaterializedResults(context.executionId, Seq(udf.operatorIdentifier), _.get().toList)(
+      readMaterializedResults(store.resultUris, Seq(udf.operatorIdentifier), _.get().toList)(
         udf.operatorIdentifier
       )
 

@@ -74,8 +74,8 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   Workflow => WorkflowPojo
 }
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.amber.core.storage.ExecutionResultUris.getResultUriByLogicalPortId
-import org.apache.texera.web.service.{ExecutionResultService, PlanToRun, WorkflowExecutionService}
+import org.apache.texera.web.service.{PlanToRun, WorkflowExecutionService}
+import org.apache.texera.web.storage.ResultUris
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{
   CompilationErrorHandling,
@@ -212,19 +212,19 @@ object TestUtils {
   }
 
   /**
-    * Resolve and read each operator's external RESULT document at `executionId`,
+    * Resolve and read each operator's external RESULT document among `resultUris`,
     * applying `extract` to the opened document. Operators with no external
     * RESULT uri (e.g. one whose output wasn't materialized) are omitted. Shared
     * by the e2e specs so the lookup-open-extract block doesn't drift between
     * copies.
     */
   def readMaterializedResults[T](
-      executionId: ExecutionIdentity,
+      resultUris: ResultUris,
       operatorIds: Iterable[OperatorIdentity],
       extract: VirtualDocument[Tuple] => T
   ): Map[OperatorIdentity, T] =
     operatorIds.flatMap { opId =>
-      getResultUriByLogicalPortId(executionId, opId, PortIdentity()).map { uri =>
+      resultUris.of(opId, PortIdentity()).map { uri =>
         opId -> extract(
           DocumentFactory.openDocument(uri)._1.asInstanceOf[VirtualDocument[Tuple]]
         )
@@ -245,9 +245,12 @@ object TestUtils {
     * Convenience over `readMaterializedResults` for the common case: read each
     * terminal operator's result of `workflow` as a `List[Tuple]`.
     */
-  def readMaterializedResults(workflow: Workflow): Map[OperatorIdentity, List[Tuple]] =
+  def readMaterializedResults(
+      resultUris: ResultUris,
+      workflow: Workflow
+  ): Map[OperatorIdentity, List[Tuple]] =
     readMaterializedResults(
-      workflow.context.executionId,
+      resultUris,
       terminalOperatorIds(workflow.physicalPlan),
       _.get().toList
     )
@@ -284,19 +287,10 @@ object TestUtils {
     )
     try {
       client.registerCallback[FatalError](evt => completion.updateIfEmpty(Throw(evt.e)))
-      // The engine emits `OperatorPortResultUriAvailable` for each
-      // materialized output port; production wires this to a DB insert in
-      // `ExecutionResultService.persistOperatorPortResultUri`. The e2e
-      // harness doesn't construct an `ExecutionResultService` (it builds an
-      // `AmberClient` directly), so register the same callback here so the
-      // post-completion `readMaterializedResults` lookup via
-      // `getResultUriByLogicalPortId` finds the rows.
-      registerResultUriPersistence(client, workflow.context.executionId)
+      val resultUris = resultUrisOf(client)
       client.registerCallback[ExecutionStateUpdate](evt => {
         if (evt.state == COMPLETED) {
-          completion.updateIfEmpty(
-            Try(readMaterializedResults(workflow.context.executionId, operatorIds, extract))
-          )
+          completion.updateIfEmpty(Try(readMaterializedResults(resultUris, operatorIds, extract)))
         }
       })
       Await.result(client.coordinatorInterface.startWorkflow(EmptyRequest(), ()))
@@ -307,16 +301,18 @@ object TestUtils {
   }
 
   /**
-    * Mirror the production `OperatorPortResultUriAvailable` → DB write that
-    * `ExecutionResultService.persistOperatorPortResultUri` does, but driven
-    * from a test-owned `AmberClient`. Specs that build their own client
-    * (the harness above, or `shouldReconfigure` for the pause/resume flow)
-    * call this so subsequent `getResultUriByLogicalPortId` lookups succeed.
+    * Where the results of the run of `client`'s engine are: kept as the engine reports each
+    * materialized output port, the way a computing unit keeps those of the run it holds
+    * (`ExecutionResultService.attachToExecution`), but driven from a test-owned `AmberClient`.
+    * To be called before the run starts: a port reported earlier is not kept.
     */
-  def registerResultUriPersistence(client: AmberClient, executionId: ExecutionIdentity): Unit =
+  def resultUrisOf(client: AmberClient): ResultUris = {
+    val resultUris = new ResultUris
     client.registerCallback[OperatorPortResultUriAvailable](evt =>
-      ExecutionResultService.persistOperatorPortResultUri(executionId, evt)
+      resultUris.add(evt.globalPortId, evt.uri)
     )
+    resultUris
+  }
 
   /**
     * Convenience over `runWorkflowAndReadResults` for the common case: run
@@ -364,16 +360,14 @@ object TestUtils {
   }
 
   /**
-    * `runWorkflowAndReadTerminalResults`, as if no run of execution `id` came before: its rows
-    * are set up afresh, as a run records its result ports there, and what an earlier run stored
-    * for `workflow`'s output ports is dropped. A port that keeps its storage over a loop's
-    * iterations (`reuseStorage`) would otherwise keep it over runs of one execution, too, which
-    * production never makes: it gives each run an execution of its own.
+    * `runWorkflowAndReadTerminalResults`, as if no run of `workflow`'s execution came before:
+    * what an earlier run stored for `workflow`'s output ports is dropped. A port that keeps its
+    * storage over a loop's iterations (`reuseStorage`) would otherwise keep it over runs of one
+    * execution, too, which production never makes: it gives each run an execution of its own.
     */
   def runAfresh(
       system: ActorSystem,
       workflow: Workflow,
-      id: Int,
       completionTimeout: Duration = Duration.fromMinutes(1)
   ): Map[OperatorIdentity, List[Tuple]] = {
     for {
@@ -388,8 +382,6 @@ object TestUtils {
       uri <- List(VFSURIFactory.resultURI(base), VFSURIFactory.stateURI(base))
       if DocumentFactory.documentExists(uri)
     } DocumentFactory.openDocument(uri)._1.clear()
-    cleanupWorkflowExecutionData(id)
-    setUpWorkflowExecutionData(id)
     runWorkflowAndReadTerminalResults(system, workflow, completionTimeout)
   }
 
@@ -397,7 +389,7 @@ object TestUtils {
     * Runs the workflow of `operators` and `links` twice, as `buildFromCompiledAndSavedPlans`
     * builds it: first from the plan its compile made, then as every run runs, from that plan
     * saved and read back. Fails unless the two runs give each terminal operator the same results,
-    * as multisets. The runs are of execution `id`.
+    * as multisets.
     *
     * @return the terminal results of the run from the saved plan
     */
@@ -406,12 +398,11 @@ object TestUtils {
       operators: List[LogicalOp],
       links: List[LogicalLink],
       newContext: () => WorkflowContext,
-      id: Int,
       completionTimeout: Duration = Duration.fromMinutes(1)
   ): Map[OperatorIdentity, List[Tuple]] = {
     val (compiled, saved) = buildFromCompiledAndSavedPlans(operators, links, newContext)
-    val fromCompiled = runAfresh(system, compiled, id, completionTimeout)
-    val fromSaved = runAfresh(system, saved, id, completionTimeout)
+    val fromCompiled = runAfresh(system, compiled, completionTimeout)
+    val fromSaved = runAfresh(system, saved, completionTimeout)
 
     def counted(tuples: List[Tuple]): Map[Tuple, Int] =
       tuples.groupMapReduce(identity)(_ => 1)(_ + _)
@@ -554,12 +545,12 @@ object TestUtils {
     )
     // Timeout for control-command acks (start/pause/reconfigure/resume).
     val commandTimeout = Duration.fromSeconds(30)
-    registerResultUriPersistence(client, workflow.context.executionId)
+    val resultUris = resultUrisOf(client)
     val completion = Promise[Unit]()
     var result: Map[OperatorIdentity, List[Tuple]] = null
     client.registerCallback[ExecutionStateUpdate](evt => {
       if (evt.state == COMPLETED) {
-        result = readMaterializedResults(workflow)
+        result = readMaterializedResults(resultUris, workflow)
         completion.setDone()
       }
     })

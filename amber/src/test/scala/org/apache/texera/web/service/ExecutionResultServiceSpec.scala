@@ -185,9 +185,14 @@ class ExecutionResultServiceSpec
   /** Every ResultEvents subscription made during a test, disposed when that test ends. */
   private val openObservers = mutable.ArrayBuffer.empty[Disposable]
 
+  /** The results a test stored, by execution: what a run of the execution's engine reports. */
+  private val storedResults =
+    mutable.Map.empty[ExecutionIdentity, mutable.ArrayBuffer[(GlobalPortIdentity, URI)]]
+
   override protected def afterEach(): Unit = {
     openObservers.foreach(_.dispose())
     openObservers.clear()
+    storedResults.clear()
 
     val ctx = getDSLContext
     // Scope every delete to the test's own ids so this spec stays safe
@@ -810,16 +815,18 @@ class ExecutionResultServiceSpec
   // -- attachToExecution: the engine callbacks -------------------------------
 
   "the OperatorPortResultUriAvailable callback" should
-    "persist the URI under the attached execution" in {
+    "keep the URI for the attached run, and persist it under the run's execution" in {
     val executionId = newExecution()
     withAttached(planOf(), executionId) { fixture =>
       val globalPortId = globalPortIdOf("erss-callback")
       val uri = resultUriOf(executionId, "erss-callback")
+      fixture.stateStore.resultUris.all shouldBe empty
 
       fixture.client.fire(
         OperatorPortResultUriAvailable(globalPortId, uri, OutputMode.SET_SNAPSHOT)
       )
 
+      fixture.stateStore.resultUris.all shouldBe Map(globalPortId -> uri)
       val rows = getDSLContext
         .selectFrom(OPERATOR_PORT_EXECUTIONS)
         .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
@@ -827,6 +834,57 @@ class ExecutionResultServiceSpec
       rows.size() shouldBe 1
       rows.get(0).getGlobalPortId shouldBe globalPortId.serializeAsString
       rows.get(0).getResultUri shouldBe uri.toString
+    }
+  }
+
+  it should "let the attached run's results be found at once, with no row in the registry" in {
+    val executionId = newExecution()
+    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
+    val uri = storeResult(
+      executionId,
+      "erss-in-memory",
+      schema,
+      (0 until 4).map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
+    )
+    // Only the table is left: nothing of the execution in the registry, and nothing the fixture
+    // told the run.
+    clearRegistry(executionId)
+    storedResults.clear()
+    val plan = planOf(
+      physicalOp(executionId, "erss-in-memory", PortIdentity() -> OutputMode.SET_SNAPSHOT)
+    )
+    val request = paginationRequest.copy(operatorID = "erss-in-memory", pageSize = 10)
+
+    withAttached(plan, executionId) { fixture =>
+      def page(): PaginatedResultEvent =
+        fixture.service.handleResultPagination(request) match {
+          case event: PaginatedResultEvent => event
+          case other                       => fail(s"expected a PaginatedResultEvent, got $other")
+        }
+      // Before the engine reports the port, the run has no result to page.
+      page().table shouldBe empty
+
+      fixture.client.fire(
+        OperatorPortResultUriAvailable(
+          globalPortIdOf("erss-in-memory"),
+          uri,
+          OutputMode.SET_SNAPSHOT
+        )
+      )
+      // The callback wrote the registry row a unit still writes; the run does not read it.
+      clearRegistry(executionId)
+
+      // A page, a result update and the poll's last word all find the result the engine reported.
+      page().table.map(_.get("id").asInt()) shouldBe List(0, 1, 2, 3)
+      val events = new ResultEvents(fixture.workflowStateStore)
+      fixture.setResultCounts("erss-in-memory" -> 4)
+      events.updates.map(_.updates) shouldBe List(
+        Map("erss-in-memory" -> WebPaginationUpdate(PaginationMode(), 4L, List(1)))
+      )
+      fixture.client.fire(ExecutionStateUpdate(WorkflowAggregatedState.COMPLETED))
+      fixture.workflowStateStore.resultStore.getState
+        .resultInfo(OperatorIdentity("erss-in-memory"))
+        .tupleCount shouldBe 4
     }
   }
 
@@ -1059,7 +1117,8 @@ class ExecutionResultServiceSpec
   private final class Fixture(
       val client: RecordingAmberClient,
       val service: ExecutionResultService,
-      val workflowStateStore: WorkflowStateStore
+      val workflowStateStore: WorkflowStateStore,
+      val stateStore: ExecutionStateStore
   ) {
 
     /** Publishes one engine-reported tuple count per operator, as the poller does. */
@@ -1090,6 +1149,10 @@ class ExecutionResultServiceSpec
       collected.collect { case e: WebResultUpdateEvent => e }.toList
   }
 
+  /**
+    * Runs `body` on a service attached to a run of `executionId`, whose engine has reported the
+    * results the test stored for the execution: the run knows where each is.
+    */
   private def withAttached(physicalPlan: PhysicalPlan, executionId: ExecutionIdentity)(
       body: Fixture => Unit
   ): Unit = {
@@ -1100,9 +1163,13 @@ class ExecutionResultServiceSpec
       testCuid,
       workflowStateStore
     )
+    val stateStore = new ExecutionStateStore
     try {
-      service.attachToExecution(executionId, new ExecutionStateStore, physicalPlan, client)
-      body(new Fixture(client, service, workflowStateStore))
+      service.attachToExecution(executionId, stateStore, physicalPlan, client)
+      storedResults.getOrElse(executionId, Nil).foreach {
+        case (port, uri) => stateStore.resultUris.add(port, uri)
+      }
+      body(new Fixture(client, service, workflowStateStore, stateStore))
     } finally {
       service.unsubscribeAll()
       client.shutdown()
@@ -1155,7 +1222,7 @@ class ExecutionResultServiceSpec
       input = false
     )
 
-  /** The external-output result URI shape that getResultUriByLogicalPortId decodes and matches. */
+  /** The result URI of output port `port` of `operatorId`, as the engine names it. */
   private def resultUriOf(
       executionId: ExecutionIdentity,
       operatorId: String,
@@ -1186,7 +1253,11 @@ class ExecutionResultServiceSpec
       )
       .execute()
 
-  /** Creates a real Iceberg result table holding `tuples`, and records its URI for `executionId`. */
+  /**
+    * Creates a real Iceberg result table holding `tuples`, and records its URI for `executionId`:
+    * in the registry, where a service attached to no run finds it, and as what a run of the
+    * execution's engine reports (`withAttached`).
+    */
   private def storeResult(
       executionId: ExecutionIdentity,
       operatorId: String,
@@ -1201,8 +1272,17 @@ class ExecutionResultServiceSpec
     tuples.foreach(writer.putOne)
     writer.close()
     insertResultUri(executionId, uri)
+    storedResults.getOrElseUpdate(executionId, mutable.ArrayBuffer.empty) +=
+      ((globalPortIdOf(operatorId, port), uri))
     uri
   }
+
+  /** Deletes the registry rows of `executionId`, leaving its result tables as they are. */
+  private def clearRegistry(executionId: ExecutionIdentity): Unit =
+    getDSLContext
+      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
+      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
+      .execute()
 
   private def storedResultCount(
       executionId: ExecutionIdentity,

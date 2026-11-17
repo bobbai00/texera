@@ -24,7 +24,6 @@ import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionResultUris,
   WarehouseReadGuard,
   WarehouseUnavailableException
 }
@@ -54,6 +53,7 @@ import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
+import org.apache.texera.web.storage.ResultUris
 
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -447,7 +447,7 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
 
       val (resultMode, result, totalRowCount, displayedRows, truncated) =
         collectOperatorResult(
-          executionId,
+          executionService.executionStateStore.resultUris,
           opId,
           maxOperatorResultCharLimit,
           maxOperatorResultCellCharLimit
@@ -510,9 +510,11 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     * Symmetric truncation: fill half the char budget from the front of the result, keep a
     * sliding-window of the most recent tuples for the back half. Returns a JSON array;
     * serialization to table/toon format happens in agent-service.
+    *
+    * @param resultUris where the results of the run are, as its engine reported them
     */
   private def collectOperatorResult(
-      executionId: ExecutionIdentity,
+      resultUris: ResultUris,
       opId: String,
       maxOperatorResultCharLimit: Int,
       maxOperatorResultCellCharLimit: Int
@@ -520,13 +522,7 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     import com.fasterxml.jackson.databind.node.ObjectNode
 
     try {
-      val storageUriOption = ExecutionResultUris.getResultUriByLogicalPortId(
-        executionId,
-        OperatorIdentity(opId),
-        PortIdentity()
-      )
-
-      storageUriOption match {
+      resultUris.of(OperatorIdentity(opId), PortIdentity()) match {
         case Some(storageUri) =>
           // Refuse to read a per-user-warehouse result while the feature is off (#6930).
           WarehouseReadGuard.assertReadable(storageUri)

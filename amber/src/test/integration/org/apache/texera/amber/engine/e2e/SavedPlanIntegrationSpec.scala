@@ -71,7 +71,6 @@ class SavedPlanIntegrationSpec
       operators,
       links,
       () => workflowContext(specId, settings),
-      specId,
       Duration.fromMinutes(2)
     )
 

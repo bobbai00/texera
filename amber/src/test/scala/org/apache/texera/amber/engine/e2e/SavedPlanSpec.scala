@@ -89,8 +89,7 @@ class SavedPlanSpec extends RetryingDatabaseE2ESpec("SavedPlanSpec", specId = 7)
       system,
       operators,
       links,
-      () => workflowContext(specId, settings),
-      specId
+      () => workflowContext(specId, settings)
     )
 
   private def link(from: LogicalOp, to: LogicalOp, toPort: Int = 0): LogicalLink =
@@ -348,7 +347,7 @@ class SavedPlanSpec extends RetryingDatabaseE2ESpec("SavedPlanSpec", specId = 7)
         case List(OpExecWithCode(code, "java")) if code.contains("class JavaUDFOpExec") =>
       }
       val failures = List(compiled, saved).map { workflow =>
-        intercept[Throwable](runAfresh(system, workflow, specId))
+        intercept[Throwable](runAfresh(system, workflow))
       }
       failures.head.getMessage should include(
         "package org.apache.texera.amber.operator.map does not exist"

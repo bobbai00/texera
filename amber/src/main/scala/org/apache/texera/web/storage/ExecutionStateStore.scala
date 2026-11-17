@@ -60,6 +60,9 @@ class ExecutionStateStore {
   val breakpointStore = new StateStore(ExecutionBreakpointStore())
   val reconfigurationStore = new StateStore(ExecutionReconfigurationStore())
 
+  /** Where the run's results are, as its engine reports them. */
+  val resultUris = new ResultUris
+
   def getAllStores: Iterable[StateStore[_]] = {
     Iterable(statsStore, consoleStore, breakpointStore, metadataStore, reconfigurationStore)
   }

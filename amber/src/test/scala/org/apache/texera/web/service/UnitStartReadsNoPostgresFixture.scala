@@ -394,8 +394,8 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   /**
     * Fails unless `run` kept to the rule: the unit recorded it READY, RUNNING and COMPLETED, in
     * one write each; until it had recorded it RUNNING, it read nothing, and only inserted into
-    * or updated the three tables of a run's state; and until the run ended, it touched no other
-    * table.
+    * or updated the three tables of a run's state; until the run ended, it touched no other
+    * table; and it never read where the run's results are, which its engine told it.
     */
   protected def assertStartedWithoutReading(run: Run): Unit = {
     val statements = run.statements
@@ -421,6 +421,13 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         .filterNot(statement =>
           statement.tables.nonEmpty && statement.tables.subsetOf(RunStateTables) &&
             Set("INSERT", "UPDATE", "SELECT").contains(statement.verb)
+        )
+        .map(described) shouldBe empty
+    }
+    withClue("to find the run's results, the unit sent: ") {
+      statements
+        .filter(statement =>
+          statement.verb == "SELECT" && statement.tables.contains("operator_port_executions")
         )
         .map(described) shouldBe empty
     }
