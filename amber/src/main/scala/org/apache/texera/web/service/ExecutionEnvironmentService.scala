@@ -92,9 +92,6 @@ object ExecutionEnvironmentService {
         failure
       ) {
 
-    /** What the consoles of `operators` are told, above `details`. */
-    val title: String = s"Python environment '${environment.name}' could not be installed"
-
     /** The last lines the install wrote, pip's among them; why it failed, if it wrote none. */
     val details: String = if (failure.log.isEmpty) failure.reason else failure.log.mkString("\n")
   }

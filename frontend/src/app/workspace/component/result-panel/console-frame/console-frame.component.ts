@@ -20,7 +20,6 @@
 import { Component, ElementRef, Input, OnChanges, OnInit, SimpleChanges, ViewChild } from "@angular/core";
 import { ExecuteWorkflowService } from "../../../service/execute-workflow/execute-workflow.service";
 import { ConsoleMessage } from "../../../types/workflow-common.interface";
-import { ExecutionState } from "src/app/workspace/types/execute-workflow.interface";
 import {
   OperatorConsoleMessage,
   WorkflowConsoleService,
@@ -218,18 +217,11 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
   }
 
   registerAutoConsoleRerender(): void {
+    // re-render the console, this may update the console with error messages or console messages
     this.executeWorkflowService
       .getExecutionStateStream()
       .pipe(untilDestroyed(this))
-      .subscribe(event => {
-        if (event.previous.state === ExecutionState.Initializing && event.current.state === ExecutionState.Running) {
-          // clear the console for the next execution
-          this.clearConsole();
-        } else {
-          // re-render the console, this may update the console with error messages or console messages
-          this.renderConsole();
-        }
-      });
+      .subscribe(_ => this.renderConsole());
 
     this.workflowConsoleService
       .getConsoleMessageUpdateStream()
@@ -241,10 +233,6 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
       .getCompilationStateInfoChangedStream()
       .pipe(untilDestroyed(this))
       .subscribe(_ => this.renderConsole());
-  }
-
-  clearConsole(): void {
-    this.consoleMessages = [];
   }
 
   renderConsole(): void {
@@ -388,10 +376,12 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
     ];
     // The same error gives the same message on every render. A new one each time would read as a
     // message just arrived, and the list would jump to its end while the user scrolls up. Every
-    // compile sends new error objects with a new timestamp, so an error is known by the rest.
+    // compile sends new error objects with a new timestamp, and the same error comes with other
+    // details from the compile of a run than from the editor's own, so an error is known by the
+    // rest, and listed once.
     const rows = new Map<string, OperatorConsoleMessage>();
-    const messages = errors.map(error => {
-      const key = JSON.stringify([error.type.name, error.operatorId, error.workerId, error.message, error.details]);
+    errors.forEach(error => {
+      const key = JSON.stringify([error.type.name, error.operatorId, error.workerId, error.message]);
       let row = rows.get(key) ?? this.fatalErrorRows.get(key);
       if (!row) {
         const shouldFormat = error.type.name === "COMPILATION_ERROR" || error.type.name === "EXECUTION_FAILURE";
@@ -408,10 +398,9 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
         };
       }
       rows.set(key, row);
-      return row;
     });
     // only the errors still shown are kept
     this.fatalErrorRows = rows;
-    return messages;
+    return [...rows.values()];
   }
 }

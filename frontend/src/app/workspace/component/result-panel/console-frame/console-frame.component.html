@@ -176,7 +176,11 @@
             [nzDisabled]="false"
             class="collapse-remove-padding">
             <ng-template #customHeader>
-              <div class="collapse-message-header">{{ entry.title }}</div>
+              <div
+                class="collapse-message-header"
+                [class.error]="entry.msgType.name === 'ERROR'">
+                {{ entry.title }}
+              </div>
             </ng-template>
             <div class="console-message">{{ entry.message }}</div>
           </nz-collapse-panel>

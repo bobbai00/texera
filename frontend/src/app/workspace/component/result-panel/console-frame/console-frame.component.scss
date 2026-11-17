@@ -112,10 +112,14 @@
       font-weight: bold;
       line-height: 14px;
       white-space: pre-line;
-      color: red;
       -webkit-user-select: text;
       user-select: text;
       //border: solid black;
+
+      // A message of any type can have a detail: only an error's title is red.
+      &.error {
+        color: red;
+      }
     }
 
     .console-message {

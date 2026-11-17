@@ -476,13 +476,10 @@ class PythonEnvironmentIntegrationSpec
       error.details should include(
         "ERROR: No matching distribution found for tabulate==0.0.0.dev999"
       )
-      // The console says that the install began, and then why it failed.
-      val told = run.told
-      told.map(message => (message.msgType, message.title)) shouldBe Seq(
-        (ConsoleMessageType.PRINT, "Installing Python environment 'unreleased' (1 package)"),
-        (ConsoleMessageType.ERROR, "Python environment 'unreleased' could not be installed")
+      // The console says that the install began. That it failed is the run's error, said once.
+      run.told.map(message => (message.msgType, message.title)) shouldBe Seq(
+        (ConsoleMessageType.PRINT, "Installing Python environment 'unreleased' (1 package)")
       )
-      told.last.message shouldBe error.details
     }
     // A failed install leaves no directory to take for an environment.
     Files.exists(directoryOf(unreleased)) shouldBe false

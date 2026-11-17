@@ -434,9 +434,8 @@ class ExecutionEnvironmentServiceSpec
       notInstalled.getMessage shouldBe
         "Python environment 'ml' could not be installed: No matching distribution found for " +
           "tabulate==0.9.0"
-      notInstalled.title shouldBe "Python environment 'ml' could not be installed"
       notInstalled.details shouldBe pipSaid.mkString("\n")
-      // The consoles are the run's to tell, once it has failed.
+      // The failure is the run's to report: the consoles are told nothing of it.
       run.titlesTo("udf-first") shouldBe Seq("Installing Python environment 'ml' (2 packages)")
     }
   }

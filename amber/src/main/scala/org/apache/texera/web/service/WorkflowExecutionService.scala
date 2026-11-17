@@ -32,7 +32,6 @@ import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTIO
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.PythonEnvironmentInstaller
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.ERROR
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
@@ -287,9 +286,8 @@ class WorkflowExecutionService(
   /**
     * Ends the run before its engine starts, as one of its Python environments could not be
     * installed: FAILED, with why as its error, which names the first operator that runs in the
-    * environment, and then on the console of every operator that does. The consoles are
-    * committed here, as the engine will report no end. A run that ended meanwhile keeps the
-    * state it ended in, and is told nothing.
+    * environment and holds what the install wrote. The consoles are committed here, as the
+    * engine will report no end. A run that ended meanwhile keeps the state it ended in.
     */
   private def failBeforeStart(notInstalled: EnvironmentNotInstalled): Unit = {
     val failedAt = System.currentTimeMillis()
@@ -318,14 +316,6 @@ class WorkflowExecutionService(
       )
       client.shutdown()
       executionStateStore.statsStore.updateState(_.withEndTimeStamp(failedAt))
-      notInstalled.operators.foreach { operator =>
-        executionConsoleService.addUnitMessage(
-          operator.id,
-          ERROR,
-          notInstalled.title,
-          notInstalled.details
-        )
-      }
       executionConsoleService.commitMessages()
     }
   }

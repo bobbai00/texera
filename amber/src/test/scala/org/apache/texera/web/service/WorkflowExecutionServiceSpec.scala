@@ -1125,7 +1125,9 @@ class WorkflowExecutionServiceSpec
       val before = System.currentTimeMillis()
       run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
         None
-      eventually(titlesOn(run, "fails-second") should have size 2)
+      // Committing the consoles is the last thing a run that fails here does.
+      val installing = Seq("Installing Python environment 'ml' (1 package)")
+      eventually(titlesInLake("fails-second") shouldBe installing)
       val after = System.currentTimeMillis()
 
       // The run ends FAILED, when the install did, and its row says so. Its one error is pip's,
@@ -1149,18 +1151,13 @@ class WorkflowExecutionServiceSpec
       startWorkflowAsked(run) shouldBe false
       run.engine.get.shutdownCount shouldBe 1
       run.errors shouldBe empty
-      // Every operator of the environment is told, on its console, after the install it was
-      // told of; and the lake keeps what it was told, although no engine reports the run's end.
+      // The failure is reported once, as the run's error: no console repeats it. The lake
+      // keeps what the consoles were told of the install, although no engine reports the run's
+      // end.
       Seq("fails-first", "fails-second").foreach { operator =>
-        val told = consoleOf(run, operator)
-        told.map(message => (message.msgType, message.title)) shouldBe Seq(
-          (ConsoleMessageType.PRINT, "Installing Python environment 'ml' (1 package)"),
-          (ConsoleMessageType.ERROR, "Python environment 'ml' could not be installed")
-        )
-        told(1).message shouldBe pipSaid.mkString("\n")
-        told(1).source shouldBe "computing unit"
-        told(1).workerId shouldBe ""
-        eventually(titlesInLake(operator) shouldBe told.map(_.title))
+        consoleOf(run, operator).map(message => (message.msgType, message.title)) shouldBe
+          installing.map((ConsoleMessageType.PRINT, _))
+        eventually(titlesInLake(operator) shouldBe installing)
       }
     } finally run.close()
   }

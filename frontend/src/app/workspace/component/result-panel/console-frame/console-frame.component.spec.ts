@@ -160,12 +160,6 @@ describe("ConsoleFrameComponent", () => {
   });
 
   describe("console rendering", () => {
-    it("clearConsole empties the message list", () => {
-      component.consoleMessages = [consoleMessage("PRINT")];
-      component.clearConsole();
-      expect(component.consoleMessages).toEqual([]);
-    });
-
     it("displayConsoleMessages loads the operator's messages from the service", () => {
       const messages = [consoleMessage("PRINT"), consoleMessage("ERROR")];
       getConsoleMessages.mockReturnValue(messages);
@@ -228,6 +222,32 @@ describe("ConsoleFrameComponent", () => {
       component.displayConsoleMessages(undefined);
 
       expect(component.consoleMessages.map(m => m.title)).toEqual(["A broke", "B broke"]);
+    });
+
+    it("lists an error once when the run and the editor's compile both report it", () => {
+      // A run the Dashboard refuses for a compile error reports it with that compile's details and
+      // time; the editor's own compile then reports the same error with its own.
+      const compileError = (details: string, seconds: number) => ({
+        message: "java.lang.RuntimeException: no column 'a'",
+        details,
+        operatorId: "opA",
+        workerId: "",
+        type: { name: "COMPILATION_ERROR" },
+        timestamp: { nanos: 0, seconds },
+      });
+      getErrorMessages.mockReturnValue([compileError("at the run's compile", 5)]);
+      vi.spyOn(TestBed.inject(WorkflowCompilingService), "getWorkflowCompilationErrors").mockReturnValue({
+        opA: compileError("at the editor's compile", 9),
+        opB: { ...compileError("at the editor's compile", 9), operatorId: "opB" },
+      });
+
+      component.displayConsoleMessages(undefined);
+
+      // The run's report of opA's error, and the editor's of opB's, which the run did not report.
+      expect(component.consoleMessages.map(m => [m.title, m.message, m.timestamp.seconds])).toEqual([
+        ["no column 'a'", "at the run's compile", 5],
+        ["no column 'a'", "at the editor's compile", 9],
+      ]);
     });
 
     it("displayConsoleMessages falls back to an empty list for an operator the service has never seen", () => {
@@ -340,18 +360,22 @@ describe("ConsoleFrameComponent", () => {
   });
 
   describe("registerAutoConsoleRerender", () => {
-    it("clears the console when execution transitions from Initializing to Running", () => {
-      component.consoleMessages = [consoleMessage("PRINT")];
+    it("keeps a run's messages on show when the run goes from Initializing to Running", () => {
+      // What the computing unit says of a run before its engine starts, such as that it installs
+      // the run's Python environment, is still the run's once it is running.
+      component.operatorId = "op1";
+      getConsoleMessages.mockReturnValue([consoleMessage("PRINT")]);
+      component.renderConsole();
 
       executionStateStream.next({
         previous: { state: ExecutionState.Initializing },
         current: { state: ExecutionState.Running },
       });
 
-      expect(component.consoleMessages).toEqual([]);
+      expect(component.consoleMessages).toEqual([consoleMessage("PRINT")]);
     });
 
-    it("re-renders the console on any other execution state change", () => {
+    it("re-renders the console on an execution state change", () => {
       component.operatorId = "op1";
       getWorkerIds.mockReturnValue(["w-9"]);
       getConsoleMessages.mockReturnValue([consoleMessage("DEBUGGER")]);
@@ -503,6 +527,19 @@ describe("ConsoleFrameComponent", () => {
       expect(fixture.debugElement.queryAll(By.css(".worker-tag")).length).toBe(1);
     });
 
+    it("marks the title of a message with a body as an error's only when the message is one", () => {
+      // A message of any type can have a body, as what the computing unit says of an install has.
+      const errorWithBody: ConsoleMessage = { ...noBody, title: "header E", message: "trace" };
+      component.consoleMessages = [withBody, errorWithBody];
+      fixture.detectChanges();
+
+      const headers = fixture.debugElement
+        .queryAll(By.css(".collapse-message-header"))
+        .map(header => header.nativeElement as HTMLElement);
+      expect(headers.map(header => header.textContent?.trim())).toEqual(["header A", "header E"]);
+      expect(headers.map(header => header.classList.contains("error"))).toEqual([false, true]);
+    });
+
     it("hides the source and timestamp tags when the toggles are off", () => {
       component.consoleMessages = [withBody, noBody];
       component.showSource = false;
@@ -572,17 +609,6 @@ describe("ConsoleFrameComponent", () => {
 
       expect(fixture.debugElement.queryAll(By.css(".console-message-entry")).length).toBe(1);
       expect(fixture.nativeElement.textContent).toContain("plain B");
-    });
-
-    it("keeps the filter when clearConsole empties the list", () => {
-      component.setTypeVisibility("PRINT", false);
-      component.consoleMessages = [withBody, noBody];
-      component.clearConsole();
-      component.consoleMessages = [withBody, noBody];
-      fixture.detectChanges();
-
-      expect(component.isTypeVisible("PRINT")).toBe(false);
-      expect(fixture.debugElement.queryAll(By.css(".console-message-entry")).length).toBe(1);
     });
 
     it("keeps the filter when the bound operator changes", () => {
