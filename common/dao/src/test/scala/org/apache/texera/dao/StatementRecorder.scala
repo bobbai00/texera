@@ -20,6 +20,7 @@
 package org.apache.texera.dao
 
 import org.apache.texera.dao.StatementRecorder.{ExecuteStarted, Statement, siteOf}
+import org.jooq.ExecuteContext.BatchMode
 import org.jooq.impl.DefaultExecuteListenerProvider
 import org.jooq.{DSLContext, ExecuteContext, ExecuteListener}
 
@@ -71,13 +72,21 @@ final class StatementRecorder private () extends ExecuteListener {
   override def exception(ctx: ExecuteContext): Unit =
     if (recording.get() && ctx.data(ExecuteStarted) == null) add(ctx)
 
-  // A batch of separate statements holds one text per statement; a statement jOOQ has not
-  // rendered yet, because it failed first, is recorded with no text.
+  // A batch of separate statements holds one text, and one query, per statement; a statement
+  // jOOQ has not rendered yet, because it failed first, is recorded with no text and no value.
+  // A batch of several rows sends one text with each row's values, which the context does not
+  // hold, so it is recorded with none.
   private def add(ctx: ExecuteContext): Unit = {
     val thread = Thread.currentThread()
     val site = siteOf(thread.getStackTrace.toSeq)
-    ctx.batchSQL().foreach { sql =>
-      recorded.add(Statement(Option(sql).getOrElse(""), thread.getName, site))
+    val queries = ctx.batchQueries()
+    ctx.batchSQL().zipWithIndex.foreach {
+      case (sql, i) =>
+        val values = queries
+          .lift(i)
+          .filter(query => query != null && sql != null && ctx.batchMode() != BatchMode.SINGLE)
+          .fold(Seq.empty[Any])(_.getBindValues.asScala.toSeq)
+        recorded.add(Statement(Option(sql).getOrElse(""), values, thread.getName, site))
     }
   }
 }
@@ -89,14 +98,49 @@ object StatementRecorder {
     *
     * @param sql    its text as sent, with `?` for each bind value; empty if it failed before jOOQ
     *               rendered it
+    * @param values the values bound to its `?`s, in their order; none for a statement that failed
+    *               before jOOQ rendered it, and for a batch of several rows, each of which binds
+    *               its own
     * @param thread the name of the thread that sent it
     * @param site   the innermost frame of Texera code that sent it; see [[siteOf]]
     */
-  final case class Statement(sql: String, thread: String, site: Option[StackTraceElement]) {
+  final case class Statement(
+      sql: String,
+      values: Seq[Any],
+      thread: String,
+      site: Option[StackTraceElement]
+  ) {
 
     /** The statement's first keyword, upper-cased: SELECT, WITH, INSERT, UPDATE, DELETE, ... */
     def verb: String =
       sql.dropWhile(c => c.isWhitespace || c == '(').takeWhile(_.isLetter).toUpperCase(Locale.ROOT)
+
+    /**
+      * The tables the statement names, in lower case, without schema or quotes: what follows
+      * each FROM, JOIN, INTO and UPDATE of its text, a subquery's included. A name the text
+      * gives a common table expression counts as a table where it is read.
+      */
+    def tables: Set[String] =
+      TableReference
+        .findAllMatchIn(sql)
+        .flatMap(reference => Option(reference.group(1)))
+        .map(Name.findAllIn(_).toSeq.last.stripPrefix("\"").stripSuffix("\""))
+        .map(_.toLowerCase(Locale.ROOT))
+        .toSet
+  }
+
+  /** A name in a statement's text, quoted or not. */
+  private val Name = """"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*""".r
+
+  /**
+    * A table where a statement names one: the name after FROM, JOIN, INTO or UPDATE, with the
+    * schema before it if it has one. The UPDATE of an upsert (ON CONFLICT ... DO UPDATE SET)
+    * and of a locking read (FOR UPDATE) names none, and is matched without a name.
+    */
+  private val TableReference = {
+    val name = s"(?:${Name.regex})"
+    ("""(?i)\b(?:do|for)\s+update\b|\b(?:from|join|into|update)\s+(""" + name +
+      """(?:\s*\.\s*""" + name + ")*)").r
   }
 
   /** The key of the mark that `executeStart` leaves on a statement's context. */

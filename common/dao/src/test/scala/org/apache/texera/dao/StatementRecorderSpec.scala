@@ -64,6 +64,23 @@ class StatementRecorderSpec
     statements.map(_.thread).distinct shouldBe Seq(Thread.currentThread().getName)
   }
 
+  it should "record the values a statement binds, in the order of its placeholders" in {
+    val statements = recorder.record {
+      getDSLContext
+        .update(USER)
+        .set(USER.NAME, "nobody")
+        .set(USER.EMAIL, null.asInstanceOf[String])
+        .where(USER.UID.eq(-1))
+        .execute()
+      getDSLContext.selectOne().fetch()
+    }
+
+    statements.head.sql.count(_ == '?') shouldBe 3
+    statements.head.values shouldBe Seq("nobody", null, -1)
+    // A statement that binds nothing has no value.
+    statements(1).values shouldBe empty
+  }
+
   it should "leave out what is sent outside the block, before it, after it or in an earlier one" in {
     getDSLContext.selectOne().fetch()
     val first = recorder.record(getDSLContext.selectOne().fetch())
@@ -93,8 +110,10 @@ class StatementRecorderSpec
       })
     val statements = recorder.record {
       Try(DSL.using(noConnection).selectOne().fetch())
+      Try(DSL.using(noConnection).update(USER).set(USER.NAME, "nobody").execute())
     }
-    statements.map(_.verb) shouldBe Seq("SELECT")
+    statements.map(_.verb) shouldBe Seq("SELECT", "UPDATE")
+    statements(1).values shouldBe Seq("nobody")
   }
 
   it should "record each statement of a batch of separate statements" in {
@@ -107,6 +126,7 @@ class StatementRecorderSpec
         .execute()
     }
     statements.map(_.verb) shouldBe Seq("UPDATE", "DELETE")
+    statements.map(_.values) shouldBe Seq(Seq("nobody", -1), Seq(-1))
   }
 
   it should "record a batch insert of several rows once, as the one statement it sends" in {
@@ -122,6 +142,8 @@ class StatementRecorderSpec
     try {
       val statements = recorder.record(getDSLContext.batchInsert(users.asJava).execute())
       statements.map(_.verb) shouldBe Seq("INSERT")
+      // Each row binds its own values to the one text, so the statement is recorded with none.
+      statements.head.values shouldBe empty
     } finally getDSLContext.deleteFrom(USER).where(USER.NAME.in(names: _*)).execute()
   }
 
@@ -178,11 +200,65 @@ class StatementRecorderSpec
   }
 
   "verb" should "be the first keyword, upper-cased, past leading space and parentheses" in {
-    def verbOf(sql: String): String = Statement(sql, "thread", None).verb
+    def verbOf(sql: String): String = Statement(sql, Seq.empty, "thread", None).verb
     verbOf("update \"user\" set name = ?") shouldBe "UPDATE"
     verbOf("  \n select 1") shouldBe "SELECT"
     verbOf("(select 1) union (select 2)") shouldBe "SELECT"
     verbOf("WITH t AS (select 1) select * from t") shouldBe "WITH"
     verbOf("") shouldBe ""
+  }
+
+  "tables" should "be the tables a statement names, without schema or quotes" in {
+    def tablesOf(sql: String): Set[String] = Statement(sql, Seq.empty, "thread", None).tables
+    tablesOf(
+      """update "texera_db"."workflow_executions" set "status" = ? where "eid" = ?"""
+    ) shouldBe
+      Set("workflow_executions")
+    tablesOf(
+      """insert into "texera_db"."operator_executions" ("operator_id") values (?)"""
+    ) shouldBe
+      Set("operator_executions")
+    tablesOf("""delete from "texera_db"."operator_port_executions" where "x" = ?""") shouldBe
+      Set("operator_port_executions")
+    // Every table of a join, whatever the join, and unquoted names in any case.
+    tablesOf(
+      """select "d"."name" from "texera_db"."dataset" as "d" left outer join "texera_db"."user"
+        |on "user"."uid" = "d"."owner_uid" JOIN Dataset_Version on 1 = 1""".stripMargin
+    ) shouldBe Set("dataset", "user", "dataset_version")
+    // A table read only in a subquery, of a condition or of the table list.
+    tablesOf(
+      """update "workflow_executions" set "runtime_stats_uri" = ? where "vid" in
+        |(select "vid" from "workflow_version" where "wid" = ?)""".stripMargin
+    ) shouldBe Set("workflow_executions", "workflow_version")
+    tablesOf("""select count(*) from (select 1 from "site_settings") as "t"""") shouldBe
+      Set("site_settings")
+    tablesOf("with t as (select 1 from site_settings) select * from t") shouldBe
+      Set("site_settings", "t")
+  }
+
+  it should "name no table for a statement that reads none, or for an UPDATE that is not of a table" in {
+    def tablesOf(sql: String): Set[String] = Statement(sql, Seq.empty, "thread", None).tables
+    tablesOf("select 1") shouldBe empty
+    tablesOf("select setval(pg_get_serial_sequence(?, ?), ?, true)") shouldBe empty
+    tablesOf("") shouldBe empty
+    // An upsert updates the table it inserts into, and a locking read updates none.
+    tablesOf(
+      """insert into "site_settings" ("key", "value") values (?, ?)
+        |on conflict ("key") do update set "value" = ?""".stripMargin
+    ) shouldBe Set("site_settings")
+    tablesOf("""select "eid" from "workflow_executions" where "eid" = ? for update""") shouldBe
+      Set("workflow_executions")
+    tablesOf(
+      """select "eid" from "workflow_executions" for update of "workflow_executions""""
+    ) shouldBe
+      Set("workflow_executions")
+  }
+
+  it should "be those of the statements jOOQ sends" in {
+    val statements = recorder.record {
+      updateNobody()
+      getDSLContext.selectCount().from(USER).fetch()
+    }
+    statements.map(_.tables) shouldBe Seq(Set("user"), Set("user"))
   }
 }
