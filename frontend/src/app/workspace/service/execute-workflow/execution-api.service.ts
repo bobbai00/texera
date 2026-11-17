@@ -60,79 +60,105 @@ export type CreateExecutionRequest = Readonly<{
 /** An execution `POST /api/executions` created (201): the unit is to start it from its plan table, `planUri`. */
 export type CreateExecutionResponse = Readonly<{
   eid: number;
-  wid: number;
-  computingUnitId: number;
   planUri: string;
 }>;
 
-/**
- * The body of a 400 from `POST /api/executions` for a workflow that does not compile: the execution is
- * recorded as failed. `operatorErrors` holds the first error of each operator that has one, in the order of
- * the workflow (an operator before those downstream of it); `errors` the errors that belong to no operator.
- */
-export type CreateExecutionFailure = Readonly<{
-  eid: number;
-  operatorErrors: Readonly<Record<string, WorkflowFatalError>>;
-  errors: ReadonlyArray<WorkflowFatalError>;
-}>;
-
-/** A change to a paused operator that `POST /api/executions/{eid}/updates` stored (200). */
+/** A change to a paused operator that `POST /api/executions/{eid}/updates` stored (201). */
 export type OperatorUpdateResponse = Readonly<{
   /** The id the computing unit is asked to apply the change by. */
   updateId: string;
   operatorId: string;
 }>;
 
-/** How the Dashboard service answers a request it refuses, or fails to serve: the HTTP status, and why. */
+/**
+ * How the Dashboard service answers a request it does not serve: the HTTP status, and why. When the workflow
+ * of a `POST /api/executions` does not compile (400), also the execution, which is recorded as failed, and
+ * the first error of each operator that has one, by the operator's id.
+ */
 type ErrorBody = Readonly<{
   code: number;
   message: string;
+  eid?: number;
+  operatorErrors?: Readonly<Record<string, WorkflowFatalError>>;
 }>;
-
-function isCreateExecutionFailure(body: unknown): body is CreateExecutionFailure {
-  if (typeof body !== "object" || body === null) {
-    return false;
-  }
-  const { operatorErrors, errors } = body as Partial<Record<keyof CreateExecutionFailure, unknown>>;
-  return (
-    typeof operatorErrors === "object" &&
-    operatorErrors !== null &&
-    !Array.isArray(operatorErrors) &&
-    Array.isArray(errors)
-  );
-}
 
 function isErrorBody(body: unknown): body is ErrorBody {
   if (typeof body !== "object" || body === null) {
     return false;
   }
-  const { code, message } = body as Partial<Record<keyof ErrorBody, unknown>>;
-  return typeof code === "number" && typeof message === "string";
+  const { code, message, operatorErrors } = body as Partial<Record<keyof ErrorBody, unknown>>;
+  return (
+    typeof code === "number" &&
+    typeof message === "string" &&
+    (operatorErrors === undefined ||
+      (typeof operatorErrors === "object" && operatorErrors !== null && !Array.isArray(operatorErrors)))
+  );
 }
 
-/**
- * The compile failure that `error`, the failure of a `POST /api/executions`, reports: the workflow does not
- * compile. Undefined for any other failure, whose reason is its {@link failureMessage}.
- */
-export function compileFailureOf(error: unknown): CreateExecutionFailure | undefined {
+/** How the Dashboard answered the request that failed with `error`, if the answer is one of its own. */
+function errorBodyOf(error: unknown): ErrorBody | undefined {
   if (!(error instanceof HttpErrorResponse)) {
     return undefined;
   }
   const body: unknown = error.error;
-  return isCreateExecutionFailure(body) ? body : undefined;
+  return isErrorBody(body) ? body : undefined;
+}
+
+/** The ids of `plan`'s operators, each after the operators upstream of it, otherwise in the plan's order. */
+function upstreamFirst(plan: LogicalPlan): string[] {
+  const ordered: string[] = [];
+  const visiting = new Set<string>();
+  const place = (operatorId: string): void => {
+    if (ordered.includes(operatorId) || visiting.has(operatorId)) {
+      return;
+    }
+    visiting.add(operatorId);
+    plan.links.filter(link => link.toOpId === operatorId).forEach(link => place(link.fromOpId));
+    visiting.delete(operatorId);
+    ordered.push(operatorId);
+  };
+  plan.operators.forEach(operator => place(operator.operatorID));
+  return ordered;
+}
+
+/**
+ * The operators' errors that `error`, the failure of a `POST /api/executions` of `plan`, reports: the
+ * workflow does not compile. They are listed in the order of the plan, an operator before those downstream
+ * of it, so that the cause of a chain of errors comes first: the answer keys them by operator, in no order.
+ * Undefined for any other failure, whose reason is its {@link failureMessage}.
+ */
+export function operatorErrorsOf(error: unknown, plan: LogicalPlan): ReadonlyArray<WorkflowFatalError> | undefined {
+  const operatorErrors = errorBodyOf(error)?.operatorErrors;
+  if (operatorErrors === undefined) {
+    return undefined;
+  }
+  const withErrors = Object.keys(operatorErrors);
+  const inPlan = upstreamFirst(plan).filter(operatorId => withErrors.includes(operatorId));
+  const others = withErrors.filter(operatorId => !inPlan.includes(operatorId)).sort();
+  return [...inPlan, ...others].map(operatorId => operatorErrors[operatorId]);
 }
 
 /**
  * Why a request to the Dashboard service failed, in words for the user: the reason the Dashboard gives
- * (`{code, message}`), or, for an answer that is not its own (a gateway's error page, no answer at all), the
- * failed request as the browser reports it.
+ * (`{code, message}`), or, for an answer that is not its own (a gateway's error page, no answer at all), what
+ * became of the request.
  */
 export function failureMessage(error: unknown): string {
   if (!(error instanceof HttpErrorResponse)) {
     return String(error);
   }
-  const body: unknown = error.error;
-  return isErrorBody(body) ? body.message : error.message;
+  const answer = errorBodyOf(error);
+  if (answer !== undefined) {
+    return answer.message;
+  }
+  switch (error.status) {
+    case 0:
+      return "The Dashboard service could not be reached.";
+    case 413:
+      return "The workflow is larger than this deployment accepts in one request.";
+    default:
+      return `The Dashboard service answered ${error.status} ${error.statusText}.`;
+  }
 }
 
 /**
@@ -148,7 +174,7 @@ export class ExecutionApiService {
 
   /**
    * Creates an execution: the Dashboard checks the caller's rights, compiles the workflow for them, records
-   * the execution and writes its plan. Fails with the HTTP error: see {@link compileFailureOf} and
+   * the execution and writes its plan. Fails with the HTTP error: see {@link operatorErrorsOf} and
    * {@link failureMessage}.
    */
   public create(request: CreateExecutionRequest): Observable<CreateExecutionResponse> {

@@ -60,10 +60,10 @@ import { unavailableComputingUnitReason } from "../../../common/util/computing-u
 import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 import {
-  compileFailureOf,
   CreateExecutionRequest,
   ExecutionApiService,
   failureMessage,
+  operatorErrorsOf,
   ReplayExecutionInfo,
 } from "./execution-api.service";
 
@@ -71,15 +71,15 @@ import {
 export const FORM_DEBOUNCE_TIME_MS = 150;
 
 /**
- * The errors of a run whose execution the Dashboard service did not create, `error` being how the request
- * for it failed. For a workflow that does not compile: each operator's error, in the order of the workflow,
- * then the errors that belong to no operator, as the Dashboard wrote them. For any other failure: its reason,
- * as one error that belongs to no operator, which is how the computing unit reports a start it refuses.
+ * The errors of a run of `plan` whose execution the Dashboard service did not create, `error` being how the
+ * request for it failed. For a workflow that does not compile: each operator's error, an operator before
+ * those downstream of it. For any other failure: its reason, as one error that belongs to no operator, which
+ * is how the computing unit reports a start it refuses.
  */
-function errorsOfFailedCreate(error: unknown): ReadonlyArray<WorkflowFatalError> {
-  const compileFailure = compileFailureOf(error);
-  if (compileFailure) {
-    return [...Object.values(compileFailure.operatorErrors), ...compileFailure.errors];
+function errorsOfFailedCreate(error: unknown, plan: LogicalPlan): ReadonlyArray<WorkflowFatalError> {
+  const operatorErrors = operatorErrorsOf(error, plan);
+  if (operatorErrors !== undefined) {
+    return operatorErrors;
   }
   const now = Date.now();
   return [
@@ -434,7 +434,10 @@ export class ExecuteWorkflowService {
         next: ({ eid, planUri }) =>
           this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri }),
         error: (error: unknown) =>
-          this.updateExecutionState({ state: ExecutionState.Failed, errorMessages: errorsOfFailedCreate(error) }),
+          this.updateExecutionState({
+            state: ExecutionState.Failed,
+            errorMessages: errorsOfFailedCreate(error, request.logicalPlan),
+          }),
       });
   }
 

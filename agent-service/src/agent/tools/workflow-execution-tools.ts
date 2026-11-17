@@ -317,7 +317,8 @@ async function executeWorkflowHttp(
       const failure = adaptCreateExecutionFailure(
         createResponse.status,
         createResponse.statusText,
-        await createResponse.text()
+        await createResponse.text(),
+        createRequest.logicalPlan
       );
       log.info({ status: createResponse.status, state: failure.state }, "execution not created");
       return failure;

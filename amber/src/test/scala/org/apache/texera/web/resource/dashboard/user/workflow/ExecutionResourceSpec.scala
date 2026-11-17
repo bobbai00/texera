@@ -689,8 +689,6 @@ class ExecutionResourceSpec
     val execution = created(post(sent, creator = creator))
 
     execution.eid should be > firstCreatedEid.toLong
-    execution.wid shouldBe testWid
-    execution.computingUnitId shouldBe unitCuid
     execution.planUri shouldBe
       s"vfs:///wid/$testWid/eid/${execution.eid}/plan"
 
@@ -1423,14 +1421,15 @@ class ExecutionResourceSpec
 
     val failure = compileFailure(post(request(plan = brokenPlan())))
 
-    failure.operatorErrors.keys.head shouldBe "scan"
+    failure.code shouldBe 400
+    failure.message should startWith("The workflow does not compile: 2 operators have errors.")
+    failure.operatorErrors.keySet shouldBe Set("scan", "search")
     failure.operatorErrors("scan").message should include("No file selected")
     failure.operatorErrors.foreach {
       case (operator, error) =>
         error.`type` shouldBe COMPILATION_ERROR
         error.operatorId shouldBe operator
     }
-    failure.errors shouldBe empty
     val failed = row(failure.eid)
     failed.getStatus shouldBe 4.toByte
     failed.getLastUpdateTime.getTime should be >= (before - 1000)
@@ -1441,14 +1440,18 @@ class ExecutionResourceSpec
     )
   }
 
-  it should "write the operators' errors as the compiling service writes them" in {
+  it should "write a workflow that does not compile as the refusal it is, with the execution and the operators' errors" in {
     val failure = compileFailure(post(request(plan = brokenPlan())))
 
     val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(failure))
 
+    // The code and the message every refusal has, and the two fields only this one has.
+    written.fieldNames().asScala.toSet shouldBe Set("code", "message", "eid", "operatorErrors")
+    written.get("code").asInt() shouldBe 400
+    written.get("message").asText() should startWith("The workflow does not compile: ")
     written.get("eid").asLong() shouldBe failure.eid
-    // The scan, the cause of the search's error, first.
-    written.get("operatorErrors").fieldNames().asScala.toList shouldBe List("scan", "search")
+    // Each error as the compiling service writes an operator's.
+    written.get("operatorErrors").fieldNames().asScala.toSet shouldBe Set("scan", "search")
     val scanError = written.get("operatorErrors").get("scan")
     scanError.get("type").get("name").asText() shouldBe "COMPILATION_ERROR"
     scanError.get("timestamp").get("seconds").isNumber shouldBe true
@@ -1457,51 +1460,14 @@ class ExecutionResourceSpec
     scanError.get("operatorId").asText() shouldBe "scan"
     scanError.has("details") shouldBe true
     scanError.has("workerId") shouldBe true
-    written.get("errors").isArray shouldBe true
-    written.get("errors").size() shouldBe 0
   }
 
-  it should "list the operators' errors in the order of the workflow, and write them in it" in {
-    // Five scans with no file chosen, each before a search on what it would read, listed in an
-    // order that is not sorted: an operator comes before those downstream of it.
-    val scans = List("e", "b", "d", "a", "c")
-    val plan = LogicalPlanPojo(
-      scans.map(id => named(new CSVScanSourceOpDesc(), id)) ++
-        scans.map(id => named(TestOperators.keywordSearchOpDesc("Region", "Asia"), s"search-$id")),
-      scans.map(id => link(id, s"search-$id")),
-      List.empty,
-      List.empty
-    )
-    val inWorkflowOrder = List(
-      "e",
-      "b",
-      "d",
-      "a",
-      "c",
-      "search-e",
-      "search-b",
-      "search-d",
-      "search-a",
-      "search-c"
-    )
-
-    val failure = compileFailure(post(request(plan = plan)))
-
-    failure.operatorErrors.keys.toList shouldBe inWorkflowOrder
-    dashboardMapper
-      .readTree(dashboardMapper.writeValueAsString(failure))
-      .get("operatorErrors")
-      .fieldNames()
-      .asScala
-      .toList shouldBe inWorkflowOrder
-  }
-
-  it should "write the execution it created as {eid, wid, computingUnitId, planUri}" in {
+  it should "write the execution it created as {eid, planUri}" in {
     val execution = created(post(request()))
 
     val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(execution))
 
-    written.fieldNames().asScala.toSet shouldBe Set("eid", "wid", "computingUnitId", "planUri")
+    written.fieldNames().asScala.toSet shouldBe Set("eid", "planUri")
     written.get("eid").asLong() shouldBe execution.eid
     written.get("planUri").asText() shouldBe execution.planUri
   }

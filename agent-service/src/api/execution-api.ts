@@ -83,7 +83,7 @@ export interface CreateExecutionRequest {
   emailNotificationEnabled: boolean;
 }
 
-/** What a create answers with (201, amber's `CreateExecutionResponse`), as far as it is read. */
+/** What a create answers with (201, amber's `CreateExecutionResponse`). */
 export interface CreatedExecution {
   eid: number;
   // The execution's plan table, which the computing unit starts the execution from.
@@ -107,7 +107,6 @@ export interface RunExecutionRequest {
   maxOperatorResultCellCharLimit: number;
 }
 
-// Only the fields that are read are validated: the answer also names the workflow and the unit.
 const createdExecutionSchema = z.object({
   eid: z.number().int().positive(),
   planUri: z.string().min(1),
@@ -126,14 +125,13 @@ export function parseCreatedExecution(input: unknown): CreatedExecution {
 // is listed under the operator's id.
 const compileErrorSchema = z.object({ message: z.string() });
 
-// What the Dashboard answers for a workflow that does not compile (amber's `CreateExecutionFailure`).
-const compileFailureSchema = z.object({
-  operatorErrors: z.record(compileErrorSchema),
-  errors: z.array(compileErrorSchema).nullish(),
+// How the Dashboard answers a create it does not serve, whatever the status: `{code, message}`,
+// and for a workflow that does not compile (amber's `CreateExecutionFailure`) also the execution
+// and the first error of each operator that has one, by the operator's id.
+const createFailureSchema = z.object({
+  message: z.string(),
+  operatorErrors: z.record(compileErrorSchema).optional(),
 });
-
-// What the Dashboard answers for any other create it refuses: `{code, message}`.
-const refusalSchema = z.object({ message: z.string() });
 
 function parseJsonOrUndefined(text: string): unknown {
   try {
@@ -143,52 +141,53 @@ function parseJsonOrUndefined(text: string): unknown {
   }
 }
 
-/**
- * The compilation errors that a create's answer lists, when the answer is the one for a workflow
- * that does not compile: a 400 `{eid, operatorErrors, errors}`. Each operator's error comes first
- * and names its operator, in the order the Dashboard lists them (the workflow's: an operator
- * before those downstream of it); the errors of no operator follow. Empty for any other answer.
- */
-function compilationErrorsOf(status: number, json: unknown): WorkflowFatalError[] {
-  if (status !== 400) {
-    return [];
-  }
-  const failure = compileFailureSchema.safeParse(json);
-  if (!failure.success) {
-    return [];
-  }
-  const { operatorErrors, errors } = failure.data;
-  return [
-    ...Object.entries(operatorErrors).map(([operatorId, error]) =>
-      makeWorkflowError(WorkflowFatalErrorType.COMPILATION_ERROR, error.message, operatorId)
-    ),
-    ...(errors ?? []).map(error => makeWorkflowError(WorkflowFatalErrorType.COMPILATION_ERROR, error.message, "")),
-  ];
+/** The ids of `plan`'s operators, each after the operators upstream of it, otherwise in the plan's order. */
+function upstreamFirst(plan: Pick<LogicalPlan, "operators" | "links">): string[] {
+  const ordered: string[] = [];
+  const visiting = new Set<string>();
+  const place = (operatorId: string): void => {
+    if (ordered.includes(operatorId) || visiting.has(operatorId)) {
+      return;
+    }
+    visiting.add(operatorId);
+    plan.links.filter(link => link.toOpId === operatorId).forEach(link => place(link.fromOpId));
+    visiting.delete(operatorId);
+    ordered.push(operatorId);
+  };
+  plan.operators.forEach(operator => place(operator.operatorID));
+  return ordered;
 }
 
 /**
- * The summary of a create that the Dashboard did not answer with an execution: any status but 2xx.
+ * The summary of a create of `plan` that the Dashboard did not answer with an execution: any
+ * status but 2xx.
  *
- * A workflow that does not compile is a compilation failure, with the errors the answer lists
- * (`compilationErrorsOf`); the Dashboard has recorded the execution as failed. Any other answer is
- * an error that names the status and what the Dashboard said: the message of a refusal
- * `{code, message}` (400 for a request it will not take, 403 without the rights, 409 for a
- * terminated unit, 500 when the plan cannot be made or stored), or else the body as it is, such
- * as a proxy's.
+ * A workflow that does not compile is a compilation failure, with each operator's error, which
+ * names its operator; the Dashboard has recorded the execution as failed. The answer keys the
+ * errors by operator, in no order: they are listed in the plan's, an operator before those
+ * downstream of it, so that the cause of a chain of errors comes first. Any other answer is an
+ * error that names the status and what the Dashboard said: the message of its `{code, message}`,
+ * or else the body as it is, such as a proxy's.
  */
 export function adaptCreateExecutionFailure(
   status: number,
   statusText: string,
-  body: string
+  body: string,
+  plan: Pick<LogicalPlan, "operators" | "links">
 ): WorkflowExecutionSummary {
-  const json = parseJsonOrUndefined(body);
-  const compilationErrors = compilationErrorsOf(status, json);
+  const failure = createFailureSchema.safeParse(parseJsonOrUndefined(body));
+  const operatorErrors = failure.success ? (failure.data.operatorErrors ?? {}) : {};
+  const withErrors = Object.keys(operatorErrors);
+  const inPlan = upstreamFirst(plan).filter(operatorId => withErrors.includes(operatorId));
+  const others = withErrors.filter(operatorId => !inPlan.includes(operatorId)).sort();
+  const compilationErrors = [...inPlan, ...others].map(operatorId =>
+    makeWorkflowError(WorkflowFatalErrorType.COMPILATION_ERROR, operatorErrors[operatorId].message, operatorId)
+  );
   if (compilationErrors.length > 0) {
     return { state: WorkflowExecutionState.COMPILATION_FAILED, operators: {}, errors: compilationErrors };
   }
 
-  const refusal = refusalSchema.safeParse(json);
-  const reason = refusal.success ? refusal.data.message : body;
+  const reason = failure.success ? failure.data.message : body;
   const answer = [`${status} ${statusText}`.trim(), reason.trim()].filter(Boolean).join(" - ");
   return {
     state: WorkflowExecutionState.ERROR,

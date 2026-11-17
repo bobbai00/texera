@@ -531,9 +531,9 @@ class OperatorUpdatesSpec
     resource(fixtureUpdates = updates)
       .postUpdate(eid, OperatorUpdateRequestBody(operator), sessionUser(uid))
 
-  /** The update a 200 stored. */
+  /** The update a 201 stored. */
   private def stored(response: Response): OperatorUpdateResponse = {
-    withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 200 }
+    withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 201 }
     response.getEntity.asInstanceOf[OperatorUpdateResponse]
   }
 

@@ -35,20 +35,15 @@ function compilationError(operatorId: string, message: string) {
 
 describe("parseCreatedExecution", () => {
   test("reads the execution's id and plan table from the Dashboard's answer", () => {
-    const created = parseCreatedExecution({
-      eid: 345,
-      wid: 12,
-      computingUnitId: 3,
-      planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan",
-    });
+    const created = parseCreatedExecution({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
 
     expect(created).toEqual({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
   });
 
   test.each([
-    ["no plan table", { eid: 345, wid: 12, computingUnitId: 3 }],
+    ["no plan table", { eid: 345 }],
     ["an empty plan table", { eid: 345, planUri: "" }],
-    ["no execution id", { wid: 12, planUri: "vfs:///wid/12/eid/345/plan" }],
+    ["no execution id", { planUri: "vfs:///wid/12/eid/345/plan" }],
     ["an execution id that is text", { eid: "345", planUri: "vfs:///wid/12/eid/345/plan" }],
     ["an execution id that is not a whole number", { eid: 3.5, planUri: "vfs:///wid/12/eid/3/plan" }],
     ["an execution id below 1", { eid: 0, planUri: "vfs:///wid/12/eid/0/plan" }],
@@ -59,19 +54,35 @@ describe("parseCreatedExecution", () => {
 });
 
 describe("adaptCreateExecutionFailure", () => {
-  test("turns a workflow that does not compile into each operator's error, in the order listed, then the others", () => {
+  // A scan, a filter on what it reads, and a sort of what the filter keeps, listed downstream first.
+  const link = (fromOpId: string, toOpId: string) => ({
+    fromOpId,
+    fromPortId: { id: 0, internal: false },
+    toOpId,
+    toPortId: { id: 0, internal: false },
+  });
+  const pipeline = {
+    operators: [
+      { operatorID: "sort-3", operatorType: "Sort" },
+      { operatorID: "filter-1", operatorType: "Filter" },
+      { operatorID: "scan-2", operatorType: "CSVFileScan" },
+    ],
+    links: [link("filter-1", "sort-3"), link("scan-2", "filter-1")],
+  };
+  const notCompiled = (operatorErrors: unknown) =>
+    JSON.stringify({ code: 400, message: "The workflow does not compile.", eid: 345, operatorErrors });
+
+  test("turns a workflow that does not compile into each operator's error, an operator before those downstream of it", () => {
     const summary = adaptCreateExecutionFailure(
       400,
       "Bad Request",
-      JSON.stringify({
-        eid: 345,
-        // Not sorted: the Dashboard lists the operators in the order of the workflow.
-        operatorErrors: {
-          "scan-2": compilationError("scan-2", "java.lang.RuntimeException: No file selected."),
-          "filter-1": compilationError("filter-1", "java.lang.RuntimeException: column age does not exist"),
-        },
-        errors: [compilationError("", "java.lang.IllegalStateException: the plan cannot be scheduled")],
-      })
+      // Keyed in an order that is not the workflow's.
+      notCompiled({
+        "filter-1": compilationError("filter-1", "java.lang.RuntimeException: column age does not exist"),
+        "sort-3": compilationError("sort-3", "java.lang.RuntimeException: column age does not exist"),
+        "scan-2": compilationError("scan-2", "java.lang.RuntimeException: No file selected."),
+      }),
+      pipeline
     );
 
     expect(summary.state).toBe(WorkflowExecutionState.COMPILATION_FAILED);
@@ -79,15 +90,55 @@ describe("adaptCreateExecutionFailure", () => {
     expect(summary.errors.map(error => [error.type.name, error.operatorId, error.message])).toEqual([
       [WorkflowFatalErrorType.COMPILATION_ERROR, "scan-2", "java.lang.RuntimeException: No file selected."],
       [WorkflowFatalErrorType.COMPILATION_ERROR, "filter-1", "java.lang.RuntimeException: column age does not exist"],
-      [WorkflowFatalErrorType.COMPILATION_ERROR, "", "java.lang.IllegalStateException: the plan cannot be scheduled"],
+      [WorkflowFatalErrorType.COMPILATION_ERROR, "sort-3", "java.lang.RuntimeException: column age does not exist"],
     ]);
   });
 
-  test("reads only each error's message, and does not require the errors of no operator", () => {
+  test("lists operators that do not depend on one another in the plan's order, and drops no error", () => {
+    const twoScans = {
+      operators: [
+        { operatorID: "scan-z", operatorType: "CSVFileScan" },
+        { operatorID: "scan-a", operatorType: "CSVFileScan" },
+      ],
+      // A link that closes a cycle does not stop the listing.
+      links: [link("scan-z", "scan-a"), link("scan-a", "scan-z")],
+    };
+
     const summary = adaptCreateExecutionFailure(
       400,
       "Bad Request",
-      JSON.stringify({ eid: 345, operatorErrors: { "udf-1": { message: "invalid syntax" } } })
+      notCompiled({
+        ghost: compilationError("ghost", "g"),
+        "scan-a": compilationError("scan-a", "a"),
+        "scan-z": compilationError("scan-z", "z"),
+      }),
+      twoScans
+    );
+
+    // The error of an operator the plan does not have comes last.
+    expect(summary.errors.map(error => error.operatorId)).toEqual(["scan-a", "scan-z", "ghost"]);
+  });
+
+  test("reports no error for an operator that has none, whatever it is called", () => {
+    // An id that every object answers to, as a member it inherits.
+    const plan = { operators: [{ operatorID: "toString", operatorType: "Sort" }, ...pipeline.operators], links: [] };
+
+    const summary = adaptCreateExecutionFailure(
+      400,
+      "Bad Request",
+      notCompiled({ "scan-2": compilationError("scan-2", "java.lang.RuntimeException: No file selected.") }),
+      plan
+    );
+
+    expect(summary.errors.map(error => error.operatorId)).toEqual(["scan-2"]);
+  });
+
+  test("reads only each error's message", () => {
+    const summary = adaptCreateExecutionFailure(
+      400,
+      "Bad Request",
+      notCompiled({ "udf-1": { message: "invalid syntax" } }),
+      pipeline
     );
 
     expect(summary.state).toBe(WorkflowExecutionState.COMPILATION_FAILED);
@@ -102,12 +153,18 @@ describe("adaptCreateExecutionFailure", () => {
   });
 
   test.each([
-    [400, "Bad Request", "The request names no computing unit: computingUnitId is 0."],
+    [400, "Bad Request", "The request names no computing unit to run the workflow on."],
     [403, "Forbidden", "You may not run workflows on computing unit 3."],
-    [409, "Conflict", "computing unit 3 is terminated"],
+    [409, "Conflict", "Computing unit 3 is terminated."],
     [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+    [504, "Gateway Timeout", "Execution 345 could not be created: compiling the workflow took longer than 60 seconds."],
   ])("turns a %d refusal into an error with its status and message", (status, statusText, message) => {
-    const summary = adaptCreateExecutionFailure(status, statusText, JSON.stringify({ code: status, message }));
+    const summary = adaptCreateExecutionFailure(
+      status,
+      statusText,
+      JSON.stringify({ code: status, message }),
+      pipeline
+    );
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
     expect(summary.operators).toEqual({});
@@ -122,7 +179,7 @@ describe("adaptCreateExecutionFailure", () => {
   test("takes an answer that is not JSON as it is", () => {
     const body = "Credentials are required to access this resource.\n";
 
-    const summary = adaptCreateExecutionFailure(401, "Unauthorized", body);
+    const summary = adaptCreateExecutionFailure(401, "Unauthorized", body, pipeline);
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
     expect(summary.errors[0].message).toBe(
@@ -132,7 +189,7 @@ describe("adaptCreateExecutionFailure", () => {
 
   test("names only what the answer has: no body, no status text, or a blank message", () => {
     const messageOf = (status: number, statusText: string, body: string) =>
-      adaptCreateExecutionFailure(status, statusText, body).errors[0].message;
+      adaptCreateExecutionFailure(status, statusText, body, pipeline).errors[0].message;
 
     expect(messageOf(502, "Bad Gateway", "")).toBe("Execution could not be created: 502 Bad Gateway");
     expect(messageOf(503, "", "upstream connect error")).toBe(
@@ -143,29 +200,28 @@ describe("adaptCreateExecutionFailure", () => {
     );
   });
 
-  test("reads compilation errors only from a 400", () => {
-    const body = JSON.stringify({
-      eid: 345,
-      operatorErrors: { scan: compilationError("scan", "java.lang.RuntimeException: No file selected.") },
-      errors: [],
-    });
+  test("reports a refusal that lists no operator's error by its message", () => {
+    const body = JSON.stringify({ code: 400, message: "The workflow does not compile.", eid: 345, operatorErrors: {} });
 
-    const summary = adaptCreateExecutionFailure(500, "Internal Server Error", body);
+    const summary = adaptCreateExecutionFailure(400, "Bad Request", body, pipeline);
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
     expect(summary.errors.map(error => error.message)).toEqual([
-      `Execution could not be created: 500 Internal Server Error - ${body}`,
+      "Execution could not be created: 400 Bad Request - The workflow does not compile.",
     ]);
   });
 
   test.each([
-    ["lists no error at all", { eid: 345, operatorErrors: {}, errors: [] }],
-    ["lists an operator's error that has no message", { eid: 345, operatorErrors: { scan: { operatorId: "scan" } } }],
-    ["is neither a refusal nor a list of errors", { eid: 345 }],
+    ["has operators' errors and no message", { eid: 345, operatorErrors: { scan: { message: "No file selected." } } }],
+    [
+      "lists an operator's error that has no message",
+      { code: 400, message: "no", operatorErrors: { scan: { operatorId: "scan" } } },
+    ],
+    ["has neither a message nor operators' errors", { eid: 345 }],
   ])("reports a 400 that %s as the answer it is", (_case, answer) => {
     const body = JSON.stringify(answer);
 
-    const summary = adaptCreateExecutionFailure(400, "Bad Request", body);
+    const summary = adaptCreateExecutionFailure(400, "Bad Request", body, pipeline);
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
     expect(summary.errors.map(error => error.message)).toEqual([

@@ -134,8 +134,7 @@ object ExecutionCreator {
 /**
   * The workflow of a create does not compile (400): execution `eid` is recorded as failed.
   *
-  * @param operatorErrors the first error of each operator that has one, by the operator's id, in
-  *                       the order of the workflow: an operator before those downstream of it
+  * @param operatorErrors the first error of each operator that has one, by the operator's id
   */
 final class WorkflowNotCompiled(
     val eid: Long,
@@ -307,7 +306,7 @@ class ExecutionCreator(
     background.execute(() =>
       ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
     )
-    CreateExecutionResponse(eid.id, checked.wid, checked.computingUnitId, planUri.toString)
+    CreateExecutionResponse(eid.id, planUri.toString)
   }
 
   /**

@@ -104,8 +104,6 @@ describe("ExecuteWorkflowService", () => {
   /** The Dashboard's answer for execution `eid`, once it is created. */
   const created = (eid: number): CreateExecutionResponse => ({
     eid,
-    wid: WID,
-    computingUnitId: CUID,
     planUri: `vfs:///wid/${WID}/eid/${eid}/plan`,
   });
 
@@ -635,28 +633,45 @@ describe("ExecuteWorkflowService", () => {
       workerId: "",
     });
 
-    it("fails the run with each operator's compile error, in the order of the workflow", fakeAsync(() => {
+    it("fails the run with each operator's compile error, an operator before those downstream of it", fakeAsync(() => {
       const wsSendSpy = spyOnSocket();
       const states: ExecutionState[] = [];
       service.getExecutionStateStream().subscribe(event => states.push(event.current.state));
-      // Ids as the editor gives them, in an order that is not sorted: the scan before the filter that reads it.
+      // A scan and the filter that reads it, which the editor lists first.
+      vi.spyOn(ExecuteWorkflowService, "getLogicalPlanRequest").mockReturnValue({
+        operators: [
+          { operatorID: "Filter-operator-a", operatorType: "Filter" },
+          { operatorID: "CSVFileScan-operator-b", operatorType: "CSVFileScan" },
+        ],
+        links: [
+          {
+            fromOpId: "CSVFileScan-operator-b",
+            fromPortId: { id: 0, internal: false },
+            toOpId: "Filter-operator-a",
+            toPortId: { id: 0, internal: false },
+          },
+        ],
+        opsToViewResult: [],
+        opsToReuseResult: [],
+      });
       const scanError = compileError("CSVFileScan-operator-b", "java.lang.RuntimeException: No file selected");
       const filterError = compileError("Filter-operator-a", "region is not contained in the schema");
-      const generalError = compileError("", "the workflow could not be compiled");
 
       service.executeWorkflow("run");
+      // The answer keys the errors by operator, here with the filter's first.
       expectCreate().flush(
         {
+          code: 400,
+          message: "The workflow does not compile: 2 operators have errors.",
           eid: 345,
-          operatorErrors: { [scanError.operatorId]: scanError, [filterError.operatorId]: filterError },
-          errors: [generalError],
+          operatorErrors: { [filterError.operatorId]: filterError, [scanError.operatorId]: scanError },
         },
         { status: 400, statusText: "Bad Request" }
       );
 
       expect(states).toEqual([ExecutionState.Initializing, ExecutionState.Failed]);
-      // Each as the Dashboard wrote it: the operators' errors first, then those of no operator.
-      expect(service.getErrorMessages()).toEqual([scanError, filterError, generalError]);
+      // Each as the Dashboard wrote it, the cause of the filter's error first.
+      expect(service.getErrorMessages()).toEqual([scanError, filterError]);
       // Nothing reached the unit: the run it holds, and that run's results, are as they were.
       expect(wsSendSpy).not.toHaveBeenCalled();
       // Run is usable again, and so is the editor.
@@ -665,9 +680,9 @@ describe("ExecuteWorkflowService", () => {
 
     // One `it` per answer: it.each does not run its body in the zone fakeAsync needs.
     const refusals: { status: number; statusText: string; message: string }[] = [
-      { status: 400, statusText: "Bad Request", message: "no warehouse with id 9 owned by this user" },
+      { status: 400, statusText: "Bad Request", message: "You have no warehouse with id 9." },
       { status: 403, statusText: "Forbidden", message: "You may not run workflows on computing unit 3." },
-      { status: 409, statusText: "Conflict", message: "computing unit 3 is terminated" },
+      { status: 409, statusText: "Conflict", message: "Computing unit 3 is terminated." },
       {
         status: 500,
         statusText: "Server Error",
@@ -697,14 +712,14 @@ describe("ExecuteWorkflowService", () => {
       }));
     }
 
-    it("fails the run with the browser's report of a request that got no answer", fakeAsync(() => {
+    it("fails the run saying that the Dashboard could not be reached, for a request that got no answer", fakeAsync(() => {
       const wsSendSpy = spyOnSocket();
 
       service.executeWorkflow("run");
       expectCreate().error(new ProgressEvent("error"), { status: 0, statusText: "Unknown Error" });
 
       expect(service.getErrorMessages().map(error => error.message)).toEqual([
-        "Http failure response for api/executions: 0 Unknown Error",
+        "The Dashboard service could not be reached.",
       ]);
       expect(wsSendSpy).not.toHaveBeenCalled();
     }));
@@ -713,7 +728,7 @@ describe("ExecuteWorkflowService", () => {
       const wsSendSpy = spyOnSocket();
       service.executeWorkflow("run");
       expectCreate().flush(
-        { code: 409, message: "computing unit 3 is terminated" },
+        { code: 409, message: "Computing unit 3 is terminated." },
         { status: 409, statusText: "Conflict" }
       );
 
@@ -1326,7 +1341,7 @@ describe("ExecuteWorkflowService", () => {
       // The unit hears of the change only once it is stored.
       expect(wsSendSpy).not.toHaveBeenCalled();
 
-      update.flush({ updateId: "update-4f6c", operatorId: "1" });
+      update.flush({ updateId: "update-4f6c", operatorId: "1" }, { status: 201, statusText: "Created" });
 
       expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, updateId: "update-4f6c" }]]);
     }));
@@ -1343,7 +1358,7 @@ describe("ExecuteWorkflowService", () => {
         statusText: "Forbidden",
         message: "Only the user who created execution 345 may change its operators.",
       },
-      { status: 409, statusText: "Conflict", message: "execution 345 has ended" },
+      { status: 409, statusText: "Conflict", message: "Execution 345 has ended." },
       {
         status: 500,
         statusText: "Server Error",

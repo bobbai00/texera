@@ -109,7 +109,7 @@ const { apiEndpoint: DASHBOARD, executionEndpoint: UNIT } = getBackendConfig();
 const CREATE_URL = `${DASHBOARD}/api/executions`;
 
 // What the Dashboard answers a create with, unless a test says otherwise.
-const CREATED = { eid: 345, wid: 1, computingUnitId: 3, planUri: "vfs:///wid/1/eid/345/plan" };
+const CREATED = { eid: 345, planUri: "vfs:///wid/1/eid/345/plan" };
 
 function createdResponse(body: unknown = CREATED): Response {
   return new Response(JSON.stringify(body), { status: 201, headers: { "Content-Type": "application/json" } });
@@ -127,10 +127,7 @@ function refusedResponse(status: number, statusText: string, message: string): R
 // A create of a workflow that does not compile: the execution the Dashboard recorded as failed,
 // each operator's error, a WorkflowFatalError, under the operator's id, and the errors of no
 // operator after them.
-function compileFailureResponse(
-  messageByOperator: Record<string, string>,
-  messagesOfNoOperator: string[] = []
-): Response {
+function compileFailureResponse(messageByOperator: Record<string, string>): Response {
   const compileError = (message: string, operatorId: string) => ({
     type: { name: "COMPILATION_ERROR" },
     timestamp: { seconds: 1794873600, nanos: 0 },
@@ -142,12 +139,16 @@ function compileFailureResponse(
   const operatorErrors = Object.fromEntries(
     Object.entries(messageByOperator).map(([operatorId, message]) => [operatorId, compileError(message, operatorId)])
   );
-  const errors = messagesOfNoOperator.map(message => compileError(message, ""));
-  return new Response(JSON.stringify({ eid: 345, operatorErrors, errors }), {
-    status: 400,
-    statusText: "Bad Request",
-    headers: { "Content-Type": "application/json" },
-  });
+  const count = Object.keys(operatorErrors).length;
+  return new Response(
+    JSON.stringify({
+      code: 400,
+      message: `The workflow does not compile: ${count} operators have errors.`,
+      eid: 345,
+      operatorErrors,
+    }),
+    { status: 400, statusText: "Bad Request", headers: { "Content-Type": "application/json" } }
+  );
 }
 
 // Answers the create with `create`, and the run of the execution it names with `run`. Any other
@@ -825,7 +826,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
     const state = makeState(makeOperator("dst"));
     // Not the default answer: the run has to name the execution and the plan this create answered.
     const planUri = "vfs:///wh/user-1-7/wid/7/eid/12/plan";
-    routeFetch(createdResponse({ eid: 12, wid: 7, computingUnitId: 3, planUri }), completed());
+    routeFetch(createdResponse({ eid: 12, planUri }), completed());
     const controller = new AbortController();
 
     await executeOperatorAndFormat(
@@ -878,7 +879,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
 
   test("names no computing unit as unit 0, which the Dashboard refuses before any unit is asked", async () => {
     const state = makeState(makeOperator("dst"));
-    const message = "The request names no computing unit: computingUnitId is 0.";
+    const message = "The request names no computing unit to run the workflow on.";
     routeFetch(refusedResponse(400, "Bad Request", message));
 
     const out = await executeOperatorAndFormat(state, makeConfig(), "dst");
@@ -893,10 +894,12 @@ describe("executeOperatorAndFormat - create, then run", () => {
 
   test("reports each operator's compilation error, naming the operator, and runs nothing", async () => {
     const { state, source, target } = makeLinearState();
+    // The answer keys the errors by operator, here with the target's first: the tool lists the
+    // source's, the cause, before it.
     routeFetch(
       compileFailureResponse({
-        [source]: "java.lang.RuntimeException: No file selected.",
         [target]: "java.lang.RuntimeException: column age does not exist",
+        [source]: "java.lang.RuntimeException: No file selected.",
       })
     );
     const onResult = mock((_operatorId: string, _info: OperatorExecutionSummary) => {});
@@ -920,32 +923,12 @@ describe("executeOperatorAndFormat - create, then run", () => {
     expect(info.errorMessages.map(error => error.message)).toEqual([expected]);
   });
 
-  test("lists a compilation error of no operator under the same heading, after the operators'", async () => {
-    const { state, source, target } = makeLinearState();
-    routeFetch(
-      compileFailureResponse({ [source]: "java.lang.RuntimeException: No file selected." }, [
-        "java.lang.IllegalStateException: the plan cannot be scheduled",
-      ])
-    );
-
-    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
-
-    expect(out).toBe(
-      [
-        "[ERROR] Execution failed due to the following error:",
-        "Compilation error:",
-        `  ${source}: java.lang.RuntimeException: No file selected.`,
-        "  java.lang.IllegalStateException: the plan cannot be scheduled",
-      ].join("\n")
-    );
-    expect(requestUrls()).toEqual([CREATE_URL]);
-  });
-
   test.each([
-    [400, "Bad Request", "a warehouse must be selected for this execution"],
+    [400, "Bad Request", "A warehouse must be selected for this execution."],
     [403, "Forbidden", "You may not run workflows on computing unit 3."],
-    [409, "Conflict", "computing unit 3 is terminated"],
+    [409, "Conflict", "Computing unit 3 is terminated."],
     [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+    [504, "Gateway Timeout", "Execution 345 could not be created: compiling the workflow took longer than 60 seconds."],
   ])("reports a create refused with %d, and runs nothing", async (status, statusText, message) => {
     const { state, target } = makeLinearState();
     routeFetch(refusedResponse(status, statusText, message));
@@ -961,7 +944,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
 
   test("reports a create whose answer names no stored plan, and runs nothing", async () => {
     const { state, target } = makeLinearState();
-    routeFetch(createdResponse({ eid: 345, wid: 1, computingUnitId: 3 }), completed());
+    routeFetch(createdResponse({ eid: 345 }), completed());
 
     const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
 

@@ -49,7 +49,10 @@ object ExecutionResource {
   *
   * Registered only by the Dashboard. It shares its path with [[WorkflowExecutionsResource]],
   * which a computing unit registers too; Jersey merges the two, and none of their methods share a
-  * path and a method.
+  * path and a method. The first path segment after `/executions` is a workflow's id in that
+  * resource's routes and an execution's id in this one's.
+  *
+  * A request that is not served is answered `{code, message}`, whatever its status.
   *
   * @param creator creates the executions
   * @param updates stores the changes to paused operators
@@ -67,12 +70,13 @@ class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
     * compiles the workflow for them, records the execution and writes its plan to the lake (see
     * [[ExecutionCreator]]).
     *
-    * @return 201 with `{eid, wid, computingUnitId, planUri}`; 400 with `{eid, operatorErrors,
-    *         errors}` when the workflow does not compile, the execution then recorded as failed.
-    *         A refused request is answered `{code, message}`: 400 when it is malformed or names a
-    *         warehouse or a replay it may not, 403 without the right to read the workflow or to
-    *         run workflows on the unit, 409 when the unit is terminated; 500 when the plan cannot
-    *         be made or written for any other reason.
+    * @return 201 with `{eid, planUri}`. Otherwise 400 when the request is malformed or names a
+    *         warehouse or a replay it may not, and 400 with `eid` and `operatorErrors` beside
+    *         the code and the message when the workflow does not compile, the execution then
+    *         recorded as failed ([[CreateExecutionFailure]]); 403 without the right to read the
+    *         workflow or to run workflows on the unit; 409 when the unit is terminated; 504 when
+    *         the compile takes longer than its deadline and 503 when too many compiles wait; 500
+    *         when the plan cannot be made or written for any other reason.
     */
   @POST
   @RolesAllowed(Array("REGULAR", "ADMIN"))
@@ -86,9 +90,12 @@ class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
       Response.status(Response.Status.CREATED).entity(created).build()
     } catch {
       case failed: WorkflowNotCompiled =>
+        val status = failed.getResponse.getStatus
         Response
-          .status(Response.Status.BAD_REQUEST)
-          .entity(CreateExecutionFailure(failed.eid, failed.operatorErrors, List.empty))
+          .status(status)
+          .entity(
+            CreateExecutionFailure(status, failed.getMessage, failed.eid, failed.operatorErrors)
+          )
           .build()
     }
 
@@ -97,13 +104,13 @@ class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
     * created the execution, for its computing unit to apply when the run resumes (see
     * [[OperatorUpdates]]).
     *
-    * @return 200 with `{updateId, operatorId}`. A refused change is answered `{code, message}`:
-    *         400 when the request names no operator or the running operator cannot take the
-    *         change, 403 unless the caller created the execution and may still read its workflow
-    *         and run workflows on its unit, 404 for an execution, a stored plan or an operator
-    *         there is not, 409 when the execution has ended or its plan is in a per-user warehouse
-    *         while those are disabled; 500 when the plan cannot be read, was made for another
-    *         user or unit, or the change cannot be stored.
+    * @return 201 with `{updateId, operatorId}`. Otherwise 400 when the request names no operator
+    *         or the running operator cannot take the change; 403 unless the caller created the
+    *         execution and may still read its workflow and run workflows on its unit; 404 for an
+    *         execution, a stored plan or an operator there is not; 409 when the execution has
+    *         ended or its plan is in a per-user warehouse while those are disabled; 500 when the
+    *         plan cannot be read, was made for another user or unit, or the change cannot be
+    *         stored.
     */
   @POST
   @Path("/{eid}/updates")
@@ -113,5 +120,8 @@ class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
       request: OperatorUpdateRequestBody,
       @Auth user: SessionUser
   ): Response =
-    Response.ok(updates.store(eid, request, user.getUser)).build()
+    Response
+      .status(Response.Status.CREATED)
+      .entity(updates.store(eid, request, user.getUser))
+      .build()
 }

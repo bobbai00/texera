@@ -22,21 +22,24 @@ package org.apache.texera.web.model.http.response.execution
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 
 /**
-  * An execution `POST /api/executions` created but could not make a plan for (400): the workflow
-  * does not compile. The execution is recorded as failed.
+  * The body of the 400 that `POST /api/executions` answers for a workflow that does not compile:
+  * the `code` and `message` of every refusal, and beside them the execution, which is recorded
+  * as failed, and its operators' errors.
   *
   * Each error is a `WorkflowFatalError` as the compiling service writes its operators' errors
   * (`{type: {name}, timestamp: {seconds, nanos}, message, details, operatorId, workerId}`), so the
   * browser shows them as it shows those.
   *
+  * @param code           400
+  * @param message        that the workflow does not compile, and how many operators have errors
   * @param eid            the execution, recorded as failed
-  * @param operatorErrors the first error of each operator that has one, by the operator's id, in
-  *                       the order of the workflow: an operator before those downstream of it
-  * @param errors         the errors that belong to no operator. A compile that fails reports
-  *                       every error on an operator, so this is empty for now.
+  * @param operatorErrors the first error of each operator that has one, by the operator's id, as
+  *                       the compiling service's answer has them. A JSON object has no order: a
+  *                       client that lists them orders them itself.
   */
 case class CreateExecutionFailure(
+    code: Int,
+    message: String,
     eid: Long,
-    operatorErrors: Map[String, WorkflowFatalError],
-    errors: List[WorkflowFatalError]
+    operatorErrors: Map[String, WorkflowFatalError]
 )
