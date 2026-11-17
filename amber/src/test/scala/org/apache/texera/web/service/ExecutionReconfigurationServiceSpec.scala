@@ -341,7 +341,7 @@ class ExecutionReconfigurationServiceSpec
       stateStore: ExecutionStateStore,
       physicalOps: Set[PhysicalOp] = Set(runningLimit, runningUdf),
       planUri: URI = planTable,
-      read: Option[String => PlanRecord] = None,
+      read: (URI, String) => PlanRecord = ExecutionPlanStore.readUpdate,
       mountRoot: Option[Path] = Some(unitMountRoot)
   ) extends ExecutionReconfigurationService(
         client = null,
@@ -349,7 +349,8 @@ class ExecutionReconfigurationServiceSpec
         mkWorkflow(physicalOps),
         planUri,
         creatorUid,
-        mountRoot
+        mountRoot,
+        read
       ) {
     val captured: mutable.ArrayBuffer[WorkflowReconfigureRequest] = mutable.ArrayBuffer.empty
     val mounted: mutable.ArrayBuffer[Set[String]] = mutable.ArrayBuffer.empty
@@ -358,8 +359,6 @@ class ExecutionReconfigurationServiceSpec
     override protected def ensureMounted(locators: Set[String]): Unit = mounted += locators
     override protected def registerWorkerCompletionCallback(): Unit = ()
     override protected def registerCompletionDiffHandler(): Unit = ()
-    override protected def readUpdate(planUri: URI, updateId: String): PlanRecord =
-      read.fold(super.readUpdate(planUri, updateId))(_(updateId))
   }
 
   /** A change asked for by the user who created the execution. */
@@ -477,7 +476,7 @@ class ExecutionReconfigurationServiceSpec
     val stateStore = new ExecutionStateStore
     val service = new StoredChangeService(
       stateStore,
-      read = Some(updateId => fail(s"$updateId was read for a user who may not apply it"))
+      read = (_, updateId) => fail(s"$updateId was read for a user who may not apply it")
     )
     Seq(Some(creatorUid + 1), None).foreach { requester =>
       withClue(s"$requester: ") {
@@ -558,7 +557,7 @@ class ExecutionReconfigurationServiceSpec
     val stateStore = new ExecutionStateStore
     val unanswered = new StoredChangeService(
       stateStore,
-      read = Some(_ => throw new IllegalStateException("the catalog is unavailable"))
+      read = (_, _) => throw new IllegalStateException("the catalog is unavailable")
     )
     unanswered.applyStoredUpdate("update-1", asCreator) shouldBe
       ModifyLogicResponse(

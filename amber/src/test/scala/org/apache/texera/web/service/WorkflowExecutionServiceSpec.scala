@@ -90,7 +90,6 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   StateRestoreConfig
 }
 import org.apache.texera.amber.engine.common.Utils
-import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.dao.MockTexeraDB
@@ -166,7 +165,7 @@ import scala.util.{Try, Using}
   *   - `startStored`, the start of a run from the plan read back from its execution's plan
   *     table. Its runs are built as a computing unit builds one to start it by id (`StoredRun`),
   *     on a plan encoded and read back here, for a unit that mounts under `unitMountRoot`. Only
-  *     the engine is stood in for, through the service's `createAmberRuntime` seam, which hands
+  *     the engine is stood in for, by the `createAmberRuntime` the service is given, which hands
   *     back a client on this suite's actor system that answers nothing unless a test answers it:
   *     every service is built around the plan, and nothing starts. They read nothing from the
   *     lake but the changes one case stores in the fixture execution's plan table, in the catalog
@@ -692,21 +691,16 @@ class WorkflowExecutionServiceSpec
       resultService,
       store,
       errors += _,
-      mountRoot
-    ) {
-      override protected def createAmberRuntime(
-          workflow: EngineWorkflow,
-          config: CoordinatorConfig
-      ): AmberClient = {
-        engineWorkflow = Some(workflow)
+      mountRoot,
+      installer.getOrElse(PythonEnvironmentInstaller.forThisUnit),
+      createAmberRuntime = (context, plan, config, _) => {
+        engineWorkflow = Some(EngineWorkflow(context, plan))
         coordinatorConfig = Some(config)
         val built = new UnansweredClient
         engine = Some(built)
         built
       }
-      override protected def environmentInstaller: PythonEnvironmentInstaller =
-        installer.getOrElse(super.environmentInstaller)
-    }
+    )
 
     def close(): Unit = {
       service.unsubscribeAll()
@@ -762,8 +756,9 @@ class WorkflowExecutionServiceSpec
       engineWorkflow.physicalPlan.operators.map(_.propagateSchema) shouldBe
         Set(PhysicalPlanCodec.ReadBackSchemaPropagation)
       engineWorkflow.context should be theSameInstanceAs executionPlan.context
-      // Every service is built around that same workflow.
-      run.service.workflow should be theSameInstanceAs engineWorkflow
+      // Every service is built around that same plan, under that context.
+      run.service.workflow.physicalPlan should be theSameInstanceAs engineWorkflow.physicalPlan
+      run.service.workflow.context should be theSameInstanceAs engineWorkflow.context
       // The run replays what the plan replays, and writes its replay log where the plan says.
       run.coordinatorConfig shouldBe Some(
         WorkflowExecutionService.coordinatorConfigOf(executionPlan)

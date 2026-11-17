@@ -34,8 +34,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   OperatorIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{CostHints, PortIdentity, WorkflowContext}
-import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
+import org.apache.texera.amber.core.workflow.{CostHints, PortIdentity}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.ERROR
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
@@ -80,7 +79,6 @@ import org.apache.texera.web.service.execution.{
   ExecutionCreator,
   ExecutionResources
 }
-import org.apache.texera.web.storage.ExecutionStateStore
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
@@ -234,33 +232,20 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     * workflow, but for the engine of each run, which is on this suite's actor system: no unit's
     * is started here.
     */
-  private class UnitWorkflowService
-      extends WorkflowService(WorkflowIdentity(wid.toLong), unitCuid, 3600) {
-    override protected def storedRun(
-        context: WorkflowContext,
-        executionStateStore: ExecutionStateStore,
-        onError: Throwable => Unit
-    ): WorkflowExecutionService =
-      new WorkflowExecutionService(
-        context,
-        resultService,
-        executionStateStore,
-        onError,
-        Some(TestUtils.fixtureUnitMountRoot)
-      ) {
-        override protected def createAmberRuntime(
-            workflow: Workflow,
-            coordinatorConfig: CoordinatorConfig
-        ): AmberClient =
-          new AmberClient(
-            system,
-            workflow.context,
-            workflow.physicalPlan,
-            coordinatorConfig,
-            onError
-          )
-      }
-  }
+  private def unitWorkflowService(): WorkflowService =
+    new WorkflowService(
+      WorkflowIdentity(wid.toLong),
+      unitCuid,
+      3600,
+      newRun = new WorkflowExecutionService(
+        _,
+        _,
+        _,
+        _,
+        Some(TestUtils.fixtureUnitMountRoot),
+        createAmberRuntime = new AmberClient(system, _, _, _, _)
+      )
+    )
 
   /**
     * A session on the workflow, as a browser's: it is sent what the workflow's service and its
@@ -365,7 +350,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
       )
     created += execution
 
-    val service = new UnitWorkflowService
+    val service = unitWorkflowService()
     val session = new Session
     val subscriptions =
       Seq(service.connect(session.receive), service.connectToExecution(session.receive))

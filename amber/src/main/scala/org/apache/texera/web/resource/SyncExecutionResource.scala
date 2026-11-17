@@ -120,22 +120,24 @@ case class TerminalStateReached(state: ExecutionMetadataStore) extends Terminati
 case class ConsoleErrorDetected(consoleState: ExecutionConsoleStore) extends TerminationReason
 case class TargetResultsReady(statsState: ExecutionStatsStore) extends TerminationReason
 
+/**
+  * Runs of executions that wait for their results: what the agent asks of a computing unit.
+  *
+  * @param workflowServiceOf the service of a workflow's runs on this unit, for a computing unit:
+  *                          the one the workflow's sessions share
+  */
 @Path("/execution")
 @Consumes(Array(MediaType.APPLICATION_JSON))
 @Produces(Array(MediaType.APPLICATION_JSON))
-class SyncExecutionResource extends LazyLogging {
+class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => WorkflowService)
+    extends LazyLogging {
+
+  // No-arg constructor for Jersey reflection. Tests use the param-ful form.
+  def this() = this(WorkflowService.getOrCreate(_, _))
 
   // Hard caps applied regardless of request — guard against runaway payloads.
   private val MAX_OPERATOR_RESULT_CHARS = 100000
   private val MAX_OPERATOR_RESULT_CELL_CHARS = 20000
-
-  // The service of a workflow's runs on this unit, shared with its sessions. A seam, so a test can
-  // start runs on a service of its own.
-  protected def workflowServiceOf(
-      workflowId: WorkflowIdentity,
-      computingUnitId: Int
-  ): WorkflowService =
-    WorkflowService.getOrCreate(workflowId, computingUnitId)
 
   /**
     * Runs execution `executionId`, which the Dashboard service created for the caller, on this

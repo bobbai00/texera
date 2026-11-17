@@ -1160,10 +1160,28 @@ class WorkflowWebsocketResourceSpec
   /**
     * The workflow's service, as `getOrCreate` makes one for the first session on `serviceCuid`,
     * but for the engine of each run, which is a [[TestAmberClient]], and for the idle clean-up,
-    * which it never arms. Sessions subscribe to it for real.
+    * which it never arms. Sessions subscribe to it for real. `engines` is the workflow each run's
+    * engine was handed.
     */
-  private class StoredStartService(serviceCuid: Int = storedCuid)
-      extends WorkflowService(WorkflowIdentity(storedWid), serviceCuid, 3600) {
+  private class StoredStartService(
+      serviceCuid: Int = storedCuid,
+      val engines: ArrayBuffer[EngineWorkflow] = ArrayBuffer.empty
+  ) extends WorkflowService(
+        WorkflowIdentity(storedWid),
+        serviceCuid,
+        3600,
+        newRun = new WorkflowExecutionService(
+          _,
+          _,
+          _,
+          _,
+          Some(TestUtils.fixtureUnitMountRoot),
+          createAmberRuntime = (context, plan, _, _) => {
+            engines += EngineWorkflow(context, plan)
+            new TestAmberClient
+          }
+        )
+      ) {
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("WorkflowWebsocketResourceSpec", 3600, () => ()) {
         override def increaseUserCount(): Unit = ()
@@ -1171,9 +1189,6 @@ class WorkflowWebsocketResourceSpec
         override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore): Disposable =
           Disposable.empty()
       }
-
-    /** The workflow each run's engine was handed. */
-    val engines: ArrayBuffer[EngineWorkflow] = ArrayBuffer.empty
 
     /** The unit each start by id was asked with. */
     val asked: ArrayBuffer[Int] = ArrayBuffer.empty
@@ -1187,27 +1202,6 @@ class WorkflowWebsocketResourceSpec
       asked += cuid
       super.startStoredExecution(executionId, planUri, user, cuid)
     }
-
-    override protected def storedRun(
-        context: WorkflowContext,
-        executionStateStore: ExecutionStateStore,
-        errorHandler: Throwable => Unit
-    ): WorkflowExecutionService =
-      new WorkflowExecutionService(
-        context,
-        resultService,
-        executionStateStore,
-        errorHandler,
-        Some(TestUtils.fixtureUnitMountRoot)
-      ) {
-        override protected def createAmberRuntime(
-            workflow: EngineWorkflow,
-            coordinatorConfig: CoordinatorConfig
-        ): AmberClient = {
-          engines += workflow
-          new TestAmberClient
-        }
-      }
   }
 
   /** A session of `uid` on `service`'s workflow and `cuid`, subscribed to it. */

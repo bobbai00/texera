@@ -109,17 +109,29 @@ object WorkflowExecutionService extends LazyLogging {
   * the plan names are installed on this unit before the engine starts. Its operators change,
   * while it is paused, only by the changes the Dashboard stored in its plan table.
   *
-  * @param mountRoot the directory this computing unit mounts datasets and models under, which
-  *                  the code of the plan, and of every change to an operator of it, is given to
-  *                  read them from; None on a unit that mounts none. Production reads the unit's
-  *                  environment; a parameter so a test can name one.
+  * @param mountRoot            the directory this computing unit mounts datasets and models
+  *                             under, which the code of the plan, and of every change to an
+  *                             operator of it, is given to read them from; None on a unit that
+  *                             mounts none. Production reads the unit's environment; a parameter
+  *                             so a test can name one.
+  * @param environmentInstaller installs the Python environments the plan names on this unit
+  * @param createAmberRuntime   hands a plan to the engine, under its context and the
+  *                             coordinator's configuration, and returns the engine's client,
+  *                             which reports what fails to the handler it is given
   */
 class WorkflowExecutionService(
     val workflowContext: WorkflowContext,
     resultService: ExecutionResultService,
     val executionStateStore: ExecutionStateStore,
     errorHandler: Throwable => Unit,
-    mountRoot: Option[Path]
+    mountRoot: Option[Path],
+    environmentInstaller: PythonEnvironmentInstaller = PythonEnvironmentInstaller.forThisUnit,
+    createAmberRuntime: (
+        WorkflowContext,
+        PhysicalPlan,
+        CoordinatorConfig,
+        Throwable => Unit
+    ) => AmberClient = ComputingUnitMaster.createAmberRuntime
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -201,7 +213,7 @@ class WorkflowExecutionService(
     workflow = Workflow(workflowContext, plan)
     val coordinatorConfig = WorkflowExecutionService.coordinatorConfigOf(executionPlan)
 
-    client = createAmberRuntime(workflow, coordinatorConfig)
+    client = createAmberRuntime(workflowContext, plan, coordinatorConfig, errorHandler)
     executionReconfigurationService = new ExecutionReconfigurationService(
       client,
       executionStateStore,
@@ -319,24 +331,6 @@ class WorkflowExecutionService(
       executionConsoleService.commitMessages()
     }
   }
-
-  // Installs the Python environments the plan names on this unit. A seam, so a test can stand in
-  // for pip.
-  protected def environmentInstaller: PythonEnvironmentInstaller =
-    PythonEnvironmentInstaller.forThisUnit
-
-  // Hands the plan to the engine. A seam, so a test can set a run up in full, every service
-  // built around its plan, without an engine to start it.
-  protected def createAmberRuntime(
-      workflow: Workflow,
-      coordinatorConfig: CoordinatorConfig
-  ): AmberClient =
-    ComputingUnitMaster.createAmberRuntime(
-      workflow.context,
-      workflow.physicalPlan,
-      coordinatorConfig,
-      errorHandler
-    )
 
   override def unsubscribeAll(): Unit = {
     super.unsubscribeAll()

@@ -54,13 +54,14 @@ import scala.util.control.NonFatal
   * changes the Dashboard service made and stored in the execution's plan table
   * ([[applyStoredUpdate]]).
   *
-  * @param planUri   the plan table of the execution the run runs, where the Dashboard stores the
-  *                  changes to its operators
-  * @param creator   the user who created the execution: only the changes they stored apply, when
-  *                  they ask for them
-  * @param mountRoot the directory this computing unit mounts datasets and models under, which the
-  *                  code of a stored change is given to read them from; None on a unit that
-  *                  mounts none
+  * @param planUri    the plan table of the execution the run runs, where the Dashboard stores
+  *                   the changes to its operators
+  * @param creator    the user who created the execution: only the changes they stored apply,
+  *                   when they ask for them
+  * @param mountRoot  the directory this computing unit mounts datasets and models under, which
+  *                   the code of a stored change is given to read them from; None on a unit that
+  *                   mounts none
+  * @param readUpdate reads the change stored under an id in the plan table at a URI
   */
 class ExecutionReconfigurationService(
     client: AmberClient,
@@ -68,7 +69,8 @@ class ExecutionReconfigurationService(
     workflow: Workflow,
     planUri: URI,
     creator: Int,
-    mountRoot: Option[Path]
+    mountRoot: Option[Path],
+    readUpdate: (URI, String) => PlanRecord = ExecutionPlanStore.readUpdate
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -191,10 +193,6 @@ class ExecutionReconfigurationService(
             Left(refused.getMessage)
         }
     } yield changed
-
-  // Reads a stored change. A seam, so a test can make the read fail.
-  protected def readUpdate(planUri: URI, updateId: String): PlanRecord =
-    ExecutionPlanStore.readUpdate(planUri, updateId)
 
   private def show(id: PhysicalOpIdentity): String = s"${id.logicalOpId.id}-${id.layerName}"
 

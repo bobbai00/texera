@@ -115,7 +115,7 @@ import scala.util.Try
   *
   * Two of the resource's methods are public (`runStoredExecution`, `healthCheck`); the others
   * are `private def`. `runStoredExecution` is driven for real here, on executions the Dashboard's
-  * `ExecutionCreator` made, through its workflow-service seam onto a service whose runs end as
+  * `ExecutionCreator` made, on a resource given a workflow service whose runs end as
   * soon as they start (what a run does with its plan is `WorkflowExecutionServiceSpec`'s). The
   * result-shaping helpers it calls cannot be reached that way: every one of them only produces an
   * observable difference once the engine has populated the stats/console stores or written
@@ -1122,49 +1122,48 @@ class SyncExecutionResourceSpec
     */
   private class EndingService(
       serviceCuid: Int = testCuid,
-      failure: Option[RuntimeException] = None
-  ) extends WorkflowService(WorkflowIdentity(testWid.toLong), serviceCuid, 3600) {
+      failure: Option[RuntimeException] = None,
+      val started: scala.collection.mutable.ArrayBuffer[(ExecutionPlan, URI)] =
+        scala.collection.mutable.ArrayBuffer.empty
+  ) extends WorkflowService(
+        WorkflowIdentity(testWid.toLong),
+        serviceCuid,
+        3600,
+        newRun = (context, _, executionStateStore, errorHandler) =>
+          new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
+            override def startStored(
+                executionPlan: ExecutionPlan,
+                record: PlanRecord,
+                planUri: URI
+            ): Option[Throwable] = {
+              started += ((executionPlan, planUri))
+              failure match {
+                case Some(failure) => errorHandler(failure)
+                case None =>
+                  this.executionStateStore.metadataStore.updateState(metadataStore =>
+                    updateWorkflowState(COMPLETED, metadataStore)
+                  )
+              }
+              failure
+            }
+          }
+      ) {
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("SyncExecutionResourceSpec", 3600, () => ()) {
         override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore) =
           io.reactivex.rxjava3.disposables.Disposable.empty()
       }
-    val started = scala.collection.mutable.ArrayBuffer.empty[(ExecutionPlan, URI)]
-    override protected def storedRun(
-        context: WorkflowContext,
-        executionStateStore: ExecutionStateStore,
-        errorHandler: Throwable => Unit
-    ): WorkflowExecutionService =
-      new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
-        override def startStored(
-            executionPlan: ExecutionPlan,
-            record: PlanRecord,
-            planUri: URI
-        ): Option[Throwable] = {
-          started += ((executionPlan, planUri))
-          failure match {
-            case Some(failure) => errorHandler(failure)
-            case None =>
-              this.executionStateStore.metadataStore.updateState(metadataStore =>
-                updateWorkflowState(COMPLETED, metadataStore)
-              )
-          }
-          failure
-        }
-      }
   }
 
   /** The resource, running every workflow's executions on `service`; it records what it asks. */
-  private class ResourceOn(service: WorkflowService) extends SyncExecutionResource {
-    val asked = scala.collection.mutable.ArrayBuffer.empty[(WorkflowIdentity, Int)]
-    override protected def workflowServiceOf(
-        workflowId: WorkflowIdentity,
-        computingUnitId: Int
-    ): WorkflowService = {
-      asked += ((workflowId, computingUnitId))
-      service
-    }
-  }
+  private class ResourceOn(
+      service: WorkflowService,
+      val asked: scala.collection.mutable.ArrayBuffer[(WorkflowIdentity, Int)] =
+        scala.collection.mutable.ArrayBuffer.empty
+  ) extends SyncExecutionResource((workflowId, computingUnitId) => {
+        asked += ((workflowId, computingUnitId))
+        service
+      })
 
   private def runRequest(
       planUri: String,

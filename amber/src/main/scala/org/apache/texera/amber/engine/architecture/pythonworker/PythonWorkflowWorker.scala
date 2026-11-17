@@ -116,8 +116,12 @@ object PythonWorkflowWorker {
   }
 }
 
+/**
+  * @param environments where this unit keeps the Python environments it installed
+  */
 class PythonWorkflowWorker(
-    workerConfig: WorkerConfig
+    workerConfig: WorkerConfig,
+    environments: PythonEnvironmentInstaller = PythonEnvironmentInstaller.forThisUnit
 ) extends WorkflowActor(replayLogConfOpt = None, actorId = workerConfig.workerId) {
 
   // For receiving the Python server port number that will be available later
@@ -231,10 +235,6 @@ class PythonWorkflowWorker(
   private def startProxyClient(): Unit = {
     clientThreadExecutor.submit(pythonProxyClient)
   }
-
-  // Where this unit keeps the Python environments it installed. A seam, so a test names another
-  // place.
-  protected def environments: PythonEnvironmentInstaller = PythonEnvironmentInstaller.forThisUnit
 
   // The interpreter of the environment this worker's operator runs in. The worker fails to start
   // if that environment is not installed here: it runs in no other.

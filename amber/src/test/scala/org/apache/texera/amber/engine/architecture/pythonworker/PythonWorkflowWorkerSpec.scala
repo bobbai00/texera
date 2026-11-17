@@ -101,9 +101,8 @@ class PythonWorkflowWorkerSpec
 
   /** The worker with its process/socket startup removed; see the class comment. */
   private class InertPythonWorkflowWorker(config: WorkerConfig)
-      extends PythonWorkflowWorker(config) {
+      extends PythonWorkflowWorker(config, unitEnvironments) {
     override def initState(): Unit = ()
-    override protected def environments: PythonEnvironmentInstaller = unitEnvironments
   }
 
   /** Stands in for the OS process the worker would have spawned. */

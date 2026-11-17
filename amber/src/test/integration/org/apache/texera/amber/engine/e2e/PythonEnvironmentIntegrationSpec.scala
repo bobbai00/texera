@@ -36,7 +36,6 @@ import org.apache.texera.amber.core.workflow.{
   PortIdentity,
   PythonEnvironment
 }
-import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.PythonEnvironmentInstaller.InstallFailed
 import org.apache.texera.amber.engine.architecture.pythonworker.environment.{
   EngineInterpreter,
@@ -310,14 +309,9 @@ class PythonEnvironmentIntegrationSpec
       resultService,
       store,
       failed,
-      Some(fixtureUnitMountRoot)
-    ) {
-      override protected def createAmberRuntime(
-          workflow: Workflow,
-          coordinatorConfig: CoordinatorConfig
-      ): AmberClient =
-        new AmberClient(system, workflow.context, workflow.physicalPlan, coordinatorConfig, failed)
-    }
+      Some(fixtureUnitMountRoot),
+      createAmberRuntime = new AmberClient(system, _, _, _, _)
+    )
 
     /** Starts the run, and answers what it ended as. */
     def end(): ExecutionMetadataStore = {

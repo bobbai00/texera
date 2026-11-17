@@ -148,6 +148,19 @@ object WorkflowService extends LazyLogging {
         Left(s"The plan of execution $executionId could not be read. Run the workflow again.")
     }
 
+  /**
+    * Builds the run of a plan read back from the lake, before it is started: given the context
+    * the plan was read back with, the result service of the run's workflow, the store of the
+    * run's states and the handler of its errors.
+    */
+  type NewRun =
+    (
+        WorkflowContext,
+        ExecutionResultService,
+        ExecutionStateStore,
+        Throwable => Unit
+    ) => WorkflowExecutionService
+
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
   /** The states a run ends in: a run in any other may still be running. */
@@ -178,10 +191,22 @@ object WorkflowService extends LazyLogging {
   }
 }
 
+/**
+  * The runs of one workflow on this computing unit, one at a time, and what outlives a run: the
+  * workflow's sessions and its results.
+  *
+  * @param readPlan   reads an execution's plan row from its plan table
+  * @param claimStart claims an execution for its one start, in its plan table
+  * @param newRun     builds the run of a plan read back from the lake, before it is started
+  */
 class WorkflowService(
     val workflowId: WorkflowIdentity,
     val computingUnitId: Int,
-    cleanUpTimeout: Int
+    cleanUpTimeout: Int,
+    readPlan: URI => PlanRecord = ExecutionPlanStore.readPlan,
+    claimStart: URI => Unit = ExecutionPlanStore.claimStart,
+    newRun: WorkflowService.NewRun =
+      new WorkflowExecutionService(_, _, _, _, RepositoryMountManager.mountRoot)
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -291,28 +316,6 @@ class WorkflowService(
     )
   }
 
-  // Read an execution's plan row, and claim the execution for its one start, in its plan table.
-  // Seams, so a test can see what a start asks of the lake, or make it fail there.
-  protected def readPlan(planUri: URI): PlanRecord = ExecutionPlanStore.readPlan(planUri)
-  protected def claimStart(planUri: URI): Unit = ExecutionPlanStore.claimStart(planUri)
-
-  /**
-    * The run of a plan read back from the lake, under `context`, before it is started. A seam, so
-    * a test can give the run an engine of its own.
-    */
-  protected def storedRun(
-      context: WorkflowContext,
-      executionStateStore: ExecutionStateStore,
-      errorHandler: Throwable => Unit
-  ): WorkflowExecutionService =
-    new WorkflowExecutionService(
-      context,
-      resultService,
-      executionStateStore,
-      errorHandler,
-      RepositoryMountManager.mountRoot
-    )
-
   /**
     * Starts execution `executionId` of this workflow, which the Dashboard service created, from
     * the plan stored in its plan table at `planUri`, for `user` on computing unit `cuid`: the unit
@@ -409,7 +412,7 @@ class WorkflowService(
     var published = false
     try {
       WorkflowMetricsRecorder.onStart(executionId)
-      val execution = storedRun(context, executionStateStore, errorHandler)
+      val execution = newRun(context, resultService, executionStateStore, errorHandler)
       built = Some(execution)
       logger.info(
         s"Execution ${executionId.id} of workflow ${workflowId.id} starts on computing unit " +

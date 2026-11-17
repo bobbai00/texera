@@ -231,48 +231,45 @@ class WorkflowServiceSpec
     * instead of building an engine: `WorkflowExecutionServiceSpec` owns what a run does with its
     * plan. Its reads and claims go to the lake unless `read` or `claim` stands in for them.
     * `supersedeFailure` fails its supersede, and `buildFailure` the building of a run.
-    * `whileStarting` runs while a run is started, which is while it is being set up.
+    * `whileStarting` runs while a run is started, which is while it is being set up. `started`
+    * is what each run was started from: its plan, its plan row and its plan table.
     */
   private final class StoredStartService(
-      read: Option[URI => PlanRecord] = None,
-      claim: Option[URI => Unit] = None,
+      read: URI => PlanRecord = ExecutionPlanStore.readPlan,
+      claim: URI => Unit = ExecutionPlanStore.claimStart,
       startFailure: Option[RuntimeException] = None,
       serviceCuid: Int = storedCuid,
       supersedeFailure: Option[RuntimeException] = None,
       buildFailure: Option[RuntimeException] = None,
-      whileStarting: () => Unit = () => ()
-  ) extends WorkflowService(WorkflowIdentity(testWid.toLong), serviceCuid, cleanUpTimeoutSecs) {
+      whileStarting: () => Unit = () => (),
+      val started: ArrayBuffer[(ExecutionPlan, PlanRecord, URI)] = ArrayBuffer.empty
+  ) extends WorkflowService(
+        WorkflowIdentity(testWid.toLong),
+        serviceCuid,
+        cleanUpTimeoutSecs,
+        read,
+        claim,
+        newRun = (context, _, executionStateStore, errorHandler) => {
+          buildFailure.foreach(failure => throw failure)
+          new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
+            override def startStored(
+                executionPlan: ExecutionPlan,
+                record: PlanRecord,
+                planUri: URI
+            ): Option[Throwable] = {
+              started += ((executionPlan, record, planUri))
+              whileStarting()
+              startFailure.foreach(failure => throw failure)
+              None
+            }
+          }
+        }
+      ) {
     val lifecycle = new RecordingLifecycleManager
     override val lifeCycleManager: WorkflowLifecycleManager = lifecycle
 
-    /** What each run was started from: its plan, its plan row and its plan table. */
-    val started: ArrayBuffer[(ExecutionPlan, PlanRecord, URI)] = ArrayBuffer.empty
-
-    override protected def readPlan(planUri: URI): PlanRecord =
-      read.fold(super.readPlan(planUri))(_(planUri))
-    override protected def claimStart(planUri: URI): Unit =
-      claim.fold(super.claimStart(planUri))(_(planUri))
     override def supersedeCurrentRun(): Unit =
       supersedeFailure.fold(super.supersedeCurrentRun())(failure => throw failure)
-    override protected def storedRun(
-        context: WorkflowContext,
-        executionStateStore: ExecutionStateStore,
-        errorHandler: Throwable => Unit
-    ): WorkflowExecutionService = {
-      buildFailure.foreach(failure => throw failure)
-      new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
-        override def startStored(
-            executionPlan: ExecutionPlan,
-            record: PlanRecord,
-            planUri: URI
-        ): Option[Throwable] = {
-          started += ((executionPlan, record, planUri))
-          whileStarting()
-          startFailure.foreach(failure => throw failure)
-          None
-        }
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -936,18 +933,18 @@ class WorkflowServiceSpec
 
     // Every retry of the claim lost its commit to another commit on the table.
     refusalOf(
-      new StoredStartService(claim = Some(_ => throw new CommitFailedException("lost the race")))
+      new StoredStartService(claim = _ => throw new CommitFailedException("lost the race"))
     ) shouldBe Left(
       s"Execution $unclaimedEid could not be claimed for its start, as its plan was being " +
         "changed. Run the workflow again."
     )
     refusalOf(
-      new StoredStartService(claim = Some(_ => throw new IllegalStateException("catalog down")))
+      new StoredStartService(claim = _ => throw new IllegalStateException("catalog down"))
     ) shouldBe
       Left(s"Execution $unclaimedEid could not be claimed for its start. Run the workflow again.")
     refusalOf(
       new StoredStartService(
-        read = Some(_ => throw new UncheckedIOException(new IOException("catalog down")))
+        read = _ => throw new UncheckedIOException(new IOException("catalog down"))
       )
     ) shouldBe
       Left(s"The plan of execution $unclaimedEid could not be read. Run the workflow again.")
@@ -955,14 +952,14 @@ class WorkflowServiceSpec
     // try reads the same row.
     refusalOf(
       new StoredStartService(
-        read = Some(_ => throw new IllegalStateException("a plan table row has no body"))
+        read = _ => throw new IllegalStateException("a plan table row has no body")
       )
     ) shouldBe
       Left(
         s"The stored plan of execution $unclaimedEid cannot be read: a plan table row has no body"
       )
     refusalOf(
-      new StoredStartService(read = Some(_ => throw new IllegalArgumentException()))
+      new StoredStartService(read = _ => throw new IllegalArgumentException())
     ) shouldBe Left(s"The stored plan of execution $unclaimedEid cannot be read.")
     ExecutionPlanStore.isStarted(planUri) shouldBe false
   }
