@@ -74,6 +74,9 @@ class DataProcessor(
   /** The executor whose loop-variable references `bindStateReferences` has bound. */
   @transient private var executorWithBoundReferences: OperatorExecutor = _
 
+  /** The executor `closeExecutor` has closed. */
+  @transient private var closedExecutor: OperatorExecutor = _
+
   def initTimerService(adaptiveBatchingMonitor: WorkerTimerService): Unit = {
     this.adaptiveBatchingMonitor = adaptiveBatchingMonitor
   }
@@ -108,6 +111,17 @@ class DataProcessor(
     if (executorWithBoundReferences ne executor) {
       executor.bindStateReferences()
       executorWithBoundReferences = executor
+    }
+
+  /**
+    * Closes the executor, once: when it finishes, when another takes its place, or when the
+    * worker stops with it still open, whichever comes first. A worker that was given no executor
+    * closes none.
+    */
+  def closeExecutor(): Unit =
+    if (executor != null && (closedExecutor ne executor)) {
+      closedExecutor = executor
+      executor.close()
     }
 
   /**
@@ -194,7 +208,7 @@ class DataProcessor(
           )
         }
         // Send Completed signal to worker actor.
-        executor.close()
+        closeExecutor()
         adaptiveBatchingMonitor.stopAdaptiveBatching()
         stateManager.transitTo(COMPLETED)
         logger.debug(

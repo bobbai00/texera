@@ -153,6 +153,9 @@ class WorkflowWorker(
     timerService.stopAdaptiveBatching()
     dpThread.stop()
     logManager.terminate()
+    // The DP thread has ended, so nothing else uses the executor. A worker stopped before its
+    // executor finished, as when its run is killed or fails, closes it here.
+    dp.closeExecutor()
   }
 
   override def handleBackpressure(isBackpressured: Boolean): Unit = {

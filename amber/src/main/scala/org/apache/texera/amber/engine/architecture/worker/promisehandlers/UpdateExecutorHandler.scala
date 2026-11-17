@@ -43,10 +43,7 @@ trait UpdateExecutorHandler {
         )
       )
     // Close the existing executor (if any) before replacing it to avoid resource leaks.
-    val oldExecutor = dp.executor
-    if (oldExecutor != null) {
-      oldExecutor.close()
-    }
+    dp.closeExecutor()
     setupExecutor(request.newExecInitInfo, workerIdx, cachedTotalWorkerCount)
     dp.executor.open()
     EmptyReturn()

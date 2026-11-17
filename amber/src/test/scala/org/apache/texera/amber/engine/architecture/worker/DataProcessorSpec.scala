@@ -188,6 +188,45 @@ class DataProcessorSpec extends AnyFlatSpec with MockFactory with Matchers with 
     while (dp.inputManager.hasUnfinishedInput || dp.outputManager.hasUnfinishedOutput) {
       dp.continueDataProcessing()
     }
+    // The executor finished and was closed: a worker that stops afterwards closes it no more.
+    dp.closeExecutor()
+  }
+
+  "data processor" should "close its executor once, however often it is asked to" in {
+    val dp = mkDataProcessor
+    dp.executor = executor
+    (executor.close _).expects().once()
+
+    dp.closeExecutor()
+    dp.closeExecutor()
+  }
+
+  "data processor" should "not close again an executor that failed to close" in {
+    val dp = mkDataProcessor
+    dp.executor = executor
+    (executor.close _).expects().throwing(new IllegalStateException("cannot close")).once()
+
+    an[IllegalStateException] should be thrownBy dp.closeExecutor()
+    dp.closeExecutor()
+  }
+
+  "data processor" should "close the executor that takes a closed one's place, in its turn" in {
+    val dp = mkDataProcessor
+    val replacement = mock[OperatorExecutor]
+    inSequence {
+      (executor.close _).expects().once()
+      (replacement.close _).expects().once()
+    }
+
+    dp.executor = executor
+    dp.closeExecutor()
+    dp.executor = replacement
+    dp.closeExecutor()
+    dp.closeExecutor()
+  }
+
+  "data processor" should "close nothing when it was given no executor" in {
+    noException should be thrownBy mkDataProcessor.closeExecutor()
   }
 
   "data processor" should "process control messages during data processing" in {

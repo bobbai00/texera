@@ -19,10 +19,12 @@
 
 package org.apache.texera.amber.engine.architecture.worker
 
-import org.apache.pekko.actor.{ActorSystem, Props}
+import org.apache.pekko.actor.SupervisorStrategy.Stop
+import org.apache.pekko.actor.{Actor, ActorSystem, AllForOneStrategy, Props, SupervisorStrategy}
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit, TestProbe}
 import org.apache.texera.amber.clustering.SingleNodeListener
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorExecutor}
+import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ChannelIdentity,
@@ -54,6 +56,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 
 import java.net.URI
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{CompletableFuture, LinkedBlockingQueue, TimeUnit}
 import scala.collection.mutable
 
@@ -79,6 +82,65 @@ class WorkflowWorkerSpec
     TestActorRef(
       new WorkflowWorker(WorkerConfig(identifier1), WorkerReplayInitialization())
     )
+
+  /** Counts how often it is closed. */
+  private class CloseCountingExecutor extends OperatorExecutor {
+    val closes = new AtomicInteger()
+    override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = Iterator.empty
+    override def close(): Unit = closes.incrementAndGet()
+  }
+
+  /** Supervises a worker as the coordinator does: a worker that fails is stopped. */
+  private class StoppingSupervisor extends Actor {
+    override val supervisorStrategy: SupervisorStrategy =
+      AllForOneStrategy() { case _: Throwable => Stop }
+    override def receive: Receive = Actor.emptyBehavior
+  }
+
+  "WorkflowWorker" should "close an executor that is still open when it is stopped" in {
+    // As when its run is killed: the engine stops its workers where they stand.
+    val worker = mkWorker()
+    val executor = new CloseCountingExecutor
+    worker.underlyingActor.dp.executor = executor
+    watch(worker)
+
+    system.stop(worker)
+
+    expectTerminated(worker)
+    assert(executor.closes.get() == 1)
+  }
+
+  "WorkflowWorker" should "close an executor that is still open when a failure stops it" in {
+    // As when its run fails: the DP thread hands what it died of to the actor, which fails,
+    // and its supervisor stops it.
+    val worker = TestActorRef[WorkflowWorker](
+      Props(new WorkflowWorker(WorkerConfig(identifier1), WorkerReplayInitialization())),
+      TestActorRef(new StoppingSupervisor),
+      "worker-that-fails"
+    )
+    val executor = new CloseCountingExecutor
+    worker.underlyingActor.dp.executor = executor
+    watch(worker)
+
+    worker ! MainThreadDelegateMessage(_ => throw new IllegalStateException("the DP thread died"))
+
+    expectTerminated(worker)
+    assert(executor.closes.get() == 1)
+  }
+
+  "WorkflowWorker" should "close its executor once, though it is torn down more than once" in {
+    val worker = mkWorker()
+    val executor = new CloseCountingExecutor
+    worker.underlyingActor.dp.executor = executor
+    watch(worker)
+
+    // A restart tears the worker down, and so does stopping it afterwards.
+    worker.underlyingActor.preRestart(new RuntimeException("x"), None)
+    system.stop(worker)
+
+    expectTerminated(worker)
+    assert(executor.closes.get() == 1)
+  }
 
   "WorkflowWorker" should "enqueue backpressure and preRestart" in {
     val worker = mkWorker()
