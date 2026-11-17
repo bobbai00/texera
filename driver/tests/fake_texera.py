@@ -226,6 +226,9 @@ class Run:
                 out["tag"] = m.group(1)
             if "tabulate.__version__" in code:
                 out["tabulate_version"] = "0.9.0"
+            if "hashlib.sha256" in code:
+                content = row["line"].encode("utf-8")
+                out["n_bytes"], out["sha256"] = len(content), hashlib.sha256(content).hexdigest()
             return [out]
         if t == "FileScanOp":
             name = row["filename"]
@@ -835,9 +838,11 @@ class FakeTexera:
                                                if self.executions[r.eid]["wid"] == wid), None)
                         rows, schema = run.results(msg["operatorID"]) if run else ([], [])
                         size, page = msg["pageSize"], msg["pageIndex"]
+                        # a result table shows the start of a long string cell, as the real one does
+                        shown = [{k: v[:100] + "..." if isinstance(v, str) and len(v) > 100 else v
+                                  for k, v in row.items()} for row in rows[(page - 1) * size: page * size]]
                         conn.send({"type": "PaginatedResultEvent", "requestID": msg["requestID"],
-                                   "table": rows[(page - 1) * size: page * size], "schema": schema,
-                                   "totalTuples": len(rows)})
+                                   "table": shown, "schema": schema, "totalTuples": len(rows)})
         finally:
             with self.lock:
                 sessions.remove(conn)

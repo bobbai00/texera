@@ -9,6 +9,7 @@ a plain-Python one.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import re
@@ -1255,16 +1256,43 @@ def scenario_o(ctx: Ctx) -> None:
 # ----------------------------------------------------- f, f2: listed files
 
 
+UDF_DIGEST = '''from pytexera import *
+import hashlib
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        content = tuple_["line"].encode("utf-8")
+        tuple_["n_bytes"] = len(content)
+        tuple_["sha256"] = hashlib.sha256(content).hexdigest()
+        yield tuple_
+'''
+
+#: A result table shows the first characters of a long string cell, then "..." (TupleUtils).
+RESULT_CELL_CHARS = 100
+
+
+def as_shown(value: str) -> str:
+    """A string cell as a result table shows it."""
+    return value if len(value) <= RESULT_CELL_CHARS else value[:RESULT_CELL_CHARS] + "..."
+
+
 def scenario_f(ctx: Ctx) -> None:
     """File Lister (the e2e dataset's version) -> File Scan From Input (single
-    string, with the file name): the three files, read through links."""
+    string, with the file name) -> Python UDF (the content's size and SHA-256):
+    the three files, read whole through links. The digest is taken in the run
+    because a result table shows only the start of a long cell."""
     _need_create_ws(ctx)
     version_path = ctx.dataset.get("version_path")
     wf = ctx.workflow("f-file-lister-scan")
     lister = wf.add("dataset-files", "FileLister", file_lister(version_path), n_in=0)
     scan = wf.add("read-files", "FileScanOp", file_scan_from_input("single string", True))
+    digest = wf.add("content-digest", "PythonUDFV2",
+                    python_udf(UDF_DIGEST, out_columns=[("n_bytes", "integer"), ("sha256", "string")]))
     wf.link(lister, scan)
-    handle, res = run_to_completion(ctx, wf, scan)
+    wf.link(scan, digest)
+    handle, res = run_to_completion(ctx, wf, digest)
     rows = res["rows"]
     ctx.check("three rows, one per file", len(rows) == len(ctx.paths), f"got {len(rows)}")
     want_names = sorted(ctx.paths.values())
@@ -1273,9 +1301,23 @@ def scenario_f(ctx: Ctx) -> None:
               f"got {got_names}, want {want_names}")
     ctx.check("no value contains http (no link leaks into the data)",
               not any("http" in str(v) for r in rows for v in r.values()), "")
-    by_path = {p: ctx.data_bytes[f].decode("utf-8") for f, p in ctx.paths.items()}
-    bad = [r.get("filename") for r in rows if by_path.get(r.get("filename")) != r.get("line")]
-    ctx.check("each file's content equals the uploaded bytes", not bad, f"differ: {bad}")
+    by_path = {p: ctx.data_bytes[f] for f, p in ctx.paths.items()}
+
+    def differs(row: dict) -> str | None:
+        content = by_path.get(row.get("filename"))
+        if content is None:
+            return "not a file of the dataset"
+        if row.get("n_bytes") != len(content):
+            return f"{row.get('n_bytes')} bytes, uploaded {len(content)}"
+        if row.get("sha256") != hashlib.sha256(content).hexdigest():
+            return "another SHA-256 than the uploaded bytes'"
+        if row.get("line") != as_shown(content.decode("utf-8")):
+            return f"shown as {str(row.get('line'))[:60]!r}"
+        return None
+
+    bad = {str(r.get("filename")): why for r in rows if (why := differs(r))}
+    ctx.check("each file's content is the uploaded bytes (size and SHA-256 taken in the run; the "
+              f"cell shows its first {RESULT_CELL_CHARS} characters)", not bad, f"differ: {bad}")
     ctx.persisted_status(STATUS_COMPLETED, eid=handle.eid)
 
 
