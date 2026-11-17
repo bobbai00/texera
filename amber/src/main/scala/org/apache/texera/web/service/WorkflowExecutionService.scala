@@ -20,27 +20,13 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
-import org.apache.texera.amber.core.storage.{
-  ExecutionPlanStore,
-  FileResolver,
-  PlanRecord,
-  RepositoryMountManager
-}
-import org.apache.texera.amber.core.storedplan.StoredPhysicalPlan
+import org.apache.texera.amber.core.storage.{PlanRecord, RepositoryMountManager}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{
-  ExecutionPlan,
-  PhysicalOp,
-  PhysicalPlan,
-  PhysicalPlanCodec,
-  ReplaySource,
-  WorkflowContext
-}
+import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.{CoordinatorConfig, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
@@ -51,30 +37,20 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
-import org.apache.texera.common.compiler.WorkflowCompiler
-import org.apache.texera.common.compiler.model.LogicalPlan
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
-import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.{
-  WorkflowExecutionsResource,
-  WorkflowResource
-}
+import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
 
 import java.net.URI
-import java.nio.charset.StandardCharsets
 import java.nio.file.Path
-import java.security.MessageDigest
-import java.sql.Timestamp
 import scala.collection.mutable
-import scala.util.{Failure, Success, Try}
 
 object WorkflowExecutionService extends LazyLogging {
   def getLatestExecutionId(
@@ -84,54 +60,6 @@ object WorkflowExecutionService extends LazyLogging {
     WorkflowExecutionsResource
       .getLatestExecutionID(workflowId.id.toInt, computingUnitId)
       .map(eid => new ExecutionIdentity(eid.longValue()))
-  }
-
-  /**
-    * The plan the engine runs for the run under `context`, read back from `savedPlan`: the text a
-    * plan to run was saved as ([[PlanToRun.make]]), as the execution's plan table holds it. The
-    * engine starts here; it is never handed the plan a compile made, so what runs is what was
-    * saved.
-    *
-    * The plan must be the run's own: saved for its workflow and execution, with the batch size
-    * and execution mode its request asks for, and its warehouse. The computing unit is the run's
-    * own too, as a saved plan names none. The output ports whose results are stored are the
-    * plan's, which the compile that made it found, and so are the cost hints: `context` takes
-    * the saved settings, stored ports included, and the saved cost hints. The run replays what
-    * the plan replays and writes its replay log where the plan says ([[coordinatorConfigOf]]).
-    * And the engine must be able to run the plan on this unit ([[requireRunnableUnder]]). A plan
-    * that reads inputs from outside the run is refused rather than run without them: nothing here
-    * checks an input's link before the run starts. A plan refused leaves `context` as it was.
-    *
-    * Logs the saved plan's size, and at debug level the saved plan without what may hold
-    * credentials: each executor's settings or code, and the user info of a replay log's location.
-    *
-    * @param unitMountRoot the directory this computing unit mounts datasets and models under
-    * @return the plan read back, with the context it was saved under, which names no unit
-    * @throws IllegalArgumentException if the saved plan is not one the engine reads
-    * @throws IllegalStateException    if the plan is another run's, cannot run on this unit, or
-    *                                  reads inputs
-    */
-  def readPlanToRun(
-      savedPlan: String,
-      context: WorkflowContext,
-      unitMountRoot: Option[Path]
-  ): ExecutionPlan = {
-    val executionId = context.executionId.id
-    logger.info(
-      s"Execution $executionId runs a saved plan of " +
-        s"${savedPlan.getBytes(StandardCharsets.UTF_8).length} bytes."
-    )
-    val stored = PhysicalPlanCodec.fromJson(savedPlan)
-    logger.debug(
-      s"The saved plan of execution $executionId, without what its executors are given:\n" +
-        PhysicalPlanCodec.toJson(withoutCredentials(stored))
-    )
-    val executionPlan = PhysicalPlanCodec.decode(stored)
-    requirePlanOf(context, executionPlan.context)
-    requireRunnableHere(executionPlan, unitMountRoot)
-    context.workflowSettings = executionPlan.context.workflowSettings
-    context.costHints = executionPlan.context.costHints
-    executionPlan
   }
 
   /**
@@ -147,20 +75,6 @@ object WorkflowExecutionService extends LazyLogging {
     requireRunnableUnder(executionPlan.plan, unitMountRoot)
     requireNoInputs(executionPlan.context.executionId.id, executionPlan)
   }
-
-  /**
-    * What a run whose plan is compiled on this computing unit is asked for: the request that
-    * started it, its user, and where its status emails, replay and replay log come from. A run of
-    * an execution the Dashboard service created has none of this: its plan holds it all.
-    */
-  private final case class CompiledHere(
-      request: WorkflowExecuteRequest,
-      uid: Integer,
-      userEmail: Option[String],
-      sessionUri: URI,
-      replay: Option[ReplaySource],
-      replayLog: Option[URI]
-  )
 
   /**
     * The configuration the coordinator of a run of `executionPlan` starts with: this unit's, with
@@ -179,37 +93,6 @@ object WorkflowExecutionService extends LazyLogging {
         executionPlan.replayLog.map(location => FaultToleranceConfig(writeTo = location))
     )
 
-  /**
-    * Fails unless `planContext`, the context a saved plan was read back with, agrees with
-    * `runContext` on all the run's request fixes: the workflow and execution, the batch size and
-    * execution mode, and the warehouse. The output ports whose results are stored and the cost
-    * hints are left out: the run takes the plan's, as only what made the plan knows them.
-    */
-  private def requirePlanOf(runContext: WorkflowContext, planContext: WorkflowContext): Unit = {
-    def differ[A](what: String, saved: A, run: A)(show: A => String): Option[String] =
-      Option.when(saved != run)(s"its $what is ${show(saved)}, the run's is ${show(run)}")
-    val (inPlan, inRun) = (planContext.workflowSettings, runContext.workflowSettings)
-    val differences = Seq(
-      differ("workflow", planContext.workflowId.id, runContext.workflowId.id)(_.toString),
-      differ("execution", planContext.executionId.id, runContext.executionId.id)(_.toString),
-      differ(
-        "data transfer batch size",
-        inPlan.dataTransferBatchSize,
-        inRun.dataTransferBatchSize
-      )(_.toString),
-      differ("execution mode", inPlan.executionMode, inRun.executionMode)(_.toString),
-      differ("warehouse", planContext.warehouse, runContext.warehouse)(
-        _.getOrElse("the default one")
-      )
-    ).flatten
-    if (differences.nonEmpty) {
-      throw new IllegalStateException(
-        s"The plan handed to execution ${runContext.executionId.id} is not its own: " +
-          s"${differences.mkString("; ")}."
-      )
-    }
-  }
-
   /** Fails if `executionPlan` reads inputs from outside the run (see [[requireRunnableHere]]). */
   private def requireNoInputs(executionId: Long, executionPlan: ExecutionPlan): Unit = {
     val inputs = executionPlan.inputs.size
@@ -221,57 +104,6 @@ object WorkflowExecutionService extends LazyLogging {
       )
     }
   }
-
-  /**
-    * `stored` without what may hold credentials, for the log: each executor's settings (an
-    * operator's descriptor) or code is replaced by its length and SHA-256 digest, as they may hold
-    * the operator's credentials, a SQL source's password say; and the location of each replay
-    * log, the one the run replays and the one it writes, loses its user info (see
-    * [[withoutUserInfo]]). The rest of the plan, what the engine schedules by, is kept.
-    */
-  private def withoutCredentials(stored: StoredPhysicalPlan): StoredPhysicalPlan = {
-    def digest(content: String): String = {
-      val sha256 = MessageDigest
-        .getInstance("SHA-256")
-        .digest(content.getBytes(StandardCharsets.UTF_8))
-        .map(byte => f"$byte%02x")
-        .mkString
-      s"(left out: ${content.length} characters, SHA-256 $sha256)"
-    }
-    stored.copy(
-      operators = stored.operators.map { op =>
-        op.copy(opExecInitInfo = op.opExecInitInfo match {
-          case OpExecWithClassName(className, descString) =>
-            OpExecWithClassName(className, digest(descString))
-          case OpExecWithCode(code, language) => OpExecWithCode(digest(code), language)
-          case none                           => none
-        })
-      },
-      replay =
-        stored.replay.map(replay => replay.withLogLocation(withoutUserInfo(replay.logLocation))),
-      replayLogLocation = stored.replayLogLocation.map(withoutUserInfo)
-    )
-  }
-
-  /**
-    * `location` with the user info of its authority left out, for the log: a log store can sign
-    * in with it (sftp://user:password@host/...). All of `location` is left out if it is not a URI,
-    * as the user info cannot be told apart then.
-    */
-  private def withoutUserInfo(location: String): String =
-    Try(new URI(location)) match {
-      case Failure(_) => "(left out: not a URI)"
-      case Success(uri) =>
-        val authority = Option(uri.getRawAuthority).getOrElse("")
-        val userInfoEnd = authority.lastIndexOf('@')
-        if (userInfoEnd < 0) location
-        else {
-          // The authority comes right after the first "//", as a scheme holds no slash.
-          val start = location.indexOf("//") + 2
-          location.substring(0, start) + "(user info left out)" +
-            authority.substring(userInfoEnd) + location.substring(start + authority.length)
-        }
-    }
 
   /**
     * Fails unless the engine can run `plan` on a computing unit that mounts datasets and models
@@ -290,94 +122,31 @@ object WorkflowExecutionService extends LazyLogging {
 }
 
 /**
-  * One run of a workflow on this computing unit, of a plan read back from the execution's plan
-  * table in the lake. There are two ways to one:
+  * One run of a workflow on this computing unit: of an execution the Dashboard service created,
+  * of the plan read back from the execution's plan table in the lake. It is built on the context
+  * its plan was read back with, and started from that plan ([[startStored]]): the engine, and
+  * every service around the run, are built on the plan read back. Its operators change, while it
+  * is paused, only by the changes the Dashboard stored in its plan table.
   *
-  *  - a run of an execution the Dashboard service created, built with the primary constructor on
-  *    the context its plan was read back with, and started from that plan ([[startStored]]);
-  *  - a run whose plan is made here, for the run's user and this unit, built with the second
-  *    constructor and started by [[executeWorkflow]]: the plan is written to the execution's plan
-  *    table, the execution is claimed for its one start there, and the engine runs the plan read
-  *    back. This way goes once the browser and the agent create their executions at the Dashboard.
-  *
-  * Either way the engine, and every service around the run, are built on the plan read back, and
-  * the run starts as one ([[startFrom]]).
-  *
-  * @param mountRoot    the directory this computing unit mounts datasets and models under: the
-  *                     plan's code reads them from below it, and the plan, and every change to an
-  *                     operator of it, is checked against it before it runs. Production reads the
-  *                     unit's environment; a parameter so a test can name one.
-  * @param compiledHere what the run whose plan is made here was asked for; None for a run of a
-  *                     stored plan
+  * @param mountRoot the directory this computing unit mounts datasets and models under: the
+  *                  plan's code reads them from below it, and the plan, and every change to an
+  *                  operator of it, is checked against it before it runs. Production reads the
+  *                  unit's environment; a parameter so a test can name one.
   */
-class WorkflowExecutionService private (
+class WorkflowExecutionService(
     val workflowContext: WorkflowContext,
     resultService: ExecutionResultService,
     val executionStateStore: ExecutionStateStore,
     errorHandler: Throwable => Unit,
-    mountRoot: Option[Path],
-    compiledHere: Option[WorkflowExecutionService.CompiledHere]
+    mountRoot: Option[Path]
 ) extends SubscriptionManager
     with LazyLogging {
-
-  /** A run of an execution the Dashboard service created, on the context its plan was read with. */
-  def this(
-      workflowContext: WorkflowContext,
-      resultService: ExecutionResultService,
-      executionStateStore: ExecutionStateStore,
-      errorHandler: Throwable => Unit,
-      mountRoot: Option[Path]
-  ) = this(workflowContext, resultService, executionStateStore, errorHandler, mountRoot, None)
-
-  /**
-    * A run whose plan is made here, from `request`, for user `uid` and this unit. It runs under the
-    * settings `request` asks for.
-    *
-    * @param userEmail  where the run's status emails go, if the user's address is known; they are
-    *                   sent only when the request asks for them
-    * @param sessionUri the URI the request that started the run came to: the emails link to the
-    *                   workflow on its host
-    * @param replay     the replay log the run replays, up to one interaction; None for none
-    * @param replayLog  where the run writes its replay log; None for nowhere
-    */
-  def this(
-      workflowContext: WorkflowContext,
-      resultService: ExecutionResultService,
-      request: WorkflowExecuteRequest,
-      executionStateStore: ExecutionStateStore,
-      errorHandler: Throwable => Unit,
-      uid: Integer,
-      userEmail: Option[String],
-      sessionUri: URI,
-      replay: Option[ReplaySource],
-      replayLog: Option[URI],
-      mountRoot: Option[Path] = RepositoryMountManager.mountRoot
-  ) = {
-    this(
-      workflowContext,
-      resultService,
-      executionStateStore,
-      errorHandler,
-      mountRoot,
-      Some(
-        WorkflowExecutionService.CompiledHere(
-          request,
-          uid,
-          userEmail,
-          sessionUri,
-          replay,
-          replayLog
-        )
-      )
-    )
-    workflowContext.workflowSettings = request.workflowSettings
-  }
 
   // Wire error/state reporting first, before any other construction work, so a
   // fatalErrors update (recorded by errorHandler) always has an emitter.
   // Construction itself does no external work and cannot throw; the throwing
-  // work lives in executeWorkflow() and startStored(), whose failures reach the
-  // UI through this same handler.
+  // work lives in startStored(), whose failures reach the UI through this same
+  // handler.
   addSubscription(
     executionStateStore.metadataStore.registerDiffHandler((oldState, newState) => {
       val outputEvents = new mutable.ArrayBuffer[TexeraWebSocketEvent]()
@@ -396,12 +165,13 @@ class WorkflowExecutionService private (
 
   val wsInput = new WebsocketInput(errorHandler)
 
+  // The run's state, as every session on the workflow is told it, with the execution the run is
+  // of: a session that did not start the run learns from it which execution it watches.
   private def createStateEvent(state: ExecutionMetadataStore): WorkflowStateEvent = {
-    if (state.isRecovering && state.state != COMPLETED) {
-      WorkflowStateEvent("Recovering")
-    } else {
-      WorkflowStateEvent(Utils.aggregatedStateToString(state.state))
-    }
+    val stateName =
+      if (state.isRecovering && state.state != COMPLETED) "Recovering"
+      else Utils.aggregatedStateToString(state.state)
+    WorkflowStateEvent(stateName, Some(workflowContext.executionId.id))
   }
 
   var workflow: Workflow = _
@@ -414,23 +184,14 @@ class WorkflowExecutionService private (
   var executionRuntimeService: ExecutionRuntimeService = _
   var executionConsoleService: ExecutionConsoleService = _
 
-  // The execution's plan table, once the run's plan is written there or the run starts from it.
-  @volatile private var storedAt: Option[URI] = None
-
   /**
-    * The execution's plan table: where the run's plan is stored, once [[executeWorkflow]] wrote it
-    * or [[startStored]] was handed it.
-    */
-  def planUri: Option[URI] = storedAt
-
-  /**
-    * Starts the run of an execution the Dashboard service created, from `executionPlan`, the plan
-    * the plan row `record` of the plan table at `planUri` holds, read back. The execution was
-    * claimed for this start, and the run's context is the one the plan was read back with. The
-    * engine must be able to run the plan on this unit
-    * ([[WorkflowExecutionService.requireRunnableHere]]); then the run starts from it
-    * ([[startFrom]]). Its operators change, while it is paused, only by the changes the Dashboard
-    * stored in its plan table.
+    * Starts the run from `executionPlan`, the plan the plan row `record` of the plan table at
+    * `planUri` holds, read back. The execution was claimed for this start, and the run's context
+    * is the one the plan was read back with. The engine must be able to run the plan on this unit
+    * ([[WorkflowExecutionService.requireRunnableHere]]). The run replays what the plan replays,
+    * writes its replay log where the plan says, and sends its status emails where the row says.
+    * The engine and every service around the run are built on the plan read back, the run is
+    * READY, and the engine is asked to start.
     *
     * @return Some(failure) when the run fails before its engine is built, once reported through
     *         the error handler; None once the run is started
@@ -440,174 +201,18 @@ class WorkflowExecutionService private (
       record: PlanRecord,
       planUri: URI
   ): Option[Throwable] = {
-    storedAt = Some(planUri)
-    try WorkflowExecutionService.requireRunnableHere(executionPlan, mountRoot)
-    catch {
-      case err: Throwable =>
-        errorHandler(err)
-        return Some(err)
-    }
-    startFrom(
-      executionPlan,
-      record,
-      planUri,
-      // The engine runs the physical plan alone, and an operator of this run changes only by a
-      // change the Dashboard stored, so the run has no logical plan.
-      LogicalPlan(List.empty, List.empty),
-      bindResources = None
-    )
-  }
-
-  // Returns Some(err) when setup fails synchronously (e.g. compilation) after the
-  // failure has already been surfaced to the UI via errorHandler, so the caller can
-  // mark its still-open setup span; None once the run has started, after which
-  // runtime failures arrive asynchronously through errorHandler and belong to later
-  // execution work rather than this setup.
-  def executeWorkflow(): Option[Throwable] = {
-    val uid = compiledHereRun.uid
-    // Makes the plan to run, for this run's user: it reads only the files, datasets and models
-    // they may read, and its code reads each dataset and model where this unit mounts it. An
-    // operator changed while the run is paused is bound by it too.
-    val compiler = new WorkflowCompiler(
-      workflowContext,
-      FileResolver.forUser(uid),
-      FileResolver.repositoryVersionResolverForUser(uid),
-      mountRoot
-    )
-    val (planTable, logicalPlan) =
-      try storePlan(compiler)
-      catch {
-        case err: Throwable =>
-          // stop here: the plan was not made, or not written, so there is nothing to start
-          errorHandler(err)
-          return Some(err)
-      }
-    runStoredPlan(planTable, logicalPlan, compiler)
-  }
-
-  /** What the run whose plan is made here was asked for; a run of a stored plan has nothing. */
-  private def compiledHereRun: WorkflowExecutionService.CompiledHere =
-    compiledHere.getOrElse(
-      throw new IllegalStateException(
-        s"Execution ${workflowContext.executionId.id} runs the plan the Dashboard made for it: " +
-          "this unit makes no plan for it."
-      )
-    )
-
-  /**
-    * Makes this run's plan and writes it to the execution's plan table as its plan row: the plan
-    * saved, with the run's replay and replay log; the logical plan the run's request sent; the
-    * run's user; the computing unit the request names; and where the run's status emails go,
-    * when its request asks for them and the user's address is known.
-    *
-    * @return the plan table, and the logical plan the plan was compiled from
-    */
-  private def storePlan(compiler: WorkflowCompiler): (URI, LogicalPlan) = {
-    val run = compiledHereRun
-    // The plan as the request sent it, loop-variable references included, written before the
-    // compile resolves its operators in place.
-    val logical = run.request.logicalPlan.toJson
-    val planToRun = makePlanToRun(compiler)
-    val planTable = ExecutionPlanStore.planUri(
-      workflowContext.workflowId,
-      workflowContext.executionId,
-      workflowContext.warehouse
-    )
-    writePlan(
-      planTable,
-      PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        kind = ExecutionPlanStore.PlanKind,
-        formatVersion = PhysicalPlanCodec.FormatVersion,
-        body = planToRun.savedPlan,
-        logical = logical,
-        createdAt = new Timestamp(System.currentTimeMillis()),
-        createdBy = run.uid.intValue(),
-        computingUnitId = run.request.computingUnitId,
-        notification = notificationAskedFor(run).map(Notification.toJson)
-      )
-    )
-    storedAt = Some(planTable)
-    (planTable, planToRun.logicalPlan)
-  }
-
-  // Where the run's status emails go and what they name, when its request asks for them and the
-  // user's address is known: the workflow's name, and its page on the host the request came to.
-  private def notificationAskedFor(
-      run: WorkflowExecutionService.CompiledHere
-  ): Option[Notification] =
-    run.userEmail.filter(_ => run.request.emailNotificationEnabled).map { email =>
-      val workflowId = workflowContext.workflowId.id
-      Notification(
-        email,
-        WorkflowResource.getWorkflowName(workflowId.toInt),
-        WorkflowEmailNotifier.workflowUrl(run.sessionUri, workflowId)
-      )
-    }
-
-  /**
-    * Starts the run from the plan this unit stored in the plan table `planTable`. It claims the
-    * execution's one start there, reads the plan row back and checks the plan read back against
-    * the run ([[WorkflowExecutionService.readPlanToRun]]); then the run starts from that plan
-    * ([[startFrom]]).
-    *
-    * @param logicalPlan the logical plan the stored plan was compiled from, for an operator
-    *                    changed while the run is paused
-    * @param compiler    the compiler the plan was made with, which binds such an operator
-    * @return Some(failure) when the run fails before its engine is built, once reported through
-    *         the error handler; None once the run is started
-    */
-  private def runStoredPlan(
-      planTable: URI,
-      logicalPlan: LogicalPlan,
-      compiler: WorkflowCompiler
-  ): Option[Throwable] = {
-    val (executionPlan, record) =
+    val notification =
       try {
-        ExecutionPlanStore.claimStart(planTable)
-        val record = ExecutionPlanStore.readPlan(planTable)
-        (WorkflowExecutionService.readPlanToRun(record.body, workflowContext, mountRoot), record)
+        WorkflowExecutionService.requireRunnableHere(executionPlan, mountRoot)
+        record.notification.map(Notification.fromJson)
       } catch {
         case err: Throwable =>
-          // stop here: `workflow` is still null, so falling through would NPE below and mask the
-          // reported error, of the claim or of the plan read back
-          errorHandler(err)
-          return Some(err)
-      }
-    startFrom(executionPlan, record, planTable, logicalPlan, Some(compiler.bindResources))
-  }
-
-  /**
-    * Starts the run from `executionPlan`, the plan read back from the plan row `record` of the plan
-    * table at `planUri`: it replays what the plan replays, writes its replay log where the plan
-    * says, and sends its status emails where the row says. The engine and every service around
-    * the run are built on the plan read back, the run is READY, and the engine is asked to start.
-    *
-    * @param logicalPlan   the logical plan the plan was compiled from, for an operator changed
-    *                      while the run is paused; none for a run of a stored plan
-    * @param bindResources binds such an operator, as the plan was bound; None for a run of a
-    *                      stored plan, whose operators change only through its plan table
-    * @return Some(failure) when the run fails before its engine is built, once reported through
-    *         the error handler; None once the run is started
-    */
-  private def startFrom(
-      executionPlan: ExecutionPlan,
-      record: PlanRecord,
-      planUri: URI,
-      logicalPlan: LogicalPlan,
-      bindResources: Option[PhysicalOp => PhysicalOp]
-  ): Option[Throwable] = {
-    val notification =
-      try record.notification.map(Notification.fromJson)
-      catch {
-        case err: Throwable =>
-          // stop here: `workflow` is still null, so falling through would NPE below and mask the
-          // reported error
+          // The run ends here, reported, before anything is built for it.
           errorHandler(err)
           return Some(err)
       }
     // The run, and every service built around it below, use the plan read back.
-    workflow = Workflow(workflowContext, logicalPlan, executionPlan.plan)
+    workflow = Workflow(workflowContext, executionPlan.plan)
     val coordinatorConfig = WorkflowExecutionService.coordinatorConfigOf(executionPlan)
 
     client = createAmberRuntime(workflow, coordinatorConfig)
@@ -615,7 +220,6 @@ class WorkflowExecutionService private (
       client,
       executionStateStore,
       workflow,
-      bindResources,
       planUri,
       record.createdBy,
       mountRoot
@@ -665,18 +269,6 @@ class WorkflowExecutionService private (
       )
     None
   }
-
-  // Makes the plan this run runs and saves it: the half of starting a run that is meant to move
-  // to the Dashboard service. A seam, so a test can hand the run a saved plan of its own.
-  protected def makePlanToRun(compiler: WorkflowCompiler): PlanToRun = {
-    val run = compiledHereRun
-    PlanToRun.make(compiler, run.request.logicalPlan, run.replay, run.replayLog)
-  }
-
-  // Writes the run's plan row to the execution's plan table. A seam, so a test can store a plan
-  // other than the one the run made, and see the run take the stored one.
-  protected def writePlan(planTable: URI, record: PlanRecord): Unit =
-    ExecutionPlanStore.writePlan(planTable, record)
 
   // Hands the plan to the engine. A seam, so a test can set a run up in full, every service
   // built around its plan, without an engine to start it.

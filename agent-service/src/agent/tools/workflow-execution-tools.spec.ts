@@ -125,22 +125,25 @@ function refusedResponse(status: number, statusText: string, message: string): R
 }
 
 // A create of a workflow that does not compile: the execution the Dashboard recorded as failed,
-// and each operator's error, a WorkflowFatalError, under the operator's id.
-function compileFailureResponse(messageByOperator: Record<string, string>): Response {
+// each operator's error, a WorkflowFatalError, under the operator's id, and the errors of no
+// operator after them.
+function compileFailureResponse(
+  messageByOperator: Record<string, string>,
+  messagesOfNoOperator: string[] = []
+): Response {
+  const compileError = (message: string, operatorId: string) => ({
+    type: { name: "COMPILATION_ERROR" },
+    timestamp: { seconds: 1794873600, nanos: 0 },
+    message,
+    details: `${message}\n\tat org.apache.texera.common.compiler.WorkflowCompiler.compile`,
+    operatorId,
+    workerId: "",
+  });
   const operatorErrors = Object.fromEntries(
-    Object.entries(messageByOperator).map(([operatorId, message]) => [
-      operatorId,
-      {
-        type: { name: "COMPILATION_ERROR" },
-        timestamp: { seconds: 1794873600, nanos: 0 },
-        message,
-        details: `${message}\n\tat org.apache.texera.common.compiler.WorkflowCompiler.compile`,
-        operatorId,
-        workerId: "",
-      },
-    ])
+    Object.entries(messageByOperator).map(([operatorId, message]) => [operatorId, compileError(message, operatorId)])
   );
-  return new Response(JSON.stringify({ eid: 345, operatorErrors, errors: [] }), {
+  const errors = messagesOfNoOperator.map(message => compileError(message, ""));
+  return new Response(JSON.stringify({ eid: 345, operatorErrors, errors }), {
     status: 400,
     statusText: "Bad Request",
     headers: { "Content-Type": "application/json" },
@@ -617,41 +620,6 @@ describe("executeOperatorAndFormat - execution failures", () => {
     expect(info.errorMessages[0].message).toContain("kaboom");
   });
 
-  test("formats compilation errors under their own heading when the run state is CompilationFailed", async () => {
-    const state = makeState(makeOperator("op1"));
-    setFetchResolving(
-      legacyJsonResponse({
-        success: false,
-        state: "CompilationFailed",
-        operators: {},
-        compilationErrors: { op1: "type mismatch" },
-      })
-    );
-
-    const out = await executeOperatorAndFormat(state, makeConfig(), "op1");
-
-    expect(out).toBe("[ERROR] Execution failed due to the following error:\nCompilation error:\n  type mismatch");
-  });
-
-  test("keeps compilation errors apart from other workflow-level errors", async () => {
-    const state = makeState(makeOperator("op1"));
-    setFetchResolving(
-      legacyJsonResponse({
-        success: false,
-        state: "Failed",
-        operators: {},
-        compilationErrors: { op1: "type mismatch" },
-        errors: ["type mismatch", "worker crashed"],
-      })
-    );
-
-    const out = await executeOperatorAndFormat(state, makeConfig(), "op1");
-
-    expect(out).toBe(
-      "[ERROR] Execution failed due to the following error:\nCompilation error:\n  type mismatch\nError:\n  worker crashed"
-    );
-  });
-
   test("reports a timeout when the workflow was KILLED, ignoring any accompanying errors", async () => {
     const { state, target } = makeLinearState();
     const summary: WorkflowExecutionSummary = {
@@ -950,6 +918,27 @@ describe("executeOperatorAndFormat - create, then run", () => {
     expect(notifiedId).toBe(target);
     expect(info.state).toBe(OperatorState.FAILED);
     expect(info.errorMessages.map(error => error.message)).toEqual([expected]);
+  });
+
+  test("lists a compilation error of no operator under the same heading, after the operators'", async () => {
+    const { state, source, target } = makeLinearState();
+    routeFetch(
+      compileFailureResponse({ [source]: "java.lang.RuntimeException: No file selected." }, [
+        "java.lang.IllegalStateException: the plan cannot be scheduled",
+      ])
+    );
+
+    const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
+
+    expect(out).toBe(
+      [
+        "[ERROR] Execution failed due to the following error:",
+        "Compilation error:",
+        `  ${source}: java.lang.RuntimeException: No file selected.`,
+        "  java.lang.IllegalStateException: the plan cannot be scheduled",
+      ].join("\n")
+    );
+    expect(requestUrls()).toEqual([CREATE_URL]);
   });
 
   test.each([

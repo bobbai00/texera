@@ -93,12 +93,13 @@ class SessionStateSpec extends AnyFlatSpec with Matchers with MockFactory {
     val (session, messages) = messageCollectingSession()
     val state = new SessionState(session)
 
-    state.send(WorkflowStateEvent("RUNNING"))
+    state.send(WorkflowStateEvent("RUNNING", Some(345L)))
 
     messages should have size 1
     val payload = objectMapper.readTree(messages.head)
     payload.get("type").asText() shouldBe "WorkflowStateEvent"
     payload.get("state").asText() shouldBe "RUNNING"
+    payload.get("executionId").asLong() shouldBe 345L
   }
 
   it should "replace subscriptions before attaching a new workflow service" in {

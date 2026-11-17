@@ -47,8 +47,7 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalOp,
   PhysicalPlan,
   PortIdentity,
-  WorkflowContext,
-  WorkflowSettings
+  WorkflowContext
 }
 import org.apache.texera.amber.engine.architecture.coordinator.{Workflow => EngineWorkflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
@@ -68,14 +67,12 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorMetrics,
   OperatorStatistics
 }
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
-import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.limit.LimitOpDesc
-import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan, LogicalPlanPojo}
+import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
@@ -99,7 +96,6 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
 import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
-import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore
@@ -118,16 +114,14 @@ import scala.util.Try
   * Unit tests for the synchronous "run this workflow and hand me the results" endpoint used by
   * agent-service.
   *
-  * Three of the resource's methods are public (`executeWorkflowSync`, `runStoredExecution`,
-  * `healthCheck`); the others are `private def`. `executeWorkflowSync` is driven for real here — one
-  * end-to-end case that gets as far as a running engine can be taken without one — and so is
-  * `runStoredExecution`, on executions the Dashboard's `ExecutionCreator` made, through its
-  * workflow-service seam onto a service whose runs complete as soon as they start (what a run does
-  * with its plan is `WorkflowExecutionServiceSpec`'s). The result-shaping helpers
-  * it calls cannot be reached that way: every one of them only produces an observable difference
-  * once the engine has populated the stats/console stores or written Iceberg results. They are
-  * therefore driven through `PrivateMethodTester` over fixtures that stand in for that state, and
-  * each such test says which engine state it is standing in for.
+  * Two of the resource's methods are public (`runStoredExecution`, `healthCheck`); the others
+  * are `private def`. `runStoredExecution` is driven for real here, on executions the Dashboard's
+  * `ExecutionCreator` made, through its workflow-service seam onto a service whose runs end as
+  * soon as they start (what a run does with its plan is `WorkflowExecutionServiceSpec`'s). The
+  * result-shaping helpers it calls cannot be reached that way: every one of them only produces an
+  * observable difference once the engine has populated the stats/console stores or written
+  * Iceberg results. They are therefore driven through `PrivateMethodTester` over fixtures that
+  * stand in for that state, and each such test says which engine state it is standing in for.
   *
   * `collectOperatorResult` needs the most of those fixtures, and gets a real one: `storeResult`
   * below writes an actual Iceberg result table through `DocumentFactory` on the ambient catalog
@@ -147,10 +141,10 @@ import scala.util.Try
   *   - the document-reading half of `collectConsoleLogs`. Reachable by the same fixture technique
   *     (a console-messages document whose single column holds ASCII-serialized `ConsoleMessage`
   *     protos), just not done here; its database half, `getConsoleMessageUri`, is pinned below.
-  *   - the `Observable.amb` wait and construction of its timeout/error responses (lines 231-277),
-  *     plus the `ConsoleErrorDetected` / `TargetResultsReady` termination arms (284-298). Reaching
-  *     them needs an execution that is still non-terminal when `executeWorkflowSync` looks at it,
-  *     i.e. a live engine. Timeout cause classification is pinned independently below.
+  *   - the `Observable.amb` wait and construction of its timeout/error responses, plus the
+  *     `ConsoleErrorDetected` / `TargetResultsReady` termination arms. Reaching them needs an
+  *     execution that is still non-terminal when `runStoredExecution` looks at it, i.e. a live
+  *     engine. Timeout cause classification is pinned independently below.
   */
 class SyncExecutionResourceSpec
     extends AnyFlatSpec
@@ -160,21 +154,17 @@ class SyncExecutionResourceSpec
     with PrivateMethodTester {
 
   /**
-    * Repo-unique ids. `executeWorkflowSync` registers a `WorkflowService` in a JVM-wide map that
-    * nothing in a test run ever removes, and result/console storage URIs are derived from the
-    * workflow id, so a value another suite also uses could collide inside the single JVM sbt runs
-    * amber's suites in. 9317 appears nowhere else in the repository.
+    * Repo-unique ids. Result and console storage URIs are derived from the workflow id, so a value
+    * another suite also uses could collide inside the single JVM sbt runs amber's suites in. 9317
+    * appears nowhere else in the repository.
     */
   private val testWid = 9317
   private val testUid = 9317
+
+  /** The computing unit the executions run by id are created for. */
   private val testCuid = 9317
 
-  /**
-    * The console-URI fixtures below belong to a SECOND computing unit. `initExecutionService`
-    * treats the newest execution of (workflow, computing unit) as "the previous run" and cleans
-    * its registered storage up; parking the fixtures elsewhere keeps the `executeWorkflowSync`
-    * case from tripping over URIs that point at documents no test ever created.
-    */
+  /** A second computing unit, which the console-URI and result fixtures belong to. */
   private val fixtureCuid = 9318
 
   private val resource = new SyncExecutionResource()
@@ -188,10 +178,6 @@ class SyncExecutionResourceSpec
   private val truncateSingleTuple = PrivateMethod[ObjectNode](Symbol("truncateSingleTuple"))
   private val estimateTupleSize = PrivateMethod[Int](Symbol("estimateTupleSize"))
   private val isVisualizationTuple = PrivateMethod[Boolean](Symbol("isVisualizationTuple"))
-  private val handleExecutionError =
-    PrivateMethod[SyncExecutionResult](Symbol("handleExecutionError"))
-  private val computeSubDAGIfNeeded =
-    PrivateMethod[LogicalPlanPojo](Symbol("computeSubDAGIfNeeded"))
   private val collectOperatorInfos =
     PrivateMethod[Map[String, OperatorInfo]](Symbol("collectOperatorInfos"))
   private val getConsoleMessageUri = PrivateMethod[Option[URI]](Symbol("getConsoleMessageUri"))
@@ -234,8 +220,7 @@ class SyncExecutionResourceSpec
     version.setCreationTime(new Timestamp(System.currentTimeMillis()))
     new WorkflowVersionDao(cfg).insert(version)
 
-    // workflow_executions.cuid is a foreign key; without these rows initExecutionService cannot
-    // insert its execution and never reaches the engine at all.
+    // workflow_executions.cuid is a foreign key: an execution is created for a unit that exists.
     val unitDao = new WorkflowComputingUnitDao(cfg)
     List(testCuid -> "sync_exec_unit", fixtureCuid -> "sync_exec_fixture_unit").foreach {
       case (cuid, name) =>
@@ -378,40 +363,20 @@ class SyncExecutionResourceSpec
   /**
     * An execution with no coordinator, no result service and no client — the pattern
     * `WorkflowExecutionServiceSpec` and `WorkflowServiceSpec` establish: construction does no
-    * external work, and `client` stays null until `executeWorkflow()` builds one.
+    * external work, and `client` stays null until the run is started.
     */
   private def newExecution(
       stateStore: ExecutionStateStore,
       eid: Option[Int] = None
   ): WorkflowExecutionService = {
-    // Of execution `eid` when given, which its context and its metadata store then name, as
-    // initExecutionService sets them.
+    // Of execution `eid` when given, which its context and its metadata store then name, as a
+    // start sets them.
     val context = new WorkflowContext()
     eid.foreach { eid =>
       context.executionId = ExecutionIdentity(eid.toLong)
       stateStore.metadataStore.updateState(_.withExecutionId(ExecutionIdentity(eid.toLong)))
     }
-    new WorkflowExecutionService(
-      context,
-      null,
-      WorkflowExecuteRequest(
-        executionName = "test",
-        engineVersion = "test",
-        logicalPlan = LogicalPlanPojo(List.empty, List.empty, List.empty, List.empty),
-        replayFromExecution = None,
-        workflowSettings = WorkflowSettings(),
-        emailNotificationEnabled = false,
-        computingUnitId = testCuid,
-        warehouseId = None
-      ),
-      stateStore,
-      (_: Throwable) => (),
-      Integer.valueOf(1), // uid; these tests never resolve a file
-      None,
-      new URI("vfs:///sync-execution-spec"),
-      replay = None,
-      replayLog = None
-    )
+    new WorkflowExecutionService(context, null, stateStore, (_: Throwable) => (), None)
   }
 
   private def metrics(
@@ -441,12 +406,6 @@ class SyncExecutionResourceSpec
           .withTitle(title)
           .withMessage(message)
     })
-
-  private def op(id: String): LogicalOp = {
-    val logicalOp = new KeywordSearchOpDesc()
-    logicalOp.setOperatorId(id)
-    logicalOp
-  }
 
   private def link(from: String, to: String): LogicalLink =
     LogicalLink(OperatorIdentity(from), PortIdentity(), OperatorIdentity(to), PortIdentity())
@@ -527,7 +486,7 @@ class SyncExecutionResourceSpec
 
   "isTerminalState" should "treat exactly the four finished states as terminal" in {
     // Partitioning every declared state, so neither adding nor dropping a case survives: a state
-    // wrongly called terminal makes executeWorkflowSync skip waiting for the run to finish.
+    // wrongly called terminal makes runStoredExecution skip waiting for the run to finish.
     val terminal = List(
       UNINITIALIZED,
       READY,
@@ -674,122 +633,6 @@ class SyncExecutionResourceSpec
     // The catch: a malformed tuple must degrade to "not a visualization" rather than fail the
     // whole result assembly. Nothing else reaches it, since getSchema cannot throw on its own.
     resource invokePrivate isVisualizationTuple(null.asInstanceOf[Tuple]) shouldBe false
-  }
-
-  "handleExecutionError" should "report a compilation-flavoured failure separately" in {
-    // The four keywords the classifier looks for, each on its own message.
-    val compilationMessages = List(
-      "compilation of the plan failed",
-      "Compilation error at op-3",
-      "unknown operator scan-1",
-      "schema mismatch on port 0"
-    )
-
-    compilationMessages.foreach { message =>
-      val result = resource invokePrivate handleExecutionError(new Exception(message))
-      withClue(s"for message '$message': ") {
-        result shouldBe SyncExecutionResult(
-          success = false,
-          state = "CompilationFailed",
-          operators = Map.empty,
-          compilationErrors = Some(Map("error" -> message)),
-          errors = Some(List(message))
-        )
-      }
-    }
-  }
-
-  it should "report any other failure as a plain error, with no compilation detail" in {
-    resource invokePrivate handleExecutionError(
-      new Exception("connection reset by peer")
-    ) shouldBe SyncExecutionResult(
-      success = false,
-      state = "Error",
-      operators = Map.empty,
-      compilationErrors = None,
-      errors = Some(List("connection reset by peer"))
-    )
-  }
-
-  it should "survive an exception with no message" in {
-    // A null message must take the plain-error arm (the keyword scan would NPE on it) and still
-    // produce something the caller can display.
-    resource invokePrivate handleExecutionError(new Exception()) shouldBe SyncExecutionResult(
-      success = false,
-      state = "Error",
-      operators = Map.empty,
-      compilationErrors = None,
-      errors = Some(List("Unknown error"))
-    )
-  }
-
-  "computeSubDAGIfNeeded" should "run only the target's upstream sub-DAG" in {
-    // a -> b -> c, d -> c, c -> z, and an unrelated e.
-    val plan = LogicalPlanPojo(
-      operators = List(op("a"), op("b"), op("c"), op("d"), op("e"), op("z")),
-      links = List(link("a", "b"), link("b", "c"), link("d", "c"), link("c", "z")),
-      opsToViewResult = List("z"),
-      opsToReuseResult = List("a", "e")
-    )
-
-    val subDag = resource invokePrivate computeSubDAGIfNeeded(plan, List("c"))
-
-    // "z" is downstream of the target and "e" is unrelated: both must be dropped, which is the
-    // whole point of "Execute To". Ids, not instances, because dfs order is map-iteration order.
-    subDag.operators.map(_.operatorIdentifier.id) should contain theSameElementsAs
-      List("a", "b", "c", "d")
-    subDag.links should contain theSameElementsAs List(
-      link("a", "b"),
-      link("b", "c"),
-      link("d", "c")
-    )
-    subDag.opsToViewResult shouldBe List("c")
-    // "e" was never visited, so reusing its cached result would reference an operator that is not
-    // in the plan handed to the compiler.
-    subDag.opsToReuseResult shouldBe List("a")
-  }
-
-  it should "visit a diamond's shared ancestor exactly once" in {
-    // a -> b -> d and a -> c -> d: without the visited set, "a" is collected twice and the
-    // compiler sees a duplicate operator.
-    val plan = LogicalPlanPojo(
-      operators = List(op("a"), op("b"), op("c"), op("d")),
-      links = List(link("a", "b"), link("a", "c"), link("b", "d"), link("c", "d")),
-      opsToViewResult = List.empty,
-      opsToReuseResult = List.empty
-    )
-
-    val subDag = resource invokePrivate computeSubDAGIfNeeded(plan, List("d"))
-
-    subDag.operators.map(_.operatorIdentifier.id) should contain theSameElementsAs
-      List("a", "b", "c", "d")
-    subDag.operators should have size 4
-    subDag.links should have size 4
-  }
-
-  it should "keep the full plan unless exactly one target is named" in {
-    val plan = LogicalPlanPojo(
-      operators = List(op("a"), op("b")),
-      links = List(link("a", "b")),
-      opsToViewResult = List("b"),
-      opsToReuseResult = List("a")
-    )
-
-    // No target: a plain "run everything" request.
-    (resource invokePrivate computeSubDAGIfNeeded(
-      plan,
-      List.empty
-    )) should be theSameInstanceAs plan
-    // Two targets: sub-DAG semantics are undefined, so the full DAG runs.
-    (resource invokePrivate computeSubDAGIfNeeded(
-      plan,
-      List("a", "b")
-    )) should be theSameInstanceAs plan
-    // One target the plan does not contain: fall back rather than run an empty plan.
-    (resource invokePrivate computeSubDAGIfNeeded(
-      plan,
-      List("ghost")
-    )) should be theSameInstanceAs plan
   }
 
   "collectOperatorInfos" should "report per-operator stats, summed across ports" in {
@@ -1217,100 +1060,6 @@ class SyncExecutionResourceSpec
     stateStore.metadataStore.getState.state shouldBe KILLED
   }
 
-  "executeWorkflowSync" should "report a run whose plan cannot compile as a failure" in {
-    // A scan source with no file selected: the engine rejects it during compilation, so this
-    // reaches initExecutionService, the execution row, the engine, and the whole result-assembly
-    // tail without needing a coordinator to come up.
-    //
-    // What this does NOT pin, deliberately: which arm produced `state`. On this path
-    // `terminatedByConsoleError` is false and `stateToString(finalState.state)` is also "Failed",
-    // so inverting the console-error branch at SyncExecutionResource.scala:328 leaves the suite
-    // green. Distinguishing the two arms needs a run whose final state is not FAILED, which is
-    // impossible without a live engine here -- with no coordinator, initExecutionService always
-    // absorbs the failure and stamps FAILED. Recorded rather than papered over.
-    val scan = new CSVScanSourceOpDesc()
-    scan.setOperatorId("scan-op")
-    val user = new User
-    user.setUid(testUid)
-    user.setEmail("sync-exec@example.com")
-
-    val result = resource.executeWorkflowSync(
-      testWid.toLong,
-      testCuid,
-      SyncExecutionRequest(
-        executionName = "sync-spec-run",
-        logicalPlan = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty),
-        workflowSettings = None,
-        targetOperatorIds = List("scan-op"),
-        timeoutSeconds = 5,
-        maxOperatorResultCharLimit = 100000,
-        maxOperatorResultCellCharLimit = 20000
-      ),
-      new SessionUser(user)
-    )
-
-    result.success shouldBe false
-    result.state shouldBe "Failed"
-    // compilationErrors is always None on this path — the endpoint reports compile failures that
-    // happen inside the engine as fatal errors, not as the compilationErrors map.
-    result.compilationErrors shouldBe None
-    val errors =
-      result.errors.getOrElse(fail("expected the fatal compilation error to be reported"))
-    errors should have size 1
-    // The fatal error is rendered as "<type>: <message>"; dropping the type loses the only
-    // machine-readable part of it. A plan that does not compile is reported as the editing
-    // compile reports it: each operator's own error, a COMPILATION_ERROR.
-    errors.head shouldBe "COMPILATION_ERROR: java.lang.RuntimeException: No file selected. " +
-      "Please select a file from the 'File' dropdown in the right panel."
-
-    // The requested target is still reported, with no stats, so the caller learns which operator
-    // it asked about rather than getting an empty map.
-    result.operators.keySet shouldBe Set("scan-op")
-    result.operators("scan-op").state shouldBe "Unknown"
-    result.operators("scan-op").error shouldBe None
-  }
-
-  it should "record the run it supersedes, still running, as killed" in {
-    // A run of the workflow still going in the workflow's service, as a browser's would be, of an
-    // execution with a row.
-    val previousEid = insertExecution("superseded-by-sync")
-    val previous = newExecution(new ExecutionStateStore(), eid = Some(previousEid))
-    previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
-    WorkflowService
-      .getOrCreate(WorkflowIdentity(testWid.toLong), testCuid)
-      .executionService
-      .onNext(previous)
-    val scan = new CSVScanSourceOpDesc()
-    scan.setOperatorId("scan-op")
-    val user = new User
-    user.setUid(testUid)
-    user.setEmail("sync-exec@example.com")
-
-    resource.executeWorkflowSync(
-      testWid.toLong,
-      testCuid,
-      SyncExecutionRequest(
-        executionName = "sync-supersede-run",
-        logicalPlan = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty),
-        workflowSettings = None,
-        targetOperatorIds = List("scan-op"),
-        timeoutSeconds = 5,
-        maxOperatorResultCharLimit = 100000,
-        maxOperatorResultCellCharLimit = 20000
-      ),
-      new SessionUser(user)
-    )
-
-    previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
-    previous.executionStateStore.statsStore.getState.endTimeStamp should be > 0L
-    getDSLContext
-      .select(WORKFLOW_EXECUTIONS.STATUS)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(previousEid))
-      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
-      .intValue() shouldBe Utils.maptoStatusCode(KILLED).toInt
-  }
-
   // -- running an execution the Dashboard created, by its id ---------------------------
 
   private object NoHints extends CostHintsLoader(1) {
@@ -1371,12 +1120,15 @@ class SyncExecutionResourceSpec
   }
 
   /**
-    * A service of the workflow, made for computing unit `serviceCuid`, whose runs complete as soon
-    * as they are started, with no engine: `WorkflowExecutionServiceSpec` owns what a run does with
-    * its plan. It records the plan each run is started from.
+    * A service of the workflow, made for computing unit `serviceCuid`, whose runs end as soon as
+    * they are started, with no engine: they complete, or fail with `failure` when given, as a run
+    * that fails before its engine is built does. `WorkflowExecutionServiceSpec` owns what a run
+    * does with its plan. It records the plan each run is started from.
     */
-  private class CompletingService(serviceCuid: Int = testCuid)
-      extends WorkflowService(WorkflowIdentity(testWid.toLong), serviceCuid, 3600) {
+  private class EndingService(
+      serviceCuid: Int = testCuid,
+      failure: Option[RuntimeException] = None
+  ) extends WorkflowService(WorkflowIdentity(testWid.toLong), serviceCuid, 3600) {
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("SyncExecutionResourceSpec", 3600, () => ()) {
         override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore) =
@@ -1395,10 +1147,14 @@ class SyncExecutionResourceSpec
             planUri: URI
         ): Option[Throwable] = {
           started += ((executionPlan, planUri))
-          this.executionStateStore.metadataStore.updateState(metadataStore =>
-            updateWorkflowState(COMPLETED, metadataStore)
-          )
-          None
+          failure match {
+            case Some(failure) => errorHandler(failure)
+            case None =>
+              this.executionStateStore.metadataStore.updateState(metadataStore =>
+                updateWorkflowState(COMPLETED, metadataStore)
+              )
+          }
+          failure
         }
       }
   }
@@ -1427,7 +1183,6 @@ class SyncExecutionResourceSpec
     result.success shouldBe false
     result.state shouldBe "Error"
     result.operators shouldBe empty
-    result.compilationErrors shouldBe None
     result.errors.getOrElse(fail("no reason was given")) match {
       case List(why) => why
       case other     => fail(s"expected one reason, got $other")
@@ -1447,8 +1202,14 @@ class SyncExecutionResourceSpec
     val execution = createdExecution()
     // The workflow's service, made for another unit by an earlier caller (#7676): the run is on
     // the unit the request names, which the execution was created for.
-    val service = new CompletingService(serviceCuid = fixtureCuid)
+    val service = new EndingService(serviceCuid = fixtureCuid)
     val resource = new ResourceOn(service)
+    // A run of the workflow still going in that service, as a browser's would be, of an execution
+    // with a row.
+    val previousEid = insertExecution("superseded-by-sync")
+    val previous = newExecution(new ExecutionStateStore(), eid = Some(previousEid))
+    previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
+    service.executionService.onNext(previous)
 
     val result = resource.runStoredExecution(
       execution.eid,
@@ -1471,15 +1232,43 @@ class SyncExecutionResourceSpec
     result.success shouldBe true
     result.state shouldBe "Completed"
     result.errors shouldBe None
-    result.compilationErrors shouldBe None
     result.operators.keySet shouldBe Set("limit")
     statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+    // The run it took the place of is recorded as killed, in its store and in its row.
+    previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
+    previous.executionStateStore.statsStore.getState.endTimeStamp should be > 0L
+    statusOf(previousEid.toLong) shouldBe Utils.maptoStatusCode(KILLED).toInt
+  }
+
+  it should "answer a run that fails once it is started as failed, with its error and the target asked about" in {
+    val execution = createdExecution()
+    val service =
+      new EndingService(failure = Some(new IllegalStateException("the engine is gone")))
+
+    val result = new ResourceOn(service).runStoredExecution(
+      execution.eid,
+      runRequest(execution.planUri),
+      syncUser()
+    )
+
+    result.success shouldBe false
+    result.state shouldBe "Failed"
+    // The fatal error is rendered as "<type>: <message>"; dropping the type loses the only
+    // machine-readable part of it.
+    result.errors shouldBe
+      Some(List("EXECUTION_FAILURE: java.lang.IllegalStateException: the engine is gone"))
+    // The requested target is still reported, with no stats, so the caller learns which operator
+    // it asked about rather than getting an empty map.
+    result.operators.keySet shouldBe Set("limit")
+    result.operators("limit").state shouldBe "Unknown"
+    result.operators("limit").error shouldBe None
+    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(FAILED).toInt
   }
 
   it should "refuse a run for another user, on another unit, of another plan, or a second time" in {
     val execution = createdExecution()
     val other = createdExecution()
-    val service = new CompletingService
+    val service = new EndingService
     val resource = new ResourceOn(service)
     val eid = execution.eid
 
@@ -1526,7 +1315,6 @@ class SyncExecutionResourceSpec
     val built = newExecution(new ExecutionStateStore())
     built.workflow = EngineWorkflow(
       new WorkflowContext(),
-      LogicalPlan(List.empty, List.empty),
       join.getPhysicalPlan(WorkflowIdentity(testWid.toLong), ExecutionIdentity(1L))
     )
     // The build layer takes the left input; the probe layer the right one, and the build
@@ -1548,7 +1336,6 @@ class SyncExecutionResourceSpec
     val twice = newExecution(new ExecutionStateStore())
     twice.workflow = EngineWorkflow(
       new WorkflowContext(),
-      LogicalPlan(List.empty, List.empty),
       PhysicalPlan(Set(layer("first"), layer("second")), Set.empty)
     )
     resource invokePrivate expectedExternalInputsOf(twice, List("twice")) shouldBe

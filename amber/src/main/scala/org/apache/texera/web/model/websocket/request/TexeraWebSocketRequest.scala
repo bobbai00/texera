@@ -21,7 +21,6 @@ package org.apache.texera.web.model.websocket.request
 
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type
 import com.fasterxml.jackson.annotation.{JsonSubTypes, JsonTypeInfo}
-import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.web.model.websocket.request.python.{
   DebugCommandRequest,
   PythonExpressionEvaluateRequest
@@ -31,12 +30,10 @@ import org.apache.texera.web.model.websocket.request.python.{
 @JsonSubTypes(
   Array(
     new Type(value = classOf[HeartBeatRequest]),
-    new Type(value = classOf[ModifyLogicRequest]),
     new Type(value = classOf[OperatorUpdateRequest]),
     new Type(value = classOf[ResultPaginationRequest]),
     new Type(value = classOf[RetryRequest]),
     new Type(value = classOf[SkipTupleRequest]),
-    new Type(value = classOf[WorkflowExecuteRequest]),
     new Type(value = classOf[WorkflowStartRequest]),
     new Type(value = classOf[WorkflowKillRequest]),
     new Type(value = classOf[WorkflowPauseRequest]),
@@ -49,7 +46,6 @@ import org.apache.texera.web.model.websocket.request.python.{
 trait TexeraWebSocketRequest {}
 
 case class HeartBeatRequest() extends TexeraWebSocketRequest
-case class ModifyLogicRequest(operator: LogicalOp) extends TexeraWebSocketRequest
 
 /**
   * Starts execution `executionId`, which the Dashboard service created, from its stored plan.

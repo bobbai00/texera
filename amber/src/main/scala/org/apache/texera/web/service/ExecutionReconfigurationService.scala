@@ -28,7 +28,7 @@ import org.apache.texera.amber.core.storage.{
   RepositoryMountManager
 }
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, PhysicalOpIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalOp, PhysicalPlanCodec, RepositoryMounts}
+import org.apache.texera.amber.core.workflow.{PhysicalPlanCodec, RepositoryMounts}
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   UpdateExecutorRequest,
@@ -36,8 +36,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.web.SubscriptionManager
-import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
-import org.apache.texera.web.model.websocket.request.ModifyLogicRequest
 import org.apache.texera.web.model.websocket.response.{
   ModifyLogicCompletedEvent,
   ModifyLogicResponse
@@ -48,30 +46,23 @@ import java.net.URI
 import java.nio.file.Path
 import java.util.UUID
 import scala.util.control.NonFatal
-import scala.util.{Failure, Success}
 
 /**
-  * Changes to the operators of a paused run, which the engine applies when the run resumes: a
-  * change sent over the socket and made into an operator here ([[modifyOperatorLogic]]), or one
-  * the Dashboard service made and stored in the execution's plan table ([[applyStoredUpdate]]).
+  * Changes to the operators of a paused run, which the engine applies when the run resumes: the
+  * changes the Dashboard service made and stored in the execution's plan table
+  * ([[applyStoredUpdate]]).
   *
-  * @param bindResources pins the datasets and models an edited operator names, the way the
-  *                      compiler that made the workflow's plan pinned every operator: production
-  *                      passes that compiler's bindResources. None for a run of a plan the
-  *                      Dashboard made, which no compiler here made: its operators change only
-  *                      through its plan table.
-  * @param planUri       the plan table of the execution the run runs, where the Dashboard stores
-  *                      the changes to its operators
-  * @param creator       the user who created the execution: only the changes they stored apply,
-  *                      when they ask for them
-  * @param mountRoot     the directory this computing unit mounts datasets and models under, which
-  *                      the code of a stored change must read them from
+  * @param planUri   the plan table of the execution the run runs, where the Dashboard stores the
+  *                  changes to its operators
+  * @param creator   the user who created the execution: only the changes they stored apply, when
+  *                  they ask for them
+  * @param mountRoot the directory this computing unit mounts datasets and models under, which the
+  *                  code of a stored change must read them from
   */
 class ExecutionReconfigurationService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
     workflow: Workflow,
-    bindResources: Option[PhysicalOp => PhysicalOp],
     planUri: URI,
     creator: Int,
     mountRoot: Option[Path]
@@ -85,70 +76,10 @@ class ExecutionReconfigurationService(
   // notifies the frontend when all workers of an operator complete reconfiguration
   registerCompletionDiffHandler()
 
-  // handles reconfigure workflow logic from frontend
-  // validate the modify logic request and notifies the frontend
-  // reconfigurations can only come when the workflow is paused,
-  // they are not actually performed until the workflow is resumed
-  def modifyOperatorLogic(modifyLogicRequest: ModifyLogicRequest): TexeraWebSocketEvent =
-    bindResources match {
-      case Some(bind) => modifyOperatorLogic(modifyLogicRequest, bind)
-      case None =>
-        ModifyLogicResponse(
-          modifyLogicRequest.operator.operatorIdentifier.id,
-          isValid = false,
-          s"Execution ${workflow.context.executionId.id} runs the plan the Dashboard made for it: " +
-            "change its operators through the Dashboard."
-        )
-    }
-
-  private def modifyOperatorLogic(
-      modifyLogicRequest: ModifyLogicRequest,
-      bind: PhysicalOp => PhysicalOp
-  ): TexeraWebSocketEvent = {
-    val newOp = modifyLogicRequest.operator
-    val opId = newOp.operatorIdentifier
-    val currentOp = workflow.logicalPlan.getOperator(opId)
-    // The deployed operator carries the compiler's final references; the edit, the parse's typed
-    // ones.
-    if (
-      workflow.logicalPlan.refersToLoopVariables(currentOp) ||
-      workflow.logicalPlan.refersToLoopVariables(newOp)
-    ) {
-      ModifyLogicResponse(
-        opId.id,
-        isValid = false,
-        s"${currentOp.operatorInfo.userFriendlyName} refers to loop variables, so it can't be " +
-          "changed while the workflow runs."
-      )
-    } else {
-      val reconfiguredPhysicalOp =
-        currentOp
-          .runtimeReconfiguration(
-            workflow.context.workflowId,
-            workflow.context.executionId,
-            currentOp,
-            newOp
-          )
-          // The edited operator joins a plan made to run, so what it names is pinned now, for
-          // the plan's user: a version they cannot read refuses the edit.
-          .map { case (op, stateTransfer) => (bind(op), stateTransfer) }
-      reconfiguredPhysicalOp match {
-        case Failure(exception) =>
-          ModifyLogicResponse(opId.id, isValid = false, exception.getMessage)
-        case Success(op) => {
-          stateStore.reconfigurationStore.updateState(old =>
-            old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ op)
-          )
-          ModifyLogicResponse(opId.id, isValid = true, "")
-        }
-      }
-    }
-  }
-
   /**
     * Queues the change to an operator that the Dashboard service stored as `updateId` in the plan
-    * table of the execution this run runs, to be applied when the run resumes, as an edit sent over
-    * the socket is ([[performReconfigurationOnResume]]).
+    * table of the execution this run runs, to be applied when the run resumes
+    * ([[performReconfigurationOnResume]]).
     *
     * Only the execution's creator may ask for it, and the change must be one they stored, in the
     * format this unit reads, for this execution, of an operator the running plan has, whose code
@@ -228,9 +159,7 @@ class ExecutionReconfigurationService(
             return refuse(operator, refused.getMessage)
         }
         stateStore.reconfigurationStore.updateState(old =>
-          old.copy(unscheduledReconfigurations =
-            old.unscheduledReconfigurations :+ ((changed, None))
-          )
+          old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
         )
         logger.info(
           s"Queued $updateId, a change to operator ${show(update.opId)} of execution $executionId."
@@ -248,23 +177,20 @@ class ExecutionReconfigurationService(
   // actually performs all reconfiguration requests the user made during pause
   // sends ModifyLogic messages to operators and workers,
   // see the Fries reconfiguration paper for the algorithm.
-  // Note: StateTransferFunc is currently not threaded through to the engine —
-  // the new UpdateExecutorRequest only carries (targetOpId, newOpExecInitInfo).
   def performReconfigurationOnResume(): Unit = {
     val reconfigurations = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
     if (reconfigurations.isEmpty) {
       return
     }
 
-    // Each queued operator was bound when its edit was accepted; none is bound here.
-    reconfigurations.foreach { case (op, _) => op.requireResourcesBound() }
+    // Each queued operator was bound when its change was made; none is bound here.
+    reconfigurations.foreach(_.requireResourcesBound())
 
     val reconfigurationId = UUID.randomUUID().toString
-    val updateExecutorRequests = reconfigurations.map {
-      case (op, _) =>
-        // An edited UDF may now name a repository, and its code already refers to the mount.
-        op.repositoryMounts.foreach(ensureMounted)
-        UpdateExecutorRequest(op.id, op.opExecInitInfo)
+    val updateExecutorRequests = reconfigurations.map { op =>
+      // A changed UDF may now name a repository, and its code already refers to the mount.
+      op.repositoryMounts.foreach(ensureMounted)
+      UpdateExecutorRequest(op.id, op.opExecInitInfo)
     }
     dispatch(
       WorkflowReconfigureRequest(

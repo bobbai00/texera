@@ -233,7 +233,6 @@ object WorkflowCompiler {
 }
 
 case class WorkflowCompilationResult(
-    logicalPlan: LogicalPlan,
     physicalPlan: Option[PhysicalPlan], // if physicalPlan is None, compilation failed
     operatorIdToOutputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]],
     operatorIdToError: Map[OperatorIdentity, WorkflowFatalError],
@@ -477,8 +476,8 @@ class WorkflowCompiler(
     * @param logicalPlanPojo the POJO parsed from the workflow string provided by the user
     * @param errorHandling   Lenient (editing-time: return every operator's errors) or Strict
     *                        (pre-execution: throw them)
-    * @return WorkflowCompilationResult, containing the logical plan, physical plan, output schemas per
-    *         op, errors per op, and the output ports that need storage
+    * @return WorkflowCompilationResult, containing the physical plan, output schemas per op, errors
+    *         per op, and the output ports that need storage
     * @throws WorkflowCompilationFailed if the compile is Strict and an operator has an error: with
     *                                   each such operator's first error, upstream operators first.
     *                                   A failure that is no operator's error, such as the database
@@ -525,7 +524,6 @@ class WorkflowCompiler(
     }
 
     WorkflowCompilationResult(
-      logicalPlan = logicalPlan,
       physicalPlan = if (errors.nonEmpty) None else Some(physicalPlan),
       operatorIdToOutputSchemas = opIdToOutputSchema,
       // map each error from OpId to WorkflowFatalError, and report them via logger

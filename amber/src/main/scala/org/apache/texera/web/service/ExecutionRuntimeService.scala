@@ -101,10 +101,21 @@ class ExecutionRuntimeService(
   // Receive Kill
   addSubscription(wsInput.subscribe((req: WorkflowKillRequest, uidOpt) => {
     client.shutdown()
-    stateStore.statsStore.updateState(stats => stats.withEndTimeStamp(System.currentTimeMillis()))
-    stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(KILLED, metadataStore)
-    )
+    val endTime = System.currentTimeMillis()
+    var killed = false
+    // A run that already ended keeps the state and the end time it ended with. Decided under the
+    // store's lock, against a state the engine may report at this moment.
+    stateStore.metadataStore.updateState { metadataStore =>
+      if (WorkflowService.FinishedStates.contains(metadataStore.state)) {
+        metadataStore
+      } else {
+        killed = true
+        updateWorkflowState(KILLED, metadataStore)
+      }
+    }
+    if (killed) {
+      stateStore.statsStore.updateState(stats => stats.withEndTimeStamp(endTime))
+    }
   }))
 
   // Receive Interaction

@@ -733,7 +733,6 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
       )
     )
 
-    assert(result.logicalPlan.operators.size == 2)
     val physicalPlan = result.physicalPlan.get
     assert(physicalPlan.getPhysicalOpsOfLogicalOp(csv.operatorIdentifier).nonEmpty)
     assert(physicalPlan.getPhysicalOpsOfLogicalOp(keyword.operatorIdentifier).nonEmpty)

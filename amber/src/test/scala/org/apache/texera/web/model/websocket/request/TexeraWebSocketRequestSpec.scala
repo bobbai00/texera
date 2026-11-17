@@ -21,9 +21,7 @@ package org.apache.texera.web.model.websocket.request
 
 import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.databind.exc.InvalidTypeIdException
-import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.web.model.http.request.execution.ReplayExecutionInfo
 import org.apache.texera.web.model.websocket.request.python.{
   DebugCommandRequest,
   PythonExpressionEvaluateRequest
@@ -54,16 +52,12 @@ import org.scalatest.matchers.should.Matchers
   *    2. value is the payload this request/event needs"
   *
   * The keys of `TexeraWebsocketRequestTypeMap` there are
-  * `HeartBeatRequest`, `ModifyLogicRequest`, `ResultExportRequest`,
-  * `ResultPaginationRequest`, `RetryRequest`, `SkipTupleRequest`,
-  * `WorkflowExecuteRequest`, `WorkflowKillRequest`, `WorkflowPauseRequest`,
-  * `WorkflowCheckpointRequest`, `WorkflowResumeRequest`,
+  * `HeartBeatRequest`, `OperatorUpdateRequest`, `ResultPaginationRequest`,
+  * `RetryRequest`, `SkipTupleRequest`, `WorkflowStartRequest`, `WorkflowKillRequest`,
+  * `WorkflowPauseRequest`, `WorkflowCheckpointRequest`, `WorkflowResumeRequest`,
   * `PythonExpressionEvaluateRequest` and `DebugCommandRequest`. Renaming a Scala class
   * in this package compiles cleanly on both sides and silently breaks the UI at
-  * runtime -- that is the breakage this spec exists to catch. The server also accepts
-  * `WorkflowStartRequest` and `OperatorUpdateRequest`, which start an execution the
-  * Dashboard service created and apply a change it stored; the client sends them once it
-  * creates its executions there.
+  * runtime -- that is the breakage this spec exists to catch.
   *
   * `ResultPaginationRequest`'s default arguments are the highest-value pin here and sit
   * on the live pagination path: the TS `PaginationRequest` declares `columnOffset?`,
@@ -81,20 +75,8 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
   private def frame(typeId: String, fields: String): String =
     if (fields.isEmpty) s"""{"type":"$typeId"}""" else s"""{"type":"$typeId",$fields}"""
 
-  // A LogicalPlanPojo payload with all four lists empty.
-  private val emptyPlanFields =
-    """"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]"""
-
-  // LogicalOp is itself polymorphic on a *different* property ("operatorType"), so a
-  // nested op exercises both discriminators in one frame.
-  private val limitOpJson = """{"operatorType":"Limit","limit":7}"""
-
-  private val executeFields =
-    s""""executionName":"exec-alpha","engineVersion":"engine-beta",""" +
-      s""""logicalPlan":{$emptyPlanFields},"workflowSettings":{},""" +
-      s""""emailNotificationEnabled":false,"computingUnitId":3"""
-
-  // A start and a change, as the browser sends them once the Dashboard created the execution.
+  // A start and a change, as the browser sends them once the Dashboard created the execution
+  // and stored the change.
   private val startFields =
     """"executionId":345,"planUri":"vfs:///wh/user-1-7/wid/12/eid/345/plan""""
   private val updateFields = """"executionId":345,"updateId":"update-4f6c""""
@@ -117,7 +99,6 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
   private val registeredRequests: List[(String, String, Class[_ <: TexeraWebSocketRequest])] =
     List(
       ("HeartBeatRequest", "", classOf[HeartBeatRequest]),
-      ("ModifyLogicRequest", s""""operator":$limitOpJson""", classOf[ModifyLogicRequest]),
       (
         "ResultPaginationRequest",
         """"requestID":"req-1","operatorID":"op-2","pageIndex":3,"pageSize":25""",
@@ -125,7 +106,6 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
       ),
       ("RetryRequest", """"workers":["worker-1"]""", classOf[RetryRequest]),
       ("SkipTupleRequest", """"workerIds":["worker-1"]""", classOf[SkipTupleRequest]),
-      ("WorkflowExecuteRequest", executeFields, classOf[WorkflowExecuteRequest]),
       ("WorkflowStartRequest", startFields, classOf[WorkflowStartRequest]),
       ("OperatorUpdateRequest", updateFields, classOf[OperatorUpdateRequest]),
       ("WorkflowKillRequest", "", classOf[WorkflowKillRequest]),
@@ -147,21 +127,11 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
   // The "type" strings the SERVER accepts, i.e. the backend registry. Spelled out
   // rather than derived so a rename shows up as a set diff instead of quietly
   // re-deriving.
-  //
-  // Deliberately not phrased as "what the client sends": the two registries differ
-  // both ways. The frontend's `TexeraWebsocketRequestTypeMap` also declares
-  // `ResultExportRequest`, which on the backend is an HTTP model
-  // (web/model/http/request/result/, served by WorkflowExecutionsResource) and not a
-  // TexeraWebSocketRequest subtype at all — see the divergence test below. The server
-  // also accepts `WorkflowStartRequest` and `OperatorUpdateRequest`, which the client
-  // map gains once the browser creates its executions at the Dashboard.
   private val expectedTypeIds: Set[String] = Set(
     "HeartBeatRequest",
-    "ModifyLogicRequest",
     "ResultPaginationRequest",
     "RetryRequest",
     "SkipTupleRequest",
-    "WorkflowExecuteRequest",
     "WorkflowStartRequest",
     "OperatorUpdateRequest",
     "WorkflowKillRequest",
@@ -209,15 +179,31 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     ex.getMessage should include("NoSuchWebSocketRequest")
   }
 
-  "the frontend-only ResultExportRequest id" should "not be accepted over the websocket" in {
-    // The TS `TexeraWebsocketRequestTypeMap` declares `ResultExportRequest`, but the
-    // backend class of that name is an HTTP model (web/model/http/request/result/,
+  "the ResultExportRequest id" should "not be accepted over the websocket" in {
+    // The backend class of that name is an HTTP model (web/model/http/request/result/,
     // reached through WorkflowExecutionsResource.exportResultToDataset) and is not a
-    // TexeraWebSocketRequest subtype. Pinning the rejection documents the divergence:
-    // if result export is ever moved onto the socket, this test is the reminder that
-    // the subtype has to be registered too.
+    // TexeraWebSocketRequest subtype. If result export is ever moved onto the socket,
+    // this test is the reminder that the subtype has to be registered too.
     val ex = intercept[InvalidTypeIdException](read("""{"type":"ResultExportRequest"}"""))
     ex.getMessage should include("ResultExportRequest")
+  }
+
+  "a request to compile and run a workflow on the unit" should "not be accepted over the websocket" in {
+    // A unit only starts executions the Dashboard service created, and only applies changes it
+    // stored: a client that sends it a logical plan to run, or an operator to change, is refused
+    // by the mapper, whatever the frame holds.
+    Seq(
+      "WorkflowExecuteRequest" -> (""""executionName":"exec","engineVersion":"v",""" +
+        """"logicalPlan":{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]},""" +
+        """"workflowSettings":{},"emailNotificationEnabled":false,"computingUnitId":3"""),
+      "ModifyLogicRequest" -> """"operator":{"operatorType":"Limit","limit":7}"""
+    ).foreach {
+      case (typeId, fields) =>
+        withClue(s"""type id "$typeId": """) {
+          val ex = intercept[InvalidTypeIdException](read(frame(typeId, fields)))
+          ex.getTypeId shouldBe typeId
+        }
+    }
   }
 
   "a frame with no type property" should "be rejected" in {
@@ -257,31 +243,6 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     req.columnOffset shouldBe 4
     req.columnLimit shouldBe 6
     req.columnSearch shouldBe Some("city")
-  }
-
-  "WorkflowExecuteRequest" should "bind an absent replayFromExecution to None" in {
-    val req = read(frame("WorkflowExecuteRequest", executeFields))
-      .asInstanceOf[WorkflowExecuteRequest]
-    req.replayFromExecution shouldBe None
-    // distinct values so a transposed executionName/engineVersion binding fails here
-    req.executionName shouldBe "exec-alpha"
-    req.engineVersion shouldBe "engine-beta"
-    req.computingUnitId shouldBe 3
-    req.emailNotificationEnabled shouldBe false
-  }
-
-  it should "bind a present replayFromExecution to Some with a nested eid and interaction" in {
-    // The replay path is the reason WorkflowExecuteRequest has an Option at all:
-    // an absent key must stay None (asserted above) while a present object must
-    // populate both nested fields. The values differ in kind so a swapped
-    // eid/interaction binding cannot pass.
-    val req = read(
-      frame(
-        "WorkflowExecuteRequest",
-        executeFields + ""","replayFromExecution":{"eid":91,"interaction":"interaction-7"}"""
-      )
-    ).asInstanceOf[WorkflowExecuteRequest]
-    req.replayFromExecution shouldBe Some(ReplayExecutionInfo(91L, "interaction-7"))
   }
 
   "WorkflowStartRequest" should "bind the execution and its plan table, and write them back the same" in {
@@ -337,14 +298,5 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     debug.operatorId shouldBe "op-dbg"
     debug.workerId shouldBe "worker-dbg"
     debug.cmd shouldBe "break 12"
-  }
-
-  "ModifyLogicRequest" should "resolve the nested LogicalOp discriminator too" in {
-    // "type" selects the request, "operatorType" selects the operator; the two
-    // @JsonTypeInfo properties must not collide.
-    val req = read(frame("ModifyLogicRequest", s""""operator":$limitOpJson"""))
-      .asInstanceOf[ModifyLogicRequest]
-    req.operator shouldBe a[LimitOpDesc]
-    req.operator.asInstanceOf[LimitOpDesc].limit shouldBe 7
   }
 }

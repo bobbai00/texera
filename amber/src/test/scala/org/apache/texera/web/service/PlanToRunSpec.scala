@@ -124,9 +124,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None
     executionPlan.inputs shouldBe empty
-
-    // The logical plan comes with it, for an operator changed while the run is paused.
-    planToRun.logicalPlan.getTerminalOperatorIds shouldBe List(operators.last.operatorIdentifier)
   }
 
   it should "save the run's cost hints with the plan, whatever operators they name" in {

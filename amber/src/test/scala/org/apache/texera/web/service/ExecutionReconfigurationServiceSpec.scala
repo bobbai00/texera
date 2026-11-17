@@ -23,9 +23,8 @@ import com.twitter.util.Future
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
-import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ExecutionIdentity,
@@ -40,7 +39,6 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
-  PortIdentity,
   RepositoryMounts,
   ResourceBinding,
   WorkflowContext
@@ -57,22 +55,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.operator.filter.{
-  ComparisonType,
-  FilterPredicate,
-  SpecializedFilterOpDesc
-}
-import org.apache.texera.amber.operator.limit.LimitOpDesc
-import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
-import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
-import org.apache.texera.amber.operator.udf.UiUDFParameter
-import org.apache.texera.amber.operator.udf.python.{PythonUDFOpDescV2, PythonUdfUiParameterInjector}
-import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
-import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.common.compiler.WorkflowCompiler
-import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlan}
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
-import org.apache.texera.web.model.websocket.request.ModifyLogicRequest
 import org.apache.texera.web.model.websocket.response.{
   ModifyLogicCompletedEvent,
   ModifyLogicResponse
@@ -94,7 +77,7 @@ import java.util.UUID
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
 import scala.reflect.ClassTag
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 
 /**
   * Web-service-layer tests for ExecutionReconfigurationService.
@@ -103,10 +86,8 @@ import scala.util.{Failure, Success, Try}
   * UpdateExecutor on workers) is covered by ReconfigurationSpec. This spec covers the
   * service's own wiring:
   *
-  *   - `modifyOperatorLogic`, validating a frontend edit against the operator that is
-  *     currently deployed and queueing the resulting physical op,
   *   - `applyStoredUpdate`, queueing a change the Dashboard stored in the execution's plan table,
-  *     read from the catalog the build's tests use, as a run of a plan the Dashboard made does,
+  *     read from the catalog the build's tests use,
   *   - `performReconfigurationOnResume`, i.e. empty short-circuit, request construction
   *     and store reset semantics,
   *   - the two constructor-time subscriptions: the engine's UpdateExecutorCompleted
@@ -160,9 +141,6 @@ class ExecutionReconfigurationServiceSpec
   /** The user who created that execution. */
   private val creatorUid = 9233
 
-  /** The message the test-only descriptor below rejects a reconfiguration with. */
-  private val rejectionMessage = "this operator refuses to be reconfigured at runtime"
-
   private def mkPhysicalOp(name: String): PhysicalOp =
     PhysicalOp(
       id = PhysicalOpIdentity(OperatorIdentity(name), "main"),
@@ -177,91 +155,11 @@ class ExecutionReconfigurationServiceSpec
   private def mkWorker(opName: String, workerIndex: Int): ActorVirtualIdentity =
     ActorVirtualIdentity(s"Worker:WF1-$opName-main-$workerIndex")
 
-  private def mkLimitOp(opId: String, limit: Int): LimitOpDesc = {
-    val op = new LimitOpDesc
-    op.setOperatorId(opId)
-    op.limit = limit
-    op
-  }
-
-  /**
-    * No production descriptor ever returns `Failure` from `runtimeReconfiguration`: the six
-    * that override it all return `Success`, and the `LogicalOp` base throws
-    * `UnsupportedOperationException` instead. The failure arm therefore needs a test-only
-    * descriptor. It is invisible to `OperatorMetadataGenerator`, which resolves subtypes from
-    * the `@JsonSubTypes` annotation rather than by scanning the classpath.
-    */
-  private class RejectingReconfigurationOpDesc extends LogicalOp {
-    override def operatorInfo: OperatorInfo =
-      OperatorInfo(
-        "Rejecting Reconfiguration",
-        "test-only operator whose runtime reconfiguration always fails",
-        OperatorGroupConstants.CLEANING_GROUP,
-        inputPorts = List(InputPort()),
-        outputPorts = List(OutputPort()),
-        supportReconfiguration = true
-      )
-
-    override def runtimeReconfiguration(
-        workflowId: WorkflowIdentity,
-        executionId: ExecutionIdentity,
-        oldOpDesc: LogicalOp,
-        newOpDesc: LogicalOp
-    ): Try[(PhysicalOp, Option[StateTransferFunc])] =
-      Failure(new RuntimeException(rejectionMessage))
-  }
-
-  /**
-    * Records the arguments `modifyOperatorLogic` hands to `runtimeReconfiguration`. Every
-    * production override ignores the `oldOpDesc` parameter (FilterOpDesc, MapOpDesc, LimitOpDesc,
-    * JavaUDFOpDesc, PythonUDFOpDescV2, RUDFOpDesc), so the service's choice of which descriptor
-    * is the deployed one is unobservable without a descriptor that writes it down.
-    */
-  private class RecordingReconfigurationOpDesc extends LogicalOp {
-    var seenWorkflowId: WorkflowIdentity = _
-    var seenExecutionId: ExecutionIdentity = _
-    var seenOld: LogicalOp = _
-    var seenNew: LogicalOp = _
-
-    override def operatorInfo: OperatorInfo =
-      OperatorInfo(
-        "Recording Reconfiguration",
-        "test-only operator that records the reconfiguration arguments it was given",
-        OperatorGroupConstants.CLEANING_GROUP,
-        inputPorts = List(InputPort()),
-        outputPorts = List(OutputPort()),
-        supportReconfiguration = true
-      )
-
-    override def runtimeReconfiguration(
-        workflowId: WorkflowIdentity,
-        executionId: ExecutionIdentity,
-        oldOpDesc: LogicalOp,
-        newOpDesc: LogicalOp
-    ): Try[(PhysicalOp, Option[StateTransferFunc])] = {
-      seenWorkflowId = workflowId
-      seenExecutionId = executionId
-      seenOld = oldOpDesc
-      seenNew = newOpDesc
-      Success((mkPhysicalOp(operatorIdentifier.id), None))
-    }
-  }
-
-  private def mkWorkflow(
-      logicalOps: List[LogicalOp] = List(),
-      physicalOps: Set[PhysicalOp] = Set()
-  ): Workflow =
+  private def mkWorkflow(physicalOps: Set[PhysicalOp] = Set()): Workflow =
     Workflow(
       new WorkflowContext(workflowId = testWorkflowId, executionId = testExecutionId),
-      LogicalPlan(logicalOps, List()),
       PhysicalPlan(physicalOps, Set.empty)
     )
-
-  /** For a service none of whose edits names a dataset or model: there is nothing to bind. */
-  private val nothingToBind: PhysicalOp => PhysicalOp = op => {
-    assert(op.resourceBinding.isEmpty, s"${op.id} names a dataset or model; bind it for real")
-    op
-  }
 
   /** Service variant that records dispatched requests and skips the AmberClient
     * registration / workflow-dependent diff handler so it can be constructed
@@ -272,7 +170,6 @@ class ExecutionReconfigurationServiceSpec
         client = null,
         stateStore,
         workflow = null,
-        Some(nothingToBind),
         planTable,
         creatorUid,
         mountRoot = None
@@ -284,25 +181,6 @@ class ExecutionReconfigurationServiceSpec
     override protected def ensureMounted(mounts: RepositoryMounts): Unit = mounted += mounts
     override protected def registerWorkerCompletionCallback(): Unit = ()
     override protected def registerCompletionDiffHandler(): Unit = ()
-  }
-
-  /** Service over a real workflow, with only the client-dependent seam disabled: the diff
-    * handler stays live because it needs the workflow, not the client.
-    */
-  private class WorkflowOnlyService(
-      stateStore: ExecutionStateStore,
-      workflow: Workflow,
-      bindResources: PhysicalOp => PhysicalOp = nothingToBind
-  ) extends ExecutionReconfigurationService(
-        client = null,
-        stateStore,
-        workflow,
-        Some(bindResources),
-        planTable,
-        creatorUid,
-        mountRoot = None
-      ) {
-    override protected def registerWorkerCompletionCallback(): Unit = ()
   }
 
   /** Real empty-plan client for constructor compatibility; calls made through its grpc interface
@@ -397,7 +275,6 @@ class ExecutionReconfigurationServiceSpec
     * engine callback and the diff handler and `dispatch` really goes through the client.
     */
   private def withLiveService(
-      logicalOps: List[LogicalOp] = List(),
       physicalOps: Set[PhysicalOp] = Set()
   )(body: LiveFixture => Unit): Unit = {
     sharedClient.reset()
@@ -405,8 +282,7 @@ class ExecutionReconfigurationServiceSpec
     val service = new ExecutionReconfigurationService(
       sharedClient,
       stateStore,
-      mkWorkflow(logicalOps, physicalOps),
-      Some(nothingToBind),
+      mkWorkflow(physicalOps),
       planTable,
       creatorUid,
       mountRoot = None
@@ -439,287 +315,6 @@ class ExecutionReconfigurationServiceSpec
 
   private def announcedOps(batch: Iterable[TexeraWebSocketEvent]): List[String] =
     batch.collect { case e: ModifyLogicCompletedEvent => e.opIds }.flatten.toList
-
-  private def limitOf(op: PhysicalOp): Int =
-    objectMapper
-      .readTree(op.opExecInitInfo.asInstanceOf[OpExecWithClassName].descString)
-      .get("limit")
-      .asInt()
-
-  "modifyOperatorLogic" should
-    "queue every edited operator's physical op in request order and report each edit as valid" in {
-    // The operators in the plan and the ones in the requests differ only in `limit`, so the
-    // queued physical ops show which of the two each reconfiguration was built from.
-    val stateStore = new ExecutionStateStore
-    val service = new WorkflowOnlyService(
-      stateStore,
-      mkWorkflow(List(mkLimitOp("limit-a", 1), mkLimitOp("limit-b", 2)))
-    )
-
-    service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp("limit-a", 7))) shouldBe
-      ModifyLogicResponse("limit-a", isValid = true, "")
-    service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp("limit-b", 11))) shouldBe
-      ModifyLogicResponse("limit-b", isValid = true, "")
-
-    // A user can edit several operators during one pause, so the queue has to accumulate:
-    // overwriting would silently drop every edit but the last, and prepending would reverse the
-    // order the engine reconfigures them in on resume.
-    val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
-    queued should have size 2
-    queued.map(_._1.id) shouldBe List(
-      PhysicalOpIdentity(OperatorIdentity("limit-a"), "main"),
-      PhysicalOpIdentity(OperatorIdentity("limit-b"), "main")
-    )
-    // The engine is asked to install the NEW logic; installing the deployed one would be a
-    // silently successful no-op reconfiguration.
-    queued.map { case (op, _) => limitOf(op) } shouldBe List(7, 11)
-    // The workflow's identities are threaded into the reconfiguration, not left at the
-    // WorkflowContext defaults the executor would otherwise be addressed with.
-    queued.map(_._1.workflowId).distinct shouldBe List(testWorkflowId)
-    queued.map(_._1.executionId).distinct shouldBe List(testExecutionId)
-    // The queued tuple keeps the descriptor's state-transfer closure -- for LimitOpDesc the one
-    // that carries the old executor's row count into the new one. Storing None instead would
-    // restart counting on resume.
-    queued.map { case (_, stateTransfer) => stateTransfer.isDefined } shouldBe List(true, true)
-  }
-
-  it should "reconfigure the deployed descriptor, giving it itself as old logic and the request as new" in {
-    val opId = "recording-op"
-    val deployedOp = new RecordingReconfigurationOpDesc
-    deployedOp.setOperatorId(opId)
-    val requestOp = mkLimitOp(opId, 7)
-    val stateStore = new ExecutionStateStore
-    val service = new WorkflowOnlyService(stateStore, mkWorkflow(List(deployedOp)))
-
-    service.modifyOperatorLogic(ModifyLogicRequest(requestOp))
-
-    // `theSameInstanceAs` rather than equality: both descriptors carry the same operator id, so
-    // only identity distinguishes the deployed one from the one the frontend sent. The service is
-    // the only place in the system that makes this choice -- every production override of
-    // `runtimeReconfiguration` ignores the old descriptor, so a swap is invisible everywhere else.
-    deployedOp.seenOld should be theSameInstanceAs deployedOp
-    deployedOp.seenNew should be theSameInstanceAs requestOp
-    deployedOp.seenWorkflowId shouldBe testWorkflowId
-    deployedOp.seenExecutionId shouldBe testExecutionId
-  }
-
-  it should "report the deployed operator's rejection and leave the pending queue untouched" in {
-    // The request carries a LimitOpDesc, which would reconfigure happily. Only the operator
-    // that is actually deployed refuses, so an invalid response proves the service asked the
-    // plan's operator rather than the one the frontend sent.
-    val opId = "rejecting-op"
-    val deployedOp = new RejectingReconfigurationOpDesc
-    deployedOp.setOperatorId(opId)
-    val stateStore = new ExecutionStateStore
-    val service = new WorkflowOnlyService(stateStore, mkWorkflow(List(deployedOp)))
-
-    // An edit the user already made earlier in the same pause.
-    val alreadyQueued = mkPhysicalOp("already-queued")
-    stateStore.reconfigurationStore.updateState(_ =>
-      ExecutionReconfigurationStore(unscheduledReconfigurations = List((alreadyQueued, None)))
-    )
-
-    val response = service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp(opId, 7)))
-
-    response shouldBe a[ModifyLogicResponse]
-    val rejected = response.asInstanceOf[ModifyLogicResponse]
-    rejected.opId shouldBe opId
-    rejected.isValid shouldBe false
-    // The frontend shows this string in the operator's error box, so it has to be the reason the
-    // operator gave -- not an empty string, which is also what the valid arm reports.
-    rejected.errorMessage shouldBe rejectionMessage
-
-    // A rejected edit neither queues itself nor discards work that was already pending.
-    val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
-    queued.map(_._1.id) shouldBe List(alreadyQueued.id)
-  }
-
-  // ---------------------------------------------------------------------------
-  // An edited operator that names a dataset or model
-  // ---------------------------------------------------------------------------
-
-  // One of the fixture resolver's versions, and one it refuses, as for a version the plan's user
-  // may not read.
-  private val datasetVersionPath = "/dataset/owner@x.com/sales/v1"
-  private val unreadableVersionPath = "/dataset/owner@x.com/secret/v1"
-
-  private val udfCode =
-    """from pytexera import *
-      |
-      |class ProcessTupleOperator(UDFOperatorV2):
-      |    def process_tuple(self, tuple_, port):
-      |        yield tuple_
-      |""".stripMargin
-
-  private def datasetParameter(value: String): UiUDFParameter = {
-    val parameter = new UiUDFParameter
-    parameter.attribute = new Attribute("DATA", AttributeType.STRING)
-    parameter.inputType = "dataset"
-    parameter.value = value
-    parameter
-  }
-
-  private def udfOp(opId: String, uiParameters: List[UiUDFParameter]): PythonUDFOpDescV2 = {
-    val op = new PythonUDFOpDescV2
-    op.setOperatorId(opId)
-    op.code = udfCode
-    op.uiParameters = uiParameters
-    op
-  }
-
-  /** The compiler of a plan made to run: the fixture resolver stands in for its user's. */
-  private val planCompiler: WorkflowCompiler =
-    new WorkflowCompiler(
-      new WorkflowContext(workflowId = testWorkflowId, executionId = testExecutionId),
-      TestOperators.fixtureFileResolver,
-      TestOperators.fixtureRepositoryResolver,
-      Some(TestOperators.fixtureMountRoot)
-    )
-
-  "modifyOperatorLogic" should "bind an edited UDF the way its plan was made, queueing only data" in {
-    val stateStore = new ExecutionStateStore
-    val service = new WorkflowOnlyService(
-      stateStore,
-      mkWorkflow(List(udfOp("udf-a", Nil))),
-      planCompiler.bindResources
-    )
-
-    service.modifyOperatorLogic(
-      ModifyLogicRequest(udfOp("udf-a", List(datasetParameter(datasetVersionPath))))
-    ) shouldBe ModifyLogicResponse("udf-a", isValid = true, "")
-
-    val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations.map(_._1)
-    queued should have size 1
-    // What resuming sends and mounts, with nothing left for it to bind.
-    queued.head.resourceBinding shouldBe None
-    queued.head.repositoryMounts shouldBe Some(
-      RepositoryMounts(TestOperators.fixtureMountRoot.toString, Set("dataset-1:d4t4"))
-    )
-    queued.head.opExecInitInfo shouldBe OpExecWithCode(
-      PythonUdfUiParameterInjector.inject(
-        udfCode,
-        List(
-          datasetParameter(
-            TestOperators.fixtureMountRoot.resolve("dataset-1").resolve("d4t4").toString
-          )
-        )
-      ),
-      "python"
-    )
-  }
-
-  it should "refuse an edit that names a version the plan's user cannot read" in {
-    val stateStore = new ExecutionStateStore
-    val service = new WorkflowOnlyService(
-      stateStore,
-      mkWorkflow(List(udfOp("udf-a", Nil))),
-      planCompiler.bindResources
-    )
-
-    val response = service.modifyOperatorLogic(
-      ModifyLogicRequest(udfOp("udf-a", List(datasetParameter(unreadableVersionPath))))
-    )
-
-    response shouldBe a[ModifyLogicResponse]
-    val refused = response.asInstanceOf[ModifyLogicResponse]
-    refused.opId shouldBe "udf-a"
-    refused.isValid shouldBe false
-    refused.errorMessage should include(unreadableVersionPath)
-    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
-  }
-
-  // ---------------------------------------------------------------------------
-  // An operator that refers to loop variables
-  // ---------------------------------------------------------------------------
-
-  private def loopStartOp(): LoopStartOpDesc = {
-    val op = new LoopStartOpDesc
-    op.initialization = "i = 0"
-    op.output = "table.iloc[i]"
-    op
-  }
-
-  private def loopEndOp(): LoopEndOpDesc = {
-    val op = new LoopEndOpDesc
-    op.update = "i += 1"
-    op.condition = "i < len(table)"
-    op
-  }
-
-  /** A service over a workflow whose plan is LoopStart -> `deployedOp` -> LoopEnd. */
-  private def insideLoopBlock(deployedOp: LogicalOp): (ExecutionStateStore, WorkflowOnlyService) = {
-    val start = loopStartOp()
-    val end = loopEndOp()
-    def link(from: LogicalOp, to: LogicalOp): LogicalLink =
-      LogicalLink(from.operatorIdentifier, PortIdentity(), to.operatorIdentifier, PortIdentity())
-    val workflow = Workflow(
-      new WorkflowContext(workflowId = testWorkflowId, executionId = testExecutionId),
-      LogicalPlan(
-        List(start, deployedOp, end),
-        List(link(start, deployedOp), link(deployedOp, end))
-      ),
-      PhysicalPlan(Set.empty, Set.empty)
-    )
-    val stateStore = new ExecutionStateStore
-    (stateStore, new WorkflowOnlyService(stateStore, workflow))
-  }
-
-  private def filterOp(opId: String, value: String): SpecializedFilterOpDesc = {
-    val op = new SpecializedFilterOpDesc
-    op.setOperatorId(opId)
-    op.predicates = List(new FilterPredicate("line", ComparisonType.EQUAL_TO, value))
-    op
-  }
-
-  private def refused(name: String): String =
-    s"$name refers to loop variables, so it can't be changed while the workflow runs."
-
-  "modifyOperatorLogic" should
-    "refuse to modify an operator whose deployed setting refers to a loop variable" in {
-    // The references the compiler left on the deployed operator, as it does inside a loop block.
-    val deployedOp = mkLimitOp("limit-a", 0)
-    deployedOp.stateReferences = Map("/limit" -> "n")
-    val (stateStore, service) = insideLoopBlock(deployedOp)
-
-    service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp("limit-a", 7))) shouldBe
-      ModifyLogicResponse("limit-a", isValid = false, refused("Limit"))
-    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
-  }
-
-  it should "refuse an edit that makes an operator inside a loop block refer to a loop variable" in {
-    val (typedStore, typed) = insideLoopBlock(mkLimitOp("limit-a", 1))
-    // As the frontend sends it: "$n" in the Int property.
-    val typedEdit = objectMapper.readValue(
-      """{"operatorID":"limit-a","limit":"$n","operatorType":"Limit"}""",
-      classOf[LogicalOp]
-    )
-    typed.modifyOperatorLogic(ModifyLogicRequest(typedEdit)) shouldBe
-      ModifyLogicResponse("limit-a", isValid = false, refused("Limit"))
-    typedStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
-
-    // A whole-string "$x" refers to a loop variable inside a loop block; the compiler never saw it.
-    val (literalStore, literal) = insideLoopBlock(filterOp("filter-a", "Asia"))
-    literal.modifyOperatorLogic(ModifyLogicRequest(filterOp("filter-a", "$x"))) shouldBe
-      ModifyLogicResponse("filter-a", isValid = false, refused("Filter"))
-    literalStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
-  }
-
-  it should "still modify an operator inside a loop block that refers to no loop variable, and a '$x' literal outside every block" in {
-    val (insideStore, inside) = insideLoopBlock(mkLimitOp("limit-a", 1))
-    inside.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp("limit-a", 7))) shouldBe
-      ModifyLogicResponse("limit-a", isValid = true, "")
-    insideStore.reconfigurationStore.getState.unscheduledReconfigurations.map {
-      case (op, _) => limitOf(op)
-    } shouldBe List(7)
-
-    // Outside every block "$x" is the literal it is on main.
-    val outsideStore = new ExecutionStateStore
-    val outside =
-      new WorkflowOnlyService(outsideStore, mkWorkflow(List(filterOp("filter-a", "Asia"))))
-    outside.modifyOperatorLogic(ModifyLogicRequest(filterOp("filter-a", "$x"))) shouldBe
-      ModifyLogicResponse("filter-a", isValid = true, "")
-    outsideStore.reconfigurationStore.getState.unscheduledReconfigurations should have size 1
-  }
 
   // ---------------------------------------------------------------------------
   // A change the Dashboard stored in the execution's plan table
@@ -802,10 +397,9 @@ class ExecutionReconfigurationServiceSpec
 
   /**
     * A service over a running plan of `physicalOps`, of the execution whose plan table is
-    * `planUri`, with no compiler, on a unit that mounts datasets and models under `mountRoot`: as
-    * a computing unit builds one for a run of a plan the Dashboard made. It records what resuming
-    * would dispatch and mount, and needs no engine. `read` stands in for reading a change from the
-    * lake, when given.
+    * `planUri`, on a unit that mounts datasets and models under `mountRoot`: as a computing unit
+    * builds one for a run. It records what resuming would dispatch and mount, and needs no engine.
+    * `read` stands in for reading a change from the lake, when given.
     */
   private class StoredChangeService(
       stateStore: ExecutionStateStore,
@@ -816,8 +410,7 @@ class ExecutionReconfigurationServiceSpec
   ) extends ExecutionReconfigurationService(
         client = null,
         stateStore,
-        mkWorkflow(physicalOps = physicalOps),
-        bindResources = None,
+        mkWorkflow(physicalOps),
         planUri,
         creatorUid,
         mountRoot
@@ -849,16 +442,17 @@ class ExecutionReconfigurationServiceSpec
     service.applyStoredUpdate(second, asCreator) shouldBe accepted
 
     // The running operator, with the change's executor and what its code reads, in the order the
-    // changes came; the rest of it stays as the running plan has it.
+    // changes came: a user can change several operators during one pause, so the queue has to
+    // accumulate. The rest of the operator stays as the running plan has it.
     val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
-    queued.map(_._2) shouldBe List(None, None)
-    queued.head._1 shouldBe changedLimit
-    queued.head._1.copy(
+    queued should have size 2
+    queued.head shouldBe changedLimit
+    queued.head.copy(
       opExecInitInfo = runningLimit.opExecInitInfo,
       repositoryMounts = runningLimit.repositoryMounts
     ) shouldBe runningLimit
-    queued(1)._1.opExecInitInfo shouldBe OpExecWithClassName("limit.Class", "{}")
-    queued(1)._1.repositoryMounts shouldBe None
+    queued(1).opExecInitInfo shouldBe OpExecWithClassName("limit.Class", "{}")
+    queued(1).repositoryMounts shouldBe None
 
     service.performReconfigurationOnResume()
 
@@ -875,7 +469,7 @@ class ExecutionReconfigurationServiceSpec
     val service = new StoredChangeService(stateStore)
     val alreadyQueued = mkPhysicalOp("already-queued")
     stateStore.reconfigurationStore.updateState(_ =>
-      ExecutionReconfigurationStore(unscheduledReconfigurations = List((alreadyQueued, None)))
+      ExecutionReconfigurationStore(unscheduledReconfigurations = List(alreadyQueued))
     )
     val namedOtherwise = storeChange(changedLimit, namedInBody = Some("update-another"))
     val notInPlan = mkPhysicalOp("filter-z").copy(
@@ -934,7 +528,7 @@ class ExecutionReconfigurationServiceSpec
     unreadable.errorMessage should startWith("The operator update is not JSON")
 
     stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe
-      List((alreadyQueued, None))
+      List(alreadyQueued)
   }
 
   it should "refuse a change anyone but the execution's creator asks for, before reading it" in {
@@ -1018,20 +612,6 @@ class ExecutionReconfigurationServiceSpec
     stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
   }
 
-  "modifyOperatorLogic" should "refuse an edit of a run of a plan the Dashboard made, which no compiler here made" in {
-    val stateStore = new ExecutionStateStore
-    val service = new StoredChangeService(stateStore)
-
-    service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp("limit-a", 7))) shouldBe
-      ModifyLogicResponse(
-        "limit-a",
-        isValid = false,
-        "Execution 9232 runs the plan the Dashboard made for it: change its operators through " +
-          "the Dashboard."
-      )
-    stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
-  }
-
   "performReconfigurationOnResume" should
     "return without dispatching when no reconfigurations are pending" in {
     val stateStore = new ExecutionStateStore()
@@ -1046,15 +626,15 @@ class ExecutionReconfigurationServiceSpec
     state.completedReconfigurations shouldBe empty
   }
 
-  it should "mount what an edited operator names, under its plan's root, and send its bound code" in {
+  it should "mount what a changed operator names, under its plan's root, and send its bound code" in {
     val stateStore = new ExecutionStateStore()
     val service = new RecordingService(stateStore)
     val bound = OpExecWithClassName("bound.Class", "")
     val mounts = RepositoryMounts("/mnt/texera-mounts", Set("dataset-1:abc123"))
-    // As an accepted edit queues it: bound already, holding only data.
+    // As an accepted change queues it: bound already, holding only data.
     val op = mkPhysicalOp("op-1").copy(opExecInitInfo = bound, repositoryMounts = Some(mounts))
     stateStore.reconfigurationStore.updateState(_ =>
-      ExecutionReconfigurationStore(unscheduledReconfigurations = List((op, None)))
+      ExecutionReconfigurationStore(unscheduledReconfigurations = List(op))
     )
 
     service.performReconfigurationOnResume()
@@ -1064,7 +644,7 @@ class ExecutionReconfigurationServiceSpec
   }
 
   it should "refuse a queued operator that still holds a binding, without forcing it" in {
-    // An accepted edit is always bound; resuming never binds one itself, so one that is not
+    // An accepted change is always bound; resuming never binds one itself, so one that is not
     // bound stops the resume before anything is mounted or sent.
     val stateStore = new ExecutionStateStore()
     val service = new RecordingService(stateStore)
@@ -1073,11 +653,11 @@ class ExecutionReconfigurationServiceSpec
       forced += 1
       BoundResources(OpExecWithClassName("bound.Class", ""), Set("dataset-1:abc123"))
     }
-    val boundEdit = mkPhysicalOp("op-1").copy(
+    val boundChange = mkPhysicalOp("op-1").copy(
       repositoryMounts = Some(RepositoryMounts("/mnt/texera-mounts", Set("dataset-2:def456")))
     )
     val unbound = mkPhysicalOp("op-2").withResourceBinding(Some(binding))
-    val pending = List((boundEdit, None), (unbound, None))
+    val pending = List(boundChange, unbound)
     stateStore.reconfigurationStore.updateState(_ =>
       ExecutionReconfigurationStore(unscheduledReconfigurations = pending)
     )
@@ -1102,7 +682,7 @@ class ExecutionReconfigurationServiceSpec
     val staleWorker = mkWorker("op-1", 0)
     stateStore.reconfigurationStore.updateState(_ =>
       ExecutionReconfigurationStore(
-        unscheduledReconfigurations = List((op1, None), (op2, None)),
+        unscheduledReconfigurations = List(op1, op2),
         completedReconfigurations = Set(staleWorker)
       )
     )
@@ -1139,7 +719,7 @@ class ExecutionReconfigurationServiceSpec
 
     def queueAndDispatch(opName: String): String = {
       stateStore.reconfigurationStore.updateState(old =>
-        old.copy(unscheduledReconfigurations = List((mkPhysicalOp(opName), None)))
+        old.copy(unscheduledReconfigurations = List(mkPhysicalOp(opName)))
       )
       service.performReconfigurationOnResume()
       service.captured.last.reconfigurationId
@@ -1159,7 +739,7 @@ class ExecutionReconfigurationServiceSpec
       val op1 = mkPhysicalOp("dispatched-op-1")
       val op2 = mkPhysicalOp("dispatched-op-2")
       f.stateStore.reconfigurationStore.updateState(_ =>
-        ExecutionReconfigurationStore(unscheduledReconfigurations = List((op1, None), (op2, None)))
+        ExecutionReconfigurationStore(unscheduledReconfigurations = List(op1, op2))
       )
 
       f.service.performReconfigurationOnResume()
@@ -1260,9 +840,7 @@ class ExecutionReconfigurationServiceSpec
     // It is not a completion report, so the joining client must not be told that opA finished.
     withLiveService(physicalOps = Set(mkPhysicalOp("opA"), mkPhysicalOp("opB"))) { f =>
       f.stateStore.reconfigurationStore.updateState(_ =>
-        ExecutionReconfigurationStore(unscheduledReconfigurations =
-          List((mkPhysicalOp("opA"), None))
-        )
+        ExecutionReconfigurationStore(unscheduledReconfigurations = List(mkPhysicalOp("opA")))
       )
       f.service.performReconfigurationOnResume()
       f.client.fire(UpdateExecutorCompleted(mkWorker("opA", 0)))
@@ -1280,17 +858,17 @@ class ExecutionReconfigurationServiceSpec
   }
 
   it should "publish nothing to announce when the completed set is untouched" in {
-    val opId = "queued-limit"
-    withLiveService(
-      logicalOps = List(mkLimitOp(opId, 1)),
-      physicalOps = Set(mkPhysicalOp("opA"))
-    ) { f =>
+    withLiveService(physicalOps = Set(mkPhysicalOp("opA"))) { f =>
       val batches = recordBatches(f.stateStore.reconfigurationStore) {
         // A real announcement first, so the empty batch below cannot be explained by a dead
         // subscription, a handler that was never registered, or a state that never changed.
         f.client.fire(UpdateExecutorCompleted(mkWorker("opA", 0)))
-        // Queueing a reconfiguration changes the store without completing anything.
-        f.service.modifyOperatorLogic(ModifyLogicRequest(mkLimitOp(opId, 7)))
+        // Queueing a change, as an accepted one is, changes the store without completing anything.
+        f.stateStore.reconfigurationStore.updateState(old =>
+          old.copy(unscheduledReconfigurations =
+            old.unscheduledReconfigurations :+ mkPhysicalOp("opA")
+          )
+        )
       }
 
       batches should have size 2

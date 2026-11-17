@@ -143,9 +143,8 @@ export class ExecuteWorkflowService {
    */
   private pendingRun = Subscription.EMPTY;
   /**
-   * The execution this page last created and asked the computing unit to start: the one a change to an
-   * operator is stored for while its run is paused. The unit names no execution in what it sends, so a run
-   * started elsewhere (another tab, or this page before a reload) is not known here.
+   * The execution of the run the computing unit holds, as the unit names it with each state it reports: the
+   * one a change to an operator is stored for while its run is paused, whichever page started the run.
    */
   private currentExecutionId?: number;
 
@@ -202,6 +201,8 @@ export class ExecuteWorkflowService {
   public handleExecutionEvent(event: TexeraWebsocketEvent): ExecutionStateInfo | undefined {
     switch (event.type) {
       case "WorkflowStateEvent":
+        // The unit names the execution its state is of, and none with the state of no run.
+        this.currentExecutionId = event.executionId;
         let newState = ExecutionState[event.state];
         switch (newState) {
           case ExecutionState.Paused:
@@ -406,10 +407,8 @@ export class ExecuteWorkflowService {
         switchMap(() => this.executionApiService.create(request))
       )
       .subscribe({
-        next: ({ eid, planUri }) => {
-          this.currentExecutionId = eid;
-          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri });
-        },
+        next: ({ eid, planUri }) =>
+          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri }),
         error: (error: unknown) =>
           this.updateExecutionState({ state: ExecutionState.Failed, errorMessages: errorsOfFailedCreate(error) }),
       });
@@ -510,9 +509,9 @@ export class ExecuteWorkflowService {
 
   /**
    * Changes operator `operatorID` of the paused run to what the editor holds: the change is stored at the
-   * Dashboard service, then named to the computing unit, which answers with a ModifyLogicResponse and applies
-   * it when the run resumes. A change the Dashboard does not store is reported in a toast, and nothing is sent
-   * to the unit.
+   * Dashboard service, for the execution the computing unit names as the paused one, then named to the unit,
+   * which answers with a ModifyLogicResponse and applies it when the run resumes. A change the Dashboard does
+   * not store is reported in a toast, and nothing is sent to the unit.
    */
   public modifyOperatorLogic(operatorID: string): void {
     if (this.currentState.state !== ExecutionState.Paused) {
@@ -520,7 +519,7 @@ export class ExecuteWorkflowService {
     }
     const executionId = this.currentExecutionId;
     if (executionId === undefined) {
-      throw new Error("cannot modify logic, the paused execution was not started from this page");
+      throw new Error("cannot modify logic, the computing unit has not named the paused execution");
     }
     const op = this.workflowActionService.getTexeraGraph().getOperator(operatorID);
     const operator: LogicalOperator = {
@@ -563,8 +562,8 @@ export class ExecuteWorkflowService {
    * executionStateStream so subscribers drop the previous unit's status.
    */
   public resetExecutionAndWorkers(): void {
-    // A run still on its way, and the execution this page started, belong to the session that is reset: the
-    // one must not start in the next session, and the other is not the next session's to change.
+    // A run still on its way, and the execution the unit named, belong to the session that is reset: the one
+    // must not start in the next session, and the other is not the next session's to change.
     this.pendingRun.unsubscribe();
     this.currentExecutionId = undefined;
     this.updateExecutionState({ state: ExecutionState.Uninitialized });

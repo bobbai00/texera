@@ -19,6 +19,7 @@
 
 package org.apache.texera.web
 
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.Configuration
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
@@ -39,7 +40,7 @@ import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.amber.util.{JSONUtils, ObjectMapperUtils}
+import org.apache.texera.amber.util.ObjectMapperUtils
 import org.apache.commons.jcs3.access.exception.InvalidArgumentException
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
@@ -133,8 +134,9 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
         classOf[PveWebsocketResource]
       )
     )
-    // register the modules that parse workflows (SyncExecutionResource) to dropwizard's mapper
-    JSONUtils.registerWorkflowModules(bootstrap.getObjectMapper)
+    // register the Scala module on Dropwizard's mapper: Jersey reads the unit's request bodies
+    // and writes its answers (SyncExecutionResource) with it
+    bootstrap.getObjectMapper.registerModule(DefaultScalaModule)
   }
 
   override def run(configuration: Configuration, environment: Environment): Unit = {

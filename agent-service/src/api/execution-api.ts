@@ -245,7 +245,6 @@ const legacySyncExecutionResultSchema = z.object({
   success: z.boolean(),
   state: z.string(),
   operators: z.record(legacyOperatorInfoSchema),
-  compilationErrors: z.record(z.string()).nullish(),
   errors: z.array(z.string()).nullish(),
 });
 
@@ -349,16 +348,10 @@ export function adaptLegacySyncExecutionResult(input: unknown): WorkflowExecutio
     ])
   );
 
-  const compilationMessages = new Set(Object.values(legacy.compilationErrors ?? {}));
-  const allMessages = [...compilationMessages, ...(legacy.errors ?? [])];
-  const errors = [...new Set(allMessages)].map(message =>
-    makeWorkflowError(
-      legacy.state === WorkflowExecutionState.COMPILATION_FAILED || compilationMessages.has(message)
-        ? WorkflowFatalErrorType.COMPILATION_ERROR
-        : WorkflowFatalErrorType.EXECUTION_FAILURE,
-      message,
-      ""
-    )
+  // A unit runs a plan the Dashboard compiled, so what it reports is a failure of the run. An error
+  // it reports more than once, as when several workers fail alike, is listed once.
+  const errors = [...new Set(legacy.errors ?? [])].map(message =>
+    makeWorkflowError(WorkflowFatalErrorType.EXECUTION_FAILURE, message, "")
   );
 
   return {

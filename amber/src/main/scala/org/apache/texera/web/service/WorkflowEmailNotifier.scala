@@ -80,8 +80,8 @@ object WorkflowEmailNotifier {
 
   /**
     * The page of workflow `workflowId` in the Dashboard, on the host and port of `requestUri`, the
-    * URI the request that started the run was sent to. Always `http`, and without the port when
-    * that is 80, 443 or none.
+    * URI the request that created the run's execution was sent to. Always `http`, and without the
+    * port when that is 80, 443 or none.
     */
   def workflowUrl(requestUri: URI, workflowId: Long): String = {
     val host = requestUri.getHost

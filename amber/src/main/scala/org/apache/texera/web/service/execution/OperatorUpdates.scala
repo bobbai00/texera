@@ -336,8 +336,7 @@ class OperatorUpdates extends LazyLogging {
 
   /**
     * `changed` made into the operator that takes `current`'s place in `running`, once it is found
-    * to be a change the running operator can take. Otherwise 400, with why: in the words today's
-    * websocket path answers a change with, where it has words for it.
+    * to be a change the running operator can take. Otherwise 400, with why.
     */
   private def changeMadeToRun(
       workflow: LogicalPlan,

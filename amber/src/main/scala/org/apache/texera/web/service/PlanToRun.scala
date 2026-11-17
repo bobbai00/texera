@@ -27,7 +27,7 @@ import org.apache.texera.amber.core.workflow.{
   WorkflowSettings
 }
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
-import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
+import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
 
 import java.net.URI
@@ -36,25 +36,21 @@ import java.net.URI
   * The plan of a run as the engine is handed it: saved, as text.
   *
   * Starting a run has two halves. [[PlanToRun.make]] compiles the run's workflow and saves the
-  * physical plan, with the settings it runs under, as the JSON [[PhysicalPlanCodec]] writes. The
-  * text is written to the execution's plan table, and the engine starts from the text read back
-  * from there ([[WorkflowExecutionService.readPlanToRun]]): it runs the physical plan read back,
-  * under the settings, replay and replay log read back with it, and never sees the plan the
-  * compile made. The Dashboard service makes the plan of each execution it creates
-  * ([[org.apache.texera.web.service.execution.ExecutionCreator]]). The computing unit still makes
-  * the plans of the runs it is asked to execute itself, until it only starts executions the
-  * Dashboard created; it then only reads the plan table.
+  * physical plan, with the settings it runs under, as the JSON [[PhysicalPlanCodec]] writes: the
+  * Dashboard service makes the plan of each execution it creates
+  * ([[org.apache.texera.web.service.execution.ExecutionCreator]]) and writes the text to the
+  * execution's plan table. The computing unit that starts the execution reads the text back from
+  * there ([[WorkflowService.checkStoredStart]]) and runs the physical plan it holds, under the
+  * settings, replay and replay log saved with it: the engine never sees the plan the compile
+  * made.
   *
-  * @param savedPlan   the physical plan to run, its settings and what else the run needs (an
-  *                    [[org.apache.texera.amber.core.workflow.ExecutionPlan]]), as JSON text. It
-  *                    holds what each operator's executor is given, so it holds the credentials
-  *                    an operator is set up with (a SQL source's password, say): keep it where
-  *                    they may be kept.
-  * @param logicalPlan the logical plan the physical plan was compiled from. It is not part of the
-  *                    saved plan: the engine still reads it to check and compile an operator
-  *                    changed while the run is paused.
+  * @param savedPlan the physical plan to run, its settings and what else the run needs (an
+  *                  [[org.apache.texera.amber.core.workflow.ExecutionPlan]]), as JSON text. It
+  *                  holds what each operator's executor is given, so it holds the credentials an
+  *                  operator is set up with (a SQL source's password, say): keep it where they
+  *                  may be kept.
   */
-final case class PlanToRun(savedPlan: String, logicalPlan: LogicalPlan)
+final case class PlanToRun(savedPlan: String)
 
 object PlanToRun {
 
@@ -81,8 +77,8 @@ object PlanToRun {
     * to `replayLog`, and reads no input.
     *
     * @param compiler  the run's compiler: it resolves files, datasets and models as the run's user
-    *                  may, and writes code against the mount root computing units mount datasets
-    *                  and models under (the deployment's, on the Dashboard)
+    *                  may, and writes code against the root the deployment's computing units
+    *                  mount datasets and models under
     * @param replay    the replay log the run replays, up to one interaction; None for none
     * @param replayLog where the run writes its replay log; None for nowhere
     * @throws org.apache.texera.common.compiler.WorkflowCompilationFailed if the workflow has errors
@@ -126,8 +122,7 @@ object PlanToRun {
         PhysicalPlanCodec.encode(
           ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog)
         )
-      ),
-      compiled.logicalPlan
+      )
     )
   }
 }

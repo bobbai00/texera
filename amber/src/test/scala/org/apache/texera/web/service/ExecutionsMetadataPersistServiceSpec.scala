@@ -110,7 +110,7 @@ class ExecutionsMetadataPersistServiceSpec
     workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
     workflowDao.insert(workflow)
 
-    // Seed one version explicitly so insertNewExecution's getLatestVersion
+    // Seed one version explicitly so insertCreatedExecution's getLatestVersion
     // takes the happy "max(existing)" branch instead of falling into the
     // back-compat "insert one for you" branch (which would drag in
     // WorkflowVersionResource.insertNewVersion's diff/aggregate logic).
@@ -122,7 +122,7 @@ class ExecutionsMetadataPersistServiceSpec
     seededVid = version.getVid
 
     // workflow_executions.cuid has a FK to workflow_computing_unit; seed one
-    // so insertNewExecution's setCuid(...) call doesn't trip the constraint.
+    // so an execution inserted for it doesn't trip the constraint.
     val cu = new WorkflowComputingUnit
     cu.setUid(testUid)
     cu.setName("test-cu")
@@ -169,122 +169,6 @@ class ExecutionsMetadataPersistServiceSpec
     exec.setEnvironmentVersion("test-env")
     workflowExecutionsDao.insert(exec)
     exec.getEid
-  }
-
-  // -- insertNewExecution -----------------------------------------------------
-
-  "insertNewExecution" should "insert a row tied to the latest workflow version" in {
-    val id = ExecutionsMetadataPersistService.insertNewExecution(
-      WorkflowIdentity(testWid.toLong),
-      testUid,
-      executionName = "named-execution",
-      environmentVersion = "env-1",
-      computingUnitId = seededCuid
-    )
-    id should not be ExecutionIdentity(0L)
-
-    val stored = workflowExecutionsDao.fetchOneByEid(id.id.toInt)
-    stored should not be null
-    stored.getVid shouldBe seededVid
-    stored.getUid shouldBe testUid
-    stored.getName shouldBe "named-execution"
-    stored.getEnvironmentVersion shouldBe "env-1"
-    stored.getCuid shouldBe seededCuid
-  }
-
-  it should "skip setName when executionName is the empty string" in {
-    val id = ExecutionsMetadataPersistService.insertNewExecution(
-      WorkflowIdentity(testWid.toLong),
-      testUid,
-      executionName = "",
-      environmentVersion = "env-2",
-      computingUnitId = seededCuid
-    )
-    val stored = workflowExecutionsDao.fetchOneByEid(id.id.toInt)
-    // The DDL default for workflow_executions.name is 'Untitled Execution'
-    // (sql/texera_ddl.sql). The production code path explicitly does not
-    // call setName for an empty string, so the row should fall back to the
-    // DDL default rather than persisting "".
-    stored.getName shouldBe "Untitled Execution"
-  }
-
-  it should "let the DB NOT NULL constraint reject a null uid (surfaced as a readable error)" in {
-    // No more pre-insert require: a null uid is passed straight to jOOQ and the
-    // DB's NOT NULL constraint rejects it. insertNewExecution catches the
-    // resulting DataAccessException (SQLState 23502) and rethrows a readable
-    // IllegalArgumentException. Assert both the readable message and that the
-    // original DB exception is preserved as the cause, and that nothing was
-    // written.
-    val before = workflowExecutionsDao.fetchByVid(seededVid).size()
-
-    val ex = intercept[IllegalArgumentException] {
-      ExecutionsMetadataPersistService.insertNewExecution(
-        WorkflowIdentity(testWid.toLong),
-        null, // uid is NOT NULL in the DB
-        executionName = "anonymous",
-        environmentVersion = "env-3",
-        computingUnitId = seededCuid
-      )
-    }
-    ex.getMessage should include("uid")
-    ex.getCause shouldBe a[org.jooq.exception.DataAccessException]
-
-    // The failed insert must not have persisted a row.
-    workflowExecutionsDao.fetchByVid(seededVid).size() shouldBe before
-  }
-
-  it should "record the chosen warehouse and leave it null when none is picked" in {
-    val row = getDSLContext.newRecord(USER_WAREHOUSE)
-    row.setUid(testUid)
-    row.setName("exec-spec-warehouse")
-    row.setLakekeeperWarehouseName(s"user-$testUid-exec-spec-warehouse")
-    row.setLakekeeperWarehouseId(UUID.randomUUID())
-    row.setFlavor(UserWarehouseFlavorEnum.local)
-    row.store()
-
-    val withWarehouse = ExecutionsMetadataPersistService.insertNewExecution(
-      WorkflowIdentity(testWid.toLong),
-      testUid,
-      executionName = "warehouse-run",
-      environmentVersion = "env-4",
-      computingUnitId = seededCuid,
-      warehouseId = Some(row.getWhid)
-    )
-    workflowExecutionsDao.fetchOneByEid(withWarehouse.id.toInt).getWhid shouldBe row.getWhid
-
-    val withoutWarehouse = ExecutionsMetadataPersistService.insertNewExecution(
-      WorkflowIdentity(testWid.toLong),
-      testUid,
-      executionName = "default-run",
-      environmentVersion = "env-4",
-      computingUnitId = seededCuid
-    )
-    workflowExecutionsDao.fetchOneByEid(withoutWarehouse.id.toInt).getWhid shouldBe null
-  }
-
-  it should "keep execution history when its warehouse is deleted (whid SET NULL)" in {
-    val row = getDSLContext.newRecord(USER_WAREHOUSE)
-    row.setUid(testUid)
-    row.setName("doomed-warehouse")
-    row.setLakekeeperWarehouseName(s"user-$testUid-doomed-warehouse")
-    row.setLakekeeperWarehouseId(UUID.randomUUID())
-    row.setFlavor(UserWarehouseFlavorEnum.local)
-    row.store()
-
-    val id = ExecutionsMetadataPersistService.insertNewExecution(
-      WorkflowIdentity(testWid.toLong),
-      testUid,
-      executionName = "history-run",
-      environmentVersion = "env-5",
-      computingUnitId = seededCuid,
-      warehouseId = Some(row.getWhid)
-    )
-
-    getDSLContext.deleteFrom(USER_WAREHOUSE).where(USER_WAREHOUSE.WHID.eq(row.getWhid)).execute()
-
-    val stored = workflowExecutionsDao.fetchOneByEid(id.id.toInt)
-    stored should not be null
-    stored.getWhid shouldBe null
   }
 
   // -- environmentVersionOf -----------------------------------------------------
@@ -387,6 +271,31 @@ class ExecutionsMetadataPersistServiceSpec
     statements.map(_.verb) shouldBe Seq("SELECT", "INSERT")
   }
 
+  it should "keep execution history when its warehouse is deleted (whid SET NULL)" in {
+    val row = getDSLContext.newRecord(USER_WAREHOUSE)
+    row.setUid(testUid)
+    row.setName("doomed-warehouse")
+    row.setLakekeeperWarehouseName(s"user-$testUid-doomed-warehouse")
+    row.setLakekeeperWarehouseId(UUID.randomUUID())
+    row.setFlavor(UserWarehouseFlavorEnum.local)
+    row.store()
+
+    val id = ExecutionsMetadataPersistService.insertCreatedExecution(
+      WorkflowIdentity(testWid.toLong),
+      testUid,
+      executionName = "history-run",
+      environmentVersion = "env",
+      computingUnitId = seededCuid,
+      warehouseId = Some(row.getWhid)
+    )
+
+    getDSLContext.deleteFrom(USER_WAREHOUSE).where(USER_WAREHOUSE.WHID.eq(row.getWhid)).execute()
+
+    val stored = workflowExecutionsDao.fetchOneByEid(id.id.toInt)
+    stored should not be null
+    stored.getWhid shouldBe null
+  }
+
   it should "refuse a computing unit that does not exist, and write nothing" in {
     val before = workflowExecutionsDao.fetchByVid(seededVid).size()
 
@@ -419,24 +328,6 @@ class ExecutionsMetadataPersistServiceSpec
     failed.getStatus shouldBe maptoStatusCode(WorkflowAggregatedState.FAILED)
     failed.getLastUpdateTime.getTime should be >= (before - 1000)
     workflowExecutionsDao.fetchOneByEid(other).getStatus shouldBe 0.toByte
-  }
-
-  // -- tryGetExistingExecution ------------------------------------------------
-
-  "tryGetExistingExecution" should "return Some(row) for a known eid" in {
-    val eid = seedExecution()
-    val fetched = ExecutionsMetadataPersistService.tryGetExistingExecution(
-      ExecutionIdentity(eid.longValue())
-    )
-    fetched shouldBe defined
-    fetched.get.getEid shouldBe eid
-  }
-
-  it should "return None for an unknown eid" in {
-    val fetched = ExecutionsMetadataPersistService.tryGetExistingExecution(
-      ExecutionIdentity(-1L)
-    )
-    fetched shouldBe None
   }
 
   // -- tryUpdateExistingExecution ---------------------------------------------

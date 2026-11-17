@@ -99,10 +99,12 @@ object TestUtils {
 
   /**
     * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
-    * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that
-    * (`WorkflowExecutionService.readPlanToRun`), so a spec runs what a run would. The text stays
-    * in memory: a run writes it to its execution's plan table and reads it back from there, which
-    * these specs need no catalog for.
+    * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that and
+    * checked to be one the engine can run (`WorkflowExecutionService.requireRunnableHere`), so a
+    * spec runs what a run would. `context` takes the settings and cost hints saved with the plan,
+    * the ports whose results are stored among them. The text stays in memory: the Dashboard writes
+    * it to the execution's plan table and a computing unit reads it back from there, which these
+    * specs need no catalog for.
     *
     * @param fromSavedPlan false to keep the plan as the compile made it, never saved. Only for
     *                      comparing a run of that plan with a run of the plan read back.
@@ -123,13 +125,12 @@ object TestUtils {
     )
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
     if (fromSavedPlan) {
-      val planToRun = PlanToRun.make(workflowCompiler, logicalPlan)
-      val readBack = WorkflowExecutionService.readPlanToRun(
-        planToRun.savedPlan,
-        context,
-        Some(TestOperators.fixtureMountRoot)
-      )
-      Workflow(context, planToRun.logicalPlan, readBack.plan)
+      val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan).savedPlan
+      val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
+      WorkflowExecutionService.requireRunnableHere(readBack, Some(TestOperators.fixtureMountRoot))
+      context.workflowSettings = readBack.context.workflowSettings
+      context.costHints = readBack.context.costHints
+      Workflow(context, readBack.plan)
     } else {
       // The compile PlanToRun.make makes a run's plan with, but not saved: strict, so an error
       // throws rather than leaving no physical plan.
@@ -210,13 +211,23 @@ object TestUtils {
     }.toMap
 
   /**
+    * The operators `plan` ends in: those no other operator reads from, whose results a run stores.
+    */
+  private def terminalOperatorIds(plan: PhysicalPlan): List[OperatorIdentity] = {
+    val readFrom = plan.links.collect {
+      case link if link.fromOpId.logicalOpId != link.toOpId.logicalOpId => link.fromOpId.logicalOpId
+    }
+    (plan.operators.map(_.id.logicalOpId) -- readFrom).toList
+  }
+
+  /**
     * Convenience over `readMaterializedResults` for the common case: read each
     * terminal operator's result of `workflow` as a `List[Tuple]`.
     */
   def readMaterializedResults(workflow: Workflow): Map[OperatorIdentity, List[Tuple]] =
     readMaterializedResults(
       workflow.context.executionId,
-      workflow.logicalPlan.getTerminalOperatorIds,
+      terminalOperatorIds(workflow.physicalPlan),
       _.get().toList
     )
 
@@ -298,7 +309,7 @@ object TestUtils {
     runWorkflowAndReadResults(
       system,
       workflow,
-      workflow.logicalPlan.getTerminalOperatorIds,
+      terminalOperatorIds(workflow.physicalPlan),
       _.get().toList,
       completionTimeout
     )

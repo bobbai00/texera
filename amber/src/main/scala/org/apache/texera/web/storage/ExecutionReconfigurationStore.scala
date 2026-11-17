@@ -21,10 +21,9 @@ package org.apache.texera.web.storage
 
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.PhysicalOp
-import org.apache.texera.amber.operator.StateTransferFunc
 
 case class ExecutionReconfigurationStore(
     currentReconfigId: Option[String] = None,
-    unscheduledReconfigurations: List[(PhysicalOp, Option[StateTransferFunc])] = List(),
+    unscheduledReconfigurations: List[PhysicalOp] = List(),
     completedReconfigurations: Set[ActorVirtualIdentity] = Set()
 )

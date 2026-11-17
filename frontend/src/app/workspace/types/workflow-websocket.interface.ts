@@ -164,8 +164,11 @@ export type DebugCommandRequest = Readonly<{
   cmd: string;
 }>;
 
+/** The state of the run the computing unit holds, as it tells every session on the workflow. */
 export type WorkflowStateInfo = Readonly<{
   state: ExecutionState;
+  /** The execution the run is of; left out when the state is of no run. */
+  executionId?: number;
 }>;
 
 export type TexeraWebsocketRequestTypeMap = {

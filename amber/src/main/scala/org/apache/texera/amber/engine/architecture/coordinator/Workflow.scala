@@ -21,11 +21,10 @@ package org.apache.texera.amber.engine.architecture.coordinator
 
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.common.compiler.WorkflowCompilationResult
-import org.apache.texera.common.compiler.model.LogicalPlan
 
+/** What the engine runs: a physical plan, and the context it runs under. */
 case class Workflow(
     context: WorkflowContext,
-    logicalPlan: LogicalPlan,
     physicalPlan: PhysicalPlan
 )
 
@@ -56,6 +55,6 @@ object Workflow {
     context.workflowSettings = context.workflowSettings.copy(
       outputPortsNeedingStorage = compilationResult.outputPortsNeedingStorage
     )
-    Workflow(context, compilationResult.logicalPlan, physicalPlan)
+    Workflow(context, physicalPlan)
   }
 }

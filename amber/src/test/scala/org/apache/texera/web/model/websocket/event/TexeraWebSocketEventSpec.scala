@@ -135,7 +135,7 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
   private val registeredEvents: List[(String, TexeraWebSocketEvent)] = List(
     "HeartBeatResponse" -> HeartBeatResponse(),
     "WorkflowErrorEvent" -> WorkflowErrorEvent(Seq(fatalError)),
-    "WorkflowStateEvent" -> WorkflowStateEvent("Running"),
+    "WorkflowStateEvent" -> WorkflowStateEvent("Running", Some(345L)),
     "OperatorStatisticsUpdateEvent" -> OperatorStatisticsUpdateEvent(Map("op-stats" -> metrics)),
     "WebResultUpdateEvent" -> WebResultUpdateEvent(
       Map("op-page" -> WebPaginationUpdate(PaginationMode(), 7L, List(1, 3))),
@@ -260,6 +260,25 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
           objectMapper.readValue(write(event), classOf[TexeraWebSocketEvent]) shouldBe event
         }
     }
+  }
+
+  "WorkflowStateEvent" should "name the execution its state is of, and none for the state of no run" in {
+    // An id past the Int range, so a narrowing on the way out shows.
+    val executionId = Int.MaxValue + 1L
+    val ofARun = objectMapper.readTree(write(WorkflowStateEvent("Paused", Some(executionId))))
+    ofARun.get("state").asText() shouldBe "Paused"
+    ofARun.get("executionId").isIntegralNumber shouldBe true
+    ofARun.get("executionId").asLong() shouldBe executionId
+    // The Angular WorkflowStateInfo declares `executionId?`: the state of no run leaves the key
+    // out, rather than sending a null the client would keep as an execution.
+    val ofNoRun = objectMapper.readTree(write(WorkflowStateEvent("Uninitialized", None)))
+    ofNoRun.get("state").asText() shouldBe "Uninitialized"
+    ofNoRun.has("executionId") shouldBe false
+    // Read back, the id is a Long, not whatever number type its digits fit.
+    objectMapper
+      .readValue(write(WorkflowStateEvent("Paused", Some(345L))), classOf[WorkflowStateEvent])
+      .executionId
+      .map(_ + 1L) shouldBe Some(346L)
   }
 
   "WebResultUpdateEvent" should "emit empty maps rather than omitting the keys" in {

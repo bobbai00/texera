@@ -71,7 +71,6 @@ class WorkflowSpec extends AnyFlatSpec {
     assert(context.workflowSettings.outputPortsNeedingStorage == result.outputPortsNeedingStorage)
     assert(context.workflowSettings.outputPortsNeedingStorage.nonEmpty)
     assert(workflow.physicalPlan eq result.physicalPlan.get)
-    assert(workflow.logicalPlan eq result.logicalPlan)
     assert(workflow.context eq context)
   }
 

@@ -110,7 +110,6 @@ class ExecutionRuntimeServiceSpec
         client = null,
         stateStore = null,
         workflow = null,
-        bindResources = Some(identity),
         planUri = new URI("vfs:///wid/1/eid/1/plan"),
         creator = 1,
         mountRoot = None
@@ -212,13 +211,59 @@ class ExecutionRuntimeServiceSpec
   }
 
   it should "kill the client and record a terminal timestamp when killed from the websocket" in {
+    // A run in any state it has not ended in, the ones before its engine starts included.
+    Seq(UNINITIALIZED, READY, RUNNING, PAUSING, PAUSED, RESUMING).foreach { live =>
+      withClue(s"a run that is $live: ") {
+        val f = fixture()
+        try {
+          f.stateStore.metadataStore.updateState(_.withState(live))
+
+          val before = System.currentTimeMillis()
+          f.wsInput.onNext(WorkflowKillRequest(), None)
+          val after = System.currentTimeMillis()
+
+          f.client.shutdownCount shouldBe 1
+          f.stateStore.metadataStore.getState.state shouldBe KILLED
+          f.stateStore.statsStore.getState.endTimeStamp should (be >= before and be <= after)
+          f.errors shouldBe empty
+        } finally f.close()
+      }
+    }
+  }
+
+  it should "leave a run that already ended as it ended when a kill arrives late" in {
+    // A kill sent as the run ends, or by a client that still shows it running: the run keeps the
+    // state it ended in and the time it ended at, which its execution's row and history show.
+    val endedAt = 1234L
+    Seq(COMPLETED, FAILED, KILLED, TERMINATED).foreach { ended =>
+      withClue(s"a run that is $ended: ") {
+        val f = fixture()
+        try {
+          f.stateStore.metadataStore.updateState(_.withState(ended))
+          f.stateStore.statsStore.updateState(_.withEndTimeStamp(endedAt))
+          val asItEnded = f.stateStore.metadataStore.getState
+
+          f.wsInput.onNext(WorkflowKillRequest(), None)
+
+          f.stateStore.metadataStore.getState shouldBe asItEnded
+          f.stateStore.statsStore.getState.endTimeStamp shouldBe endedAt
+          f.errors shouldBe empty
+        } finally f.close()
+      }
+    }
+  }
+
+  it should "leave a run that completed as completed when a kill follows the engine's report" in {
     val f = fixture()
     try {
+      f.client.stateCallback(ExecutionStateUpdate(COMPLETED))
+      val completedAt = f.stateStore.statsStore.getState.endTimeStamp
+      completedAt should be > 0L
+
       f.wsInput.onNext(WorkflowKillRequest(), None)
 
-      f.client.shutdownCount shouldBe 1
-      f.stateStore.metadataStore.getState.state shouldBe KILLED
-      f.stateStore.statsStore.getState.endTimeStamp should be > 0L
+      f.stateStore.metadataStore.getState.state shouldBe COMPLETED
+      f.stateStore.statsStore.getState.endTimeStamp shouldBe completedAt
       f.errors shouldBe empty
     } finally f.close()
   }

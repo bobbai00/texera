@@ -40,7 +40,6 @@ import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
-import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.common.config.ApplicationConfig
@@ -59,6 +58,8 @@ import org.apache.texera.web.resource.dashboard.user.workflow.{
 import org.apache.texera.web.resource.pythonvirtualenvironment.{PveResource, PveWebsocketResource}
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
+  SyncExecutionResult,
+  SyncRunRequest,
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
@@ -580,18 +581,37 @@ class ComputingUnitMasterSpec
     )
   }
 
-  it should "register the Scala and loop-variable modules on the bootstrap object mapper" in {
+  it should "register the Scala module on the bootstrap object mapper" in {
     val bootstrap = new Bootstrap[Configuration](master)
 
     master.initialize(bootstrap)
 
-    bootstrap.getObjectMapper.getRegisteredModuleIds.asScala should contain(
+    val mapper = bootstrap.getObjectMapper
+    mapper.getRegisteredModuleIds.asScala should contain(
       com.fasterxml.jackson.module.scala.DefaultScalaModule.getClass.getName
     )
-    // Jersey parses SyncExecutionResource's request body, a typed '$n' included, with this mapper.
-    bootstrap.getObjectMapper
-      .readValue("""{"limit":"$n","operatorType":"Limit"}""", classOf[LogicalOp])
-      .stateReferences shouldBe Map("/limit" -> "n")
+    // Jersey parses SyncExecutionResource's request body, its list of targets included, with
+    // this mapper...
+    mapper.readValue(
+      """{"planUri":"vfs:///wid/12/eid/345/plan","computingUnitId":3,
+        |"targetOperatorIds":["op-a"],"timeoutSeconds":60,"maxOperatorResultCharLimit":20000,
+        |"maxOperatorResultCellCharLimit":4000}""".stripMargin,
+      classOf[SyncRunRequest]
+    ) shouldBe SyncRunRequest("vfs:///wid/12/eid/345/plan", 3, List("op-a"), 60, 20000, 4000)
+    // ...and writes its answer with it, as the agent service reads it: a refused run.
+    mapper.readTree(
+      mapper.writeValueAsString(
+        SyncExecutionResult(
+          success = false,
+          state = "Error",
+          operators = Map.empty,
+          errors = Some(List("execution 345 was already started"))
+        )
+      )
+    ) shouldBe mapper.readTree(
+      """{"success":false,"state":"Error","operators":{},
+        |"errors":["execution 345 was already started"]}""".stripMargin
+    )
   }
 
   "run" should "serve the Jersey resources under the /api prefix" in {
@@ -636,13 +656,14 @@ class ComputingUnitMasterSpec
     jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
   }
 
-  it should "serve the agent's run of an execution the Dashboard created, beside the run it compiles" in {
+  it should "serve the agent's run of an execution the Dashboard created, and no run of a workflow sent to it" in {
     val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
 
-    // Both resolve, and are answered 401 without a signed-in user.
+    // It resolves, and is answered 401 without a signed-in user.
     jersey.statusOf("POST", "/execution/12/run") shouldBe 401
-    jersey.statusOf("POST", "/execution/12/3/run") shouldBe 401
     jersey.statusOf("GET", "/execution/12/run") shouldBe 405
+    // A workflow to compile and run on a unit, by the workflow's and the unit's ids: not served.
+    jersey.statusOf("POST", "/execution/12/3/run") shouldBe 404
   }
 
   it should "install the JWT auth feature and the session-user value factory" in {

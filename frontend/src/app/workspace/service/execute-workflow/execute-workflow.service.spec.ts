@@ -345,7 +345,7 @@ describe("ExecuteWorkflowService", () => {
         planUri: "vfs:///wid/12/eid/345/plan",
       });
       // The unit's own "Initializing", once it has built the run, is the state the run already shows.
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Initializing });
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Initializing, executionId: 345 });
       expect(states).toEqual([ExecutionState.Initializing]);
     }));
 
@@ -1094,17 +1094,26 @@ describe("ExecuteWorkflowService", () => {
   describe("modifyOperatorLogic", () => {
     const UPDATES_URL = `${EXECUTIONS_URL}/345/updates`;
 
+    /** The unit reports the run of execution `executionId` in `state`, as it tells every session. */
+    const unitReports = (state: ExecutionState, executionId?: number): void =>
+      emitWsEvent({ type: "WorkflowStateEvent", state, executionId });
+
+    /** The editor holds operator "1" as the scan it is changed to. */
+    const editOperator = (): void => {
+      vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
+    };
+
     /** Starts execution 345, which the unit then reports as paused. */
     const pauseExecution = (): void => {
       startExecution(345);
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running });
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
-      vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
+      unitReports(ExecutionState.Running, 345);
+      unitReports(ExecutionState.Paused, 345);
+      editOperator();
     };
 
     it("requires a paused state", fakeAsync(() => {
       startExecution(345);
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running });
+      unitReports(ExecutionState.Running, 345);
 
       expect(() => service.modifyOperatorLogic("1")).toThrowError(
         "cannot modify logic, the current execution state is Running"
@@ -1166,13 +1175,14 @@ describe("ExecuteWorkflowService", () => {
       }));
     }
 
-    it("stores each change for the execution this page started last", fakeAsync(() => {
+    it("stores each change for the execution the unit last named", fakeAsync(() => {
       startExecution(345);
+      unitReports(ExecutionState.Running, 345);
       service.killWorkflow();
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Killed });
+      unitReports(ExecutionState.Killed, 345);
       startExecution(346);
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
-      vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
+      unitReports(ExecutionState.Paused, 346);
+      editOperator();
       const wsSendSpy = spyOnSocket();
 
       service.modifyOperatorLogic("1");
@@ -1181,14 +1191,47 @@ describe("ExecuteWorkflowService", () => {
       expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 346, updateId: "update-1" }]]);
     }));
 
-    // The unit names no execution in what it sends, so a paused run this page did not start (another
-    // tab's, or this page's before a reload) has no execution here to store the change for.
-    it("refuses to change a paused run that this page did not start", () => {
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+    // The unit names the execution it holds to every session, so a page that did not start the paused run
+    // (it was reloaded since, or the run was started in another tab) changes its operators all the same.
+    it("changes a paused run that this page did not start, by the execution the unit names", () => {
+      // What a session is told when it opens: the state of no run, then the state of the run the unit holds.
+      unitReports(ExecutionState.Uninitialized);
+      unitReports(ExecutionState.Paused, 777);
+      editOperator();
+      const wsSendSpy = spyOnSocket();
+
+      service.modifyOperatorLogic("1");
+      const update = httpMock.expectOne(`${EXECUTIONS_URL}/777/updates`);
+      expect(update.request.body).toEqual({ operator: { operatorID: "1", operatorType: "ScanSource" } });
+      update.flush({ updateId: "update-9", operatorId: "1" });
+
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 777, updateId: "update-9" }]]);
+    });
+
+    it("stores a change for the execution the unit holds, not for the one this page created last", fakeAsync(() => {
+      // Another tab's run took the place of this page's on the unit, and paused.
+      startExecution(345);
+      unitReports(ExecutionState.Running, 345);
+      unitReports(ExecutionState.Initializing, 400);
+      unitReports(ExecutionState.Paused, 400);
+      editOperator();
+      const wsSendSpy = spyOnSocket();
+
+      service.modifyOperatorLogic("1");
+      httpMock.expectOne(`${EXECUTIONS_URL}/400/updates`).flush({ updateId: "update-2", operatorId: "1" });
+
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 400, updateId: "update-2" }]]);
+    }));
+
+    it("refuses to change a paused run whose execution the unit has not named", () => {
+      // A state of no run names no execution, and takes the place of the one named before it.
+      unitReports(ExecutionState.Paused, 345);
+      unitReports(ExecutionState.Uninitialized);
+      unitReports(ExecutionState.Paused);
       const wsSendSpy = spyOnSocket();
 
       expect(() => service.modifyOperatorLogic("1")).toThrowError(
-        "cannot modify logic, the paused execution was not started from this page"
+        "cannot modify logic, the computing unit has not named the paused execution"
       );
       expect(wsSendSpy).not.toHaveBeenCalled();
     });
@@ -1218,16 +1261,17 @@ describe("ExecuteWorkflowService", () => {
       expect(wsSendSpy).not.toHaveBeenCalled();
     }));
 
-    it("forgets the execution this page started, which is not the next session's to change", fakeAsync(() => {
-      startExecution(345);
+    it("forgets the execution the unit named, which is not the next session's to change", () => {
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused, executionId: 345 });
 
       service.resetExecutionAndWorkers();
-      // The next session's run, which this page did not start, pauses.
-      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Paused });
+      // The next session shows a paused run before its unit has said which execution that is.
+      emitWsEvent({ type: "OperatorCurrentTuplesUpdateEvent", operatorID: "1", tuples: [] });
 
+      expect(service.getExecutionState().state).toBe(ExecutionState.Paused);
       expect(() => service.modifyOperatorLogic("1")).toThrowError(
-        "cannot modify logic, the paused execution was not started from this page"
+        "cannot modify logic, the computing unit has not named the paused execution"
       );
-    }));
+    });
   });
 });

@@ -323,21 +323,23 @@ describe("adaptLegacySyncExecutionResult", () => {
     expect(summary.state).toBe(WorkflowExecutionState.FAILED);
   });
 
-  test("deduplicates the legacy compilation error projections", () => {
+  test("lists an error the unit reports more than once only once, as a failure of the run", () => {
     const summary = adaptLegacySyncExecutionResult({
       success: false,
-      state: "CompilationFailed",
+      state: "Failed",
       operators: {},
-      compilationErrors: { error: "bad schema" },
-      errors: ["bad schema"],
+      errors: [
+        "EXECUTION_FAILURE: worker crashed",
+        "EXECUTION_FAILURE: worker crashed",
+        "EXECUTION_FAILURE: disk full",
+      ],
     });
 
-    expect(summary.state).toBe(WorkflowExecutionState.COMPILATION_FAILED);
-    expect(summary.errors).toHaveLength(1);
-    expect(summary.errors[0]).toMatchObject({
-      type: { name: WorkflowFatalErrorType.COMPILATION_ERROR },
-      message: "bad schema",
-    });
+    expect(summary.state).toBe(WorkflowExecutionState.FAILED);
+    expect(summary.errors.map(error => [error.type.name, error.message, error.operatorId])).toEqual([
+      [WorkflowFatalErrorType.EXECUTION_FAILURE, "EXECUTION_FAILURE: worker crashed", ""],
+      [WorkflowFatalErrorType.EXECUTION_FAILURE, "EXECUTION_FAILURE: disk full", ""],
+    ]);
   });
 
   test("keeps an absent materialized result absent and defaults optional errors to empty", () => {

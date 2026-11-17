@@ -27,7 +27,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.dao.SqlServer
-import org.jooq.exception.DataAccessException
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
@@ -49,53 +48,6 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     new WorkflowExecutionsDao(
       context.configuration
     )
-
-  /**
-    * This method inserts a new entry of a workflow execution in the database and returns the generated eId
-    *
-    * @param workflowId the given workflow
-    * @param uid        user id that initiated the execution
-    * @return generated execution ID
-    */
-
-  def insertNewExecution(
-      workflowId: WorkflowIdentity,
-      uid: Integer,
-      executionName: String,
-      environmentVersion: String,
-      computingUnitId: Integer,
-      warehouseId: Option[Int] = None
-  ): ExecutionIdentity = {
-    // first retrieve the latest version of this workflow
-    val vid = getLatestVersion(workflowId.id.toInt)
-    val newExecution = new WorkflowExecutions()
-    if (executionName != "") {
-      newExecution.setName(executionName)
-    }
-    newExecution.setVid(vid)
-    newExecution.setUid(uid)
-    newExecution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    newExecution.setEnvironmentVersion(environmentVersion)
-
-    // Set computing unit ID if provided
-    newExecution.setCuid(computingUnitId)
-    // The warehouse this run writes into (#6870); null = the shared default warehouse.
-    warehouseId.foreach(id => newExecution.setWhid(id))
-
-    try {
-      workflowExecutionsDao.insert(newExecution)
-    } catch {
-      // A NOT NULL column (e.g. uid, vid, cuid) was null. Postgres reports this
-      // as SQLState 23502; surface a readable message instead of the raw
-      // jOOQ/JDBC stack trace, while preserving the original as the cause.
-      case e: DataAccessException if e.sqlState() == "23502" =>
-        throw new IllegalArgumentException(
-          "Cannot persist workflow execution: a required field (uid, vid, or cuid) was null.",
-          e
-        )
-    }
-    ExecutionIdentity(newExecution.getEid.longValue())
-  }
 
   /**
     * What an execution's row keeps as its environment version: the version of the engine (the
@@ -147,16 +99,6 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     */
   def markFailed(eid: ExecutionIdentity): Unit =
     updateStatus(eid, maptoStatusCode(FAILED), new Timestamp(System.currentTimeMillis()))
-
-  def tryGetExistingExecution(executionId: ExecutionIdentity): Option[WorkflowExecutions] = {
-    try {
-      Option(workflowExecutionsDao.fetchOneByEid(executionId.id.toInt))
-    } catch {
-      case t: Throwable =>
-        logger.info("Unable to get execution. Error = " + t.getMessage)
-        None
-    }
-  }
 
   def tryUpdateExistingExecution(
       executionId: ExecutionIdentity

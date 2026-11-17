@@ -29,14 +29,13 @@ import org.apache.texera.amber.core.storage.{
   WarehouseUnavailableException
 }
 import org.apache.texera.amber.core.tuple.{Tuple, TupleUtils}
-import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
   OperatorIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowSettings}
+import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
   ConsoleMessageType
@@ -52,8 +51,6 @@ import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
-import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.service.WorkflowService
 import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
@@ -66,21 +63,6 @@ import javax.ws.rs.core.MediaType
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
-
-case class SyncExecutionRequest(
-    executionName: String,
-    logicalPlan: LogicalPlanPojo,
-    workflowSettings: Option[WorkflowSettings],
-    targetOperatorIds: List[String],
-    timeoutSeconds: Int,
-    maxOperatorResultCharLimit: Int,
-    maxOperatorResultCellCharLimit: Int,
-    // The user_warehouse this run writes into. Carried from the caller the same way
-    // computingUnitId is: the agent forwards what the user picked in the UI. Required
-    // while per-user warehouses are enabled; absent keeps the shared default when the
-    // feature is off (#7751).
-    warehouseId: Option[Int] = None
-)
 
 /**
   * The body of `POST /api/execution/{eid}/run`: run an execution the Dashboard service created, on
@@ -130,7 +112,6 @@ case class SyncExecutionResult(
     success: Boolean,
     state: String,
     operators: Map[String, OperatorInfo],
-    compilationErrors: Option[Map[String, String]],
     errors: Option[List[String]]
 )
 
@@ -156,96 +137,10 @@ class SyncExecutionResource extends LazyLogging {
   ): WorkflowService =
     WorkflowService.getOrCreate(workflowId, computingUnitId)
 
-  @POST
-  @Path("/{wid}/{cuid}/run")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def executeWorkflowSync(
-      @PathParam("wid") workflowId: Long,
-      @PathParam("cuid") computingUnitId: Int,
-      request: SyncExecutionRequest,
-      @Auth user: SessionUser
-  ): SyncExecutionResult = {
-    val timeoutSeconds = request.timeoutSeconds
-
-    val maxOperatorResultCharLimit =
-      Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS)
-    val maxOperatorResultCellCharLimit =
-      Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
-
-    logger.info(
-      s"Starting sync execution for workflow $workflowId with limits: " +
-        s"maxOperatorResultCharLimit=${request.maxOperatorResultCharLimit} (capped to $maxOperatorResultCharLimit), " +
-        s"maxOperatorResultCellCharLimit=${request.maxOperatorResultCellCharLimit} (capped to $maxOperatorResultCellCharLimit)"
-    )
-
-    try {
-      val workflowService = workflowServiceOf(WorkflowIdentity(workflowId), computingUnitId)
-
-      // "Execute To" semantics: when a single target is given, run only its upstream sub-DAG.
-      val effectiveLogicalPlan =
-        computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
-
-      val executeRequest = WorkflowExecuteRequest(
-        executionName = request.executionName,
-        engineVersion = "1.0",
-        logicalPlan = effectiveLogicalPlan,
-        replayFromExecution = None,
-        workflowSettings = request.workflowSettings
-          .getOrElse(
-            WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize)
-          ),
-        emailNotificationEnabled = false,
-        computingUnitId = computingUnitId,
-        warehouseId = request.warehouseId
-      )
-
-      workflowService.initExecutionService(
-        executeRequest,
-        Some(user.getUser),
-        new URI(s"sync-execution://$workflowId")
-      )
-
-      val executionService = workflowService.executionService.getValue
-      if (executionService == null) {
-        return SyncExecutionResult(
-          success = false,
-          state = "Error",
-          operators = Map.empty,
-          compilationErrors = None,
-          errors = Some(List("Failed to initialize execution service"))
-        )
-      }
-
-      // Multi-region operators (e.g., HashJoin: build region then probe region) report their
-      // aggregated logical state as COMPLETED for a brief window after the first region
-      // terminates and before the second region's workers are added to regionExecutions.
-      // Guard against firing during that window by also requiring every declared external
-      // input port to be present in the operator's input metrics — port-1 stats only appear
-      // once probe actually starts consuming, which closes the race.
-      val targetExpectedExternalInputs: Map[String, Int] = effectiveLogicalPlan.operators
-        .filter(op => request.targetOperatorIds.contains(op.operatorIdentifier.id))
-        .map(op => op.operatorIdentifier.id -> op.operatorInfo.inputPorts.count(!_.id.internal))
-        .toMap
-
-      awaitResults(
-        executionService,
-        request.targetOperatorIds,
-        targetExpectedExternalInputs,
-        timeoutSeconds,
-        maxOperatorResultCharLimit,
-        maxOperatorResultCellCharLimit
-      )
-    } catch {
-      case e: Exception =>
-        logger.error(s"Sync execution error: ${e.getMessage}", e)
-        handleExecutionError(e)
-    }
-  }
-
   /**
     * Runs execution `executionId`, which the Dashboard service created for the caller, on this
     * computing unit, from the plan stored in its plan table, and answers once it ends, once its
-    * targets complete, or once an operator logs an error, as [[executeWorkflowSync]] does.
+    * targets complete, or once an operator logs an error.
     *
     * The workflow is the one the plan table belongs to; the execution must have been created for
     * the caller, on `computingUnitId`, and not started before. The start is checked
@@ -262,15 +157,7 @@ class SyncExecutionResource extends LazyLogging {
       request: SyncRunRequest,
       @Auth user: SessionUser
   ): SyncExecutionResult = {
-    def refused(message: String): SyncExecutionResult =
-      SyncExecutionResult(
-        success = false,
-        state = "Error",
-        operators = Map.empty,
-        compilationErrors = None,
-        errors = Some(List(message))
-      )
-    if (request == null) return refused("The request has no body.")
+    if (request == null) return errorResult("The request has no body.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
     try {
       val started = for {
@@ -288,7 +175,7 @@ class SyncExecutionResource extends LazyLogging {
       started match {
         case Left(message) =>
           logger.info(s"Refused to start execution $executionId: $message")
-          refused(message)
+          errorResult(message)
         case Right(execution) =>
           awaitResults(
             execution,
@@ -302,9 +189,18 @@ class SyncExecutionResource extends LazyLogging {
     } catch {
       case e: Exception =>
         logger.error(s"Sync execution error: ${e.getMessage}", e)
-        handleExecutionError(e)
+        errorResult(Option(e.getMessage).getOrElse("Unknown error"))
     }
   }
+
+  /** The answer for a run this unit refused to start, or failed on: an error, saying why. */
+  private def errorResult(message: String): SyncExecutionResult =
+    SyncExecutionResult(
+      success = false,
+      state = "Error",
+      operators = Map.empty,
+      errors = Some(List(message))
+    )
 
   /**
     * How many external input ports each of `targets`, a logical operator, has in the plan
@@ -350,6 +246,13 @@ class SyncExecutionResource extends LazyLogging {
 
     // Require COMPLETED, not just "has output", so upstream operators finish flushing
     // their data downstream before we tear the execution down.
+    //
+    // Multi-region operators (e.g., HashJoin: build region then probe region) report their
+    // aggregated logical state as COMPLETED for a brief window after the first region
+    // terminates and before the second region's workers are added to regionExecutions.
+    // Guard against firing during that window by also requiring every external input port
+    // of a target to be present in the operator's input metrics — port-1 stats only appear
+    // once probe actually starts consuming, which closes the race.
     def allTargetsCompleted(stats: ExecutionStatsStore): Boolean = {
       targetOperatorIds.nonEmpty && targetOperatorIds.forall { opId =>
         stats.operatorInfo.get(opId).exists { metrics =>
@@ -404,18 +307,11 @@ class SyncExecutionResource extends LazyLogging {
               success = false,
               state = "Killed",
               operators = Map.empty,
-              compilationErrors = None,
               errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
             )
           case e: Exception =>
             logger.error(s"Error waiting for execution: ${e.getMessage}", e)
-            return SyncExecutionResult(
-              success = false,
-              state = "Error",
-              operators = Map.empty,
-              compilationErrors = None,
-              errors = Some(List(e.getMessage))
-            )
+            return errorResult(e.getMessage)
         }
       }
 
@@ -478,7 +374,6 @@ class SyncExecutionResource extends LazyLogging {
       success = isSuccess,
       state = stateString,
       operators = operatorInfos,
-      compilationErrors = None,
       errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
     )
   }
@@ -608,34 +503,6 @@ class SyncExecutionResource extends LazyLogging {
     }
 
     operatorInfos.toMap
-  }
-
-  private def handleExecutionError(e: Exception): SyncExecutionResult = {
-    val errorMsg = e.getMessage
-    val isCompilationError = errorMsg != null && (
-      errorMsg.contains("compilation") ||
-        errorMsg.contains("Compilation") ||
-        errorMsg.contains("operator") ||
-        errorMsg.contains("schema")
-    )
-
-    if (isCompilationError) {
-      SyncExecutionResult(
-        success = false,
-        state = "CompilationFailed",
-        operators = Map.empty,
-        compilationErrors = Some(Map("error" -> errorMsg)),
-        errors = Some(List(errorMsg))
-      )
-    } else {
-      SyncExecutionResult(
-        success = false,
-        state = "Error",
-        operators = Map.empty,
-        compilationErrors = None,
-        errors = Some(List(Option(e.getMessage).getOrElse("Unknown error")))
-      )
-    }
   }
 
   /**
@@ -991,21 +858,6 @@ class SyncExecutionResource extends LazyLogging {
       case _             => "Unknown"
     }
   }
-
-  // "Execute To": with exactly one target, only the part of the plan up to it runs. A target the
-  // plan does not have leaves the plan whole.
-  private def computeSubDAGIfNeeded(
-      logicalPlan: LogicalPlanPojo,
-      targetOperatorIds: List[String]
-  ): LogicalPlanPojo =
-    targetOperatorIds match {
-      case List(targetOpId) =>
-        if (!logicalPlan.operators.exists(_.operatorIdentifier.id == targetOpId)) {
-          logger.warn(s"Target operator $targetOpId not found in logical plan, using full DAG")
-        }
-        logicalPlan.upstreamOf(targetOpId)
-      case _ => logicalPlan
-    }
 
   @GET
   @Path("/health")

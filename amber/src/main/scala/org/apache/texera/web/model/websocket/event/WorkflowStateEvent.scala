@@ -19,4 +19,17 @@
 
 package org.apache.texera.web.model.websocket.event
 
-case class WorkflowStateEvent(state: String) extends TexeraWebSocketEvent
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+
+/**
+  * The state of the run of a workflow that this computing unit holds, as a session on the
+  * workflow is told it when it opens and each time the state changes.
+  *
+  * @param executionId the execution the run is of, so a session that did not start the run knows
+  *                    which execution it watches; None when the state is of no run
+  */
+case class WorkflowStateEvent(
+    state: String,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    executionId: Option[Long]
+) extends TexeraWebSocketEvent

@@ -22,7 +22,7 @@ package org.apache.texera.web.resource
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
-import com.fasterxml.jackson.databind.exc.InvalidTypeIdException
+import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.google.protobuf.timestamp.Timestamp
 import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
@@ -53,10 +53,7 @@ import org.apache.texera.amber.core.workflow.{
   PortIdentity,
   WorkflowContext
 }
-import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
-  COMPILATION_ERROR,
-  EXECUTION_FAILURE
-}
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{
   CoordinatorConfig,
@@ -64,10 +61,14 @@ import org.apache.texera.amber.engine.architecture.coordinator.{
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  COMPLETED,
+  KILLED,
+  PAUSED,
   READY,
   RUNNING
 }
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
+import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.limit.LimitOpDesc
@@ -103,22 +104,18 @@ import org.apache.texera.web.model.http.response.execution.CreateExecutionRespon
 import org.apache.texera.web.model.websocket.event.{PaginatedResultEvent, TexeraWebSocketEvent}
 import org.apache.texera.web.model.websocket.request.{
   HeartBeatRequest,
-  ModifyLogicRequest,
   OperatorUpdateRequest,
   ResultPaginationRequest,
-  RetryRequest,
   TexeraWebSocketRequest,
-  WorkflowExecuteRequest,
   WorkflowStartRequest
 }
-import org.apache.texera.web.model.websocket.response.ModifyLogicResponse
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
 import org.apache.texera.web.service.{
-  ExecutionReconfigurationService,
   ExecutionResultService,
   WorkflowExecutionService,
   WorkflowService
 }
+import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.concurrent.Eventually
@@ -149,42 +146,43 @@ import scala.util.Try
 /**
   * Unit tests for the websocket endpoint's message handling.
   *
-  * The endpoint itself is thin, but two pieces of it are real logic that nothing else guards:
+  * The endpoint itself is thin, but three pieces of it are real logic that nothing else guards:
   *
-  *   - the write-access gate on `WorkflowExecuteRequest`. It is the only consumer of the privilege
-  *     `myOnOpen` parsed off the handshake, and denying it must both surface an error to the client
-  *     and rethrow. Note this branch is unreachable in single-node mode, where
-  *     `ServletAwareConfigurator` hard-codes WRITE, but live under Kubernetes where the privilege
-  *     comes from the `x-user-computing-unit-access` header.
-  *   - the catch-all error mapper, which turns any exception into a `WorkflowFatalError`, routes it
-  *     either to the execution's metadata store or (with no execution) straight to the socket, and
-  *     then rethrows so the container sees it too. Both halves are asserted: dropping either the
-  *     send or the rethrow would leave the other silently missing. `objectMapper.readValue` runs
-  *     INSIDE the guarded region, so an unparseable frame is reported through that same mapper
-  *     rather than escaping un-mapped with the client told nothing; both of the mapper's routing
-  *     arms are asserted for a parse failure as well as for a handler failure.
-  *   - the three-state distinction every execution-scoped arm has to make: no workflow, a workflow
-  *     with no execution yet, and a live execution. `executionService` is a `BehaviorSubject`
-  *     created without an initial value, so `getValue` is null until one is published, and reading
-  *     it through `workflowStateOpt.map(...)` yields `Some(null)` — a shape that slips past a `case
-  *     None` guard and NPEs on the next dereference. The middle state is covered for both
-  *     `ModifyLogicRequest` and the `case other` fall-through; it is also the only input that tells
-  *     `workflowStateOpt` apart from `executionStateOpt`, so it is what pins each guard's condition.
+  *   - the write-access gate. A heartbeat and a read of results are open to every session; every
+  *     other request changes a run, and is its sender's to make only with WRITE on the socket's
+  *     computing unit, the privilege `myOnOpen` parsed off the handshake. The gate cannot fire in
+  *     single-node mode, where `ServletAwareConfigurator` hard-codes WRITE, but is live under
+  *     Kubernetes, where the privilege comes from the `x-user-computing-unit-access` header. The
+  *     requests it covers are checked against the mapper's registry, so a request type added
+  *     later has to be placed on one side of the gate here.
+  *   - what becomes of a frame that is not done. A frame that binds to no request, a request that
+  *     is refused and a request that fails are each answered to the session that sent them, and
+  *     to it alone: nothing is written into the run in flight, which every session on the
+  *     workflow sees, and nothing is thrown, which would have the container close the session.
+  *   - the three-state distinction every command to a run has to make: no workflow, a workflow
+  *     with no run yet, and a held run. `executionService` is a `BehaviorSubject` created without
+  *     an initial value, so `getValue` is null until one is published, and reading it through
+  *     `workflow.map(...)` yields `Some(null)` — a shape that slips past a `case None` guard and
+  *     NPEs on the next dereference. The middle state is the only input that tells the workflow
+  *     apart from its run, so it is what pins the guard's condition.
   *
-  * Everything here drives a mocked `javax.websocket.Session` (the pattern `CollaborationResourceSpec`
-  * established) and registers a `SessionState` directly, so no real workflow is created.
+  * The cases of a single session drive a mocked `javax.websocket.Session` (the pattern
+  * `CollaborationResourceSpec` established) and register a `SessionState` directly, on a
+  * workflow service that subscribes nothing, so no real workflow is created.
   *
-  * Starting an execution the Dashboard created (`WorkflowStartRequest`) and applying a change it
-  * stored (`OperatorUpdateRequest`) need more: each execution is created by `ExecutionCreator`, its
-  * rows in `MockTexeraDB` and its plan in the catalog the build's tests use (the Postgres JDBC
-  * catalog in CI), and is started on a `WorkflowService` whose sessions are subscribed for real,
-  * so a session other than the sender's shows what reaches the workflow and what does not. Only
-  * the engine is a `TestAmberClient` on this suite's actor system, which answers nothing. Its
-  * coordinator tells every registered session of its regions (`RegionUpdateEvent`) once it is up,
-  * so the cases that build one wait for that before they end. A refused start is checked to reach
-  * its sender alone, to send no statement to the database, and to leave the run in flight as it
-  * was; a start frame that does not bind too. A start over a socket whose URI carries the user's
-  * access token, as a browser's does, is checked to log no line naming it.
+  * The cases that show what reaches the other sessions on a workflow, starting an execution the
+  * Dashboard created (`WorkflowStartRequest`), killing its run (`WorkflowKillRequest`) and
+  * applying a change it stored (`OperatorUpdateRequest`) among them, need more: each execution is
+  * created by `ExecutionCreator`, its rows in `MockTexeraDB` and its plan in the catalog the
+  * build's tests use (the Postgres JDBC catalog in CI), and is started on a `WorkflowService`
+  * whose sessions are subscribed for real, so a session other than the sender's shows what
+  * reaches the workflow and what does not. Only the engine is a `TestAmberClient` on this suite's
+  * actor system, which answers nothing. Its coordinator tells every registered session of its
+  * regions (`RegionUpdateEvent`) once it is up, so the cases that build one wait for that before
+  * they end. A refused start is checked to reach its sender alone, to send no statement to the
+  * database, and to leave the run in flight as it was; a frame that does not bind too. A start
+  * over a socket whose URI carries the user's access token, as a browser's does, is checked to
+  * log no line naming it.
   *
   * Deliberately not covered, because each would pin an accidental failure rather than a contract:
   *   - `myOnOpen`'s missing-`wid`/`cuid` and bogus-privilege paths, which fail with NPE /
@@ -194,6 +192,8 @@ import scala.util.Try
   *     pass-through is asserted here, against a stubbed result service.
   *   - what the mapper itself accepts and rejects, already owned by `TexeraWebSocketRequestSpec`;
   *     the malformed-frame cases here are about the endpoint's handling, not the binding rules.
+  *   - what a command does once the run takes it, owned by `ExecutionRuntimeServiceSpec`. Only a
+  *     kill is followed through here, to what every session is told and the execution's row.
   */
 class WorkflowWebsocketResourceSpec
     extends TestKit(ActorSystem("WorkflowWebsocketResourceSpec"))
@@ -332,15 +332,6 @@ class WorkflowWebsocketResourceSpec
     * `AmberRuntime.scheduleCallThroughActorSystem`, whose actor system is null in a unit JVM.
     */
   private class TestWorkflowService(id: Long) extends WorkflowService(WorkflowIdentity(id), 1, 10) {
-    var initCalls: List[(WorkflowExecuteRequest, Option[User], URI)] = Nil
-
-    /**
-      * When set, `initExecutionService` publishes this execution and then fails — the shape a real
-      * `executeWorkflow()` failure takes, and the only way to reach the endpoint's catch arm with an
-      * execution that did NOT exist when the frame arrived.
-      */
-    var publishThenFail: Option[WorkflowExecutionService] = None
-
     val results = new StubResultService(workflowId, computingUnitId, stateStore)
     override val resultService: ExecutionResultService = results
 
@@ -348,18 +339,6 @@ class WorkflowWebsocketResourceSpec
     override def connectToExecution(onNext: TexeraWebSocketEvent => Unit): Disposable =
       Disposable.empty()
     override def disconnect(): Unit = ()
-
-    override def initExecutionService(
-        req: WorkflowExecuteRequest,
-        userOpt: Option[User],
-        sessionUri: URI
-    ): Unit = {
-      initCalls = initCalls :+ ((req, userOpt, sessionUri))
-      publishThenFail.foreach { execution =>
-        executionService.onNext(execution)
-        throw new IllegalStateException("failed while starting the execution")
-      }
-    }
   }
 
   /**
@@ -380,8 +359,12 @@ class WorkflowWebsocketResourceSpec
   ) extends ExecutionResultService(workflowId, computingUnitId, stateStore) {
     var captured: Option[ResultPaginationRequest] = None
 
+    /** When set, every read fails with it, as the real one fails when its storage does. */
+    var failure: Option[String] = None
+
     override def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
       captured = Some(request)
+      failure.foreach(why => throw new IllegalStateException(why))
       PaginatedResultEvent(
         request.requestID,
         request.operatorID,
@@ -395,54 +378,17 @@ class WorkflowWebsocketResourceSpec
   }
 
   /**
-    * Production only builds an `ExecutionReconfigurationService` inside `executeWorkflow()`, but
-    * the field it lands in is a public var, so a test can put a stub there directly. The two
-    * `register*` overrides are the seams the service already ships for constructing it without a
-    * live `AmberClient` (see `ExecutionReconfigurationServiceSpec`).
-    */
-  private class CapturingReconfigurationService(stateStore: ExecutionStateStore)
-      extends ExecutionReconfigurationService(
-        client = null,
-        stateStore,
-        workflow = null,
-        bindResources = Some(identity),
-        planUri = new URI("vfs:///wid/1/eid/1/plan"),
-        creator = 42,
-        mountRoot = None
-      ) {
-    var captured: Option[ModifyLogicRequest] = None
-
-    override protected def registerWorkerCompletionCallback(): Unit = ()
-    override protected def registerCompletionDiffHandler(): Unit = ()
-
-    override def modifyOperatorLogic(request: ModifyLogicRequest): TexeraWebSocketEvent = {
-      captured = Some(request)
-      // Both fields are derived from the request that arrived, so the response the endpoint
-      // forwards proves which request the service actually saw.
-      ModifyLogicResponse(
-        request.operator.operatorIdentifier.id,
-        isValid = true,
-        errorMessage = request.operator.asInstanceOf[LimitOpDesc].limit.toString
-      )
-    }
-  }
-
-  /**
-    * A real execution, built the way `WorkflowExecutionServiceSpec`/`WorkflowServiceSpec` do:
-    * construction does no external work, so the result service can be null.
+    * A run that was never started, built the way `WorkflowExecutionServiceSpec` and
+    * `WorkflowServiceSpec` do: construction does no external work, so the result service can be
+    * null.
     */
   private def newExecution(): WorkflowExecutionService =
     new WorkflowExecutionService(
       new WorkflowContext(),
       null,
-      executeRequest,
       new ExecutionStateStore(),
       (_: Throwable) => (),
-      Integer.valueOf(1), // uid; these tests never resolve a file
-      None,
-      new URI("vfs:///test"),
-      replay = None,
-      replayLog = None
+      None
     )
 
   /** A session state holding `workflow`, with `execution` published into it when given. */
@@ -458,26 +404,29 @@ class WorkflowWebsocketResourceSpec
     state
   }
 
-  private def executeRequest: WorkflowExecuteRequest =
-    objectMapper
-      .readValue(
-        """{"type":"WorkflowExecuteRequest","executionName":"exec","engineVersion":"v",
-          |"logicalPlan":{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]},
-          |"workflowSettings":{},"emailNotificationEnabled":false,"computingUnitId":1}""".stripMargin,
-        classOf[TexeraWebSocketRequest]
-      )
-      .asInstanceOf[WorkflowExecuteRequest]
-
   private def frameOf(request: TexeraWebSocketRequest): String =
     objectMapper.writeValueAsString(request)
-
-  /** Shared by the "forwarded" and "no workflow attached" halves of each guarded arm. */
-  private val modifyLogicFrame =
-    """{"type":"ModifyLogicRequest","operator":{"operatorType":"Limit","limit":7}}"""
 
   private val paginationFrame =
     """{"type":"ResultPaginationRequest","requestID":"req-77","operatorID":"op-88",
       |"pageIndex":3,"pageSize":25}""".stripMargin
+
+  /**
+    * A frame of each command to a run, by its type: every request but a heartbeat, a read of
+    * results, a start and a change to an operator. Each carries a payload where its type has one.
+    */
+  private val commandFrames: Seq[(String, String)] = Seq(
+    "WorkflowPauseRequest" -> """{"type":"WorkflowPauseRequest"}""",
+    "WorkflowResumeRequest" -> """{"type":"WorkflowResumeRequest"}""",
+    "WorkflowKillRequest" -> """{"type":"WorkflowKillRequest"}""",
+    "WorkflowCheckpointRequest" -> """{"type":"WorkflowCheckpointRequest"}""",
+    "RetryRequest" -> """{"type":"RetryRequest","workers":["worker-a","worker-b"]}""",
+    "SkipTupleRequest" -> """{"type":"SkipTupleRequest","workerIds":["worker-a"]}""",
+    "DebugCommandRequest" ->
+      """{"type":"DebugCommandRequest","operatorId":"op-dbg","workerId":"worker-a","cmd":"n"}""",
+    "PythonExpressionEvaluateRequest" ->
+      """{"type":"PythonExpressionEvaluateRequest","expression":"len(tuple_)","operatorId":"op-eval"}"""
+  )
 
   /** The `type` discriminator of each frame the endpoint wrote back. */
   private def sentTypes(sent: ArrayBuffer[String]): Seq[String] =
@@ -490,215 +439,44 @@ class WorkflowWebsocketResourceSpec
       .flatMap(_.get("fatalErrors").elements().asScala)
       .map(_.get("message").asText())
 
+  /**
+    * Fails unless `sent` holds one frame: the answer to a request that was refused, an error of
+    * no operator that says `why` and nothing more.
+    */
+  private def assertRefused(sent: ArrayBuffer[String], why: String): Unit = {
+    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
+    val errors = objectMapper.readTree(sent.head).get("fatalErrors")
+    errors.size() shouldBe 1
+    // The scalapb enum does not serialize as a bare string: it becomes an object, so the client
+    // reads `type.name`. Pinning the nested shape is the point — flattening it would break the
+    // frontend's error panel silently.
+    errors.get(0).get("type").get("name").asText() shouldBe "EXECUTION_FAILURE"
+    errors.get(0).get("message").asText() shouldBe why
+    errors.get(0).get("details").asText() shouldBe ""
+    // No operator: the frontend's error panel offers a jump to the operator an error names.
+    errors.get(0).get("operatorId").asText() shouldBe ""
+    // A real clock reading, not `Timestamp.defaultInstance` — the panel orders errors by this.
+    errors.get(0).get("timestamp").get("seconds").asLong() should be > 0L
+  }
+
   // -- heartbeat ----------------------------------------------------------------
 
-  "myOnMsg" should "answer a heartbeat without needing a workflow" in {
+  "myOnMsg" should "answer a heartbeat without needing a workflow, or WRITE on the unit" in {
     val (session, sent) = mockSession()
-    registerState(session, PrivilegeEnum.WRITE)
+    registerState(session, PrivilegeEnum.READ)
 
     resource.myOnMsg(session, frameOf(HeartBeatRequest()))
 
     sentTypes(sent) shouldBe Seq("HeartBeatResponse")
   }
 
-  // -- the write-access gate ----------------------------------------------------
-
-  it should "refuse a WorkflowExecuteRequest when the session has no write access" in {
-    // READ, not WRITE: the gate must fire before any workflow lookup. The handler both reports the
-    // failure to the client AND rethrows, so the container sees it too — assert both halves,
-    // because dropping the rethrow (or the send) would leave one of them silently missing.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.READ)
-
-    val ex = intercept[IllegalStateException] {
-      resource.myOnMsg(session, frameOf(executeRequest))
-    }
-    ex.getMessage should include("write access")
-
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    val errors = objectMapper.readTree(sent.head).get("fatalErrors")
-    errors.size() shouldBe 1
-    // Every mapped error is stamped COMPILATION_ERROR with a placeholder operator; the frontend's
-    // error panel keys on both.
-    // The scalapb enum does not serialize as a bare string: it becomes an object, so the client
-    // reads `type.name`. Pinning the nested shape is the point — flattening it would break the
-    // frontend's error panel silently.
-    errors.get(0).get("type").get("name").asText() shouldBe "COMPILATION_ERROR"
-    errors.get(0).get("operatorId").asText() shouldBe "unknown operator"
-    errors.get(0).get("message").asText() should include("write access")
-    errors.get(0).get("details").asText() should not be empty
-  }
-
-  it should "refuse a WorkflowExecuteRequest with write access but no workflow attached" in {
-    // WRITE, so the gate passes; the request then has nowhere to go. A distinct message is what
-    // proves the gate is its own branch rather than the same failure reported twice.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
-
-    val ex = intercept[IllegalStateException] {
-      resource.myOnMsg(session, frameOf(executeRequest))
-    }
-    ex.getMessage should include("workflow is not initialized")
-
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    fatalErrorMessages(sent).head should include("workflow is not initialized")
-  }
-
-  it should "announce Initializing before handing the request to the workflow" in {
-    val (session, sent) = mockSession(uid = Some(42))
-    val state = registerState(session, PrivilegeEnum.WRITE)
-    val workflow = new TestWorkflowService(9101L)
-    state.subscribe(workflow)
-
-    val request = executeRequest
-    resource.myOnMsg(session, frameOf(request))
-
-    // Order matters: the frontend flips its run button on this event, so it has to go out before
-    // the (synchronous, potentially slow) init call rather than after it.
-    sentTypes(sent) shouldBe Seq("WorkflowStateEvent")
-    objectMapper.readTree(sent.head).get("state").asText() shouldBe "Initializing"
-
-    workflow.initCalls should have size 1
-    val (forwardedReq, forwardedUser, forwardedUri) = workflow.initCalls.head
-    forwardedReq.executionName shouldBe request.executionName
-    // The uid is read out of the session's user-properties map; a wrong key would silently
-    // degrade every execution to anonymous.
-    forwardedUser.map(_.getUid.intValue()) shouldBe Some(42)
-    forwardedUri.toString should endWith("/wsapi/workflow-websocket")
-  }
-
-  // -- the default dispatch arm -------------------------------------------------
-
-  it should "report a runtime command that arrives before any workflow is attached" in {
-    // Anything that is not one of the four named requests falls through to `wsInput`, which only
-    // exists once an execution has been created. This is the no-workflow state; the workflow-but-no-
-    // execution state is the next case, and both have to report the same thing.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
-
-    val ex = intercept[IllegalStateException] {
-      resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
-    }
-    ex.getMessage should include("workflow execution is not initialized")
-
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    fatalErrorMessages(sent).head should include("workflow execution is not initialized")
-  }
-
-  it should "hand an unrecognised runtime command to the execution's websocket input" in {
-    // The other half of the same arm: with an execution attached the command is forwarded rather
-    // than rejected, and the sender's uid rides along with it.
-    val (session, sent) = mockSession(uid = Some(42))
-    val workflow = new TestWorkflowService(9102L)
-    val execution = newExecution()
-    attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
-
-    val received = ArrayBuffer.empty[(TexeraWebSocketRequest, Option[Integer])]
-    execution.wsInput.subscribe[TexeraWebSocketRequest]((req, uid) => received += ((req, uid)))
-
-    // A payload-carrying request, deliberately. `WorkflowPauseRequest` is a field-less case class,
-    // so its generated equals matches ANY instance: asserting on one would stay green with the
-    // deserialized request dropped and a fresh constant forwarded in its place.
-    resource.myOnMsg(session, """{"type":"RetryRequest","workers":["worker-a","worker-b"]}""")
-
-    received should have size 1
-    received.head._1 shouldBe RetryRequest(Seq("worker-a", "worker-b"))
-    // Some(42), not None: None is what a missing user-properties entry yields anyway, so asserting
-    // it would be green with the whole uid lookup deleted.
-    received.head._2 shouldBe Some(Integer.valueOf(42))
-    // Forwarding is the whole handling — nothing goes back to the socket, and no exception escapes.
-    sent shouldBe empty
-  }
-
-  it should "report a runtime command that arrives with a workflow but no execution" in {
-    // The third state of this arm, between the two above: a workflow IS attached, but nothing has
-    // published an execution into it yet. `executionService` is a `BehaviorSubject` created without
-    // an initial value, so `getValue` is null, and this is the input that pins how the arm reads it:
-    // `workflowStateOpt.map(_.executionService.getValue)` would wrap that null into `Some(null)` and
-    // walk straight past the `case None` guard that exists to report this very situation, NPEing on
-    // `value.wsInput` instead. The message has to be the same one the no-workflow case above
-    // produces: the client cannot act on the difference, and an NPE tells it nothing at all.
-    val (session, sent) = mockSession(uid = Some(42))
-    val workflow = new TestWorkflowService(9107L)
-    attach(session, PrivilegeEnum.WRITE, workflow)
-
-    val ex = intercept[IllegalStateException] {
-      resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
-    }
-    ex.getMessage should include("workflow execution is not initialized")
-
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    fatalErrorMessages(sent).head should include("workflow execution is not initialized")
-  }
-
-  // -- reconfiguration ----------------------------------------------------------
-
-  it should "forward a ModifyLogicRequest to the execution's reconfiguration service" in {
-    val (session, sent) = mockSession(uid = Some(42))
-    val workflow = new TestWorkflowService(9103L)
-    val execution = newExecution()
-    val reconfiguration = new CapturingReconfigurationService(execution.executionStateStore)
-    execution.executionReconfigurationService = reconfiguration
-    attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
-
-    resource.myOnMsg(session, modifyLogicFrame)
-
-    // The deserialized operator has to arrive intact: asserting only that SOME ModifyLogicResponse
-    // came back would stay green with a different (or default) request forwarded.
-    val captured = reconfiguration.captured.getOrElse(fail("no request reached the service"))
-    captured.operator shouldBe a[LimitOpDesc]
-    captured.operator.asInstanceOf[LimitOpDesc].limit shouldBe 7
-
-    sentTypes(sent) shouldBe Seq("ModifyLogicResponse")
-    val response = objectMapper.readTree(sent.head)
-    // Both values were computed by the stub FROM the request it received, so this pins the whole
-    // round trip rather than the shape of a canned reply.
-    response.get("opId").asText() shouldBe captured.operator.operatorIdentifier.id
-    response.get("errorMessage").asText() shouldBe "7"
-  }
-
-  it should "ignore a ModifyLogicRequest that arrives before any workflow is attached" in {
-    // The `if (workflowStateOpt.isDefined)` guard, observed false. Without this case the guard could
-    // be replaced by `if (true)` and nothing would notice: the `.get` on the empty Option would
-    // throw NoSuchElementException, the catch-all would turn it into a WorkflowErrorEvent, and the
-    // rethrow would escape — so both assertions here have teeth.
-    //
-    // Silence is the assertion, and it is what separates this from the next case: with no workflow
-    // there is nothing to reconfigure and nothing to say, whereas a workflow whose execution has not
-    // started yet is a state the client can act on and is reported.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
-
-    noException should be thrownBy resource.myOnMsg(session, modifyLogicFrame)
-
-    sent shouldBe empty
-  }
-
-  it should "report a ModifyLogicRequest that arrives before any execution exists" in {
-    // The input that separates `workflowStateOpt.isDefined` from the execution actually being there:
-    // a workflow with nothing published into its `executionService`. Reconfiguration needs the
-    // execution, not the workflow, so the guard has to be about the execution — reading
-    // `executionService.getValue` behind a workflow-shaped guard yields null and NPEs one dereference
-    // later. Same message as the `case other` arm, for the same reason.
-    val (session, sent) = mockSession(uid = Some(42))
-    val workflow = new TestWorkflowService(9108L)
-    attach(session, PrivilegeEnum.WRITE, workflow)
-
-    val ex = intercept[IllegalStateException] {
-      resource.myOnMsg(session, modifyLogicFrame)
-    }
-    ex.getMessage should include("workflow execution is not initialized")
-
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    fatalErrorMessages(sent).head should include("workflow execution is not initialized")
-  }
-
   // -- pagination ---------------------------------------------------------------
 
-  it should "answer a pagination request with what the result service returns" in {
+  it should "answer a pagination request with what the result service returns, without WRITE on the unit" in {
     val (session, sent) = mockSession()
     val workflow = new TestWorkflowService(9104L)
-    attach(session, PrivilegeEnum.WRITE, workflow)
+    // READ: a read of results changes no run, so the write-access gate does not cover it.
+    attach(session, PrivilegeEnum.READ, workflow)
 
     resource.myOnMsg(session, paginationFrame)
 
@@ -725,9 +503,9 @@ class WorkflowWebsocketResourceSpec
   }
 
   it should "ignore a pagination request that arrives before any workflow is attached" in {
-    // `workflowStateOpt.foreach(...)`, observed empty. Replacing that with
-    // `workflowStateOpt.get.resultService...` throws NoSuchElementException here, which the
-    // catch-all turns into a WorkflowErrorEvent and then rethrows — so both assertions bite.
+    // `workflow.foreach(...)`, observed empty. Replacing that with `workflow.get.resultService...`
+    // throws NoSuchElementException here, which the endpoint answers as a request that failed —
+    // so the assertion bites.
     val (session, sent) = mockSession()
     registerState(session, PrivilegeEnum.WRITE)
 
@@ -736,122 +514,241 @@ class WorkflowWebsocketResourceSpec
     sent shouldBe empty
   }
 
-  // -- the error mapper and unparseable frames ----------------------------------
+  // -- a request that fails -----------------------------------------------------
 
-  it should "report an unparseable frame instead of letting it escape unmapped" in {
-    // A stale or typo'd client sends an id nothing binds to. The mapper's own rejection is already
-    // pinned by `TexeraWebSocketRequestSpec`; what this asserts is that the failure travels through
-    // the endpoint's error mapper on its way out, exactly like a failure raised by a handler. The
-    // rethrow AND the send are both asserted, for the same reason as the write-access gate: losing
-    // either one leaves the other silently missing.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
-
-    val ex = intercept[InvalidTypeIdException] {
-      resource.myOnMsg(session, """{"type":"NoSuchWebSocketRequest"}""")
-    }
-    ex.getMessage should include("NoSuchWebSocketRequest")
-
-    // No execution is attached, so the mapper's socket arm is the one that runs.
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    // The offending id has to reach the client: a generic "bad frame" would leave a stale frontend
-    // with nothing to debug against.
-    fatalErrorMessages(sent).head should include("NoSuchWebSocketRequest")
-  }
-
-  it should "record an unparseable frame in the execution's metadata store when one exists" in {
-    // The other half of the mapper, reached by a parse failure rather than a handler failure: with an
-    // execution attached the error is written to its metadata store and nothing goes to the socket.
-    // Without this case, a fix that reported parse failures by sending directly from the parse site
-    // instead of routing them through the mapper would look correct.
-    val (session, sent) = mockSession(uid = Some(42))
-    val workflow = new TestWorkflowService(9109L)
-    val execution = newExecution()
-    attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
-
-    intercept[InvalidTypeIdException] {
-      resource.myOnMsg(session, """{"type":"NoSuchWebSocketRequest"}""")
-    }
-
-    val errors = execution.executionStateStore.metadataStore.getState.fatalErrors
-    errors.map(_.`type`) shouldBe Seq(COMPILATION_ERROR)
-    errors.head.message should include("NoSuchWebSocketRequest")
-    sent shouldBe empty
-  }
-
-  // -- the error mapper's metadata-store arm ------------------------------------
-
-  it should "record a failure in the execution's metadata store, replacing the stale compilation error" in {
-    // With an execution attached the mapper writes into its metadata store instead of the socket,
-    // and drops any earlier COMPILATION_ERROR so the panel shows one compilation failure at a time.
+  it should "answer a request that fails to its sender alone, with the failure, leaving the run in flight as it was" in {
+    // A read of results fails when its storage does, or when the results are in a warehouse this
+    // deployment no longer serves. The session that asked is told the failure whole, so the
+    // refusal of a disabled warehouse reaches it; the run in flight, which the read was of, is
+    // not touched, and the session stays open.
     val (session, sent) = mockSession(uid = Some(42))
     val workflow = new TestWorkflowService(9105L)
     val execution = newExecution()
     attach(session, PrivilegeEnum.READ, workflow, Some(execution))
-
     val store = execution.executionStateStore.metadataStore
-    // Two seeded errors of two different types. With only the new error in play the filter would
-    // have nothing to remove, so deleting it entirely would leave the test green.
     store.updateState(
-      _.addFatalErrors(
-        WorkflowFatalError(
-          COMPILATION_ERROR,
-          Timestamp(Instant.now),
-          "stale compilation",
-          "",
-          "op-a"
-        ),
+      _.withState(RUNNING).addFatalErrors(
         WorkflowFatalError(EXECUTION_FAILURE, Timestamp(Instant.now), "runtime failure", "", "op-b")
       )
     )
+    val inFlight = store.getState
+    workflow.results.failure = Some("the results are in a warehouse this deployment does not serve")
 
-    // READ access, so the write-access gate throws inside the try.
-    intercept[IllegalStateException] {
-      resource.myOnMsg(session, frameOf(executeRequest))
-    }
+    noException should be thrownBy resource.myOnMsg(session, paginationFrame)
 
-    val errors = store.getState.fatalErrors
-    // The unrelated execution failure survives; only the compilation error is superseded.
-    errors.map(_.message) should contain("runtime failure")
-    errors.map(_.message) should not contain "stale compilation"
-    val compilationErrors = errors.filter(_.`type` == COMPILATION_ERROR)
-    compilationErrors should have size 1
-    compilationErrors.head.message should include("write access")
+    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
+    val errors = objectMapper.readTree(sent.head).get("fatalErrors")
+    errors.size() shouldBe 1
+    errors.get(0).get("type").get("name").asText() shouldBe "EXECUTION_FAILURE"
+    errors.get(0).get("message").asText() shouldBe
+      "java.lang.IllegalStateException: the results are in a warehouse this deployment does not serve"
     // `details` is what the frontend's error panel shows a developer, and it has to be the stack
     // trace, not the message again: naming the throwing frame is what separates
-    // `getStackTraceWithAllCauses(err)` from `err.toString` / `err.getMessage`, both of which would
-    // satisfy any "is non-empty" check.
-    compilationErrors.head.details should include("WorkflowWebsocketResource.myOnMsg")
-    // A real clock reading, not `Timestamp.defaultInstance` — the panel orders errors by this.
-    compilationErrors.head.timestamp.seconds should be > 0L
-
-    // Nothing reaches the socket: this is the arm that replaces the WorkflowErrorEvent send.
-    sent shouldBe empty
+    // `getStackTraceWithAllCauses(failure)` from `failure.toString` / `failure.getMessage`, both of
+    // which would satisfy any "is non-empty" check.
+    errors.get(0).get("details").asText() should include("StubResultService.handleResultPagination")
+    errors.get(0).get("operatorId").asText() shouldBe ""
+    errors.get(0).get("timestamp").get("seconds").asLong() should be > 0L
+    store.getState shouldBe inFlight
   }
 
-  it should "route a failure raised while the execution is being created to the socket" in {
-    // `executionStateOpt` is captured BEFORE the try, so it names the execution that existed when
-    // the frame arrived. An execution created DURING the request therefore does not receive the
-    // error — it goes to the socket instead. Recomputing that capture inside the catch (it is used
-    // nowhere else) would reverse the routing, and no other case in this suite can see the
-    // difference, because every other one either has an execution throughout or never gains one.
+  // -- frames that bind to no request -------------------------------------------
+
+  it should "answer a frame that binds to no request to its sender alone, writing nothing and leaving the run in flight as it was" in {
+    // A stale or typo'd client. The mapper's own rejections are pinned by
+    // `TexeraWebSocketRequestSpec`; what this asserts is what the endpoint makes of them. The type
+    // the frame claims reaches the client, when it reads as a type's name: a generic "bad frame"
+    // would leave a stale frontend with nothing to debug against. The mapper's own words, which
+    // quote the frame, reach neither the client nor the log.
+    val unreadable = "the request could not be read"
+    val frames: Seq[(String, String, String)] = Seq(
+      (
+        "an unknown type",
+        """{"type":"NoSuchWebSocketRequest"}""",
+        s"$unreadable as a NoSuchWebSocketRequest"
+      ),
+      (
+        "a logical plan to compile and run, which a unit does not take",
+        """{"type":"WorkflowExecuteRequest","executionName":"exec","engineVersion":"v",
+          |"logicalPlan":{"operators":[{"operatorType":"Limit","limit":7,"password":"hunter2"}],
+          |"links":[],"opsToViewResult":[],"opsToReuseResult":[]},"workflowSettings":{},
+          |"emailNotificationEnabled":false,"computingUnitId":1}""".stripMargin,
+        s"$unreadable as a WorkflowExecuteRequest"
+      ),
+      (
+        "an operator to change, sent whole, which a unit does not take",
+        """{"type":"ModifyLogicRequest","operator":{"operatorType":"Limit","limit":7}}""",
+        s"$unreadable as a ModifyLogicRequest"
+      ),
+      (
+        // As the shipped client sends it: `workers`, where the request declares `workerIds`.
+        "a known type whose fields do not bind",
+        """{"type":"SkipTupleRequest","workers":["worker-a"]}""",
+        s"$unreadable as a SkipTupleRequest"
+      ),
+      ("no type", """{"requestID":"req-1","operatorID":"op-2"}""", unreadable),
+      ("a type that is not text", """{"type":7}""", unreadable),
+      (
+        "a type that does not read as a type's name",
+        """{"type":"WorkflowPauseRequest\nand a line of its own"}""",
+        unreadable
+      ),
+      ("a type longer than any type's name", s"""{"type":"${"R" * 65}"}""", unreadable),
+      ("JSON that is no object", "null", unreadable),
+      ("no JSON at all", "pause the workflow", unreadable),
+      ("an empty frame", "", unreadable)
+    )
+    val service = new StoredStartService
+    try {
+      val inFlight = runInFlight(service)
+      val inFlightState = inFlight.executionStateStore.metadataStore.getState
+      val commands = ArrayBuffer.empty[TexeraWebSocketRequest]
+      inFlight.wsInput.subscribe[TexeraWebSocketRequest]((request, _) => commands += request)
+      val (session, sent) = sessionOn(service)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      frames.foreach {
+        case (name, frame, why) =>
+          withClue(s"$name: ") {
+            sent.clear()
+            otherSent.clear()
+
+            var statements: Seq[StatementRecorder.Statement] = Nil
+            val logLines = texeraLogLinesOf {
+              statements = recorder.record {
+                noException should be thrownBy resource.myOnMsg(session, frame)
+              }
+            }
+
+            statements shouldBe empty
+            assertRefused(sent, why)
+            otherSent shouldBe empty
+            commands shouldBe empty
+            service.executionService.getValue should be theSameInstanceAs inFlight
+            inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
+            logLines.filter(_.contains("hunter2")) shouldBe empty
+            logLines.filter(_.contains("and a line of its own")) shouldBe empty
+          }
+      }
+    } finally service.unsubscribeAll()
+  }
+
+  // -- the write-access gate ----------------------------------------------------
+
+  it should "refuse every request that changes a run to a session without WRITE on the unit, to that session alone" in {
+    // The gate covers every request the mapper registers but the two reads. Checked against the
+    // registry, so a request type added later is either refused here or declared a read.
+    val changing: Seq[(String, String)] = commandFrames ++ Seq(
+      "WorkflowStartRequest" -> frameOf(WorkflowStartRequest(974999L, "vfs:///x")),
+      "OperatorUpdateRequest" -> frameOf(OperatorUpdateRequest(974999L, "update-1"))
+    )
+    val registered = classOf[TexeraWebSocketRequest]
+      .getAnnotation(classOf[JsonSubTypes])
+      .value()
+      .map(_.value().getSimpleName)
+      .toSet
+    changing.map(_._1).toSet shouldBe registered -- Set(
+      "HeartBeatRequest",
+      "ResultPaginationRequest"
+    )
+
+    val noWriteAccess = "you do not have write access to the computing unit"
+    val service = new StoredStartService
+    try {
+      val inFlight = runInFlight(service)
+      val inFlightState = inFlight.executionStateStore.metadataStore.getState
+      val commands = ArrayBuffer.empty[TexeraWebSocketRequest]
+      inFlight.wsInput.subscribe[TexeraWebSocketRequest]((request, _) => commands += request)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      // READ is what a unit shared for reading gives; NONE is a session's privilege until one is
+      // read off its handshake.
+      for (access <- Seq(PrivilegeEnum.READ, PrivilegeEnum.NONE); (kind, frame) <- changing) {
+        withClue(s"a $kind with $access: ") {
+          val (session, sent) = sessionOn(service, access = access)
+          sent.clear()
+          otherSent.clear()
+
+          val statements = recorder.record {
+            noException should be thrownBy resource.myOnMsg(session, frame)
+          }
+
+          statements shouldBe empty
+          if (kind == "OperatorUpdateRequest") {
+            // Refused as a change that does not apply, which the editor shows as one.
+            modifyLogicResponses(sent) shouldBe Seq(("", false, noWriteAccess))
+            sent should have size 1
+          } else {
+            assertRefused(sent, noWriteAccess)
+          }
+          otherSent shouldBe empty
+          commands shouldBe empty
+          service.executionService.getValue should be theSameInstanceAs inFlight
+          inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
+        }
+      }
+    } finally service.unsubscribeAll()
+  }
+
+  // -- commands to the run ------------------------------------------------------
+
+  it should "hand each command of a session with WRITE on to the run's websocket input, with its sender" in {
+    commandFrames.foreach {
+      case (kind, frame) =>
+        withClue(s"a $kind: ") {
+          val (session, sent) = mockSession(uid = Some(42))
+          val workflow = new TestWorkflowService(9102L)
+          val execution = newExecution()
+          attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
+          val received = ArrayBuffer.empty[(TexeraWebSocketRequest, Option[Integer])]
+          execution.wsInput.subscribe[TexeraWebSocketRequest]((req, uid) =>
+            received += ((req, uid))
+          )
+
+          resource.myOnMsg(session, frame)
+
+          // The request as it was sent, not a fresh one of its type: the frames that carry a
+          // payload are what tell the two apart. `SkipTupleRequest` holds an array, which no
+          // `equals` compares by content, so it is compared as it is written.
+          received.map(_._1).map(frameOf) shouldBe
+            Seq(frameOf(objectMapper.readValue(frame, classOf[TexeraWebSocketRequest])))
+          received.head._1.getClass.getSimpleName shouldBe kind
+          // Some(42), not None: None is what a missing user-properties entry yields anyway, so
+          // asserting it would be green with the whole uid lookup deleted.
+          received.head._2 shouldBe Some(Integer.valueOf(42))
+          // Handing it on is the whole handling: nothing goes back to the socket.
+          sent shouldBe empty
+        }
+    }
+  }
+
+  it should "refuse a command that arrives before any workflow is attached, to its sender" in {
+    // Commands go to the run's `wsInput`, which only exists once a run is held. This is the
+    // no-workflow state; the workflow-but-no-run state is the next case, and both have to report
+    // the same thing.
     val (session, sent) = mockSession(uid = Some(42))
-    val workflow = new TestWorkflowService(9106L)
-    val execution = newExecution()
-    workflow.publishThenFail = Some(execution)
-    // Attached with NO execution: the capture is None.
+    registerState(session, PrivilegeEnum.WRITE)
+
+    noException should be thrownBy
+      resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
+
+    assertRefused(sent, "workflow execution is not initialized")
+  }
+
+  it should "refuse a command that arrives with a workflow but no run, to its sender" in {
+    // The state between no workflow and a held run: a workflow IS attached, but nothing has
+    // published a run into it yet. `executionService` is a `BehaviorSubject` created without an
+    // initial value, so `getValue` is null, and this is the input that pins how the endpoint
+    // reads it: `workflow.map(_.executionService.getValue)` would wrap that null into `Some(null)`
+    // and walk straight past the `case None` guard that exists to report this very situation,
+    // NPEing on `run.wsInput` instead. The message has to be the same one the no-workflow case
+    // above produces: the client cannot act on the difference.
+    val (session, sent) = mockSession(uid = Some(42))
+    val workflow = new TestWorkflowService(9107L)
     attach(session, PrivilegeEnum.WRITE, workflow)
 
-    intercept[IllegalStateException] {
-      resource.myOnMsg(session, frameOf(executeRequest))
-    }
+    noException should be thrownBy
+      resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
 
-    // The execution exists by the time the handler fails ...
-    workflow.executionService.getValue shouldBe execution
-    // ... and is nonetheless not where the error was recorded.
-    execution.executionStateStore.metadataStore.getState.fatalErrors shouldBe empty
-    sentTypes(sent) shouldBe Seq("WorkflowStateEvent", "WorkflowErrorEvent")
-    fatalErrorMessages(sent).head should include("failed while starting the execution")
+    assertRefused(sent, "workflow execution is not initialized")
   }
 
   // -- session lifecycle --------------------------------------------------------
@@ -895,9 +792,11 @@ class WorkflowWebsocketResourceSpec
           state.getComputingUnitId shouldBe Some(cuid)
 
           // Ordered, not merely present. The state event is the "hack to refresh frontend run
-          // button state" and has to go out before the workflow subscription is established.
+          // button state" and has to go out before the workflow subscription is established. It
+          // is the state of no run, and names no execution: this workflow's service holds none.
           sentTypes(sent) shouldBe Seq("WorkflowStateEvent", "ClusterStatusUpdateEvent")
           objectMapper.readTree(sent.head).get("state").asText() shouldBe "Uninitialized"
+          objectMapper.readTree(sent.head).has("executionId") shouldBe false
           objectMapper.readTree(sent(1)).get("numWorkers").asInt() shouldBe 4242
         }
     }
@@ -929,6 +828,32 @@ class WorkflowWebsocketResourceSpec
     bound should be theSameInstanceAs existing
     // The socket keeps its own unit, which a start of an execution over it runs on.
     SessionState.getState(session.getId).getComputingUnitId shouldBe Some(99)
+  }
+
+  it should "tell a session that opens on a workflow whose service holds a run which execution it is of" in {
+    // A page that did not start the run, as after a reload or in another tab: it is told the
+    // run's state as it stands, with the execution, which it needs to change a paused operator.
+    val shared = holdWorkflowService(wid = 970104L, cuid = 5)
+    val run = newExecution()
+    run.workflowContext.executionId = ExecutionIdentity(970199L)
+    run.executionStateStore.metadataStore.updateState(_.withState(PAUSED))
+    shared.executionService.onNext(run)
+    val (session, sent) = mockSession(wid = 970104L, cuid = 5)
+    registeredSessions += session.getId
+
+    try resource.myOnOpen(session, null)
+    // The service stays in the JVM's registry: left holding a run that has ended, which the
+    // cluster's node-failure recovery skips.
+    finally run.executionStateStore.metadataStore.updateState(_.withState(COMPLETED))
+
+    // First the state of no run, then the state of the run the service holds.
+    val states = sent.toSeq
+      .map(objectMapper.readTree)
+      .filter(_.get("type").asText() == "WorkflowStateEvent")
+      .takeWhile(_.get("state").asText() != "Completed")
+    states.map(_.get("state").asText()) shouldBe Seq("Uninitialized", "Paused")
+    states.head.has("executionId") shouldBe false
+    states(1).get("executionId").asLong() shouldBe 970199L
   }
 
   "myOnClose" should "drop the state registered under that session id" in {
@@ -1208,11 +1133,12 @@ class WorkflowWebsocketResourceSpec
   private def startFrame(executionId: Long, planUri: String): String =
     frameOf(WorkflowStartRequest(executionId, planUri))
 
-  private def stateEvents(sent: ArrayBuffer[String]): Seq[String] =
+  /** Each state the session was told, with the execution it was told the state is of. */
+  private def stateEvents(sent: ArrayBuffer[String]): Seq[(String, Option[Long])] =
     sent.toSeq
       .map(objectMapper.readTree)
       .filter(_.get("type").asText() == "WorkflowStateEvent")
-      .map(_.get("state").asText())
+      .map(event => (event.get("state").asText(), Option(event.get("executionId")).map(_.asLong())))
 
   /** Waits until the coordinator of a run just built has told `sent`'s session of its regions. */
   private def awaitEngineUp(sent: ArrayBuffer[String]): Unit =
@@ -1303,8 +1229,9 @@ class WorkflowWebsocketResourceSpec
       val run = service.executionService.getValue
       run.workflowContext.executionId shouldBe ExecutionIdentity(execution.eid)
       run.executionStateStore.metadataStore.getState.state shouldBe READY
-      stateEvents(sent) shouldBe Seq("Initializing")
-      stateEvents(otherSent) shouldBe Seq("Initializing")
+      // Each is told which execution the run is of, the session that did not start it too.
+      stateEvents(sent) shouldBe Seq(("Initializing", Some(execution.eid)))
+      stateEvents(otherSent) shouldBe Seq(("Initializing", Some(execution.eid)))
       fatalErrorMessages(sent) shouldBe empty
       // The start was asked with the socket's unit, and with the socket's URI without its query,
       // which holds the user's access token: no line logged names the token.
@@ -1404,14 +1331,14 @@ class WorkflowWebsocketResourceSpec
         s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":"::"}""",
         "not an execution plan"
       ),
-      // Frames that do not bind: not reported into the run in flight, as other frames are.
+      // Frames that do not bind.
       (
         "no execution id",
         Some(creatorUid),
         PrivilegeEnum.WRITE,
         storedCuid,
         s"""{"type":"WorkflowStartRequest","executionId":"abc","planUri":"${execution.planUri}"}""",
-        "the request to start an execution could not be read"
+        "the request could not be read as a WorkflowStartRequest"
       ),
       (
         "a plan table that is not a string",
@@ -1419,7 +1346,7 @@ class WorkflowWebsocketResourceSpec
         PrivilegeEnum.WRITE,
         storedCuid,
         s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":{"x":1}}""",
-        "the request to start an execution could not be read"
+        "the request could not be read as a WorkflowStartRequest"
       ),
       (
         "another execution's plan",
@@ -1543,11 +1470,7 @@ class WorkflowWebsocketResourceSpec
             }
 
             statements shouldBe empty
-            sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-            val error = objectMapper.readTree(sent.head).get("fatalErrors").get(0)
-            error.get("type").get("name").asText() shouldBe "EXECUTION_FAILURE"
-            error.get("message").asText() shouldBe why
-            error.get("operatorId").asText() shouldBe ""
+            assertRefused(sent, why)
             otherSent shouldBe empty
             service.executionService.getValue should be theSameInstanceAs inFlight
             inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
@@ -1567,8 +1490,7 @@ class WorkflowWebsocketResourceSpec
 
     noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "vfs:///x"))
 
-    sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
-    fatalErrorMessages(sent) shouldBe Seq("workflow is not initialized")
+    assertRefused(sent, "workflow is not initialized")
   }
 
   it should "refuse a second start of an execution to its sender alone, leaving the run started as it was" in {
@@ -1602,6 +1524,70 @@ class WorkflowWebsocketResourceSpec
           run.executionStateStore.metadataStore.getState.fatalErrors shouldBe empty
       }
       service.engines should have size 1
+    } finally service.unsubscribeAll()
+  }
+
+  // -- a kill, through to the run it is for -------------------------------------
+
+  private def statusOf(executionId: Long): Int =
+    getDSLContext
+      .select(WORKFLOW_EXECUTIONS.STATUS)
+      .from(WORKFLOW_EXECUTIONS)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(executionId.toInt)))
+      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
+      .intValue()
+
+  "WorkflowKillRequest" should "kill the run in flight, for every session on the workflow, and record it killed" in {
+    val execution = created()
+    val service = new StoredStartService
+    try {
+      val (session, sent) = sessionOn(service)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      awaitEngineUp(sent)
+      awaitEngineUp(otherSent)
+      val run = service.executionService.getValue
+      sent.clear()
+      otherSent.clear()
+
+      resource.myOnMsg(session, """{"type":"WorkflowKillRequest"}""")
+
+      run.executionStateStore.metadataStore.getState.state shouldBe KILLED
+      statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
+      stateEvents(sent) shouldBe Seq(("Killed", Some(execution.eid)))
+      stateEvents(otherSent) shouldBe Seq(("Killed", Some(execution.eid)))
+    } finally service.unsubscribeAll()
+  }
+
+  it should "leave a run that already ended as it is recorded, when it arrives late" in {
+    val execution = created()
+    val service = new StoredStartService
+    try {
+      val (session, sent) = sessionOn(service)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      awaitEngineUp(sent)
+      awaitEngineUp(otherSent)
+      val run = service.executionService.getValue
+      // The run completes, as its engine reports it, while a client still shows it running.
+      run.executionStateStore.metadataStore.updateState(updateWorkflowState(COMPLETED, _))
+      statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+      val completed = run.executionStateStore.metadataStore.getState
+      sent.clear()
+      otherSent.clear()
+
+      val statements = recorder.record {
+        noException should be thrownBy
+          resource.myOnMsg(session, """{"type":"WorkflowKillRequest"}""")
+      }
+
+      // Nothing is written, and no session is told anything: the run stays completed, in its
+      // store and in its execution's row.
+      statements shouldBe empty
+      run.executionStateStore.metadataStore.getState shouldBe completed
+      statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
+      sent shouldBe empty
+      otherSent shouldBe empty
     } finally service.unsubscribeAll()
   }
 
@@ -1654,7 +1640,7 @@ class WorkflowWebsocketResourceSpec
       )
       // Queued for the resume: the running Limit, with the executor the change made.
       val queued =
-        run.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations.map(_._1)
+        run.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations
       queued.map(_.id) shouldBe List(PhysicalOpIdentity(OperatorIdentity("limit"), "main"))
       objectMapper
         .readTree(queued.head.opExecInitInfo.asInstanceOf[OpExecWithClassName].descString)
