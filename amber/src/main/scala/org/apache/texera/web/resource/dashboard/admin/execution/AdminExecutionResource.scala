@@ -59,6 +59,8 @@ object AdminExecutionResource {
     * @param executionTime   how long it has taken, in seconds: until it ended, or until now
     *                        while it is open
     * @param endTime         when it ended, in epoch milliseconds; 0 while it is open
+    * @param reason          why it ended as it did, when its closing record says: "unit lost",
+    *                        an error's message; null while it is open and when there is none
     */
   case class dashboardExecution(
       workflowName: String,
@@ -71,7 +73,8 @@ object AdminExecutionResource {
       executionName: String,
       startTime: Long,
       endTime: Long,
-      access: Boolean
+      access: Boolean,
+      reason: String
   )
 
   /** The names the admin page shows and filters by, for each status an execution can have. */
@@ -163,6 +166,7 @@ class AdminExecutionResource(openStatuses: OpenExecutionStatuses, now: () => Lon
         WORKFLOW_EXECUTIONS.STARTING_TIME,
         WORKFLOW_EXECUTIONS.ENDED_AT,
         WORKFLOW_EXECUTIONS.OUTCOME,
+        WORKFLOW_EXECUTIONS.OUTCOME_REASON,
         WORKFLOW_EXECUTIONS.NAME,
         USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME,
         hasAccessField
@@ -241,7 +245,8 @@ class AdminExecutionResource(openStatuses: OpenExecutionStatuses, now: () => Lon
         workflowRecord.get(WORKFLOW_EXECUTIONS.NAME),
         startingTime,
         endedAt.getOrElse(0L),
-        hasAccess
+        hasAccess,
+        workflowRecord.get(WORKFLOW_EXECUTIONS.OUTCOME_REASON)
       )
     })
 

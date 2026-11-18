@@ -362,6 +362,23 @@ class AdminExecutionResourceSpec
     }
   }
 
+  it should "say why a closed execution ended as it did, and nothing of one that is open" in {
+    val lost = seedExecution(status = 1.toByte, name = "lost-run", outcome = 4)
+    lost.setOutcomeReason("unit lost")
+    workflowExecutionsDao.update(lost)
+
+    list().map(entry => (entry.executionStatus, entry.reason)) shouldBe List(
+      ("FAILED", "unit lost")
+    )
+
+    // A newer execution of the workflow that ended with nothing to say, then one still open.
+    seedExecution(name = "plain-run", startOffsetMillis = -1000L)
+    list().map(entry => (entry.executionStatus, entry.reason)) shouldBe List(("COMPLETED", null))
+    val open = seedOpenExecution(startOffsetMillis = -2000L)
+    label(open, "RUNNING")
+    list().map(entry => (entry.executionStatus, entry.reason)) shouldBe List(("RUNNING", null))
+  }
+
   it should "name an open execution by the newest state in its log" in {
     Seq("READY" -> "READY", "RUNNING" -> "RUNNING", "PAUSED" -> "PAUSED", "FAILED" -> "FAILED")
       .foreach {
