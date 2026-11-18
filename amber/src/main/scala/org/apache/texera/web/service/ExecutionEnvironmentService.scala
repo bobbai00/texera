@@ -79,9 +79,7 @@ object ExecutionEnvironmentService {
   /**
     * An environment of a run's plan that this unit could not install: why the run does not start.
     *
-    * @param environment the environment
-    * @param operators   the operators that run in it, the first the plan reaches first
-    * @param failure     why it was not installed
+    * @param operators the operators that run in it, the first the plan reaches first
     */
   final class EnvironmentNotInstalled(
       val environment: PythonEnvironment,
@@ -106,17 +104,13 @@ object ExecutionEnvironmentService {
   * Makes the Python environments of a run's plan ready on this computing unit, before the run's
   * engine starts, and tells the console of every operator that runs in one what becomes of it:
   * that it is being installed, here or for another run, that it still is, every
-  * `reminderInterval`, and that it is ready, with the packages it holds and what its install
-  * wrote, or that it was installed before.
+  * `reminderInterval`, and that it is ready or was installed before.
   *
   * An install is the unit's, shared by every run that needs the environment: a run only waits
   * for it. A run that is no longer awaited is told nothing more, and its installs go on.
   *
-  * @param plan      the run's plan
-  * @param console   the run's consoles
-  * @param installer installs environments on this unit
-  * @param awaited   whether the run still waits to start: false once it is killed, superseded or
-  *                  failed
+  * @param awaited whether the run still waits to start: false once it is killed, superseded or
+  *                failed
   */
 class ExecutionEnvironmentService(
     plan: PhysicalPlan,
@@ -127,11 +121,11 @@ class ExecutionEnvironmentService(
 ) {
 
   /**
-    * Makes every environment of the plan ready. It returns at once: the installer's threads do
-    * the work, and a plan that names no environment is ready already.
+    * Returns at once: the installer's threads do the work.
     *
-    * @return done once every environment is ready; failed with an [[EnvironmentNotInstalled]] as
-    *         soon as one cannot be installed, while the others' installs go on
+    * @return done once every environment is ready, at once for a plan that names none; failed
+    *         with an [[EnvironmentNotInstalled]] as soon as one cannot be installed, while the
+    *         others' installs go on
     */
   def prepare(): CompletableFuture[Unit] = {
     val prepared = new CompletableFuture[Unit]()

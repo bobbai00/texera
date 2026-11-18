@@ -29,7 +29,7 @@ import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 /**
   * What a child process did.
   *
-  * @param exitCode its exit code; None when it was still running at its limit, and was destroyed
+  * @param exitCode None when it was still running at its limit, and was destroyed
   * @param lines    the lines it wrote, to its output and its error stream, in the order they came
   */
 final case class ProcessOutcome(exitCode: Option[Int], lines: Seq[String])

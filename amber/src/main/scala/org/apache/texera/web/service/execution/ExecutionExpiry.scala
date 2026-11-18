@@ -48,7 +48,6 @@ object ExecutionExpiry {
   /** The Dashboard service's own, shared by its routes and its jobs. */
   lazy val forDeployment: ExecutionExpiry = new ExecutionExpiry()
 
-  /** Deletes the replay log kept at `location`, with every file in it. */
   def deleteReplayLog(location: String): Unit =
     SequentialRecordStorage.getStorage[ReplayLogRecord](Some(new URI(location))).deleteStorage()
 }
@@ -65,10 +64,9 @@ object ExecutionExpiry {
   * when they are older than results are kept ([[expirePast]]), which also deletes the
   * execution's replay log. Deleting an execution drops everything it keeps ([[dropAll]]).
   *
-  * An execution's port tables are found from its stored plan, which names where each port is
-  * stored. One with no plan to go by, such as one made before plans were stored, has its tables
-  * found by their names, which lists whole namespaces; so has every execution that is deleted,
-  * the last time anything can find a table of its.
+  * An execution's port tables are found from its stored plan. One with no plan to go by has
+  * them found by their names, which lists whole namespaces ([[ExecutionTables]]); so has every
+  * execution that is deleted, the last time anything can find a table of its.
   *
   * Any number of Dashboard replicas may expire the same execution: dropping a table that is
   * gone does nothing, and of several that mark its row, one does. Tables in a per-user
@@ -78,12 +76,7 @@ object ExecutionExpiry {
   * A lake call that throws is thrown on by [[expire]] and [[dropAll]], never taken for "nothing
   * there": the row is then not marked, so whoever asked can ask again.
   *
-  * @param warehousesEnabled whether runs write into per-user warehouses
-  * @param label             reads the label of the log at a URI; None when there is no log table
-  * @param deleteBinaries    deletes the large binaries of the execution of an id
-  * @param deleteReplayLog   deletes the replay log at a location
-  * @param now               the Dashboard service's clock, in epoch milliseconds
-  * @param batchSize         how many executions a pass by age reads at a time
+  * @param now the Dashboard service's clock, in epoch milliseconds
   */
 class ExecutionExpiry(
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
@@ -176,13 +169,10 @@ class ExecutionExpiry(
 
   /**
     * Drops everything execution `eid` keeps outside its row, whether it is open or closed: its
-    * plan, log, statistics and console tables, the result and the state table of each port, its
-    * large binaries and its replay log. Every table is found by its name, so one that nothing
-    * else names goes too. For when the execution is deleted: its row is left to the caller.
-    * Nothing happens for an execution with no row.
-    *
-    * Tables in a per-user warehouse are left where they are while those are disabled. A replay
-    * log that cannot be deleted is logged and left.
+    * tables of every kind, its large binaries and its replay log. Every table is found by its
+    * name, so one that nothing else names goes too. For when the execution is deleted: its row
+    * is left to the caller. Nothing happens for an execution with no row. A replay log that
+    * cannot be deleted is logged and left.
     */
   def dropAll(eid: Long): Unit =
     ExecutionRecords.find(eid).foreach { execution =>
@@ -265,7 +255,6 @@ class ExecutionExpiry(
   private def inDisabledWarehouse(execution: ExecutionRecord): Boolean =
     WarehouseReadGuard.skipWhileDisabled(execution.planUri, warehousesEnabled)
 
-  /** Drops the tables and the large binaries that hold what the run of `execution` produced. */
   private def dropProduced(execution: ExecutionRecord): Unit = {
     plannedPortTables(execution) match {
       case Some(ports) =>

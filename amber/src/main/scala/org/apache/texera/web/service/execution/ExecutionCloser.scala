@@ -53,9 +53,8 @@ object ExecutionCloser {
     })
 
   /**
-    * The bytes `execution` holds in the lake: its plan, log, statistics and console tables, and
-    * the result and the state table of each output port its plan names. A table that is not
-    * there, such as a port's that the run did not store, counts nothing.
+    * The bytes of the tables `execution` keeps in the lake ([[ExecutionTables]]). A table that is
+    * not there, such as that of a port the run did not store, counts nothing.
     */
   def storedBytesOf(execution: ExecutionRecord): Long = {
     val own =
@@ -80,18 +79,12 @@ object ExecutionCloser {
   * about once more, since the first email said it had failed. An email that cannot be sent is
   * logged, and changes nothing of the close.
   *
-  * A lake call that throws is thrown on, never taken for an answer: not for "no log", not for
-  * "no plan" and not for "no ending". The job logs it and looks at the execution again on its
-  * next tick. The one exception is the measuring of a closed execution's tables, whose failure
-  * is logged here, since the execution is closed by then.
+  * A lake call that throws is thrown on, never taken for "no log", "no plan" or "no ending":
+  * the job logs it and looks at the execution again on its next tick. The one exception is the
+  * measuring of a closed execution's tables, whose failure is logged here, since the execution
+  * is closed by then.
   *
-  * @param label       reads the label of the log at a URI; None when there is no log table
-  * @param rows        reads the rows of the log at a URI
-  * @param isStarted   whether the plan at a URI carries its start claim
-  * @param claimStart  claims the one start of the plan at a URI
-  * @param storedBytes what an execution's tables hold in the lake
   * @param now         the Dashboard service's clock, in epoch milliseconds
-  * @param emails      sends the email about a closed execution
   * @param emailThread runs each send, off the thread that closes
   */
 class ExecutionCloser(
@@ -196,8 +189,8 @@ class ExecutionCloser(
     }
 
   /**
-    * Closes `execution`, whose tables are in a warehouse this deployment cannot reach, as
-    * failed. Nothing of it is read or measured: its URIs would name the shared warehouse.
+    * Closes `execution`, whose warehouse cannot be reached
+    * ([[ExecutionClosing.warehouseUnavailable]]), as failed. Nothing of it is read or measured.
     */
   def closeUnavailable(execution: ExecutionRecord): Boolean =
     closeRow(
@@ -267,9 +260,9 @@ class ExecutionCloser(
   }
 
   /**
-    * Hands the email that `execution` ended with `ending`, as its row now says, to the email
-    * thread, if the execution asked for one. Whatever fails there is logged: a notification
-    * that cannot be read, or an email that cannot be sent.
+    * Hands the email that `execution` ended with `ending` to the email thread, if the execution
+    * asked for one. A notification that cannot be read and an email that cannot be sent are
+    * logged.
     *
     * @param corrects the verdict an earlier email reported, which `ending` replaced
     */

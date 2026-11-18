@@ -27,10 +27,7 @@ import java.net.URI
 trait ScanFileResolver {
 
   /**
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the name does not resolve to a
-    *                                                       file. Any other failure, such as the
-    *                                                       database not answering, is thrown as
-    *                                                       it is.
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the name does not resolve to a file
     */
   def resolve(fileName: String): URI
 }

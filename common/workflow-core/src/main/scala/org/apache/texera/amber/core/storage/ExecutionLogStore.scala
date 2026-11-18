@@ -64,7 +64,6 @@ final case class ExecutionLogEntry(
 
 object ExecutionLogEntry {
 
-  /** The row of a change to `state`, with why: a reason in words, the errors behind it, or neither. */
   def state(
       seq: Long,
       timeMs: Long,
@@ -101,11 +100,9 @@ final case class ExecutionLabel(
     beatEveryMs: Long
 ) {
 
-  /** Whether the execution is over: its newest state is one of [[ExecutionLogStore.EndStates]]. */
   def ended: Boolean = state.exists(ExecutionLogStore.EndStates.contains)
 }
 
-/** The JSON of a log row's `detail`. */
 private object ExecutionLogDetail {
 
   def of(reason: Option[String], errors: Seq[WorkflowFatalError]): Option[String] =
@@ -147,21 +144,15 @@ private object ExecutionLogDetail {
 }
 
 /**
-  * Keeps each execution's log in the lake: one Iceberg table per execution, in the warehouse the
-  * execution writes into, at the URI [[logUri]] names (namespace
-  * `storage.iceberg.table.execution-log-namespace`, table `wid_<wid>_eid_<eid>_executionlog`).
+  * Keeps each execution's log table, one of its [[ExecutionTables]], at the URI [[logUri]] names
+  * (namespace `storage.iceberg.table.execution-log-namespace`, table
+  * `wid_<wid>_eid_<eid>_executionlog`).
   *
-  * The engine that runs the execution is the table's one writer. It appends a row for every
-  * change of the run's state (see [[ExecutionLogEntry]]), and the commit that appends a row also
-  * sets the label: table properties that repeat the newest state (see [[ExecutionLabel]]). So
-  * the state is read with one load of the table, and no reader sees a label without its row.
-  * Between its appends the engine refreshes one of the properties, the beat, which shows that it
-  * is alive.
-  *
-  * Every method takes only a URI [[logUri]] could have built, and refuses any other. To a read,
-  * a table that is not there is an answer, None or Nil; to a write it is a
-  * [[NoSuchExecutionTableException]]. Any other failure of the catalog or the object store is
-  * thrown as it is, so a lake that cannot answer is never taken for a missing log.
+  * The engine appends a row for every change of the run's state (see [[ExecutionLogEntry]]), and
+  * the commit that appends a row also sets the label: table properties that repeat the newest
+  * state (see [[ExecutionLabel]]). So the state is read with one load of the table, and no
+  * reader sees a label without its row. Between its appends the engine refreshes one of the
+  * properties, the beat, which shows that it is alive.
   */
 object ExecutionLogStore {
 
@@ -184,15 +175,10 @@ object ExecutionLogStore {
   /** The most characters of a reason that a row's [[ExecutionLogEntry.reason]] and the label keep. */
   val MaxReasonLength = 500
 
-  /** The log table of execution `eid` of workflow `wid`, in `warehouse` (None: the default). */
   def logUri(wid: WorkflowIdentity, eid: ExecutionIdentity, warehouse: Option[String]): URI =
     VFSURIFactory.createExecutionLogURI(wid, eid, warehouse)
 
-  /**
-    * Makes the log table, empty, with a first beat at `nowMs` and `beatEveryMs` in its label. A
-    * table already at this URI can only be stale, since an execution id is run once, so it is
-    * replaced.
-    */
+  /** Makes the log table, empty, with a first beat at `nowMs` and `beatEveryMs` in its label. */
   def create(uri: URI, nowMs: Long, beatEveryMs: Long): Unit = {
     requireLogUri(uri)
     DocumentFactory.createDocument(uri, executionLogSchema)
@@ -208,8 +194,6 @@ object ExecutionLogStore {
     *
     * An append that fails may have landed all the same, when the catalog's answer was lost.
     * Appending the entries again is safe: [[read]] returns one row per `seq`.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
     */
   def append(uri: URI, entries: Seq[ExecutionLogEntry], nowMs: Long): Unit = {
     requireLogUri(uri)
@@ -236,17 +220,12 @@ object ExecutionLogStore {
     )
   }
 
-  /**
-    * Sets the beat to `nowMs`, in a commit that adds no snapshot.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
-    */
+  /** Sets the beat to `nowMs`, in a commit that adds no snapshot. */
   def beat(uri: URI, nowMs: Long): Unit = {
     requireLogUri(uri)
     IcebergAppender.setProperties(existingTable(uri), Map(BeatProperty -> nowMs.toString))
   }
 
-  /** The label, read with one load of the table; None when the table does not exist. */
   def label(uri: URI): Option[ExecutionLabel] = {
     requireLogUri(uri)
     DocumentFactory.icebergTableOf(uri).map { table =>
@@ -264,13 +243,10 @@ object ExecutionLogStore {
     }
   }
 
-  /** The rows by `seq`, one per `seq`; Nil when the table does not exist. */
+  /** The rows in the order of their `seq`, one per `seq`. */
   def read(uri: URI): Seq[ExecutionLogEntry] = read(uri, afterPlan = () => ())
 
-  /**
-    * [[read]], running `afterPlan` between each plan of the table's files and the read of them,
-    * the window in which a tidy can delete them. Tests tidy there.
-    */
+  /** [[read]], with the hook `afterPlan` that [[IcebergReader.read]] gives tests. */
   private[storage] def read(uri: URI, afterPlan: () => Unit): Seq[ExecutionLogEntry] = {
     requireLogUri(uri)
     DocumentFactory
@@ -287,15 +263,12 @@ object ExecutionLogStore {
   /**
     * Tidies the table (see [[IcebergTidy.tidy]]). For the table's writer alone, between its
     * appends, and with `atEnd` once it has appended its last row.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
     */
   def tidy(uri: URI, atEnd: Boolean): Unit = {
     requireLogUri(uri)
     IcebergTidy.tidy(existingTable(uri), atEnd)
   }
 
-  /** Drops the table with its rows and its label; nothing happens when there is no table. */
   def drop(uri: URI): Unit = {
     requireLogUri(uri)
     DocumentFactory.dropTable(uri)
@@ -303,8 +276,7 @@ object ExecutionLogStore {
 
   private def requireLogUri(uri: URI): Unit = {
     val components = VFSURIFactory.decodeURI(uri)
-    // Rebuilding the URI from what it decodes to refuses extra segments, which would address a
-    // different table name in the log namespace.
+    // An extra segment would name another table, so the URI must equal the one rebuilt from it.
     require(
       components.resourceType == VFSResourceType.EXECUTION_LOG &&
         uri == logUri(components.workflowId, components.executionId, components.warehouse),

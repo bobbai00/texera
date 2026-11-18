@@ -29,15 +29,26 @@ import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCo
 import java.net.URI
 
 /**
-  * The tables an execution keeps in the lake, found without a registry: four at locations its
-  * ids and its warehouse name ([[ownTables]]), and the result and the state of each output port
-  * where its stored plan says the port is stored ([[portTables]]).
+  * The tables an execution keeps in the lake. Each is one Iceberg table in the warehouse the
+  * execution writes into, found without a registry: its plan, log, statistics and console at
+  * URIs its ids name ([[ownTables]]), and the result and the state of each output port where its
+  * stored plan says the port is stored ([[portTables]]). An execution with no stored plan, such
+  * as one whose plan is gone, names no port, so its tables are then found by their names
+  * ([[dropNamed]]).
   *
-  * An execution with no stored plan names no port, so its tables are then found by their names
-  * ([[dropNamed]]): one made before plans were stored, or one whose plan is gone.
+  * The stores of the four own tables ([[ExecutionPlanStore]], [[ExecutionLogStore]],
+  * [[RuntimeStatisticsStore]], [[ConsoleMessageStore]]) share these rules:
   *
-  * As in the stores, a table that is not there is an answer, and a catalog or an object store
-  * that cannot answer is thrown.
+  *  - A method takes only a URI the store's own builder could have made, and refuses any other:
+  *    anything more, such as another segment, would name another table.
+  *  - An execution id is used once, so a table already at the URI of a new execution is stale,
+  *    and making the table replaces it.
+  *  - A table that is not there is an answer. A read of the log, statistics or console finds
+  *    nothing, a write to them fails with [[NoSuchExecutionTableException]], the plan store
+  *    fails with [[NoStoredPlanException]], and a drop does nothing. Any other failure of the
+  *    catalog or the object store is thrown as it is, so a lake that cannot answer is never
+  *    taken for a missing table.
+  *  - The engine that runs the execution is the one writer of its log, statistics and console.
   */
 object ExecutionTables {
 
@@ -45,15 +56,11 @@ object ExecutionTables {
   val ProducedKinds: Seq[VFSResourceType.Value] =
     Seq(VFSResourceType.RESULT, VFSResourceType.STATE, VFSResourceType.CONSOLE_MESSAGES)
 
-  /** Every kind of table an execution keeps. */
   val AllKinds: Seq[VFSResourceType.Value] =
     ProducedKinds ++
       Seq(VFSResourceType.RUNTIME_STATISTICS, VFSResourceType.EXECUTION_LOG, VFSResourceType.PLAN)
 
-  /**
-    * The plan, log, statistics and console table of execution `eid` of workflow `wid`, which
-    * writes into `warehouse` (None: the default).
-    */
+  /** The execution's four own tables. A `warehouse` of None is the default warehouse. */
   def ownTables(
       wid: WorkflowIdentity,
       eid: ExecutionIdentity,
@@ -68,13 +75,11 @@ object ExecutionTables {
 
   /**
     * The result table and the state table of every output port of the execution whose plan is
-    * at `planUri`, read from the plan: it names where each port is stored. It names every port,
-    * and a run stores only some, so a table listed here need not exist. Nil when the execution
-    * has no stored plan.
+    * at `planUri`, read from the plan. The plan names every port, and a run stores only some,
+    * so a table listed here need not exist. Nil when the execution has no stored plan.
     *
-    * @throws IllegalArgumentException if the stored plan is not one this version reads, or
-    *                                  names a location that is not a port's of its own execution
-    *                                  in its own warehouse
+    * @throws IllegalArgumentException if this version cannot read the plan, or the plan names a
+    *                                  location that is no port's of its own execution and warehouse
     */
   def portTables(planUri: URI): Seq[URI] = {
     val plan = ExecutionPlanStore
@@ -103,20 +108,14 @@ object ExecutionTables {
       }
   }
 
-  /** Whether there is a table at `uri`. */
   def exists(uri: URI): Boolean = DocumentFactory.icebergTableOf(uri).isDefined
 
-  /**
-    * Drops the table at `uri`, with its rows.
-    *
-    * @return false when there was no such table
-    */
+  /** @return false when there was no table at `uri` */
   def drop(uri: URI): Boolean = DocumentFactory.dropTable(uri)
 
   /**
-    * Drops the tables of execution `eid` of workflow `wid` that are of one of `kinds`, in
-    * `warehouse` (None: the default), going by their names: every table of an execution is
-    * named after its workflow and the execution. This finds a table that no plan names, and
+    * Drops the execution's tables of `kinds`, going by their names: every table of an execution
+    * is named after its workflow and the execution. This finds a table that no plan names, and
     * lists the whole namespace of each kind to do so.
     *
     * @return the names of the tables dropped
@@ -142,7 +141,7 @@ object ExecutionTables {
 
   /**
     * Of `tables`, the result table of output port `portId` of logical operator `operatorId`
-    * (see [[isOutputOf]]); None when none of them is.
+    * (see [[isOutputOf]]).
     *
     * @throws IllegalArgumentException if one of `tables` looked at is no table of an execution
     */

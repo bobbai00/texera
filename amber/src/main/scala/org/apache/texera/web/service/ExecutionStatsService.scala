@@ -155,8 +155,7 @@ class ExecutionStatsService(
         })
     )
 
-    // Register callback for statistics persistence (persistence only, no UI update): the run's
-    // record keeps the newest numbers, and stores them at its next commit.
+    // Register callback for statistics persistence (persistence only, no UI update)
     addSubscription(
       client
         .registerCallback[RuntimeStatisticsPersist]((evt: RuntimeStatisticsPersist) => {

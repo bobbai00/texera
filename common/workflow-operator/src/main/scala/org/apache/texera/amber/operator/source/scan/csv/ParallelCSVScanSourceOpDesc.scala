@@ -171,7 +171,6 @@ class ParallelCSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGe
     (ignoredWindow :+ body).mkString("\n")
   }
 
-  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
   override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".csv"))
 
   /** The schema of the file `document` holds, inferred from its first rows. */

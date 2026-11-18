@@ -15,12 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// A physical plan saved to be run later: what the engine needs to run it, and nothing that only
-// compiling it needs (an operator's schema propagation function, or a resource binding); with
-// what the run needs besides the plan (where it replays from, where it writes its replay log, the
-// costs an earlier run measured). Each operator says what it reads from outside the run, and
-// where each of its output ports is stored. And a change to one operator of a paused run
-// (StoredOperatorUpdate), saved in the same format version.
+// The stored form of a physical plan made to run (StoredPhysicalPlan): what the engine needs to
+// run it, and what the run needs besides the plan (where it replays from, where it writes its
+// replay log, the costs an earlier run measured). And the stored form of a change to one operator
+// of a paused run (StoredOperatorUpdate), in the same format version.
 // PhysicalPlanCodec writes both and reads them back, as JSON with these field names.
 //
 // - A plan is always written as the same text: its operators, their files and its cost hints
@@ -29,8 +27,8 @@
 //   field left out as its default. Every enum defined here starts with an UNSPECIFIED value that
 //   no plan holds, and a oneof is always set: a reader refuses either.
 // - The format takes in the messages it reuses from workflow.proto, executor.proto and
-//   virtualidentity.proto. A change to a message here, or to one it reuses, comes with a new
-//   formatVersion and new golden files (PhysicalPlanCodecSpec).
+//   virtualidentity.proto, each of which names them. A change to a message here, or to one it
+//   reuses, comes with a new formatVersion and new golden files (PhysicalPlanCodecSpec).
 
 syntax = "proto3";
 
@@ -86,7 +84,6 @@ message StoredWorkflowSettings {
 }
 
 message StoredPhysicalOp {
-  // Where the operator's workers prefer to run.
   enum LocationPreference {
     LOCATION_PREFERENCE_UNSPECIFIED = 0;
     NO_PREFERENCE = 1;
@@ -110,12 +107,12 @@ message StoredPhysicalOp {
   // How many workers to run. Absent: the engine's default.
   optional int32 suggestedWorkerNum = 12;
   // The datasets and models the operator's code reads, each once, as
-  // "<repositoryName>:<commitHash>". The code names each by this locator, where the computing
-  // unit that runs the plan puts the directory it mounts the repository at.
+  // "<repositoryName>:<commitHash>". The code names each by this locator: see
+  // UdfRepositoryDirectories.
   repeated string repositoryMounts = 13;
-  // The Python environment the operator's workers run in. Absent: the engine's own interpreter.
+  // Absent: the operator's workers run in the engine's own interpreter.
   StoredPythonEnvironment pythonEnvironment = 14;
-  // What the operator reads from outside the run. Absent: nothing.
+  // Absent: the operator reads nothing from outside the run.
   OperatorInputs inputs = 15;
 }
 
@@ -195,13 +192,12 @@ message StoredAttribute {
   AttributeType attributeType = 2;
 }
 
-// A Python environment: the packages a computing unit installs, beside the engine's own, for the
-// workers of the operators that run in it.
+// A Python environment (PythonEnvironment): what a computing unit installs beside the engine's own.
 message StoredPythonEnvironment {
   // What the plan's user calls the environment, which the operator asked for it by; not blank.
   string name = 1;
-  // The packages, as canonical requirement lines ("tabulate==0.9.0"): a package name in its
-  // normalized form, then nothing or ==, >= or <= and a version. Sorted, each once.
+  // The packages, as the canonical requirement lines of PythonRequirements ("tabulate==0.9.0").
+  // Sorted, each once.
   repeated string requirements = 2;
 }
 
@@ -231,13 +227,11 @@ message StoredOperatorCost {
   double seconds = 2;
 }
 
-// A change to one operator of a paused run, which the engine applies when the run resumes: the
-// operator's new executor, and what its new code reads. Saved and read in the plan's format
-// version, as its own text.
+// A change to one operator of a paused run (OperatorUpdate): the operator's new executor, and
+// what its new code reads. Stored and read in the plan's format version, as its own text.
 message StoredOperatorUpdate {
   // The version of this format the change is written in; a reader refuses another.
   int32 formatVersion = 1;
-  // The execution whose operator changes.
   ExecutionIdentity executionId = 2;
   // Names the change among the execution's changes; not blank.
   string updateId = 3;

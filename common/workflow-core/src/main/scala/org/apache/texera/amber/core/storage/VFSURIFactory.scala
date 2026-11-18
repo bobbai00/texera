@@ -192,8 +192,7 @@ object VFSURIFactory {
 
   /**
     * Create a URI pointing to an execution's plan table:
-    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/plan`. One table per execution, so the URI
-    * names no operator.
+    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/plan`.
     */
   def createPlanURI(
       workflowId: WorkflowIdentity,
@@ -204,8 +203,7 @@ object VFSURIFactory {
 
   /**
     * Create a URI pointing to an execution's log table:
-    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/executionlog`. One table per execution, so the
-    * URI names no operator.
+    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/executionlog`.
     */
   def createExecutionLogURI(
       workflowId: WorkflowIdentity,

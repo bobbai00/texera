@@ -63,11 +63,7 @@ function makeWorkflowError(type: WorkflowFatalErrorType, message: string, operat
   };
 }
 
-/**
- * The body of `POST /api/executions` on the Dashboard service (amber's `CreateExecutionRequest`).
- * The Dashboard creates the execution without a computing unit: it checks the user's rights,
- * has the workflow compiled for them and stores the plan that the unit is then asked to run.
- */
+/** The body of `POST /api/executions` on the Dashboard service. Mirrors amber's `CreateExecutionRequest`. */
 export interface CreateExecutionRequest {
   wid: number;
   executionName: string;
@@ -126,9 +122,7 @@ export function parseCreateExecutionResponse(input: unknown): CreateExecutionRes
 // is listed under the operator's id.
 const compileErrorSchema = z.object({ message: z.string() });
 
-// How the Dashboard answers a create it does not serve, whatever the status: `{code, message}`,
-// and for a workflow that does not compile (amber's `CreateExecutionFailure`) also the execution
-// and the first error of each operator that has one, by the operator's id.
+// The body of a create that the Dashboard does not serve, as `adaptCreateExecutionFailure` reads it.
 const createFailureSchema = z.object({
   message: z.string(),
   operatorErrors: z.record(compileErrorSchema).optional(),
@@ -163,12 +157,12 @@ function upstreamFirst(plan: Pick<LogicalPlan, "operators" | "links">): string[]
  * The summary of a create of `plan` that the Dashboard did not answer with an execution: any
  * status but 2xx.
  *
- * A workflow that does not compile is a compilation failure, with each operator's error, which
- * names its operator; the Dashboard has recorded the execution as failed. The answer keys the
- * errors by operator, in no order: they are listed in the plan's, an operator before those
- * downstream of it, so that the cause of a chain of errors comes first. Any other answer is an
- * error that names the status and what the Dashboard said: the message of its `{code, message}`,
- * or else the body as it is, such as a proxy's.
+ * A workflow that does not compile is a compilation failure (amber's `CreateExecutionFailure`):
+ * the answer holds the first error of each operator that has one, keyed by the operator's id, in
+ * no order, and the Dashboard has recorded the execution as failed. The errors are listed in the
+ * plan's order, an operator before those downstream of it, so that the cause of a chain of errors
+ * comes first. Any other answer is an error that names the status and what the Dashboard said:
+ * the message of its `{code, message}`, or else the body as it is, such as a proxy's.
  */
 export function adaptCreateExecutionFailure(
   status: number,

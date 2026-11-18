@@ -239,7 +239,6 @@ class ExecutionConsoleService(
       opId: String,
       consoleMessage: ConsoleMessage
   ): ExecutionConsoleStore = {
-    // The run's record keeps the message whole, and stores it at its next commit.
     stateStore.recorder.console(opId, consoleMessage)
 
     // Process the message (truncate if needed) and update store

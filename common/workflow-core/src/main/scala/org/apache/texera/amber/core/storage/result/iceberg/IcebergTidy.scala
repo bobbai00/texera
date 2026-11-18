@@ -58,8 +58,8 @@ private[storage] object IcebergTidy {
     // A table nothing was appended to has nothing to tidy.
     if (table.currentSnapshot() != null) {
       // Iceberg writes the manifest of a merge on its shared worker pool, whatever executor the
-      // merge names, and that pool takes no work once the JVM is exiting: a tidy made then,
-      // as by a computing unit that is stopped, merges nothing.
+      // merge names, and that pool takes no work once the JVM is exiting (see OnCallingThread):
+      // a tidy made then merges nothing.
       if (!ThreadPools.getWorkerPool.isShutdown) mergeSmallFiles(table, TargetFileBytes)
       rewriteManifests(table)
       if (atEnd) expire(table, retainLast = 1, olderThanMs = Long.MaxValue)
@@ -108,7 +108,6 @@ private[storage] object IcebergTidy {
     }
   }
 
-  /** Rewrites the current snapshot's manifests into one, when it has more than one. */
   def rewriteManifests(table: Table): Unit =
     if (Option(table.currentSnapshot()).exists(_.allManifests(table.io()).size() > 1)) {
       table

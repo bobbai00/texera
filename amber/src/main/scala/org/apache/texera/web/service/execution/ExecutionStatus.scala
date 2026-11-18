@@ -80,11 +80,8 @@ object ExecutionStatus {
 }
 
 /**
-  * An open execution of a list, with what its log is found by.
-  *
-  * @param warehouse      the name of the warehouse it writes into; None when its row names
-  *                       none, or names one that was deleted since
-  * @param startingTimeMs when it was created, in epoch milliseconds
+  * An open execution of a list, with what its log is found by. Its fields are those of
+  * [[ExecutionRecord]].
   */
 final case class OpenExecution(
     eid: Long,
@@ -93,7 +90,6 @@ final case class OpenExecution(
     startingTimeMs: Long
 ) {
 
-  /** Its log table, in the warehouse its row names. */
   def logUri: URI =
     ExecutionLogStore.logUri(WorkflowIdentity(wid), ExecutionIdentity(eid), warehouse)
 }
@@ -141,12 +137,12 @@ object OpenExecutionStatuses {
   * each, made at most [[OpenExecutionStatuses.Concurrency]] at a time.
   *
   * A list is never failed or held up by the lake: an execution whose log cannot be read in
-  * `readLimit`, or is in a warehouse this deployment cannot reach, is shown as
-  * [[WorkflowExecutionStatus.Unknown]], which is not known to be any state.
+  * `readLimit`, or whose warehouse cannot be reached
+  * ([[ExecutionClosing.warehouseUnavailable]]), is shown as [[WorkflowExecutionStatus.Unknown]],
+  * which is not known to be any state.
   *
-  * @param label             reads the label of the log at a URI; None when there is no log
-  * @param warehousesEnabled whether runs write into per-user warehouses
-  * @param readLimit         how long the reads of one batch are given
+  * @param label     reads the label of the log at a URI; None when there is no log
+  * @param readLimit how long the reads of one batch are given
   */
 class OpenExecutionStatuses(
     label: URI => Option[ExecutionLabel] = ExecutionLogStore.label,

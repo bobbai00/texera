@@ -138,7 +138,8 @@ object ExecutionCreator {
 /**
   * The workflow of a create does not compile (400): execution `eid` is recorded as failed.
   *
-  * @param operatorErrors the first error of each operator that has one, by the operator's id
+  * @param operatorErrors by the operator's id; see
+  *                       [[org.apache.texera.common.compiler.WorkflowCompilationFailed]]
   */
 final class WorkflowNotCompiled(
     val eid: Long,
@@ -165,20 +166,16 @@ final class WorkflowNotCompiled(
   *  1. The workflow compiling service is asked for the plan of the user's run, with the user's
   *     own token ([[WorkflowCompilingService.planToRun]]): it compiles the workflow (with a
   *     target, the target and what is upstream of it) under the site's settings as they stand,
-  *     and resolves what the workflow names as the user may read it. Each file a scan source
-  *     reads is one the user may read, and the plan says where it is kept; each Python
-  *     environment an operator names is one the user keeps, and the plan carries its packages
-  *     for the unit to install. A workflow that does not compile, a scan of a file the user may
-  *     not read or an operator in an environment the user does not have among them, closes the
-  *     row as failed, "compile error: …" with one operator's error, and is answered with each
-  *     operator's error ([[WorkflowNotCompiled]], 400); so does a workflow the compiler cannot
-  *     read, such as one whose links form a cycle or whose target it does not have, with why
-  *     (400). A service that does not answer by the deadline closes the row as failed, "its
-  *     plan could not be made" (504), and so does one that cannot be reached or has too many
-  *     compiles waiting (503).
+  *     and resolves what the workflow names as the user may read it
+  *     ([[org.apache.texera.common.compiler.PlanToRun]]). A workflow that does not compile
+  *     closes the row as failed, "compile error: …" with one operator's error, and is answered
+  *     with each operator's error ([[WorkflowNotCompiled]], 400); so does a workflow the
+  *     compiler cannot read, such as one whose links form a cycle or whose target it does not
+  *     have, with why (400). A service that does not answer by the deadline closes the row as
+  *     failed, "its plan could not be made" (504), and so does one that cannot be reached or
+  *     has too many compiles waiting (503).
   *  1. What the plan needs that only this service has is added to it: a link to each file its
-  *     operators read, signed with this service's keys to the object store for the address the
-  *     plan gives the file, for the computing unit to read the file through; the cost hints of
+  *     operators read, signed with this service's keys to the object store; the cost hints of
   *     the user's newest completed run of the workflow; and the replay log it replays and the
   *     one it writes. A plan that cannot be made for another reason, such as the storage not
   *     answering while the cost hints are read, closes the row as failed too (500).
@@ -197,17 +194,10 @@ final class WorkflowNotCompiled(
   * ([[ExecutionRecords.close]]): no engine and no log will ever say how such an execution
   * ended. No email is sent about it: the user is looking at the failure.
   *
-  * @param compiling         the workflow compiling service, which makes the plans
-  * @param linker            signs the links to the files a plan's operators read
-  * @param replayLogRoot     where runs keep their replay logs; None when they keep none
-  * @param warehousesEnabled whether runs write into per-user warehouses
-  * @param costHints         finds the cost hints a plan is saved with
-  * @param writePlan         writes the plan row, and the logical plan it was compiled from, to
-  *                          the plan table at a URI
-  * @param background        runs what a create leaves to be done after it has answered
-  * @param closer            closes the earlier executions a create finds ended
-  * @param compileDeadline   how long the compiling service may take to answer a plan
-  * @param expiry            expires the results of the earlier executions a later one replaced
+  * @param replayLogRoot where runs keep their replay logs; None when they keep none
+  * @param writePlan     writes the plan row, and the logical plan it was compiled from, to the
+  *                      plan table at a URI
+  * @param background    runs what a create leaves to be done after it has answered
   */
 class ExecutionCreator(
     compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
@@ -234,7 +224,6 @@ class ExecutionCreator(
     *                      workflow on its host
     * @param authorization the request's `Authorization` header: the user's own token, which the
     *                      compiling service is asked for the plan with
-    * @return the execution created
     * @throws WebApplicationException with the status of the step that refused the request or
     *                                 failed; a [[WorkflowNotCompiled]] when the workflow does not
     *                                 compile
@@ -283,8 +272,6 @@ class ExecutionCreator(
     // From here the row exists: whatever fails closes it as failed, with why, so it does not
     // stay open although no unit can ever start it.
     val (planUri, record, logical) = closingOnFailure(eid, planNotMade) {
-      // How long each operator took in the user's newest completed run of the workflow, for the
-      // scheduler's cost model: saved with the plan, which the engine takes them from.
       val hints = costHints.load(checked.wid, uid)
       val made = compiling.planToRun(
         PlanRequest(
@@ -339,8 +326,8 @@ class ExecutionCreator(
     * Closes each execution of workflow `wid` on computing unit `cuid` made before `eid` that is
     * still open although its log shows an ending, as the closing job would on its next tick.
     * One whose log shows no ending is left as it is: it may be running, or no unit has started
-    * it yet. So is one whose tables are in a warehouse this deployment cannot reach, which the
-    * closing job closes without reading it.
+    * it yet. So is one whose warehouse cannot be reached
+    * ([[ExecutionClosing.warehouseUnavailable]]), which the closing job closes without reading it.
     *
     * Nothing here is thrown: an execution that cannot be looked at stays open for the job.
     */
@@ -405,11 +392,6 @@ class ExecutionCreator(
     * The plan the compiling service made for execution `eid` of workflow `wid`, `made`, as it
     * is stored: each file its operators read linked, at the address the plan gives it, and the
     * run's cost hints, the replay log it replays and the one it writes added.
-    *
-    * @throws IllegalArgumentException if `made` is no plan made to run, or what is added is not
-    *                                  what a plan is saved with
-    * @throws IllegalStateException    if `made` is the plan of another execution, or a file is
-    *                                  kept where no link can be signed for
     */
   private def planToStore(
       made: String,
@@ -450,12 +432,9 @@ class ExecutionCreator(
     }
 
   /**
-    * What a create answers when `failure` stops it after execution `eid`'s row exists: each
-    * operator's error for a workflow that does not compile (400), why for one the compiler
-    * cannot read (400), 504 for a compiling service that does not answer by the deadline and
-    * 503 for one that cannot be reached or has too many compiles waiting, the answer a step
-    * chose for its own failure (400 for a plan too large to store), and otherwise 500, with the
-    * failure as its cause.
+    * What a create answers when `failure` stops it after execution `eid`'s row exists, with the
+    * statuses the class comment lists: the answer a step chose for its own failure, and
+    * otherwise 500, with the failure as its cause.
     */
   private def answerTo(eid: ExecutionIdentity, failure: Throwable): WebApplicationException = {
     def notCreated(why: String, status: Response.Status): WebApplicationException =
@@ -556,11 +535,6 @@ class ExecutionCreator(
     )
   }
 
-  /**
-    * Fails unless user `uid` may read the workflow and run workflows on the computing unit (403),
-    * and the unit is not terminated (409). A unit that does not exist is one the user may not run
-    * workflows on.
-    */
   private def requireAllowed(request: CheckedRequest, uid: Integer): Unit = {
     val (wid, cuid) = (request.wid, request.computingUnitId)
     if (!WorkflowAccess.hasReadAccess(Integer.valueOf(wid.toInt), uid)) {

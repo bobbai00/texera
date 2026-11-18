@@ -65,8 +65,7 @@ class DataProcessorRPCHandlerInitializer(val dp: DataProcessor)
 
   var cachedTotalWorkerCount = 0
 
-  // What the worker's operator reads from outside the run: its plan's, which the executor the
-  // worker starts with is handed, and each executor that takes its place.
+  // Handed to the executor the worker starts with, and to each executor that takes its place.
   var executorInputs: ExecutorInputs = ExecutorInputs.none
 
   override def debugCommand(

@@ -36,7 +36,6 @@ object WorkflowEmailNotifier {
     * Where the email about a run goes and what it names: the `notification` column of the
     * execution's row, written when the execution is made and read when it is closed.
     *
-    * @param email        the address the email goes to
     * @param workflowName the workflow's name when the execution was made
     * @param workflowUrl  the workflow's page in the Dashboard (see [[workflowUrl]])
     */
@@ -53,8 +52,7 @@ object WorkflowEmailNotifier {
     /**
       * The notification a row keeps, read back.
       *
-      * @throws IllegalArgumentException unless `json` is an object of exactly the three fields,
-      *                                  each a string
+      * @throws IllegalArgumentException unless `json` holds exactly the three fields, each a string
       */
     def fromJson(json: String): Notification = {
       def refuse(why: String): Nothing =
@@ -113,9 +111,8 @@ object WorkflowEmailNotifier {
 }
 
 /**
-  * Emails the user of a run how the run ended, as its execution's notification says: to its
-  * address, naming the workflow by its name and linking to its page. It reads nothing to build
-  * an email.
+  * Emails the user of a run how the run ended, as its execution's
+  * [[WorkflowEmailNotifier.Notification]] says. It reads nothing to build an email.
   *
   * @param deliver sends a message to an address, and answers why when it could not
   */

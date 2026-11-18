@@ -48,12 +48,10 @@ object UdfRepositoryDirectories {
   )
 
   /**
-    * `op` as a computing unit that mounts repositories under `root` runs it: where the code of
-    * its plan holds the locator of a repository it reads, the directory the unit mounts that
-    * repository at. An operator that reads none is returned as it is.
+    * `op` with the directory each repository it reads is mounted at, under `root`, in the place
+    * of the repository's locator in its code. An operator that reads none is returned as it is.
     *
-    * @param root the directory the unit mounts repositories under; None on a unit that mounts
-    *             none
+    * @param root the directory the unit mounts repositories under; None on a unit that mounts none
     * @throws IllegalStateException    if `op` reads a repository and the unit mounts none
     * @throws IllegalArgumentException if `op` is not a UDF whose code holds the locator of each
     *                                  repository it reads

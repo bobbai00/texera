@@ -258,9 +258,9 @@ function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?: string
 }
 
 /**
- * Runs the workflow as the user, in two calls. The Dashboard service creates the execution: it
- * checks the user's rights, has the workflow compiled for them and stores the plan. The computing
- * unit then runs that execution by its id, from the stored plan, and answers with its results.
+ * Runs the workflow as the user, in two calls: the Dashboard service creates the execution, with
+ * its stored plan, and the computing unit then runs that execution by its id and answers with its
+ * results.
  *
  * The unit is asked only once the Dashboard has created the execution: not when it refuses the
  * create, not when the workflow does not compile, and not when the run was stopped meanwhile.

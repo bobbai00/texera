@@ -53,14 +53,13 @@ object AdminExecutionResource {
   /**
     * The latest execution of a workflow, as the admin page lists it.
     *
-    * @param executionStatus the name of its status: how it ended once it is closed, and while
-    *                        it is open the newest state in its log, CREATED when no unit has
-    *                        written a state, UNKNOWN when its log cannot be read
-    * @param executionTime   how long it has taken, in seconds: until it ended, or until now
-    *                        while it is open
-    * @param endTime         when it ended, in epoch milliseconds; 0 while it is open
-    * @param reason          why it ended as it did, when its closing record says: "unit lost",
-    *                        an error's message; null while it is open and when there is none
+    * @param executionStatus the name of its status ([[statusNames]]): how it ended, once it is
+    *                        closed; while it is open, what its log shows
+    *                        ([[org.apache.texera.web.service.execution.OpenStatus]]), UNKNOWN
+    *                        when its log cannot be read
+    * @param executionTime   in seconds: until it ended, or until now while it is open
+    * @param endTime         in epoch milliseconds; 0 while it is open
+    * @param reason          why it ended as it did, when its closing record says; else null
     */
   case class dashboardExecution(
       workflowName: String,

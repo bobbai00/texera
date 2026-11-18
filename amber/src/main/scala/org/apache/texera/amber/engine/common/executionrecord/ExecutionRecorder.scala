@@ -58,9 +58,8 @@ trait ExecutionRecorder {
 
   /**
     * The run changed to `state`, one of [[ExecutionLogStore.States]], because of `errors` or
-    * for `reason`. It is written at once, after every change told before it, and the caller does
-    * not wait for the lake. A change to the state the run is in already, and any change after
-    * the run has ended, is dropped.
+    * for `reason`. A change to the state the run is in already, and any change after the run has
+    * ended, is dropped.
     */
   def state(
       state: String,
@@ -70,8 +69,7 @@ trait ExecutionRecorder {
 
   /**
     * The newest numbers of the operators the engine reports, by logical operator. An operator
-    * that `metrics` leaves out keeps the numbers it was last told with. A commit stores a row
-    * for each operator whose numbers or state differ from the row last stored for it.
+    * that `metrics` leaves out keeps the numbers it was last told with.
     */
   def statistics(metrics: Map[String, OperatorMetrics]): Unit
 
@@ -175,22 +173,13 @@ private final case class WriteKind(failed: String, madeAgain: String)
   * Console messages alone are bounded: beyond `consoleCapacity` the oldest are dropped. A table
   * that is gone was dropped with its execution: it is not made again, and the recorder stops.
   *
-  * @param logUri           the execution's log table
-  * @param statisticsUri    the execution's statistics table
-  * @param consoleUri       the execution's console table
-  * @param beatEveryMs      how often the recorder ticks, which the label tells the log's readers
-  * @param timed            whether the recorder ticks by itself; false for a caller that calls
-  *                         [[tick]] instead, as a spec does
-  * @param endRetryMs       how often it ticks while the end of the run waits to be written
-  * @param tidyEveryAppends how many appends to a table come before its tidy
-  * @param consoleBatchRows how many console messages, come since the console was last
-  *                         stored, are stored without waiting for a tick
-  * @param consoleCapacity  how many console messages wait for the lake at most
-  * @param clock            the unit's clock, in epoch milliseconds
-  * @param create           makes the log table, with its first beat and how often it beats
-  * @param append           appends rows to the log table, with the label
-  * @param beat             sets the beat of the log table
-  * @param tidy             tidies the log table, for its end when asked to
+  * @param beatEveryMs how often the recorder ticks, which the label tells the log's readers
+  * @param timed       whether the recorder ticks by itself; false for a caller that calls
+  *                    [[tick]] instead, as a spec does
+  * @param clock       the unit's clock, in epoch milliseconds
+  * @param create      makes the log table, with its first beat and how often it beats
+  * @param append      appends rows to the log table, with the label
+  * @param tidy        tidies the log table, for its end when asked to
   */
 private[executionrecord] final class LakeExecutionRecorder(
     logUri: URI,
@@ -425,7 +414,6 @@ private[executionrecord] final class LakeExecutionRecorder(
       timer = Some(thread.scheduleWithFixedDelay(() => onTick(), ms, ms, TimeUnit.MILLISECONDS))
     }
 
-  /** Beats, and commits. */
   private def onTick(): Unit =
     guarded {
       tables.foreach(_.ready())
@@ -445,11 +433,6 @@ private[executionrecord] final class LakeExecutionRecorder(
         logger.error(s"A step of the record of execution $executionId failed.", failure)
     }
 
-  /**
-    * Writes what waits: the changes of state, then the statistics, then the console messages.
-    * Then it tidies a table that is due; or, once the run's last row and everything else is
-    * written, tidies the tables for their end and stops.
-    */
   private def commit(): Unit = {
     writeLog()
     storeStatistics()
@@ -461,7 +444,6 @@ private[executionrecord] final class LakeExecutionRecorder(
     }
   }
 
-  /** Appends the queued changes of state in one commit. */
   private def writeLog(): Unit = {
     val rows = withLock(unwritten.toList)
     if (rows.nonEmpty && logTable.appending(append(logUri, rows, clock()))) {
@@ -473,10 +455,6 @@ private[executionrecord] final class LakeExecutionRecorder(
     }
   }
 
-  /**
-    * Appends a row for each operator whose newest numbers differ from its last stored row, all
-    * with the time of this commit.
-    */
   private def storeStatistics(): Unit = {
     val (told, metrics, upToDate) =
       withLock((metricsTold, newestMetrics, metricsStored == metricsTold))
@@ -519,8 +497,8 @@ private[executionrecord] final class LakeExecutionRecorder(
   }
 
   /**
-    * Appends the console messages that wait, in one commit. Where messages were dropped since
-    * the last row stored, a row says how many, with the seq of the last of them.
+    * Where messages were dropped since the last row stored, a row says how many, with the seq of
+    * the last of them.
     */
   private def storeConsole(): Unit = {
     val rows = withLock {

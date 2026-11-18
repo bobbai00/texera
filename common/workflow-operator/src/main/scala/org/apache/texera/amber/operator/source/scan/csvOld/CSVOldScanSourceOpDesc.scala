@@ -158,7 +158,6 @@ class CSVOldScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerat
     }
   }
 
-  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
   override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".csv"))
 
   /** The schema of the file `document` holds, inferred from the first rows of its window. */

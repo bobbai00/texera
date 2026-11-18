@@ -23,10 +23,7 @@ import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 
 object ResultSchema {
 
-  /**
-    * An execution's plan table (see `ExecutionPlanStore`): one plan row written when the
-    * execution is created, then one row per change to one of its paused operators.
-    */
+  /** The columns of an execution's plan table (see `ExecutionPlanStore`). */
   val executionPlanSchema: Schema = new Schema(
     new Attribute("entryId", AttributeType.STRING),
     new Attribute("body", AttributeType.STRING),
@@ -35,7 +32,7 @@ object ResultSchema {
     new Attribute("computingUnitId", AttributeType.INTEGER)
   )
 
-  /** An execution's log table (see `ExecutionLogStore`): one row per change of the run's state. */
+  /** The columns of an execution's log table (see `ExecutionLogStore`). */
   val executionLogSchema: Schema = new Schema(
     new Attribute("seq", AttributeType.LONG),
     new Attribute("timeMs", AttributeType.LONG),

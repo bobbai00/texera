@@ -48,17 +48,15 @@ object ExecutionsMetadataPersistService {
     Json.stringify(Json.obj("engine_version" -> engineVersion))
 
   /**
-    * Records a new execution of the latest version of workflow `workflowId`, created by user `uid`
-    * to run on computing unit `computingUnitId`: the row the Dashboard inserts when it creates an
-    * execution, before the execution's plan is made.
+    * Inserts the row of a new execution of the latest version of workflow `workflowId`, before
+    * the execution's plan is made.
     *
-    * The row is open, and reads as Created until a unit has started the execution: its log
-    * then says what state it is in. Its starting time is now. An empty `executionName` keeps
-    * the column's default name. With a `replayLogRoot` the execution writes its replay log to
-    * `<root>/<wid>/<eid>/`, which is recorded in the transaction that inserts the row: no row is
-    * left without the location its plan names.
+    * The row is open, starts now, and reads as Created until a unit has started the execution. An
+    * empty `executionName` keeps the column's default name. With a `replayLogRoot` the execution
+    * writes its replay log to `<root>/<wid>/<eid>/`, which is recorded in the transaction that
+    * inserts the row: no row is left without the location its plan names.
     *
-    * @param environmentVersion what the row keeps as the version of the engine that asked for it
+    * @param environmentVersion see [[environmentVersionOf]]
     * @param warehouseId        the user_warehouse the execution writes into; None for the shared
     *                           default warehouse
     * @param replayLogRoot      where runs keep their replay logs; None when they keep none

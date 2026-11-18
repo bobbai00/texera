@@ -44,7 +44,7 @@ import scala.util.{Try, Using}
   * `body` is the engine's input, a stored plan or a stored update. Who created the execution
   * and the computing unit it was created for are columns, not fields of the plan: they are what
   * the unit's web layer checks, and a plan names neither a user nor a unit. Nothing here says
-  * where to reach that user: an address is no part of what a unit reads.
+  * where to reach that user: an email address is no part of what a unit reads.
   */
 final case class PlanRecord(
     entryId: String,
@@ -93,9 +93,8 @@ final class PlanTooLargeException(what: String, val bytes: Int)
     )
 
 /**
-  * Keeps each execution's plan in the lake: one Iceberg table per execution, in the warehouse the
-  * execution writes into, at the URI [[planUri]] names (namespace
-  * `storage.iceberg.table.plan-namespace`, table `wid_<wid>_eid_<eid>_plan`).
+  * Keeps each execution's plan table, one of its [[ExecutionTables]], at the URI [[planUri]]
+  * names (namespace `storage.iceberg.table.plan-namespace`, table `wid_<wid>_eid_<eid>_plan`).
   *
   * The table holds the plan row and the rows of the changes to its paused operators (see
   * [[PlanRecord]]), and the execution's start claim: the tag `started` on the snapshot that was
@@ -109,10 +108,6 @@ final class PlanTooLargeException(what: String, val bytes: Int)
   * the links an executor reads files through are in the body alone. It is the execution's
   * provenance, and, on the plan row, what a change to a paused operator is compiled against;
   * a computing unit has no use for it, and does not read it.
-  *
-  * Every method takes only a URI [[planUri]] could have built, and refuses any other. A table
-  * that is not there is a [[NoStoredPlanException]]; any other failure of the catalog is thrown
-  * as it is, so a catalog that cannot answer is never taken for a missing plan.
   */
 object ExecutionPlanStore {
 
@@ -134,10 +129,8 @@ object ExecutionPlanStore {
   // plain file name: the prefix, then 1 to 64 letters, digits or hyphens (a UUID fits).
   private val UpdateEntryIdPattern = s"$UpdateEntryIdPrefix[A-Za-z0-9-]{1,64}".r
 
-  // The columns of a record, which is every column but `logical`.
   private val RecordColumns = executionPlanSchema.getAttributeNames.filterNot(_ == "logical")
 
-  /** The plan table of execution `eid` of workflow `wid`, in `warehouse` (None: the default). */
   def planUri(wid: WorkflowIdentity, eid: ExecutionIdentity, warehouse: Option[String]): URI =
     VFSURIFactory.createPlanURI(wid, eid, warehouse)
 
@@ -155,11 +148,9 @@ object ExecutionPlanStore {
       }
 
   /**
-    * Writes the plan row as a new table. A table already at this URI can only be stale, since an
-    * execution id is written once, so it is replaced, with its rows and its tag.
+    * Writes the plan row as a new table, in place of a stale one with its rows and its tag.
     *
-    * @param logical the logical plan `record`'s body was compiled from
-    * @throws PlanTooLargeException if the body is more than [[MaxBodyBytes]]; nothing is written.
+    * @throws PlanTooLargeException if the body is more than [[MaxBodyBytes]]; nothing is written
     */
   def writePlan(uri: URI, record: PlanRecord, logical: String): Unit = {
     requirePlanUri(uri)
@@ -175,11 +166,7 @@ object ExecutionPlanStore {
     writeRow(document, record, logical)
   }
 
-  /**
-    * The plan row.
-    *
-    * @throws NoStoredPlanException if the table does not exist or holds no plan row.
-    */
+  /** @throws NoStoredPlanException if the table does not exist or holds no plan row */
   def readPlan(uri: URI): PlanRecord = {
     requirePlanUri(uri)
     rowsWithEntryId(loadPlanTable(uri), PlanEntryId, RecordColumns).headOption
@@ -187,11 +174,7 @@ object ExecutionPlanStore {
       .getOrElse(throw new NoStoredPlanException(uri))
   }
 
-  /**
-    * The plan row, and the logical plan its body was compiled from.
-    *
-    * @throws NoStoredPlanException if the table does not exist or holds no plan row.
-    */
+  /** [[readPlan]], with the logical plan the row's body was compiled from. */
   def readPlanWithLogical(uri: URI): (PlanRecord, String) = {
     requirePlanUri(uri)
     rowsWithEntryId(
@@ -212,8 +195,7 @@ object ExecutionPlanStore {
     * are unique because the caller makes each from a UUID.
     *
     * @param logical the operator as changed, which `record`'s body was compiled from
-    * @throws NoStoredPlanException if the table does not exist.
-    * @throws PlanTooLargeException if the body is more than [[MaxBodyBytes]]; nothing is written.
+    * @throws PlanTooLargeException if the body is more than [[MaxBodyBytes]]; nothing is written
     */
   def appendUpdate(uri: URI, record: PlanRecord, logical: String): Unit = {
     requirePlanUri(uri)
@@ -233,12 +215,7 @@ object ExecutionPlanStore {
     writeRow(document, record, logical)
   }
 
-  /**
-    * The update row `updateId`.
-    *
-    * @throws NoSuchUpdateException if the table holds no update row with that entry id.
-    * @throws NoStoredPlanException if the table does not exist.
-    */
+  /** @throws NoSuchUpdateException if the table holds no update row with that entry id */
   def readUpdate(uri: URI, updateId: String): PlanRecord = {
     requirePlanUri(uri)
     val table = loadPlanTable(uri)
@@ -258,9 +235,8 @@ object ExecutionPlanStore {
     * the configured commit retries (`storage.iceberg.table.commit.retry.num-retries`); after the
     * last, that commit's `CommitFailedException` is thrown.
     *
-    * @throws ExecutionAlreadyStartedException if the table already carries the tag, including
-    *                                          when another claim added it while this one ran.
-    * @throws NoStoredPlanException if the table does not exist or has no snapshot.
+    * @throws ExecutionAlreadyStartedException if the table carries the tag, even one that
+    *                                          another claim added while this one ran
     */
   def claimStart(uri: URI): Unit = claimStart(uri, beforeCommit = () => ())
 
@@ -305,17 +281,12 @@ object ExecutionPlanStore {
     claim(retriesLeft = StorageConfig.icebergTableCommitNumRetries)
   }
 
-  /**
-    * Whether the execution was claimed for its start.
-    *
-    * @throws NoStoredPlanException if the table does not exist.
-    */
+  /** Whether the execution was claimed for its start. */
   def isStarted(uri: URI): Boolean = {
     requirePlanUri(uri)
     hasStartedTag(loadPlanTable(uri))
   }
 
-  /** Drops the table with its rows and its tag; nothing happens when there is no table. */
   def drop(uri: URI): Unit = {
     requirePlanUri(uri)
     DocumentFactory.dropTable(uri)
@@ -375,7 +346,6 @@ object ExecutionPlanStore {
     rows.filter(_.getField[String]("entryId") == entryId)
   }
 
-  /** Writes `record` and `logical` as one row, to a data file named after the entry id. */
   private def writeRow(
       document: VirtualDocument[Tuple],
       record: PlanRecord,

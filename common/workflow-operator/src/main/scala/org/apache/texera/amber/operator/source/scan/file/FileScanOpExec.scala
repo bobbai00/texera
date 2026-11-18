@@ -33,10 +33,8 @@ class FileScanOpExec private[scan] (
     objectMapper.readValue(descString, classOf[FileScanOpDesc])
 
   /**
-    * The tuples of the file `tuple` names, by its first string field: a file the plan links,
-    * which is one a File Lister upstream of this operator listed when the plan was made. The
-    * file is read through that link. No other name is looked up, wherever a file of that name
-    * may be.
+    * The tuples of the file `tuple` names, by its first string field, read through the plan's
+    * link to it (see [[FileScanOpDesc]]). No other name is looked up.
     *
     * @throws FileNotFoundException if the plan carries no link to the file
     */

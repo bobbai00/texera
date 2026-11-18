@@ -24,10 +24,8 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.texera.amber.core.workflow.WorkflowSettings
 
 /**
-  * The replay log of an earlier execution of the workflow, read up to one interaction.
-  *
-  * @param eid         the execution whose replay log is read
-  * @param interaction the id of the embedded control message to replay up to
+  * The replay log of earlier execution `eid` of the workflow, read up to `interaction`, the id of
+  * an embedded control message.
   */
 case class ReplayExecutionInfo(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -39,23 +37,18 @@ case class ReplayExecutionInfo(
   * The body of `POST /api/executions`: an execution of workflow `wid` to create, to run on
   * computing unit `computingUnitId`.
   *
-  * @param executionName            the execution's name; empty for the default name
-  * @param engineVersion            the version of the engine (the frontend's, or the agent's)
-  *                                 that asks for the execution, kept with it
-  * @param logicalPlan              the workflow to run, as the editor holds it: operators,
-  *                                 links and the results to view and reuse. The Dashboard
-  *                                 hands it to the compiling service as it is, and reads
-  *                                 nothing in it.
-  * @param workflowSettings         the run's batch size and execution mode; None for the
-  *                                 defaults. The output ports whose results are stored are the
-  *                                 compiler's to find, so any sent here are ignored.
-  * @param emailNotificationEnabled whether the user is emailed how the run ended
-  * @param warehouseId              the user_warehouse the run writes into: required while per-user
-  *                                 warehouses are enabled, refused while they are disabled
-  * @param replayFromExecution      the replay log the run replays; None for none
-  * @param targetOperatorId         the operator the run executes up to ("Execute To"): only it
-  *                                 and the operators upstream of it are compiled. None for the
-  *                                 whole workflow.
+  * @param executionName    empty for the default name
+  * @param engineVersion    the version of the frontend or agent that asks for the execution,
+  *                         kept with it
+  * @param logicalPlan      the workflow as the editor holds it. The Dashboard hands it to the
+  *                         compiling service as it is, and reads nothing in it.
+  * @param workflowSettings None for the defaults. The output ports whose results are stored are
+  *                         the compiler's to find, so any sent here are ignored.
+  * @param warehouseId      the user_warehouse row the run writes into: required while per-user
+  *                         warehouses are enabled, refused while they are disabled
+  *                         ([[org.apache.texera.web.service.execution.ExecutionWarehouse]])
+  * @param targetOperatorId the operator the run executes up to ("Execute To"): only it and the
+  *                         operators upstream of it are compiled. None for the whole workflow.
   */
 case class CreateExecutionRequest(
     wid: Long,

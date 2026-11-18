@@ -35,8 +35,6 @@ object LakeFSFileDocument {
     * Where in LakeFS the file at `uri` is: its repository, the commit of its version, and its
     * path within that version. `uri` is {scheme}:///{repositoryName}/{versionHash}/{file}, as
     * `FileResolver` builds it, with each segment of the file's path URL-encoded.
-    *
-    * @throws IllegalArgumentException if `uri` has fewer than these three parts
     */
   def locate(uri: URI): (String, String, Path) = {
     val segments = Paths.get(uri.getPath).iterator().asScala.map(_.toString).toArray

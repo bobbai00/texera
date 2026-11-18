@@ -24,13 +24,12 @@ import java.net.URI
 /**
   * A link to a file that an operator reads from outside the run: a URL the file can be read from
   * with a GET, by whoever holds the link and until it expires. A plan made to run carries one for
-  * each file its operators read, so the computing unit that runs the plan reads the files without
-  * asking any service where they are, or whether its user may read them.
+  * each file its operators read (see [[org.apache.texera.amber.core.workflow.ExecutionPlan]]).
   *
   * The URL is a secret: its query holds the signature that lets its holder read the file.
   * [[toString]] leaves the query out, so a link that ends up in a log line gives nothing away.
   *
-  * @param url         where the file is read from: a presigned GET on the object store
+  * @param url         a presigned GET on the object store
   * @param expiresAtMs when the link stops working, in milliseconds since the epoch
   */
 final case class InputLink(url: String, expiresAtMs: Long) {
@@ -41,17 +40,13 @@ final case class InputLink(url: String, expiresAtMs: Long) {
 
 object InputLink {
 
-  /**
-    * `url` up to its query, which is where a presigned link keeps its signature: the part of a
-    * link that may be logged.
-    */
+  /** `url` up to its query: the part of a link that may be logged. */
   def withoutQuery(url: String): String = url.takeWhile(c => c != '?' && c != '#')
 }
 
 /**
   * Says where the files a plan's operators read are kept, when the plan is made to run. A plan
-  * carries each file's address, so whatever signs the plan's links asks no service where a file
-  * is.
+  * carries each file's address, so an [[InputLinker]] signs its links without a lookup.
   *
   * A locator checks no access: it locates whatever file it is handed. It is to be handed only
   * files a [[ScanFileResolver]] resolved for the plan's user, which is where access is checked.
@@ -63,9 +58,7 @@ trait InputFileLocator {
     * The object that holds the bytes of the file at `fileUri`, a URI a [[ScanFileResolver]]
     * resolved a name to: its address in the store that keeps it (s3://bucket/key).
     *
-    * @throws org.apache.commons.vfs2.FileNotFoundException if there is no such file. Any other
-    *                                                       failure, such as the storage not
-    *                                                       answering, is thrown as it is.
+    * @throws org.apache.commons.vfs2.FileNotFoundException if there is no such file
     */
   def locate(fileUri: URI): String
 }

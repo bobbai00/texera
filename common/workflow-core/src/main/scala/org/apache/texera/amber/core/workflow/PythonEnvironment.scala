@@ -24,14 +24,11 @@ package org.apache.texera.amber.core.workflow
   * beside the engine's own, for the workers of the operators that run in it.
   *
   * It holds only what pip may read: every requirement is a canonical line of
-  * [[PythonRequirements]], and the lines are sorted, each once. So a value of this type is written
-  * to a requirements file as it is, wherever it came from.
+  * [[PythonRequirements]] ("tabulate==0.9.0"), and the lines are sorted, each once. So a value of
+  * this type is written to a requirements file as it is, wherever it came from.
   *
-  * @param name         what the plan's user calls the environment, which its operators ask for
-  *                     it by
-  * @param requirements the packages, as canonical requirement lines ("tabulate==0.9.0")
-  * @throws IllegalArgumentException if the name is blank, a line is not a canonical requirement
-  *                                  line, or the lines are not sorted, each once
+  * @param name what the plan's user calls the environment, which its operators ask for it by
+  * @throws IllegalArgumentException if the name is blank or the requirements are not in that form
   */
 final case class PythonEnvironment(name: String, requirements: Seq[String]) {
   PythonEnvironment
@@ -67,9 +64,8 @@ object PythonEnvironment {
   * The Python environment the workers of an operator run in.
   *
   * An operator asks for an environment by its name. The compile that makes a plan to run resolves
-  * the name, for the plan's user, to what the environment holds then, and the plan carries that:
-  * the computing unit that runs the plan installs what the plan says, and asks nobody what a name
-  * stands for.
+  * the name, for the plan's user, to what the environment holds then, and the plan carries that
+  * ([[ExecutionPlan]]).
   */
 sealed trait PythonEnvironmentRef extends Product with Serializable {
 
@@ -85,9 +81,8 @@ object PythonEnvironmentRef {
   }
 
   /**
-    * The environment the plan's user keeps under `name`, as an operator asks for it. Only a
-    * compile that makes a plan to run resolves it; nothing saves or runs an operator that still
-    * names one.
+    * The environment the plan's user keeps under `name`, not yet resolved: nothing saves or runs
+    * an operator that still names one.
     */
   final case class Named(name: String) extends PythonEnvironmentRef {
     override def environmentName: Option[String] = Some(name)

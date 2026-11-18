@@ -27,15 +27,13 @@ import { WorkflowFatalError } from "../../types/workflow-websocket.interface";
 
 /** The replay log of an earlier execution of the workflow, replayed up to one interaction. */
 export type ReplayExecutionInfo = Readonly<{
-  /** The execution whose replay log is read. */
   eid: number;
   /** The id of the embedded control message to replay up to. */
   interaction: string;
 }>;
 
 /**
- * The body of `POST /api/executions`, as the editor sends it: an execution of workflow `wid` to create, to run
- * on computing unit `computingUnitId`.
+ * The body of `POST /api/executions`, as the editor sends it (amber's `CreateExecutionRequest`).
  *
  * The route also takes `targetOperatorId`, which the editor leaves out: for a run up to an operator it sends
  * only the part of the workflow that run needs.
@@ -91,8 +89,8 @@ export type ExecutionStateResponse = Readonly<{
 
 /**
  * How the Dashboard service answers a request it does not serve: the HTTP status, and why. When the workflow
- * of a `POST /api/executions` does not compile (400), also the execution, which is recorded as failed, and
- * the first error of each operator that has one, by the operator's id.
+ * of a `POST /api/executions` does not compile (400, amber's `CreateExecutionFailure`), also the execution,
+ * which is recorded as failed, and the first error of each operator that has one, by the operator's id.
  */
 type ErrorBody = Readonly<{
   code: number;
@@ -184,6 +182,8 @@ export function failureMessage(error: unknown): string {
  * The Dashboard service's executions. An execution is created here, with its plan, and then started on its
  * computing unit by id; a change to one of its operators, while it is paused, is stored here, and then named
  * to the unit by id. Its state is kept here too, for a page whose computing unit does not show its run.
+ *
+ * Each call fails with the HTTP error: see {@link failureMessage} and, for a create, {@link operatorErrorsOf}.
  */
 @Injectable({
   providedIn: "root",
@@ -191,27 +191,15 @@ export function failureMessage(error: unknown): string {
 export class ExecutionApiService {
   constructor(private http: HttpClient) {}
 
-  /**
-   * Creates an execution: the Dashboard checks the caller's rights, records the execution, has the workflow
-   * compiled for them and writes its plan. Fails with the HTTP error: see {@link operatorErrorsOf} and
-   * {@link failureMessage}.
-   */
   public create(request: CreateExecutionRequest): Observable<CreateExecutionResponse> {
     return this.http.post<CreateExecutionResponse>(WORKFLOW_EXECUTIONS_API_BASE_URL, request);
   }
 
-  /**
-   * Stores `operator`, as the editor holds it once changed, as a change to paused execution `eid`, for its
-   * computing unit to apply when the run resumes. Fails with the HTTP error: see {@link failureMessage}.
-   */
+  /** Stores `operator`, as the editor holds it once changed, as a change to paused execution `eid`. */
   public postUpdate(eid: number, operator: LogicalOperator): Observable<OperatorUpdateResponse> {
     return this.http.post<OperatorUpdateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/updates`, { operator });
   }
 
-  /**
-   * The state the Dashboard service holds of execution `eid`, read when it is asked: the answer for an open
-   * execution changes as its run goes on. Fails with the HTTP error: see {@link failureMessage}.
-   */
   public getState(eid: number): Observable<ExecutionStateResponse> {
     return this.http.get<ExecutionStateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/state`);
   }

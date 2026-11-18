@@ -25,15 +25,11 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Physical
 import java.net.URI
 
 /**
-  * An execution as the engine is given it to run: the physical plan, the context it runs under,
-  * and what else the run needs that the plan does not hold. [[PhysicalPlanCodec]] saves it and
-  * reads it back.
+  * An execution as the engine is given it to run. A plan made to run holds everything the
+  * computing unit that runs it needs, so the unit asks no service while it runs the plan.
+  * [[PhysicalPlanCodec]] saves it and reads it back.
   *
-  * @param context   the run's ids, settings, warehouse and cost hints
-  * @param plan      the physical plan, made to run: each operator says what it reads from
-  *                  outside the run, and where each of its output ports is stored
-  * @param replay    where the run replays from; None when it replays nothing
-  * @param replayLog where the run writes its replay log, an absolute URI; None when it writes none
+  * @param replayLog where the run writes its replay log, an absolute URI
   */
 final case class ExecutionPlan(
     context: WorkflowContext,
@@ -45,9 +41,8 @@ final case class ExecutionPlan(
 /**
   * The replay log an earlier execution wrote, read up to one interaction.
   *
-  * @param sourceExecutionId the execution that wrote the log
-  * @param logLocation       where the log is, an absolute URI
-  * @param interaction       the id of the embedded control message to replay up to
+  * @param logLocation where the log is, an absolute URI
+  * @param interaction the id of the embedded control message to replay up to
   */
 final case class ReplaySource(
     sourceExecutionId: ExecutionIdentity,
@@ -56,11 +51,8 @@ final case class ReplaySource(
 )
 
 /**
-  * How long each logical operator took in an earlier execution of the workflow, for the
-  * scheduler's cost model. It may name operators the plan no longer has.
-  *
-  * @param sourceExecutionId        the execution the costs were measured in
-  * @param secondsByLogicalOperator the seconds each logical operator, by its id, took
+  * How long each logical operator, by its id, took in an earlier execution of the workflow, for
+  * the scheduler's cost model. It may name operators the plan no longer has.
   */
 final case class CostHints(
     sourceExecutionId: ExecutionIdentity,
@@ -72,10 +64,7 @@ final case class CostHints(
   * operator's new executor, and what its new code reads. The rest of the operator, its ports and
   * links included, stays as the running plan has it.
   *
-  * @param executionId      the execution whose operator changes
   * @param updateId         names the change among the execution's changes
-  * @param opId             the operator that changes
-  * @param opExecInitInfo   the operator's new executor
   * @param repositoryMounts the datasets and models the new code reads; None when it reads none
   */
 final case class OperatorUpdate(

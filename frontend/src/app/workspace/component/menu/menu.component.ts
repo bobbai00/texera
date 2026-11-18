@@ -467,10 +467,7 @@ export class MenuComponent implements OnInit, OnDestroy {
     ].includes(this.executionState);
   }
 
-  /**
-   * Whether the computing unit does not show the run on screen, whose state is then the Dashboard service's:
-   * the unit has no such run to pause, resume or kill.
-   */
+  /** Whether the computing unit does not show the run on screen; see ExecuteWorkflowService.isFollowingAtDashboard. */
   public get runIsOffUnit(): boolean {
     return this.executeWorkflowService.isFollowingAtDashboard();
   }

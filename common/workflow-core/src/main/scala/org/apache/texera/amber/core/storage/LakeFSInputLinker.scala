@@ -45,7 +45,6 @@ object LakeFSInputFileLocator extends InputFileLocator {
   /**
     * @param fileUri {dataset|model}:///{repositoryName}/{versionHash}/{file}, as `FileResolver`
     *                resolves a file's name
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the version holds no such file
     */
   override def locate(fileUri: URI): String = {
     if (!LakeFSSchemes.contains(fileUri.getScheme)) {
@@ -94,11 +93,9 @@ object LakeFSInputLinker {
   * here.
   *
   * @param presigner signs the links, for the object store as their readers reach it
-  * @param lifetime  how long a link works
   */
 class LakeFSInputLinker(presigner: ObjectStorePresigner, lifetime: Duration) extends InputLinker {
 
-  /** Signs a GET of the object at `physicalAddress`, with no request to LakeFS. */
   override def link(physicalAddress: String): InputLink = {
     if (!physicalAddress.startsWith("s3://")) {
       throw new IllegalStateException(

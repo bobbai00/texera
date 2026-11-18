@@ -137,11 +137,9 @@ object IcebergUtil {
     * accepted a request and never answered would hold its caller for good: a computing unit's
     * recorder, say, whose beat then stops though the unit is alive.
     *
-    * @param catalogName         the name of the catalog.
-    * @param warehouse           the root path for the warehouse where the tables are stored.
-    * @param uri                 where the catalog is.
-    * @param connectionTimeoutMs how long a call waits for a connection, in milliseconds.
-    * @param socketTimeoutMs     how long a call waits for the catalog to answer, in milliseconds.
+    * @param catalogName the name of the catalog.
+    * @param warehouse   the root path for the warehouse where the tables are stored.
+    * @param uri         where the catalog is.
     * @return the initialized RESTCatalog instance.
     */
   def createRestCatalog(

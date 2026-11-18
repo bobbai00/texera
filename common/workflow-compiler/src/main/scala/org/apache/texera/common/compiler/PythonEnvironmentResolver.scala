@@ -29,9 +29,7 @@ trait PythonEnvironmentResolver {
 
   /**
     * @throws PythonEnvironmentNotResolved if the plan's user has no environment of that name, or
-    *                                      has one whose packages pip may not read. Any other
-    *                                      failure, such as the database not answering, is thrown
-    *                                      as it is.
+    *                                      has one whose packages pip may not read
     */
   def resolve(name: String): PythonEnvironment
 }

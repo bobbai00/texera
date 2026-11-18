@@ -52,16 +52,10 @@ final case class ConsoleRow(
 )
 
 /**
-  * Keeps each execution's console output in the lake: one Iceberg table per execution, for all
-  * its operators, in the warehouse the execution writes into, at the URI [[consoleUri]] names
-  * (namespace `storage.iceberg.table.console-messages-namespace`, table
-  * `wid_<wid>_eid_<eid>_consolemessages`). The engine that runs the execution is the table's
-  * one writer.
-  *
-  * Every method takes only a URI [[consoleUri]] could have built, and refuses any other. To a
-  * read, a table that is not there is empty; to a write it is a
-  * [[NoSuchExecutionTableException]]. Any other failure of the catalog or the object store is
-  * thrown as it is.
+  * Keeps each execution's console table, one of its [[ExecutionTables]] and one for all its
+  * operators, at the URI [[consoleUri]] names (namespace
+  * `storage.iceberg.table.console-messages-namespace`, table
+  * `wid_<wid>_eid_<eid>_consolemessages`).
   */
 object ConsoleMessageStore {
 
@@ -76,14 +70,9 @@ object ConsoleMessageStore {
     new Attribute("message", AttributeType.STRING)
   )
 
-  /** The console table of execution `eid` of workflow `wid`, in `warehouse` (None: the default). */
   def consoleUri(wid: WorkflowIdentity, eid: ExecutionIdentity, warehouse: Option[String]): URI =
     VFSURIFactory.createConsoleMessagesURI(wid, eid, warehouse)
 
-  /**
-    * Makes the console table, empty. A table already at this URI can only be stale, since an
-    * execution id is run once, so it is replaced.
-    */
   def create(uri: URI): Unit = {
     requireConsoleUri(uri)
     DocumentFactory.createDocument(uri, schema)
@@ -96,8 +85,6 @@ object ConsoleMessageStore {
     * An append that fails may have landed all the same, when the catalog's answer was lost.
     * Appending its rows again is safe, alone or with later ones: [[read]] takes a row whose
     * `seq` is not above those appended before it for a repeat.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
     */
   def append(uri: URI, rows: Seq[ConsoleRow]): Unit = {
     requireConsoleUri(uri)
@@ -113,8 +100,7 @@ object ConsoleMessageStore {
 
   /**
     * The first `limit` rows after row `afterSeq`, by `seq`, of `operatorId` or of all operators
-    * (None), and whether more such rows follow them. One row per `seq`. Empty when the table
-    * does not exist.
+    * (None), and whether more such rows follow them. One row per `seq`.
     *
     * A page does not cost the whole console: the data files whose rows all come at or before
     * `afterSeq` are not read, and the read stops once it has the page.
@@ -126,10 +112,7 @@ object ConsoleMessageStore {
       limit: Int
   ): (Seq[ConsoleRow], Boolean) = read(uri, operatorId, afterSeq, limit, afterPlan = () => ())
 
-  /**
-    * [[read]], running `afterPlan` between each plan of the table's files and the read of them,
-    * the window in which a tidy can delete them. Tests tidy there.
-    */
+  /** [[read]], with the hook `afterPlan` that [[IcebergReader.read]] gives tests. */
   private[storage] def read(
       uri: URI,
       operatorId: Option[String],
@@ -167,18 +150,12 @@ object ConsoleMessageStore {
       .getOrElse((Nil, false))
   }
 
-  /**
-    * Tidies the table (see [[IcebergTidy.tidy]]). For the table's writer alone, between its
-    * appends, and with `atEnd` once it has appended its last row.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
-    */
+  /** Tidies the table, as [[ExecutionLogStore.tidy]] tidies the log. */
   def tidy(uri: URI, atEnd: Boolean): Unit = {
     requireConsoleUri(uri)
     IcebergTidy.tidy(existingTable(uri), atEnd)
   }
 
-  /** Drops the table with its rows; nothing happens when there is no table. */
   def drop(uri: URI): Unit = {
     requireConsoleUri(uri)
     DocumentFactory.dropTable(uri)
@@ -186,8 +163,8 @@ object ConsoleMessageStore {
 
   private def requireConsoleUri(uri: URI): Unit = {
     val components = VFSURIFactory.decodeURI(uri)
-    // Rebuilding the URI from what it decodes to refuses extra segments, which would address a
-    // different table name in the console namespace: one operator's console table, say.
+    // An extra segment would name another table, such as one operator's console table, so the
+    // URI must equal the one rebuilt from it.
     require(
       components.resourceType == VFSResourceType.CONSOLE_MESSAGES &&
         uri == consoleUri(components.workflowId, components.executionId, components.warehouse),

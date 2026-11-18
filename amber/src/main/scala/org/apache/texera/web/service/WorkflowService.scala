@@ -67,10 +67,8 @@ object WorkflowService extends LazyLogging {
   private val workflowServiceMapping = new ConcurrentHashMap[String, WorkflowService]()
 
   /**
-    * A start of execution `executionId` by its id that passed every check made before the
-    * execution is claimed ([[checkStoredStart]]): the plan table at `planUri`, of workflow
-    * `workflowId`; its plan row `record`, made for the user who asks and for the computing unit
-    * asked; and the plan the row holds, read back.
+    * A start of an execution that passed every check made before the execution is claimed
+    * ([[checkStoredStart]]), with its plan row and the plan the row holds, read back.
     */
   final case class CheckedStart(
       executionId: Long,
@@ -93,15 +91,10 @@ object WorkflowService extends LazyLogging {
     s"Execution $executionId could not be started, because of an error on this computing unit."
 
   /**
-    * Checks a request of `user` to start execution `executionId`, which the Dashboard service
-    * created, on computing unit `cuid`, from the plan stored in its plan table at `planUri`, in
-    * this order:
-    *  1. A user is required.
-    *  1. A unit that knows which unit it is (`thisUnit`) starts only what was asked of that unit.
-    *  1. The URI is checked before any catalog is opened ([[StoredExecutionStart.checkUri]]).
-    *  1. The plan row is read with `readPlan`, and checked: made for `user` and `cuid`, of the
-    *     execution the table is of, with its replay logs where this unit keeps them and no input
-    *     link expired ([[StoredExecutionStart.checkRecord]]).
+    * Checks a request of `user` to start execution `executionId` on computing unit `cuid`, from
+    * the plan stored at `planUri`. A user is required, and a unit that knows which unit it is
+    * starts only what was asked of that unit. The URI is checked before any catalog is opened,
+    * and then the plan row is read and checked (both by [[StoredExecutionStart]]).
     *
     * It reads the plan row and writes nothing.
     *
@@ -206,9 +199,7 @@ object WorkflowService extends LazyLogging {
   * The runs of one workflow on this computing unit, one at a time, and what outlives a run: the
   * workflow's sessions and its results.
   *
-  * @param readPlan    reads an execution's plan row from its plan table
   * @param claimStart  claims an execution for its one start, in its plan table
-  * @param newRun      builds the run of a plan read back from the lake, before it is started
   * @param startRecord starts the record of a run that is about to be built, under its context
   */
 class WorkflowService(
@@ -246,7 +237,7 @@ class WorkflowService(
     * What becomes of this service once nobody has used the workflow for the clean-up timeout: the
     * service leaves the registry and lets go of every subscription, shutting the engine of the
     * run it holds down. A run that has not ended is then recorded KILLED, as nobody watched it.
-    * What the run stored stays: a unit drops nothing, and the Dashboard service expires results.
+    * What the run stored stays: see [[execution.ExecutionExpiry]] for when it is dropped.
     */
   private[service] def cleanUpAfterIdle(): Unit = {
     val held = Option(executionService.getValue)
@@ -339,11 +330,9 @@ class WorkflowService(
   }
 
   /**
-    * Starts execution `executionId` of this workflow, which the Dashboard service created, from
-    * the plan stored in its plan table at `planUri`, for `user` on computing unit `cuid`: the unit
-    * the request to start it came to. The start is checked first
-    * ([[WorkflowService.checkStoredStart]]: the user, the URI before any catalog is opened, then
-    * the plan row), then started ([[startChecked]]).
+    * Checks a start of execution `executionId` of this workflow
+    * ([[WorkflowService.checkStoredStart]]), then starts it ([[startChecked]]). `cuid` is the
+    * unit the request to start it came to.
     *
     * @return why the start was refused (Left), or the run started (Right), which may have failed
     *         before its engine started
@@ -360,11 +349,9 @@ class WorkflowService(
 
   /**
     * Starts the execution `start` names, a start of this workflow that passed its checks
-    * ([[WorkflowService.checkStoredStart]]). Under the lock a new run is set up under (`runLock`),
-    * the execution is claimed for its one start (a second start is refused, however it comes),
-    * and the run this service holds is superseded. The run is built on the plan read back, under
-    * the context it was read back with, published to the workflow's sessions, and started
-    * ([[WorkflowExecutionService.startStored]]).
+    * ([[WorkflowService.checkStoredStart]]). Under `runLock`, the execution is claimed for its one
+    * start (a second start is refused, however it comes), and its run takes the place of the run
+    * this service holds ([[startClaimedRun]]).
     *
     * A start refused before its claim writes nothing, leaves the run this service holds as it is,
     * and is answered only to the caller. Once the execution is claimed, what fails is the run's
@@ -416,10 +403,9 @@ class WorkflowService(
   /**
     * Builds the run of the execution `start` names, which was just claimed for its start,
     * supersedes the run this service holds, publishes the new run in its place, and starts it.
-    * Everything after the claim is the new run's: what fails is reported through its error
-    * handler, which records it, and the run is published so its sessions see why. Only a run that
-    * could not even be built is not published: the run this service holds stays, and the start
-    * is answered why (Left), as the execution reads FAILED.
+    * A run that fails is still published, so its sessions see why. Only a run that could not even
+    * be built is not: the run this service holds stays, and the start is answered why (Left), as
+    * the execution reads FAILED.
     */
   private def startClaimedRun(
       start: WorkflowService.CheckedStart,

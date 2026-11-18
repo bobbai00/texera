@@ -310,10 +310,8 @@ object LakeFSStorageClient extends LazyLogging {
     * Fetches the pages of a paginated LakeFS API call, in order, until it has `atMost` results
     * or there are no more.
     *
-    * @param atMost The most results to fetch.
-    * @param fetch  A function that takes a pagination cursor and the number of results to ask
-    *               for, and returns (results, pagination).
-    * @return The results across the pages fetched: all there are, or the first `atMost`.
+    * @param fetch A function that takes a pagination cursor and the number of results to ask
+    *              for, and returns (results, pagination).
     */
   private def fetchPages[T](atMost: Int = Int.MaxValue)(
       fetch: (String, Int) => (java.util.List[T], Pagination)
@@ -335,10 +333,7 @@ object LakeFSStorageClient extends LazyLogging {
   /**
     * Lists the objects of a specific repository and commit, ordered by their paths.
     *
-    * @param repoName     Repository name.
-    * @param commitHash   Commit hash of the version.
-    * @param atMost       The most objects to list.
-    * @return             The objects' metadata: all the commit holds, or the first `atMost`.
+    * @return The objects' metadata: all the commit holds, or the first `atMost`.
     */
   def retrieveObjectsOfVersion(
       repoName: String,
@@ -454,11 +449,8 @@ object LakeFSStorageClient extends LazyLogging {
   /**
     * Looks up a file of a specific repository and commit, without reading it.
     *
-    * @param repoName     Repository name.
-    * @param commitHash   Commit hash of the version.
-    * @param filePath     Path to the file in the repository.
-    * @return             The file's metadata: among it, its size and its physical address, the
-    *                     object in the underlying store that holds its bytes.
+    * @return The file's metadata: among it, its size and its physical address, the object in
+    *         the underlying store that holds its bytes.
     */
   def statObject(repoName: String, commitHash: String, filePath: String): ObjectStats = {
     objectsApi.statObject(repoName, commitHash, filePath).execute()

@@ -94,9 +94,9 @@ object SqlServer {
     * Replaces the singleton with a pool against `url`, closing the pool it replaces. A process
     * that declared it has no database ([[withoutDatabase]]) has one from then on.
     *
-    * @param applicationName the name the server records for each connection (`application_name`);
-    *                        each service passes its own, and a caller that names none, such as a
-    *                        test, gets `texera`.
+    * @param applicationName the `application_name` the server records for each connection; each
+    *                        service passes its own, and a caller that names none, such as a
+    *                        test, gets `texera`
     */
   def initConnection(
       url: String,

@@ -99,10 +99,9 @@ object ComputingUnitManagingResource {
     * a run.
     *
     * Every execution is closed in the end, so none keeps a unit for ever: the Dashboard service
-    * closes a run whose unit shows no sign of life as lost, and an execution that no unit
-    * started in time as never started (apache/texera#8618). Until it does, such an execution
-    * is open here too: this service reads no lake, so it cannot tell an execution that waits
-    * for its start from one that runs.
+    * closes one whose unit is lost, and one that no unit started in time (apache/texera#8618).
+    * Until it does, such an execution is open here too: this service reads no lake, so it cannot
+    * tell an execution that waits for its start from one that runs.
     */
   private[resource] def lastComputingUnitActivityTime(
       unit: WorkflowComputingUnit,
@@ -318,12 +317,9 @@ object ComputingUnitManagingResource {
   )
 
   // Overrides, forwarded only when set: each has a default in the unit's own configuration
-  // (application.conf, storage.conf, udf.conf), so its absence is not an error. The four after
-  // the payload size are settings a unit reads to run a stored plan: the object-store endpoints
-  // it reads input links from, which must include the one the Dashboard signs them for; the
-  // namespace of the plan tables, which must be the Dashboard's; and where and how long it
-  // installs Python environments. The last three are how long a unit's calls to the Iceberg
-  // REST catalog wait, and how often it commits the record of an execution it runs.
+  // (application.conf, storage.conf, udf.conf), so its absence is not an error. Two must agree
+  // with the Dashboard: the endpoints a unit reads input links from must include the one the
+  // Dashboard signs them for, and the namespace of the plan tables must be the Dashboard's.
   // USER_SYS_ENABLED and SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR are absent
   // from both lists -- their conf keys went away with #3831 and #3542, so nothing reads them.
   // TODO: use AmberConfig here; it is only accessible in workflow-executing-service
@@ -419,9 +415,9 @@ object ComputingUnitManagingResource {
     * run produces and records, and what [[requiredComputingUnitEnv]] and
     * [[optionalComputingUnitEnv]] forward.
     *
-    * No login to the Texera database is among them, nor its address: a unit keeps nothing in
-    * Postgres, and opens no connection to it. Nor is LakeFS: a run reads its files through
-    * the links its plan holds.
+    * No login to the Texera database is among them, nor its address: a unit has no database
+    * ([[org.apache.texera.web.ComputingUnitMaster.NoDatabase]]). Nor is LakeFS: a run reads its
+    * files through the links its plan holds.
     */
   private[resource] def computingUnitEnvironment(
       lookup: String => Option[String]

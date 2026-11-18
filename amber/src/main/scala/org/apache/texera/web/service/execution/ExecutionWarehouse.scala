@@ -42,8 +42,7 @@ object ExecutionWarehouse {
     * With warehouses disabled, an explicit pick is refused loudly rather than silently
     * routed into the shared warehouse, and no pick keeps the shared default (#6930).
     *
-    * @throws IllegalArgumentException if the pick breaks one of these rules, in words the user
-    *                                  can act on
+    * @throws IllegalArgumentException if the pick breaks one of these rules, in words for the user
     */
   def resolveLakekeeperWarehouseName(
       warehouseId: Option[Int],

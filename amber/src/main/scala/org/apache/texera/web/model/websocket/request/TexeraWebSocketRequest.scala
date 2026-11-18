@@ -81,12 +81,6 @@ case class ResultPaginationRequest(
 case class RetryRequest(workers: Seq[String]) extends TexeraWebSocketRequest
 case class SkipTupleRequest(workerIds: Array[String]) extends TexeraWebSocketRequest
 case class WorkflowCheckpointRequest() extends TexeraWebSocketRequest
-
-/** Kills the run of execution `executionId`. */
 case class WorkflowKillRequest(executionId: Long) extends ExecutionRequest
-
-/** Pauses the run of execution `executionId`. */
 case class WorkflowPauseRequest(executionId: Long) extends ExecutionRequest
-
-/** Resumes the paused run of execution `executionId`. */
 case class WorkflowResumeRequest(executionId: Long) extends ExecutionRequest

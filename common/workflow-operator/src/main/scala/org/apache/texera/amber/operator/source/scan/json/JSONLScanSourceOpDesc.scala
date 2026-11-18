@@ -234,7 +234,6 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerato
       )
   }
 
-  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
   override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".jsonl"))
 
   /** The schema of the file `document` holds, inferred from the first lines of its window. */

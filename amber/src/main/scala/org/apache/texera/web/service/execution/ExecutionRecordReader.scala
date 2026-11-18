@@ -58,20 +58,15 @@ object ExecutionRecordReader {
 
 /**
   * Reads what one execution recorded, for a user: what `GET /api/executions/{eid}/state`,
-  * `/log` and `/console` on the Dashboard service answer. A closed execution's state is its
-  * closing record; an open one's is the label of its log in the lake. No computing unit is
-  * asked, so each answers for a run whose unit is gone.
+  * `/log` and `/console` on the Dashboard service answer. No computing unit is asked, so each
+  * answers for a run whose unit is gone.
   *
   * The caller must have created the execution, or own or have been granted its workflow
   * ([[ExecutionRecords.mayRead]]). Otherwise, and for an execution there is not, the answer is
   * 403, so execution ids cannot be probed.
   *
-  * @param label             reads the label of the log at a URI; None when there is no log
-  * @param rows              reads the rows of the log at a URI
-  * @param messages          reads a page of the console table at a URI: the first so many
-  *                          messages after a `seq`, of one operator or of all, and whether more
-  *                          follow
-  * @param warehousesEnabled whether runs write into per-user warehouses
+  * @param messages reads a page of the console table at a URI: the first so many messages after
+  *                 a `seq`, of one operator or of all, and whether more follow
   */
 class ExecutionRecordReader(
     label: URI => Option[ExecutionLabel] = ExecutionLogStore.label,
@@ -82,11 +77,10 @@ class ExecutionRecordReader(
 ) extends LazyLogging {
 
   /**
-    * The state of execution `eid`, for `user` (see [[ExecutionStateResponse]]). An open
-    * execution whose log cannot be read, because the lake does not answer or its warehouse
-    * cannot be reached, has status -1: that is not known to be any state.
-    *
-    * @throws ForbiddenException (403) unless `user` may read the execution
+    * The state of execution `eid`, for `user` (see [[ExecutionStateResponse]]), told as the lists
+    * of executions tell it ([[OpenExecutionStatuses]]). An open execution whose log cannot be
+    * read, because the lake does not answer or its warehouse cannot be reached, has status -1:
+    * that is not known to be any state.
     */
   def state(eid: Long, user: User): ExecutionStateResponse = {
     val execution = readable(eid, user)
@@ -131,9 +125,8 @@ class ExecutionRecordReader(
     * The log of execution `eid` and its closing record, for `user` (see
     * [[ExecutionLogResponse]]).
     *
-    * @throws ForbiddenException           (403) unless `user` may read the execution
-    * @throws WebApplicationException      (409) if the log is in a warehouse this deployment
-    *                                      cannot reach: it is not answered as a log with no rows
+    * @throws WebApplicationException      (409) if its warehouse cannot be reached: the log is
+    *                                      not answered as one with no rows
     * @throws InternalServerErrorException (500) if the lake cannot be read
     */
   def log(eid: Long, user: User): ExecutionLogResponse = {
@@ -178,10 +171,9 @@ class ExecutionRecordReader(
     * whose results have expired holds no console output: its page is empty, and nothing is
     * read for it.
     *
-    * @throws ForbiddenException           (403) unless `user` may read the execution
     * @throws BadRequestException          (400) if `limit` is negative
-    * @throws WebApplicationException      (409) if the console output is in a warehouse this
-    *                                      deployment cannot reach: it is not answered as none
+    * @throws WebApplicationException      (409) if its warehouse cannot be reached: the console
+    *                                      output is not answered as none
     * @throws InternalServerErrorException (500) if the lake cannot be read
     */
   def console(

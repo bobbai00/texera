@@ -31,7 +31,6 @@ sealed trait PartitionRule extends Product with Serializable {
     * @param inputs the partitioning of each input port, one entry per port, in the order the
     *               scheduler hands them over. That is not port order: ResourceAllocator groups
     *               the inputs by port id in a hash map, so for ports 0 and 1 the head is port 1.
-    * @return the partitioning of the output
     */
   def outputPartition(inputs: List[PartitionInfo]): PartitionInfo
 }
@@ -39,9 +38,8 @@ sealed trait PartitionRule extends Product with Serializable {
 object PartitionRule {
 
   /**
-    * The output is partitioned like the head of `inputs`. An operator has this rule by default.
-    * With one input port the head is that port; with several it need not be port 0 (see
-    * [[PartitionRule.outputPartition]]).
+    * The output is partitioned like the head of `inputs`, which with several input ports need not
+    * be port 0 (see [[PartitionRule.outputPartition]]). An operator has this rule by default.
     */
   case object FirstInput extends PartitionRule {
     override def outputPartition(inputs: List[PartitionInfo]): PartitionInfo = inputs.head

@@ -23,12 +23,12 @@ package org.apache.texera.web.model.http.response.execution
   * What `GET /api/executions/{eid}/state` answers: the state of one execution, from its closing
   * record once it is closed, and from its log while it is open.
   *
-  * @param status the execution's status code. Closed: how it ended (3 completed, 4 failed,
-  *               5 killed). Open: the newest state in its log (0 initializing, 1 running,
-  *               2 paused, or an ending the closing job has yet to record); 6, created, when no
-  *               unit has written a state; -1 when the lake cannot be read.
+  * @param status a code of [[org.apache.texera.dao.WorkflowExecutionStatus]]. Closed: how it
+  *               ended. Open: initializing, running or paused, or an ending the closing job has
+  *               yet to record; created, when no unit has written a state; unknown (-1) when
+  *               the lake cannot be read.
   * @param open   whether the execution has no closing record yet
-  * @param reason why it is in that state, when its closing record or its log says; else null
+  * @param reason null unless its closing record or its log gives one
   * @param timeMs when it took that state, in epoch milliseconds: when it ended, once closed;
   *               when it was created, while its log shows no state or cannot be read
   */

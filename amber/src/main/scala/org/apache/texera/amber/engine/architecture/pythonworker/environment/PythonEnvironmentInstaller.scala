@@ -66,12 +66,9 @@ import scala.util.{Try, Using}
   * `timeout`, whatever becomes of those that wait for it, and only one that fails removes its
   * directory.
   *
-  * @param root      the directory environments are installed under, one directory each
-  * @param timeout   how long one install may take; one that takes longer is stopped
-  * @param engine    the interpreter environments are built on
-  * @param processes runs the interpreters and pip
-  * @param executor  runs what [[ensure]] is asked for, off the caller's thread. An install
-  *                  holds one of its threads until it ends, one waiting for its turn too.
+  * @param timeout  how long one install may take; one that takes longer is stopped
+  * @param executor runs what [[ensure]] is asked for, off the caller's thread. An install
+  *                 holds one of its threads until it ends, one waiting for its turn too.
   */
 final class PythonEnvironmentInstaller(
     val root: Path,
@@ -215,7 +212,6 @@ final class PythonEnvironmentInstaller(
     } finally turns.release()
   }
 
-  /** Runs `body` holding the lock file of `directory`, waited for until `deadline`. */
   private def locked[T](directory: Path, deadline: Deadline)(body: => T): T =
     Using.resource(
       FileChannel.open(
@@ -381,7 +377,6 @@ object PythonEnvironmentInstaller {
   /** An environment that is ready on this unit. */
   sealed trait Ready {
 
-    /** Its Python interpreter. */
     def interpreter: Path
 
     /** What it holds beside the engine's packages, each as pip lists it: `<name>==<version>`. */
@@ -458,7 +453,6 @@ object PythonEnvironmentInstaller {
       finishedAt: String
   )
 
-  // How many installs, of different keys, run at once.
   private val ConcurrentInstalls = 2
   private val KeyLength = 32
   private val MarkerFile = "texera-environment.json"
@@ -479,16 +473,13 @@ object PythonEnvironmentInstaller {
   private def isPip(pinned: String): Boolean =
     pinned.toLowerCase(Locale.ROOT).startsWith("pip==")
 
-  /** The interpreter of the virtual environment in `directory`. */
   private def interpreterIn(directory: Path): Path =
     if (SystemUtils.IS_OS_WINDOWS) directory.resolve("Scripts").resolve("python.exe")
     else directory.resolve("bin").resolve("python")
 
-  /** `text` as a string literal of Python's. */
   private def pythonLiteral(text: String): String =
     "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
-  /** Completes `to` as `from` completes. */
   private def forward(from: CompletableFuture[Ready], to: CompletableFuture[Ready]): Unit =
     from.whenComplete { (ready, failure) =>
       if (failure == null) to.complete(ready) else to.completeExceptionally(failure)

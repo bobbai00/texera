@@ -66,8 +66,7 @@ case class LogicalPlanPojo(
     * that is missing, or one that holds null. The first check of [[graphProblem]], and all a plan
     * must pass to be cut ([[upstreamOf]]).
     *
-    * @return the first problem found, in words the workflow's user can act on; None when both
-    *         lists are there and hold no null
+    * @return the first problem found, in words the workflow's user can act on
     */
   def listProblem(): Option[String] =
     if (operators == null) Some("The workflow lists no operators.")
@@ -84,8 +83,7 @@ case class LogicalPlanPojo(
     * lists of results to view and reuse are not checked: the compiler passes over an id there that
     * the plan does not have.
     *
-    * @return the first problem found, in words the workflow's user can act on; None when the plan
-    *         is a graph the compiler can read
+    * @return the first problem found, in words the workflow's user can act on
     */
   def graphProblem(): Option[String] =
     listProblem().orElse {
@@ -158,12 +156,9 @@ case class LogicalPlanPojo(
 
   /**
     * This plan as JSON that parses back to it, loop-variable references included: the plan as
-    * the editor sends it, as far as a parse can tell.
-    *
-    * Written with a mapper as it is, the plan would lose its typed references: the parse put a
-    * placeholder (`0`, `0.0` or `false`) where each was and recorded it in the operator's sidecar,
-    * which the next parse drops. So each operator is written with its references back in place
-    * and without the sidecar ([[StateReferencing.restoreReferences]]).
+    * the editor sends it, as far as a parse can tell. Each operator is written with its
+    * references back in place and without the sidecar; [[StateReferencing.restoreReferences]]
+    * says why.
     */
   def toJson: String = {
     val tree = objectMapper.readTree(objectMapper.writeValueAsString(this))

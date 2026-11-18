@@ -96,8 +96,8 @@ import scala.util.Try
 
 /**
   * Runs executions as a deployment runs them, and holds what a computing unit sends to Postgres
-  * meanwhile against the rule of a self-contained engine: nothing. A unit starts and runs a run
-  * without a statement to Postgres, and keeps the run's record in the lake.
+  * meanwhile against the rule that a unit keeps nothing there: nothing. A unit starts and runs a
+  * run without a statement to Postgres, and keeps the run's record in the lake.
   *
   * An execution is created as the Dashboard service creates one (`ExecutionCreator`): its row is
   * inserted, and its plan is compiled for its creator and written to the lake, in the catalog

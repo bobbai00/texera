@@ -189,9 +189,7 @@ class WorkflowWebsocketResource extends LazyLogging {
   /**
     * Starts the execution `start` names, which the Dashboard service created, on this socket's
     * workflow and computing unit, for the socket's user ([[WorkflowService.startStoredExecution]]).
-    * Once started, the run reaches every session on the workflow, as a run does. A start that is
-    * refused, or that fails before it is claimed, writes nothing; a start whose run could not
-    * even be built is refused too, as its execution reads FAILED.
+    * Once started, the run reaches every session on the workflow, as a run does.
     *
     * @return why the start is refused, if it is
     */
@@ -223,7 +221,7 @@ class WorkflowWebsocketResource extends LazyLogging {
     * Applies the change to an operator that `update` names, which the Dashboard service stored, to
     * the run of its execution on this socket's workflow
     * ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyStoredUpdate]]), and
-    * answers `sender` whether it applies. Only the user who created the execution may ask for it.
+    * answers `sender` whether it applies.
     *
     * @return why the change is refused, if its execution has no run here
     */

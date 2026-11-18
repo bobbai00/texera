@@ -60,8 +60,7 @@ object WorkflowExecutionService {
 
   /**
     * The configuration the coordinator of a run of `executionPlan` starts with: this unit's, with
-    * the replay and the replay log the plan holds. The run replays the plan's replay log, up to
-    * its interaction, and writes its own replay log where the plan says.
+    * the replay and the replay log the plan holds.
     */
   def coordinatorConfigOf(executionPlan: ExecutionPlan): CoordinatorConfig =
     CoordinatorConfig.default.copy(
@@ -82,8 +81,7 @@ object WorkflowExecutionService {
     * that reads what the unit cannot mount fails before any region runs.
     *
     * @param unitMountRoot None on a unit that mounts none
-    * @throws IllegalStateException if an operator reads a dataset or model, and the unit mounts
-    *                               none
+    * @throws IllegalStateException if an operator reads a dataset or model on such a unit
     */
   def mountedUnder(plan: PhysicalPlan, unitMountRoot: Option[Path]): PhysicalPlan =
     plan.copy(operators = plan.operators.map(UdfRepositoryDirectories.mountedUnder(unitMountRoot)))
@@ -104,22 +102,16 @@ object WorkflowExecutionService {
 
 /**
   * One run of a workflow on this computing unit: of an execution the Dashboard service created,
-  * of the plan read back from the execution's plan table in the lake. It is built on the context
-  * its plan was read back with, and started from that plan ([[startStored]]): the engine, and
-  * every service around the run, are built on the plan read back, and the Python environments
-  * the plan names are installed on this unit before the engine starts. Its operators change,
-  * while it is paused, only by the changes the Dashboard stored in its plan table.
+  * started from the plan read back from the execution's plan table in the lake
+  * ([[startStored]]). Its operators change, while it is paused, only by the changes the Dashboard
+  * stored in its plan table.
   *
   * @param mountRoot            the directory this computing unit mounts datasets and models
-  *                             under, which the code of the plan, and of every change to an
-  *                             operator of it, is given to read them from; None on a unit that
-  *                             mounts none. Production reads the unit's environment; a parameter
-  *                             so a test can name one.
-  * @param environmentInstaller installs the Python environments the plan names on this unit;
-  *                             the run's workers are told the root it installs them under
-  * @param createAmberRuntime   hands a plan to the engine, under its context and the
-  *                             coordinator's configuration, and returns the engine's client,
-  *                             which reports what fails to the handler it is given
+  *                             under; None on a unit that mounts none. A parameter so that a test
+  *                             can name one.
+  * @param environmentInstaller the run's workers are told the root it installs environments under
+  * @param createAmberRuntime   hands a plan to the engine and returns the engine's client, which
+  *                             reports what fails to the handler it is given
   */
 class WorkflowExecutionService(
     val workflowContext: WorkflowContext,
@@ -179,18 +171,17 @@ class WorkflowExecutionService(
   def services: Option[RunServices] = built
 
   /**
-    * Starts the run from `executionPlan`, the plan the plan row `record` of the plan table at
-    * `planUri` holds, read back. The execution was claimed for this start, and the run's context
-    * is the one the plan was read back with. The plan's code is given the directories this unit
-    * mounts the datasets and models it reads at ([[WorkflowExecutionService.mountedUnder]]): a
-    * plan that reads any fails here on a unit that mounts none. The run replays what the plan
-    * replays, and writes its replay log where the plan says. The engine and every service around
-    * the run are built on that plan, and the run is READY. The engine is asked to start once the Python environments the plan names are
-    * ready on this unit: at once when it names none, and otherwise on a thread of the unit's
-    * installer, after this has returned, and only if the run still waits for it then. A run that
-    * was killed or superseded meanwhile is left as it ended, while its installs go on for the
-    * runs after it; a run whose environment cannot be installed ends FAILED, with pip's words as
-    * its error.
+    * Starts the run from `executionPlan`, the plan that the plan row `record` of the plan table
+    * at `planUri` holds, read back. The execution was claimed for this start. A plan that reads
+    * datasets or models fails here on a unit that mounts none
+    * ([[WorkflowExecutionService.mountedUnder]]). The engine and every service around the run are
+    * built on the plan, and the run is READY.
+    *
+    * The engine is asked to start once the Python environments the plan names are ready on this
+    * unit: at once when it names none, and otherwise on a thread of the unit's installer, after
+    * this has returned, and only if the run still waits for it then. A run that was killed or
+    * superseded meanwhile is left as it ended, while its installs go on for the runs after it; a
+    * run whose environment cannot be installed ends FAILED, with pip's words as its error.
     *
     * @return Some(failure) when the run could not be set up, once reported through the error
     *         handler: nothing is kept of it, and its engine, if one was built, is shut down.

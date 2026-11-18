@@ -39,7 +39,6 @@ class ResultUris {
   /** The engine made the storage of output port `port`: its result is at `uri`. */
   def add(port: GlobalPortIdentity, uri: URI): Unit = byPort.put(port, uri)
 
-  /** The result URI of every output port whose storage was made, by port. */
   def all: Map[GlobalPortIdentity, URI] = byPort.asScala.toMap
 
   /**

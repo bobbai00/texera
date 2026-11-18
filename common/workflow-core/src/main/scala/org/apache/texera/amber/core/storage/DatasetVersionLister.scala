@@ -23,31 +23,22 @@ package org.apache.texera.amber.core.storage
   * A file of a dataset version, as a listing of the version holds it.
   *
   * @param logicalPath     the file's name to users: the path of its version, then its path
-  *                        within the version
-  *                        (/dataset/ownerEmail/datasetName/versionName/directory/file.csv)
-  * @param physicalAddress the object that holds the file's bytes, in the store that keeps the
-  *                        dataset's files (s3://bucket/key)
+  *                        within it (/dataset/ownerEmail/datasetName/versionName/dir/file.csv)
+  * @param physicalAddress the object that holds the file's bytes (s3://bucket/key)
   */
 final case class ListedFile(logicalPath: String, physicalAddress: String)
 
 /**
   * Lists the files of dataset versions, when a plan is made to run. A plan carries what a
-  * listing holds, so the computing unit that runs the plan asks no service which files a version
-  * has, or where they are kept.
+  * listing holds (see [[org.apache.texera.amber.core.workflow.ExecutionPlan]]).
   */
 trait DatasetVersionLister {
 
   /**
-    * Lists the files of the dataset version at `versionPath`.
-    *
     * @param versionPath /dataset/ownerEmail/datasetName/versionName
-    * @param atMost      the most files to list
-    * @return the version's files, ordered by their paths; of a version that holds more than
-    *         `atMost`, the first `atMost`
+    * @return the version's files, ordered by their paths: at most the first `atMost`
     * @throws org.apache.commons.vfs2.FileNotFoundException if the path names no dataset version
-    *                                                       this lister's user may read. Any other
-    *                                                       failure, such as the storage not
-    *                                                       answering, is thrown as it is.
+    *                                                       this lister's user may read
     */
   def list(versionPath: String, atMost: Int): Seq[ListedFile]
 }
