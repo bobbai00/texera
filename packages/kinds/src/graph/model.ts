@@ -1,9 +1,10 @@
 // What a chat's graph draws, read from what the catalog returns. It reads left to right: data and
 // the models workflows use, then each workflow, then each of its executions, then the tables they
 // made. An execution is a box of its own and carries the unit it ran on, so a unit stands once for
-// every execution on it. The functions a workflow uses ride on its card. Data and work stand in
-// ranks of dependency, data even and work odd. Each item of the latest plan stands where the thing
-// it names will stand. Pure, so it is tested on its own.
+// every execution on it. A workflow whose executions ran other versions than the one it shows lists
+// them, and each execution is drawn from the version it ran. The functions a workflow uses ride on
+// its card. Data and work stand in ranks of dependency, data even and work odd. Each item of the
+// latest plan stands where the thing it names will stand. Pure, so it is tested on its own.
 
 import type { ConversationGraph, GraphNode, GraphRun, GraphStep, PlannedItem } from "@texera/catalog-client/types";
 import { baseOf, namesIn } from "@texera/workflow-model";
@@ -50,8 +51,12 @@ export interface WorkItem {
   uses: GraphNode[];
   /** Models and functions the plan will make, which it will likely use. */
   plannedUses: PlannedItem[];
-  /** Its executions, the newest first; one it has not had yet comes before them. */
+  /** Its executions by the version they ran, the newest version first and the newest first within
+   * one; one it has not had yet comes before them. */
   runs: string[];
+  /** The versions its executions ran, the newest first, unless all ran the version it shows: each
+   * is a row of its card, and the executions of a version are drawn from its row. */
+  executed: number[];
 }
 
 /** An execution of a workflow; without `run`, the one it has not had yet. */
@@ -99,6 +104,15 @@ export interface GraphView {
 }
 
 export const plannedId = (p: PlannedItem) => `planned:${p.kind ?? ""}:${p.name}`;
+/** The row of a workflow's card that stands for one of its versions. */
+export const versionRow = (vno: number) => `version:${vno}`;
+
+/** The row of its workflow's card an execution is drawn from: the version it ran, or for one not
+ * had yet the version the card shows; none when the card does not list that version. */
+export function versionRowOf(work: WorkItem, box: RunItem): string | undefined {
+  const vno = box.run ? box.run.version : work.node?.version;
+  return vno !== undefined && work.executed.includes(vno) ? versionRow(vno) : undefined;
+}
 /** An execution's id on the graph, by what tells it apart: its URI, or the unit of one not had yet. */
 export const runId = (work: string, key: string) => `run:${work}|${key}`;
 
@@ -113,7 +127,17 @@ export function viewOf(graph: ConversationGraph): GraphView {
   }
   const works: WorkItem[] = graph.nodes
     .filter(n => n.role === "workflow")
-    .map(n => ({ id: n.uri, node: n, steps: n.steps ?? [], reads: [], models: [], uses: [], plannedUses: [], runs: [] }));
+    .map(n => ({
+      id: n.uri,
+      node: n,
+      steps: n.steps ?? [],
+      reads: [],
+      models: [],
+      uses: [],
+      plannedUses: [],
+      runs: [],
+      executed: [],
+    }));
   const work = new Map(works.map(w => [w.id, w]));
   const runs = new Map<string, RunItem>();
   const boxOf = (w: WorkItem, unit: string, run?: GraphRun): RunItem => {
@@ -146,7 +170,7 @@ export function viewOf(graph: ConversationGraph): GraphView {
     if (e.relation === "runsOn" && units.has(e.to)) ranOn.set(w.id, [...(ranOn.get(w.id) ?? []), e.to]);
   }
 
-  // Each workflow's executions, the newest first, and the tables each of them kept.
+  // Each workflow's executions by the version they ran, and the tables each of them kept.
   for (const w of works) {
     const ran = w.node?.runs ?? [];
     const on = ranOn.get(w.id) ?? [];
@@ -155,6 +179,12 @@ export function viewOf(graph: ConversationGraph): GraphView {
         run.unit && units.has(run.unit) ? run.unit : !run.unit && on.length === 1 ? (on[0] as string) : SOMEWHERE;
       boxOf(w, unit, run);
     }
+    // They come newest first; a stable sort keeps that within a version. One that does not say
+    // its version stays first.
+    const versionOf = (id: string) => runs.get(id)?.run?.version ?? Number.POSITIVE_INFINITY;
+    w.runs.sort((a, b) => (versionOf(a) === versionOf(b) ? 0 : versionOf(a) > versionOf(b) ? -1 : 1));
+    const versions = [...new Set(ran.flatMap(r => (r.version === undefined ? [] : [r.version])))].sort((a, b) => b - a);
+    if (versions.length > 1 || (versions.length === 1 && versions[0] !== w.node?.version)) w.executed = versions;
     for (const table of made.get(w.id) ?? []) {
       const by = nodes.get(table)?.run;
       const box = boxes(w).find(b => b.run?.uri === by) ?? boxes(w)[0];
@@ -185,7 +215,17 @@ export function viewOf(graph: ConversationGraph): GraphView {
     if (unit) boxOf(w, unit);
   }
   for (const p of planned.filter(p => p.kind === "workflow")) {
-    const w: WorkItem = { id: plannedId(p), planned: p, steps: [], reads: [], models: [], uses: [], plannedUses: [], runs: [] };
+    const w: WorkItem = {
+      id: plannedId(p),
+      planned: p,
+      steps: [],
+      reads: [],
+      models: [],
+      uses: [],
+      plannedUses: [],
+      runs: [],
+      executed: [],
+    };
     works.push(w);
     work.set(w.id, w);
     boxOf(w, target ?? SOMEWHERE).planned = p;

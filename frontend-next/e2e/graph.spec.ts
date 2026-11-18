@@ -465,3 +465,67 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   // Each unit says what it has.
   await expect(page.locator('[data-overview-section="computing-unit"]')).toContainText(/\d+ cores?|Shared CPU/);
 });
+
+test("each execution is drawn from the version of the workflow it ran, and the card lists those versions", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(300_000);
+  const alice = await api(request);
+  const iris = await withIris(alice, "versions on the graph");
+  const conversation = (
+    await alice("POST", "/conversations", { name: `versions ${Date.now()}`, parent: iris.project, spec: {} })
+  ).metadata.rid as string;
+  cleanups.push(() => iris.clear(conversation));
+  const file = `texera://datasets/${iris.dataset}@1/files/iris.csv`;
+  const longer = (than: number) => ({
+    operators: [
+      { operatorID: "readings", operatorType: "scan", operatorProperties: { file } },
+      { operatorID: "long", operatorType: "filter", operatorProperties: { where: `PetalLengthCm > ${than}` } },
+    ],
+    links: [
+      {
+        linkID: "readings-long",
+        source: { operatorID: "readings", portID: "output-0" },
+        target: { operatorID: "long", portID: "input-0" },
+      },
+    ],
+  });
+
+  // The agent makes a workflow and executes it, then changes it and executes the new version.
+  const agent = await inTurn(request, alice, conversation);
+  const made = await agent("POST", "/workflows", { name: "long petals", spec: longer(4) });
+  const rid = made.metadata.rid as string;
+  await agent("POST", `/workflows/${rid}/run`, { waitSeconds: 120 });
+  await agent("PUT", `/workflows/${rid}`, { spec: longer(5) });
+  await agent("POST", `/workflows/${rid}/run`, { waitSeconds: 120 });
+  await agent.end();
+
+  await signIn(page);
+  await page.goto(`/conversations/${conversation}`);
+  const graph = page.locator("[data-resource-graph]");
+  await graph.locator('[data-graph-level="standard"]').click();
+  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "standard");
+  const card = graph.locator('[data-graph-role="workflow"]');
+  await expect(card).toHaveCount(1);
+  // The card lists the versions its executions ran, the newest first.
+  const rows = card.locator("[data-graph-version]");
+  await expect(rows).toHaveText([/v2\s*1 execution/, /v1\s*1 execution/]);
+  const runs = graph.locator(`[data-graph-role="run"][data-graph-of="${made.metadata.uri}"]`);
+  await expect(runs).toHaveCount(2);
+  await expect(runs).toHaveText([/v2/, /v1/]);
+  // Each execution's line leaves the card at the row of its version, the newer's straight across;
+  // both are read in one frame, as the camera may still be moving.
+  const lines = graph.locator('[data-graph-edge="runs"] path');
+  await expect(lines).toHaveCount(2);
+  expect(await lines.first().getAttribute("d")).not.toContain("Q");
+  const [starts, middles] = await graph.evaluate(g => [
+    [...g.querySelectorAll('[data-graph-edge="runs"] path')].map(p => p.getBoundingClientRect().top),
+    [...g.querySelectorAll("[data-graph-version]")].map(r => {
+      const b = r.getBoundingClientRect();
+      return b.top + b.height / 2;
+    }),
+  ]);
+  expect(starts.map((y, i) => Math.abs(y - (middles[i] ?? Number.NaN)) < 2)).toEqual([true, true]);
+  await page.screenshot({ path: "test-results/resource-graph-versions.png" });
+});

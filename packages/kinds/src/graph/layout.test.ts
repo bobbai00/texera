@@ -172,6 +172,44 @@ describe("the resource graph's layout", () => {
     expect(noOverlaps(layout)).toEqual([]);
   });
 
+  it("draws each execution from the row of the version it ran, as level with it as the executions above allow", () => {
+    const g: ConversationGraph = {
+      ...one,
+      nodes: [
+        work(W, D, "t1", {
+          version: 4,
+          runs: [
+            { uri: exec(W, 2), phase: "completed", steps: 3, reused: 0, unit: U, version: 4 },
+            { uri: exec(W, 1), phase: "completed", steps: 3, reused: 0, unit: U, version: 1 },
+          ],
+        }),
+        ...one.nodes.slice(1),
+      ],
+    };
+    const rows: Measured = {
+      ...measured,
+      row: (id, row) => (row === "version:4" ? 60 : row === "version:1" ? 80 : measured.row(id, row)),
+    };
+    const layout = layOut(viewOf(g), rows, "standard", EM);
+    const card = layout.places.get(W) as { x: number; y: number };
+    const [newer, older] = [layout.places.get(runId(W, exec(W, 2))), layout.places.get(runId(W, exec(W, 1)))];
+    expect((newer?.y as number) + 15).toBe(card.y + 60);
+    expect(older?.y).toBe((newer?.y as number) + 30 + 0.7 * EM);
+    const lines = layout.arrows.filter(a => a.relation === "runs");
+    expect(lines.map(a => a.to)).toEqual([runId(W, exec(W, 2)), runId(W, exec(W, 1))]);
+    expect(lines[0]?.path).toMatch(new RegExp(`^M${card.x + 220},${card.y + 60}H[\\d.]+$`));
+    expect(lines[1]?.path).toMatch(new RegExp(`^M${card.x + 220},${card.y + 80}H`));
+    expect(noOverlaps(layout)).toEqual([]);
+    // Closer, the executions keep the height of the steps, and their lines still leave from the rows.
+    const close = layOut(viewOf(g), rows, "detail", EM);
+    const at = close.places.get(W) as { x: number; y: number };
+    expect(close.arrows.filter(a => a.relation === "runs").map(a => a.path.split("H")[0])).toEqual([
+      `M${at.x + 220},${at.y + 60}`,
+      `M${at.x + 220},${at.y + 80}`,
+    ]);
+    expect(close.places.get(runId(W, exec(W, 2)))?.y).toBeCloseTo(at.y + 0.35 * EM);
+  });
+
   it("stands a unit nothing ran on by itself, under the executions", () => {
     const g: ConversationGraph = { ...one, nodes: [...one.nodes, node(U2, "unit")] };
     const m: Measured = { ...measured, size: id => (id === U2 ? { w: 150, h: 40 } : measured.size(id)) };

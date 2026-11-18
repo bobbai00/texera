@@ -1,13 +1,14 @@
 // Where each thing of a chat's graph stands, once its size is known. It reads left to right: data
 // above models, workflows, executions, and the tables they made, and the same again for a workflow
 // that reads another's table. Each workflow takes a row: the data it reads level with it on the
-// left, its executions beside it one under another, the tables each kept level with it on the
-// right; at the closest level a file and a table stand level with the step that reads or made it,
-// and an execution runs the height of the steps. Rows are taken in the order the chat came to the
+// left, its executions beside it one under another, each as level as it can be with the row of the
+// version it ran when its card lists versions, the tables each kept level with it on the right; at
+// the closest level a file and a table stand level with the step that reads or made it, and an
+// execution runs the height of the steps. Rows are taken in the order the chat came to the
 // workflows, so a new one never moves what is drawn; the models, under the data, go down as data
 // comes. Arrows have at most one rounded elbow.
 
-import { type GraphView, type Level, namedBy, type RunItem, type WorkItem } from "./model";
+import { type GraphView, type Level, namedBy, type RunItem, versionRowOf, type WorkItem } from "./model";
 
 export interface Box {
   x: number;
@@ -113,6 +114,12 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
 
   // A workflow's head: where its arrows meet it when nothing finer is known.
   const headOf = (w: WorkItem) => Math.min(sizeOf(w.id).h / 2, 1.6 * em);
+  // How far down its card the row of the version an execution ran is, when the card lists it.
+  const rowOn = (w: WorkItem, b: RunItem) => {
+    const row = versionRowOf(w, b);
+    return row === undefined ? undefined : m.row(w.id, row);
+  };
+  const runHead = (h: number) => runEnd(h, em);
   for (const w of view.works) {
     const r = rankOf(w.id);
     const size = sizeOf(w.id);
@@ -132,13 +139,16 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
     const head = top + headOf(w);
     let end = top + size.h;
 
-    // Its executions, one under another from its top; at the closest level they share the height of the steps.
+    // Its executions, one under another from its top, each no higher than the row of the version it
+    // ran; at the closest level they share the height of the steps.
     const span = { from: top + 0.35 * em, to: top + size.h - 0.35 * em };
     const share = boxes.length ? (span.to - span.from - (boxes.length - 1) * stackGap) / boxes.length : 0;
     let next = level === "detail" ? span.from : top;
     for (const b of boxes) {
       const bs = sizeOf(b.id);
-      const box = { x: at(execX, r), y: next, w: bs.w, h: level === "detail" ? Math.max(bs.h, share) : bs.h };
+      const row = level === "detail" ? undefined : rowOn(w, b);
+      const y = row === undefined ? next : Math.max(next, top + row - runHead(bs.h));
+      const box = { x: at(execX, r), y, w: bs.w, h: level === "detail" ? Math.max(bs.h, share) : bs.h };
       places.set(b.id, box);
       next = box.y + box.h + stackGap;
       end = Math.max(end, box.y + box.h);
@@ -300,15 +310,22 @@ function arrowsOf(view: GraphView, places: Map<string, Box>, m: Measured, level:
       const y2 = sy !== undefined ? card.y + sy : inside(y1, card);
       push("uses", model, w.id, plannedWork, { x1: b.x + b.w, y1, x2: card.x, y2 }, { late: r > 1 });
     }
-    // One line out of the workflow to each execution; straight to the first, which stands level with it.
-    const runY = (b: Box) => b.y + Math.min(b.h / 2, 1.2 * em);
+    // One line out of the workflow to each execution: from the row of the version it ran when the
+    // card lists it, else from level with the first execution, which stands level with the card.
+    const runY = (b: Box) => b.y + runEnd(b.h, em);
     const firstRun = w.runs.map(id => places.get(id)).find((b): b is Box => !!b);
     const out = firstRun ? inside(runY(firstRun), card) : 0;
     for (const id of w.runs) {
       const box = view.runs.get(id);
       const b = places.get(id);
       if (!box || !b) continue;
-      push("runs", w.id, id, plannedWork || !box.run, { x1: card.x + card.w, y1: out, x2: b.x, y2: runY(b) });
+      const row = versionRowOf(w, box);
+      const rowY = row === undefined ? undefined : m.row(w.id, row);
+      const ends =
+        rowY === undefined
+          ? { x1: card.x + card.w, y1: out, x2: b.x, y2: runY(b) }
+          : { x1: card.x + card.w, y1: card.y + rowY, x2: b.x, y2: inside(card.y + rowY, b, 1.2 * em) };
+      push("runs", w.id, id, plannedWork || !box.run, ends);
       for (const t of box.results) {
         const table = places.get(t);
         if (!table) continue;
@@ -330,6 +347,9 @@ function arrowsOf(view: GraphView, places: Map<string, Box>, m: Measured, level:
   }
   return arrows;
 }
+
+/** How far down an execution its line ends, its height being `h`. */
+const runEnd = (h: number, em: number) => Math.min(h / 2, 1.2 * em);
 
 const round = (n: number) => Math.round(n * 100) / 100;
 

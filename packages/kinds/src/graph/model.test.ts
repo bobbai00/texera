@@ -1,6 +1,19 @@
 import type { ConversationGraph, GraphNode } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
-import { commentTarget, nameOf, plannedId, relationsOf, runId, runStateOf, SOMEWHERE, touching, viewOf } from "./model";
+import {
+  commentTarget,
+  nameOf,
+  plannedId,
+  type RunItem,
+  relationsOf,
+  runId,
+  runStateOf,
+  SOMEWHERE,
+  touching,
+  versionRow,
+  versionRowOf,
+  viewOf,
+} from "./model";
 
 const D = "texera://datasets/11111111-1111-1111-1111-111111111111";
 const W = "texera://workflows/22222222-2222-2222-2222-222222222222";
@@ -101,6 +114,65 @@ describe("the view of a chat's graph", () => {
     expect(large && runStateOf(large)).toBe("running");
     expect(large?.results).toEqual([]);
     expect(small?.results).toEqual([port(E1, "calib"), port(E1, "auc")]);
+  });
+
+  it("lists the versions a workflow's executions ran, newest first, and draws each execution from its own, the one it has not had yet from the version shown", () => {
+    const view = viewOf({
+      ...screening,
+      nodes: [
+        node(W, "workflow", {
+          ...screening.nodes[0],
+          version: 4,
+          runs: [
+            // Executed last, but of an older version: it stands under the newer one.
+            { uri: E2, phase: "completed", steps: 4, reused: 0, unit: U, version: 1 },
+            { uri: E1, phase: "completed", steps: 5, reused: 1, unit: U, version: 4 },
+          ],
+        }),
+        ...screening.nodes.slice(1),
+      ],
+      planned: [{ kind: "execution", name: "screen again", turn: "t2" }],
+    });
+    const [w] = view.works;
+    expect(w?.executed).toEqual([4, 1]);
+    const [next, ...had] = (w?.runs ?? []).map(id => view.runs.get(id) as RunItem);
+    expect(next?.run).toBeUndefined();
+    expect(had.map(b => b.run?.uri)).toEqual([E1, E2]);
+    expect([next, ...had].map(b => w && b && versionRowOf(w, b))).toEqual([
+      versionRow(4),
+      versionRow(4),
+      versionRow(1),
+    ]);
+  });
+
+  it("lists no version when every execution ran the one the card shows, and the one they ran when the card shows a newer", () => {
+    const of = (version: number, ran: number[]) =>
+      viewOf({
+        ...screening,
+        nodes: [
+          node(W, "workflow", {
+            ...screening.nodes[0],
+            version,
+            runs: ran.map((v, i) => ({
+              uri: i ? E1 : E2,
+              phase: "completed",
+              steps: 4,
+              reused: 0,
+              unit: U,
+              version: v,
+            })),
+          }),
+          ...screening.nodes.slice(1),
+        ],
+      });
+    const same = of(2, [2, 2]);
+    expect(same.works[0]?.executed).toEqual([]);
+    expect(same.works[0]?.runs).toEqual([runId(W, E2), runId(W, E1)]);
+    const older = of(2, [1]);
+    expect(older.works[0]?.executed).toEqual([1]);
+    expect(versionRowOf(older.works[0] as never, older.runs.get(runId(W, E2)) as RunItem)).toBe(versionRow(1));
+    // Executions that do not say their version list none and keep their order.
+    expect(viewOf(screening).works[0]?.executed).toEqual([]);
   });
 
   it("puts a run that does not say its unit on the one unit its workflow ran on, and one on a unit the caller cannot see somewhere", () => {

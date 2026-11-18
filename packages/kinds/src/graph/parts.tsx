@@ -32,6 +32,7 @@ import {
   runStateOf,
   SOMEWHERE,
   type UnitItem,
+  versionRow,
   type WorkItem,
 } from "./model";
 import { lineOf } from "./steps";
@@ -440,6 +441,23 @@ export function WorkCard({
         </div>
       )}
       <div className={level === "overview" ? "pb-[0.35em]" : "pb-[0.2em]"} />
+      {level !== "overview" && work.executed.length > 0 && (
+        // The versions its executions ran: each execution's line starts at the row of its own.
+        <ul className="grid gap-[0.12em] border-t px-[0.6em] pt-[0.4em] pb-[0.45em]" data-graph-versions>
+          {work.executed.map(vno => (
+            <li
+              key={vno}
+              data-graph-row={versionRow(vno)}
+              data-graph-version={vno}
+              className="flex items-center gap-[0.55em] rounded-[0.4em] px-[0.3em] py-[0.22em] text-[0.86em]">
+              <span className="font-semibold tabular-nums">v{vno}</span>
+              <span className="truncate text-muted-foreground">
+                {plural(n?.runs?.filter(r => r.version === vno).length ?? 0, "execution")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {level === "detail" && work.steps.length > 0 ? (
         <ol className="grid gap-[0.12em] border-t px-[0.6em] pt-[0.45em] pb-[0.55em]" data-graph-steps>
           {work.steps.map(step => {
