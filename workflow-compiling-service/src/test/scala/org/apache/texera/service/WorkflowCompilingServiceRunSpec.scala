@@ -36,6 +36,7 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.service.WorkflowCompilingServiceRunSpec.SpecPayload
 import org.apache.texera.service.resource.{
   HealthCheckResource,
+  RunCompilationResource,
   WorkflowCompilationResource,
   WorkflowToPythonResource
 }
@@ -100,6 +101,7 @@ class WorkflowCompilingServiceRunSpec extends AnyFlatSpec with Matchers {
     val (jersey, _) = ranService
     verify(jersey).register(classOf[HealthCheckResource])
     verify(jersey).register(classOf[WorkflowCompilationResource])
+    verify(jersey).register(classOf[RunCompilationResource])
     verify(jersey).register(classOf[WorkflowToPythonResource])
   }
 

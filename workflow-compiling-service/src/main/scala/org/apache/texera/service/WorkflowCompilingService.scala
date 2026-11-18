@@ -28,6 +28,7 @@ import org.apache.texera.auth.{AuthFeatures, RequestLoggingFilter, RoleAnnotatio
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.service.resource.{
   HealthCheckResource,
+  RunCompilationResource,
   WorkflowCompilationResource,
   WorkflowToPythonResource
 }
@@ -70,6 +71,9 @@ class WorkflowCompilingService extends Application[WorkflowCompilingServiceConfi
 
     // register the compilation endpoint
     environment.jersey.register(classOf[WorkflowCompilationResource])
+
+    // register the endpoints that compile a run's plan, and a change to a paused operator
+    environment.jersey.register(classOf[RunCompilationResource])
 
     // register the workflow-to-python endpoint
     environment.jersey.register(classOf[WorkflowToPythonResource])
