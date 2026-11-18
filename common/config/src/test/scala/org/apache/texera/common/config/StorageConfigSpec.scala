@@ -89,6 +89,17 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  "StorageConfig REST catalog settings" should
+    "give a call ten seconds to connect and a minute to be answered by default" in {
+    // Only assert when the env override is unset, since it would win otherwise.
+    if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS").isEmpty) {
+      StorageConfig.icebergRESTCatalogConnectionTimeoutMs shouldBe 10000L
+    }
+    if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS").isEmpty) {
+      StorageConfig.icebergRESTCatalogSocketTimeoutMs shouldBe 60000
+    }
+  }
+
   "StorageConfig input-link settings" should
     "sign links for the S3 endpoint, and read links from it alone, by default" in {
     // A deployment whose services and computing units reach the object store at one address

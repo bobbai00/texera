@@ -565,14 +565,16 @@ class ComputingUnitManagingResourceSpec
 
   private val payloadSize = EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
 
-  // Mirrors the private production list too: the payload size, and what a unit reads to run a
-  // stored plan.
+  // Mirrors the private production list too: the payload size, what a unit reads to run a
+  // stored plan, and how long its calls to the Iceberg REST catalog wait.
   private val optionalEnvNames = Seq(
     payloadSize,
     EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS,
     EnvironmentalVariable.ENV_ICEBERG_TABLE_PLAN_NAMESPACE,
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT,
-    EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES
+    EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES,
+    EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS,
+    EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS
   )
 
   "requiredComputingUnitEnv" should "return every variable when all are set" in {

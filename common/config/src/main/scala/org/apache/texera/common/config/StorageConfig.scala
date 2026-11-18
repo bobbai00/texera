@@ -40,6 +40,10 @@ object StorageConfig {
     conf.getString("storage.iceberg.catalog.rest.warehouse-name")
   val icebergRESTCatalogS3Bucket: String =
     conf.getString("storage.iceberg.catalog.rest.s3-bucket")
+  val icebergRESTCatalogConnectionTimeoutMs: Long =
+    conf.getLong("storage.iceberg.catalog.rest.connection-timeout-ms")
+  val icebergRESTCatalogSocketTimeoutMs: Int =
+    conf.getInt("storage.iceberg.catalog.rest.socket-timeout-ms")
 
   // Iceberg Postgres specifics
   val icebergPostgresCatalogUriWithoutScheme: String =
