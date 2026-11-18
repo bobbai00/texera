@@ -17,6 +17,10 @@
  * under the License.
  */
 
+/**
+ * One operator's statistics at one moment of an execution, by the names the Dashboard service sends each row
+ * of `GET /api/executions/{wid}/stats/{eid}` with. The three times are in nanoseconds.
+ */
 export interface WorkflowRuntimeStatistics {
   [key: string]: any;
   operatorId: string;
@@ -25,9 +29,9 @@ export interface WorkflowRuntimeStatistics {
   inputTupleSize: number;
   outputTupleCount: number;
   outputTupleSize: number;
-  totalDataProcessingTime: number;
-  totalControlProcessingTime: number;
-  totalIdleTime: number;
-  numberOfWorkers: number;
+  dataProcessingTime: number;
+  controlProcessingTime: number;
+  idleTime: number;
+  numWorkers: number;
   status: number; // Operator status (e.g., RUNNING, COMPLETED, FAILED, etc.)
 }

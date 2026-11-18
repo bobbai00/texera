@@ -29,10 +29,10 @@ function makeRow(overrides: Partial<WorkflowRuntimeStatistics>): WorkflowRuntime
     inputTupleSize: 0,
     outputTupleCount: 0,
     outputTupleSize: 0,
-    totalDataProcessingTime: 0,
-    totalControlProcessingTime: 0,
-    totalIdleTime: 0,
-    numberOfWorkers: 1,
+    dataProcessingTime: 0,
+    controlProcessingTime: 0,
+    idleTime: 0,
+    numWorkers: 1,
     status: 3,
     ...overrides,
   };
@@ -65,10 +65,10 @@ describe("toOperatorRuntimeStatusMap", () => {
         inputTupleSize: 8_000,
         outputTupleCount: 250,
         outputTupleSize: 2_000,
-        totalDataProcessingTime: 5_000_000,
-        totalControlProcessingTime: 1_000_000,
-        totalIdleTime: 700_000,
-        numberOfWorkers: 2,
+        dataProcessingTime: 5_000_000,
+        controlProcessingTime: 1_000_000,
+        idleTime: 700_000,
+        numWorkers: 2,
         status: 1,
       }),
     ]);
@@ -85,6 +85,27 @@ describe("toOperatorRuntimeStatusMap", () => {
         aggregatedControlProcessingTime: 1_000_000,
         aggregatedIdleTime: 700_000,
       },
+    });
+  });
+
+  // A row of `GET /api/executions/{wid}/stats/{eid}`, as it arrives: the names are the server's.
+  it("reads the times and the workers of a row as the Dashboard service sends it", () => {
+    const sent = JSON.parse(`{
+      "operatorId": "op1", "timestamp": 1794873600000, "inputTupleCount": 1000, "inputTupleSize": 8000,
+      "outputTupleCount": 250, "outputTupleSize": 2000, "dataProcessingTime": 5000000,
+      "controlProcessingTime": 1000000, "idleTime": 700000, "numWorkers": 2, "status": 3
+    }`) as WorkflowRuntimeStatistics;
+
+    expect(toOperatorRuntimeStatusMap([sent]).op1).toEqual({
+      operatorState: OperatorState.Completed,
+      aggregatedInputRowCount: 1_000,
+      aggregatedInputSize: 8_000,
+      aggregatedOutputRowCount: 250,
+      aggregatedOutputSize: 2_000,
+      numWorkers: 2,
+      aggregatedDataProcessingTime: 5_000_000,
+      aggregatedControlProcessingTime: 1_000_000,
+      aggregatedIdleTime: 700_000,
     });
   });
 
