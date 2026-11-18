@@ -2255,6 +2255,87 @@ def _lose_unit(ctx: Ctx, label: str, key: str, *, back_at_once: bool = False, li
     return {"label": label, "wid": wid, "eid": eid, "entry": entry}
 
 
+CUT_OFF_SLEEP_S = 0.25
+UDF_CUT_OFF = f'''from pytexera import *
+import time
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        print(f"sce-e2e cut-off run: {{tuple_['n']}}")
+        time.sleep({CUT_OFF_SLEEP_S})
+        yield tuple_
+'''
+
+
+def scenario_q2(ctx: Ctx) -> None:
+    """A unit cut off from the lake under a slow run, for longer than the Dashboard service
+    waits for a sign of life: the execution is closed "unit lost", as it must be when all
+    the Dashboard can see is a beat that stopped. But the unit was only cut off. It is back
+    on the lake before its run ends, the run completes and its record says so, and the
+    verdict gives way to the run's own ending."""
+    _need_fast_record(ctx)
+    _need_level(ctx, "B")
+    _need_stack(ctx)
+    timing = ctx.timing
+    total = len(ctx.data["numbers.csv"])
+    # Long enough to outlast the cut: the watch, the verdict's ticks, and the way back.
+    ctx.check("the run is long enough to outlast the cut", total * CUT_OFF_SLEEP_S > timing.lost_verdict_s + 30,
+              f"{total} rows at {CUT_OFF_SLEEP_S} s against a verdict within {timing.lost_verdict_s} s")
+    wf = ctx.workflow("q2-cut-off-and-back")
+    scan = wf.add("numbers", "CSVFileScan", csv_scan(ctx.paths["numbers.csv"]), n_in=0)
+    udf = wf.add("slow-print", "PythonUDFV2", python_udf(UDF_CUT_OFF))
+    wf.link(scan, udf)
+    handle = ctx.start(wf, view=[udf])
+    handle.wait_for_state("Running", timeout=ctx.timeout)
+    wid, eid = ctx.rec.wid, handle.eid
+    stored, _ = poll(lambda: _stored(ctx, wid, eid), lambda st: st["statistics"] > 0 and st["console"] > 0,
+                     FIRST_COMMIT_INTERVALS * timing.commit_interval_s, timing.poll_s)
+    ctx.check("the run is Running, with statistics and console output in the lake",
+              stored["statistics"] > 0 and stored["console"] > 0 and handle.last_state == "Running",
+              f"{stored['statistics']} statistics row(s), {stored['console']} console row(s); state {handle.last_state}")
+
+    ctx.log(f"  cutting the unit off the lake: {ctx.stack.cut_unit_off_the_lake()}")
+    cut_at = time.monotonic()
+    try:
+        state, waited = poll(lambda: ctx.api.execution_state(eid), lambda st: not st.open,
+                             timing.lost_verdict_s + 2 * timing.closing_interval_s, timing.poll_s)
+        ctx.check("with its beat stopped, the execution is closed as failed, \"unit lost\"",
+                  not state.open and state.status == STATUS_FAILED and state.reason == "unit lost",
+                  f"{waited:.1f} s after the cut: open {state.open}, status {state.status}, reason {state.reason!r}")
+        ctx.check("its run goes on meanwhile: the unit still answers, and the UDF still makes rows",
+                  handle.last_state == "Running" and not handle.fatal_errors,
+                  f"state {handle.last_state}; output rows {handle.output_rows(udf)} of {total}")
+    finally:
+        ctx.log(f"  the unit is back on the lake: {ctx.stack.rejoin_unit_to_the_lake()} "
+                f"({time.monotonic() - cut_at:.1f} s after the cut)")
+
+    done = handle.wait_for_state("Completed", timeout=max(ctx.timeout, total * CUT_OFF_SLEEP_S + 60),
+                                 since_last_command=False)
+    ctx.check("the run completes on the unit that was only cut off", done == "Completed" and not handle.fatal_errors,
+              f"states {handle.states}; {[e.get('message') for e in handle.fatal_errors][:2]}")
+    ctx.check("with every row", handle.output_rows(udf) == total, f"output rows {handle.output_rows(udf)} of {total}")
+
+    # The record reaches the lake once the unit is back, and the Dashboard's next look at the
+    # verdict finds the ending there.
+    state, waited = poll(lambda: ctx.api.execution_state(eid), lambda st: st.status == STATUS_COMPLETED,
+                         4 * timing.commit_interval_s + 3 * timing.closing_interval_s, timing.poll_s)
+    ctx.check("the verdict gives way to the run's own ending: the execution reads Completed, with no reason",
+              not state.open and state.status == STATUS_COMPLETED and state.reason is None,
+              f"{waited:.1f} s after the run ended: open {state.open}, status {state.status}, reason {state.reason!r}")
+    log = ctx.api.execution_log(eid)
+    ctx.check("its log ends COMPLETED, and its closing record is the log's",
+              log.states[-1:] == ["COMPLETED"] and log.closed and log.outcome == STATUS_COMPLETED,
+              f"log states {log.states}; closing outcome {log.outcome}, reason {log.reason!r}")
+    after = _stored(ctx, wid, eid)
+    ctx.check("what the run stored while it was cut off reached the lake afterwards",
+              after["statistics"] > stored["statistics"] and after["console"] >= total,
+              f"statistics rows {stored['statistics']} -> {after['statistics']}; console rows "
+              f"{stored['console']} -> {after['console']} of {total}")
+    ctx.persisted_status(STATUS_COMPLETED)
+
+
 def stayed_running(rec: ScenarioRecord) -> tuple[bool, str]:
     """Step 3's negative control on q (design H5): on the old product nothing closes a lost
     unit's execution, so its history must still say Running past the deadline by which
@@ -2744,6 +2825,8 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
                             "lake while it runs", scenario_p),
     "q": ("unit-lost", "the unit is killed under a slow run: the execution is closed \"unit lost\"",
           scenario_q),
+    "q2": ("unit-cut-off-and-back", "the unit is cut off the lake under a slow run and comes back: \"unit lost\" "
+                                    "gives way to the run's own ending", scenario_q2),
     "r": ("never-started", "an execution nobody starts is closed \"never started\", and cannot be started",
           scenario_r),
     "s": ("polite-stop", "the unit is stopped under a slow run: it records \"the computing unit was stopped\"",
@@ -2759,9 +2842,9 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
 BASELINE = ["a", "b", "c", "d", "e", "u"]
 #: scenarios that run only on create-ws (the Dashboard creates executions)
 CREATE_WS_ONLY = {"k", "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", "l10", "m", "o",
-                  "f", "f2", "g", "h", "i", "p", "q", "r", "s", "t", "w", "v"}
+                  "f", "f2", "g", "h", "i", "p", "q", "q2", "r", "s", "t", "w", "v"}
 #: step 3's scenarios: named, or selected by a step-3 gate; `all` stays what it was
-STEP3 = {"p", "q", "r", "s", "t", "w", "v"}
+STEP3 = {"p", "q", "q2", "r", "s", "t", "w", "v"}
 #: group keys
 GROUPS = {"l": [f"l{i}" for i in range(1, 11)]}
 #: what each scenario needs from the driver's setup

@@ -48,7 +48,11 @@ DEFAULT_CONTAINERS = {
     "postgres": "sce-texera-postgres",
     "workflow-runtime-coordinator-service": "sce-workflow-runtime-coordinator-service",
     "nginx": "sce-texera-nginx",
+    "lakekeeper": "sce-texera-lakekeeper",
+    "rustfs": "sce-texera-rustfs",
 }
+#: the network a stack started with --isolate-unit puts its unit on, alone with what it needs
+UNIT_NETWORK = "sce-unit-net"
 #: Docker's CLI takes DOCKER_HOST over any context. In Kubernetes and local-dev mode the
 #: driver points its own at this socket, which does not exist: every `docker` call the
 #: driver makes fails at once, so nothing it runs can reach another stack's containers.
@@ -97,6 +101,15 @@ class StackControl(ABC):
         the unit is down or cannot be told from the other services by its address."""
         return []
 
+    def cut_unit_off_the_lake(self) -> dict:
+        """The unit can no longer reach the lake (its catalog and its object store), while
+        everything else still can, and the unit still answers its sessions."""
+        raise StackControlError("this stack cannot cut its unit off the lake")
+
+    def rejoin_unit_to_the_lake(self) -> dict:
+        """Undoes `cut_unit_off_the_lake`."""
+        raise StackControlError("this stack cannot cut its unit off the lake")
+
     def exec_prefix(self) -> Callable[[bool], list[str]] | None:
         """What runs a command where the unit now runs, when `start_unit` made that another
         place than before; None when it is where it was."""
@@ -112,6 +125,10 @@ class SingleNodeControl(StackControl):
         self.unit = names["workflow-runtime-coordinator-service"]
         self.postgres = names["postgres"]
         self.gateway = names["nginx"]
+        #: the lake as the unit reaches it: the catalog and the object store
+        self.lake = [names["lakekeeper"], names["rustfs"]]
+        #: the names each of them answers to on the unit's network, kept while it is off it
+        self._lake_aliases: dict[str, list[str]] = {}
         self._run = runner
         #: waits until the gateway answers again, after its restart
         self._wait_gateway = wait_gateway
@@ -163,6 +180,36 @@ class SingleNodeControl(StackControl):
             time.sleep(1)
         raise StackControlError(f"{self.unit} is not healthy {self.start_timeout_s:.0f} s after `docker start` "
                                 f"(health: {health or 'none'})")
+
+    def cut_unit_off_the_lake(self) -> dict:
+        """Takes the catalog and the object store off the unit's network. It needs a stack
+        started with --isolate-unit: there the unit is on that network alone, and the two
+        stay on the stack's own, where the Dashboard service reads them."""
+        on = json.loads(self._docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", self.unit) or "{}")
+        if set(on) != {UNIT_NETWORK}:
+            raise StackControlError(f"{self.unit} is on {sorted(on)}, not on {UNIT_NETWORK} alone: the stack "
+                                    f"was not started with --isolate-unit")
+        t0 = time.monotonic()
+        for container in self.lake:
+            nets = json.loads(self._docker("inspect", "--format", "{{json .NetworkSettings.Networks}}",
+                                           container) or "{}")
+            if UNIT_NETWORK not in nets:
+                continue
+            names = [a for a in dict.fromkeys(nets[UNIT_NETWORK].get("Aliases") or []) if a != container]
+            self._lake_aliases[container] = names
+            self._docker("network", "disconnect", UNIT_NETWORK, container)
+        return {"off": sorted(self._lake_aliases), "network": UNIT_NETWORK,
+                "seconds": round(time.monotonic() - t0, 1)}
+
+    def rejoin_unit_to_the_lake(self) -> dict:
+        t0 = time.monotonic()
+        back = []
+        for container, names in list(self._lake_aliases.items()):
+            aliases = [arg for name in names for arg in ("--alias", name)]
+            self._docker("network", "connect", *aliases, UNIT_NETWORK, container)
+            back.append(container)
+            del self._lake_aliases[container]
+        return {"back": sorted(back), "network": UNIT_NETWORK, "seconds": round(time.monotonic() - t0, 1)}
 
     def pg_activity(self) -> list[dict]:
         return pg_activity.parse(self._docker("exec", self.postgres, "psql", "-U", "texera", "-d", "texera_db",
