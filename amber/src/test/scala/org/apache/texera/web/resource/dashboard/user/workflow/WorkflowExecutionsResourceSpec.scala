@@ -46,10 +46,8 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder, WorkflowExecutionStatus}
-import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.{
@@ -75,13 +73,11 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowUserAccess,
   WorkflowVersion
 }
-import org.apache.texera.amber.engine.architecture.coordinator.OperatorPortResultUriAvailable
 import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination, ReplayLogRecord}
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.common.storage.VFSRecordStorage
 import org.apache.texera.web.model.http.request.result.{OperatorExportInfo, ResultExportRequest}
 import org.apache.texera.web.model.http.response.result.ResultExportResponse
-import org.apache.texera.web.service.ExecutionResultService
 import org.apache.texera.web.service.execution.{ExecutionExpiry, OpenExecutionStatuses}
 import org.jose4j.jwt.JwtClaims
 import org.scalatest.flatspec.AnyFlatSpec
@@ -179,31 +175,6 @@ class WorkflowExecutionsResourceSpec
       .from(WORKFLOW_VERSION)
       .where(WORKFLOW_VERSION.WID.eq(wid))
 
-    // Child tables of WORKFLOW_EXECUTIONS must be wiped before the parent row.
-    getDSLContext
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          getDSLContext
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
-        )
-      )
-      .execute()
-
-    getDSLContext
-      .deleteFrom(OPERATOR_EXECUTIONS)
-      .where(
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          getDSLContext
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
-        )
-      )
-      .execute()
-
     getDSLContext
       .deleteFrom(WORKFLOW_EXECUTIONS)
       .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
@@ -267,28 +238,22 @@ class WorkflowExecutionsResourceSpec
 
   /**
     * An execution of the test workflow, open unless `endedOffsetMillis` says how long ago it
-    * was closed, as `outcome` for `outcomeReason`. `status` is the column a unit writes, which
-    * no list reads.
+    * was closed, as `outcome` for `outcomeReason`.
     */
   private def insertExecution(
       name: String = s"Execution-${UUID.randomUUID().toString.substring(0, 8)}",
-      status: Byte = 0.toByte,
-      result: String = "",
       logLocation: String = "",
       startOffsetMillis: Long = 0L,
       endedOffsetMillis: Option[Long] = None,
       outcome: Short = WorkflowExecutionStatus.Completed,
       outcomeReason: String = null,
       cuid: Integer = null,
-      runtimeStatsUri: String = null,
       whid: Integer = null,
       uid: Integer = testUser.getUid
   ): WorkflowExecutions = {
     val execution = new WorkflowExecutions
     execution.setVid(testVersion.getVid)
     execution.setUid(uid)
-    execution.setStatus(status)
-    execution.setResult(result)
     execution.setLogLocation(logLocation)
     val now = System.currentTimeMillis()
     execution.setStartingTime(new Timestamp(now - startOffsetMillis))
@@ -302,7 +267,6 @@ class WorkflowExecutionsResourceSpec
     execution.setEnvironmentVersion("test-env-1.0")
     execution.setCuid(cuid)
     execution.setWhid(whid)
-    execution.setRuntimeStatsUri(runtimeStatsUri)
     workflowExecutionsDao.insert(execution)
     // As stored: a time written through the DAO keeps whole seconds.
     workflowExecutionsDao.fetchOneByEid(execution.getEid)
@@ -311,10 +275,7 @@ class WorkflowExecutionsResourceSpec
   // An execution that is real, readable by testUser's session, and belongs to a
   // *different* workflow than `testWorkflowWid` — the shape an endpoint that
   // forgets to join execution -> version -> workflow would happily serve.
-  private def insertForeignExecution(
-      runtimeStatsUri: String = null,
-      logLocation: String = ""
-  ): WorkflowExecutions = {
+  private def insertForeignExecution(logLocation: String = ""): WorkflowExecutions = {
     val workflow = new Workflow
     workflow.setWid(foreignWid)
     workflow.setName("foreign_workflow_" + UUID.randomUUID().toString.substring(0, 8))
@@ -333,14 +294,11 @@ class WorkflowExecutionsResourceSpec
     val execution = new WorkflowExecutions
     execution.setVid(version.getVid)
     execution.setUid(testUser.getUid)
-    execution.setStatus(0.toByte)
-    execution.setResult("")
     execution.setLogLocation(logLocation)
     execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
     execution.setBookmarked(false)
     execution.setName("foreign-execution")
     execution.setEnvironmentVersion("test-env-1.0")
-    execution.setRuntimeStatsUri(runtimeStatsUri)
     workflowExecutionsDao.insert(execution)
     execution
   }
@@ -386,19 +344,6 @@ class WorkflowExecutionsResourceSpec
     ()
   }
 
-  // Local convenience over the production callback: fixture rows the
-  // lookup specs below need go through the same insert prod uses, so a
-  // regression in the column list shows up here too.
-  private def insertOperatorPortResult(
-      eid: ExecutionIdentity,
-      globalPortId: GlobalPortIdentity,
-      uri: URI
-  ): Unit =
-    ExecutionResultService.persistOperatorPortResultUri(
-      eid,
-      OperatorPortResultUriAvailable(globalPortId, uri, OutputMode.SET_SNAPSHOT)
-    )
-
   // ─── existing tests (preserved) ───────────────────────────────────────────
 
   "WorkflowExecutionsResource.getWorkflowExecutions" should "return executions with EIDs in descending order" in {
@@ -438,217 +383,6 @@ class WorkflowExecutionsResourceSpec
       executionIds.toSet.subsetOf(returnedIds),
       "All inserted execution IDs should be returned"
     )
-  }
-
-  // (The production callback body that writes operator_port_executions is
-  // covered by `ExecutionResultServiceSpec.persistOperatorPortResultUri`.)
-
-  // ─── new: getLatestExecutionID ────────────────────────────────────────────
-
-  "getLatestExecutionID" should "return None when no executions exist for the (wid, cuid) pair" in {
-    val result =
-      WorkflowExecutionsResource.getLatestExecutionID(testWorkflowWid, Integer.valueOf(999))
-    assert(result.isEmpty)
-  }
-
-  it should "return the largest EID for matching (wid, cuid)" in {
-    // cuid has an FK to WORKFLOW_COMPUTING_UNIT — seed two units.
-    val unitA = insertComputingUnit()
-    val unitB = insertComputingUnit()
-
-    val a = insertExecution(cuid = unitA.getCuid)
-    val b = insertExecution(cuid = unitA.getCuid)
-    // Distractor with a different cuid — should be ignored.
-    insertExecution(cuid = unitB.getCuid)
-
-    val result = WorkflowExecutionsResource.getLatestExecutionID(testWorkflowWid, unitA.getCuid)
-    assert(result.isDefined)
-    assert(result.get == math.max(a.getEid, b.getEid))
-  }
-
-  it should "pass over an execution that was created and not started" in {
-    val unit = insertComputingUnit()
-    val started = insertExecution(cuid = unit.getCuid)
-    insertExecution(cuid = unit.getCuid, status = WorkflowExecutionStatus.Created.toByte)
-
-    assert(
-      WorkflowExecutionsResource
-        .getLatestExecutionID(testWorkflowWid, unit.getCuid)
-        .contains(started.getEid)
-    )
-  }
-
-  // ─── new: insertOperatorExecutions ────────────────────────────────────────
-
-  "insertOperatorExecutions" should "insert one OPERATOR_EXECUTIONS row" in {
-    val execution = insertExecution()
-    val uri = URI.create("vfs:///console-msg")
-
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      "op-A",
-      uri
-    )
-
-    val rows = getDSLContext
-      .selectFrom(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq("op-A"))
-      .fetch()
-
-    assert(rows.size() == 1)
-    assert(rows.get(0).getConsoleMessagesUri == uri.toString)
-  }
-
-  it should "change nothing when the same operator of the execution is registered again" in {
-    // A run registers its execution's one console table as it is set up, whatever was
-    // registered before.
-    val execution = insertExecution()
-    val uri = URI.create("vfs:///console-msg")
-    WorkflowExecutionsResource.insertOperatorExecutions(execution.getEid.longValue(), "*", uri)
-
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      "*",
-      URI.create("vfs:///another")
-    )
-
-    val rows = getDSLContext
-      .selectFrom(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .fetch()
-    assert(rows.size() == 1)
-    assert(rows.get(0).getConsoleMessagesUri == uri.toString)
-  }
-
-  // ─── new: updateRuntimeStatsUri ───────────────────────────────────────────
-
-  "updateRuntimeStatsUri" should "set the runtime_stats_uri on the execution in one UPDATE by eid" in {
-    val execution = insertExecution()
-    val uri = URI.create("vfs:///runtime-stats")
-
-    // The unit stamps the URI as a run starts, so it reads nothing, not even in a subselect.
-    val statements = recorder.record {
-      WorkflowExecutionsResource.updateRuntimeStatsUri(execution.getEid.longValue(), uri)
-    }
-
-    assert(statements.map(_.verb) == Seq("UPDATE"))
-    assert(!statements.head.sql.toLowerCase.contains("select"))
-    val refreshed = workflowExecutionsDao.fetchOneByEid(execution.getEid)
-    assert(refreshed.getRuntimeStatsUri == uri.toString)
-  }
-
-  it should "leave every other execution untouched" in {
-    val execution = insertExecution()
-    val other = insertExecution()
-
-    WorkflowExecutionsResource.updateRuntimeStatsUri(
-      execution.getEid.longValue(),
-      URI.create("vfs:///runtime-stats")
-    )
-
-    assert(workflowExecutionsDao.fetchOneByEid(other.getEid).getRuntimeStatsUri == null)
-  }
-
-  it should "update nothing for an unknown eid" in {
-    val execution = insertExecution()
-
-    WorkflowExecutionsResource.updateRuntimeStatsUri(-1L, URI.create("vfs:///runtime-stats"))
-
-    assert(workflowExecutionsDao.fetchOneByEid(execution.getEid).getRuntimeStatsUri == null)
-  }
-
-  // ─── new: URI fetchers ────────────────────────────────────────────────────
-
-  "getConsoleMessagesUriByExecutionId" should "return inserted URIs and filter empty entries" in {
-    val execution = insertExecution()
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      "op-A",
-      URI.create("vfs:///console-A")
-    )
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      "op-B",
-      URI.create("vfs:///console-B")
-    )
-    // Empty-URI row — must be filtered.
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .columns(
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_EXECUTIONS.OPERATOR_ID,
-        OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI
-      )
-      .values(execution.getEid, "op-C", "")
-      .execute()
-
-    val uris = WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(eid)
-    assert(uris.toSet == Set(URI.create("vfs:///console-A"), URI.create("vfs:///console-B")))
-  }
-
-  "getRuntimeStatsUriByExecutionId" should "return None when the stored URI is null or empty" in {
-    val noUri = insertExecution()
-    assert(
-      WorkflowExecutionsResource
-        .getRuntimeStatsUriByExecutionId(ExecutionIdentity(noUri.getEid.longValue()))
-        .isEmpty
-    )
-
-    val emptyUri = insertExecution(runtimeStatsUri = "")
-    assert(
-      WorkflowExecutionsResource
-        .getRuntimeStatsUriByExecutionId(ExecutionIdentity(emptyUri.getEid.longValue()))
-        .isEmpty
-    )
-  }
-
-  it should "return Some(URI) when the stored URI is non-empty" in {
-    val withUri = insertExecution(runtimeStatsUri = "vfs:///stats")
-    val result = WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(
-      ExecutionIdentity(withUri.getEid.longValue())
-    )
-    assert(result.contains(URI.create("vfs:///stats")))
-  }
-
-  // ─── new: deleteConsoleMessageAndExecutionResultUris ──────────────────────
-
-  "deleteConsoleMessageAndExecutionResultUris" should "purge both child tables for a given eid" in {
-    val execution = insertExecution()
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-
-    val globalPortId = GlobalPortIdentity(
-      PhysicalOpIdentity(OperatorIdentity("op-purge"), "main"),
-      PortIdentity(),
-      input = false
-    )
-    insertOperatorPortResult(
-      eid,
-      globalPortId,
-      URI.create("vfs:///r")
-    )
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      "op-purge",
-      URI.create("vfs:///c")
-    )
-
-    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
-
-    val resultRows = getDSLContext
-      .fetchCount(
-        OPERATOR_PORT_EXECUTIONS,
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid)
-      )
-    val consoleRows = getDSLContext
-      .fetchCount(
-        OPERATOR_EXECUTIONS,
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid)
-      )
-    assert(resultRows == 0)
-    assert(consoleRows == 0)
   }
 
   // ─── removeAllExecutionFiles ──────────────────────────────────────────────
@@ -876,182 +610,6 @@ class WorkflowExecutionsResourceSpec
         .execute()
       getDSLContext.deleteFrom(USER).where(USER.UID.eq(readUid)).execute()
     }
-  }
-
-  // ─── new: updateResultSizeAndCount ────────────────────────────────────────
-
-  "updateResultSizeAndCount" should "set RESULT_SIZE and RESULT_COUNT on the matching (eid, globalPortId) row" in {
-    val execution = insertExecution()
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-    val globalPortId = GlobalPortIdentity(
-      PhysicalOpIdentity(OperatorIdentity("op-size"), "main"),
-      PortIdentity(),
-      input = false
-    )
-    insertOperatorPortResult(
-      eid,
-      globalPortId,
-      URI.create("vfs:///r")
-    )
-
-    WorkflowExecutionsResource.updateResultSizeAndCount(eid, globalPortId, 4096L, 25L)
-
-    val row = getDSLContext
-      .selectFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
-      .fetchOne()
-    assert(row.getResultSize == 4096)
-    assert(row.getResultCount == 25L)
-  }
-
-  it should "store a >2GiB size without truncation (#6978)" in {
-    val execution = insertExecution()
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-    val globalPortId = GlobalPortIdentity(
-      PhysicalOpIdentity(OperatorIdentity("op-big-size"), "main"),
-      PortIdentity(),
-      input = false
-    )
-    insertOperatorPortResult(eid, globalPortId, URI.create("vfs:///big"))
-
-    // 3 GiB exceeds Int.MaxValue; a Long->Int narrowing would wrap it negative.
-    val threeGiB = 3L * 1024 * 1024 * 1024
-    WorkflowExecutionsResource.updateResultSizeAndCount(eid, globalPortId, threeGiB, 0L)
-
-    val row = getDSLContext
-      .selectFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
-      .fetchOne()
-    assert(row.getResultSize.longValue() == threeGiB)
-  }
-
-  // ─── new: updateRuntimeStatsSize / updateConsoleMessageSize ───────────────
-
-  "updateRuntimeStatsSize" should "store a >2GiB size on the matching execution" in {
-    val execution = insertExecution()
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-    val threeGiB = 3L * 1024 * 1024 * 1024
-
-    WorkflowExecutionsResource.updateRuntimeStatsSize(eid, threeGiB)
-
-    val row = getDSLContext
-      .selectFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
-      .fetchOne()
-    assert(row.getRuntimeStatsSize.longValue() == threeGiB)
-  }
-
-  it should "leave the size untouched when the execution has no runtime stats URI" in {
-    val execution = insertExecution(runtimeStatsUri = null)
-
-    WorkflowExecutionsResource.updateRuntimeStatsSize(
-      ExecutionIdentity(execution.getEid.longValue())
-    )
-
-    val row = getDSLContext
-      .selectFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
-      .fetchOne()
-    // The fixture never set a size, so a no-op leaves the column as inserted.
-    assert(row.getRuntimeStatsSize == null)
-  }
-
-  it should "open the stored document for measuring when a runtime stats URI is present" in {
-    // A URI is present, so the method must reach the document-open call. No
-    // document backend exists in this unit environment, so the open fails on
-    // the unsupported scheme — proving the branch executed and that the
-    // failure propagates instead of degrading into a silent no-op.
-    val execution = insertExecution(runtimeStatsUri = "mock:///runtime-stats")
-
-    val ex = intercept[UnsupportedOperationException] {
-      WorkflowExecutionsResource.updateRuntimeStatsSize(
-        ExecutionIdentity(execution.getEid.longValue())
-      )
-    }
-    assert(ex.getMessage.contains("mock"))
-  }
-
-  it should "measure the statistics table a run's record made, and nothing while there is none" in {
-    val (exec, uri) = executionWithStatisticsUri()
-    val eid = ExecutionIdentity(exec.getEid.longValue())
-    def storedSize(): java.lang.Long =
-      workflowExecutionsDao.fetchOneByEid(exec.getEid).getRuntimeStatsSize
-    RuntimeStatisticsStore.drop(uri)
-
-    // The record has not made the table yet: a result that comes first measures nothing, and
-    // does not fail.
-    WorkflowExecutionsResource.updateRuntimeStatsSize(eid)
-    assert(storedSize() == null)
-
-    RuntimeStatisticsStore.create(uri)
-    try {
-      RuntimeStatisticsStore.append(
-        uri,
-        Seq(RuntimeStatisticsRow("scan", 1794873600123L, 0, 0, 10, 100, 5000, 600, 70, 2, 1))
-      )
-      WorkflowExecutionsResource.updateRuntimeStatsSize(eid)
-      assert(storedSize().longValue() > 0)
-    } finally RuntimeStatisticsStore.drop(uri)
-  }
-
-  "updateConsoleMessageSize" should "store a >2GiB size on the matching (eid, opId) row" in {
-    val execution = insertExecution()
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-    val opId = OperatorIdentity("op-console-size")
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      opId.id,
-      URI.create("vfs:///console-big")
-    )
-
-    val threeGiB = 3L * 1024 * 1024 * 1024
-    WorkflowExecutionsResource.updateConsoleMessageSize(eid, opId, threeGiB)
-
-    val row = getDSLContext
-      .selectFrom(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-      .fetchOne()
-    assert(row.getConsoleMessagesSize.longValue() == threeGiB)
-  }
-
-  it should "leave the size untouched when the operator has no console messages URI" in {
-    val execution = insertExecution()
-    val opId = OperatorIdentity("op-no-console-uri")
-
-    WorkflowExecutionsResource.updateConsoleMessageSize(
-      ExecutionIdentity(execution.getEid.longValue()),
-      opId
-    )
-
-    val row = getDSLContext
-      .selectFrom(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-      .fetchOne()
-    assert(row == null)
-  }
-
-  it should "open the stored document for measuring when a console messages URI is present" in {
-    // Same shape as the runtime-stats case above: the stored URI forces the
-    // document-open call, whose unsupported-scheme failure propagates.
-    val execution = insertExecution()
-    val opId = OperatorIdentity("op-console-uri")
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      execution.getEid.longValue(),
-      opId.id,
-      URI.create("mock:///console")
-    )
-
-    val ex = intercept[UnsupportedOperationException] {
-      WorkflowExecutionsResource.updateConsoleMessageSize(
-        ExecutionIdentity(execution.getEid.longValue()),
-        opId
-      )
-    }
-    assert(ex.getMessage.contains("mock"))
   }
 
   // ─── new: getNonDownloadableOperatorMap (private — via PrivateMethodTester) ─
@@ -1325,8 +883,6 @@ class WorkflowExecutionsResourceSpec
   it should "answer a closed execution's status, reason and end from its closing record, without reading the lake" in {
     grantReadAccess()
     val before = labelsRead.size
-    // The status column is what a unit last wrote: a run whose unit was lost is still Running
-    // there, and is failed.
     val closed = Seq[(Short, String)](
       WorkflowExecutionStatus.Completed -> null,
       WorkflowExecutionStatus.Failed -> "unit lost",
@@ -1334,7 +890,6 @@ class WorkflowExecutionsResourceSpec
     ).map {
       case (outcome, reason) =>
         val execution = insertExecution(
-          status = WorkflowExecutionStatus.Running.toByte,
           startOffsetMillis = 90000L,
           endedOffsetMillis = Some(30000L),
           outcome = outcome,
@@ -1359,8 +914,7 @@ class WorkflowExecutionsResourceSpec
   it should "answer an open execution's status from the label of its log" in {
     grantReadAccess()
     val stateTime = System.currentTimeMillis() + 5000L
-    // The status column says each of them completed, which no unit's word makes true.
-    def open() = insertExecution(status = WorkflowExecutionStatus.Completed.toByte)
+    def open() = insertExecution()
     val expected = Seq(
       "READY" -> WorkflowExecutionStatus.Initializing,
       "RUNNING" -> WorkflowExecutionStatus.Running,
@@ -1388,9 +942,9 @@ class WorkflowExecutionsResourceSpec
 
   it should "answer an open execution that no unit has started as created, as of its creation" in {
     grantReadAccess()
-    val noLog = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    val noLog = insertExecution()
     // A unit made the log and has not written a state to it.
-    val noState = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    val noState = insertExecution()
     label(noState, None, System.currentTimeMillis() + 5000L)
 
     Seq(noLog, noState).foreach { execution =>
@@ -1411,7 +965,7 @@ class WorkflowExecutionsResourceSpec
 
   it should "answer -1 for an open execution whose log cannot be read, and list the others as they are" in {
     grantReadAccess()
-    val unread = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    val unread = insertExecution()
     unreadable.add(logUriOf(unread))
     val running = insertExecution()
     label(running, Some("RUNNING"), System.currentTimeMillis())
@@ -1481,7 +1035,7 @@ class WorkflowExecutionsResourceSpec
 
   it should "read an open execution's status from its log in the lake" in {
     grantReadAccess()
-    val execution = insertExecution(status = WorkflowExecutionStatus.Completed.toByte)
+    val execution = insertExecution()
     val uri = logUriOf(execution)
     val startedAt = execution.getStartingTime.getTime
     ExecutionLogStore.create(uri, startedAt + 1000L, 30000L)
@@ -1583,12 +1137,11 @@ class WorkflowExecutionsResourceSpec
       "created" -> None
     ).map {
       case (name, state) =>
-        // What the status column says is no part of any filter.
-        val execution = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+        val execution = insertExecution()
         state.foreach(_ => label(execution, state, System.currentTimeMillis()))
         name -> execution
     }
-    val unread = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    val unread = insertExecution()
     unreadable.add(logUriOf(unread))
     (closed ++ open :+ ("unknown" -> unread)).toMap
   }
@@ -1679,7 +1232,6 @@ class WorkflowExecutionsResourceSpec
     def latest() = resource.retrieveLatestExecutionEntry(testWorkflowWid, session(testUser))
 
     val closed = insertExecution(
-      status = WorkflowExecutionStatus.Running.toByte,
       startOffsetMillis = 60000L,
       endedOffsetMillis = Some(30000L),
       outcome = WorkflowExecutionStatus.Failed,
@@ -1690,8 +1242,8 @@ class WorkflowExecutionsResourceSpec
     assert(latest().reason == "unit lost")
     assert(latest().completionTime == closed.getEndedAt)
 
-    // Created, which the status column a create writes also says, and then run by a unit.
-    val open = insertExecution(status = WorkflowExecutionStatus.Created.toByte)
+    // Created, and then run by a unit.
+    val open = insertExecution()
     assert(latest().eId == open.getEid)
     assert(latest().status == WorkflowExecutionStatus.Created.toByte)
     assert(latest().completionTime == open.getStartingTime)
@@ -1967,29 +1519,7 @@ class WorkflowExecutionsResourceSpec
     )
   }
 
-  it should "read the statistics where the execution's ids say, whatever its row names as their location" in {
-    grantReadAccess()
-    // The column a unit used to write: left empty, and then naming a place nothing is at.
-    val unnamed = insertExecution()
-    val misnamed = insertExecution(runtimeStatsUri = "mock:///stats")
-    val uris = Seq(unnamed, misnamed).map(statisticsUriOf(_))
-    uris.foreach(RuntimeStatisticsStore.create)
-    try {
-      uris.foreach(RuntimeStatisticsStore.append(_, Seq(scanSample)))
-
-      Seq(unnamed, misnamed).foreach { exec =>
-        val rows =
-          resource.retrieveWorkflowRuntimeStatistics(
-            testWorkflowWid,
-            exec.getEid,
-            session(testUser)
-          )
-        assert(rows.map(_.operatorId) == Seq("scan"))
-      }
-    } finally uris.foreach(RuntimeStatisticsStore.drop)
-  }
-
-  it should "find the execution in one read of its row, without the column that named its statistics" in {
+  it should "find the execution in one read of its row" in {
     grantReadAccess()
     val (exec, _) = executionWithStatistics()
 
@@ -1999,23 +1529,6 @@ class WorkflowExecutionsResourceSpec
 
     assert(statements.forall(_.verb == "SELECT"))
     assert(statements.count(_.tables.contains("workflow_executions")) == 1)
-    assert(!statements.exists(_.sql.toLowerCase.contains("runtime_stats_uri")))
-  }
-
-  /**
-    * An execution of the test workflow whose row names where its statistics are, as a unit
-    * that measures them reads it.
-    */
-  private def executionWithStatisticsUri(): (WorkflowExecutions, URI) = {
-    val exec = insertExecution()
-    val uri = RuntimeStatisticsStore.statisticsUri(
-      WorkflowIdentity(testWorkflowWid.longValue()),
-      ExecutionIdentity(exec.getEid.longValue()),
-      None
-    )
-    exec.setRuntimeStatsUri(uri.toString)
-    workflowExecutionsDao.update(exec)
-    (exec, uri)
   }
 
   it should "return the rows a run's record stored, oldest first, each with its time to the millisecond" in {

@@ -26,7 +26,7 @@ import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionLogStore,
-  ExecutionResultUris,
+  ExecutionTables,
   IcebergCatalogInstance
 }
 import org.apache.texera.amber.core.storage.model.VirtualDocument
@@ -96,8 +96,8 @@ import scala.util.Try
 
 /**
   * Runs executions as a deployment runs them, and holds what a computing unit sends to Postgres
-  * meanwhile against the rule of a self-contained engine: a unit starts a run without reading
-  * Postgres, and until the run ends it touches only the three tables a run's state is kept in.
+  * meanwhile against the rule of a self-contained engine: nothing. A unit starts and runs a run
+  * without a statement to Postgres, and keeps the run's record in the lake.
   *
   * An execution is created as the Dashboard service creates one (`ExecutionCreator`): its row is
   * inserted, and its plan is compiled for its creator and written to the lake, in the catalog
@@ -320,14 +320,18 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
       recorded: Boolean
   ) {
 
-    /** The rows the run stored as the result of operator `operatorId`. */
+    /**
+      * The rows the run stored as the result of operator `operatorId`, found where the
+      * execution's stored plan says the operator's first output port is stored.
+      */
     def resultOf(operatorId: String): List[Tuple] = {
-      val uri = ExecutionResultUris
-        .getResultUriByLogicalPortId(
-          ExecutionIdentity(execution.eid),
+      val uri = ExecutionTables
+        .resultTableAmong(
+          ExecutionTables.portTables(new URI(execution.planUri)),
           OperatorIdentity(operatorId),
           PortIdentity()
         )
+        .filter(ExecutionTables.exists)
         .getOrElse(fail(s"the run stored no result of operator $operatorId"))
       DocumentFactory
         .openDocument(uri)
@@ -424,67 +428,20 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     table.currentSnapshot().summary().get("total-data-files") shouldBe "1"
   }
 
-  /** The tables a run's state is kept in: all that a unit may touch while it runs one. */
-  private val RunStateTables =
-    Set("workflow_executions", "operator_port_executions", "operator_executions")
-
   /** A statement as a failure names it: what it does, to which tables, and what sent it. */
   private def described(statement: Statement): String =
     s"${statement.verb} of ${statement.tables.mkString(", ")} by " +
       s"${statement.site.fold("unknown code")(_.toString)}: ${statement.sql}"
 
   /**
-    * The state `statement` records for execution `eid`, as the code its row keeps, if it is a
-    * write of the execution's status.
+    * Fails unless `run` kept to the rule: from its start until its session was sent the results
+    * of the completed run, the unit sent Postgres no statement, of any kind, and the session
+    * was told the run READY, RUNNING and COMPLETED.
     */
-  private def statusWritten(statement: Statement, eid: Long): Option[Int] = {
-    val status = statement.sql.indexOf("\"status\" = ?")
-    Option
-      .when(statement.verb == "UPDATE" && status >= 0 && statement.values.contains(eid.toInt)) {
-        statement.values(statement.sql.take(status).count(_ == '?'))
-      }
-      .collect { case code: Number => code.intValue() }
-  }
-
-  /**
-    * Fails unless `run` kept to the rule: the unit recorded it READY, RUNNING and COMPLETED, in
-    * one write each; until it had recorded it RUNNING, it read nothing, and only inserted into
-    * or updated the three tables of a run's state; until the run ended, it touched no other
-    * table; and it never read where the run's results are, which its engine told it.
-    */
-  protected def assertStartedWithoutReading(run: Run): Unit = {
-    val statements = run.statements
-    val statusWrites = statements.zipWithIndex.flatMap {
-      case (statement, index) => statusWritten(statement, run.execution.eid).map(index -> _)
-    }
-    withClue(s"the unit's writes of the run's status, of ${statements.map(described)}: ") {
-      statusWrites.map(_._2) shouldBe Seq(READY, RUNNING, COMPLETED).map(
-        Utils.maptoStatusCode(_).toInt
-      )
+  protected def assertRanWithoutPostgres(run: Run): Unit = {
+    withClue("from the start of the run to its end, the unit sent: ") {
+      run.statements.map(described) shouldBe empty
     }
     run.states shouldBe Seq(READY, RUNNING, COMPLETED).map(nameOf)
-
-    val (untilRunning, _) = statusWrites(1)
-    val toStart = statements.take(untilRunning + 1)
-    withClue("until the unit recorded the run RUNNING, it sent: ") {
-      toStart
-        .filterNot(statement => Set("INSERT", "UPDATE").contains(statement.verb))
-        .map(described) shouldBe empty
-    }
-    withClue("until the run ended, the unit sent: ") {
-      statements
-        .filterNot(statement =>
-          statement.tables.nonEmpty && statement.tables.subsetOf(RunStateTables) &&
-            Set("INSERT", "UPDATE", "SELECT").contains(statement.verb)
-        )
-        .map(described) shouldBe empty
-    }
-    withClue("to find the run's results, the unit sent: ") {
-      statements
-        .filter(statement =>
-          statement.verb == "SELECT" && statement.tables.contains("operator_port_executions")
-        )
-        .map(described) shouldBe empty
-    }
   }
 }

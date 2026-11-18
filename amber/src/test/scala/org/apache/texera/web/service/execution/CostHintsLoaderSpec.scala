@@ -145,11 +145,7 @@ class CostHintsLoaderSpec
     * start. A run in a state that is an ending is closed with it; in any other state it is
     * open. Like a run the service starts, it is of the workflow's latest version.
     *
-    * @param status      what the row's status column says, which a unit writes and no load
-    *                    reads; by default the code of `state`
-    * @param statsColumn what the row's statistics location says, which a unit writes and no
-    *                    load reads
-    * @param whid        the warehouse the run writes into
+    * @param whid the warehouse the run writes into
     */
   private def run(
       eid: Int,
@@ -157,8 +153,6 @@ class CostHintsLoaderSpec
       uid: Int,
       state: WorkflowAggregatedState,
       startedAt: Int,
-      status: Option[Short] = None,
-      statsColumn: Option[String] = None,
       whid: Option[Integer] = None
   ): Unit = {
     val vid = getDSLContext
@@ -176,11 +170,9 @@ class CostHintsLoaderSpec
       .set(WORKFLOW_EXECUTIONS.EID, Integer.valueOf(eid))
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(uid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status.getOrElse(code)))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, started)
       .set(WORKFLOW_EXECUTIONS.NAME, s"cost-hints-run-$eid")
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
-      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, statsColumn.orNull)
       .set(WORKFLOW_EXECUTIONS.WHID, whid.orNull)
       .set(WORKFLOW_EXECUTIONS.OUTCOME, if (ended) java.lang.Short.valueOf(code) else null)
       .set(WORKFLOW_EXECUTIONS.ENDED_AT, if (ended) started else null)
@@ -420,34 +412,32 @@ class CostHintsLoaderSpec
     loader.opened shouldBe Map(source -> 1)
   }
 
-  // The status column is what a unit last wrote: it says Running for a completed run whose
-  // unit was cut off, and Completed for a run that is not closed, or was closed as lost.
-  it should "choose the run by its closing record, whatever status its row keeps" in {
+  it should "choose the run by its closing record: the newest that completed, not a newer one still open or failed" in {
     val wid = 9540
     newWorkflow(wid)
     val source = statistics(wid, 954001, ("scan", 2_000_000_000L, 0L))
-    run(954001, wid, runUser, COMPLETED, 10, status = Some(WorkflowExecutionStatus.Running))
-    // Newer, and completed by the column only: one still open, one closed as failed.
+    run(954001, wid, runUser, COMPLETED, 10)
+    // Newer, with statistics of their own: one still open, one closed as failed.
     statistics(wid, 954002, ("scan", 5L, 0L))
-    run(954002, wid, runUser, RUNNING, 20, status = Some(WorkflowExecutionStatus.Completed))
+    run(954002, wid, runUser, RUNNING, 20)
     statistics(wid, 954003, ("scan", 6L, 0L))
-    run(954003, wid, runUser, FAILED, 30, status = Some(WorkflowExecutionStatus.Completed))
+    run(954003, wid, runUser, FAILED, 30)
     val loader = new CountingLoader
 
     loader.load(wid, runUser) shouldBe hintsOf(954001, "scan" -> 2.0)
     loader.opened shouldBe Map(source -> 1)
   }
 
-  it should "find the statistics where the run's row says its tables are, whatever location a unit recorded" in {
+  it should "find each run's statistics where the run's row says its tables are" in {
     val wid = 9535
     newWorkflow(wid)
     val source = statistics(wid, 953501, ("scan", 1_000_000_000L, 0L))
-    run(953501, wid, runUser, COMPLETED, 10, statsColumn = Some("::not a URI"))
+    run(953501, wid, runUser, COMPLETED, 10)
     val loader = new CountingLoader
 
     loader.load(wid, runUser) shouldBe hintsOf(953501, "scan" -> 1.0)
 
-    // A newer run, for which a unit recorded no location at all.
+    // A newer run.
     val newer = statistics(wid, 953502, ("scan", 3_000_000_000L, 0L))
     run(953502, wid, runUser, COMPLETED, 20)
     loader.load(wid, runUser) shouldBe hintsOf(953502, "scan" -> 3.0)

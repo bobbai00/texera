@@ -29,8 +29,7 @@ import scala.util.Using
 
 /**
   * [[UnitStartReadsNoPostgresSpec]] for a run whose operator is a Python process: a computing
-  * unit starts a Python UDF's run without reading Postgres, and touches only the tables of the
-  * run's state until the run ends.
+  * unit starts a Python UDF's run, and runs it to its end, without a statement to Postgres.
   *
   * Tagged @IntegrationTest because it spawns a Python worker; routed to the `amber-integration`
   * CI job.
@@ -73,7 +72,7 @@ class UnitStartReadsNoPostgresIntegrationSpec
       List(link("scan", "udf"))
     )
 
-    assertStartedWithoutReading(ran)
+    assertRanWithoutPostgres(ran)
     assertLogged(ran)
     ran
       .resultOf("udf")

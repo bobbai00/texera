@@ -62,30 +62,10 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   PAUSED,
   RUNNING
 }
-import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
 import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
-import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
-import org.apache.texera.dao.jooq.generated.Tables.{
-  OPERATOR_EXECUTIONS,
-  OPERATOR_PORT_EXECUTIONS,
-  WORKFLOW_EXECUTIONS,
-  WORKFLOW_VERSION
-}
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowComputingUnitDao,
-  WorkflowDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowComputingUnit,
-  WorkflowVersion
-}
+import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.ExecutionDurationUpdateEvent
 import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.model.websocket.event.{
@@ -102,7 +82,6 @@ import org.slf4j.LoggerFactory
 
 import java.io.{IOException, UncheckedIOException}
 import java.net.URI
-import java.sql.Timestamp
 import java.util.UUID
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit, TimeoutException}
 import scala.collection.concurrent.TrieMap
@@ -121,8 +100,8 @@ import scala.util.Try
   * untestable rather than merely inconvenient:
   *
   *   - `lifeCycleManager`. The real one schedules the clean-up through `AmberRuntime`'s global
-  *     actor system, which no unit test starts, and its callback reads `workflow_executions` from
-  *     the database and shuts down the execution's Amber client. Stubbing it also makes the two
+  *     actor system, which no unit test starts, and its callback shuts down the execution's
+  *     Amber client. Stubbing it also makes the two
   *     things `WorkflowService` actually contributes here observable: that `connect` registers a
   *     user, and that `disconnect` reports the *current execution's* state (the value that decides
   *     whether clean-up is postponed).
@@ -147,11 +126,7 @@ import scala.util.Try
   * `WorkflowExecutionServiceSpec` owns what a run does with its plan, and `StoredExecutionStartSpec`
   * every check a start makes.
   */
-class WorkflowServiceSpec
-    extends AnyFlatSpec
-    with Matchers
-    with BeforeAndAfterAll
-    with MockTexeraDB {
+class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll {
 
   /** Long enough that a stray clean-up deadline could never fire inside a test run. */
   private val cleanUpTimeoutSecs = 3600
@@ -205,7 +180,7 @@ class WorkflowServiceSpec
       workflowId: WorkflowIdentity,
       computingUnitId: Int,
       stateStore: WorkflowStateStore
-  ) extends ExecutionResultService(workflowId, computingUnitId, stateStore) {
+  ) extends ExecutionResultService(workflowId, stateStore) {
     var unsubscribeCount = 0
 
     override def unsubscribeAll(): Unit = {
@@ -275,8 +250,8 @@ class WorkflowServiceSpec
   }
 
   // ---------------------------------------------------------------------------
-  // Fixtures: the user / workflow / workflow_version / workflow_computing_unit chain an
-  // execution's row hangs off. workflow_executions.uid, .vid and .cuid are all foreign keys.
+  // Fixtures: the ids of the workflow, the user, the computing units and the executions the
+  // cases run. A unit has no database, so none of them has a row anywhere.
   // ---------------------------------------------------------------------------
 
   // A different literal for each id domain, so a transposition of two of them cannot go unseen.
@@ -295,17 +270,14 @@ class WorkflowServiceSpec
   /** The unit the executions started by id were created for. */
   private val storedCuid = 9423
 
-  // Executions carry explicit eids rather than the SERIAL's: the tables the cases make in the
-  // lake are named after them.
+  // The executions' ids are the suite's own: the tables the cases make in the lake are named
+  // after them.
 
   /** The superseded-run cases' execution, on `supersedeCuid`. */
   private val supersededEid = 941105
 
   /** The execution the idle clean-up cases' service holds, on `idleCuid`. */
   private val heldIdleEid = 941106
-
-  /** A newer execution of `testWid` on `idleCuid`, which the service does not hold. */
-  private val newerIdleEid = 941107
 
   /**
     * Executions created for `storedCuid` and started by id: their plans are written to the lake
@@ -341,146 +313,19 @@ class WorkflowServiceSpec
   /** And one whose run the idle clean-up finds paused. */
   private val idlePausedEid = 941121
 
-  /** Records the statements the cases' code sends to the database. */
-  private var recorder: StatementRecorder = _
-
-  private var executingUser: User = _
-
-  override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
-    recorder = StatementRecorder.installOn(getDSLContext)
-    val cfg = getDSLContext.configuration()
-
-    executingUser = new User
-    executingUser.setUid(testUid)
-    executingUser.setName("workflow_service_spec_user")
-    executingUser.setEmail(s"workflow-service-${UUID.randomUUID()}@example.com")
-    new UserDao(cfg).insert(executingUser)
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName("workflow_service_spec_workflow")
-    workflow.setContent("{}")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(cfg).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(cfg).insert(version)
-
-    val unitDao = new WorkflowComputingUnitDao(cfg)
-    List(
-      testCuid -> "workflow_service_spec_unit",
-      supersedeCuid -> "workflow_service_spec_supersede_unit",
-      idleCuid -> "workflow_service_spec_idle_unit",
-      storedCuid -> "workflow_service_spec_stored_unit"
-    ).foreach {
-      case (cuid, name) =>
-        val unit = new WorkflowComputingUnit
-        unit.setCuid(cuid)
-        unit.setUid(testUid)
-        unit.setName(name)
-        unit.setType(WorkflowComputingUnitTypeEnum.local)
-        unit.setCreationTime(new Timestamp(System.currentTimeMillis()))
-        unitDao.insert(unit)
-    }
-
-    insertExecution(supersededEid, supersedeCuid, "superseded-run")
-    insertExecution(heldIdleEid, idleCuid, "held-idle-run")
-    insertExecution(newerIdleEid, idleCuid, "newer-idle-run")
-    Seq(
-      startedEid,
-      refusedEid,
-      unclaimedEid,
-      failedEid,
-      heldStoredEid,
-      askedUnitEid,
-      unpublishedEid,
-      unbuiltEid,
-      followedEid,
-      followingEid,
-      setUpEid,
-      failedByWorkerEid,
-      idlePausedEid
-    ).foreach { eid =>
-      insertExecution(eid, storedCuid, s"stored-run-$eid")
-    }
-
-    // A different row count per execution, so a clean-up that took the wrong one cannot be
-    // mistaken for one that took the right one.
-    (0 until 2).foreach { i =>
-      registerOperator(heldIdleEid, s"held-idle-op-$i")
-      registerPort(heldIdleEid, s"held-idle-port-$i")
-    }
-    registerOperator(newerIdleEid, "newer-idle-op")
-    registerPort(newerIdleEid, "newer-idle-port")
+  private val executingUser: User = {
+    val user = new User
+    user.setUid(testUid)
+    user.setName("workflow_service_spec_user")
+    user.setEmail(s"workflow-service-${UUID.randomUUID()}@example.com")
+    user
   }
 
   /** The plan tables the cases write, in the catalog the build's tests use. */
   private val madePlans = ArrayBuffer.empty[URI]
 
   override protected def afterAll(): Unit =
-    try madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
-    finally closeConnectionPool()
-
-  /** An execution of the fixture workflow on unit `cuid`, recorded as completed. */
-  private def insertExecution(eid: Int, cuid: Int, name: String): Unit =
-    getDSLContext
-      .insertInto(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.EID, Integer.valueOf(eid))
-      .set(
-        WORKFLOW_EXECUTIONS.VID,
-        getDSLContext
-          .select(WORKFLOW_VERSION.VID)
-          .from(WORKFLOW_VERSION)
-          .where(WORKFLOW_VERSION.WID.eq(testWid))
-          .fetchOneInto(classOf[Integer])
-      )
-      .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(testUid))
-      .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(cuid))
-      // Spelled out rather than left to the DDL's default, which is RUNNING: a case that records
-      // another state for a run shows it against this one.
-      .set(
-        WORKFLOW_EXECUTIONS.STATUS,
-        java.lang.Short.valueOf(Utils.maptoStatusCode(COMPLETED).toShort)
-      )
-      .set(WORKFLOW_EXECUTIONS.NAME, name)
-      .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
-      .execute()
-
-  /** A console-message registry row. The URI column stays NULL: see the header comment. */
-  private def registerOperator(eid: Int, operatorId: String): Unit =
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .set(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid))
-      .set(OPERATOR_EXECUTIONS.OPERATOR_ID, operatorId)
-      .execute()
-
-  /** A result registry row. The URI column stays NULL: see the header comment. */
-  private def registerPort(eid: Int, globalPortId: String): Unit =
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .set(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid))
-      .set(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID, globalPortId)
-      .execute()
-
-  private def operatorRowCount(eid: Int): Int =
-    getDSLContext.fetchCount(
-      OPERATOR_EXECUTIONS,
-      OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid)
-    )
-
-  private def portRowCount(eid: Int): Int =
-    getDSLContext.fetchCount(
-      OPERATOR_PORT_EXECUTIONS,
-      OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid)
-    )
-
-  private def executionRowCount(eid: Int): Int =
-    getDSLContext.fetchCount(WORKFLOW_EXECUTIONS, WORKFLOW_EXECUTIONS.EID.eq(eid))
+    madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
 
   /**
     * A run that was never started, as a start builds one; of execution `eid` when given, which
@@ -506,14 +351,6 @@ class WorkflowServiceSpec
 
   /** An execution that takes the place of the superseded-run cases' runs. */
   private val replacingEid = ExecutionIdentity(941199L)
-
-  private def statusOf(eid: Int): Int =
-    getDSLContext
-      .select(WORKFLOW_EXECUTIONS.STATUS)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(eid))
-      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
-      .intValue()
 
   /** The plan table of fixture execution `eid`, in the default warehouse. */
   private def planUriOf(eid: Int): URI =
@@ -760,27 +597,20 @@ class WorkflowServiceSpec
     events shouldBe empty
   }
 
-  it should "record a live run it supersedes as killed, in one write of its row, and tell no client" in {
+  it should "record a live run it supersedes as killed, and tell no client" in {
     val service = new TestWorkflowService(testWid.toLong, supersedeCuid)
     val previous = newExecution(Some(supersededEid))
     service.executionService.onNext(previous)
     previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
-    statusOf(supersededEid) shouldBe Utils
-      .maptoStatusCode(COMPLETED)
-      .toInt // as the fixture wrote it
     val clientEvents = ArrayBuffer.empty[TexeraWebSocketEvent]
     service.connectToExecution(clientEvents += _)
     clientEvents.clear()
 
     val before = System.currentTimeMillis()
-    val statements = recorder.record(service.supersedeCurrentRun(replacingEid))
+    service.supersedeCurrentRun(replacingEid)
     val after = System.currentTimeMillis()
 
-    // Its row reads Killed, written by one UPDATE that reads nothing, and so does its store.
-    statements.map(_.verb) shouldBe Seq("UPDATE")
-    statements.head.sql should include("workflow_executions")
-    statements.head.sql.toLowerCase should not include "select"
-    statusOf(supersededEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
+    // Its store reads Killed.
     previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
     previous.executionStateStore.statsStore.getState.endTimeStamp should (be >= before and be <= after)
     // Its record says what took its place.
@@ -792,7 +622,7 @@ class WorkflowServiceSpec
     clientEvents shouldBe empty
   }
 
-  it should "only let go of a finished run it supersedes, writing nothing" in {
+  it should "only let go of a finished run it supersedes, recording nothing" in {
     Seq(COMPLETED, WorkflowAggregatedState.FAILED, KILLED, WorkflowAggregatedState.TERMINATED)
       .foreach { finished =>
         withClue(s"a run that is $finished: ") {
@@ -804,7 +634,7 @@ class WorkflowServiceSpec
           // A new subscriber is first told the store's state, as a reconnecting client is.
           events.clear()
 
-          recorder.record(service.supersedeCurrentRun(replacingEid)) shouldBe empty
+          service.supersedeCurrentRun(replacingEid)
 
           previous.executionStateStore.metadataStore.getState.state shouldBe finished
           previous.executionStateStore.statsStore.getState.endTimeStamp shouldBe 0L
@@ -818,7 +648,8 @@ class WorkflowServiceSpec
 
   it should "do nothing when superseding while it holds no run" in {
     val service = new TestWorkflowService(testWid.toLong, supersedeCuid)
-    recorder.record(service.supersedeCurrentRun(replacingEid)) shouldBe empty
+    service.supersedeCurrentRun(replacingEid)
+    Option(service.executionService.getValue) shouldBe None
   }
 
   it should "let go of the run it holds once idle, and leave what the run stored where it is" in {
@@ -840,16 +671,12 @@ class WorkflowServiceSpec
     val console = ConsoleMessageStore.consoleUri(wid, eid, None)
     ConsoleMessageStore.create(console)
     try {
-      val statements = recorder.record(service.cleanUpAfterIdle())
+      service.cleanUpAfterIdle()
 
-      // A unit drops nothing: neither a table, nor a row that says where one is.
+      // A unit drops nothing.
       Seq(result, console).foreach { uri =>
         withClue(s"$uri: ") { ExecutionTables.exists(uri) shouldBe true }
       }
-      operatorRowCount(heldIdleEid) shouldBe 2
-      portRowCount(heldIdleEid) shouldBe 2
-      executionRowCount(heldIdleEid) shouldBe 1
-      statements.map(_.verb) should not contain "DELETE"
       // and the service lets go of everything, the run it holds included, which never started
       ownSubscription.isDisposed shouldBe true
       service.results.unsubscribeCount shouldBe 1
@@ -873,7 +700,6 @@ class WorkflowServiceSpec
         held.executionStateStore.metadataStore.getState.state shouldBe KILLED
         held.executionStateStore.statsStore.getState.endTimeStamp should
           (be >= before and be <= after)
-        statusOf(heldIdleEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
         recordOf(held) shouldBe
           Seq(("KILLED", Some(s"stopped: nobody watched it for $cleanUpTimeoutSecs s")))
         // It was let go of first: nothing that followed its state heard of the kill.
@@ -890,25 +716,22 @@ class WorkflowServiceSpec
         service.executionService.onNext(held)
         held.executionStateStore.metadataStore.updateState(_.withState(ended))
 
-        val statements = recorder.record(service.cleanUpAfterIdle())
+        service.cleanUpAfterIdle()
 
         held.executionStateStore.metadataStore.getState.state shouldBe ended
         held.executionStateStore.statsStore.getState.endTimeStamp shouldBe 0L
         recordOf(held) shouldBe empty
-        statements.filter(_.verb == "UPDATE") shouldBe empty
       }
     }
   }
 
-  it should "send the database nothing once idle when it holds no run" in {
+  it should "let go of its subscriptions once idle when it holds no run" in {
     val service = new TestWorkflowService(testWid.toLong, idleCuid)
     val ownSubscription = new TrackingDisposable
     service.addSubscription(ownSubscription)
 
-    recorder.record(service.cleanUpAfterIdle()) shouldBe empty
+    service.cleanUpAfterIdle()
 
-    operatorRowCount(newerIdleEid) shouldBe 1
-    portRowCount(newerIdleEid) shouldBe 1
     ownSubscription.isDisposed shouldBe true
   }
 
@@ -933,10 +756,9 @@ class WorkflowServiceSpec
     )
     // Claimed for its one start, in its plan table.
     ExecutionPlanStore.isStarted(planUri) shouldBe true
-    // The run it held reads Killed, in its store, its row and its record, which names the
-    // execution that took its place, and no session was told of it.
+    // The run it held reads Killed, in its store and its record, which names the execution
+    // that took its place, and no session was told of it.
     held.executionStateStore.metadataStore.getState.state shouldBe KILLED
-    statusOf(heldStoredEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
     recordOf(held) shouldBe Seq(("KILLED", Some(s"replaced by execution $startedEid")))
     heldEvents shouldBe empty
     // The new run is published in its place, and followed by the idle clean-up.
@@ -956,18 +778,14 @@ class WorkflowServiceSpec
     started.workflowContext.executionId shouldBe ExecutionIdentity(startedEid.toLong)
     started.workflowContext.workflowSettings.dataTransferBatchSize shouldBe 64
 
-    // A second start of it is refused, however it comes, writing nothing and leaving the run
-    // started as it is.
-    val again = recorder.record {
-      service.startStoredExecution(startedEid, planUri, executingUser, storedCuid) shouldBe
-        Left(s"Execution $startedEid was already started.")
-    }
-    again shouldBe empty
+    // A second start of it is refused, however it comes, leaving the run started as it is.
+    service.startStoredExecution(startedEid, planUri, executingUser, storedCuid) shouldBe
+      Left(s"Execution $startedEid was already started.")
     service.executionService.getValue should be theSameInstanceAs started
     service.started should have size 1
   }
 
-  it should "refuse a start the plan row was not made for, writing nothing and leaving the held run alone" in {
+  it should "refuse a start the plan row was not made for, leaving the held run alone" in {
     val planUri = storePlanOf(refusedEid)
     val service = new StoredStartService()
     val held = holdRunningRun(service, heldStoredEid)
@@ -985,32 +803,25 @@ class WorkflowServiceSpec
     refusals.foreach {
       case (user, cuid, why) =>
         withClue(s"$why: ") {
-          val statements = recorder.record {
-            service.startStoredExecution(refusedEid, planUri, user, cuid) shouldBe Left(why)
-          }
-          statements shouldBe empty
+          service.startStoredExecution(refusedEid, planUri, user, cuid) shouldBe Left(why)
         }
     }
     // An execution with no plan in the lake.
-    recorder.record {
-      service.startStoredExecution(
-        heldStoredEid,
-        planUriOf(heldStoredEid),
-        executingUser,
-        storedCuid
-      ) shouldBe Left(s"Execution $heldStoredEid has no stored plan.")
-    } shouldBe empty
+    service.startStoredExecution(
+      heldStoredEid,
+      planUriOf(heldStoredEid),
+      executingUser,
+      storedCuid
+    ) shouldBe Left(s"Execution $heldStoredEid has no stored plan.")
     // A start checked for another workflow, which the agent's path would have asked another
     // service to start.
     val checked = WorkflowService
       .checkStoredStart(refusedEid, planUri, executingUser, storedCuid, socketWorkflowId = None)
       .getOrElse(fail("the start was refused"))
     checked.workflowId shouldBe WorkflowIdentity(testWid.toLong)
-    recorder.record {
-      service.startChecked(
-        checked.copy(workflowId = WorkflowIdentity(testWid.toLong + 1))
-      ) shouldBe Left(s"The plan belongs to workflow ${testWid + 1}, not to this one.")
-    } shouldBe empty
+    service.startChecked(
+      checked.copy(workflowId = WorkflowIdentity(testWid.toLong + 1))
+    ) shouldBe Left(s"The plan belongs to workflow ${testWid + 1}, not to this one.")
 
     ExecutionPlanStore.isStarted(planUri) shouldBe false
     service.started shouldBe empty
@@ -1127,14 +938,12 @@ class WorkflowServiceSpec
       .getOrElse(fail("the start was refused"))
     val after = System.currentTimeMillis()
 
-    // Published, superseding the held run, and failed, at the time it failed; its row reads
-    // Failed.
+    // Published, superseding the held run, and failed, at the time it failed.
     service.executionService.getValue should be theSameInstanceAs failed
     held.executionStateStore.metadataStore.getState.state shouldBe KILLED
     failed.executionStateStore.metadataStore.getState.state shouldBe
       WorkflowAggregatedState.FAILED
     failed.executionStateStore.statsStore.getState.endTimeStamp should (be >= before and be <= after)
-    statusOf(failedEid) shouldBe Utils.maptoStatusCode(WorkflowAggregatedState.FAILED).toInt
     ExecutionPlanStore.isStarted(planUri) shouldBe true
     // The failure is the run's one error, which every session on the workflow is sent: its text,
     // and the trace of it and of every cause. No worker raised it, so it is no operator's.
@@ -1202,7 +1011,7 @@ class WorkflowServiceSpec
       .getOrElse(fail("the start was refused"))
 
     // Claimed, so never to start: published FAILED in the held run's place, with the reason,
-    // which every session on the workflow is sent, and its row reads Failed.
+    // which every session on the workflow is sent.
     ExecutionPlanStore.isStarted(planUri) shouldBe true
     service.executionService.getValue should be theSameInstanceAs failed
     failed.workflowContext.executionId shouldBe ExecutionIdentity(unpublishedEid.toLong)
@@ -1212,14 +1021,13 @@ class WorkflowServiceSpec
       Seq("java.lang.IllegalStateException: cannot supersede")
     collectExecutionEvents(failed).collect { case errors: WorkflowErrorEvent => errors } should
       not be empty
-    statusOf(unpublishedEid) shouldBe Utils.maptoStatusCode(WorkflowAggregatedState.FAILED).toInt
     recordOf(failed) shouldBe Seq(("FAILED", None))
     service.started shouldBe empty
     // The supersede failed before it touched the held run.
     held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
   }
 
-  it should "answer a run that cannot even be built, keeping the held run, as its execution reads Failed" in {
+  it should "answer a run that cannot even be built, keeping the held run, as its record reads FAILED" in {
     val planUri = storePlanOf(unbuiltEid)
     val service =
       new StoredStartService(buildFailure = Some(new IllegalStateException("cannot build")))
@@ -1233,7 +1041,6 @@ class WorkflowServiceSpec
     // Claimed, so never to start, and recorded Failed; nothing is published, and the held run
     // goes on.
     ExecutionPlanStore.isStarted(planUri) shouldBe true
-    statusOf(unbuiltEid) shouldBe Utils.maptoStatusCode(WorkflowAggregatedState.FAILED).toInt
     service.executionService.getValue should be theSameInstanceAs held
     held.executionStateStore.metadataStore.getState.state shouldBe RUNNING
     service.started shouldBe empty
@@ -1265,7 +1072,6 @@ class WorkflowServiceSpec
     // Killed, but the kill did not reach the clean-up: on a workflow no session has open, it
     // would arm the deadline, which could then fire while the new run is set up.
     first.executionStateStore.metadataStore.getState.state shouldBe KILLED
-    statusOf(followedEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
     statesFollowed(first) should not contain KILLED
     // The clean-up follows the new run.
     service.lifecycle.registeredStores.last should be theSameInstanceAs second.executionStateStore
@@ -1289,7 +1095,6 @@ class WorkflowServiceSpec
     service.cleanUpAfterIdle()
 
     run.executionStateStore.metadataStore.getState.state shouldBe KILLED
-    statusOf(idlePausedEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
     service.records(idlePausedEid.toLong).states shouldBe Seq(
       ("RUNNING", None),
       ("PAUSED", None),
@@ -1331,7 +1136,6 @@ class WorkflowServiceSpec
 
       // ...and then lets go of the run set up in full, recording it killed.
       run.executionStateStore.metadataStore.getState.state shouldBe KILLED
-      statusOf(setUpEid) shouldBe Utils.maptoStatusCode(KILLED).toInt
     } finally {
       release.countDown()
       threads.shutdownNow()

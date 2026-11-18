@@ -20,9 +20,10 @@
 package org.apache.texera.dao
 
 /**
-  * The codes `workflow_executions.status` holds. They live beside the table because every service
-  * that reads or writes the column needs them: the Dashboard service, the computing units and the
-  * computing unit manager. The frontend names them in
+  * The codes of an execution's status. No column holds a status: a closed execution's is how it
+  * ended, the outcome of its closing record (`workflow_executions.outcome`, one of [[Ended]]),
+  * and an open one's is the newest state in its log, in the lake. They live beside the table
+  * because every service that tells a status needs them. The frontend names them in
   * `frontend/src/app/dashboard/type/workflow-executions-entry.ts`.
   */
 object WorkflowExecutionStatus {

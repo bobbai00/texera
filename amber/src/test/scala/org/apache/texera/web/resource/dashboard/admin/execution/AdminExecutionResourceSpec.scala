@@ -170,11 +170,9 @@ class AdminExecutionResourceSpec
 
   /**
     * An execution of version `vid`, created `startOffsetMillis` ago. It is closed, as
-    * `outcome`, `durationMillis` after that; with no duration it is open. `status` is the
-    * column a unit writes, which the list does not read.
+    * `outcome`, `durationMillis` after that; with no duration it is open.
     */
   private def seedExecution(
-      status: Byte = 3.toByte,
       name: String = "run",
       startOffsetMillis: Long = 0L,
       durationMillis: Option[Long] = Some(1000L),
@@ -184,8 +182,6 @@ class AdminExecutionResourceSpec
     val execution = new WorkflowExecutions
     execution.setVid(vid)
     execution.setUid(testUser.getUid)
-    execution.setStatus(status)
-    execution.setResult("")
     execution.setLogLocation("")
     val created = (System.currentTimeMillis() - startOffsetMillis) / 1000L * 1000L
     execution.setStartingTime(new Timestamp(created))
@@ -201,7 +197,7 @@ class AdminExecutionResourceSpec
     workflowExecutionsDao.fetchOneByEid(execution.getEid)
   }
 
-  /** An open execution, whose row's status says it completed, which the list does not read. */
+  /** An open execution. */
   private def seedOpenExecution(
       name: String = "open-run",
       startOffsetMillis: Long = 0L,
@@ -326,7 +322,7 @@ class AdminExecutionResourceSpec
   // ─── listWorkflows ───────────────────────────────────────────────────────────
 
   "listWorkflows" should "return the seeded execution with the mapped status and access flag" in {
-    seedExecution(status = 3.toByte, name = "completed-run")
+    seedExecution(name = "completed-run")
     grantAccess(testUser.getUid, PrivilegeEnum.READ)
 
     val rows = list()
@@ -348,11 +344,10 @@ class AdminExecutionResourceSpec
     list(filter = filterOf("READY", "RUNNING")) shouldBe empty
   }
 
-  it should "name a closed execution by its outcome, whatever status its unit left" in {
+  it should "name a closed execution by its outcome, whatever its log says" in {
     Seq[(Short, String)]((3, "COMPLETED"), (4, "FAILED"), (5, "KILLED")).foreach {
       case (outcome, name) =>
-        // Running, says the column: the unit was lost, or stopped, before it wrote more.
-        val execution = seedExecution(status = 1.toByte, outcome = outcome)
+        val execution = seedExecution(outcome = outcome)
         // Its log, if anything read it, would say otherwise.
         label(execution, "PAUSED")
         val before = labelsRead.size
@@ -363,7 +358,7 @@ class AdminExecutionResourceSpec
   }
 
   it should "say why a closed execution ended as it did, and nothing of one that is open" in {
-    val lost = seedExecution(status = 1.toByte, name = "lost-run", outcome = 4)
+    val lost = seedExecution(name = "lost-run", outcome = 4)
     lost.setOutcomeReason("unit lost")
     workflowExecutionsDao.update(lost)
 
@@ -456,8 +451,8 @@ class AdminExecutionResourceSpec
   }
 
   it should "filter closed executions by their outcome, without reading the lake" in {
-    // Failed, although the status its unit left says it runs.
-    val failed = seedExecution(status = 1.toByte, name = "failed-run", outcome = 4)
+    // Failed, although its log says it runs.
+    val failed = seedExecution(name = "failed-run", outcome = 4)
     label(failed, "RUNNING")
     val before = labelsRead.size
 

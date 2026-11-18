@@ -23,9 +23,7 @@ import com.google.protobuf.timestamp.Timestamp
 import com.twitter.util.{Await, Duration}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.amber.core.storage.ConsoleMessageStore
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.WorkflowContext
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.COMMAND
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
@@ -47,13 +45,11 @@ import org.apache.texera.web.model.websocket.request.python.{
   PythonExpressionEvaluateRequest
 }
 import org.apache.texera.web.model.websocket.response.python.PythonExpressionEvaluateResponse
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 
 import java.time.Instant
 import scala.collection.mutable
-import scala.util.control.NonFatal
 
 /**
   * Utility object for processing console messages
@@ -115,13 +111,6 @@ object ExecutionConsoleService {
 
   /** Who a message of the computing unit's own is from, as a console shows it. */
   val ComputingUnitSource = "computing unit"
-
-  /**
-    * The operator an execution's one console table is registered under in
-    * `operator_executions`, where a console table per operator used to be: no operator has
-    * this id.
-    */
-  val AllOperators = "*"
 }
 
 /**
@@ -132,8 +121,7 @@ object ExecutionConsoleService {
 class ExecutionConsoleService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
-    wsInput: WebsocketInput,
-    workflowContext: WorkflowContext
+    wsInput: WebsocketInput
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -141,32 +129,6 @@ class ExecutionConsoleService(
 
   val bufferSize: Int = ApplicationConfig.operatorConsoleBufferSize
   val consoleMessageDisplayLength: Int = ApplicationConfig.consoleMessageDisplayLength
-
-  // The run's record stores the console in one table of the execution. It is registered where
-  // the clean-up of an execution's results looks for console tables. A run does not fail over
-  // it: the console table of an execution that is not registered is left in the lake.
-  try {
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      workflowContext.executionId.id,
-      ExecutionConsoleService.AllOperators,
-      ConsoleMessageStore.consoleUri(
-        workflowContext.workflowId,
-        workflowContext.executionId,
-        workflowContext.warehouse
-      )
-    )
-  } catch {
-    case NonFatal(failure) =>
-      // A warning of one line, the stack trace at debug level.
-      logger.warn(
-        s"The console table of execution ${workflowContext.executionId.id} could not be " +
-          s"registered for the clean-up of the execution's results: $failure"
-      )
-      logger.debug(
-        s"Registering the console table of execution ${workflowContext.executionId.id} failed.",
-        failure
-      )
-  }
 
   addSubscription(
     stateStore.consoleStore.registerDiffHandler((oldState, newState) => {

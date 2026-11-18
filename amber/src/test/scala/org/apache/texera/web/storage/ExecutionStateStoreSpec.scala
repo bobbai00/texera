@@ -38,8 +38,9 @@ import org.scalatest.matchers.should.Matchers
 import java.util.concurrent.{Callable, CountDownLatch, Executors, TimeUnit}
 
 /**
-  * What a run's state store does in memory, and what it hands the run's recorder. The row a
-  * change of state writes is `ExecutionsMetadataPersistServiceSpec`'s, where the database is.
+  * What a run's state store does in memory, and what it hands the run's recorder. A change of
+  * state is written nowhere else: `ComputingUnitWithoutDatabaseSpec` runs executions on a unit
+  * that has no database.
   */
 class ExecutionStateStoreSpec extends AnyFlatSpec with Matchers {
 

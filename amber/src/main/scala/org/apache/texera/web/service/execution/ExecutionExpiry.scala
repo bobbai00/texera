@@ -32,7 +32,6 @@ import org.apache.texera.amber.engine.architecture.logreplay.ReplayLogRecord
 import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.service.util.LargeBinaryManager
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 
 import java.net.URI
 import scala.annotation.tailrec
@@ -284,9 +283,6 @@ class ExecutionExpiry(
           ExecutionTables.ProducedKinds
         )
     }
-    // Until the registry of result and console locations is gone, whoever still reads it finds
-    // no table named there, not one that was dropped.
-    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(execution.executionId)
     deleteBinaries(execution.eid)
   }
 

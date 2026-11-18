@@ -24,7 +24,6 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-import java.nio.file.{Files, Paths}
 import java.sql.Timestamp
 import scala.jdk.CollectionConverters._
 import scala.util.Using
@@ -32,8 +31,9 @@ import scala.util.Using
 /**
   * Applies `sql/updates/53.sql`, which gives `workflow_executions` its closing record, to a
   * database as it was before: the suite's own database, made from `sql/texera_ddl.sql`, with the
-  * closing record's columns and indexes taken out again. What the update adds must be what the
-  * DDL makes, and every execution that exists must come out closed.
+  * closing record's columns and indexes taken out again, and with the columns of a run's state
+  * put back, which the update reads and the next one, `sql/updates/54.sql`, drops. What the
+  * update adds must be what the DDL makes, and every execution that exists must come out closed.
   */
 class ExecutionClosingRecordUpdateSpec
     extends AnyFlatSpec
@@ -58,6 +58,17 @@ class ExecutionClosingRecordUpdateSpec
 
   private val createdAt = Timestamp.valueOf("2026-11-16 09:00:00")
   private val updatedAt = Timestamp.valueOf("2026-11-16 09:05:00")
+
+  /** The update after this one, which says what the columns of a run's state were. */
+  private val runStateDrop = new SqlUpdate(54)
+
+  /** The column that held when a row last changed: the one of them that was a time. */
+  private val lastChange: String = runStateDrop.droppedColumns.collect {
+    case (name, "TIMESTAMP") => name
+  } match {
+    case Seq(name) => name
+    case other     => fail(s"expected one column of a time among those update 54 drops: $other")
+  }
 
   private var uid: Integer = _
   private var vid: Integer = _
@@ -94,7 +105,9 @@ class ExecutionClosingRecordUpdateSpec
     execute(
       indexes.map(index => s"DROP INDEX texera_db.$index;").mkString("\n") +
         "\nALTER TABLE texera_db.workflow_executions " +
-        columns.map(column => s"DROP COLUMN $column").mkString(", ") + ";"
+        (columns.map(column => s"DROP COLUMN $column") ++
+          runStateDrop.droppedColumns.map { case (column, was) => s"ADD COLUMN $column $was" })
+          .mkString(", ") + ";"
     )
   }
 
@@ -108,15 +121,9 @@ class ExecutionClosingRecordUpdateSpec
       Using.resource(connection.createStatement())(_.execute(script))
     }
 
-  /** The update as its runners apply it: without psql's `\c`, on a connection to the database. */
-  private def applyUpdate(): Unit =
-    execute(
-      Files
-        .readAllLines(Paths.get("sql/updates/53.sql").toRealPath())
-        .asScala
-        .filterNot(_.trim.startsWith("\\c"))
-        .mkString("\n")
-    )
+  private val update = new SqlUpdate(53)
+
+  private def applyUpdate(): Unit = execute(update.script)
 
   private def quoted(names: Seq[String]): String = names.map(name => s"'$name'").mkString(", ")
 
@@ -149,9 +156,9 @@ class ExecutionClosingRecordUpdateSpec
   private def insertExecution(status: Int, lastUpdate: Option[Timestamp]): Integer =
     getDSLContext
       .fetchOne(
-        """insert into texera_db.workflow_executions
-          |  (vid, uid, status, starting_time, last_update_time, environment_version)
-          |values (?, ?, ?::smallint, ?, ?, 'test') returning eid""".stripMargin,
+        s"""insert into texera_db.workflow_executions
+           |  (vid, uid, status, starting_time, $lastChange, environment_version)
+           |values (?, ?, ?::smallint, ?, ?, 'test') returning eid""".stripMargin,
         vid,
         uid,
         Integer.valueOf(status),
@@ -256,14 +263,21 @@ class ExecutionClosingRecordUpdateSpec
     )
     closingColumns() shouldBe columnsOfDdl
     closingIndexes() shouldBe indexesOfDdl
+
+    // On a database made from the DDL, the columns the update reads are not there either: it
+    // still changes nothing, and does not fail over them.
+    execute(runStateDrop.script)
+    applyUpdate()
+
+    closingOf(open) shouldBe
+      Seq(null, null, null, java.lang.Boolean.FALSE, null, java.lang.Boolean.FALSE, null)
+    closingOf(closed).take(2) shouldBe Seq(Short.box(5.toShort), "killed by the user")
+    closingColumns() shouldBe columnsOfDdl
+    closingIndexes() shouldBe indexesOfDdl
   }
 
   it should "be an update of sql/changelog.xml, which lists its updates in order" in {
-    val changelog = new String(Files.readAllBytes(Paths.get("sql/changelog.xml").toRealPath()))
-    val updates = """<sqlFile path="sql/updates/(\d+)\.sql"/>""".r
-      .findAllMatchIn(changelog.replaceAll("(?s)<!--.*?-->", ""))
-      .map(_.group(1).toInt)
-      .toSeq
+    val updates = SqlUpdate.listedInChangelog
 
     updates should contain(53)
     updates shouldBe updates.sorted

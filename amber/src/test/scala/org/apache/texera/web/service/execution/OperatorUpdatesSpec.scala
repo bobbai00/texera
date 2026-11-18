@@ -264,8 +264,8 @@ class OperatorUpdatesSpec
       )
       .execute()
 
-  /** Inserts execution `eid` of the workflow by the creator, at `status`, with no plan. */
-  private def insertExecution(eid: Int, status: Short, cuid: Option[Int] = Some(unitCuid)): Unit = {
+  /** Inserts execution `eid` of the workflow by the creator, with no plan. */
+  private def insertExecution(eid: Int, cuid: Option[Int] = Some(unitCuid)): Unit = {
     val vid = getDSLContext
       .select(WORKFLOW_VERSION.VID)
       .from(WORKFLOW_VERSION)
@@ -277,17 +277,9 @@ class OperatorUpdatesSpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(creatorUid))
       .set(WORKFLOW_EXECUTIONS.CUID, cuid.map(Integer.valueOf).orNull)
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .execute()
   }
-
-  private def setStatus(eid: Long, status: Short): Unit =
-    getDSLContext
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
-      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
-      .execute()
 
   /** Creates executions with the fixture bindings and no cost hints. */
   private class FixtureCreator(warehouses: Boolean = false)
@@ -712,20 +704,6 @@ class OperatorUpdatesSpec
     )
   }
 
-  // Only the closing record says an execution is over: the status column is what a unit last
-  // wrote, and 3 is there for a moment before the run is closed.
-  it should "store changes while the execution is open, whatever status its row keeps" in {
-    val execution = created()
-
-    Seq[Short](0, 1, 2, 3, 4, 5, 6, -1).zipWithIndex.foreach {
-      case (status, index) =>
-        setStatus(execution.eid, status)
-        withClue(s"status $status: ") {
-          stored(post(execution.eid, udf(code = changedCode(s"s$index"))))
-        }
-    }
-  }
-
   it should "read the plan from the creator's warehouse while per-user warehouses are enabled" in {
     val execution =
       created(creator = new FixtureCreator(warehouses = true), warehouseId = Some(creatorWhid))
@@ -900,7 +878,7 @@ class OperatorUpdatesSpec
     // would refuse to apply.
     val execution = created()
     val (plan, logical) = ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))
-    insertExecution(otherLayerEid, status = 2)
+    insertExecution(otherLayerEid)
     val uri =
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(otherLayerEid), None)
     // The plan of this execution, as its own, its ports stored as its own are.
@@ -1162,7 +1140,7 @@ class OperatorUpdatesSpec
   }
 
   it should "refuse an execution created for no computing unit" in {
-    insertExecution(noUnitEid, status = 2, cuid = None)
+    insertExecution(noUnitEid, cuid = None)
 
     refused(403)(post(noUnitEid, limit("limit", 7))) shouldBe
       s"Execution $noUnitEid was created for no computing unit."
@@ -1189,11 +1167,9 @@ class OperatorUpdatesSpec
     updateRows(upToUdf.planUri) shouldBe empty
   }
 
-  it should "refuse an execution that is closed with 409, whatever status its row keeps" in {
+  it should "refuse an execution that is closed with 409, however it ended" in {
     Seq[Short](3, 4, 5).foreach { outcome =>
       val execution = created()
-      // Paused, says the column: the unit was lost before it wrote more.
-      setStatus(execution.eid, 2)
       ExecutionRecords.close(
         execution.eid,
         outcome,
@@ -1221,7 +1197,7 @@ class OperatorUpdatesSpec
   }
 
   it should "refuse an execution that has no stored plan" in {
-    insertExecution(noPlanEid, status = 2)
+    insertExecution(noPlanEid)
 
     refused(404)(post(noPlanEid, limit("limit", 7))) shouldBe
       s"Execution $noPlanEid has no stored plan."
@@ -1265,8 +1241,8 @@ class OperatorUpdatesSpec
   it should "answer 500 when the stored plan cannot be read" in {
     val execution = created()
     val (plan, logical) = ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))
-    insertExecution(badBodyEid, status = 2)
-    insertExecution(badLogicalEid, status = 2)
+    insertExecution(badBodyEid)
+    insertExecution(badLogicalEid)
     Seq(
       badBodyEid -> (plan.copy(body = "{}"), logical),
       badLogicalEid -> (plan, "[]")
@@ -1327,8 +1303,8 @@ class OperatorUpdatesSpec
     // a change stored for the ones the execution's row names.
     val execution = created()
     val (plan, logical) = ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))
-    insertExecution(otherCreatorEid, status = 2)
-    insertExecution(otherUnitEid, status = 2)
+    insertExecution(otherCreatorEid)
+    insertExecution(otherUnitEid)
     val plans = Seq(
       otherCreatorEid -> plan.copy(createdBy = ownerUid),
       otherUnitEid -> plan.copy(computingUnitId = unitCuid + 1)

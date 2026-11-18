@@ -528,8 +528,6 @@ class ResultExportServiceSpec
     val execution = new WorkflowExecutions
     execution.setVid(version.getVid)
     execution.setUid(testUser.getUid)
-    execution.setStatus(0.toByte)
-    execution.setResult("")
     execution.setLogLocation("")
     execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
     execution.setBookmarked(false)

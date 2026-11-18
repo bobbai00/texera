@@ -38,7 +38,7 @@ import org.apache.texera.common.compiler.model.LogicalLink
   */
 @IntegrationTest
 class ReconfigurationIntegrationSpec
-    extends RetryingDatabaseE2ESpec("ReconfigurationIntegrationSpec", specId = 4) {
+    extends RetryingE2ESpec("ReconfigurationIntegrationSpec", specId = 4) {
 
   val logger = Logger("ReconfigurationIntegrationSpecLogger")
   val ctx = TestUtils.workflowContext(specId)

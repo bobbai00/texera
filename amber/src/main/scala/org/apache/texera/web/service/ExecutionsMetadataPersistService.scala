@@ -19,13 +19,10 @@
 
 package org.apache.texera.web.service
 
-import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.dao.SqlServer.withTransaction
-import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
-import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
-import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
 import play.api.libs.json.Json
 
@@ -33,18 +30,14 @@ import java.net.URI
 import java.sql.Timestamp
 
 /**
-  * This global object handles inserting a new entry to the DB to store metadata information about every workflow execution
-  * It also updates the entry if an execution status is updated
+  * Inserts the row of a new execution, at the Dashboard service. A computing unit writes no
+  * row: what a run does is in its log, and the Dashboard closes the row from that.
   */
-object ExecutionsMetadataPersistService extends LazyLogging {
+object ExecutionsMetadataPersistService {
   private def context =
     SqlServer
       .getInstance()
       .createDSLContext()
-  private def workflowExecutionsDao =
-    new WorkflowExecutionsDao(
-      context.configuration
-    )
 
   /**
     * What an execution's row keeps as its environment version: the version of the engine (the
@@ -59,12 +52,11 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     * to run on computing unit `computingUnitId`: the row the Dashboard inserts when it creates an
     * execution, before the execution's plan is made.
     *
-    * The row's status is Created, set here rather than left to the column's default, which is
-    * Running: no unit has started the execution, and the unit that does records it as
-    * Initializing. Its starting time is now. An empty `executionName` keeps the column's default
-    * name. With a `replayLogRoot` the execution writes its replay log to `<root>/<wid>/<eid>/`,
-    * which is recorded in the transaction that inserts the row: no row is left without the
-    * location its plan names.
+    * The row is open, and reads as Created until a unit has started the execution: its log
+    * then says what state it is in. Its starting time is now. An empty `executionName` keeps
+    * the column's default name. With a `replayLogRoot` the execution writes its replay log to
+    * `<root>/<wid>/<eid>/`, which is recorded in the transaction that inserts the row: no row is
+    * left without the location its plan names.
     *
     * @param environmentVersion what the row keeps as the version of the engine that asked for it
     * @param warehouseId        the user_warehouse the execution writes into; None for the shared
@@ -91,7 +83,6 @@ object ExecutionsMetadataPersistService extends LazyLogging {
         .set(WORKFLOW_EXECUTIONS.VID, vid)
         .set(WORKFLOW_EXECUTIONS.UID, uid)
         .set(WORKFLOW_EXECUTIONS.CUID, computingUnitId)
-        .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
         .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
         .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
         .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)
@@ -110,50 +101,4 @@ object ExecutionsMetadataPersistService extends LazyLogging {
       (ExecutionIdentity(eid.longValue()), replayLog)
     }
   }
-
-  /**
-    * Records that execution `eid` failed before any unit ran it (FAILED, with the time of the
-    * failure as its last update), the way [[updateStatus]] records any status.
-    */
-  def markFailed(eid: ExecutionIdentity): Unit =
-    updateStatus(eid, WorkflowExecutionStatus.Failed, new Timestamp(System.currentTimeMillis()))
-
-  def tryUpdateExistingExecution(
-      executionId: ExecutionIdentity
-  )(updateFunc: WorkflowExecutions => Unit): Unit = {
-    try {
-      val execution = workflowExecutionsDao.fetchOneByEid(executionId.id.toInt)
-      updateFunc(execution)
-      workflowExecutionsDao.update(execution)
-    } catch {
-      case t: Throwable =>
-        logger.info("Unable to update execution. Error = " + t.getMessage)
-    }
-  }
-
-  /**
-    * Records an execution's status and when it changed, in one UPDATE by eid.
-    *
-    * It reads nothing first, so a run reports its state without reading Postgres, and it writes
-    * no other column of the row. An unknown eid updates nothing. A failure is logged and
-    * swallowed: a run must not fail because its status could not be stored.
-    */
-  def updateStatus(eid: ExecutionIdentity, status: Short, at: Timestamp): Unit =
-    tryUpdate(eid) {
-      context
-        .update(WORKFLOW_EXECUTIONS)
-        .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(status))
-        .set(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME, at)
-        .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
-        .execute()
-    }
-
-  // A failure leaves the row with a stale status, which an operator should see, so it is a
-  // warning. It is never routine: an unknown eid matches no row instead of failing.
-  private def tryUpdate(eid: ExecutionIdentity)(update: => Unit): Unit =
-    try update
-    catch {
-      case t: Throwable =>
-        logger.warn(s"Unable to update execution ${eid.id}. Error = ${t.getMessage}")
-    }
 }

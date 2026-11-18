@@ -235,7 +235,7 @@ class WorkflowService(
   private val runLock = new ReentrantLock()
 
   val resultService: ExecutionResultService =
-    new ExecutionResultService(workflowId, computingUnitId, stateStore)
+    new ExecutionResultService(workflowId, stateStore)
   val lifeCycleManager: WorkflowLifecycleManager = new WorkflowLifecycleManager(
     s"workflowId=$workflowId",
     cleanUpTimeout,

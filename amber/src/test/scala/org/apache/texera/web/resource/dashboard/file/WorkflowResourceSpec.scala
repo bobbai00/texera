@@ -1286,8 +1286,8 @@ class WorkflowResourceSpec
     assert(thrown.getCause.isInstanceOf[NullPointerException])
   }
 
-  // No location stored in a row is read by a delete: an execution's tables are found by their
-  // names, so a row that names a location nothing can decode does not stop it.
+  // An execution's tables are found by their names, and a replay log that cannot be deleted
+  // is left: a row that names a location nothing can decode does not stop a delete.
   it should "still delete the workflow when a stored execution URI cannot be decoded" in {
     val wid = seedWorkflow(sessionUser1, "undecodable-uri-wf").workflow.getWid
     getDSLContext
@@ -1295,7 +1295,7 @@ class WorkflowResourceSpec
       .set(WORKFLOW_EXECUTIONS.VID, WorkflowVersionResource.getLatestVersion(wid))
       .set(WORKFLOW_EXECUTIONS.UID, testUser.getUid)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test-env")
-      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, "bogus://not-a-vfs-uri")
+      .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, "bogus://not-a-vfs-uri")
       .execute()
 
     workflowResource.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)

@@ -21,21 +21,18 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 
 import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
   FileResolver,
   RuntimeStatisticsStore,
   WarehouseReadGuard
 }
 import org.apache.texera.amber.core.virtualidentity._
-import org.apache.texera.amber.core.workflow.GlobalPortIdentity
 import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination, ReplayLogRecord}
 import org.apache.texera.amber.engine.common.Utils.{maptoStatusCode, stringToAggregatedState}
 import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.util.WorkflowAccess
 import org.apache.texera.auth.{JwtParser, SessionUser}
-import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
@@ -97,32 +94,6 @@ object WorkflowExecutionsResource {
       if (!userCanAccessExecution(uid, eid, requireWrite)) {
         throw new ForbiddenException("No sufficient access privilege.")
       }
-    }
-  }
-
-  /**
-    * The latest execution of workflow `wid` that computing unit `cuid` was asked to run. An
-    * execution that was created and not started is passed over: the unit holds nothing of it.
-    */
-  def getLatestExecutionID(wid: Integer, cuid: Integer): Option[Integer] = {
-    val executions = context
-      .select(WORKFLOW_EXECUTIONS.EID)
-      .from(WORKFLOW_EXECUTIONS)
-      .join(WORKFLOW_VERSION)
-      .on(WORKFLOW_EXECUTIONS.VID.eq(WORKFLOW_VERSION.VID))
-      .where(
-        WORKFLOW_VERSION.WID
-          .eq(wid)
-          .and(WORKFLOW_EXECUTIONS.CUID.eq(cuid))
-          .and(WORKFLOW_EXECUTIONS.STATUS.ne(Short.box(WorkflowExecutionStatus.Created)))
-      )
-      .fetchInto(classOf[Integer])
-      .asScala
-      .toList
-    if (executions.isEmpty) {
-      None
-    } else {
-      Some(executions.max)
     }
   }
 
@@ -250,60 +221,6 @@ object WorkflowExecutionsResource {
 
     restrictionMap.toMap
   }
-
-  /**
-    * Registers the console table at `uri` for execution `eid`, under `opId`. Registering it
-    * again under the same `opId` changes nothing.
-    */
-  def insertOperatorExecutions(
-      eid: Long,
-      opId: String,
-      uri: URI
-  ): Unit = {
-    context
-      .insertInto(OPERATOR_EXECUTIONS)
-      .columns(
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_EXECUTIONS.OPERATOR_ID,
-        OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI
-      )
-      .values(eid.toInt, opId, uri.toString)
-      .onConflictDoNothing()
-      .execute()
-  }
-
-  /**
-    * Records where an execution's runtime statistics are stored, in one UPDATE by eid that reads
-    * nothing first: the unit calls it as a run starts, for the execution it is running.
-    */
-  def updateRuntimeStatsUri(eid: Long, uri: URI): Unit = {
-    context
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, uri.toString)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(eid.toInt))
-      .execute()
-  }
-
-  def getConsoleMessagesUriByExecutionId(eid: ExecutionIdentity): List[URI] =
-    context
-      .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
-      .from(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-      .fetchInto(classOf[String])
-      .asScala
-      .toList
-      .filter(uri => uri != null && uri.nonEmpty)
-      .map(URI.create)
-
-  def getRuntimeStatsUriByExecutionId(eid: ExecutionIdentity): Option[URI] =
-    Option(
-      context
-        .select(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-        .from(WORKFLOW_EXECUTIONS)
-        .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
-        .fetchOneInto(classOf[String])
-    ).filter(_.nonEmpty)
-      .map(URI.create)
 
   /**
     * The executions of workflow `wid`, newest first, as user `uid` sees them (see
@@ -444,17 +361,6 @@ object WorkflowExecutionsResource {
     }.toList
   }
 
-  def deleteConsoleMessageAndExecutionResultUris(eid: ExecutionIdentity): Unit = {
-    context
-      .delete(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-      .execute()
-    context
-      .delete(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-      .execute()
-  }
-
   /**
     * Deletes the executions `eids`: first everything each keeps in the lake
     * ([[ExecutionExpiry.dropAll]]), then its row, so that a table that cannot be dropped leaves
@@ -486,106 +392,6 @@ object WorkflowExecutionsResource {
         )
         .execute()
     }
-  }
-
-  /**
-    * Updates the size and row count stored for this port's result in operator_port_executions.
-    *
-    * @param eid          Execution ID associated with the result.
-    * @param globalPortId Global port identifier for the operator output.
-    * @param size         Size of the result in bytes.
-    * @param count        Number of rows in the result.
-    */
-  def updateResultSizeAndCount(
-      eid: ExecutionIdentity,
-      globalPortId: GlobalPortIdentity,
-      size: Long,
-      count: Long
-  ): Unit = {
-    context
-      .update(OPERATOR_PORT_EXECUTIONS)
-      .set(OPERATOR_PORT_EXECUTIONS.RESULT_SIZE, java.lang.Long.valueOf(size))
-      .set(OPERATOR_PORT_EXECUTIONS.RESULT_COUNT, java.lang.Long.valueOf(count))
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
-      .execute()
-  }
-
-  /**
-    * Updates the size of the runtime statistics stored via Iceberg document. Nothing is
-    * measured while the statistics table is not there: a run's record makes it on a thread of
-    * its own, which may be later than the run's first result.
-    *
-    * @param eid Execution ID associated with the runtime statistics document.
-    */
-  def updateRuntimeStatsSize(eid: ExecutionIdentity): Unit = {
-    val statsUriOpt = context
-      .select(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
-      .fetchOptionalInto(classOf[String])
-      .map(URI.create)
-
-    if (statsUriOpt.isPresent && DocumentFactory.documentExists(statsUriOpt.get)) {
-      updateRuntimeStatsSize(
-        eid,
-        DocumentFactory.openDocument(statsUriOpt.get)._1.getTotalFileSize
-      )
-    }
-  }
-
-  /**
-    * Stores an already-measured runtime statistics size, mirroring updateResultSizeAndCount.
-    *
-    * @param eid  Execution ID associated with the runtime statistics document.
-    * @param size Size of the runtime statistics in bytes.
-    */
-  def updateRuntimeStatsSize(eid: ExecutionIdentity, size: Long): Unit = {
-    context
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_SIZE, java.lang.Long.valueOf(size))
-      .where(WORKFLOW_EXECUTIONS.EID.eq(eid.id.toInt))
-      .execute()
-  }
-
-  /**
-    * Updates the size of the console message stored via Iceberg document.
-    *
-    * @param eid  Execution ID associated with the console message.
-    * @param opId Operator ID of the corresponding operator.
-    */
-  def updateConsoleMessageSize(eid: ExecutionIdentity, opId: OperatorIdentity): Unit = {
-    val uriOpt = context
-      .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
-      .from(OPERATOR_EXECUTIONS)
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-      .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-      .fetchOptionalInto(classOf[String])
-      .map(URI.create)
-
-    if (uriOpt.isPresent) {
-      updateConsoleMessageSize(
-        eid,
-        opId,
-        DocumentFactory.openDocument(uriOpt.get)._1.getTotalFileSize
-      )
-    }
-  }
-
-  /**
-    * Stores an already-measured console message size, mirroring updateResultSizeAndCount.
-    *
-    * @param eid  Execution ID associated with the console message.
-    * @param opId Operator ID of the corresponding operator.
-    * @param size Size of the console messages in bytes.
-    */
-  def updateConsoleMessageSize(eid: ExecutionIdentity, opId: OperatorIdentity, size: Long): Unit = {
-    context
-      .update(OPERATOR_EXECUTIONS)
-      .set(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_SIZE, java.lang.Long.valueOf(size))
-      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-      .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-      .execute()
   }
 
   /**

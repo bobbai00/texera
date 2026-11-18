@@ -38,7 +38,7 @@ import org.apache.texera.amber.operator.udf.java.JavaUDFOpDesc
 import org.apache.texera.amber.operator.aggregate.AggregationFunction
 import org.apache.texera.common.compiler.model.LogicalLink
 
-class DataProcessingSpec extends RetryingDatabaseE2ESpec("DataProcessingSpec", specId = 1) {
+class DataProcessingSpec extends RetryingE2ESpec("DataProcessingSpec", specId = 1) {
 
   val workflowContext: WorkflowContext = TestUtils.workflowContext(specId)
 

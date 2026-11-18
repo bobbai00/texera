@@ -59,7 +59,6 @@ import org.apache.texera.amber.engine.architecture.worker.statistics.{
   PortTupleMetricsMapping,
   TupleMetrics
 }
-import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionConsoleStore,
@@ -75,12 +74,8 @@ import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
-import org.apache.texera.dao.jooq.generated.Tables.{
-  OPERATOR_PORT_EXECUTIONS,
-  WORKFLOW_EXECUTIONS,
-  WORKFLOW_OF_USER
-}
+import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_OF_USER
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   UserDao,
@@ -134,8 +129,8 @@ import scala.util.Try
   * `collectOperatorResult` needs the most of those fixtures, and gets a real one: `storeResult`
   * below writes an actual Iceberg result table through `DocumentFactory` on the ambient catalog
   * and keeps its URI as a run keeps what its engine reports (`ResultUris`), which is all the
-  * method needs — it takes the run's result URIs as a parameter, so no engine, coordinator,
-  * client or registry row is involved. Two things to know before touching those tests: its
+  * method needs — it takes the run's result URIs as a parameter, so no engine, coordinator
+  * or client is involved. Two things to know before touching those tests: its
   * outermost `catch` turns any storage failure into a well-formed `("table", None, ...)`, so an
   * assertion weaker than the row contents passes on a fixture that never opened a document; and
   * its front/back split is exact arithmetic, so the char budgets are multiples of a measured
@@ -938,11 +933,6 @@ class SyncExecutionResourceSpec
     result._3 shouldBe Some(3)
     result._4 shouldBe Some(3)
     result._5 shouldBe Some(false)
-    // Found where the run's engine reported it: the registry holds no row of the execution.
-    getDSLContext.fetchCount(
-      OPERATOR_PORT_EXECUTIONS,
-      OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(resultEid)
-    ) shouldBe 0
   }
 
   it should "report an empty result as zero rows rather than as an absent one" in {
@@ -1253,14 +1243,6 @@ class SyncExecutionResourceSpec
     }
   }
 
-  private def statusOf(eid: Long): Int =
-    getDSLContext
-      .select(WORKFLOW_EXECUTIONS.STATUS)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
-      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
-      .intValue()
-
   "runStoredExecution" should
     "run an execution the Dashboard created, by its id, from its stored plan, and answer once it ends" in {
     val execution = createdExecution()
@@ -1268,8 +1250,7 @@ class SyncExecutionResourceSpec
     // the unit the request names, which the execution was created for.
     val service = new EnginelessService(serviceCuid = fixtureCuid)
     val resource = new ResourceOn(service)
-    // A run of the workflow still going in that service, as a browser's would be, of an execution
-    // with a row.
+    // A run of the workflow still going in that service, as a browser's would be.
     val previousEid = insertExecution("superseded-by-sync")
     val previous = newExecution(new ExecutionStateStore(), eid = Some(previousEid))
     previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
@@ -1296,11 +1277,9 @@ class SyncExecutionResourceSpec
     result.state shouldBe "Completed"
     result.errors shouldBe None
     result.operators.keySet shouldBe Set("limit")
-    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
-    // The run it took the place of is recorded as killed, in its store and in its row.
+    // The run it took the place of is recorded as killed.
     previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
     previous.executionStateStore.statsStore.getState.endTimeStamp should be > 0L
-    statusOf(previousEid.toLong) shouldBe Utils.maptoStatusCode(KILLED).toInt
     // The record of the run started is told how it went.
     service.records(execution.eid).states shouldBe Seq(("COMPLETED", None))
   }
@@ -1323,7 +1302,6 @@ class SyncExecutionResourceSpec
     val run = service.executionService.getValue.executionStateStore
     run.metadataStore.getState.state shouldBe KILLED
     run.statsStore.getState.endTimeStamp should (be >= before + 1000 and be <= after)
-    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
     service.records(execution.eid).states shouldBe
       Seq(("RUNNING", None), ("KILLED", Some("stopped by its caller")))
   }
@@ -1348,7 +1326,6 @@ class SyncExecutionResourceSpec
     result.operators("limit").error shouldBe Some("boom")
     service.executionService.getValue.executionStateStore.metadataStore.getState.state shouldBe
       KILLED
-    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
     service.records(execution.eid).states shouldBe
       Seq(("RUNNING", None), ("KILLED", Some("stopped by its caller")))
   }
@@ -1382,7 +1359,6 @@ class SyncExecutionResourceSpec
     val run = service.executionService.getValue.executionStateStore
     run.metadataStore.getState.state shouldBe COMPLETED
     run.statsStore.getState.endTimeStamp should be > 0L
-    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
     // The run is stopped short of its end, and is not killed on the way: its record holds one
     // ending, and no session saw it Killed.
     service.records(execution.eid).states shouldBe
@@ -1412,7 +1388,7 @@ class SyncExecutionResourceSpec
     result.operators.keySet shouldBe Set("limit")
     result.operators("limit").state shouldBe "Unknown"
     result.operators("limit").error shouldBe None
-    statusOf(execution.eid) shouldBe Utils.maptoStatusCode(FAILED).toInt
+    service.records(execution.eid).states shouldBe Seq(("FAILED", None))
   }
 
   it should "watch the run for as long as it waits on it, as an open session does" in {
@@ -1471,7 +1447,6 @@ class SyncExecutionResourceSpec
     resource.asked shouldBe empty
     service.started shouldBe empty
     ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
-    statusOf(eid) shouldBe WorkflowExecutionStatus.Created
 
     resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser()).success shouldBe
       true

@@ -50,10 +50,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.dao.jooq.generated.Tables.{
-  OPERATOR_EXECUTIONS,
-  OPERATOR_PORT_EXECUTIONS,
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_VERSION
@@ -77,7 +74,6 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowVersion
 }
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -233,7 +229,6 @@ class ExecutionExpirySpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(testUid))
       .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(cuid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(endedAt - 60000L))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, warehouse.orNull)
@@ -351,14 +346,6 @@ class ExecutionExpirySpec
     )
     tableOfLines(resultOf(execution))
     tableOfLines(stateOf(execution))
-    // As its unit registered them, for whoever still reads the registry.
-    WorkflowExecutionsResource.insertOperatorExecutions(execution.eid, "scan", consoleOf(execution))
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .set(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(execution.eid.toInt))
-      .set(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID, storedPort.serializeAsString)
-      .set(OPERATOR_PORT_EXECUTIONS.RESULT_URI, resultOf(execution).toString)
-      .execute()
     execution
   }
 
@@ -387,15 +374,6 @@ class ExecutionExpirySpec
     Seq(execution.planUri, execution.logUri, statisticsOf(execution))
 
   private def bytesOf(uris: Seq[URI]): Long = uris.map(ExecutionTables.storedBytes).sum
-
-  private def registered(execution: ExecutionRecord): Int =
-    getDSLContext.fetchCount(
-      OPERATOR_EXECUTIONS,
-      OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(execution.eid.toInt))
-    ) + getDSLContext.fetchCount(
-      OPERATOR_PORT_EXECUTIONS,
-      OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(execution.eid.toInt))
-    )
 
   /** A replay log of two files, where an execution's row says it keeps one. */
   private def replayLog(): Path = {
@@ -487,8 +465,6 @@ class ExecutionExpirySpec
     after.getStoredBytes.longValue() should (be > 0L and be < before)
     // How it ended is as it was.
     record(execution.eid).closing shouldBe execution.closing
-    // Nothing is left for a reader of the registry to open.
-    registered(execution) shouldBe 0
     lines shouldBe Seq(
       (
         Level.INFO,
@@ -524,7 +500,6 @@ class ExecutionExpirySpec
       withClue(s"$uri: ") { has(uri) shouldBe true }
     }
     row(other).getResultsExpiredAt shouldBe null
-    registered(other) shouldBe 2
   }
 
   it should "leave an open execution, and one with no row, as they are" in {

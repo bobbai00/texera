@@ -87,7 +87,6 @@ import org.apache.texera.dao.{MockTexeraDB, SiteSettings, WorkflowExecutionStatu
 import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
   DATASET_USER_ACCESS,
-  OPERATOR_EXECUTIONS,
   SITE_SETTINGS,
   USER_WAREHOUSE,
   VIRTUAL_ENVIRONMENTS,
@@ -138,7 +137,7 @@ import org.apache.texera.web.model.http.response.execution.{
 import org.apache.texera.web.resource.EmailMessage
 import org.apache.texera.web.service.WorkflowEmailNotifier
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
-import org.apache.texera.web.service.{ExecutionConsoleService, WorkflowService}
+import org.apache.texera.web.service.WorkflowService
 import org.apache.texera.web.service.execution.WorkflowCompilingService.CompileRefused
 import org.apache.texera.web.service.execution.{
   ClosingRecord,
@@ -417,7 +416,6 @@ class ExecutionResourceSpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(uid))
       .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(cuid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation.orNull)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, whid.orNull)
@@ -429,14 +427,7 @@ class ExecutionResourceSpec
       .execute()
   }
 
-  private def setStatus(eid: Long, status: Short): Unit =
-    getDSLContext
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
-      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
-      .execute()
-
-  /** Gives execution `eid` of `wid` its console table, registered as a run registers it. */
+  /** Gives execution `eid` of `wid` its console table. */
   private def withConsole(wid: Int, eid: Int): URI = {
     val uri = ConsoleMessageStore.consoleUri(
       WorkflowIdentity(wid.toLong),
@@ -445,21 +436,10 @@ class ExecutionResourceSpec
     )
     ConsoleMessageStore.create(uri)
     madeTables += uri
-    WorkflowExecutionsResource.insertOperatorExecutions(
-      eid.toLong,
-      ExecutionConsoleService.AllOperators,
-      uri
-    )
     uri
   }
 
   private def hasTable(uri: URI): Boolean = Try(DocumentFactory.openDocument(uri)).isSuccess
-
-  private def consolesOf(eid: Int): Int =
-    getDSLContext.fetchCount(
-      OPERATOR_EXECUTIONS,
-      OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(eid))
-    )
 
   private def executionCount: Int = getDSLContext.fetchCount(WORKFLOW_EXECUTIONS)
 
@@ -766,7 +746,6 @@ class ExecutionResourceSpec
     refusal.getResponse.getStatus shouldBe 400
     executionCount shouldBe before + 1
     val eid = newestEid.toLong
-    row(eid).getStatus shouldBe 4.toByte
     closedAtCreate(eid, s"compile error: ${refusal.getMessage}", since)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
@@ -813,9 +792,6 @@ class ExecutionResourceSpec
       s"vfs:///wid/$testWid/eid/${execution.eid}/plan"
 
     val stored = row(execution.eid)
-    // Created, which no reader takes for a run in progress: the column's default is Running, and
-    // Initializing is what the unit records once it has started the execution.
-    stored.getStatus shouldBe WorkflowExecutionStatus.Created
     // Open: nothing of its closing record is written until it is over.
     stored.getOutcome shouldBe null
     stored.getOutcomeReason shouldBe null
@@ -830,7 +806,6 @@ class ExecutionResourceSpec
     stored.getName shouldBe "spec-execution"
     stored.getEnvironmentVersion shouldBe """{"engine_version":"1.4.0-spec"}"""
     stored.getLogLocation shouldBe null
-    stored.getLastUpdateTime shouldBe null
 
     val (record, plan) = storedPlan(execution)
     record.entryId shouldBe ExecutionPlanStore.PlanEntryId
@@ -1006,7 +981,7 @@ class ExecutionResourceSpec
     error.message should startWith("org.apache.commons.vfs2.FileNotFoundException")
     error.message should include(notesPath)
     linked shouldBe empty
-    row(failure.eid).getStatus shouldBe 4.toByte
+    row(failure.eid).getOutcome shouldBe 4
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
     )
@@ -1121,7 +1096,7 @@ class ExecutionResourceSpec
           s"You have no Python environment named '$name'. Each user keeps their own " +
           "environments, so to run this workflow, create one with this name."
         // No plan is made to run in another environment, or in none.
-        row(failure.eid).getStatus shouldBe 4.toByte
+        row(failure.eid).getOutcome shouldBe 4
         a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
           ExecutionPlanStore.planUri(
             WorkflowIdentity(testWid),
@@ -1173,7 +1148,7 @@ class ExecutionResourceSpec
     failure.getCause shouldBe a[CompileRefused]
     failure.getMessage shouldBe
       s"Execution $newestEid could not be created: its plan could not be made."
-    row(newestEid.toLong).getStatus shouldBe 4.toByte
+    row(newestEid.toLong).getOutcome shouldBe 4
   }
 
   it should "list each File Lister's dataset version and link the files listed, in the plan it stores and nowhere else" in {
@@ -1220,7 +1195,7 @@ class ExecutionResourceSpec
     error.`type` shouldBe COMPILATION_ERROR
     error.message shouldBe s"java.lang.IllegalArgumentException: Dataset version " +
       s"$notesVersionPath was not found: it does not exist, or you do not have access to it."
-    row(failure.eid).getStatus shouldBe 4.toByte
+    row(failure.eid).getOutcome shouldBe 4
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
     )
@@ -1264,7 +1239,7 @@ class ExecutionResourceSpec
     failure.operatorErrors("scan").message shouldBe "java.lang.IllegalArgumentException: File " +
       "Scan From Input reads only the files a File Lister upstream of it lists. Link a File " +
       "Lister to its input, directly or through other operators."
-    row(failure.eid).getStatus shouldBe 4.toByte
+    row(failure.eid).getOutcome shouldBe 4
   }
 
   /** A dataset version as a File Lister names it, which only [[creatorListing]] lists. */
@@ -1553,9 +1528,6 @@ class ExecutionResourceSpec
         error.`type` shouldBe COMPILATION_ERROR
         error.operatorId shouldBe operator
     }
-    val failed = row(failure.eid)
-    failed.getStatus shouldBe 4.toByte
-    failed.getLastUpdateTime.getTime should be >= (before - 1000)
     // Closed by its create, with the error of one operator: the first by its id.
     closedAtCreate(
       failure.eid,
@@ -1618,7 +1590,6 @@ class ExecutionResourceSpec
     val eid = newestEid
     failure.getMessage shouldBe
       s"Execution $eid could not be created: its plan could not be written to the lake."
-    row(eid.toLong).getStatus shouldBe 4.toByte
     closedAtCreate(eid.toLong, "its plan could not be stored", since)
   }
 
@@ -1641,7 +1612,6 @@ class ExecutionResourceSpec
       s"Execution $eid could not be created\\. The plan is 1[67]\\.[0-9] MiB, and a stored plan " +
         "may be at most 16 MiB\\. A plan holds a link to each file its operators read, so a " +
         "workflow that lists fewer files makes a smaller plan\\."
-    row(eid.toLong).getStatus shouldBe 4.toByte
     closedAtCreate(eid.toLong, "its plan could not be stored", since)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
@@ -1669,13 +1639,11 @@ class ExecutionResourceSpec
     val eid = newestEid
     failure.getMessage shouldBe
       s"Execution $eid could not be created: its plan could not be made."
-    row(eid.toLong).getStatus shouldBe 4.toByte
     closedAtCreate(eid.toLong, "its plan could not be made", since)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
     )
     // A create that fails expires nothing.
-    consolesOf(961921) shouldBe 1
     hasTable(console) shouldBe true
     row(961921).getResultsExpiredAt shouldBe null
   }
@@ -1713,7 +1681,6 @@ class ExecutionResourceSpec
       server.requests should have size 1
       executionCount shouldBe before + 1
       val eid = newestEid.toLong
-      row(eid).getStatus shouldBe 4.toByte
       closedAtCreate(eid, reason, since)
       a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
         ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
@@ -1824,7 +1791,6 @@ class ExecutionResourceSpec
           error.timestamp.seconds should be >= (since / 1000 - 1)
           error.details should not be empty
       }
-      row(failure.eid).getStatus shouldBe 4.toByte
       closedAtCreate(
         failure.eid,
         s"compile error: ${failure.operatorErrors("scan").message}",
@@ -1890,7 +1856,6 @@ class ExecutionResourceSpec
     val eid = newestEid
     failure.getMessage shouldBe s"Execution $eid could not be created: the workflow compiling " +
       "service could not be reached. Try again in a moment."
-    row(eid.toLong).getStatus shouldBe 4.toByte
     closedAtCreate(eid.toLong, "its plan could not be made", since)
   }
 
@@ -1978,7 +1943,7 @@ class ExecutionResourceSpec
         val eid = newestEid
         failure.getMessage shouldBe
           s"Execution $eid could not be created: its plan could not be made."
-        row(eid.toLong).getStatus shouldBe 4.toByte
+        row(eid.toLong).getOutcome shouldBe 4
         creator.written shouldBe empty
         a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
           ExecutionPlanStore
@@ -2001,7 +1966,6 @@ class ExecutionResourceSpec
     def kept(eids: Long*): Unit =
       eids.foreach { eid =>
         withClue(s"execution $eid: ") {
-          consolesOf(eid.toInt) shouldBe 1
           hasTable(consoles(eid)) shouldBe true
           row(eid).getResultsExpiredAt shouldBe null
         }
@@ -2012,7 +1976,7 @@ class ExecutionResourceSpec
     compileFailure(post(request(plan = brokenPlan(), cuid = clearingCuid)))
     val abandoned = created(post(request(cuid = clearingCuid)))
     val started = created(post(request(cuid = clearingCuid)))
-    row(abandoned.eid).getStatus shouldBe WorkflowExecutionStatus.Created
+    row(abandoned.eid).getEndedAt shouldBe null
     kept(961911, 961913, 961914)
 
     // The unit starts the second: its log names the run's first states.
@@ -2020,13 +1984,11 @@ class ExecutionResourceSpec
     consoles += started.eid -> withConsole(testWid, started.eid.toInt)
     created(post(request(cuid = clearingCuid)))
 
-    consolesOf(961911) shouldBe 0
     hasTable(consoles(961911)) shouldBe false
     row(961911).getResultsExpiredAt should not be null
     row(961911).getStoredBytes shouldBe 0L
     kept(961913, 961914, started.eid)
     // Expired, not deleted: the execution stays in the history as it ended.
-    row(961911).getStatus shouldBe 3.toByte
     row(961911).getOutcome shouldBe 3
   }
 
@@ -2041,13 +2003,11 @@ class ExecutionResourceSpec
       post(request(cuid = clearingCuid), creator = new FixtureCreator(background = left += _))
     )
 
-    consolesOf(961941) shouldBe 1
     hasTable(replaced) shouldBe true
     left should have size 1
 
     left.foreach(_.run())
 
-    consolesOf(961941) shouldBe 0
     hasTable(replaced) shouldBe false
   }
 
@@ -2063,9 +2023,7 @@ class ExecutionResourceSpec
     val execution = created(post(request(cuid = sharedCuid), uid = readerUid))
 
     row(execution.eid).getUid shouldBe readerUid
-    consolesOf(961931) shouldBe 0
     hasTable(creators) shouldBe false
-    consolesOf(961932) shouldBe 1
     hasTable(readers) shouldBe true
   }
 
@@ -2110,13 +2068,11 @@ class ExecutionResourceSpec
     row(first.eid).getStoredBytes.longValue() should be > 0L
     row(second.eid).getStoredBytes.longValue() should be > 0L
     // The first, which later runs replaced, is expired: its plan and its log stay.
-    consolesOf(first.eid.toInt) shouldBe 0
     hasTable(consoles(first.eid)) shouldBe false
     row(first.eid).getResultsExpiredAt should not be null
     hasTable(new URI(first.planUri)) shouldBe true
     hasTable(logOfUri(first.eid)) shouldBe true
     // The second, closed and replaced by the third's run as well, is expired too.
-    consolesOf(second.eid.toInt) shouldBe 0
     hasTable(consoles(second.eid)) shouldBe false
     row(second.eid).getResultsExpiredAt should not be null
     // The one that runs is left open, and untouched; so are the ones no unit started, and
@@ -2129,7 +2085,6 @@ class ExecutionResourceSpec
         left.getStoredBytes shouldBe null
       }
     }
-    consolesOf(third.eid.toInt) shouldBe 1
     hasTable(consoles(third.eid)) shouldBe true
   }
 

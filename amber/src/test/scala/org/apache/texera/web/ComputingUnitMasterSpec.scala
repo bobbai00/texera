@@ -53,7 +53,7 @@ import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.dao.{MockTexeraDB, SqlServer}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.web.resource.dashboard.user.workflow.{
   ExecutionResource,
   WorkflowExecutionsResource
@@ -71,7 +71,6 @@ import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
 import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature
-import org.jooq.impl.DSL
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpec
@@ -88,14 +87,12 @@ import javax.websocket.{RemoteEndpoint, Session}
 import scala.concurrent.Await
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
-import scala.util.Try
 
 class ComputingUnitMasterSpec
     extends AnyFlatSpec
     with Matchers
     with BeforeAndAfterAll
-    with Eventually
-    with MockTexeraDB {
+    with Eventually {
 
   /**
     * The coordinator the `createAmberRuntime` tests build does its scheduling on a pekko
@@ -128,10 +125,6 @@ class ComputingUnitMasterSpec
   override protected def afterAll(): Unit = {
     amberRuntimeActorSystemField.set(AmberRuntime, previousActorSystem)
     testSystem.terminate()
-    // run() repoints the JVM-wide SqlServer singleton at StorageConfig.jdbcUrl and closes the
-    // pool it replaced. Point it back at this suite's embedded database before tearing that down,
-    // so the singleton is never left aimed at production storage for whatever runs next.
-    initializeDBAndReplaceDSLContext()
     super.afterAll()
   }
 
@@ -146,9 +139,8 @@ class ComputingUnitMasterSpec
       getClass.getClassLoader
     )
 
-  /** The SqlServer singletons seen either side of the single run() call. */
-  private var sqlServerBeforeRun: AnyRef = _
-  private var sqlServerAfterRun: AnyRef = _
+  /** Why the process had no database before the single run() call: not what a unit says. */
+  private val noDatabaseBeforeRun = "ComputingUnitMasterSpec has not called run() yet"
 
   /**
     * What the runtime logged of a task it was asked to schedule while run() had no actor system
@@ -157,29 +149,15 @@ class ComputingUnitMasterSpec
   private var skippedSchedulesDuringRun: Seq[String] = Nil
 
   /**
-    * The name the server recorded for the connections of the pool run() opened. Read straight
-    * after run(): from the next test on, MockTexeraDB's fixture points the singleton's context
-    * back at this suite's own database.
-    */
-  private var applicationNameAfterRun: Option[String] = None
-
-  /**
     * run() is driven exactly once against a real Dropwizard Environment (a mock would not
     * do: WebSocketUpgradeFilter.configureContext needs a live MutableServletContextHandler);
-    * every assertion below inspects the resulting wiring. Note that run() also repoints the
-    * JVM-wide SqlServer singleton at StorageConfig.jdbcUrl, so this suite requires the same
-    * reachable Postgres the amber CI job provisions; MockTexeraDB.withFixture points the
-    * singleton back at this suite's own database before each subsequent test, and afterAll points
-    * it back once more before shutting the pool down.
-    *
-    * One residual hazard is worth naming rather than hiding: initConnection CLOSES the pool it
-    * replaces, so a suite running concurrently in this JVM could lose its connection mid-test.
-    * amber sets neither `Test / fork` nor `Test / parallelExecution := false`, unlike every other
-    * module that mixes MockTexeraDB, so nothing in the build prevents that overlap.
+    * every assertion below inspects the resulting wiring. It needs no Postgres: a unit opens no
+    * connection to one. run() declares so on the JVM-wide SqlServer singleton, closing whatever
+    * pool an earlier suite left there; a suite that needs a database opens its own.
     */
   private lazy val ranEnvironment: Environment = {
     val environment = newEnvironment("computing-unit-master-spec-run")
-    sqlServerBeforeRun = SqlServer.getInstance()
+    SqlServer.withoutDatabase(noDatabaseBeforeRun)
     // With no actor system, whatever run() asked the runtime to schedule is skipped and logged.
     amberRuntimeActorSystemField.set(AmberRuntime, null)
     try {
@@ -187,15 +165,6 @@ class ComputingUnitMasterSpec
         master.run(new Configuration(), environment)
       }
     } finally amberRuntimeActorSystemField.set(AmberRuntime, testSystem)
-    sqlServerAfterRun = SqlServer.getInstance()
-    applicationNameAfterRun = Try(
-      SqlServer
-        .getInstance()
-        .createDSLContext()
-        .select(DSL.field("current_setting('application_name')", classOf[String]))
-        .fetchSingle()
-        .value1()
-    ).toOption
     environment
   }
 
@@ -577,21 +546,13 @@ class ComputingUnitMasterSpec
     ranEnvironment.jersey.getUrlPattern shouldBe "/api/*"
   }
 
-  it should "open its own connection to the configured storage database" in {
+  it should "open no connection to Postgres, and fail whatever asks for the database with why" in {
     ranEnvironment
 
-    // MockTexeraDB has already installed a singleton for this suite, and nothing else runs
-    // between the two reads, so a second instance can only come from run() itself calling
-    // SqlServer.initConnection.
-    sqlServerAfterRun should not be theSameInstanceAs(sqlServerBeforeRun)
-  }
-
-  it should "name its database connections after the computing unit" in {
-    ranEnvironment
-
-    // As the server recorded it: pg_stat_activity and the Postgres log attribute this pool's
-    // statements to the computing unit, not to the Dashboard or another service.
-    applicationNameAfterRun shouldBe Some("texera-computing-unit")
+    // The reason is the unit's, not the one this suite gave before run(): run() declared it.
+    val refused = the[IllegalStateException] thrownBy SqlServer.getInstance()
+    refused.getMessage shouldBe "a computing unit keeps nothing in Postgres"
+    ComputingUnitMaster.NoDatabase shouldBe refused.getMessage
   }
 
   it should "register the master's Jersey resource classes" in {

@@ -27,7 +27,7 @@ import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.LogicalLink
 
-class ReconfigurationSpec extends RetryingDatabaseE2ESpec("ReconfigurationSpec", specId = 3) {
+class ReconfigurationSpec extends RetryingE2ESpec("ReconfigurationSpec", specId = 3) {
 
   val logger = Logger("ReconfigurationSpecLogger")
   val ctx = TestUtils.workflowContext(specId)

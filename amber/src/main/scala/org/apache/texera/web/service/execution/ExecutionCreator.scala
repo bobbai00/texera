@@ -195,8 +195,7 @@ final class WorkflowNotCompiled(
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
   * as `{"code", "message"}`. One that fails once its row exists closes the row itself
   * ([[ExecutionRecords.close]]): no engine and no log will ever say how such an execution
-  * ended. No email is sent about it: the user is looking at the failure. Until every reader
-  * takes an ending from the closing record, the row's status is FAILED as well.
+  * ended. No email is sent about it: the user is looking at the failure.
   *
   * @param compiling         the workflow compiling service, which makes the plans
   * @param linker            signs the links to the files a plan's operators read
@@ -373,8 +372,8 @@ class ExecutionCreator(
 
   /**
     * `step`, a step of the create of execution `eid` after its row exists. When it fails, the
-    * row is closed as failed for `reason` of the failure, and marked FAILED for the lists that
-    * still read its status, and the create fails with [[answerTo]] the failure.
+    * row is closed as failed for `reason` of the failure, and the create fails with
+    * [[answerTo]] the failure.
     *
     * The row is closed as one no unit ever started, which it is: nothing looks for its results.
     * A close that fails is logged, not thrown, since the caller is owed the create's own
@@ -386,7 +385,6 @@ class ExecutionCreator(
     try step
     catch {
       case NonFatal(failure) =>
-        ExecutionsMetadataPersistService.markFailed(eid)
         try {
           ExecutionRecords.close(
             eid.id,

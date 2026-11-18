@@ -30,7 +30,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   RUNNING,
   TERMINATED
 }
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.amber.engine.common.executionrecord.ExecutionRecorder
 import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionBreakpointStore,
@@ -39,9 +38,6 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionStatsStore
 }
 import org.apache.texera.web.observability.WorkflowMetricsRecorder
-import org.apache.texera.web.service.ExecutionsMetadataPersistService
-
-import java.sql.Timestamp
 
 object ExecutionStateStore {
 
@@ -85,8 +81,9 @@ class ExecutionStateStore(val recorder: ExecutionRecorder = ExecutionRecorder.no
 
   /**
     * Changes the run's state to `state`, because of `errors` or for `reason`: the one way the
-    * state of a run changes. The change is written to the run's log and to the execution's row,
-    * and `errors` join the run's errors; a change that ends the run also stamps its end time.
+    * state of a run changes. The change is written to the run's log, and nowhere else: the
+    * execution's row is the Dashboard service's, which closes it from the log. `errors` join the
+    * run's errors; a change that ends the run also stamps its end time.
     *
     * A run ends once. One that has ended keeps the state, the errors and the end time it ended
     * with, whatever is asked of it after: nothing is recorded, and this answers false. Changes
@@ -106,11 +103,6 @@ class ExecutionStateStore(val recorder: ExecutionRecorder = ExecutionRecorder.no
       } else {
         taken = true
         ExecutionStateStore.logged(state).foreach(recorder.state(_, errors, reason))
-        ExecutionsMetadataPersistService.updateStatus(
-          metadata.executionId,
-          maptoStatusCode(state),
-          new Timestamp(System.currentTimeMillis())
-        )
         WorkflowMetricsRecorder.onStateChange(metadata.executionId, metadata.state, state)
         metadata.withState(state).addFatalErrors(errors: _*)
       }

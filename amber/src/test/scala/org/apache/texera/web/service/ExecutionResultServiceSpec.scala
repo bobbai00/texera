@@ -55,31 +55,6 @@ import org.apache.texera.amber.engine.architecture.coordinator.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{
-  OPERATOR_PORT_EXECUTIONS,
-  USER,
-  WORKFLOW,
-  WORKFLOW_COMPUTING_UNIT,
-  WORKFLOW_EXECUTIONS,
-  WORKFLOW_VERSION
-}
-import org.apache.texera.dao.jooq.generated.enums.{OutputModeEnum, WorkflowComputingUnitTypeEnum}
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowComputingUnitDao,
-  WorkflowDao,
-  WorkflowExecutionsDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowComputingUnit,
-  WorkflowExecutions,
-  WorkflowVersion
-}
 import org.apache.texera.web.model.websocket.event.{
   PaginatedResultEvent,
   TexeraWebSocketEvent,
@@ -99,7 +74,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
 import java.net.URI
-import java.sql.Timestamp
+import java.util.concurrent.atomic.AtomicLong
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -108,20 +83,25 @@ import java.util.UUID
 import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
 
+/**
+  * The results of a run, as the computing unit that holds the run serves them: from where the
+  * run's engine reported them, with no database. A unit has none.
+  */
 class ExecutionResultServiceSpec
     extends AnyFlatSpec
     with Matchers
     with BeforeAndAfterAll
-    with BeforeAndAfterEach
-    with MockTexeraDB {
+    with BeforeAndAfterEach {
 
-  // Fixed (not random) so a failure replays identically across runs. The
-  // spec owns its embedded DB so collision with other specs isn't a concern.
+  // Fixed (not random) so a failure replays identically across runs.
   private val testWid: Integer = 9001
-  private val testUid: Integer = 9001
-  private var executionsDao: WorkflowExecutionsDao = _
-  private var testVid: Integer = _
-  private var testCuid: Integer = _
+
+  // The executions of the suite's tests, each with an id of its own: its result tables are
+  // named after the workflow, the execution and the operator.
+  private val executionIds = new AtomicLong(0)
+
+  /** The execution a test made last: the one whose run `paginate` asks. */
+  private var latestExecution: Option[ExecutionIdentity] = None
 
   // AmberClient needs an ActorSystem to host its ClientActor. A bare one is enough:
   // the client is constructed over an empty PhysicalPlan, so its InitializeRequest
@@ -129,57 +109,15 @@ class ExecutionResultServiceSpec
   private var system: ActorSystem = _
 
   override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
     // Suffixed so two ActorSystems can never contend for the same name if this spec is ever run
     // alongside another in one JVM.
     system = ActorSystem(s"ExecutionResultServiceSpec-${UUID.randomUUID()}")
   }
 
   override protected def afterAll(): Unit = {
-    // terminate() is asynchronous; without the await the JVM can move on to shutdownDB() while the
-    // dispatcher threads are still running, which is how this kind of fixture starts hanging.
+    // terminate() is asynchronous; without the await the JVM can move on while the dispatcher
+    // threads are still running, which is how this kind of fixture starts hanging.
     Await.ready(system.terminate(), 30.seconds)
-    shutdownDB()
-  }
-
-  override protected def beforeEach(): Unit = {
-    val user = new User
-    user.setUid(testUid)
-    user.setName("execution-result-test-user")
-    user.setEmail(s"u$testUid@example.com")
-    new UserDao(getDSLContext.configuration()).insert(user)
-
-    // getLatestExecutionId matches on cuid, and a NULL cuid matches no value, so
-    // handleResultPagination can only find an execution that names a real unit.
-    val computingUnit = new WorkflowComputingUnit
-    computingUnit.setUid(testUid)
-    computingUnit.setName("execution-result-test-unit")
-    computingUnit.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    computingUnit.setType(WorkflowComputingUnitTypeEnum.local)
-    computingUnit.setUri("local://execution-result-test")
-    computingUnit.setResource("{}")
-    new WorkflowComputingUnitDao(getDSLContext.configuration()).insert(computingUnit)
-    testCuid = computingUnit.getCuid
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName(s"execution-result-test-$testWid")
-    workflow.setContent("{}")
-    workflow.setDescription("")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
-    // The vid sequence isn't reset between tests, so capture the
-    // generated key here instead of assuming it's `1` later.
-    testVid = version.getVid
-
-    executionsDao = new WorkflowExecutionsDao(getDSLContext.configuration())
   }
 
   /** Every ResultEvents subscription made during a test, disposed when that test ends. */
@@ -193,81 +131,8 @@ class ExecutionResultServiceSpec
     openObservers.foreach(_.dispose())
     openObservers.clear()
     storedResults.clear()
-
-    val ctx = getDSLContext
-    // Scope every delete to the test's own ids so this spec stays safe
-    // if it ever shares a DB with another spec.
-    ctx
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          ctx
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.UID.eq(testUid))
-        )
-      )
-      .execute()
-    ctx
-      .deleteFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.UID.eq(testUid))
-      .execute()
-    ctx.deleteFrom(WORKFLOW_VERSION).where(WORKFLOW_VERSION.WID.eq(testWid)).execute()
-    ctx.deleteFrom(WORKFLOW).where(WORKFLOW.WID.eq(testWid)).execute()
-    ctx.deleteFrom(WORKFLOW_COMPUTING_UNIT).where(WORKFLOW_COMPUTING_UNIT.UID.eq(testUid)).execute()
-    ctx.deleteFrom(USER).where(USER.UID.eq(testUid)).execute()
+    latestExecution = None
   }
-
-  "persistOperatorPortResultUri" should
-    "insert the URI carried by an OperatorPortResultUriAvailable event" in {
-    val execution = new WorkflowExecutions
-    execution.setVid(testVid)
-    execution.setUid(testUid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("execution-result-callback-test")
-    execution.setEnvironmentVersion("test-env")
-    executionsDao.insert(execution)
-    val eid = ExecutionIdentity(execution.getEid.longValue())
-    val globalPortId = GlobalPortIdentity(
-      PhysicalOpIdentity(OperatorIdentity("op-X"), "main"),
-      PortIdentity(),
-      input = false
-    )
-    val uri = URI.create("vfs:///exec-result-callback")
-
-    ExecutionResultService.persistOperatorPortResultUri(
-      eid,
-      OperatorPortResultUriAvailable(globalPortId, uri, OutputMode.SINGLE_SNAPSHOT)
-    )
-
-    val rows = getDSLContext
-      .selectFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
-      .fetch()
-    rows.size() shouldBe 1
-    rows.get(0).getResultUri shouldBe uri.toString
-    // The mode is recorded with the URI, so a finished execution's results can be
-    // listed without the engine's physical plan (#8994).
-    rows.get(0).getOutputMode shouldBe OutputModeEnum.SINGLE_SNAPSHOT
-  }
-
-  "toOutputModeEnum" should "map every declared output mode to the stored value of its name" in {
-    // Walks the proto's values, so a new mode missing from the match fails here, not at runtime.
-    OutputMode.values.foreach { mode =>
-      ExecutionResultService.toOutputModeEnum(mode).getLiteral shouldBe mode.name
-    }
-  }
-
-  it should "reject an unrecognized mode" in {
-    a[RuntimeException] should be thrownBy
-      ExecutionResultService.toOutputModeEnum(OutputMode.Unrecognized(99))
-  }
-
-  // The WebOutputMode / WebResultUpdate ADTs are serialized to the frontend over
-  // the websocket; the "type" discriminator is the contract the UI dispatches on.
 
   "WebOutputMode serialization" should "tag each mode with its discriminator" in {
     objectMapper
@@ -514,23 +379,36 @@ class ExecutionResultServiceSpec
     event.schema shouldBe empty
   }
 
-  it should "fail loudly when the workflow has never been executed" in {
-    // No execution row at all: distinct from the case above, where an execution
-    // exists but stored no result for the operator.
-    val thrown = the[IllegalStateException] thrownBy paginate(
-      paginationRequest.copy(operatorID = "erss-page-rows")
+  it should "answer an empty page while it is attached to no run, though an execution of the workflow stored the result" in {
+    // As on a unit that restarted since the workflow last ran: what the execution stored is
+    // the Dashboard service's to serve, and the unit looks nowhere for it.
+    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
+    val stored = newExecution()
+    storeResult(
+      stored,
+      "erss-unattached",
+      schema,
+      (0 until 3).map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
     )
-    thrown.getMessage shouldBe "No execution is recorded"
+    val request = paginationRequest.copy(operatorID = "erss-unattached", pageIndex = 1)
+
+    val event =
+      new ExecutionResultService(WorkflowIdentity(testWid.longValue()), new WorkflowStateStore)
+        .handleResultPagination(request)
+
+    event shouldBe PaginatedResultEvent(request, List.empty, List.empty)
+    // The same request, asked of the run that stored it.
+    paginate(request).table.map(_.get("id").asInt()) shouldBe List(0, 1, 2)
   }
 
-  it should "read the execution it attached to, though a newer one of the workflow is on its unit" in {
+  it should "read the execution it attached to, though a newer one of the workflow stored the same operator's result" in {
     val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
     def rows(ids: Range): Seq[Tuple] =
       ids.map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
     val attached = newExecution()
     storeResult(attached, "erss-attached", schema, rows(0 until 3))
-    // A newer execution of the workflow on the same unit, with a result of the same operator, as
-    // an execution made and not yet started, or another session's, would be.
+    // A newer execution of the workflow, with a result of the same operator, as an execution
+    // made and not yet started, or another session's, would be.
     val newer = newExecution()
     storeResult(newer, "erss-attached", schema, rows(100 until 102))
     val request = paginationRequest.copy(operatorID = "erss-attached", pageSize = 10)
@@ -546,20 +424,22 @@ class ExecutionResultServiceSpec
         case other => fail(s"expected a PaginatedResultEvent, got $other")
       }
     }
-    // A service attached to no execution, as on a unit restarted since the run, reads the newest.
-    paginate(request).table.map(_.get("id").asInt()) shouldBe List(100, 101)
   }
 
   it should "refuse to read a result whose warehouse the URI cannot resolve" in {
     val executionId = newExecution()
-    // Only the URI row is needed: the guard has to reject before the document is
+    // Only the URI is needed: the guard has to reject before the document is
     // opened, and no table was ever created for this warehouse. An unresolvable
     // /wh/ prefix is what the guard refuses in *either* flag state, so this pins
     // the wiring — that paginate consults the guard at all — without depending on
     // the shipping default. WarehouseReadGuardSpec pins the enabled and disabled
     // behaviour of the guard itself.
     val resolvable = resultUriOf(executionId, "erss-warehouse", Some("byo"))
-    insertResultUri(executionId, new URI(resolvable.toString.replace("/wh/byo/", "/wh/a%2Fb/")))
+    reportResult(
+      executionId,
+      "erss-warehouse",
+      new URI(resolvable.toString.replace("/wh/byo/", "/wh/a%2Fb/"))
+    )
 
     a[WarehouseUnavailableException] should be thrownBy paginate(
       paginationRequest.copy(operatorID = "erss-warehouse")
@@ -630,54 +510,6 @@ class ExecutionResultServiceSpec
     }
   }
 
-  it should "record the size and row count of a table-mode result with no browser connected" in {
-    val executionId = newExecution()
-    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
-    val uri = storeResult(
-      executionId,
-      "erss-snapshot-count",
-      schema,
-      (1 to 3).map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
-    )
-    val plan = planOf(
-      physicalOp(executionId, "erss-snapshot-count", PortIdentity() -> OutputMode.SET_SNAPSHOT)
-    )
-
-    withAttached(plan, executionId) { fixture =>
-      // No ResultEvents: the run finishes after its browser tab has closed (#8994).
-      fixture.client.fire(ExecutionStateUpdate(WorkflowAggregatedState.COMPLETED))
-
-      storedResultCount(executionId, "erss-snapshot-count") shouldBe 3L
-      // The document's own file size, not some other measure of the result. Nothing is
-      // closed afterwards because VirtualDocument exposes no close(); its only teardown is
-      // clear(), which deletes the data rather than releasing a handle.
-      val expectedSize = DocumentFactory.openDocument(uri)._1.getTotalFileSize
-      expectedSize should not be 0L
-      storedResultSize(executionId, "erss-snapshot-count") shouldBe expectedSize
-    }
-  }
-
-  it should "record no row count for a SINGLE_SNAPSHOT port" in {
-    val executionId = newExecution()
-    val schema = new Schema(List(new Attribute("html", AttributeType.STRING)))
-    storeResult(
-      executionId,
-      "erss-single-count",
-      schema,
-      List(Tuple.builder(schema).add("html", AttributeType.STRING, "<p/>").build())
-    )
-    val plan = planOf(
-      physicalOp(executionId, "erss-single-count", PortIdentity() -> OutputMode.SINGLE_SNAPSHOT)
-    )
-
-    withAttached(plan, executionId) { fixture =>
-      fixture.client.fire(ExecutionStateUpdate(WorkflowAggregatedState.COMPLETED))
-
-      // A visualization is shown whole, never paged, so it has no count to record.
-      storedResultCount(executionId, "erss-single-count") shouldBe null
-    }
-  }
-
   it should "send the whole untruncated snapshot, and no statistics, for a SINGLE_SNAPSHOT port" in {
     val executionId = newExecution()
     val schema = new Schema(List(new Attribute("html", AttributeType.STRING)))
@@ -703,10 +535,8 @@ class ExecutionResultServiceSpec
       // truncation must be switched off for it.
       update.table.map(_.get("html").asText()) shouldBe List(html, "<p>second</p>")
       // A SINGLE_SNAPSHOT port's document is not a table, so no statistics are
-      // gathered and no size is recorded for it -- while the data update itself
-      // is still sent.
+      // gathered for it -- while the data update itself is still sent.
       events.updates.head.tableStats shouldBe empty
-      storedResultSize(executionId, "erss-single") shouldBe 0L
     }
   }
 
@@ -814,8 +644,7 @@ class ExecutionResultServiceSpec
 
   // -- attachToExecution: the engine callbacks -------------------------------
 
-  "the OperatorPortResultUriAvailable callback" should
-    "keep the URI for the attached run, and persist it under the run's execution" in {
+  "the OperatorPortResultUriAvailable callback" should "keep the URI for the attached run" in {
     val executionId = newExecution()
     withAttached(planOf(), executionId) { fixture =>
       val globalPortId = globalPortIdOf("erss-callback")
@@ -827,17 +656,10 @@ class ExecutionResultServiceSpec
       )
 
       fixture.stateStore.resultUris.all shouldBe Map(globalPortId -> uri)
-      val rows = getDSLContext
-        .selectFrom(OPERATOR_PORT_EXECUTIONS)
-        .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
-        .fetch()
-      rows.size() shouldBe 1
-      rows.get(0).getGlobalPortId shouldBe globalPortId.serializeAsString
-      rows.get(0).getResultUri shouldBe uri.toString
     }
   }
 
-  it should "let the attached run's results be found at once, with no row in the registry" in {
+  it should "let the attached run's results be found at once, from what the engine reported" in {
     val executionId = newExecution()
     val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
     val uri = storeResult(
@@ -846,9 +668,7 @@ class ExecutionResultServiceSpec
       schema,
       (0 until 4).map(i => Tuple.builder(schema).add("id", AttributeType.INTEGER, i).build())
     )
-    // Only the table is left: nothing of the execution in the registry, and nothing the fixture
-    // told the run.
-    clearRegistry(executionId)
+    // Only the table is left: nothing the fixture told the run.
     storedResults.clear()
     val plan = planOf(
       physicalOp(executionId, "erss-in-memory", PortIdentity() -> OutputMode.SET_SNAPSHOT)
@@ -871,8 +691,6 @@ class ExecutionResultServiceSpec
           OutputMode.SET_SNAPSHOT
         )
       )
-      // The callback wrote the registry row a unit still writes; the run does not read it.
-      clearRegistry(executionId)
 
       // A page, a result update and the poll's last word all find the result the engine reported.
       page().table.map(_.get("id").asInt()) shouldBe List(0, 1, 2, 3)
@@ -1031,12 +849,7 @@ class ExecutionResultServiceSpec
       val polling = new RecordingCancellable
       setPollingCancellable(fixture.service, polling)
 
-      fixture.service.attachToExecution(
-        executionId,
-        new ExecutionStateStore,
-        planOf(),
-        fixture.client
-      )
+      fixture.service.attachToExecution(new ExecutionStateStore, planOf(), fixture.client)
 
       // Two cancels, from two different places: attachToExecution's own guard,
       // and then the freshly registered metadata subscription, which replays the
@@ -1052,12 +865,7 @@ class ExecutionResultServiceSpec
       val polling = new RecordingCancellable(initiallyCancelled = true)
       setPollingCancellable(fixture.service, polling)
 
-      fixture.service.attachToExecution(
-        executionId,
-        new ExecutionStateStore,
-        planOf(),
-        fixture.client
-      )
+      fixture.service.attachToExecution(new ExecutionStateStore, planOf(), fixture.client)
 
       // Only the metadata subscription's cancel is left: attachToExecution's guard
       // skips a handle that reports itself already cancelled.
@@ -1158,14 +966,11 @@ class ExecutionResultServiceSpec
   ): Unit = {
     val client = new RecordingAmberClient
     val workflowStateStore = new WorkflowStateStore
-    val service = new ExecutionResultService(
-      WorkflowIdentity(testWid.longValue()),
-      testCuid,
-      workflowStateStore
-    )
+    val service =
+      new ExecutionResultService(WorkflowIdentity(testWid.longValue()), workflowStateStore)
     val stateStore = new ExecutionStateStore
     try {
-      service.attachToExecution(executionId, stateStore, physicalPlan, client)
+      service.attachToExecution(stateStore, physicalPlan, client)
       storedResults.getOrElse(executionId, Nil).foreach {
         case (port, uri) => stateStore.resultUris.add(port, uri)
       }
@@ -1177,19 +982,19 @@ class ExecutionResultServiceSpec
   }
 
   /**
-    * Runs `request` against a service bound to the seeded workflow and computing
-    * unit, so getLatestExecutionId resolves against the rows this spec inserts.
+    * Asks the run of the execution the test made last for the page `request` names: a service
+    * attached to that run, whose engine has reported the results the test stored for it.
     */
   private def paginate(request: ResultPaginationRequest): PaginatedResultEvent = {
-    val service = new ExecutionResultService(
-      WorkflowIdentity(testWid.longValue()),
-      testCuid,
-      new WorkflowStateStore
-    )
-    service.handleResultPagination(request) match {
-      case event: PaginatedResultEvent => event
-      case other                       => fail(s"expected a PaginatedResultEvent, got $other")
+    val executionId = latestExecution.getOrElse(fail("the test made no execution"))
+    var page: Option[PaginatedResultEvent] = None
+    withAttached(planOf(), executionId) { fixture =>
+      page = Some(fixture.service.handleResultPagination(request) match {
+        case event: PaginatedResultEvent => event
+        case other                       => fail(s"expected a PaginatedResultEvent, got $other")
+      })
     }
+    page.get
   }
 
   private def dataUpdate(update: ExecutionResultService.WebResultUpdate): WebDataUpdate =
@@ -1198,18 +1003,11 @@ class ExecutionResultServiceSpec
       case other                     => fail(s"expected a WebDataUpdate, got $other")
     }
 
+  /** An execution of the suite's workflow, with an id of its own. */
   private def newExecution(): ExecutionIdentity = {
-    val execution = new WorkflowExecutions
-    execution.setVid(testVid)
-    execution.setUid(testUid)
-    execution.setCuid(testCuid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("execution-result-instance-test")
-    execution.setEnvironmentVersion("test-env")
-    executionsDao.insert(execution)
-    ExecutionIdentity(execution.getEid.longValue())
+    val executionId = ExecutionIdentity(executionIds.incrementAndGet())
+    latestExecution = Some(executionId)
+    executionId
   }
 
   private def globalPortIdOf(
@@ -1238,25 +1036,22 @@ class ExecutionResultServiceSpec
       )
     )
 
-  private def insertResultUri(executionId: ExecutionIdentity, uri: URI): Unit =
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .columns(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
-        OPERATOR_PORT_EXECUTIONS.RESULT_URI
-      )
-      .values(
-        Integer.valueOf(executionId.id.toInt),
-        VFSURIFactory.decodeURI(uri).globalPortId.get.serializeAsString,
-        uri.toString
-      )
-      .execute()
+  /**
+    * Records `uri` as what a run of the engine of `executionId` reports for the first output port
+    * of `operatorId` (`withAttached`).
+    */
+  private def reportResult(
+      executionId: ExecutionIdentity,
+      operatorId: String,
+      uri: URI,
+      port: PortIdentity = PortIdentity()
+  ): Unit =
+    storedResults.getOrElseUpdate(executionId, mutable.ArrayBuffer.empty) +=
+      ((globalPortIdOf(operatorId, port), uri))
 
   /**
-    * Creates a real Iceberg result table holding `tuples`, and records its URI for `executionId`:
-    * in the registry, where a service attached to no run finds it, and as what a run of the
-    * execution's engine reports (`withAttached`).
+    * Creates a real Iceberg result table holding `tuples`, and records its URI for `executionId`
+    * as what a run of the execution's engine reports ([[reportResult]]).
     */
   private def storeResult(
       executionId: ExecutionIdentity,
@@ -1271,41 +1066,9 @@ class ExecutionResultServiceSpec
     writer.open()
     tuples.foreach(writer.putOne)
     writer.close()
-    insertResultUri(executionId, uri)
-    storedResults.getOrElseUpdate(executionId, mutable.ArrayBuffer.empty) +=
-      ((globalPortIdOf(operatorId, port), uri))
+    reportResult(executionId, operatorId, uri, port)
     uri
   }
-
-  /** Deletes the registry rows of `executionId`, leaving its result tables as they are. */
-  private def clearRegistry(executionId: ExecutionIdentity): Unit =
-    getDSLContext
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
-      .execute()
-
-  private def storedResultCount(
-      executionId: ExecutionIdentity,
-      operatorId: String
-  ): java.lang.Long =
-    getDSLContext
-      .select(OPERATOR_PORT_EXECUTIONS.RESULT_COUNT)
-      .from(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
-      .and(
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortIdOf(operatorId).serializeAsString)
-      )
-      .fetchOne(OPERATOR_PORT_EXECUTIONS.RESULT_COUNT)
-
-  private def storedResultSize(executionId: ExecutionIdentity, operatorId: String): Long =
-    getDSLContext
-      .select(OPERATOR_PORT_EXECUTIONS.RESULT_SIZE)
-      .from(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
-      .and(
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortIdOf(operatorId).serializeAsString)
-      )
-      .fetchOne(OPERATOR_PORT_EXECUTIONS.RESULT_SIZE)
 
   /**
     * A single-layer physical op whose output ports are declared in the given order --

@@ -27,31 +27,26 @@ import org.apache.pekko.util.Timeout
 import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.engine.common.AmberRuntime
-import org.apache.texera.amber.engine.e2e.TestUtils.{
-  cleanupWorkflowExecutionData,
-  initiateTexeraDBForTestCases,
-  setUpWorkflowExecutionData
-}
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.common.compiler.model.LogicalLink
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, Outcome, Retries}
+import org.scalatest.{BeforeAndAfterAll, Outcome, Retries}
 import org.scalatest.flatspec.AnyFlatSpecLike
 
 import scala.concurrent.duration.DurationInt
 
 /**
-  * Shared retrying TestKit + database setup/teardown fixture for Amber E2E suites.
-  * Each subclass passes a unique `specId` so concurrent Iceberg and DB state stays isolated.
+  * Shared retrying TestKit fixture for Amber E2E suites. They run on the engine alone, as a
+  * computing unit does: with no Texera database.
+  * Each subclass passes a unique `specId` so concurrent Iceberg state stays isolated.
   */
-abstract class RetryingDatabaseE2ESpec(
+abstract class RetryingE2ESpec(
     actorSystemName: String,
     protected val specId: Int
 ) extends TestKit(ActorSystem(actorSystemName, AmberRuntime.pekkoConfig))
     with ImplicitSender
     with AnyFlatSpecLike
     with BeforeAndAfterAll
-    with BeforeAndAfterEach
     with Retries {
 
   override def withFixture(test: NoArgTest): Outcome =
@@ -59,20 +54,12 @@ abstract class RetryingDatabaseE2ESpec(
 
   implicit val timeout: Timeout = Timeout(5.seconds)
 
-  override protected def beforeEach(): Unit = {
-    setUpWorkflowExecutionData(specId)
-  }
-
-  override protected def afterEach(): Unit = {
-    cleanupWorkflowExecutionData(specId)
-  }
-
   override def beforeAll(): Unit = {
     system.actorOf(Props[SingleNodeListener](), "cluster-info")
-    // These test cases access postgres in CI, but occasionally the jdbc driver cannot be found during CI run.
+    // The Iceberg catalog these test cases write results to is kept in postgres in CI, but
+    // occasionally the jdbc driver cannot be found during CI run.
     // Explicitly load the JDBC driver to avoid flaky CI failures.
     Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
   }
 
   override def afterAll(): Unit = {
@@ -85,7 +72,6 @@ abstract class RetryingDatabaseE2ESpec(
     */
   protected def warmUpPythonWorker(logger: Logger): Unit = {
     val warmupCap = Duration.fromSeconds(60)
-    setUpWorkflowExecutionData(specId)
     try {
       val src = new TextInputSourceOpDesc()
       src.textInput = "warmup"
@@ -108,8 +94,6 @@ abstract class RetryingDatabaseE2ESpec(
         logger.warn(
           s"warmup workflow did not finish within ${warmupCap}; tests will run cold and rely on Retries: ${e.getMessage}"
         )
-    } finally {
-      cleanupWorkflowExecutionData(specId)
     }
   }
 }

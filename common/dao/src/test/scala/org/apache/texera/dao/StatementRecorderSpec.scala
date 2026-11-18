@@ -211,15 +211,15 @@ class StatementRecorderSpec
   "tables" should "be the tables a statement names, without schema or quotes" in {
     def tablesOf(sql: String): Set[String] = Statement(sql, Seq.empty, "thread", None).tables
     tablesOf(
-      """update "texera_db"."workflow_executions" set "status" = ? where "eid" = ?"""
+      """update "texera_db"."workflow_executions" set "outcome" = ? where "eid" = ?"""
     ) shouldBe
       Set("workflow_executions")
     tablesOf(
-      """insert into "texera_db"."operator_executions" ("operator_id") values (?)"""
+      """insert into "texera_db"."workflow_user_access" ("uid") values (?)"""
     ) shouldBe
-      Set("operator_executions")
-    tablesOf("""delete from "texera_db"."operator_port_executions" where "x" = ?""") shouldBe
-      Set("operator_port_executions")
+      Set("workflow_user_access")
+    tablesOf("""delete from "texera_db"."operator_port_cache" where "x" = ?""") shouldBe
+      Set("operator_port_cache")
     // Every table of a join, whatever the join, and unquoted names in any case.
     tablesOf(
       """select "d"."name" from "texera_db"."dataset" as "d" left outer join "texera_db"."user"
@@ -227,7 +227,7 @@ class StatementRecorderSpec
     ) shouldBe Set("dataset", "user", "dataset_version")
     // A table read only in a subquery, of a condition or of the table list.
     tablesOf(
-      """update "workflow_executions" set "runtime_stats_uri" = ? where "vid" in
+      """update "workflow_executions" set "log_location" = ? where "vid" in
         |(select "vid" from "workflow_version" where "wid" = ?)""".stripMargin
     ) shouldBe Set("workflow_executions", "workflow_version")
     tablesOf("""select count(*) from (select 1 from "site_settings") as "t"""") shouldBe

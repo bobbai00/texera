@@ -159,20 +159,18 @@ class ComputingUnitIdleCleanupSpec
 
   /**
     * An execution on `unit`, open unless `endedMinutesBefore` says when it was closed, as
-    * `outcome`. The sweep reads nothing else of it: `status` is what a unit last wrote there.
+    * `outcome`. The sweep reads nothing else of it.
     */
   private def insertExecution(
       unit: WorkflowComputingUnit,
       startingMinutesBefore: Long,
       endedMinutesBefore: Option[Long] = None,
-      outcome: Short = 3,
-      status: Short = 1
+      outcome: Short = 3
   ): Unit = {
     val execution = new WorkflowExecutions
     execution.setVid(testVersion.getVid)
     execution.setUid(testUserId)
     execution.setCuid(unit.getCuid)
-    execution.setStatus(status)
     execution.setStartingTime(timestampMinutesBefore(startingMinutesBefore))
     endedMinutesBefore.foreach { minutes =>
       execution.setOutcome(outcome)
@@ -302,31 +300,8 @@ class ComputingUnitIdleCleanupSpec
       WorkflowComputingUnitTerminationReasonEnum.GARBAGE_COLLECTED
   }
 
-  it should "keep a unit that has an open execution, whatever state its run is in" in {
-    // An open execution has no closing record. What its row's status says is not read: the
-    // unit that wrote it may be gone, and 3 here is a run that ended and is not closed yet.
-    val units = Seq[Short](0, 1, 2, -1, 3, 6).map { status =>
-      val unit = insertComputingUnit(s"open-status-$status")
-      insertExecution(unit, startingMinutesBefore = 180, status = status)
-      unit
-    }
-    val k8s = stubKubernetesClient()
-
-    ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
-      idleTimeoutMinutes,
-      now,
-      k8s
-    ) shouldBe empty
-
-    verify(k8s, never()).deletePod(anyInt())
-    units.foreach(unit =>
-      workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
-    )
-  }
-
   it should "garbage collect a unit whose executions were all closed past the timeout" in {
-    // However they ended, and whatever status the unit left in the row: 1 is a run whose unit
-    // was lost while it ran.
+    // However they ended.
     Seq[Short](3, 4, 5).foreach { outcome =>
       val stale = insertComputingUnit(s"stale-outcome-$outcome")
       insertExecution(
@@ -339,8 +314,7 @@ class ComputingUnitIdleCleanupSpec
         stale,
         startingMinutesBefore = 180,
         endedMinutesBefore = Some(90),
-        outcome = outcome,
-        status = 1
+        outcome = outcome
       )
       val k8s = stubKubernetesClient()
 
@@ -376,12 +350,13 @@ class ComputingUnitIdleCleanupSpec
     workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
   }
 
-  it should "keep a unit whose execution no unit has started until the execution is closed" in {
-    // This service reads no lake, so it cannot tell an execution that waits for its start from
-    // one that runs. The Dashboard service closes one that is never started, as failed, and
-    // only then is its unit idle.
-    val unit = insertComputingUnit("created-only")
-    insertExecution(unit, startingMinutesBefore = 180, status = 6)
+  it should "keep a unit that has an open execution, whatever state its run is in, until the execution is closed" in {
+    // An open execution has no closing record, and the state of its run is in the lake, which
+    // this service does not read: it cannot tell an execution that waits for its start from
+    // one that runs. The Dashboard service closes every execution, one that is never started
+    // as failed, and only then is its unit idle.
+    val unit = insertComputingUnit("open-execution")
+    insertExecution(unit, startingMinutesBefore = 180)
     val k8s = stubKubernetesClient()
 
     ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
@@ -462,8 +437,7 @@ class ComputingUnitIdleCleanupSpec
       unit,
       startingMinutesBefore = 0,
       endedMinutesBefore = Some(0),
-      outcome = 4,
-      status = 6
+      outcome = 4
     )
 
     val k8s = stubKubernetesClient()
