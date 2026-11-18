@@ -23,22 +23,35 @@ import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.subjects.PublishSubject
 import org.apache.texera.web.model.websocket.request.TexeraWebSocketRequest
 
+import scala.collection.mutable
 import scala.reflect.{ClassTag, classTag}
 
-class WebsocketInput(errorHandler: Throwable => Unit) {
-  private val wsInput = PublishSubject.create[(TexeraWebSocketRequest, Option[Integer])]()
+/**
+  * The requests sessions make of one run, handed to whichever of the run's services subscribed
+  * to their type. A request one of them fails on is its sender's to hear of, not the run's
+  * failure: what a handler throws is thrown to whoever handed the request in, once every handler
+  * has seen it.
+  */
+class WebsocketInput {
+  private case class Asked(
+      request: TexeraWebSocketRequest,
+      uid: Option[Integer],
+      failures: mutable.Buffer[Throwable]
+  )
+
+  private val wsInput = PublishSubject.create[Asked]()
 
   def subscribe[T <: TexeraWebSocketRequest: ClassTag](
       callback: (T, Option[Integer]) => Unit
   ): Disposable = {
-    wsInput.subscribe((evt: (TexeraWebSocketRequest, Option[Integer])) => {
-      evt._1 match {
+    wsInput.subscribe((asked: Asked) => {
+      asked.request match {
         case req: T if classTag[T].runtimeClass.isInstance(req) =>
+          // Kept out of the subject, which would end the subscription of a handler that throws.
           try {
-            callback(req, evt._2)
+            callback(req, asked.uid)
           } catch {
-            case throwable: Throwable =>
-              errorHandler(throwable)
+            case throwable: Throwable => asked.failures += throwable
           }
         case other =>
         // skip this one because it doesn't match the type we want
@@ -46,8 +59,15 @@ class WebsocketInput(errorHandler: Throwable => Unit) {
     })
   }
 
+  /**
+    * Hands `req` to its handlers, on the calling thread.
+    *
+    * @throws Throwable what the first handler to fail threw
+    */
   def onNext(req: TexeraWebSocketRequest, uidOpt: Option[Integer]): Unit = {
-    wsInput.onNext((req, uidOpt))
+    val failures = mutable.ListBuffer.empty[Throwable]
+    wsInput.onNext(Asked(req, uidOpt, failures))
+    failures.headOption.foreach(throw _)
   }
 
 }

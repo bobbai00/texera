@@ -316,7 +316,7 @@ class ExecutionConsoleServiceSpec
     val coordinator = mock[CoordinatorServiceFs2Grpc[TwitterFuture, Unit]]
     val client = new TestAmberClient(coordinator)
     val stateStore = new ExecutionStateStore
-    val wsInput = new WebsocketInput(ListBuffer.empty[Throwable] += _)
+    val wsInput = new WebsocketInput()
     val service = new ExecutionConsoleService(client, stateStore, wsInput, new WorkflowContext())
     new Fixture(client, coordinator, stateStore, wsInput, service)
   }

@@ -104,7 +104,9 @@ import org.apache.texera.web.model.websocket.request.{
   HeartBeatRequest,
   OperatorUpdateRequest,
   ResultPaginationRequest,
+  RetryRequest,
   TexeraWebSocketRequest,
+  WorkflowCheckpointRequest,
   WorkflowKillRequest,
   WorkflowStartRequest
 }
@@ -844,6 +846,41 @@ class WorkflowWebsocketResourceSpec
       // The same commands, of the execution the run held is of, reach it.
       namedCommandFrames(974999L).foreach { case (_, frame) => resource.myOnMsg(session, frame) }
       commands.map(_.getClass.getSimpleName) shouldBe namedCommandFrames(974999L).map(_._1)
+    } finally service.unsubscribeAll()
+  }
+
+  it should "answer a command the held run fails on to its sender alone, and leave the run as it is" in {
+    // Until now what a run's handler threw was recorded as the run's failure: a skip, which the
+    // engine cannot do, or a wrong debugger command ended the run for every session.
+    val service = new StoredStartService
+    try {
+      val held = runInFlight(service)
+      val heldState = held.executionStateStore.metadataStore.getState
+      held.wsInput.subscribe[WorkflowCheckpointRequest]((_, _) =>
+        throw new UnsupportedOperationException("This run takes no checkpoint.")
+      )
+      held.wsInput.subscribe[RetryRequest]((_, _) =>
+        throw new IllegalStateException("no such worker")
+      )
+      val (session, sent) = sessionOn(service)
+      val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
+      Seq(
+        ("WorkflowCheckpointRequest", "This run takes no checkpoint."),
+        ("RetryRequest", "The request failed on this computing unit: no such worker")
+      ).foreach {
+        case (kind, why) =>
+          withClue(s"a $kind: ") {
+            sent.clear()
+            otherSent.clear()
+            noException should be thrownBy resource.myOnMsg(
+              session,
+              unnamedCommandFrames.toMap.apply(kind)
+            )
+            assertRefused(sent, why, request = Some(kind))
+            otherSent shouldBe empty
+            held.executionStateStore.metadataStore.getState shouldBe heldState
+          }
+      }
     } finally service.unsubscribeAll()
   }
 

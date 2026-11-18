@@ -20,10 +20,14 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.virtualidentity.EmbeddedControlMessageIdentity
+import org.apache.texera.amber.core.virtualidentity.{
+  ActorVirtualIdentity,
+  EmbeddedControlMessageIdentity
+}
 import org.apache.texera.amber.engine.architecture.coordinator.ExecutionStateUpdate
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   EmptyRequest,
+  RetryWorkflowRequest,
   TakeGlobalCheckpointRequest
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
@@ -55,9 +59,21 @@ class ExecutionRuntimeService(
     new EmailNotificationService(new WorkflowEmailNotifier(workflowId, notification))
   )
 
-  //Receive skip tuple
+  // Receive Skip. The engine cannot skip a tuple; the sender is told so, and the run goes on.
   addSubscription(wsInput.subscribe((req: SkipTupleRequest, uidOpt) => {
-    throw new RuntimeException("skipping tuple is temporarily disabled")
+    throw new UnsupportedOperationException("Skipping a tuple is not supported.")
+  }))
+
+  // Receive Retry: the workers named process the tuple they stopped on once more, with whatever
+  // change to their operator was made meanwhile, and the run resumes. A run that has ended is
+  // not asked.
+  addSubscription(wsInput.subscribe((req: RetryRequest, uidOpt) => {
+    if (stateStore.transitionTo(RESUMING)) {
+      reconfigurationService.performReconfigurationOnResume()
+      client.coordinatorInterface
+        .retryWorkflow(RetryWorkflowRequest(req.workers.map(ActorVirtualIdentity(_))), ())
+        .onSuccess(_ => stateStore.transitionTo(RUNNING))
+    }
   }))
 
   // Receive execution state update from Amber
@@ -97,10 +113,11 @@ class ExecutionRuntimeService(
 
   // Receive Interaction
   addSubscription(wsInput.subscribe((req: WorkflowCheckpointRequest, uidOpt) => {
-    assert(
-      logConf.nonEmpty,
-      "Fault tolerance log folder is not established. Unable to take a global checkpoint."
-    )
+    if (logConf.isEmpty) {
+      throw new UnsupportedOperationException(
+        "This computing unit keeps no replay logs, so it cannot take a checkpoint."
+      )
+    }
     val checkpointId = EmbeddedControlMessageIdentity(s"Checkpoint_${UUID.randomUUID().toString}")
     val uri = logConf.get.writeTo.resolve(checkpointId.toString)
     client.coordinatorInterface.takeGlobalCheckpoint(

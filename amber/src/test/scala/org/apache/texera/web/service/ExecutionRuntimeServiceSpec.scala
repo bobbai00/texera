@@ -26,8 +26,10 @@ import com.twitter.util.{Future, Promise}
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.engine.architecture.coordinator.ExecutionStateUpdate
+import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   EmptyRequest,
+  RetryWorkflowRequest,
   TakeGlobalCheckpointRequest
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.{
@@ -40,6 +42,8 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultTo
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.web.WebsocketInput
 import org.apache.texera.web.model.websocket.request.{
+  RetryRequest,
+  SkipTupleRequest,
   WorkflowCheckpointRequest,
   WorkflowKillRequest,
   WorkflowPauseRequest,
@@ -103,7 +107,6 @@ class ExecutionRuntimeServiceSpec
       val wsInput: WebsocketInput,
       val reconfigurationService: RecordingReconfigurationService,
       val runtime: ExecutionRuntimeService,
-      val errors: ListBuffer[Throwable],
       val recorder: RecordingExecutionRecorder
   ) {
     def close(): Unit = {
@@ -122,8 +125,7 @@ class ExecutionRuntimeServiceSpec
     val client = new RecordingExecutionClient(system, Some(coordinator))
     val recorder = new RecordingExecutionRecorder
     val stateStore = new ExecutionStateStore(recorder)
-    val errors = ListBuffer.empty[Throwable]
-    val wsInput = new WebsocketInput(errors += _)
+    val wsInput = new WebsocketInput()
     val reconfigurationService = new RecordingReconfigurationService
 
     val runtime = new ExecutionRuntimeService(
@@ -142,7 +144,6 @@ class ExecutionRuntimeServiceSpec
       wsInput,
       reconfigurationService,
       runtime,
-      errors,
       recorder
     )
   }
@@ -160,7 +161,6 @@ class ExecutionRuntimeServiceSpec
       f.wsInput.onNext(WorkflowPauseRequest(executionId), None)
 
       f.stateStore.metadataStore.getState.state shouldBe PAUSING
-      f.errors shouldBe empty
     } finally f.close()
   }
 
@@ -180,7 +180,6 @@ class ExecutionRuntimeServiceSpec
 
       resumeResult.setValue(EmptyReturn())
       f.stateStore.metadataStore.getState.state shouldBe RUNNING
-      f.errors shouldBe empty
     } finally f.close()
   }
 
@@ -204,7 +203,6 @@ class ExecutionRuntimeServiceSpec
 
       f.recorder.states shouldBe
         Seq(("RUNNING", None), ("PAUSED", None), ("RUNNING", None))
-      f.errors shouldBe empty
     } finally f.close()
   }
 
@@ -225,7 +223,6 @@ class ExecutionRuntimeServiceSpec
           f.stateStore.metadataStore.getState shouldBe asItEnded
           f.reconfigurationService.resumeCallCount shouldBe 0
           f.recorder.changes shouldBe empty
-          f.errors shouldBe empty
         } finally f.close()
       }
     }
@@ -247,7 +244,6 @@ class ExecutionRuntimeServiceSpec
           f.stateStore.metadataStore.getState.state shouldBe KILLED
           f.stateStore.statsStore.getState.endTimeStamp should (be >= before and be <= after)
           f.recorder.states shouldBe Seq(("KILLED", Some("killed by the user")))
-          f.errors shouldBe empty
         } finally f.close()
       }
     }
@@ -270,7 +266,6 @@ class ExecutionRuntimeServiceSpec
           f.stateStore.metadataStore.getState shouldBe asItEnded
           f.stateStore.statsStore.getState.endTimeStamp shouldBe endedAt
           f.recorder.changes shouldBe empty
-          f.errors shouldBe empty
         } finally f.close()
       }
     }
@@ -288,7 +283,6 @@ class ExecutionRuntimeServiceSpec
       f.stateStore.metadataStore.getState.state shouldBe COMPLETED
       f.stateStore.statsStore.getState.endTimeStamp shouldBe completedAt
       f.recorder.states shouldBe Seq(("COMPLETED", None))
-      f.errors shouldBe empty
     } finally f.close()
   }
 
@@ -306,7 +300,6 @@ class ExecutionRuntimeServiceSpec
       f.stateStore.metadataStore.getState.state shouldBe KILLED
       f.stateStore.statsStore.getState.endTimeStamp shouldBe killedAt
       f.recorder.states shouldBe Seq(("RUNNING", None), ("KILLED", Some("killed by the user")))
-      f.errors shouldBe empty
     } finally f.close()
   }
 
@@ -331,17 +324,75 @@ class ExecutionRuntimeServiceSpec
       destination shouldBe new URI("file:///runtime-checkpoints/").resolve(
         captured.checkpointId.toString
       )
-      f.errors shouldBe empty
     } finally f.close()
   }
 
-  it should "report a checkpoint request without fault-tolerance storage instead of dispatching it" in {
+  it should "tell the sender of a checkpoint request that a unit without replay logs takes none" in {
     val f = fixture(logConf = None)
     try {
-      f.wsInput.onNext(WorkflowCheckpointRequest(), None)
+      f.stateStore.transitionTo(RUNNING)
+      // Thrown to whoever handed the request in, which answers its session; the engine is asked
+      // nothing, and the run goes on.
+      the[UnsupportedOperationException] thrownBy
+        f.wsInput.onNext(WorkflowCheckpointRequest(), None) should have message
+        "This computing unit keeps no replay logs, so it cannot take a checkpoint."
+      f.stateStore.metadataStore.getState.state shouldBe RUNNING
+      f.stateStore.metadataStore.getState.fatalErrors shouldBe empty
+    } finally f.close()
+  }
 
-      f.errors should have size 1
-      f.errors.head.getMessage should include("Fault tolerance log folder is not established")
+  it should "have the workers named process their tuple once more, with the changes made meanwhile, and resume" in {
+    val f = fixture()
+    try {
+      f.stateStore.transitionTo(PAUSED)
+      val retried = Promise[EmptyReturn]()
+      (f.coordinator.retryWorkflow _)
+        .expects(
+          RetryWorkflowRequest(
+            Seq(ActorVirtualIdentity("worker-a"), ActorVirtualIdentity("worker-b"))
+          ),
+          ()
+        )
+        .onCall { (_: RetryWorkflowRequest, _: Unit) =>
+          // A change to the operator that stopped is applied before its tuple is tried again.
+          f.reconfigurationService.resumeCallCount shouldBe 1
+          f.stateStore.metadataStore.getState.state shouldBe RESUMING
+          retried
+        }
+
+      f.wsInput.onNext(RetryRequest(Seq("worker-a", "worker-b")), None)
+      f.stateStore.metadataStore.getState.state shouldBe RESUMING
+
+      retried.setValue(EmptyReturn())
+      eventually(timeout(Span(5, Seconds))) {
+        f.stateStore.metadataStore.getState.state shouldBe RUNNING
+      }
+    } finally f.close()
+  }
+
+  it should "leave a run that already ended as it ended when a retry arrives late" in {
+    val f = fixture()
+    try {
+      f.stateStore.transitionTo(COMPLETED)
+      val asItEnded = f.stateStore.metadataStore.getState
+
+      // The coordinator, expecting no call, would report one as an error.
+      f.wsInput.onNext(RetryRequest(Seq("worker-a")), None)
+
+      f.stateStore.metadataStore.getState shouldBe asItEnded
+      f.reconfigurationService.resumeCallCount shouldBe 0
+    } finally f.close()
+  }
+
+  it should "tell the sender of a skip that the engine skips no tuple, and leave the run alone" in {
+    val f = fixture()
+    try {
+      f.stateStore.transitionTo(PAUSED)
+      the[UnsupportedOperationException] thrownBy
+        f.wsInput.onNext(SkipTupleRequest(Array("worker-a")), None) should have message
+        "Skipping a tuple is not supported."
+      f.stateStore.metadataStore.getState.state shouldBe PAUSED
+      f.stateStore.metadataStore.getState.fatalErrors shouldBe empty
     } finally f.close()
   }
 
@@ -354,7 +405,6 @@ class ExecutionRuntimeServiceSpec
       f.client.shutdownCount shouldBe 1
       f.stateStore.metadataStore.getState.state shouldBe COMPLETED
       f.stateStore.statsStore.getState.endTimeStamp should be > 0L
-      f.errors shouldBe empty
     } finally f.close()
   }
 

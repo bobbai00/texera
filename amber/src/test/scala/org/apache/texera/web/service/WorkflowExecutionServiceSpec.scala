@@ -758,10 +758,12 @@ class WorkflowExecutionServiceSpec
       config.faultToleranceConfOpt shouldBe None
       // Nor do its status emails go anywhere: its plan row names no one.
       run.service.services.get.runtime.notification shouldBe None
-      // So it cannot checkpoint: a checkpoint request is refused.
-      run.service.wsInput.onNext(WorkflowCheckpointRequest(), None)
-      run.errors.map(_.getMessage) should have size 1
-      run.errors.head.getMessage should include("Fault tolerance log folder is not established")
+      // So it cannot checkpoint: a checkpoint request is its sender's to hear refused, and is
+      // no error of the run.
+      the[UnsupportedOperationException] thrownBy
+        run.service.wsInput.onNext(WorkflowCheckpointRequest(), None) should have message
+        "This computing unit keeps no replay logs, so it cannot take a checkpoint."
+      run.errors shouldBe empty
       run.engine.get.answers.keySet should not contain "takeGlobalCheckpoint"
     } finally run.close()
   }

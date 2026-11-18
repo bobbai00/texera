@@ -52,7 +52,6 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.event.python.ConsoleUpdateEvent
-import org.apache.texera.web.model.websocket.request.RetryRequest
 import org.apache.texera.web.model.websocket.request.python.{
   DebugCommandRequest,
   PythonExpressionEvaluateRequest
@@ -344,11 +343,6 @@ class ExecutionConsoleService(
     val truncatedMessage = processConsoleMessage(consoleMessage)
     addMessageToOperatorConsole(consoleStore, opId, truncatedMessage)
   }
-
-  //Receive retry request
-  addSubscription(wsInput.subscribe((req: RetryRequest, uidOpt) => {
-    // empty implementation
-  }))
 
   //Receive evaluate python expression
   addSubscription(wsInput.subscribe((req: PythonExpressionEvaluateRequest, uidOpt) => {

@@ -171,7 +171,7 @@ class WorkflowExecutionService(
     })
   )
 
-  val wsInput = new WebsocketInput(errorHandler)
+  val wsInput = new WebsocketInput()
 
   // The run's state, as every session on the workflow is told it, with the execution the run is
   // of: a session that did not start the run learns from it which execution it watches.

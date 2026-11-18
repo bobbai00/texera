@@ -80,9 +80,9 @@ class WorkflowWebsocketResource extends LazyLogging {
     * Takes one frame from a session. Whatever the frame asks for that is not done is answered to
     * that session, and to it alone, with a [[RequestRefusedEvent]]: a frame that reads as no
     * request, a request that is refused (its sender may not change runs on the computing unit,
-    * or there is nothing for it to act on) and a request that fails. None of these is written
-    * into the run in flight, which every session on the workflow sees, and none closes the
-    * session.
+    * or there is nothing for it to act on) and a request that fails, also where it fails in the
+    * run it was handed to. None of these is written into the run in flight, which every session
+    * on the workflow sees, and none closes the session.
     */
   @OnMessage
   def myOnMsg(session: Session, message: String): Unit = {
@@ -109,6 +109,10 @@ class WorkflowWebsocketResource extends LazyLogging {
             case _                        => refused(why)
           })
         } catch {
+          // What a run cannot do says so itself.
+          case unsupported: UnsupportedOperationException if unsupported.getMessage != null =>
+            logger.info(s"Refused a $kind: ${unsupported.getMessage}")
+            sender.send(refused(unsupported.getMessage))
           case NonFatal(failure) =>
             logger.error(s"A $kind failed.", failure)
             sender.send(

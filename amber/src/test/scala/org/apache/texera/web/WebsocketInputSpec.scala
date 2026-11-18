@@ -32,39 +32,30 @@ import scala.collection.mutable
 
 class WebsocketInputSpec extends AnyFlatSpec with Matchers {
 
-  // Each test gets a fresh input + error sink. Throwables routed through
-  // `errorHandler` land in `errors` for assertion.
-  private def newInputWithErrorSink(): (WebsocketInput, mutable.ListBuffer[Throwable]) = {
-    val errors = mutable.ListBuffer.empty[Throwable]
-    (new WebsocketInput(errors += _), errors)
-  }
-
   "subscribe" should "deliver requests whose runtime class matches T" in {
-    val (input, errors) = newInputWithErrorSink()
+    val input = new WebsocketInput()
     val received = mutable.ListBuffer.empty[(HeartBeatRequest, Option[Integer])]
     val sub = input.subscribe[HeartBeatRequest]((req, uid) => received += ((req, uid)))
     try {
       val req = HeartBeatRequest()
       input.onNext(req, Some(7))
       received.toList shouldBe List((req, Some(7)))
-      errors shouldBe empty
     } finally sub.dispose()
   }
 
   it should "silently drop requests that do not match T" in {
-    val (input, errors) = newInputWithErrorSink()
+    val input = new WebsocketInput()
     val received = mutable.ListBuffer.empty[TexeraWebSocketRequest]
     val sub = input.subscribe[HeartBeatRequest]((req, _) => received += req)
     try {
       input.onNext(WorkflowKillRequest(1L), None)
       input.onNext(WorkflowKillRequest(1L), Some(1))
       received shouldBe empty
-      errors shouldBe empty
     } finally sub.dispose()
   }
 
   it should "pass through uidOpt verbatim, including None" in {
-    val (input, _) = newInputWithErrorSink()
+    val input = new WebsocketInput()
     val seenUids = mutable.ListBuffer.empty[Option[Integer]]
     val sub = input.subscribe[HeartBeatRequest]((_, uid) => seenUids += uid)
     try {
@@ -76,35 +67,57 @@ class WebsocketInputSpec extends AnyFlatSpec with Matchers {
     } finally sub.dispose()
   }
 
-  "subscribe" should "route exceptions thrown inside the callback to errorHandler" in {
-    val (input, errors) = newInputWithErrorSink()
+  "onNext" should "throw what a handler throws to whoever handed the request in" in {
+    val input = new WebsocketInput()
     val boom = new RuntimeException("boom")
     val sub = input.subscribe[HeartBeatRequest]((_, _) => throw boom)
     try {
-      input.onNext(HeartBeatRequest(), None)
-      errors.toList shouldBe List(boom)
+      (the[RuntimeException] thrownBy input.onNext(
+        HeartBeatRequest(),
+        None
+      )) should be theSameInstanceAs boom
+      // A request no handler fails on throws nothing.
+      noException should be thrownBy input.onNext(WorkflowKillRequest(1L), None)
     } finally sub.dispose()
   }
 
-  it should "keep delivering events to other subscribers after one callback throws" in {
-    val (input, errors) = newInputWithErrorSink()
+  it should "hand the request to every handler before it throws, and keep the one that threw subscribed" in {
+    val input = new WebsocketInput()
     val survivorCount = new AtomicReference[Int](0)
-    val throwingSub =
-      input.subscribe[HeartBeatRequest]((_, _) => throw new IllegalStateException("nope"))
+    val thrown = new AtomicReference[Int](0)
+    val throwingSub = input.subscribe[HeartBeatRequest]((_, _) => {
+      thrown.updateAndGet(_ + 1)
+      throw new IllegalStateException("nope")
+    })
     val survivorSub = input.subscribe[HeartBeatRequest]((_, _) => survivorCount.updateAndGet(_ + 1))
     try {
-      input.onNext(HeartBeatRequest(), None)
-      input.onNext(HeartBeatRequest(), None)
+      an[IllegalStateException] should be thrownBy input.onNext(HeartBeatRequest(), None)
+      an[IllegalStateException] should be thrownBy input.onNext(HeartBeatRequest(), None)
       survivorCount.get() shouldBe 2
-      errors should have size 2
+      thrown.get() shouldBe 2
     } finally {
       throwingSub.dispose()
       survivorSub.dispose()
     }
   }
 
-  it should "stop delivering events after the returned Disposable is disposed" in {
-    val (input, _) = newInputWithErrorSink()
+  it should "throw the first failure when more than one handler fails" in {
+    val input = new WebsocketInput()
+    val first =
+      input.subscribe[HeartBeatRequest]((_, _) => throw new IllegalStateException("first"))
+    val second =
+      input.subscribe[HeartBeatRequest]((_, _) => throw new IllegalArgumentException("second"))
+    try {
+      the[IllegalStateException] thrownBy input.onNext(HeartBeatRequest(), None) should have message
+        "first"
+    } finally {
+      first.dispose()
+      second.dispose()
+    }
+  }
+
+  "subscribe" should "stop delivering events after the returned Disposable is disposed" in {
+    val input = new WebsocketInput()
     val count = new AtomicReference[Int](0)
     val sub = input.subscribe[HeartBeatRequest]((_, _) => count.updateAndGet(_ + 1))
     input.onNext(HeartBeatRequest(), None)
