@@ -728,6 +728,31 @@ class WorkflowServiceSpec
     service.lifecycle.reportedStates.last shouldBe Some(COMPLETED)
   }
 
+  it should "count a request among those watching the workflow while it runs, and let go of it as of a session" in {
+    val service = new TestWorkflowService(6L)
+    val execution = newExecution()
+    service.executionService.onNext(execution)
+    execution.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
+
+    service.watching {
+      // Counted before the request does anything, and until it is over.
+      service.lifecycle.increaseCount shouldBe 1
+      service.lifecycle.reportedStates shouldBe empty
+      "answered"
+    } shouldBe "answered"
+    // Let go of as a session that disconnects is, with the state its run is in: a run still
+    // running is what keeps the clean-up from being armed for a workflow nobody watches.
+    service.lifecycle.increaseCount shouldBe 1
+    service.lifecycle.reportedStates shouldBe Seq(Some(RUNNING))
+
+    // A request that fails is let go of too, and its failure is its caller's.
+    val failure = new IllegalStateException("the request failed")
+    (the[IllegalStateException] thrownBy service.watching[Unit](throw failure)) should
+      be theSameInstanceAs failure
+    service.lifecycle.increaseCount shouldBe 2
+    service.lifecycle.reportedStates shouldBe Seq(Some(RUNNING), Some(RUNNING))
+  }
+
   it should "dispose its own, the execution's and the result service's subscriptions" in {
     val service = new TestWorkflowService(5L)
     val ownSubscription = new TrackingDisposable
@@ -1018,6 +1043,27 @@ class WorkflowServiceSpec
         .map(_.executionId) shouldBe Right(refusedEid)
     }
     ExecutionPlanStore.isStarted(planUri) shouldBe false
+  }
+
+  it should "check which unit it is once a user asks, and before it looks at the plan table named" in {
+    def askedOfAnotherUnit(user: User, planUri: URI): Either[String, WorkflowService.CheckedStart] =
+      WorkflowService.checkStoredStart(
+        refusedEid,
+        planUri,
+        user,
+        storedCuid,
+        socketWorkflowId = None,
+        readPlan = _ => fail("the plan was read"),
+        thisUnit = Some(storedCuid + 1)
+      )
+
+    // Nobody asks: refused for that, whichever unit it reached.
+    askedOfAnotherUnit(null, planUriOf(refusedEid)) shouldBe
+      Left("A signed-in user is required to start an execution.")
+    // What is named is no plan table: the wrong unit says it is the wrong unit, and judges
+    // nothing else of a request that was not for it.
+    askedOfAnotherUnit(executingUser, new URI("vfs:///no/plan")) shouldBe
+      Left(s"This is computing unit ${storedCuid + 1}, not $storedCuid.")
   }
 
   it should "answer a claim or a read the lake fails as a refusal, leaving the held run alone" in {
