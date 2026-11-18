@@ -65,7 +65,7 @@ OTHER_PASSWORD = "sce-e2e-other-password"
 
 # The harness gates of the step 2 design (section 5): transport, scenarios and the
 # evidence checks that gate. The stack options each gate expects are in the README.
-STEP2_LAST = "a,b,c,d,e,u,j,k,l,m,o,f,f2,g,h,i"
+STEP2_LAST = "a,b,c,d,e,u,x,z,j,k,l,m,o,f,f2,g,h,i"
 GATES = {
     "A": {"transport": "ws", "scenarios": "a,b,c,d,e,u,g0", "evidence": "E", "legacy_env": True},
     "B": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,g0", "evidence": "C,E,F",
