@@ -175,31 +175,6 @@ class WorkflowExecutionsResourceSpec
       .from(WORKFLOW_VERSION)
       .where(WORKFLOW_VERSION.WID.eq(wid))
 
-    // Child tables of WORKFLOW_EXECUTIONS must be wiped before the parent row.
-    getDSLContext
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          getDSLContext
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
-        )
-      )
-      .execute()
-
-    getDSLContext
-      .deleteFrom(OPERATOR_EXECUTIONS)
-      .where(
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          getDSLContext
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
-        )
-      )
-      .execute()
-
     getDSLContext
       .deleteFrom(WORKFLOW_EXECUTIONS)
       .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
@@ -263,28 +238,22 @@ class WorkflowExecutionsResourceSpec
 
   /**
     * An execution of the test workflow, open unless `endedOffsetMillis` says how long ago it
-    * was closed, as `outcome` for `outcomeReason`. `status` is the column a unit writes, which
-    * no list reads.
+    * was closed, as `outcome` for `outcomeReason`.
     */
   private def insertExecution(
       name: String = s"Execution-${UUID.randomUUID().toString.substring(0, 8)}",
-      status: Byte = 0.toByte,
-      result: String = "",
       logLocation: String = "",
       startOffsetMillis: Long = 0L,
       endedOffsetMillis: Option[Long] = None,
       outcome: Short = WorkflowExecutionStatus.Completed,
       outcomeReason: String = null,
       cuid: Integer = null,
-      runtimeStatsUri: String = null,
       whid: Integer = null,
       uid: Integer = testUser.getUid
   ): WorkflowExecutions = {
     val execution = new WorkflowExecutions
     execution.setVid(testVersion.getVid)
     execution.setUid(uid)
-    execution.setStatus(status)
-    execution.setResult(result)
     execution.setLogLocation(logLocation)
     val now = System.currentTimeMillis()
     execution.setStartingTime(new Timestamp(now - startOffsetMillis))
@@ -298,7 +267,6 @@ class WorkflowExecutionsResourceSpec
     execution.setEnvironmentVersion("test-env-1.0")
     execution.setCuid(cuid)
     execution.setWhid(whid)
-    execution.setRuntimeStatsUri(runtimeStatsUri)
     workflowExecutionsDao.insert(execution)
     // As stored: a time written through the DAO keeps whole seconds.
     workflowExecutionsDao.fetchOneByEid(execution.getEid)
@@ -307,10 +275,7 @@ class WorkflowExecutionsResourceSpec
   // An execution that is real, readable by testUser's session, and belongs to a
   // *different* workflow than `testWorkflowWid` — the shape an endpoint that
   // forgets to join execution -> version -> workflow would happily serve.
-  private def insertForeignExecution(
-      runtimeStatsUri: String = null,
-      logLocation: String = ""
-  ): WorkflowExecutions = {
+  private def insertForeignExecution(logLocation: String = ""): WorkflowExecutions = {
     val workflow = new Workflow
     workflow.setWid(foreignWid)
     workflow.setName("foreign_workflow_" + UUID.randomUUID().toString.substring(0, 8))
@@ -329,14 +294,11 @@ class WorkflowExecutionsResourceSpec
     val execution = new WorkflowExecutions
     execution.setVid(version.getVid)
     execution.setUid(testUser.getUid)
-    execution.setStatus(0.toByte)
-    execution.setResult("")
     execution.setLogLocation(logLocation)
     execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
     execution.setBookmarked(false)
     execution.setName("foreign-execution")
     execution.setEnvironmentVersion("test-env-1.0")
-    execution.setRuntimeStatsUri(runtimeStatsUri)
     workflowExecutionsDao.insert(execution)
     execution
   }
@@ -921,8 +883,6 @@ class WorkflowExecutionsResourceSpec
   it should "answer a closed execution's status, reason and end from its closing record, without reading the lake" in {
     grantReadAccess()
     val before = labelsRead.size
-    // The status column is what a unit last wrote: a run whose unit was lost is still Running
-    // there, and is failed.
     val closed = Seq[(Short, String)](
       WorkflowExecutionStatus.Completed -> null,
       WorkflowExecutionStatus.Failed -> "unit lost",
@@ -930,7 +890,6 @@ class WorkflowExecutionsResourceSpec
     ).map {
       case (outcome, reason) =>
         val execution = insertExecution(
-          status = WorkflowExecutionStatus.Running.toByte,
           startOffsetMillis = 90000L,
           endedOffsetMillis = Some(30000L),
           outcome = outcome,
@@ -955,8 +914,7 @@ class WorkflowExecutionsResourceSpec
   it should "answer an open execution's status from the label of its log" in {
     grantReadAccess()
     val stateTime = System.currentTimeMillis() + 5000L
-    // The status column says each of them completed, which no unit's word makes true.
-    def open() = insertExecution(status = WorkflowExecutionStatus.Completed.toByte)
+    def open() = insertExecution()
     val expected = Seq(
       "READY" -> WorkflowExecutionStatus.Initializing,
       "RUNNING" -> WorkflowExecutionStatus.Running,
@@ -984,9 +942,9 @@ class WorkflowExecutionsResourceSpec
 
   it should "answer an open execution that no unit has started as created, as of its creation" in {
     grantReadAccess()
-    val noLog = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    val noLog = insertExecution()
     // A unit made the log and has not written a state to it.
-    val noState = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    val noState = insertExecution()
     label(noState, None, System.currentTimeMillis() + 5000L)
 
     Seq(noLog, noState).foreach { execution =>
@@ -1007,7 +965,7 @@ class WorkflowExecutionsResourceSpec
 
   it should "answer -1 for an open execution whose log cannot be read, and list the others as they are" in {
     grantReadAccess()
-    val unread = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    val unread = insertExecution()
     unreadable.add(logUriOf(unread))
     val running = insertExecution()
     label(running, Some("RUNNING"), System.currentTimeMillis())
@@ -1077,7 +1035,7 @@ class WorkflowExecutionsResourceSpec
 
   it should "read an open execution's status from its log in the lake" in {
     grantReadAccess()
-    val execution = insertExecution(status = WorkflowExecutionStatus.Completed.toByte)
+    val execution = insertExecution()
     val uri = logUriOf(execution)
     val startedAt = execution.getStartingTime.getTime
     ExecutionLogStore.create(uri, startedAt + 1000L, 30000L)
@@ -1179,12 +1137,11 @@ class WorkflowExecutionsResourceSpec
       "created" -> None
     ).map {
       case (name, state) =>
-        // What the status column says is no part of any filter.
-        val execution = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+        val execution = insertExecution()
         state.foreach(_ => label(execution, state, System.currentTimeMillis()))
         name -> execution
     }
-    val unread = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    val unread = insertExecution()
     unreadable.add(logUriOf(unread))
     (closed ++ open :+ ("unknown" -> unread)).toMap
   }
@@ -1275,7 +1232,6 @@ class WorkflowExecutionsResourceSpec
     def latest() = resource.retrieveLatestExecutionEntry(testWorkflowWid, session(testUser))
 
     val closed = insertExecution(
-      status = WorkflowExecutionStatus.Running.toByte,
       startOffsetMillis = 60000L,
       endedOffsetMillis = Some(30000L),
       outcome = WorkflowExecutionStatus.Failed,
@@ -1286,8 +1242,8 @@ class WorkflowExecutionsResourceSpec
     assert(latest().reason == "unit lost")
     assert(latest().completionTime == closed.getEndedAt)
 
-    // Created, which the status column a create writes also says, and then run by a unit.
-    val open = insertExecution(status = WorkflowExecutionStatus.Created.toByte)
+    // Created, and then run by a unit.
+    val open = insertExecution()
     assert(latest().eId == open.getEid)
     assert(latest().status == WorkflowExecutionStatus.Created.toByte)
     assert(latest().completionTime == open.getStartingTime)
@@ -1563,29 +1519,7 @@ class WorkflowExecutionsResourceSpec
     )
   }
 
-  it should "read the statistics where the execution's ids say, whatever its row names as their location" in {
-    grantReadAccess()
-    // The column a unit used to write: left empty, and then naming a place nothing is at.
-    val unnamed = insertExecution()
-    val misnamed = insertExecution(runtimeStatsUri = "mock:///stats")
-    val uris = Seq(unnamed, misnamed).map(statisticsUriOf(_))
-    uris.foreach(RuntimeStatisticsStore.create)
-    try {
-      uris.foreach(RuntimeStatisticsStore.append(_, Seq(scanSample)))
-
-      Seq(unnamed, misnamed).foreach { exec =>
-        val rows =
-          resource.retrieveWorkflowRuntimeStatistics(
-            testWorkflowWid,
-            exec.getEid,
-            session(testUser)
-          )
-        assert(rows.map(_.operatorId) == Seq("scan"))
-      }
-    } finally uris.foreach(RuntimeStatisticsStore.drop)
-  }
-
-  it should "find the execution in one read of its row, without the column that named its statistics" in {
+  it should "find the execution in one read of its row" in {
     grantReadAccess()
     val (exec, _) = executionWithStatistics()
 
@@ -1595,23 +1529,6 @@ class WorkflowExecutionsResourceSpec
 
     assert(statements.forall(_.verb == "SELECT"))
     assert(statements.count(_.tables.contains("workflow_executions")) == 1)
-    assert(!statements.exists(_.sql.toLowerCase.contains("runtime_stats_uri")))
-  }
-
-  /**
-    * An execution of the test workflow whose row names where its statistics are, as a unit
-    * that measures them reads it.
-    */
-  private def executionWithStatisticsUri(): (WorkflowExecutions, URI) = {
-    val exec = insertExecution()
-    val uri = RuntimeStatisticsStore.statisticsUri(
-      WorkflowIdentity(testWorkflowWid.longValue()),
-      ExecutionIdentity(exec.getEid.longValue()),
-      None
-    )
-    exec.setRuntimeStatsUri(uri.toString)
-    workflowExecutionsDao.update(exec)
-    (exec, uri)
   }
 
   it should "return the rows a run's record stored, oldest first, each with its time to the millisecond" in {

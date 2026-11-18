@@ -416,7 +416,6 @@ class ExecutionResourceSpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(uid))
       .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(cuid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation.orNull)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, whid.orNull)
@@ -807,7 +806,6 @@ class ExecutionResourceSpec
     stored.getName shouldBe "spec-execution"
     stored.getEnvironmentVersion shouldBe """{"engine_version":"1.4.0-spec"}"""
     stored.getLogLocation shouldBe null
-    stored.getLastUpdateTime shouldBe null
 
     val (record, plan) = storedPlan(execution)
     record.entryId shouldBe ExecutionPlanStore.PlanEntryId

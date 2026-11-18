@@ -183,8 +183,6 @@ class AdminUserResourceSpec
     val execution = new WorkflowExecutions
     execution.setVid(version.getVid)
     execution.setUid(uid)
-    execution.setStatus(0.toByte)
-    execution.setResult("")
     execution.setLogLocation("")
     execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
     execution.setBookmarked(false)

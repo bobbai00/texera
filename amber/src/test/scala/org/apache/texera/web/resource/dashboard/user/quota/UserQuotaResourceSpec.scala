@@ -142,28 +142,6 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
       .where(WORKFLOW_VERSION.WID.eq(testWid))
 
     getDSLContext
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          getDSLContext
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.UID.eq(testUid))
-        )
-      )
-      .execute()
-    getDSLContext
-      .deleteFrom(OPERATOR_EXECUTIONS)
-      .where(
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          getDSLContext
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.UID.eq(testUid))
-        )
-      )
-      .execute()
-    getDSLContext
       .deleteFrom(WORKFLOW_EXECUTIONS)
       .where(WORKFLOW_EXECUTIONS.VID.in(vidSubquery))
       .execute()
@@ -207,8 +185,6 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     val execution = new WorkflowExecutions
     execution.setVid(testVersion.getVid)
     execution.setUid(testUid)
-    execution.setStatus(0.toByte)
-    execution.setResult("")
     execution.setLogLocation("")
     execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
     execution.setBookmarked(false)
@@ -315,44 +291,6 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     insertExecution()
 
     assert(UserQuotaResource.getUserQuotaSize(testUid).map(_.storedBytes).toList == List(0L))
-  }
-
-  // The sizes a unit counted while it ran are no part of what an execution holds.
-  it should "leave out the sizes a computing unit recorded" in {
-    resetFixtures()
-    val execution = insertExecution()
-    getDSLContext
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_SIZE, java.lang.Long.valueOf(200L))
-      .set(WORKFLOW_EXECUTIONS.STORED_BYTES, java.lang.Long.valueOf(7L))
-      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
-      .execute()
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .columns(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
-        OPERATOR_PORT_EXECUTIONS.RESULT_URI,
-        OPERATOR_PORT_EXECUTIONS.RESULT_SIZE
-      )
-      .values(execution.getEid, "gp-1", "vfs:///r", java.lang.Long.valueOf(100L))
-      .execute()
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .columns(
-        OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_EXECUTIONS.OPERATOR_ID,
-        OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI,
-        OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_SIZE
-      )
-      .values(execution.getEid, "op-1", "vfs:///c", java.lang.Long.valueOf(50L))
-      .execute()
-
-    val quota = UserQuotaResource.getUserQuotaSize(testUid)
-
-    assert(quota.length == 1)
-    assert(quota.head.eid == execution.getEid)
-    assert(quota.head.storedBytes == 7L)
   }
 
   // ─── class endpoints (delegate to the object using the SessionUser's uid) ──

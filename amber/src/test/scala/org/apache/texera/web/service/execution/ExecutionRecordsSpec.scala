@@ -190,7 +190,6 @@ class ExecutionRecordsSpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(uid))
       .set(WORKFLOW_EXECUTIONS.CUID, cuid.map(Integer.valueOf).orNull)
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(startedAtMs))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, warehouse.orNull)
@@ -374,12 +373,6 @@ class ExecutionRecordsSpec
       eid
     }
     val all = Seq(open, done, broken, stopped)
-    // What the status column says is no part of it: the open one is "completed" there.
-    getDSLContext
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(completed))
-      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(open.toInt)))
-      .execute()
 
     among(all) shouldBe all
     among(all, completed) shouldBe Seq(done)
@@ -422,8 +415,6 @@ class ExecutionRecordsSpec
     // Nothing looked for its tables yet, and nothing measured them.
     closed.getResultsExpiredAt shouldBe null
     closed.getStoredBytes shouldBe null
-    // Lists still read the status, which a close leaves as the unit wrote it.
-    closed.getStatus shouldBe WorkflowExecutionStatus.Created
   }
 
   it should "keep when the execution ended, and when its results were marked expired, to the millisecond" in {
@@ -643,9 +634,9 @@ class ExecutionRecordsSpec
       .fetchOneInto(classOf[Integer])
     val table = s"${WORKFLOW_EXECUTIONS.getSchema.getName}.${WORKFLOW_EXECUTIONS.getName}"
     getDSLContext.execute(
-      s"""insert into $table (vid, uid, cuid, status, environment_version, starting_time,
+      s"""insert into $table (vid, uid, cuid, environment_version, starting_time,
          |                    outcome, ended_at, outcome_from_log)
-         |select ?, ?, ?, 3, 'test', ?, 3, ?, true from generate_series(1, 2000)""".stripMargin,
+         |select ?, ?, ?, 'test', ?, 3, ?, true from generate_series(1, 2000)""".stripMargin,
       vid,
       Integer.valueOf(creatorUid),
       Integer.valueOf(liveCuid),

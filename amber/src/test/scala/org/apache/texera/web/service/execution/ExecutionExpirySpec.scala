@@ -229,7 +229,6 @@ class ExecutionExpirySpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(testUid))
       .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(cuid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(endedAt - 60000L))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, warehouse.orNull)

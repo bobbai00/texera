@@ -386,7 +386,6 @@ class ExecutionClosingJobSpec
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(ownerUid))
       .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(liveCuid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(WorkflowExecutionStatus.Created))
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, warehouse.orNull)
@@ -671,8 +670,6 @@ class ExecutionClosingJobSpec
     )
     // Its results are there to be read, and expired later.
     row(ranToTheEnd).getResultsExpiredAt shouldBe null
-    // Lists still read the status column, which a close does not write.
-    row(broke).getStatus shouldBe WorkflowExecutionStatus.Created
   }
 
   it should "leave a run that is under way open, tick after tick, while its unit beats" in {

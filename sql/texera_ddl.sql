@@ -46,8 +46,6 @@ SET search_path TO texera_db, public;
 -- 3. Drop all tables if they exist
 --    (CASCADE handles FK dependencies)
 -- ============================================
-DROP TABLE IF EXISTS operator_executions CASCADE;
-DROP TABLE IF EXISTS operator_port_executions CASCADE;
 DROP TABLE IF EXISTS operator_port_cache CASCADE;
 DROP TABLE IF EXISTS workflow_user_access CASCADE;
 DROP TABLE IF EXISTS workflow_of_user CASCADE;
@@ -102,9 +100,6 @@ CREATE TYPE workflow_computing_unit_termination_reason_enum AS ENUM ('USER_REQUE
 CREATE TYPE provider_type_enum AS ENUM ('LOCAL', 'GOOGLE', 'ORCID', 'APPLE');
 CREATE TYPE user_warehouse_flavor_enum AS ENUM ('local', 'aws');
 CREATE TYPE default_view_enum AS ENUM ('CANVAS', 'FORM');
--- Mirrors OutputPort.OutputMode in workflow.proto: a new mode needs a value here, a migration,
--- and a case in ExecutionResultService.toOutputModeEnum.
-CREATE TYPE output_mode_enum AS ENUM ('SET_SNAPSHOT', 'SET_DELTA', 'SINGLE_SNAPSHOT');
 
 -- ============================================
 -- 5. Create tables
@@ -315,22 +310,19 @@ CREATE TABLE IF NOT EXISTS virtual_environments
 );
 
 -- workflow_executions
+-- What the Dashboard service keeps of an execution. What its run does is not here: a computing
+-- unit keeps a run's state, statistics, console and results in the lake, and writes no row.
 CREATE TABLE IF NOT EXISTS workflow_executions
 (
     eid                 SERIAL PRIMARY KEY,
     vid                 INT NOT NULL,
     uid                 INT NOT NULL,
     cuid                INT,
-    status              SMALLINT NOT NULL DEFAULT 1,
-    result              TEXT,
-    starting_time       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_update_time    TIMESTAMP,
+    starting_time       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- when it was created
     bookmarked          BOOLEAN DEFAULT FALSE,
     name                VARCHAR(128) NOT NULL DEFAULT 'Untitled Execution',
     environment_version VARCHAR(128) NOT NULL,
-    log_location        TEXT,
-    runtime_stats_uri   TEXT,
-    runtime_stats_size  BIGINT DEFAULT 0,
+    log_location        TEXT,              -- where its replay log is, when it keeps one
     whid                INT,
     -- The closing record: written by the Dashboard service when the execution is over.
     outcome             SMALLINT,          -- 3 completed, 4 failed, 5 killed; NULL while open
@@ -554,32 +546,6 @@ CREATE TABLE IF NOT EXISTS model_upload_session_part
     FOREIGN KEY (upload_id)
         REFERENCES model_upload_session(upload_id)
         ON DELETE CASCADE
-);
-
--- operator_executions (modified to match MySQL: no separate primary key; added console_messages_uri)
-CREATE TABLE IF NOT EXISTS operator_executions
-(
-    workflow_execution_id INT NOT NULL,
-    operator_id           VARCHAR(100) NOT NULL,
-    console_messages_uri  TEXT,
-    console_messages_size BIGINT DEFAULT 0,
-    PRIMARY KEY (workflow_execution_id, operator_id),
-    FOREIGN KEY (workflow_execution_id) REFERENCES workflow_executions(eid) ON DELETE CASCADE
-    );
-
--- operator_port_executions
-CREATE TABLE operator_port_executions
-(
-    workflow_execution_id INT NOT NULL,
-    global_port_id        VARCHAR(200) NOT NULL,
-    result_uri            TEXT,
-    result_size           BIGINT DEFAULT 0,
-    -- The port's declared output mode and row count, so a finished execution's results
-    -- can be listed without the engine's physical plan or opening each table (#8994).
-    output_mode           output_mode_enum,
-    result_count          BIGINT,
-    PRIMARY KEY (workflow_execution_id, global_port_id),
-    FOREIGN KEY (workflow_execution_id) REFERENCES workflow_executions(eid) ON DELETE CASCADE
 );
 
 -- operator_port_cache

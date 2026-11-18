@@ -129,8 +129,8 @@ import scala.util.Try
   * `collectOperatorResult` needs the most of those fixtures, and gets a real one: `storeResult`
   * below writes an actual Iceberg result table through `DocumentFactory` on the ambient catalog
   * and keeps its URI as a run keeps what its engine reports (`ResultUris`), which is all the
-  * method needs — it takes the run's result URIs as a parameter, so no engine, coordinator,
-  * client or registry row is involved. Two things to know before touching those tests: its
+  * method needs — it takes the run's result URIs as a parameter, so no engine, coordinator
+  * or client is involved. Two things to know before touching those tests: its
   * outermost `catch` turns any storage failure into a well-formed `("table", None, ...)`, so an
   * assertion weaker than the row contents passes on a fixture that never opened a document; and
   * its front/back split is exact arithmetic, so the char budgets are multiples of a measured
