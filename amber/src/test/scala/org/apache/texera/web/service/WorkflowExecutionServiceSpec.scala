@@ -1285,6 +1285,32 @@ class WorkflowExecutionServiceSpec
     } finally run.close()
   }
 
+  it should "start nothing for a run that failed while its environment installs, though its engine is still there" in {
+    val python = new FakePython()
+    val held = python.holdPipInstalls()
+    val installer = installerOn(python)
+    val executionPlan = readBack(environmentPlan("failed-meanwhile"))
+    val run = new StoredRun(executionPlan, Some(installer))
+    try {
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
+      held.awaitBegun() shouldBe true
+
+      // As the workflow's error handler records what fails in a run: the run ends FAILED, and
+      // its engine is left to whoever lets go of the run.
+      run.store.transitionTo(FAILED) shouldBe true
+      run.engine.getOrElse(fail("no engine")).isActive shouldBe true
+      held.letGo()
+
+      eventually(installer.interpreterFor(Some(ml)) should not be empty)
+      Thread.sleep(300)
+      startWorkflowAsked(run) shouldBe false
+      run.store.metadataStore.getState.state shouldBe FAILED
+      run.recorder.states shouldBe Seq(("READY", None), ("FAILED", None))
+      run.errors shouldBe empty
+    } finally run.close()
+  }
+
   "WorkflowExecutionService.coordinatorConfigOf" should
     "start the coordinator replaying the plan's replay log, and writing its own where the plan says" in {
     val config = WorkflowExecutionService.coordinatorConfigOf(
