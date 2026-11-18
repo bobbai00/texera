@@ -2692,11 +2692,17 @@ def _export_rows(text: str) -> tuple[list[str], list[dict]]:
     return header, [dict(zip(header, map(cell, row))) for row in table[1:]]
 
 
+#: How long the check that the unit is down waits for a socket to open. Where the gateway
+#: gets no refusal from a stopped unit (its container is on a network of its own), the attempt
+#: ends only with this wait, and what the scenario reads next expires by age: so it is short.
+UNIT_DOWN_WAIT_S = 5.0
+
+
 def _check_unit_down(ctx: Ctx, wid: int) -> None:
     try:
-        ctx.transport.open_socket(wid, ctx.cuid).close()
+        ctx.transport.open_socket(wid, ctx.cuid, open_timeout_s=UNIT_DOWN_WAIT_S).close()
         refused = ""
-    except Exception as e:  # noqa: BLE001 -- however the gateway refuses, the unit did not answer
+    except Exception as e:  # noqa: BLE001 -- refused or never answered: the unit is down either way
         refused = f"{type(e).__name__}: {str(e)[:200]}"
     ctx.check("the unit is down: a new socket to it is refused", bool(refused),
               refused or "the unit answered a new socket")

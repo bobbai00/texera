@@ -820,18 +820,21 @@ class WebSocketTransport(Transport):
     open_quiet_s = OPEN_QUIET_S
 
     def open_socket(self, wid: int, cuid: int, *, token: str | None = None,
-                    uid: int | None = None) -> WebSocketRunHandle:
+                    uid: int | None = None, open_timeout_s: float | None = None) -> WebSocketRunHandle:
         """A session on the workflow, subscribed, its open sequence over: the handshake
         state, the replay of the workflow's held execution and ClusterStatusUpdateEvent
-        have arrived, so nothing of an earlier run can arrive after the first command."""
+        have arrived, so nothing of an earlier run can arrive after the first command.
+        `open_timeout_s` is how long to wait for the connection and then for that, when not
+        the transport's own."""
         token = token or self._token()
         if uid is None:
             uid = int(jwt_claims(token)["userId"]) if token != self._token() else self._uid()
         query = urllib.parse.urlencode({"wid": wid, "uid": uid, "cuid": cuid, "access-token": token})
+        wait_s = self.open_timeout_s if open_timeout_s is None else open_timeout_s
         handle = WebSocketRunHandle(f"{self.ws_base}/wsapi/workflow-websocket?{query}", wid, cuid,
-                                    heartbeat_s=self.heartbeat_s, log=self._log)
+                                    heartbeat_s=self.heartbeat_s, log=self._log, connect_timeout=wait_s)
         try:
-            handle.wait_open(self.open_timeout_s, self.open_cluster_wait_s, self.open_quiet_s)
+            handle.wait_open(wait_s, self.open_cluster_wait_s, self.open_quiet_s)
         except Exception:
             handle.close()
             raise
