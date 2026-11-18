@@ -19,14 +19,25 @@
 
 package org.apache.texera.web.service.execution
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord, PlanTooLargeException}
+import org.apache.texera.amber.core.storage.{
+  ExecutionPlanStore,
+  InputLinker,
+  LakeFSInputLinker,
+  PlanRecord,
+  PlanTooLargeException
+}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.workflow.{
+  CostHints,
+  ExecutionPlan,
+  PhysicalPlanCodec,
+  ReplaySource,
+  WorkflowSettings
+}
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
-import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.common.compiler.{CompileFor, WorkflowCompilationFailed}
 import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -43,25 +54,21 @@ import org.apache.texera.web.model.http.request.execution.{
 import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
-import org.apache.texera.web.service.{
-  ExecutionsMetadataPersistService,
-  PlanToRun,
-  WorkflowEmailNotifier
+import org.apache.texera.web.service.execution.WorkflowCompilingService.{
+  CompileRefused,
+  CompileUnanswered,
+  PlanRequest
 }
+import org.apache.texera.web.service.{ExecutionsMetadataPersistService, WorkflowEmailNotifier}
 
 import java.net.URI
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{
-  ArrayBlockingQueue,
   BlockingQueue,
-  ExecutionException,
   Executor,
-  ExecutorService,
   LinkedBlockingQueue,
-  RejectedExecutionException,
   ThreadPoolExecutor,
-  TimeUnit,
-  TimeoutException
+  TimeUnit
 }
 import javax.ws.rs.core.Response
 import javax.ws.rs.{
@@ -80,15 +87,11 @@ object ExecutionCreator {
   val MaxColumnLength = 128
 
   /**
-    * How long a workflow's compile may take: half of the 120 seconds each deployment's route
-    * gives a create, which leaves the rest for the cost hints before it and the plan's write
-    * after it.
+    * How long the compiling service may take to answer a workflow's plan: half of the 120
+    * seconds each deployment's route gives a create, which leaves the rest for the cost hints
+    * before it and the plan's links and write after it.
     */
   val CompileDeadline: FiniteDuration = 60.seconds
-
-  /** How many creates compile at once, and how many more may wait for a compile to begin. */
-  private val CompileThreads = 8
-  private val CompilesWaiting = 32
 
   /**
     * A pool of at most `threads` daemon threads named after `name`, which holds the work they
@@ -123,7 +126,8 @@ object ExecutionCreator {
       computingUnitId: Int,
       executionName: String,
       environmentVersion: String,
-      plan: LogicalPlanPojo,
+      plan: JsonNode,
+      target: Option[String],
       settings: WorkflowSettings,
       emailNotificationEnabled: Boolean,
       warehouseId: Option[Int],
@@ -149,31 +153,38 @@ final class WorkflowNotCompiled(
   *
   * In this order, which decides what a refused request leaves behind:
   *  1. The request is checked: a workflow, a computing unit, an engine version, settings a plan
-  *     can be made to run under, and a workflow whose graph the compiler can read (with a target,
-  *     which must be one of its operators, the part of it up to the target, which is all that is
-  *     compiled). Otherwise 400.
+  *     can be made to run under, and a logical plan. Otherwise 400. The logical plan is not
+  *     read here: what is wrong with it is the compiling service's to say.
   *  1. The user must be able to read the workflow and run workflows on the unit (403, also for a
   *     unit that does not exist), and the unit must not be terminated (409).
   *  1. The warehouse the run writes into and the replay log it replays, which is one of the
   *     user's own executions of the workflow, are checked (400).
   *  1. The execution's row is inserted, as Created, with where it writes its replay log when
   *     replay logs are kept. No row is left by a request refused before this.
-  *  1. The workflow is compiled for the user's run, under the site's settings as they stand and
-  *     with the cost hints of their newest completed run of it, and the plan made
-  *     ([[PlanToRun.make]]): each file a scan source reads is one the user may read, and the plan
-  *     carries a link to it for the computing unit to read it through; each Python environment
-  *     an operator names is one the user keeps, and the plan carries its packages for the unit
-  *     to install. A workflow that does not compile, a scan of a file the user may not read or
-  *     an operator in an environment the user does not have among them, closes the row as
-  *     failed, "compile error: …" with one operator's error, and is answered with each
-  *     operator's error ([[WorkflowNotCompiled]], 400). The compile runs on a pool of its own
-  *     with a deadline, and one that passes it closes the row as failed, "its plan could not be
-  *     made" (504). A plan that cannot be made for another reason, such as the database or the
-  *     storage not answering while a file is resolved or linked, closes the row so too (500).
+  *  1. The workflow compiling service is asked for the plan of the user's run, with the user's
+  *     own token ([[WorkflowCompilingService.planToRun]]): it compiles the workflow (with a
+  *     target, the target and what is upstream of it) under the site's settings as they stand,
+  *     and resolves what the workflow names as the user may read it. Each file a scan source
+  *     reads is one the user may read, and the plan says where it is kept; each Python
+  *     environment an operator names is one the user keeps, and the plan carries its packages
+  *     for the unit to install. A workflow that does not compile, a scan of a file the user may
+  *     not read or an operator in an environment the user does not have among them, closes the
+  *     row as failed, "compile error: …" with one operator's error, and is answered with each
+  *     operator's error ([[WorkflowNotCompiled]], 400); so does a workflow the compiler cannot
+  *     read, such as one whose links form a cycle or whose target it does not have, with why
+  *     (400). A service that does not answer by the deadline closes the row as failed, "its
+  *     plan could not be made" (504), and so does one that cannot be reached or has too many
+  *     compiles waiting (503).
+  *  1. What the plan needs that only this service has is added to it: a link to each file its
+  *     operators read, signed with this service's keys to the object store for the address the
+  *     plan gives the file, for the computing unit to read the file through; the cost hints of
+  *     the user's newest completed run of the workflow; and the replay log it replays and the
+  *     one it writes. A plan that cannot be made for another reason, such as the storage not
+  *     answering while the cost hints are read, closes the row as failed too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
-  *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
-  *     the email notification. A plan larger than the table keeps closes the row as failed,
-  *     "its plan could not be stored" (400); so does a write that fails (500).
+  *     from (as JSON that parses back to it, as the compiling service answered it), the user,
+  *     the unit and the email notification. A plan larger than the table keeps closes the row
+  *     as failed, "its plan could not be stored" (400); so does a write that fails (500).
   *  1. Off the request's thread, the results of the workflow's ended executions on the unit that
   *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
   *     new execution replaces none until a unit runs it.
@@ -184,18 +195,19 @@ final class WorkflowNotCompiled(
   * ended. Until every reader takes an ending from the closing record, the row's status is
   * FAILED as well.
   *
-  * @param bindingsFor       what a plan is bound to, for a user
+  * @param compiling         the workflow compiling service, which makes the plans
+  * @param linker            signs the links to the files a plan's operators read
   * @param replayLogRoot     where runs keep their replay logs; None when they keep none
   * @param warehousesEnabled whether runs write into per-user warehouses
   * @param costHints         finds the cost hints a plan is saved with
   * @param writePlan         writes the plan row, and the logical plan it was compiled from, to
   *                          the plan table at a URI
   * @param background        runs what a create leaves to be done after it has answered
-  * @param compiles          runs the compiles, a bounded number at once
-  * @param compileDeadline   how long a compile may take
+  * @param compileDeadline   how long the compiling service may take to answer a plan
   */
 class ExecutionCreator(
-    bindingsFor: Integer => CompileFor.Run = PlanToRun.bindingsFor,
+    compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
+    linker: InputLinker = LakeFSInputLinker.forDeployment,
     replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     costHints: CostHintsLoader = new CostHintsLoader(),
@@ -205,11 +217,6 @@ class ExecutionCreator(
       threads = 1,
       waiting = new LinkedBlockingQueue[Runnable]()
     ),
-    compiles: ExecutorService = ExecutionCreator.daemonThreads(
-      "execution-compile",
-      ExecutionCreator.CompileThreads,
-      waiting = new ArrayBlockingQueue[Runnable](ExecutionCreator.CompilesWaiting)
-    ),
     compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline
 ) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, MaxColumnLength}
@@ -217,8 +224,10 @@ class ExecutionCreator(
   /**
     * Creates the execution `request` asks for, for `user`, in the steps this class describes.
     *
-    * @param requestUri the URI the request came to: the email notification links to the workflow
-    *                   on its host
+    * @param requestUri    the URI the request came to: the email notification links to the
+    *                      workflow on its host
+    * @param authorization the request's `Authorization` header: the user's own token, which the
+    *                      compiling service is asked for the plan with
     * @return the execution created
     * @throws WebApplicationException with the status of the step that refused the request or
     *                                 failed; a [[WorkflowNotCompiled]] when the workflow does not
@@ -227,7 +236,8 @@ class ExecutionCreator(
   def create(
       request: CreateExecutionRequest,
       user: User,
-      requestUri: URI
+      requestUri: URI,
+      authorization: String
   ): CreateExecutionResponse = {
     val uid = Option(user).flatMap(u => Option(u.getUid)).getOrElse {
       throw new ForbiddenException("An execution is created for a signed-in user.")
@@ -263,17 +273,24 @@ class ExecutionCreator(
     // From here the row exists: whatever fails closes it as failed, with why, so it does not
     // stay open although no unit can ever start it.
     val (planUri, record, logical) = closingOnFailure(eid, planNotMade) {
-      val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
       // How long each operator took in the user's newest completed run of the workflow, for the
       // scheduler's cost model: saved with the plan, which the engine takes them from.
-      context.costHints = costHints.load(checked.wid, uid)
-      // The plan compiled, as the request sent it, loop-variable references included: written
-      // before the compile resolves its operators in place.
-      val logical = checked.plan.toJson
-      val bindings = bindingsFor(uid)
-      val savedPlan = withinDeadline(eid) {
-        PlanToRun.make(context, bindings, checked.plan, replay, replayLog)
-      }
+      val hints = costHints.load(checked.wid, uid)
+      val made = compiling.planToRun(
+        PlanRequest(
+          checked.wid,
+          eid.id,
+          warehouse,
+          checked.settings,
+          checked.plan,
+          checked.target
+        ),
+        authorization,
+        compileDeadline
+      )
+      val savedPlan = planToStore(made.plan, wid, eid, warehouse, hints, replay, replayLog)
+      // The plan compiled, as the request sent it, loop-variable references included.
+      val logical = made.logicalPlan
       val record = PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
         body = savedPlan,
@@ -340,69 +357,94 @@ class ExecutionCreator(
         throw answerTo(eid, failure)
     }
 
+  /**
+    * The plan the compiling service made for execution `eid` of workflow `wid`, `made`, as it
+    * is stored: each file its operators read linked, at the address the plan gives it, and the
+    * run's cost hints, the replay log it replays and the one it writes added.
+    *
+    * @throws IllegalArgumentException if `made` is no plan made to run, or what is added is not
+    *                                  what a plan is saved with
+    * @throws IllegalStateException    if `made` is the plan of another execution, or a file is
+    *                                  kept where no link can be signed for
+    */
+  private def planToStore(
+      made: String,
+      wid: WorkflowIdentity,
+      eid: ExecutionIdentity,
+      warehouse: Option[String],
+      hints: Option[CostHints],
+      replay: Option[ReplaySource],
+      replayLog: Option[URI]
+  ): String = {
+    val unlinked = PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.fromJson(made))
+    val context = unlinked.context
+    if (context.workflowId != wid || context.executionId != eid || context.warehouse != warehouse) {
+      throw new IllegalStateException(
+        s"The compiling service answered the plan of execution ${context.executionId.id} of " +
+          s"workflow ${context.workflowId.id}, asked for execution ${eid.id}'s."
+      )
+    }
+    context.costHints = hints
+    PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec.encode(
+        ExecutionPlan(context, unlinked.plan.linkedBy(linker), replay, replayLog)
+      )
+    )
+  }
+
   /** Why an execution whose plan could not be made is closed, given what failed. */
   private def planNotMade(failure: Throwable): String =
     failure match {
-      case failed: WorkflowCompilationFailed =>
-        // One operator's error, the same one whenever the workflow is compiled.
-        ExecutionClosing.compileError(failed.operatorErrors.minBy(_._1.id)._2.message)
+      case refused: CompileRefused if refused.status == Response.Status.BAD_REQUEST.getStatusCode =>
+        // One operator's error, the same one whenever the workflow is compiled; of a workflow
+        // the compiler cannot read, why.
+        ExecutionClosing.compileError(
+          if (refused.operatorErrors.isEmpty) refused.getMessage
+          else refused.operatorErrors.minBy(_._1)._2.message
+        )
       case _ => ExecutionClosing.PlanNotMade
     }
 
   /**
-    * `compile`, the compile of execution `eid`'s workflow, run on a thread of the pool of
-    * compiles while the request's thread waits for it, for no longer than the deadline. A compile
-    * reads what the workflow's operators name, such as the files of its scans or the database of
-    * a SQL source, at addresses the request chose: a source that does not answer holds one of the
-    * pool's threads, not the service's.
-    *
-    * @throws WebApplicationException (504) if the deadline passes, when the compile is
-    *                                 interrupted, or (503) if as many compiles as the pool holds
-    *                                 wait already
-    */
-  private def withinDeadline[T](eid: ExecutionIdentity)(compile: => T): T = {
-    val compiling =
-      try compiles.submit[T](() => compile)
-      catch {
-        case _: RejectedExecutionException =>
-          throw new WebApplicationException(
-            s"Execution ${eid.id} could not be created: too many workflows are being compiled. " +
-              "Try again in a moment.",
-            Response.Status.SERVICE_UNAVAILABLE
-          )
-      }
-    try compiling.get(compileDeadline.toMillis, TimeUnit.MILLISECONDS)
-    catch {
-      case failed: ExecutionException => throw failed.getCause
-      case _: TimeoutException =>
-        compiling.cancel(true)
-        throw new WebApplicationException(
-          s"Execution ${eid.id} could not be created: compiling the workflow took longer than " +
-            s"$compileDeadline.",
-          Response.Status.GATEWAY_TIMEOUT
-        )
-      case interrupted: InterruptedException =>
-        compiling.cancel(true)
-        throw interrupted
-    }
-  }
-
-  /**
     * What a create answers when `failure` stops it after execution `eid`'s row exists: each
-    * operator's error for a workflow that does not compile (400), the answer a step chose for
-    * its own failure (400 for a plan too large to store), and otherwise 500, with the failure as
-    * its cause.
+    * operator's error for a workflow that does not compile (400), why for one the compiler
+    * cannot read (400), 504 for a compiling service that does not answer by the deadline and
+    * 503 for one that cannot be reached or has too many compiles waiting, the answer a step
+    * chose for its own failure (400 for a plan too large to store), and otherwise 500, with the
+    * failure as its cause.
     */
-  private def answerTo(eid: ExecutionIdentity, failure: Throwable): WebApplicationException =
+  private def answerTo(eid: ExecutionIdentity, failure: Throwable): WebApplicationException = {
+    def notCreated(why: String, status: Response.Status): WebApplicationException =
+      new WebApplicationException(s"Execution ${eid.id} could not be created: $why", status)
+    def tookTooLong: WebApplicationException =
+      notCreated(
+        s"compiling the workflow took longer than $compileDeadline.",
+        Response.Status.GATEWAY_TIMEOUT
+      )
     failure match {
-      case failed: WorkflowCompilationFailed =>
-        logger.info(
-          s"Execution ${eid.id} failed: the workflow does not compile. ${failed.getMessage}"
+      case refused: CompileRefused if refused.status == Response.Status.BAD_REQUEST.getStatusCode =>
+        if (refused.operatorErrors.isEmpty) new BadRequestException(refused.getMessage)
+        else {
+          logger.info(
+            s"Execution ${eid.id} failed: the workflow does not compile. ${refused.getMessage}"
+          )
+          new WorkflowNotCompiled(eid.id, refused.operatorErrors, refused.getMessage)
+        }
+      case refused: CompileRefused
+          if refused.status == Response.Status.SERVICE_UNAVAILABLE.getStatusCode =>
+        notCreated(
+          "too many workflows are being compiled. Try again in a moment.",
+          Response.Status.SERVICE_UNAVAILABLE
         )
-        new WorkflowNotCompiled(
-          eid.id,
-          failed.operatorErrors.map { case (operator, error) => operator.id -> error },
-          failed.getMessage
+      case refused: CompileRefused
+          if refused.status == Response.Status.GATEWAY_TIMEOUT.getStatusCode =>
+        tookTooLong
+      case unanswered: CompileUnanswered if unanswered.timedOut => tookTooLong
+      case unanswered: CompileUnanswered =>
+        logger.warn(s"Execution ${eid.id} failed: ${unanswered.getMessage}", unanswered)
+        notCreated(
+          "the workflow compiling service could not be reached. Try again in a moment.",
+          Response.Status.SERVICE_UNAVAILABLE
         )
       case answer: WebApplicationException => answer
       case other =>
@@ -411,11 +453,11 @@ class ExecutionCreator(
           other
         )
     }
+  }
 
   /**
     * The parts of `request` a create uses, with what it may leave out filled in, or 400 with what
-    * is missing or wrong. The plan compiled is the one sent, or, with a target, the target and
-    * the part of the plan upstream of it.
+    * is missing or wrong. The logical plan is taken as it was sent.
     */
   private def checkedRequest(request: CreateExecutionRequest): CheckedRequest = {
     def refuse(message: String): Nothing = throw new BadRequestException(message)
@@ -441,30 +483,15 @@ class ExecutionCreator(
           "characters an execution keeps."
       )
     }
-    val sent = Option(request.logicalPlan).getOrElse(refuse("The request has no logical plan."))
-    sent.listProblem().foreach(problem => refuse(problem))
-    // Lists a client may leave out, which the compiler reads.
-    val whole = sent.copy(
-      opsToViewResult = Option(sent.opsToViewResult).getOrElse(Nil),
-      opsToReuseResult = Option(sent.opsToReuseResult).getOrElse(Nil)
-    )
-    // Only the plan compiled has to be a graph the compiler reads: with a target, a part of the
-    // workflow the run does not reach is neither compiled nor checked.
-    val plan = Option(request.targetOperatorId).flatten match {
-      case Some(target) =>
-        if (!whole.operators.exists(_.operatorIdentifier.id == target)) {
-          refuse(s"The workflow has no operator $target to run up to.")
-        }
-        whole.upstreamOf(target)
-      case None => whole
-    }
-    plan.graphProblem().foreach(problem => refuse(problem))
+    val plan = Option(request.logicalPlan)
+      .filter(_.isObject)
+      .getOrElse(refuse("The request has no logical plan."))
     // Any output ports whose results are stored that the settings name are replaced by the ones
     // the compiler finds, which the plan is saved with.
     val settings = Option(request.workflowSettings).flatten.getOrElse(
       WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize)
     )
-    PlanToRun.settingsProblem(settings).foreach(problem => refuse(problem))
+    WorkflowSettings.problemOf(settings).foreach(problem => refuse(problem))
     val replay = Option(request.replayFromExecution).flatten
     replay.foreach { info =>
       if (info.interaction == null || info.interaction.isBlank) {
@@ -477,6 +504,7 @@ class ExecutionCreator(
       executionName = executionName,
       environmentVersion = environmentVersion,
       plan = plan,
+      target = Option(request.targetOperatorId).flatten,
       settings = settings,
       emailNotificationEnabled = request.emailNotificationEnabled,
       warehouseId = Option(request.warehouseId).flatten,

@@ -19,7 +19,6 @@
 
 package org.apache.texera.web.resource.dashboard.user.environment
 
-import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.typesafe.scalalogging.LazyLogging
@@ -36,7 +35,7 @@ import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
 import scala.jdk.CollectionConverters._
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 
 object EnvironmentResource {
 
@@ -47,7 +46,6 @@ object EnvironmentResource {
   case class EnvironmentRow(veid: Int, name: String, packages: Map[String, String])
 
   private val mapper: ObjectMapper = new ObjectMapper().registerModule(DefaultScalaModule)
-  private val packagesType = new TypeReference[java.util.Map[String, String]] {}
 
   /**
     * The packages a row holds in `stored`, each name mapped to its version spec: none for a row
@@ -55,12 +53,7 @@ object EnvironmentResource {
     * by hand, or by an older release, may hold.
     */
   def packagesOf(stored: JSONB): Try[Map[String, String]] =
-    Option(stored).fold[Try[Map[String, String]]](Success(Map.empty)) { json =>
-      Try(mapper.readValue(json.data(), packagesType)).flatMap { packages =>
-        if (packages == null) Failure(new IllegalArgumentException("The packages are null."))
-        else Success(packages.asScala.toMap)
-      }
-    }
+    PythonRequirements.storedPackages(Option(stored).map(_.data()).orNull)
 }
 
 /**

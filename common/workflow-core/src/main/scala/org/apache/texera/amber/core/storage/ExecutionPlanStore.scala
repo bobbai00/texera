@@ -110,8 +110,8 @@ final class PlanTooLargeException(what: String, val bytes: Int)
   * execution runs to; on an update row, the operator as changed. It is written so that it parses
   * back with its loop-variable references, and holds nothing a compile found for an operator:
   * the links an executor reads files through are in the body alone. It is the execution's
-  * provenance, and, on the plan row, what the Dashboard compiles a change to a paused operator
-  * against; a computing unit has no use for it, and does not read it.
+  * provenance, and, on the plan row, what a change to a paused operator is compiled against;
+  * a computing unit has no use for it, and does not read it.
   *
   * Every method takes only a URI [[planUri]] could have built, and refuses any other. A table
   * that is not there is a [[NoStoredPlanException]]; any other failure of the catalog is thrown

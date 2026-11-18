@@ -200,9 +200,10 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     initializedBootstrap().getObjectMapper.writeValueAsString(Some("x")) shouldBe "\"x\""
   }
 
-  it should "register the loop-variable module on Dropwizard's object mapper, so a create's plan parses" in {
-    // Jersey reads the body of POST /api/executions with this mapper: a workflow in a loop block
-    // sends "$k" where an Int property goes.
+  it should "read a create's logical plan as it was sent, whatever its operators hold" in {
+    // Jersey reads the body of POST /api/executions with this mapper. The Dashboard reads no
+    // operator of the plan, which is the compiling service's to parse: a workflow in a loop
+    // block sends "$k" where an Int property goes, and it is handed on as that.
     val request = initializedBootstrap().getObjectMapper.readValue(
       """{"wid": 12, "engineVersion": "1.4.0", "computingUnitId": 3,
         | "logicalPlan": {"operators": [{"operatorType": "Limit", "operatorID": "limit-1",
@@ -210,8 +211,12 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
       classOf[CreateExecutionRequest]
     )
 
-    request.logicalPlan.operators.map(_.operatorIdentifier.id) shouldBe List("limit-1")
-    request.logicalPlan.operators.head.stateReferences shouldBe Map("/limit" -> "k")
+    val operators = request.logicalPlan.get("operators")
+    operators.size() shouldBe 1
+    operators.get(0).get("operatorID").asText() shouldBe "limit-1"
+    operators.get(0).get("limit").asText() shouldBe "$k"
+    request.logicalPlan.fieldNames().asScala.toList shouldBe
+      List("operators", "links", "opsToViewResult", "opsToReuseResult")
     request.wid shouldBe 12L
     request.computingUnitId shouldBe 3
     // What a request may leave out.
@@ -223,16 +228,16 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     request.targetOperatorId shouldBe None
   }
 
-  it should "parse a change to a paused operator with the loop-variable module" in {
-    // The body of POST /api/executions/{eid}/updates: the change is refused when it refers to a
-    // loop variable, which the parse records only with the module.
+  it should "read a change to a paused operator as it was sent" in {
+    // The body of POST /api/executions/{eid}/updates: the compiling service parses the change,
+    // and refuses one that refers to a loop variable.
     val request = initializedBootstrap().getObjectMapper.readValue(
       """{"operator": {"operatorType": "Limit", "operatorID": "limit-1", "limit": "$k"}}""",
       classOf[OperatorUpdateRequestBody]
     )
 
-    request.operator.operatorIdentifier.id shouldBe "limit-1"
-    request.operator.stateReferences shouldBe Map("/limit" -> "k")
+    request.operator.get("operatorID").asText() shouldBe "limit-1"
+    request.operator.get("limit").asText() shouldBe "$k"
   }
 
   it should "serve the built frontend from the filesystem at the context root" in {

@@ -19,9 +19,9 @@
 
 package org.apache.texera.web.model.http.request.execution
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.texera.amber.core.workflow.WorkflowSettings
-import org.apache.texera.common.compiler.model.LogicalPlanPojo
 
 /**
   * The replay log of an earlier execution of the workflow, read up to one interaction.
@@ -42,7 +42,10 @@ case class ReplayExecutionInfo(
   * @param executionName            the execution's name; empty for the default name
   * @param engineVersion            the version of the engine (the frontend's, or the agent's)
   *                                 that asks for the execution, kept with it
-  * @param logicalPlan              the workflow to run, as the editor holds it
+  * @param logicalPlan              the workflow to run, as the editor holds it: operators,
+  *                                 links and the results to view and reuse. The Dashboard
+  *                                 hands it to the compiling service as it is, and reads
+  *                                 nothing in it.
   * @param workflowSettings         the run's batch size and execution mode; None for the
   *                                 defaults. The output ports whose results are stored are the
   *                                 compiler's to find, so any sent here are ignored.
@@ -58,7 +61,7 @@ case class CreateExecutionRequest(
     wid: Long,
     executionName: String = "",
     engineVersion: String,
-    logicalPlan: LogicalPlanPojo,
+    logicalPlan: JsonNode,
     workflowSettings: Option[WorkflowSettings],
     emailNotificationEnabled: Boolean = false,
     computingUnitId: Int,

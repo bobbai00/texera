@@ -42,7 +42,7 @@ import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTIO
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.jooq.generated.Tables.{
   USER_WAREHOUSE,
@@ -292,7 +292,7 @@ class ExecutionClosingJobSpec
       wid = testWid,
       executionName = "closing-spec-execution",
       engineVersion = "1.4.0-spec",
-      logicalPlan = plan,
+      logicalPlan = TestUtils.sentPlan(plan),
       workflowSettings = Some(WorkflowSettings(77, ExecutionMode.MATERIALIZED)),
       emailNotificationEnabled = false,
       computingUnitId = cuid,
@@ -303,7 +303,8 @@ class ExecutionClosingJobSpec
 
   /** Creates as the Dashboard does, bound to the fixture files; nothing is cleared afterwards. */
   private val creator = new ExecutionCreator(
-    bindingsFor = _ => TestUtils.fixtureBindings,
+    compiling = new FixtureCompilingService(),
+    linker = FixtureInputs.linker,
     replayLogRoot = None,
     warehousesEnabled = false,
     costHints = new CostHintsLoader(1) {
@@ -317,7 +318,12 @@ class ExecutionClosingJobSpec
   /** An execution as its create leaves it: an open row, and a stored plan no unit has started. */
   private def created(cuid: Int = liveCuid): ExecutionRecord = {
     val response =
-      creator.create(request(cuid, plan(TestOperators.smallCsvScanOpDesc())), owner, requestUri)
+      creator.create(
+        request(cuid, plan(TestOperators.smallCsvScanOpDesc())),
+        owner,
+        requestUri,
+        FixtureCompilingService.authorizationOf(owner.getUid)
+      )
     madePlans.add(new URI(response.planUri))
     record(response.eid)
   }
@@ -325,7 +331,12 @@ class ExecutionClosingJobSpec
   /** An execution whose workflow does not compile, which its create closed itself. */
   private def notCompiled(): ExecutionRecord = {
     val refused = intercept[WorkflowNotCompiled] {
-      creator.create(request(liveCuid, plan(new CSVScanSourceOpDesc())), owner, requestUri)
+      creator.create(
+        request(liveCuid, plan(new CSVScanSourceOpDesc())),
+        owner,
+        requestUri,
+        FixtureCompilingService.authorizationOf(owner.getUid)
+      )
     }
     record(refused.eid)
   }

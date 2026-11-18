@@ -38,8 +38,8 @@ import org.apache.texera.web.service.execution.{
 }
 
 import javax.annotation.security.RolesAllowed
-import javax.ws.rs.core.{Context, MediaType, Response, UriInfo}
-import javax.ws.rs.{Consumes, GET, POST, Path, PathParam, Produces}
+import javax.ws.rs.core.{Context, HttpHeaders, MediaType, Response, UriInfo}
+import javax.ws.rs.{Consumes, GET, HeaderParam, POST, Path, PathParam, Produces}
 
 object ExecutionResource {
 
@@ -81,26 +81,28 @@ class ExecutionResource(
 
   /**
     * Creates an execution of a workflow, to run on a computing unit: checks the caller's rights,
-    * compiles the workflow for them, records the execution and writes its plan to the lake (see
-    * [[ExecutionCreator]]).
+    * records the execution, asks the workflow compiling service for its plan with the caller's
+    * token, and writes the plan to the lake (see [[ExecutionCreator]]).
     *
     * @return 201 with `{eid, planUri}`. Otherwise 400 when the request is malformed or names a
-    *         warehouse or a replay it may not, and 400 with `eid` and `operatorErrors` beside
-    *         the code and the message when the workflow does not compile, the execution then
-    *         recorded as failed ([[CreateExecutionFailure]]); 403 without the right to read the
-    *         workflow or to run workflows on the unit; 409 when the unit is terminated; 504 when
-    *         the compile takes longer than its deadline and 503 when too many compiles wait; 500
-    *         when the plan cannot be made or written for any other reason.
+    *         warehouse or a replay it may not; 400 when the workflow is not one the compiler can
+    *         read, and 400 with `eid` and `operatorErrors` beside the code and the message when
+    *         it does not compile ([[CreateExecutionFailure]]), the execution recorded as failed
+    *         in both; 403 without the right to read the workflow or to run workflows on the
+    *         unit; 409 when the unit is terminated; 504 when the compile takes longer than its
+    *         deadline and 503 when too many compiles wait or the compiling service cannot be
+    *         reached; 500 when the plan cannot be made or written for any other reason.
     */
   @POST
   @RolesAllowed(Array("REGULAR", "ADMIN"))
   def create(
       request: CreateExecutionRequest,
       @Auth user: SessionUser,
-      @Context uriInfo: UriInfo
+      @Context uriInfo: UriInfo,
+      @HeaderParam(HttpHeaders.AUTHORIZATION) authorization: String
   ): Response =
     try {
-      val created = creator.create(request, user.getUser, uriInfo.getRequestUri)
+      val created = creator.create(request, user.getUser, uriInfo.getRequestUri, authorization)
       Response.status(Response.Status.CREATED).entity(created).build()
     } catch {
       case failed: WorkflowNotCompiled =>
@@ -122,9 +124,10 @@ class ExecutionResource(
     *         or the running operator cannot take the change; 403 unless the caller created the
     *         execution and may still read its workflow and run workflows on its unit; 404 for an
     *         execution, a stored plan or an operator there is not; 409 when the execution has
-    *         ended or its plan is in a per-user warehouse while those are disabled; 500 when the
-    *         plan cannot be read, was made for another user or unit, or the change cannot be
-    *         stored.
+    *         ended or its plan is in a per-user warehouse while those are disabled; 504 when
+    *         the compiling service does not answer by its deadline and 503 when it cannot be
+    *         reached; 500 when the plan cannot be read, was made for another user or unit, or
+    *         the change cannot be made or stored.
     */
   @POST
   @Path("/{eid}/updates")
@@ -132,11 +135,12 @@ class ExecutionResource(
   def postUpdate(
       @PathParam("eid") eid: Long,
       request: OperatorUpdateRequestBody,
-      @Auth user: SessionUser
+      @Auth user: SessionUser,
+      @HeaderParam(HttpHeaders.AUTHORIZATION) authorization: String
   ): Response =
     Response
       .status(Response.Status.CREATED)
-      .entity(updates.store(eid, request, user.getUser))
+      .entity(updates.store(eid, request, user.getUser, authorization))
       .build()
 
   /**
