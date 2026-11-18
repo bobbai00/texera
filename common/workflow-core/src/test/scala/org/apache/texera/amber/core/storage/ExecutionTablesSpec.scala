@@ -181,6 +181,85 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     }
   }
 
+  /** A port of one of the physical operators `layer` of logical operator `operator`. */
+  private def portOf(
+      operator: String,
+      layer: String,
+      number: Int,
+      internal: Boolean = false
+  ): GlobalPortIdentity =
+    GlobalPortIdentity(
+      PhysicalOpIdentity(OperatorIdentity(operator), layer),
+      PortIdentity(number, internal)
+    )
+
+  "ExecutionTables.isOutputOf" should "take an external port of any physical operator of the logical operator, by its number" in {
+    val aggregate = OperatorIdentity("aggregate")
+
+    ExecutionTables.isOutputOf(
+      portOf("aggregate", "globalAgg", 0),
+      aggregate,
+      PortIdentity()
+    ) shouldBe true
+    ExecutionTables.isOutputOf(
+      portOf("aggregate", "main", 1),
+      aggregate,
+      PortIdentity(1)
+    ) shouldBe true
+    // The port between the operator's own physical operators is not one its users see.
+    ExecutionTables.isOutputOf(
+      portOf("aggregate", "localAgg", 0, internal = true),
+      aggregate,
+      PortIdentity()
+    ) shouldBe false
+    ExecutionTables.isOutputOf(
+      portOf("aggregate", "globalAgg", 1),
+      aggregate,
+      PortIdentity()
+    ) shouldBe false
+    ExecutionTables.isOutputOf(
+      portOf("aggregate-2", "globalAgg", 0),
+      aggregate,
+      PortIdentity()
+    ) shouldBe false
+  }
+
+  "ExecutionTables.resultTableAmong" should "find the result, not the state, of a logical operator's external port among a plan's port tables" in {
+    val eid = freshExecution()
+    val internal = locationOf(eid, portOf("aggregate", "localAgg", 0, internal = true))
+    val external = locationOf(eid, portOf("aggregate", "globalAgg", 0))
+    val scan = locationOf(eid, port("scan", 0))
+    val tables = ExecutionTables.portTables(
+      writtenPlan(eid, Seq(Seq(scan.toString), Seq(internal.toString), Seq(external.toString)))
+    )
+
+    ExecutionTables.resultTableAmong(tables, OperatorIdentity("aggregate"), PortIdentity()) shouldBe
+      Some(VFSURIFactory.resultURI(external))
+    ExecutionTables.resultTableAmong(tables, OperatorIdentity("scan"), PortIdentity()) shouldBe
+      Some(VFSURIFactory.resultURI(scan))
+    ExecutionTables.resultTableAmong(
+      tables,
+      OperatorIdentity("scan"),
+      PortIdentity(1)
+    ) shouldBe None
+    ExecutionTables.resultTableAmong(tables, OperatorIdentity("join"), PortIdentity()) shouldBe None
+    ExecutionTables.resultTableAmong(Nil, OperatorIdentity("scan"), PortIdentity()) shouldBe None
+    // A state table alone is no result.
+    ExecutionTables.resultTableAmong(
+      Seq(VFSURIFactory.stateURI(scan)),
+      OperatorIdentity("scan"),
+      PortIdentity()
+    ) shouldBe None
+  }
+
+  it should "refuse a URI that is no table of an execution" in {
+    an[IllegalArgumentException] should be thrownBy ExecutionTables.resultTableAmong(
+      Seq(new URI("mock:///not-a-vfs-uri")),
+      OperatorIdentity("scan"),
+      PortIdentity()
+    )
+  }
+
   "ExecutionTables.storedBytes" should "count nothing for a table that is not there, or that nothing was written to" in {
     val eid = freshExecution()
     val log = ExecutionLogStore.logUri(workflowId, eid, None)

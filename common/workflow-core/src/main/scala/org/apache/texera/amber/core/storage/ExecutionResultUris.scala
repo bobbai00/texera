@@ -60,16 +60,6 @@ object ExecutionResultUris {
       opId: OperatorIdentity,
       portId: PortIdentity
   ): Option[URI] = {
-    def isMatchingExternalPortURI(uri: URI): Boolean = {
-      val components = VFSURIFactory.decodeURI(uri)
-      components.globalPortId.exists { globalPortId =>
-        !globalPortId.portId.internal &&
-        globalPortId.opId.logicalOpId == opId &&
-        globalPortId.portId == portId &&
-        components.resourceType == VFSResourceType.RESULT
-      }
-    }
-
     val urisOfEid: List[URI] =
       context
         .select(OPERATOR_PORT_EXECUTIONS.RESULT_URI)
@@ -80,6 +70,6 @@ object ExecutionResultUris {
         .toList
         .map(URI.create)
 
-    urisOfEid.find(isMatchingExternalPortURI)
+    ExecutionTables.resultTableAmong(urisOfEid, opId, portId)
   }
 }
