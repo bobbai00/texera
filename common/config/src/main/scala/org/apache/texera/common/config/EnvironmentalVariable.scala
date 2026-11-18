@@ -95,6 +95,9 @@ object EnvironmentalVariable {
   // Iceberg namespace of the executions' plan tables
   val ENV_ICEBERG_TABLE_PLAN_NAMESPACE = "STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE"
 
+  // How often a computing unit commits the record of an execution it runs
+  val ENV_ICEBERG_TABLE_COMMIT_INTERVAL_MS = "STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS"
+
   // LakeFS
   val ENV_LAKEFS_ENDPOINT = "STORAGE_LAKEFS_ENDPOINT"
 

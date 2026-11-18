@@ -566,7 +566,8 @@ class ComputingUnitManagingResourceSpec
   private val payloadSize = EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
 
   // Mirrors the private production list too: the payload size, what a unit reads to run a
-  // stored plan, and how long its calls to the Iceberg REST catalog wait.
+  // stored plan, how long its calls to the Iceberg REST catalog wait, and how often it commits
+  // an execution's record.
   private val optionalEnvNames = Seq(
     payloadSize,
     EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS,
@@ -574,7 +575,8 @@ class ComputingUnitManagingResourceSpec
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT,
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES,
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS,
-    EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS
+    EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS,
+    EnvironmentalVariable.ENV_ICEBERG_TABLE_COMMIT_INTERVAL_MS
   )
 
   "requiredComputingUnitEnv" should "return every variable when all are set" in {
@@ -648,6 +650,13 @@ class ComputingUnitManagingResourceSpec
   "optionalComputingUnitEnv" should "forward every override that is set" in {
     ComputingUnitManagingResource.optionalComputingUnitEnv(name => Some(s"value-$name")) shouldBe
       optionalEnvNames.map(name => name -> s"value-$name").toMap
+  }
+
+  // A deployment that sets how often an execution's record is committed means its units: they
+  // are what commits it.
+  it should "hand a unit the interval at which it commits an execution's record" in {
+    val set = Map(EnvironmentalVariable.ENV_ICEBERG_TABLE_COMMIT_INTERVAL_MS -> "5000")
+    ComputingUnitManagingResource.optionalComputingUnitEnv(set.get) shouldBe set
   }
 
   // A deployment whose Dashboard signs input links for another address of the object store names

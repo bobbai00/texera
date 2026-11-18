@@ -468,6 +468,9 @@ texeraEnvVars:
   #   UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES  how long one install may take (default 30).
   #   STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE  the Iceberg namespace of the executions' plan tables
   #     (default execution-plan).
+  #   STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS  how often a unit commits the statistics and the
+  #     console output of an execution it runs, and shows in the execution's log that it is
+  #     alive, in milliseconds (default 30000).
   #   STORAGE_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS, STORAGE_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS
   #     how long a call to the Iceberg REST catalog waits for a connection (default 10000) and
   #     for the catalog to answer (default 60000), in milliseconds, before it fails.
