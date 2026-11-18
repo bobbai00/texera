@@ -68,8 +68,7 @@ private[storage] class IcebergDocument[T >: Null <: AnyRef](
     val serde: (org.apache.iceberg.Schema, T) => Record,
     val deserde: (org.apache.iceberg.Schema, Record) => T,
     val warehouse: Option[String] = None
-) extends VirtualDocument[T]
-    with OnIceberg {
+) extends VirtualDocument[T] {
 
   private val lock = new ReentrantReadWriteLock()
 
