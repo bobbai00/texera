@@ -64,4 +64,14 @@ class EngineBoundarySpec extends AnyFlatSpec {
       assert(classesNaming(naming).isEmpty, s"$naming is used in the engine")
     }
   }
+
+  it should "use nothing of the compiler: it runs a plan that was made before it starts" in {
+    assert(engineClasses.size > 500, "too few classes for the engine's: were they found?")
+    // The compiler's package, as a class file names a class and as a string names one.
+    Seq("org/apache/texera/common/compiler", "org.apache.texera.common.compiler").foreach {
+      compiler =>
+        val naming = classesNaming(compiler)
+        assert(naming.isEmpty, s"the engine uses the compiler in ${naming.mkString(", ")}")
+    }
+  }
 }

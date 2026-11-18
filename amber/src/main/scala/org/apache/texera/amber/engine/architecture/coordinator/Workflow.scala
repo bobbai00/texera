@@ -20,41 +20,9 @@
 package org.apache.texera.amber.engine.architecture.coordinator
 
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
-import org.apache.texera.common.compiler.WorkflowCompilationResult
 
 /** What the engine runs: a physical plan, and the context it runs under. */
 case class Workflow(
     context: WorkflowContext,
     physicalPlan: PhysicalPlan
 )
-
-object Workflow {
-
-  /**
-    * The `Workflow` the result of a compile for a run holds, with the physical plan as the
-    * compile made it. Also writes the result's `outputPortsNeedingStorage` onto the context, whose
-    * settings the plan runs under, so the schedule generators materialize terminal results —
-    * every caller must do both, so they are kept together here. A compile for a run
-    * guarantees `physicalPlan` is defined.
-    *
-    * A run does not run this plan: [[org.apache.texera.web.service.PlanToRun.make]] saves it
-    * under a context of its own, which this writes the stored ports onto, and the engine runs
-    * the plan read back from what was saved, under the settings saved with it.
-    */
-  def fromCompilationResult(
-      context: WorkflowContext,
-      compilationResult: WorkflowCompilationResult
-  ): Workflow = {
-    val physicalPlan = compilationResult.physicalPlan.getOrElse(
-      throw new IllegalStateException(
-        "fromCompilationResult requires a compilation result with a defined physicalPlan " +
-          "(compile for a run); this result carries " +
-          s"${compilationResult.operatorIdToError.size} compilation error(s) instead"
-      )
-    )
-    context.workflowSettings = context.workflowSettings.copy(
-      outputPortsNeedingStorage = compilationResult.outputPortsNeedingStorage
-    )
-    Workflow(context, physicalPlan)
-  }
-}

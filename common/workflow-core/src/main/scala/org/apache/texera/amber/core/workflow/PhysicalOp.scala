@@ -165,7 +165,7 @@ object PhysicalOp {
 @JsonIgnoreProperties(
   Array(
     "opExecInitInfo", // function type, ignore it
-    "outputPartitionRule", // no Jackson type info; left out as the function it replaced was
+    "outputPartitionRule", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
     "inputPorts", // may contain very long stacktrace, ignore it
     "outputPorts", // same reason with above
     "propagateSchema", // function type, so ignore it

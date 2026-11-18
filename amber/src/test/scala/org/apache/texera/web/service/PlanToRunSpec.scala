@@ -31,7 +31,6 @@ import org.apache.texera.amber.core.workflow.{
   WorkflowContext,
   WorkflowSettings
 }
-import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
@@ -120,13 +119,9 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
     val savedPlan =
       PlanToRun.make(context, TestUtils.fixtureBindings, pojo(operators, chain(operators: _*)))
 
-    // The plan as the compile makes it, and the ports whose results are stored.
-    val compiledContext = newContext()
-    val compiled = Workflow.fromCompilationResult(
-      compiledContext,
-      newCompiler(compiledContext).compile(pojo(operators, chain(operators: _*)))
-    )
-    val storedPorts = compiledContext.workflowSettings.outputPortsNeedingStorage
+    // The plan as the compile makes it, and the ports the compile finds are stored.
+    val compiled = newCompiler(newContext()).compile(pojo(operators, chain(operators: _*)))
+    val storedPorts = compiled.outputPortsNeedingStorage
     storedPorts should not be empty
 
     val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
@@ -137,7 +132,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
       newContext().workflowSettings.copy(outputPortsNeedingStorage = storedPorts)
     planContext.warehouse shouldBe context.warehouse
     planContext.costHints shouldBe None
-    TestUtils.assertReadBackFrom(compiled.physicalPlan, executionPlan.plan)
+    TestUtils.assertReadBackFrom(compiled.physicalPlan.get, executionPlan.plan)
     // Given no replay or replay log, the plan replays nothing and writes no replay log.
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None

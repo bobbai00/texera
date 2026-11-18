@@ -31,7 +31,6 @@ import org.apache.texera.amber.core.workflow.{
   WorkflowContext,
   WorkflowSettings
 }
-import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{CompileFor, CompileSettings, WorkflowCompiler}
 import org.apache.texera.web.service.execution.UserEnvironmentResolver
@@ -123,21 +122,21 @@ object PlanToRun {
     settingsProblem(run.workflowSettings).foreach(problem =>
       throw new IllegalArgumentException(problem)
     )
-    // The context the plan is saved under: a copy of the run's, as the compile adds the ports
-    // whose results are stored to its settings.
+    val result = new WorkflowCompiler(run, bindings).compile(logicalPlan)
+    // The context the plan is saved under: a copy of the run's, with the ports whose results
+    // are stored, which the compile found, added to its settings.
     val savedUnder =
       new WorkflowContext(
         run.workflowId,
         run.executionId,
-        run.workflowSettings,
+        run.workflowSettings.copy(outputPortsNeedingStorage = result.outputPortsNeedingStorage),
         run.warehouse,
         run.costHints
       )
-    val result = new WorkflowCompiler(run, bindings).compile(logicalPlan)
-    val compiled = Workflow.fromCompilationResult(savedUnder, result)
+    // A compile for a run throws an operator's error, so its result holds a plan.
     PhysicalPlanCodec.toJson(
       PhysicalPlanCodec.encode(
-        ExecutionPlan(compiled.context, compiled.physicalPlan, replay, replayLog)
+        ExecutionPlan(savedUnder, result.physicalPlan.get, replay, replayLog)
       )
     )
   }

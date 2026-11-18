@@ -171,10 +171,11 @@ object TestUtils {
     } else {
       // The compile PlanToRun.make makes a run's plan with, but not saved: for a run, so an
       // error throws rather than leaving no physical plan.
-      Workflow.fromCompilationResult(
-        context,
-        new WorkflowCompiler(context, fixtureBindings).compile(logicalPlan)
+      val result = new WorkflowCompiler(context, fixtureBindings).compile(logicalPlan)
+      context.workflowSettings = context.workflowSettings.copy(
+        outputPortsNeedingStorage = result.outputPortsNeedingStorage
       )
+      Workflow(context, result.physicalPlan.get)
     }
   }
 

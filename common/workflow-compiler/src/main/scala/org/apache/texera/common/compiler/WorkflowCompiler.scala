@@ -269,9 +269,8 @@ case class WorkflowCompilationResult(
   * becomes of the errors of the workflow's operators and what is looked up for the plan.
   *
   * This module depends only on WorkflowOperator, so neither service leaks its HTTP stack into
-  * the other; the engine `Workflow` wrapper stays in amber as a thin adapter over
-  * [[WorkflowCompilationResult]]. `outputPortsNeedingStorage` is always computed — the
-  * editing-path caller simply ignores it — keeping both paths on one code path.
+  * the other. `outputPortsNeedingStorage` is always computed — the editing-path caller simply
+  * ignores it — keeping both paths on one code path.
   *
   * @param context the workflow and execution the compiler makes plans for: their ids stamp
   *                every operator
