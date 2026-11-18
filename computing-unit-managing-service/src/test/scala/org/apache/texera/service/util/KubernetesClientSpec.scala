@@ -492,6 +492,8 @@ class KubernetesClientSpec extends AnyFlatSpec with Matchers {
     env should contain(
       "ACCESS_CONTROL_SERVICE_URL" -> testAccessControlServiceUrl
     )
+    // What the client adds of its own names no database: a unit is given no login to one.
+    env.keySet.filter(_.startsWith("STORAGE_JDBC")) shouldBe empty
 
     // Still unprivileged: the whole point of mounting out of pod.
     val privileged = Option(container.getSecurityContext).flatMap(c => Option(c.getPrivileged))

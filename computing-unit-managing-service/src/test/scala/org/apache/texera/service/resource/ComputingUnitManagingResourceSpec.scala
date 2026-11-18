@@ -26,7 +26,7 @@ import jakarta.ws.rs.{
   ServiceUnavailableException
 }
 import jakarta.ws.rs.core.Response
-import org.apache.texera.common.config.EnvironmentalVariable
+import org.apache.texera.common.config.{EnvironmentalVariable, StorageConfig}
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.config.KubernetesConfig.maxNumOfRunningComputingUnitsPerUser
 import org.apache.texera.dao.MockTexeraDB
@@ -559,7 +559,6 @@ class ComputingUnitManagingResourceSpec
   // case.
   private val requiredEnvNames = Seq(
     EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-    EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT,
     EnvironmentalVariable.ENV_AUTH_JWT_SECRET
   )
 
@@ -579,6 +578,56 @@ class ComputingUnitManagingResourceSpec
     EnvironmentalVariable.ENV_ICEBERG_TABLE_COMMIT_INTERVAL_MS
   )
 
+  // What this service is deployed with: every name its chart or its `.env` sets, answered.
+  private def deployed(name: String): Option[String] = Some(s"value-$name")
+
+  "computingUnitEnvironment" should "give a unit no login to the Texera database, nor its address" in {
+    val env = ComputingUnitManagingResource.computingUnitEnvironment(deployed)
+
+    env.keySet should contain noneOf (
+      EnvironmentalVariable.ENV_JDBC_URL,
+      EnvironmentalVariable.ENV_JDBC_USERNAME,
+      EnvironmentalVariable.ENV_JDBC_PASSWORD
+    )
+    // By its name, whatever constant names it: nothing of the database's settings.
+    env.keySet.filter(_.startsWith("STORAGE_JDBC")) shouldBe empty
+    // Nor its address by its value, under another name.
+    env.values.map(_.toString) should not contain StorageConfig.jdbcUrl
+  }
+
+  it should "give a unit the lake, the object store, and what a unit reads of this service's own" in {
+    val env = ComputingUnitManagingResource.computingUnitEnvironment(deployed)
+
+    val lake = env.keySet.filter(_.startsWith("STORAGE_ICEBERG_CATALOG"))
+    lake should contain(EnvironmentalVariable.ENV_ICEBERG_CATALOG_TYPE)
+    val objectStore = Set(
+      EnvironmentalVariable.ENV_S3_ENDPOINT,
+      EnvironmentalVariable.ENV_S3_REGION,
+      EnvironmentalVariable.ENV_S3_AUTH_USERNAME,
+      EnvironmentalVariable.ENV_S3_AUTH_PASSWORD
+    )
+    // Nothing else: every name is one of these.
+    env.keySet shouldBe lake ++ objectStore ++ requiredEnvNames ++ optionalEnvNames
+    requiredEnvNames.foreach(name => env(name) shouldBe s"value-$name")
+  }
+
+  it should "forward no setting that nothing on a unit reads: where results are uploaded, and LakeFS" in {
+    val env = ComputingUnitManagingResource.computingUnitEnvironment(deployed)
+
+    // Results are exported by the Dashboard service, and a run reads its files through the
+    // links its plan holds.
+    env.keySet should contain noneOf (
+      EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT,
+      EnvironmentalVariable.ENV_LAKEFS_ENDPOINT
+    )
+    env.keySet.filter(_.startsWith("STORAGE_LAKEFS")) shouldBe empty
+  }
+
+  it should "refuse to make an environment while a variable a unit needs is unset" in {
+    a[ServiceUnavailableException] should be thrownBy
+      ComputingUnitManagingResource.computingUnitEnvironment(_ => None)
+  }
+
   "requiredComputingUnitEnv" should "return every variable when all are set" in {
     val env = ComputingUnitManagingResource.requiredComputingUnitEnv(name => Some(s"value-$name"))
     env.keySet shouldBe requiredEnvNames.toSet
@@ -586,12 +635,14 @@ class ComputingUnitManagingResourceSpec
   }
 
   // USER_SYS_ENABLED and SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR lost their
-  // conf keys (#3831, #3542); the payload size defaults to 1024 in application.conf. None of
-  // the three stops a unit from starting, so none may refuse to create one.
+  // conf keys (#3831, #3542); the payload size defaults to 1024 in application.conf; and where
+  // results are uploaded is read by the Dashboard service, which exports them. None of the
+  // four stops a unit from starting, so none may refuse to create one.
   it should "not require a variable the unit does not need" in {
     val notNeeded = Seq(
       EnvironmentalVariable.ENV_USER_SYS_ENABLED,
       EnvironmentalVariable.ENV_SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR,
+      EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT,
       payloadSize
     )
     val env = ComputingUnitManagingResource.requiredComputingUnitEnv(name =>

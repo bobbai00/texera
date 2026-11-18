@@ -94,7 +94,8 @@ spec:
             - name: ACCESS_CONTROL_SERVICE_URL
               value: http://{{ .Values.accessControlService.name }}-svc.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.accessControlService.service.port }}
             {{- end }}
-            # TexeraDB Access
+            # TexeraDB Access, for this service only: it passes none of it on to a computing
+            # unit, which keeps nothing in Postgres.
             - name: STORAGE_JDBC_URL
               value: jdbc:postgresql://{{ .Release.Name }}-postgresql:5432/texera_db?currentSchema=texera_db,public
             - name: STORAGE_JDBC_PASSWORD
@@ -102,11 +103,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-postgresql
                   key: postgres-password
-            # FileService Access
+            # FileService Access: passed on to each computing unit, whose Python UDFs ask it
+            # for links to the dataset files they open.
             - name: FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
               value: http://{{ .Values.fileService.name }}-svc:9092/api/dataset/presign-download
-            - name: FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT
-              value: http://{{ .Values.fileService.name }}-svc:9092/api/dataset/did/upload
             # S3 Access (for R UDF large binary support)
             - name: STORAGE_S3_ENDPOINT
               value: {{ include "texera.s3.endpoint" . }}
@@ -124,19 +124,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "texera.s3.secretName" . }}
                   key: {{ include "texera.s3.secretAccessKeyKey" . }}
-            # LakeFS Access (should be removed in production environment)
-            - name: STORAGE_LAKEFS_ENDPOINT
-              value: http://{{ .Release.Name }}-lakefs.{{ .Release.Namespace }}:8000/api/v1
-            - name: STORAGE_LAKEFS_AUTH_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-lakefs-secret
-                  key: access_key
-            - name: STORAGE_LAKEFS_AUTH_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-lakefs-secret
-                  key: secret_key
             # Workflow Result
             - name: STORAGE_ICEBERG_CATALOG_TYPE
               value: rest

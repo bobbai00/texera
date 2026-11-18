@@ -306,14 +306,14 @@ object ComputingUnitManagingResource {
     }
   }
 
-  // Required: the endpoints default to localhost:9092 (pytexera's DatasetFileDocument,
-  // ResultExportService) and the secret to a published literal (auth.conf), none of which
-  // suits a real deployment. Forwarded raw -- the endpoints are trimmed by their own readers,
-  // and trimming the secret would leave the unit and this service verifying the token against
-  // different keys, since AuthConfig does not trim.
+  // Required: the endpoint defaults to localhost:9092 (pytexera's DatasetFileDocument) and the
+  // secret to a published literal (auth.conf), neither of which suits a real deployment.
+  // Forwarded raw -- the endpoint is trimmed by its own reader, and trimming the secret would
+  // leave the unit and this service verifying the token against different keys, since
+  // AuthConfig does not trim. The file service's upload endpoint is not among them: results
+  // are exported by the Dashboard service, and nothing on a unit reads it.
   private val requiredComputingUnitEnvNames: Seq[String] = Seq(
     EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-    EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT,
     EnvironmentalVariable.ENV_AUTH_JWT_SECRET
   )
 
@@ -413,24 +413,29 @@ object ComputingUnitManagingResource {
     }
   }
 
-  // Environment variables passed to the created computing unit(pod)
-  private lazy val computingUnitEnvironmentVariables: Map[String, Any] =
+  /**
+    * The environment a created computing unit (pod) is given, of this service's own, which
+    * `lookup` reads: the lake's catalog and the object store, where a unit keeps everything a
+    * run produces and records, and what [[requiredComputingUnitEnv]] and
+    * [[optionalComputingUnitEnv]] forward.
+    *
+    * No login to the Texera database is among them, nor its address: a unit keeps nothing in
+    * Postgres, and opens no connection to it. Nor is LakeFS: a run reads its files through
+    * the links its plan holds.
+    */
+  private[resource] def computingUnitEnvironment(
+      lookup: String => Option[String]
+  ): Map[String, Any] =
     icebergEnvironmentVariables ++ Map(
-      // Variables for saving the metadata of the results, i.e. URIs of results/stats
-      EnvironmentalVariable.ENV_JDBC_URL -> StorageConfig.jdbcUrl,
-      EnvironmentalVariable.ENV_JDBC_USERNAME -> StorageConfig.jdbcUsername,
-      EnvironmentalVariable.ENV_JDBC_PASSWORD -> StorageConfig.jdbcPassword,
-      // Variables for reading files & exporting results
-      // LakeFS endpoint is passed to CU to make CU work in dev mode(using localhost & using default LakeFS credentials)
-      // LakeFS credentials should NOT be passed to CU
-      EnvironmentalVariable.ENV_LAKEFS_ENDPOINT -> StorageConfig.lakefsEndpoint,
       // S3 variables are passed to CU for R UDF large binary support
       EnvironmentalVariable.ENV_S3_ENDPOINT -> StorageConfig.s3Endpoint,
       EnvironmentalVariable.ENV_S3_REGION -> StorageConfig.s3Region,
       EnvironmentalVariable.ENV_S3_AUTH_USERNAME -> StorageConfig.s3Username,
       EnvironmentalVariable.ENV_S3_AUTH_PASSWORD -> StorageConfig.s3Password
-    ) ++ requiredComputingUnitEnv(EnvironmentalVariable.get) ++
-      optionalComputingUnitEnv(EnvironmentalVariable.get)
+    ) ++ requiredComputingUnitEnv(lookup) ++ optionalComputingUnitEnv(lookup)
+
+  private lazy val computingUnitEnvironmentVariables: Map[String, Any] =
+    computingUnitEnvironment(EnvironmentalVariable.get)
 
   case class TerminatedComputingUnitInfo(
       cuid: Integer,
