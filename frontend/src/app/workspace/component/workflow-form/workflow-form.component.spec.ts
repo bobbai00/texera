@@ -2005,6 +2005,53 @@ describe("WorkflowFormComponent", () => {
       expect(component.runButtonState).toEqual({ label: "Stop", icon: "stop", disabled: false });
     });
 
+    // A unit that died and restarted answers its socket and holds no run, while the page still shows the
+    // run it lost, in the state the Dashboard service answers for it.
+    it("offers Run, not Stop, for a run the unit does not show, and starts a run on a click", () => {
+      build(formViewWorkflow).ngOnInit();
+      makeReady();
+      h.executionStateStream.next({ current: { state: ExecutionState.Running } });
+      h.followingAtDashboard.next(true);
+
+      expect(component.isRunning).toBe(true);
+      expect(component.canStopRun).toBe(false);
+      expect(component.runButtonState).toEqual({ label: "Run", icon: "caret-right", disabled: false });
+
+      component.onRun();
+
+      expect(h.executeWorkflowService.executeWorkflow).toHaveBeenCalledWith("scGPT");
+      expect(h.executeWorkflowService.killWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("says Connecting for a run the unit does not show while its socket is down, and sends no kill", () => {
+      build(formViewWorkflow).ngOnInit();
+      makeReady();
+      h.executionStateStream.next({ current: { state: ExecutionState.Running } });
+      h.followingAtDashboard.next(true);
+      h.workflowWebsocketService.isConnected = false;
+
+      expect(component.runButtonState).toEqual({ label: "Connecting", icon: "loading", disabled: true });
+
+      component.onRun();
+
+      expect(h.executeWorkflowService.executeWorkflow).not.toHaveBeenCalled();
+      expect(h.executeWorkflowService.killWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("offers Stop again once the unit shows the run, and repaints at each change", () => {
+      build(formViewWorkflow).ngOnInit();
+      makeReady();
+      h.executionStateStream.next({ current: { state: ExecutionState.Running } });
+      h.followingAtDashboard.next(true);
+      h.cdr.markForCheck.mockClear();
+
+      h.followingAtDashboard.next(false);
+
+      expect(h.cdr.markForCheck).toHaveBeenCalled();
+      expect(component.canStopRun).toBe(true);
+      expect(component.runButtonState).toEqual({ label: "Stop", icon: "stop", disabled: false });
+    });
+
     it("offers no Stop on a unit shared read-only, which would refuse it", () => {
       build(formViewWorkflow).ngOnInit();
       makeReady();

@@ -24,6 +24,7 @@ import {
   CreateExecutionRequest,
   CreateExecutionResponse,
   ExecutionApiService,
+  ExecutionStateResponse,
   failureMessage,
   operatorErrorsOf,
   OperatorUpdateResponse,
@@ -216,6 +217,48 @@ describe("ExecutionApiService", () => {
         .flush({ code: 409, message: "Execution 345 has ended." }, { status: 409, statusText: "Conflict" });
 
       expect(failureMessage(failure)).toBe("Execution 345 has ended.");
+    });
+  });
+
+  describe("getState", () => {
+    it("gets the execution's state from /api/executions/{eid}/state and hands back the answer", () => {
+      let state: ExecutionStateResponse | undefined;
+      service.getState(345).subscribe(response => (state = response));
+
+      const req = httpMock.expectOne(`${EXECUTIONS_URL}/345/state`);
+      expect(req.request.method).toBe("GET");
+      expect(req.request.body).toBeNull();
+      const answer = { eid: 345, status: 4, open: false, reason: "unit lost", timeMs: 1794873600000 };
+      req.flush(answer);
+
+      expect(state).toEqual(answer);
+    });
+
+    it("asks again each time it is subscribed to, as the state of an open execution changes", () => {
+      const states: ExecutionStateResponse[] = [];
+      const state$ = service.getState(345);
+
+      state$.subscribe(response => states.push(response));
+      httpMock
+        .expectOne(`${EXECUTIONS_URL}/345/state`)
+        .flush({ eid: 345, status: 1, open: true, reason: null, timeMs: 1794873000000 });
+      state$.subscribe(response => states.push(response));
+      httpMock
+        .expectOne(`${EXECUTIONS_URL}/345/state`)
+        .flush({ eid: 345, status: 3, open: false, reason: null, timeMs: 1794873600000 });
+
+      expect(states.map(state => state.status)).toEqual([1, 3]);
+    });
+
+    it("fails with the Dashboard's reason for an execution the caller may not read", () => {
+      let failure: unknown;
+      service.getState(345).subscribe({ error: (error: unknown) => (failure = error) });
+
+      httpMock
+        .expectOne(`${EXECUTIONS_URL}/345/state`)
+        .flush({ code: 403, message: "You may not read execution 345." }, { status: 403, statusText: "Forbidden" });
+
+      expect(failureMessage(failure)).toBe("You may not read execution 345.");
     });
   });
 

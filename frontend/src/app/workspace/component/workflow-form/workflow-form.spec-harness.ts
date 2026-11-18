@@ -313,8 +313,13 @@ export function setupHarness() {
     state: ExecutionState.Uninitialized,
     duration: 0,
   };
+  // Whether the computing unit does not show the run on screen, whose state is then the Dashboard
+  // service's: false as the real service starts out, and for every run its unit reports.
+  const followingAtDashboard = new BehaviorSubject<boolean>(false);
   const executeWorkflowService = {
     getExecutionStateStream: () => executionStateStream.asObservable(),
+    isFollowingAtDashboard: () => followingAtDashboard.value,
+    getFollowingAtDashboardStream: () => followingAtDashboard.asObservable(),
     // The state a page handed a live session arrives on top of: the stream above carries no
     // current value, so this is the only way the page can learn a run is already in flight.
     // Mutable, so a test can put a run in flight before the component is built.
@@ -413,6 +418,7 @@ export function setupHarness() {
     workflowMetaDataChangedStream,
     compilationChanged,
     executionStateStream,
+    followingAtDashboard,
     modificationEnabled,
     durationEvents,
     durationTicks,

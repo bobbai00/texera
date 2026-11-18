@@ -20,7 +20,10 @@
 import { Inject, Injectable, DOCUMENT } from "@angular/core";
 import {
   BehaviorSubject,
+  catchError,
   combineLatest,
+  EMPTY,
+  exhaustMap,
   interval,
   Observable,
   Subject,
@@ -61,25 +64,75 @@ import { GuiConfigService } from "../../../common/service/gui-config.service";
 import {
   CreateExecutionRequest,
   ExecutionApiService,
+  ExecutionStateResponse,
   failureMessage,
   operatorErrorsOf,
   ReplayExecutionInfo,
 } from "./execution-api.service";
+import { EXECUTION_STATUS_CODE } from "../../../dashboard/type/workflow-executions-entry";
 
 // TODO: change this declaration
 export const FORM_DEBOUNCE_TIME_MS = 150;
 
-/** Why a run did not start, as an error of the run that belongs to no operator. */
-function startFailure(message: string): WorkflowFatalError {
-  const now = Date.now();
+/**
+ * How long the computing unit has not shown the run on screen before the Dashboard service is asked for the
+ * run's state, and how long after each question the next one is asked.
+ */
+export const FOLLOWED_EXECUTION_POLL_INTERVAL_MS = 5000;
+
+/** Why a run failed at `timeMs`, as an error of the run that belongs to no operator. */
+function runFailure(message: string, timeMs: number): WorkflowFatalError {
   return {
     type: { name: "EXECUTION_FAILURE" },
-    timestamp: { seconds: Math.floor(now / 1000), nanos: (now % 1000) * 1_000_000 },
+    timestamp: { seconds: Math.floor(timeMs / 1000), nanos: (timeMs % 1000) * 1_000_000 },
     message,
     details: "",
     operatorId: "",
     workerId: "",
   };
+}
+
+/** Why a run did not start, as an error of the run that belongs to no operator. */
+function startFailure(message: string): WorkflowFatalError {
+  return runFailure(message, Date.now());
+}
+
+/** A run that failed, as the Dashboard service's `answer` for its execution says why, if it says why. */
+function failedAsAnswered(answer: ExecutionStateResponse): ExecutionStateInfo {
+  return {
+    state: ExecutionState.Failed,
+    errorMessages: answer.reason ? [runFailure(answer.reason, answer.timeMs)] : [],
+  };
+}
+
+/**
+ * The state of a run as `answer`, the Dashboard service's answer for its execution, gives it, read the way the
+ * execution history reads the same status; `shown` is the state on screen. Undefined for an answer that says
+ * nothing of a run: the execution is created and no unit has started it, or its stored state could not be read.
+ */
+function stateAnsweredFor(answer: ExecutionStateResponse, shown: ExecutionStateInfo): ExecutionStateInfo | undefined {
+  const status = EXECUTION_STATUS_CODE[answer.status];
+  if (status === ExecutionState.Completed) {
+    return { state: ExecutionState.Completed };
+  }
+  if (status === ExecutionState.Killed) {
+    return { state: ExecutionState.Killed };
+  }
+  // A closed execution has ended, whatever the answer calls the way it ended.
+  if (status === ExecutionState.Failed || !answer.open) {
+    return failedAsAnswered(answer);
+  }
+  switch (status) {
+    case ExecutionState.Initializing:
+      return { state: ExecutionState.Initializing };
+    case ExecutionState.Running:
+      return { state: ExecutionState.Running };
+    case ExecutionState.Paused:
+      // The tuples a paused run stopped at are its unit's to tell: the ones on screen stay.
+      return shown.state === ExecutionState.Paused ? shown : { state: ExecutionState.Paused, currentTuples: {} };
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -164,6 +217,23 @@ export class ExecuteWorkflowService {
    * run, which is the run on screen from then on, or by refusing the start.
    */
   private awaitedStart?: number;
+  /**
+   * The execution this page follows: the one it asked the computing unit to start, or the one the unit named
+   * last. Unlike {@link currentExecutionId} it outlives a unit that stops showing its run, so that the
+   * Dashboard service can be asked how the run went. Forgotten once the Dashboard service says the
+   * execution is closed, when another run is asked for, and when the page leaves the session.
+   */
+  private followedExecutionId?: number;
+  /**
+   * The questions to the Dashboard service about the followed execution: asked while the run on screen is in
+   * flight and its unit does not show it, because the socket is down or because the unit, on a socket that is
+   * up, says that it holds no run. Closed while the unit shows the run, and once the execution is closed.
+   */
+  private dashboardPoll = Subscription.EMPTY;
+  /** Whether {@link dashboardPoll} is open, for the views that offer to pause, resume, kill and run. */
+  private readonly followingAtDashboard = new BehaviorSubject<boolean>(false);
+  /** Whether the socket to the computing unit is up, as the websocket service said last. */
+  private socketConnected = false;
 
   constructor(
     private workflowActionService: WorkflowActionService,
@@ -203,16 +273,25 @@ export class ExecuteWorkflowService {
       }
     });
 
+    // A unit whose socket is down shows no run: the Dashboard service is asked about the one this page follows.
+    workflowWebsocketService.getConnectionStatusStream().subscribe(connected => {
+      this.socketConnected = connected;
+      if (!connected) {
+        this.followAtDashboard();
+      }
+    });
+
     // Ends an in-flight run once its unit is gone or Failed and the socket is down; console and results are kept.
     // A run is in flight from the moment it is asked for: one that has not reached the unit is given up, so
-    // nothing of it is sent there later.
+    // nothing of it is sent there later. A run whose execution this page follows is not ended here: the
+    // Dashboard service says how it went.
     combineLatest([
       computingUnitStatusService.getSelectedComputingUnit(),
       workflowWebsocketService.getConnectionStatusStream(),
     ]).subscribe(([unit, connected]) => {
       const unitLost = unit === null || unit.status === "Failed";
       const runInFlight = !this.pendingRun.closed || this.isExecutionInFlight(this.currentState.state);
-      if (!connected && unitLost && runInFlight) {
+      if (!connected && unitLost && runInFlight && this.followedExecutionId === undefined) {
         this.resetExecutionAndWorkers();
       }
     });
@@ -244,6 +323,8 @@ export class ExecuteWorkflowService {
       refusal.executionId === this.awaitedStart;
     if (refusesAwaitedStart) {
       this.awaitedStart = undefined;
+      // The refusal is how this run ended on this page: nothing the Dashboard holds of it takes its place.
+      this.unfollow();
       this.updateExecutionState({ state: ExecutionState.Failed, errorMessages: [startFailure(refusal.message)] });
     } else {
       this.notificationService.error(refusal.message);
@@ -258,6 +339,14 @@ export class ExecuteWorkflowService {
         if (event.executionId !== undefined) {
           // The run the unit holds: the one this page asked for, or one another page started meanwhile.
           this.awaitedStart = undefined;
+          // It is the run to follow, and its unit shows it: the unit's word is the state on screen.
+          this.follow(event.executionId);
+        } else if (this.isFollowedRunInFlight()) {
+          // The state of no run is what every new socket is told first, and all that a unit which holds no
+          // run says: it is not the end of the run on screen. That run stays as it is, and the Dashboard
+          // service is asked about it until the unit names it again.
+          this.followAtDashboard();
+          return undefined;
         }
         let newState = ExecutionState[event.state];
         switch (newState) {
@@ -351,6 +440,20 @@ export class ExecuteWorkflowService {
     this.updateWorkflowActionLock(this.currentState);
   }
 
+  /**
+   * Whether the state on screen is of a run its computing unit does not show, and so is what the Dashboard
+   * service answers for the run's execution. The unit cannot be asked to pause, resume or kill such a run,
+   * and, once its socket is up, it is free to start another.
+   */
+  public isFollowingAtDashboard(): boolean {
+    return this.followingAtDashboard.value;
+  }
+
+  /** {@link isFollowingAtDashboard}, now and at each change. */
+  public getFollowingAtDashboardStream(): Observable<boolean> {
+    return this.followingAtDashboard.asObservable();
+  }
+
   public getErrorMessages(): ReadonlyArray<WorkflowFatalError> {
     if (this.currentState?.state === ExecutionState.Failed) {
       return this.currentState.errorMessages;
@@ -442,9 +545,11 @@ export class ExecuteWorkflowService {
    * run's results, stay as they are.
    */
   private createThenStart(request: CreateExecutionRequest): void {
-    // The run asked for last is the one that starts, and the one whose start is waited for.
+    // The run asked for last is the one that starts, and the one whose start is waited for. It takes the place
+    // of the run this page followed.
     this.pendingRun.unsubscribe();
     this.awaitedStart = undefined;
+    this.unfollow();
     // wait for the form debounce to complete, then create the execution
     this.pendingRun = timer(FORM_DEBOUNCE_TIME_MS)
       .pipe(
@@ -456,6 +561,12 @@ export class ExecuteWorkflowService {
         next: ({ eid, planUri }) => {
           this.currentExecutionId = eid;
           this.awaitedStart = eid;
+          // The unit is taken to show the run it is asked to start, until it says that it holds none. A unit
+          // whose socket is down is asked nothing yet.
+          this.follow(eid);
+          if (!this.socketConnected) {
+            this.followAtDashboard();
+          }
           this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri });
         },
         error: (error: unknown) =>
@@ -627,16 +738,81 @@ export class ExecuteWorkflowService {
    */
   public resetExecutionAndWorkers(): void {
     // A run still on its way, and the execution the unit named, belong to the session that is reset: the one
-    // must not start in the next session, and the other is not the next session's to change.
+    // must not start in the next session, and the other is not the next session's to change, or to follow.
     this.pendingRun.unsubscribe();
     this.currentExecutionId = undefined;
     this.awaitedStart = undefined;
+    this.unfollow();
     this.updateExecutionState({ state: ExecutionState.Uninitialized });
     this.assignedWorkerIds.clear();
     // Leaving the workspace takes this path, not resetExecutionState, so the clock has to be
     // stopped here as well: otherwise the next workflow opens showing the last run's time, and
     // if that run was still going, showing it still counting up.
     this.anchorDuration(0, false);
+  }
+
+  /** Follows execution `eid`, which its unit shows, in place of the one followed before. */
+  private follow(eid: number): void {
+    this.followedExecutionId = eid;
+    this.stopFollowingAtDashboard();
+  }
+
+  /** Follows no execution any more. */
+  private unfollow(): void {
+    this.followedExecutionId = undefined;
+    this.stopFollowingAtDashboard();
+  }
+
+  /** Whether the run on screen is in flight and is of an execution this page follows. */
+  private isFollowedRunInFlight(): boolean {
+    return this.followedExecutionId !== undefined && this.isExecutionInFlight(this.currentState.state);
+  }
+
+  /**
+   * Asks the Dashboard service for the state of the followed execution from now on, as its unit has stopped
+   * showing the run: every {@link FOLLOWED_EXECUTION_POLL_INTERVAL_MS}, and the first time that long from now,
+   * so that a unit which only lost its socket names the run again first. Does nothing for a run that is not in
+   * flight, and while the Dashboard is being asked already. A question that fails is asked again at the next
+   * turn, and none is asked while the one before it is unanswered.
+   */
+  private followAtDashboard(): void {
+    const eid = this.followedExecutionId;
+    if (eid === undefined || !this.isFollowedRunInFlight() || !this.dashboardPoll.closed) {
+      return;
+    }
+    this.dashboardPoll = timer(FOLLOWED_EXECUTION_POLL_INTERVAL_MS, FOLLOWED_EXECUTION_POLL_INTERVAL_MS)
+      .pipe(exhaustMap(() => this.executionApiService.getState(eid).pipe(catchError(() => EMPTY))))
+      .subscribe(answer => this.showAnsweredState(answer));
+    this.followingAtDashboard.next(true);
+  }
+
+  private stopFollowingAtDashboard(): void {
+    this.dashboardPoll.unsubscribe();
+    if (this.followingAtDashboard.value) {
+      this.followingAtDashboard.next(false);
+    }
+  }
+
+  /**
+   * Shows the state the Dashboard service answers for the followed execution. An open execution is asked
+   * about again; a closed one has ended for good as far as this page follows it, with the outcome answered.
+   */
+  private showAnsweredState(answer: ExecutionStateResponse): void {
+    if (!answer.open) {
+      if (this.awaitedStart === this.followedExecutionId) {
+        this.awaitedStart = undefined;
+      }
+      this.unfollow();
+    }
+    const state = stateAnsweredFor(answer, this.currentState);
+    if (state === undefined) {
+      return;
+    }
+    if (!this.isExecutionInFlight(state.state) && this.durationAnchor.isRunning) {
+      // The unit that would have reported what the run took is not there to: the clock stops where it is.
+      this.anchorDuration(this.getExecutionDuration(), false);
+    }
+    this.updateExecutionState(state);
   }
 
   private isExecutionInFlight(state: ExecutionState): boolean {

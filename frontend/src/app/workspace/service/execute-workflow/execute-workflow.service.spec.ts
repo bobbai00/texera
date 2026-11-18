@@ -23,7 +23,11 @@ import { DOCUMENT } from "@angular/core";
 import { ExecutionState, ExecutionStateInfo, LogicalPlan } from "../../types/execute-workflow.interface";
 import { fakeAsync, inject, TestBed, tick } from "@angular/core/testing";
 
-import { ExecuteWorkflowService, FORM_DEBOUNCE_TIME_MS } from "./execute-workflow.service";
+import {
+  ExecuteWorkflowService,
+  FOLLOWED_EXECUTION_POLL_INTERVAL_MS,
+  FORM_DEBOUNCE_TIME_MS,
+} from "./execute-workflow.service";
 
 import { DEFAULT_WORKFLOW, WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 import { UndoRedoService } from "../undo-redo/undo-redo.service";
@@ -53,7 +57,7 @@ import { commonTestProviders } from "../../../common/testing/test-utils";
 import { RegionStateEvent, RegionUpdateEvent, TexeraWebsocketEvent } from "../../types/workflow-websocket.interface";
 import { mockScanPredicate } from "../workflow-graph/model/mock-workflow-data";
 import { Version } from "src/environments/version";
-import { CreateExecutionResponse, ReplayExecutionInfo } from "./execution-api.service";
+import { CreateExecutionResponse, ExecutionStateResponse, ReplayExecutionInfo } from "./execution-api.service";
 
 describe("ExecuteWorkflowService", () => {
   // Where the Dashboard service creates executions, and the workflow and the computing unit the specs run on.
@@ -153,6 +157,8 @@ describe("ExecuteWorkflowService", () => {
   afterEach(() => {
     // A spec that mocks the static getLogicalPlanRequest must not hand its plan to the next one.
     vi.restoreAllMocks();
+    // A spec that leaves a run its unit does not show must not go on asking the Dashboard about it.
+    service.resetExecutionAndWorkers();
     // Every request for an execution was expected by its spec.
     httpMock.verify();
   });
@@ -448,7 +454,8 @@ describe("ExecuteWorkflowService", () => {
       expect(wsSendSpy).not.toHaveBeenCalled();
     }));
 
-    it("ends a run its unit was asked to start and had not reported on", fakeAsync(() => {
+    // Its execution is the Dashboard's to close: the page shows how it ended, in place of going back to idle.
+    it("keeps a run whose execution it follows when its unit is lost, and asks the Dashboard how it went", fakeAsync(() => {
       selectedUnit$.next(unit(CUID));
       startExecution(345);
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
@@ -456,7 +463,26 @@ describe("ExecuteWorkflowService", () => {
       connected$.next(false);
       selectedUnit$.next(unit(CUID, "Failed"));
 
-      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Uninitialized });
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+      tick(FOLLOWED_EXECUTION_POLL_INTERVAL_MS);
+      httpMock
+        .expectOne(`${EXECUTIONS_URL}/345/state`)
+        .flush({ eid: 345, status: 4, open: false, reason: "unit lost", timeMs: 1794873600000 });
+      expect(service.getExecutionState().state).toBe(ExecutionState.Failed);
+      expect(service.getErrorMessages().map(error => error.message)).toEqual(["unit lost"]);
+    }));
+
+    it("keeps a run the unit named when the selection empties with the socket down", fakeAsync(() => {
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+      emitWsEvent({ type: "WorkerAssignmentUpdateEvent", operatorId: "op1", workerIds: ["w1"] });
+      selectedUnit$.next(unit(7));
+
+      connected$.next(false);
+      selectedUnit$.next(null);
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      expect(service.getWorkerIds("op1")).toEqual(["w1"]);
+      service.resetExecutionAndWorkers();
     }));
 
     // The socket redials a healthy unit, and hands it what was sent meanwhile.
@@ -473,6 +499,11 @@ describe("ExecuteWorkflowService", () => {
         ["WorkflowStartRequest", { executionId: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
       ]);
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+      // The unit reports the run it was handed before the Dashboard would be asked about it.
+      connected$.next(true);
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Initializing, executionId: 345 });
+      tick(FOLLOWED_EXECUTION_POLL_INTERVAL_MS);
+      httpMock.expectNone(`${EXECUTIONS_URL}/345/state`);
     }));
   });
 
@@ -1599,6 +1630,472 @@ describe("ExecuteWorkflowService", () => {
       );
       expect(wsSendSpy).not.toHaveBeenCalled();
     });
+  });
+
+  // ---- a run the computing unit does not show ---------------------------------------------------
+
+  describe("a run the computing unit does not show", () => {
+    const POLL = FOLLOWED_EXECUTION_POLL_INTERVAL_MS;
+    const stateUrl = (eid: number): string => `${EXECUTIONS_URL}/${eid}/state`;
+
+    /** The unit reports its run in `state`, of execution `executionId`: of none, the state of no run. */
+    const unitReports = (state: ExecutionState, executionId?: number): void =>
+      emitWsEvent({ type: "WorkflowStateEvent", state, executionId });
+
+    /** What the Dashboard answers for execution `eid`. */
+    const answer = (
+      eid: number,
+      status: number,
+      open: boolean,
+      reason: string | null = null,
+      timeMs: number = 1794873600123
+    ): ExecutionStateResponse => ({ eid, status, open, reason, timeMs });
+
+    /** Lets a poll interval pass, and hands back the question it brings for execution `eid`. */
+    const nextQuestion = (eid: number): TestRequest => {
+      tick(POLL);
+      return httpMock.expectOne(stateUrl(eid));
+    };
+
+    /** Lets `ms` pass, in which the Dashboard is asked nothing. */
+    const expectNoQuestion = (ms: number = 3 * POLL): void => {
+      tick(ms);
+      httpMock.expectNone(request => request.url.endsWith("/state"));
+    };
+
+    /** The states the page showed, from here on. */
+    const statesShown = (): ExecutionState[] => {
+      const states: ExecutionState[] = [];
+      service.getExecutionStateStream().subscribe(event => states.push(event.current.state));
+      return states;
+    };
+
+    /** The unit runs execution `eid`, and then its socket drops. */
+    const loseSocketDuringRun = (eid: number): void => {
+      unitReports(ExecutionState.Running, eid);
+      connected$.next(false);
+    };
+
+    beforeEach(() => {
+      // The unit stays selected, and in the list as Running: nothing but its socket says that it is gone.
+      selectedUnit$.next({
+        computingUnit: { cuid: CUID },
+        status: "Running",
+      } as unknown as DashboardWorkflowComputingUnit);
+    });
+
+    it("asks the Dashboard for the execution's state every 5 s while the socket is down during a run", fakeAsync(() => {
+      loseSocketDuringRun(345);
+
+      // Not at once: a socket that only dropped redials within the interval, and its unit names the run again.
+      tick(POLL - 1);
+      httpMock.expectNone(stateUrl(345));
+      tick(1);
+      const first = httpMock.expectOne(stateUrl(345));
+      expect(first.request.method).toBe("GET");
+      first.flush(answer(345, 1, true));
+
+      tick(POLL - 1);
+      httpMock.expectNone(stateUrl(345));
+      tick(1);
+      httpMock.expectOne(stateUrl(345)).flush(answer(345, 1, true));
+      nextQuestion(345).flush(answer(345, 1, true));
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      service.resetExecutionAndWorkers();
+    }));
+
+    it("shows the status an open execution is answered with, as the history reads it", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const states = statesShown();
+
+      nextQuestion(345).flush(answer(345, 2, true));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Paused, currentTuples: {} });
+      nextQuestion(345).flush(answer(345, 0, true));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+      nextQuestion(345).flush(answer(345, 1, true));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+
+      expect(states).toEqual([ExecutionState.Paused, ExecutionState.Initializing, ExecutionState.Running]);
+      // The run is still one the editor is locked for.
+      expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(false);
+      service.resetExecutionAndWorkers();
+    }));
+
+    it("keeps the tuples a paused run stopped at when it is answered as paused again", fakeAsync(() => {
+      unitReports(ExecutionState.Paused, 345);
+      emitWsEvent({ type: "OperatorCurrentTuplesUpdateEvent", operatorID: "op1", tuples: [] });
+      const paused = service.getExecutionState();
+      connected$.next(false);
+      const states = statesShown();
+
+      nextQuestion(345).flush(answer(345, 2, true));
+
+      expect(service.getExecutionState()).toBe(paused);
+      expect(states).toEqual([]);
+      service.resetExecutionAndWorkers();
+    }));
+
+    // Not states of a run: no unit has started the execution, or what is stored of it could not be read.
+    for (const [what, status] of [
+      ["created and started by no unit", 6],
+      ["of a state that could not be read", -1],
+      ["in a state this page does not know", 42],
+    ] as const) {
+      it(`leaves the state on screen for an open execution that is ${what}, and asks again`, fakeAsync(() => {
+        loseSocketDuringRun(345);
+        const states = statesShown();
+
+        nextQuestion(345).flush(answer(345, status, true));
+
+        expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+        expect(states).toEqual([]);
+        nextQuestion(345).flush(answer(345, 1, true));
+        service.resetExecutionAndWorkers();
+      }));
+    }
+
+    it("fails the run with the reason a closed execution is answered with, and asks no more", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const states = statesShown();
+      nextQuestion(345).flush(answer(345, 1, true));
+
+      nextQuestion(345).flush(answer(345, 4, false, "unit lost", 1794873600123));
+
+      // The reason is the run's one error, of no operator, at the time the execution ended.
+      expect(service.getExecutionState()).toEqual({
+        state: ExecutionState.Failed,
+        errorMessages: [
+          {
+            type: { name: "EXECUTION_FAILURE" },
+            timestamp: { seconds: 1794873600, nanos: 123_000_000 },
+            message: "unit lost",
+            details: "",
+            operatorId: "",
+            workerId: "",
+          },
+        ],
+      });
+      expect(states).toEqual([ExecutionState.Failed]);
+      expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(true);
+      expect(service.isFollowingAtDashboard()).toBe(false);
+      expectNoQuestion();
+    }));
+
+    it("fails the run with no error when a closed execution is answered with no reason", fakeAsync(() => {
+      loseSocketDuringRun(345);
+
+      nextQuestion(345).flush({ eid: 345, status: 4, open: false, timeMs: 1794873600000 });
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Failed, errorMessages: [] });
+      expectNoQuestion();
+    }));
+
+    for (const [status, state] of [
+      [3, ExecutionState.Completed],
+      [5, ExecutionState.Killed],
+    ] as const) {
+      it(`shows a closed execution that is ${state} as that, and asks no more`, fakeAsync(() => {
+        loseSocketDuringRun(345);
+
+        nextQuestion(345).flush(answer(345, status, false));
+
+        expect(service.getExecutionState()).toEqual({ state });
+        expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(true);
+        expectNoQuestion();
+      }));
+    }
+
+    // A closed execution has ended: an answer that calls it anything else must not leave the run going for good.
+    for (const status of [1, 6, -1]) {
+      it(`fails the run for a closed execution answered with status ${status}, and asks no more`, fakeAsync(() => {
+        loseSocketDuringRun(345);
+
+        nextQuestion(345).flush(answer(345, status, false, "unit terminated"));
+
+        expect(service.getExecutionState().state).toBe(ExecutionState.Failed);
+        expect(service.getErrorMessages().map(error => error.message)).toEqual(["unit terminated"]);
+        expectNoQuestion();
+      }));
+    }
+
+    // The run ended and the Dashboard has not closed its execution yet: it does within a minute.
+    it("shows the ending an open execution is answered with, and asks until the execution is closed", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const states = statesShown();
+
+      nextQuestion(345).flush(answer(345, 3, true));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Completed });
+      nextQuestion(345).flush(answer(345, 3, false));
+
+      expect(states).toEqual([ExecutionState.Completed]);
+      expectNoQuestion();
+    }));
+
+    it("stops the run clock when the Dashboard says how the run ended", fakeAsync(() => {
+      unitReports(ExecutionState.Running, 345);
+      emitWsEvent({ type: "ExecutionDurationUpdateEvent", duration: 0, isRunning: true });
+      connected$.next(false);
+
+      nextQuestion(345).flush(answer(345, 4, false, "unit lost"));
+      const atEnd = service.getExecutionDuration();
+      tick(60_000);
+
+      expect(atEnd).toBeGreaterThanOrEqual(POLL);
+      expect(service.getExecutionDuration()).toBe(atEnd);
+    }));
+
+    it("stops asking once the socket is back and its unit names the execution again", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      nextQuestion(345).flush(answer(345, 1, true));
+      const states = statesShown();
+
+      // What a new socket is told: the state of no run, then the state of the run the unit holds.
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+      unitReports(ExecutionState.Paused, 345);
+
+      // The unit's word is the state on screen again, and what the commands name.
+      expect(service.isFollowingAtDashboard()).toBe(false);
+      expect(states).toEqual([ExecutionState.Paused]);
+      expectNoQuestion();
+      const wsSendSpy = spyOnSocket();
+      service.resumeWorkflow();
+      expect(wsSendSpy.mock.calls).toEqual([["WorkflowResumeRequest", { executionId: 345 }]]);
+    }));
+
+    it("drops the answer to a question that is out when the unit names the execution again", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const question = nextQuestion(345);
+
+      connected$.next(true);
+      unitReports(ExecutionState.Running, 345);
+
+      expect(question.cancelled).toBe(true);
+      expectNoQuestion();
+    }));
+
+    // A unit that died and restarted answers its socket again, and holds no run.
+    it("keeps the state on screen, and keeps asking, when the socket is back and its unit holds no run", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const states = statesShown();
+      tick(POLL - 1000);
+
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      expect(states).toEqual([]);
+      expect(TestBed.inject(WorkflowActionService).checkWorkflowModificationEnabled()).toBe(false);
+      // The first question still comes 5 s after the unit stopped showing the run, not 5 s after it said so.
+      tick(1000);
+      httpMock.expectOne(stateUrl(345)).flush(answer(345, 1, true));
+      nextQuestion(345).flush(answer(345, 1, true));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+
+      nextQuestion(345).flush(answer(345, 4, false, "unit lost"));
+
+      expect(states).toEqual([ExecutionState.Failed]);
+      expect(service.getErrorMessages().map(error => error.message)).toEqual(["unit lost"]);
+      expectNoQuestion();
+    }));
+
+    it("asks about a run when its unit says, on a socket that stayed up, that it holds none", fakeAsync(() => {
+      unitReports(ExecutionState.Running, 345);
+
+      unitReports(ExecutionState.Uninitialized);
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      nextQuestion(345).flush(answer(345, 5, false));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Killed });
+    }));
+
+    it("switches to another execution that a state event names", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      nextQuestion(345).flush(answer(345, 1, true));
+      const states = statesShown();
+
+      // Another page's run took the unit while this page's socket was down.
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+      unitReports(ExecutionState.Paused, 400);
+
+      expect(states).toEqual([ExecutionState.Paused]);
+      expectNoQuestion();
+      // It is the one asked about from now on.
+      connected$.next(false);
+      nextQuestion(400).flush(answer(400, 3, false));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Completed });
+    }));
+
+    it("stops asking about a run when the user asks for another, which is followed in its place", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const question = nextQuestion(345);
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+
+      service.executeWorkflow("again");
+
+      expect(question.cancelled).toBe(true);
+      expect(service.isFollowingAtDashboard()).toBe(false);
+      expectCreate().flush(created(346), { status: 201, statusText: "Created" });
+      expectNoQuestion();
+      // The unit that is asked to start the run and then loses its socket is asked about that run.
+      connected$.next(false);
+      nextQuestion(346).flush(answer(346, 4, false, "unit lost"));
+      expect(service.getErrorMessages().map(error => error.message)).toEqual(["unit lost"]);
+    }));
+
+    it("says that pause, resume and kill have no unit to go to, and sends none, while it asks", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      const following: boolean[] = [];
+      service.getFollowingAtDashboardStream().subscribe(isFollowing => following.push(isFollowing));
+      unitReports(ExecutionState.Running, 345);
+      expect(service.isFollowingAtDashboard()).toBe(false);
+
+      // From the moment the unit stops showing the run, before the Dashboard has answered anything.
+      connected$.next(false);
+      expect(service.isFollowingAtDashboard()).toBe(true);
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+      expect(service.isFollowingAtDashboard()).toBe(true);
+
+      const unnamed = "the computing unit has not named the execution it runs";
+      expect(() => service.pauseWorkflow()).toThrowError(`cannot pause workflow, ${unnamed}`);
+      expect(() => service.killWorkflow()).toThrowError(`cannot kill workflow, ${unnamed}`);
+      nextQuestion(345).flush(answer(345, 2, true));
+      expect(() => service.resumeWorkflow()).toThrowError(`cannot resume workflow, ${unnamed}`);
+      expect(wsSendSpy).not.toHaveBeenCalled();
+
+      nextQuestion(345).flush(answer(345, 4, false, "unit lost"));
+      expect(following).toEqual([false, true, false]);
+    }));
+
+    // Run is not held back by the run on screen: the unit that is back holds none.
+    it("starts another run while it asks about the one on screen", fakeAsync(() => {
+      const wsSendSpy = spyOnSocket();
+      loseSocketDuringRun(345);
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+
+      expect(service.executeWorkflow("again")).toBe(true);
+      expectCreate().flush(created(346), { status: 201, statusText: "Created" });
+
+      expect(wsSendSpy.mock.calls).toEqual([
+        ["WorkflowStartRequest", { executionId: 346, planUri: "vfs:///wid/12/eid/346/plan" }],
+      ]);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+    }));
+
+    it("asks nothing for a run whose execution no state event named", fakeAsync(() => {
+      unitReports(ExecutionState.Running);
+
+      connected$.next(false);
+      expectNoQuestion();
+      // The state of no run ends it, as it does for a page that follows nothing.
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Uninitialized });
+      expectNoQuestion();
+    }));
+
+    for (const ended of [ExecutionState.Completed, ExecutionState.Killed]) {
+      it(`asks nothing for a followed run that the unit reported as ${ended}`, fakeAsync(() => {
+        unitReports(ExecutionState.Running, 345);
+        unitReports(ended, 345);
+
+        connected$.next(false);
+        expectNoQuestion();
+        // The state of no run takes the place of a run that has ended.
+        connected$.next(true);
+        unitReports(ExecutionState.Uninitialized);
+
+        expect(service.getExecutionState()).toEqual({ state: ExecutionState.Uninitialized });
+        expectNoQuestion();
+      }));
+    }
+
+    it("asks nothing about a run the unit was asked to start, while its socket stays up", fakeAsync(() => {
+      startExecution(345);
+
+      expectNoQuestion();
+
+      expect(service.isFollowingAtDashboard()).toBe(false);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+    }));
+
+    it("asks about a run the unit was asked to start, once its socket drops before it reports the run", fakeAsync(() => {
+      startExecution(345);
+
+      connected$.next(false);
+      // Created, and started by no unit: the run goes on showing as starting.
+      nextQuestion(345).flush(answer(345, 6, true));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
+      nextQuestion(345).flush(answer(345, 4, false, "never started"));
+
+      expect(service.getErrorMessages().map(error => error.message)).toEqual(["never started"]);
+      expectNoQuestion();
+    }));
+
+    it("stops asking about a run whose start the unit refuses", fakeAsync(() => {
+      vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+      startExecution(345);
+      connected$.next(false);
+      connected$.next(true);
+      unitReports(ExecutionState.Uninitialized);
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        executionId: 345,
+        message: "Execution 345 could not be claimed for its start. Run the workflow again.",
+      });
+
+      expect(service.isFollowingAtDashboard()).toBe(false);
+      expectNoQuestion();
+      expect(service.getErrorMessages().map(error => error.message)).toEqual([
+        "Execution 345 could not be claimed for its start. Run the workflow again.",
+      ]);
+    }));
+
+    it("asks again after a question the Dashboard does not answer, or answers with an error", fakeAsync(() => {
+      loseSocketDuringRun(345);
+
+      nextQuestion(345).error(new ProgressEvent("error"), { status: 0, statusText: "Unknown Error" });
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      nextQuestion(345).flush({ code: 500, message: "no" }, { status: 500, statusText: "Server Error" });
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
+      nextQuestion(345).flush(answer(345, 3, false));
+
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Completed });
+    }));
+
+    it("asks no second question while the one before it is unanswered", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const slow = nextQuestion(345);
+
+      expectNoQuestion(2 * POLL);
+      slow.flush(answer(345, 1, true));
+
+      nextQuestion(345).flush(answer(345, 3, false));
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Completed });
+    }));
+
+    it("asks nothing after the page leaves the workflow", fakeAsync(() => {
+      loseSocketDuringRun(345);
+      const question = nextQuestion(345);
+
+      service.resetExecutionAndWorkers();
+
+      expect(question.cancelled).toBe(true);
+      expect(service.isFollowingAtDashboard()).toBe(false);
+      expectNoQuestion();
+      // The next session's socket going down is nothing to ask the Dashboard about either.
+      connected$.next(true);
+      connected$.next(false);
+      expectNoQuestion();
+    }));
   });
 
   // ---- leaving the session a run belongs to ----------------------------------------------------

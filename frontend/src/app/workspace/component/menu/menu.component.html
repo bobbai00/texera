@@ -452,6 +452,7 @@
         executionState === ExecutionState.Completed ||
         executionState === ExecutionState.Killed ||
         executionState === ExecutionState.Failed ||
+        runIsOffUnit ||
         !workflowWebsocketService.isConnected ||
         lacksUnitWriteAccess
       "

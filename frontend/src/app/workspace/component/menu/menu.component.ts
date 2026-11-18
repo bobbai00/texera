@@ -277,12 +277,18 @@ export class MenuComponent implements OnInit, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe(event => {
         // A run that was going has failed: the button goes back to Run, and the user is told why.
-        if (!this.buttonStartsRun() && event.current.state === ExecutionState.Failed) {
+        if (!this.noRunGoing() && event.current.state === ExecutionState.Failed) {
           this.notificationService.error(failedRunNotice(event.current.errorMessages));
         }
         this.executionState = event.current.state;
         this.applyRunButtonBehavior(this.getRunButtonBehavior());
       });
+
+    // Whether the unit shows the run on screen changes what the button does, without a change of state.
+    this.executeWorkflowService
+      .getFollowingAtDashboardStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(() => this.applyRunButtonBehavior(this.getRunButtonBehavior()));
 
     // set the map of operatorStatusMap
     this.validationWorkflowService
@@ -450,8 +456,8 @@ export class MenuComponent implements OnInit, OnDestroy {
     return this.selectedComputingUnit !== null && this.selectedComputingUnit.accessPrivilege !== "WRITE";
   }
 
-  // the execution states in which the run button starts a new run rather than controlling one
-  private buttonStartsRun(): boolean {
+  // the execution states in which no run is going
+  private noRunGoing(): boolean {
     return [
       ExecutionState.Uninitialized,
       ExecutionState.Completed,
@@ -459,6 +465,20 @@ export class MenuComponent implements OnInit, OnDestroy {
       ExecutionState.Killed,
       ExecutionState.Failed,
     ].includes(this.executionState);
+  }
+
+  /**
+   * Whether the computing unit does not show the run on screen, whose state is then the Dashboard service's:
+   * the unit has no such run to pause, resume or kill.
+   */
+  public get runIsOffUnit(): boolean {
+    return this.executeWorkflowService.isFollowingAtDashboard();
+  }
+
+  // whether the run button starts a new run rather than controlling one: no run is going, or the one on
+  // screen is not on the computing unit
+  private buttonStartsRun(): boolean {
+    return this.noRunGoing() || this.runIsOffUnit;
   }
 
   public getRunButtonBehavior(): {
@@ -540,6 +560,17 @@ export class MenuComponent implements OnInit, OnDestroy {
       return {
         text: "Warehouse",
         icon: "plus-circle",
+        disable: false,
+        onClick: () => this.runWorkflow(),
+      };
+    }
+
+    // The run on screen is not on the unit, which is connected: it has nothing to pause or resume, and
+    // can start a run.
+    if (this.runIsOffUnit) {
+      return {
+        text: "Run",
+        icon: "play-circle",
         disable: false,
         onClick: () => this.runWorkflow(),
       };

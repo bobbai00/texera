@@ -365,8 +365,8 @@
              Pause/Resume/Submitting: a run in flight simply shows "Stop". -->
         <button
           class="run"
-          [class.stop]="isRunning"
-          [class.connecting]="runButtonState.disabled && !isRunning"
+          [class.stop]="canStopRun"
+          [class.connecting]="runButtonState.disabled && !canStopRun"
           [disabled]="runButtonState.disabled"
           (click)="onRun()">
           <i
