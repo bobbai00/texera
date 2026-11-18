@@ -24,6 +24,11 @@ export interface Execution {
   userId: number;
   executionId: number;
   executionStatus: string;
+  /**
+   * Why the execution is in its status, when the Dashboard service gives a reason: "unit lost", an error's
+   * message. Null or left out when there is none.
+   */
+  reason?: string | null;
   executionTime: number;
   executionName: string;
   startTime: number;

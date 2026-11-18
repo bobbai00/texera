@@ -38,6 +38,7 @@ import { DebugElement } from "@angular/core";
 import { By } from "@angular/platform-browser";
 import { NoopAnimationsModule } from "@angular/platform-browser/animations";
 import { NzPopoverDirective } from "ng-zorro-antd/popover";
+import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 import type { MockInstance } from "vitest";
 
 function makeEntry(overrides: Partial<WorkflowExecutionsEntry>): WorkflowExecutionsEntry {
@@ -307,8 +308,71 @@ describe("WorkflowExecutionHistoryComponent", () => {
       expect(component.getExecutionStatus(6)).toEqual(["Created", "clock-circle", "steelblue"]);
     });
 
-    it("falls back to a question-circle for unknown codes", () => {
-      expect(component.getExecutionStatus(99)).toEqual(["", "question-circle", "gray"]);
+    it("reads a state that could not be read, and a code it does not know, as Unknown", () => {
+      expect(component.getExecutionStatus(-1)).toEqual(["Unknown", "question-circle", "gray"]);
+      expect(component.getExecutionStatus(99)).toEqual(["Unknown", "question-circle", "gray"]);
+    });
+  });
+
+  describe("why an execution is in its status", () => {
+    /** What the status icon of the row at `rowIndex` says when it is pointed at. */
+    const statusTooltip = (rowIndex: number) =>
+      fixture.debugElement.queryAll(By.css("i.status-icon"))[rowIndex].injector.get(NzTooltipDirective).title;
+
+    beforeEach(async () => {
+      await setup({
+        entries: [
+          makeEntry({ eId: 4, status: 4, reason: "unit lost", startingTime: 4000 }),
+          makeEntry({ eId: 3, status: 4, reason: null, startingTime: 3000 }),
+          makeEntry({ eId: 2, status: 3, startingTime: 2000 }),
+          makeEntry({ eId: 1, status: -1, reason: "", startingTime: 1000 }),
+        ],
+      });
+    });
+
+    it("is said beside the status, for an execution the Dashboard gives a reason for", () => {
+      expect(statusTooltip(0)).toBe("Failed: unit lost");
+    });
+
+    it("is left out for an execution with no reason: none given, none to give, or an empty one", () => {
+      expect(statusTooltip(1)).toBe("Failed");
+      expect(statusTooltip(2)).toBe("Completed");
+      expect(statusTooltip(3)).toBe("Unknown");
+    });
+  });
+
+  describe("an execution whose state could not be read", () => {
+    beforeEach(async () => {
+      await setup({ entries: [makeEntry({ eId: 7, name: "unreadable", status: -1 }), ...makeDefaultEntries()] });
+    });
+
+    it("is counted as Unknown in the status chart", () => {
+      const statusPie = generatePieChart.mock.calls.find(
+        call => call[2] === WorkflowExecutionHistoryComponent.STATUS_PIE_CHART_ID
+      );
+
+      expect(statusPie?.[0]).toEqual([
+        ["Unknown", 1],
+        ["Running", 1],
+        ["Completed", 2],
+      ]);
+    });
+
+    it("is suggested by its status in the search box, beside the statuses of the other rows", () => {
+      component.searchInputOnChange("status:unk");
+      expect(component.filteredExecutionInfo).toEqual(["status:unknown"]);
+
+      component.searchInputOnChange("status:run");
+      expect(component.filteredExecutionInfo).toEqual(["status:running"]);
+    });
+
+    it("is searched for by the code the Dashboard lists it with", () => {
+      const searchSpy = vi.spyOn(component.fuse, "search").mockReturnValue(fuseResults());
+      component.executionSearchValue = "status:unknown";
+
+      component.searchExecution();
+
+      expect(searchSpy).toHaveBeenCalledWith({ $and: [{ $path: ["status"], $val: "-1" }] });
     });
   });
 

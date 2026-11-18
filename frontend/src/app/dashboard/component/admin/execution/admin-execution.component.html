@@ -111,7 +111,16 @@
       </td>
       <td>{{ maxStringLength(execution.executionName, 20) }} ({{ execution.executionId }})</td>
       <td>{{ execution.userName }}</td>
-      <td [ngStyle]="{ 'color': getStatusColor(execution.executionStatus) }"><b>{{ execution.executionStatus }}</b></td>
+      <td [ngStyle]="{ 'color': getStatusColor(execution.executionStatus) }">
+        <b>{{ execution.executionStatus }}</b>
+        <div
+          *ngIf="execution.reason"
+          class="execution-reason"
+          nz-tooltip
+          [nzTooltipTitle]="execution.reason">
+          {{ execution.reason }}
+        </div>
+      </td>
       <td>
         <div *ngIf="execution.executionTime >= 0; else endTimeNotAvailable">
           {{ convertSecondsToTime(execution.executionTime) }}
