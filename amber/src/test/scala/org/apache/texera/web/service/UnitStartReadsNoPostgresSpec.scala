@@ -21,7 +21,7 @@ package org.apache.texera.web.service
 
 import org.apache.texera.amber.core.storage.{FileResolver, InputLink, InputLinker, ListedFile}
 import org.apache.texera.amber.engine.e2e.TestUtils
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.filter.{
   ComparisonType,
   FilterPredicate,
@@ -29,7 +29,7 @@ import org.apache.texera.amber.operator.filter.{
 }
 import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
-import org.apache.texera.common.compiler.RunBindings
+import org.apache.texera.common.compiler.CompileFor
 import org.apache.texera.dao.jooq.generated.tables.daos.{DatasetDao, DatasetVersionDao}
 import org.apache.texera.dao.jooq.generated.tables.pojos.{Dataset, DatasetVersion}
 
@@ -87,7 +87,7 @@ class UnitStartReadsNoPostgresSpec
     * The fixtures' bindings, and the dataset's file: resolved for the creator from the dataset's
     * rows, as the deployment resolves it, and linked to the fixture file that holds its bytes.
     */
-  override protected def bindings: RunBindings = {
+  override protected def bindings: CompileFor.Run = {
     val fixtures = TestUtils.fixtureBindings
     fixtures.copy(
       files = fileName =>
@@ -147,7 +147,7 @@ class UnitStartReadsNoPostgresSpec
 
   it should "start a File Lister and a File Scan From Input without reading Postgres" in {
     val lister = named(new FileListerSourceOpDesc(), "lister")
-    lister.datasetVersionPath = TestOperators.fixtureDatasetVersionPath
+    lister.datasetVersionPath = FixtureInputs.datasetVersionPath
     val scan = named(new FileScanOpDesc(), "scan")
     scan.outputFileName = true
 
@@ -158,9 +158,9 @@ class UnitStartReadsNoPostgresSpec
     // Each line of each file the version lists, beside the file's name: a name of a dataset's
     // file, which the unit neither resolved nor asked anything about.
     ran.resultOf("scan").map(_.getFields.toList) should contain theSameElementsAs
-      TestOperators.fixtureDatasetFiles.flatMap {
+      FixtureInputs.datasetFiles.flatMap {
         case (file, localPath) =>
-          linesOf(localPath).map(List(s"${TestOperators.fixtureDatasetVersionPath}/$file", _))
+          linesOf(localPath).map(List(s"${FixtureInputs.datasetVersionPath}/$file", _))
       }
   }
 }

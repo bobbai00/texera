@@ -51,8 +51,8 @@ import java.sql.{Connection, SQLException}
   * `@JsonTypeInfo` discriminator that lets the frontend route success vs
   * failure, and the JSON shape the resource expects on the wire.
   *
-  * All compiler-behavior assertions (schema propagation, lenient-mode
-  * error accumulation, multi-op chains) live in
+  * All compiler-behavior assertions (schema propagation, error
+  * accumulation, multi-op chains) live in
   * `org.apache.texera.common.compiler.WorkflowCompilerSpec` so a regression
   * lands on the right spec.
   */

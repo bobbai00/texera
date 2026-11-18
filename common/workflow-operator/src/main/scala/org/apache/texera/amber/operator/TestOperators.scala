@@ -19,14 +19,9 @@
 
 package org.apache.texera.amber.operator
 
-import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.storage.{
-  DatasetVersionLister,
   FileResolver,
-  InputLink,
-  InputLinker,
-  ListedFile,
   RepositoryVersionResolver,
   ScanFileResolver
 }
@@ -38,18 +33,14 @@ import org.apache.texera.amber.operator.aggregate.{
 }
 import org.apache.texera.amber.operator.hashJoin.HashJoinOpDesc
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
-import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.json.JSONLScanSourceOpDesc
 import org.apache.texera.amber.operator.source.sql.asterixdb.AsterixDBSourceOpDesc
 import org.apache.texera.amber.operator.udf.python.PythonUDFOpDescV2
 import org.apache.texera.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
-import org.apache.texera.common.config.StorageConfig
 
-import java.net.{HttpURLConnection, InetAddress, InetSocketAddress, URI}
+import java.net.URI
 import java.nio.file.{Files, Path, Paths}
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.{ConcurrentHashMap, Executors, TimeUnit}
 
 object TestOperators {
 
@@ -73,91 +64,6 @@ object TestOperators {
     */
   val fixtureFileResolver: ScanFileResolver = fileName =>
     if (FileResolver.isFileResolved(fileName)) new URI(fileName) else localFileUri(fileName)
-
-  /**
-    * Links the fixture files, as a plan made to run links the files of a dataset: each to a GET
-    * on a server of this JVM's, which stands in for the object store ([[FixtureFileServer]]).
-    * Tests hand this to the compiler in place of the deployment's linker, which signs links to
-    * the store itself. A file is linked once, so two compiles of one workflow make one plan.
-    */
-  val fixtureInputLinker: InputLinker = new InputLinker {
-    override def link(fileUri: URI): InputLink = fixtureFileServer.link(Paths.get(fileUri))
-
-    override def linkListed(file: ListedFile): InputLink =
-      fixtureFileServer.link(Paths.get(new URI(file.physicalAddress)))
-  }
-
-  /**
-    * `scan` with the file it reads linked by [[fixtureInputLinker]], as a compile that makes a
-    * plan to run links it: for a test that builds a scan's executor from a descriptor it did
-    * not compile.
-    */
-  def linked[T <: ScanSourceOpDesc](scan: T): T = {
-    val fileName = scan.fileName.get
-    scan.inputLinks = Map(fileName -> fixtureInputLinker.link(new URI(fileName)))
-    scan
-  }
-
-  private lazy val fixtureFileServer = new FixtureFileServer
-
-  /**
-    * Serves the files [[fixtureInputLinker]] linked, and nothing else, on the loopback
-    * interface. The first link starts it, and from then on every executor of this JVM may read
-    * links from it (`StorageConfig.inputLinksAllowedEndpoints`), as a computing unit may from
-    * its object store.
-    */
-  private class FixtureFileServer {
-    private val files = new ConcurrentHashMap[String, Path]()
-    private val links = new ConcurrentHashMap[Path, InputLink]()
-    private val linksMade = new AtomicInteger()
-    private val server =
-      HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress, 0), 0)
-    server.createContext("/", (exchange: HttpExchange) => serve(exchange))
-    // Daemon threads, so that no JVM waits for the server to end. Its own thread takes after
-    // the one that starts it.
-    server.setExecutor(Executors.newCachedThreadPool(daemon("fixture-file-server", _)))
-    private val starter = daemon("fixture-file-server-starter", () => server.start())
-    starter.start()
-    starter.join()
-    private val endpoint = s"http://127.0.0.1:${server.getAddress.getPort}"
-    StorageConfig.inputLinksAllowedEndpoints :+= endpoint
-
-    /** The link to `file`, made the first time it is asked for. It lasts a day: past any test. */
-    def link(file: Path): InputLink = {
-      if (!Files.isRegularFile(file)) {
-        throw new FileNotFoundException(s"Local file $file does not exist")
-      }
-      links.computeIfAbsent(
-        file,
-        _ => {
-          val path = s"/${linksMade.incrementAndGet()}"
-          files.put(path, file)
-          InputLink(endpoint + path, System.currentTimeMillis() + TimeUnit.DAYS.toMillis(1))
-        }
-      )
-    }
-
-    private def daemon(name: String, task: Runnable): Thread = {
-      val thread = new Thread(task, name)
-      thread.setDaemon(true)
-      thread
-    }
-
-    private def serve(exchange: HttpExchange): Unit =
-      try {
-        Option(files.get(exchange.getRequestURI.getPath)).filter(_ =>
-          exchange.getRequestMethod == "GET"
-        ) match {
-          case Some(file) =>
-            // A length of 0 would mean a body of no declared length, so an empty file has none.
-            val size = Files.size(file)
-            exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, if (size == 0) -1 else size)
-            if (size > 0) Files.copy(file, exchange.getResponseBody)
-          case None =>
-            exchange.sendResponseHeaders(HttpURLConnection.HTTP_NOT_FOUND, -1)
-        }
-      } finally exchange.close()
-  }
 
   /** The dataset and model versions `fixtureRepositoryResolver` pins, to repository and commit. */
   val fixtureRepositoryVersions: Map[String, (String, String)] = Map(
@@ -197,33 +103,6 @@ object TestOperators {
   val TestTextFilePath: String = s"$parentDir/src/test/resources/line_numbers.txt"
   val TestCRLFTextFilePath: String = s"$parentDir/src/test/resources/line_numbers_crlf.txt"
   val TestNumbersFilePath: String = s"$parentDir/src/test/resources/numbers.txt"
-
-  /** The dataset version `fixtureDatasetVersionLister` lists. */
-  val fixtureDatasetVersionPath = "/dataset/owner@x.com/sales/v1"
-
-  /**
-    * The files of the fixture dataset version: by its path within the version, the fixture file
-    * on the local disk whose bytes are the file's.
-    */
-  val fixtureDatasetFiles: Seq[(String, String)] =
-    Seq("line_numbers.txt" -> TestTextFilePath, "reports/numbers.txt" -> TestNumbersFilePath)
-
-  /**
-    * Lists the fixture dataset version, as a user's lister lists the versions that user may
-    * read; tests hand it to the compiler in place of one, which needs a database and LakeFS. A
-    * file is kept where its fixture file is, on the local disk, so `fixtureInputLinker` links
-    * what this lists. Any other version is refused, as one that does not exist or that the user
-    * may not read is.
-    */
-  val fixtureDatasetVersionLister: DatasetVersionLister = (versionPath, atMost) => {
-    if (versionPath != fixtureDatasetVersionPath) {
-      throw new FileNotFoundException(s"Version $versionPath not found.")
-    }
-    fixtureDatasetFiles.take(atMost).map {
-      case (file, localPath) =>
-        ListedFile(s"$versionPath/$file", Paths.get(localPath).toUri.toString)
-    }
-  }
 
   def headerlessSmallCsvScanOpDesc(): CSVScanSourceOpDesc = {
     getCsvScanOpDesc(CountrySalesHeaderlessSmallCsvPath, header = false)

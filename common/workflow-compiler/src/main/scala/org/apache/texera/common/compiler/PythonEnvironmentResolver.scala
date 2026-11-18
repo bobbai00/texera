@@ -36,18 +36,6 @@ trait PythonEnvironmentResolver {
   def resolve(name: String): PythonEnvironment
 }
 
-object PythonEnvironmentResolver {
-
-  /**
-    * Resolves nothing. For a compile that makes no plan to run, which never asks; a plan made to
-    * run with it fails on the first environment it names rather than running in another.
-    */
-  val Unavailable: PythonEnvironmentResolver = name =>
-    throw new IllegalStateException(
-      s"No resolver for Python environments was given, so '$name' cannot be resolved."
-    )
-}
-
 /**
   * Why the Python environment an operator names cannot be made part of a plan to run: the error of
   * that operator, in words for the user who runs the workflow.

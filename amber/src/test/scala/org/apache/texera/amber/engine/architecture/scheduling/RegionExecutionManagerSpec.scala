@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.architecture.scheduling
 import com.twitter.util.{Future, JavaTimer, Time, Timer}
 import org.apache.pekko.actor.{ActorSystem, Props}
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{InputFile, OpExecWithClassName, OperatorInputs}
 import org.apache.texera.amber.core.storage.VFSURIFactory
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
 import org.apache.texera.amber.core.workflow.{
@@ -166,6 +166,30 @@ class RegionExecutionManagerSpec
     launchRegion(fixture.manager)
 
     assert(fixture.rpcProbe.initializedExecutors == Seq(OpExecWithClassName("bound")))
+  }
+
+  it should "initialize executors with what the plan says they read, and where the unit reads links from" in {
+    val reads = OperatorInputs(
+      files = Seq(InputFile("a.csv", "http://texera-rustfs:9000/texera-dataset/a", Long.MaxValue)),
+      csvParserMaxColumns = Some(731)
+    )
+    val fixture = createSingleRegionFixture(
+      endWorkerResponse = _ => None,
+      physicalOp = createSourceOp("test-op").withInputs(reads),
+      coordinatorConfig = CoordinatorConfig(
+        None,
+        None,
+        None,
+        None,
+        inputLinkEndpoints = Seq("http://texera-rustfs:9000")
+      )
+    )
+
+    launchRegion(fixture.manager)
+
+    val Seq(request) = fixture.rpcProbe.initializations
+    assert(request.inputs == reads)
+    assert(request.inputLinkEndpoints == Seq("http://texera-rustfs:9000"))
   }
 
   it should "fail the region without initializing any executor when a mount is refused" in {
@@ -598,7 +622,8 @@ class RegionExecutionManagerSpec
       terminationTimeoutMs: Long = RegionExecutionManager.DefaultTerminationTimeoutMs,
       physicalOp: PhysicalOp = createSourceOp("test-op"),
       ensureMounted: Set[String] => Unit = _ => (),
-      beforeCleanup: () => Unit = () => ()
+      beforeCleanup: () => Unit = () => (),
+      coordinatorConfig: CoordinatorConfig = CoordinatorConfig(None, None, None, None)
   ): SingleRegionFixture = {
     val workerId = createWorkerId(physicalOp)
     val region = createSingleWorkerRegion(1, physicalOp, workerId)
@@ -622,7 +647,7 @@ class RegionExecutionManagerSpec
       isRestart = false,
       workflowExecution,
       rpcProbe.asyncRPCClient,
-      CoordinatorConfig(None, None, None, None),
+      coordinatorConfig,
       coordinator.actorService,
       coordinator.actorRefService,
       maxTerminationAttempts,

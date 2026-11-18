@@ -125,10 +125,6 @@ object OperatorMetadataGenerator {
     jsonSchema.get("properties").asInstanceOf[ObjectNode].remove("operatorVersion")
     // remove the loop-variable sidecar (StateReferencing.stateReferences): the backend fills it in
     jsonSchema.get("properties").asInstanceOf[ObjectNode].remove(StateReferencing.SIDECAR_PROPERTY)
-    // remove the properties the compiler sets (`SetByCompiler`): they are not the user's to edit
-    LogicalOp.propertiesSetByCompiler(opDescClass).foreach { name =>
-      jsonSchema.get("properties").asInstanceOf[ObjectNode].remove(name)
-    }
     // remove inputPorts/outputPorts from json schema
     jsonSchema.get("properties").asInstanceOf[ObjectNode].remove("inputPorts")
     jsonSchema.get("properties").asInstanceOf[ObjectNode].remove("outputPorts")

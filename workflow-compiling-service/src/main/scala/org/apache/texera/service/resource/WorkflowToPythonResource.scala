@@ -30,12 +30,7 @@ import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
-import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
-  CompileSettings,
-  RunBindings,
-  WorkflowCompiler
-}
+import org.apache.texera.common.compiler.{CompileFor, CompileSettings, WorkflowCompiler}
 import org.apache.texera.amber.translator.WorkflowToPythonTranslator
 import org.apache.texera.auth.SessionUser
 
@@ -89,7 +84,7 @@ class WorkflowToPythonResource extends LazyLogging {
   }
 
   /**
-    * What each operator's output ports carry, from the same Lenient compile the
+    * What each operator's output ports carry, from the same compile the
     * editing path runs. A failure is logged and the translation goes on without
     * them, so a workflow whose file is not chosen yet still exports, as it did
     * before, only without what the schema adds.
@@ -101,8 +96,8 @@ class WorkflowToPythonResource extends LazyLogging {
     try {
       new WorkflowCompiler(
         new WorkflowContext(workflowId = WorkflowIdentity(0)),
-        RunBindings.forEditing(FileResolver.forUser(uid), CompileSettings.fromSiteSettings())
-      ).compile(logicalPlanPojo, CompilationErrorHandling.Lenient).operatorIdToOutputSchemas
+        CompileFor.Editing(FileResolver.forUser(uid), CompileSettings.fromSiteSettings())
+      ).compile(logicalPlanPojo).operatorIdToOutputSchemas
     } catch {
       case e: Exception =>
         logger.warn("Could not resolve output schemas; translating without them", e)

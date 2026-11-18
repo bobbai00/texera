@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.csv
 
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeTypeUtils, TupleLike}
 import org.apache.texera.amber.operator.source.BufferedBlockReader
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
@@ -31,12 +31,13 @@ import scala.collection.compat.immutable.ArraySeq
 
 class ParallelCSVScanSourceOpExec private[csv] (
     descString: String,
+    inputs: ExecutorInputs,
     idx: Int = 0,
     workerCount: Int = 1
 ) extends SourceOperatorExecutor {
   val desc: ParallelCSVScanSourceOpDesc =
     objectMapper.readValue(descString, classOf[ParallelCSVScanSourceOpDesc])
-  private val input = desc.openInputFile()
+  private val input = inputs.open(desc.fileName.get)
   private var reader: BufferedBlockReader = _
   private val schema = desc.inferSchemaFrom(input)
   private val skippedRows = new SkippedRowReporter()

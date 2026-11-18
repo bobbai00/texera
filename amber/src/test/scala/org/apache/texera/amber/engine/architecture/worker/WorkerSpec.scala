@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.architecture.worker
 import org.apache.pekko.actor.{ActorRef, ActorSystem, Props}
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit}
 import org.apache.texera.amber.clustering.SingleNodeListener
-import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorExecutor}
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorExecutor, OperatorInputs}
 import org.apache.texera.amber.core.tuple._
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
@@ -201,7 +201,9 @@ class WorkerSpec
           "org.apache.texera.amber.engine.architecture.worker.DummyOperatorExecutor"
         ),
         isSource = false,
-        loopStartPortUris = Map.empty
+        loopStartPortUris = Map.empty,
+        inputs = OperatorInputs.defaultInstance,
+        inputLinkEndpoints = Seq.empty
       ),
       AsyncRPCContext(COORDINATOR, identifier1),
       4

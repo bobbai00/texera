@@ -49,7 +49,8 @@
                 "attributeType": "INTEGER"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wid/7/eid/42/globalportid/(logicalOpId=source,layerName=main,portId=0,isInternal=false,isInput=false)"
         }
       ]
     }

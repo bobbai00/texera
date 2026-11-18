@@ -22,6 +22,7 @@ package org.apache.texera.web.service.execution
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.vfs2.FileNotFoundException
+import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
   NoStoredPlanException,
@@ -33,7 +34,7 @@ import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, Physica
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
-import org.apache.texera.common.compiler.{RunBindings, WorkflowCompiler}
+import org.apache.texera.common.compiler.{CompileFor, WorkflowCompiler}
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
@@ -113,7 +114,7 @@ object OperatorUpdates {
   *                          operator builds it itself ([[LogicalOp.runtimeReconfiguration]])
   */
 class OperatorUpdates(
-    bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
+    bindingsFor: Integer => CompileFor.Run = PlanToRun.bindingsFor,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     appendUpdate: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.appendUpdate,
     reconfigure: OperatorUpdates.Reconfigure = (current, changed, workflowId, executionId) =>
@@ -146,12 +147,12 @@ class OperatorUpdates(
     }
     val changed = changedOperatorOf(request)
     val operatorId = changed.operatorIdentifier
-    // The change as the editor sent it, written as each operator of the plan row's logical plan
-    // is (LogicalPlanPojo.asSent), without the stateReferences sidecar or anything a compile
-    // sets, and before it is made to run: the update's provenance. A change that refers to a loop
-    // variable is refused below, so the change stored has no typed reference to put back.
+    // The change as the editor sent it, written as the plan row's logical plan is
+    // (LogicalPlanPojo.toJson), without the stateReferences sidecar, and before it is made to run:
+    // the update's provenance. A change that refers to a loop variable is refused below, so the
+    // change stored has no typed reference to put back.
     val logical = objectMapper.writeValueAsString(
-      LogicalPlanPojo.asSent(objectMapper.valueToTree[ObjectNode](changed), changed)
+      StateReferencing.restoreReferences(objectMapper.valueToTree[ObjectNode](changed))
     )
 
     val execution =
@@ -396,8 +397,7 @@ class OperatorUpdates(
     * the database not answering, is thrown as it is.
     */
   private def boundFor(uid: Integer, running: ExecutionPlan, op: PhysicalOp): PhysicalOp = {
-    val compiler = new WorkflowCompiler(running.context, bindingsFor(uid))
-    try compiler.bindResources(op)
+    try WorkflowCompiler.bindResources(op, bindingsFor(uid).repositories)
     catch {
       case error: FileNotFoundException => throw new BadRequestException(error.getMessage)
     }

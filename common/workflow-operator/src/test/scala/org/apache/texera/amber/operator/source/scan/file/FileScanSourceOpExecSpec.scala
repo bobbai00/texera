@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.source.scan.file
 
 import org.apache.texera.amber.core.tuple.{AttributeType, LargeBinary, Schema, SchemaEnforceable}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.operator.source.scan.{FileAttributeType, FileDecodingMethod}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.service.util.{LargeBinaryManager, S3StorageClient}
@@ -148,7 +148,7 @@ class FileScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     desc.setResolvedFileName(URI.create(testFile.toUri.toString))
 
     val executor =
-      new FileScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
+      new FileScanSourceOpExec(objectMapper.writeValueAsString(desc), FixtureInputs.inputsOf(desc))
 
     // FileScanUtils mints each LARGE_BINARY field through LargeBinaryManager.create(), which
     // reads a per-execution base URI off the calling thread. Seed it the way the coordinator

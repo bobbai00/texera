@@ -19,11 +19,17 @@
 
 package org.apache.texera.amber.operator.source.scan.file
 
-import org.apache.texera.amber.core.executor.{ExecFactory, OpExecWithClassName, OperatorExecutor}
+import org.apache.texera.amber.core.executor.{
+  ExecFactory,
+  InputFile,
+  OpExecWithClassName,
+  OperatorExecutor,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.storage.InputLink
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.source.scan.FileAttributeType
 import org.apache.texera.dao.{MockTexeraDB, SqlServer, StatementRecorder}
 import org.jooq.ConnectionProvider
@@ -39,7 +45,7 @@ import java.time.Instant
 
 /**
   * A File Scan From Input's executor reads the files its input tuples name through the links its
-  * plan carries, and through nothing else: a name the plan has no link to is refused, whatever
+  * plan gives it, and through nothing else: a name the plan has no link to is refused, whatever
   * it names and wherever a file of that name may be. So a computing unit reads only the files a
   * File Lister listed when the plan was made, and asks no service for a file.
   *
@@ -69,7 +75,7 @@ class FileScanOpExecSpec
 
   /** A link to the bytes of the local file at `path`, as a plan made to run carries one. */
   private def linkTo(path: String): InputLink =
-    TestOperators.fixtureInputLinker.link(TestOperators.localFileUri(path))
+    FixtureInputs.linker.link(TestOperators.localFileUri(path))
 
   /** The links of a plan whose File Listers listed the two files above. */
   private def listed: Map[String, InputLink] =
@@ -78,26 +84,29 @@ class FileScanOpExecSpec
       numbers -> linkTo(TestOperators.TestNumbersFilePath)
     )
 
-  /** A File Scan From Input as a compile leaves it, with `links` as the links of its plan. */
-  private def planned(
+  /**
+    * The executor a worker builds for a File Scan From Input set up by `configure`, from what
+    * its plan's operator carries, with `links` as the links the plan gives the operator.
+    */
+  private def executorOf(
       links: Map[String, InputLink] = listed,
       configure: FileScanOpDesc => Unit = _ => ()
-  ): FileScanOpDesc = {
+  ): OperatorExecutor = {
     val descriptor = new FileScanOpDesc
     configure(descriptor)
-    descriptor.inputLinks = links
-    descriptor
-  }
-
-  /** The executor a worker builds for `descriptor`, from what its plan's operator carries. */
-  private def executorOf(descriptor: FileScanOpDesc): OperatorExecutor =
+    val inputs = FixtureInputs.executorInputs(
+      OperatorInputs(files = links.toSeq.sortBy(_._1).map {
+        case (name, link) => InputFile(name, link.url, link.expiresAtMs)
+      })
+    )
     descriptor.getPhysicalOp(WorkflowIdentity(1), ExecutionIdentity(1)).opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>
         ExecFactory
-          .newExecFromJavaClassName(className, descString)
+          .newExecFromJavaClassName(className, descString, inputs = inputs)
           .asInstanceOf[OperatorExecutor]
       case other => fail(s"a File Scan From Input runs no executor of a class: $other")
     }
+  }
 
   private val fileNames = new Schema(new Attribute("filename", AttributeType.STRING))
 
@@ -127,7 +136,7 @@ class FileScanOpExecSpec
 
   "FileScanOpExec" should
     "read each file its input tuples name through its plan's link, with the database out of reach" in {
-    val executor = executorOf(planned())
+    val executor = executorOf()
 
     val statements = whileDatabaseUnreachable {
       rowsOf(executor, lines) shouldBe (1 to 10).map(n => List(s"line$n")).toList
@@ -139,23 +148,23 @@ class FileScanOpExecSpec
 
   it should "read the lines of the window its descriptor asks for" in {
     def scanned(configure: FileScanOpDesc => Unit): List[List[Any]] =
-      rowsOf(executorOf(planned(configure = configure)), lines)
+      rowsOf(executorOf(configure = configure), lines)
 
     scanned(_.fileScanLimit = Some(5)) shouldBe (1 to 5).map(n => List(s"line$n")).toList
     scanned(_.fileScanOffset = Some(5)) shouldBe (6 to 10).map(n => List(s"line$n")).toList
   }
 
   it should "read a file as the type its descriptor asks for" in {
-    val asIntegers = executorOf(planned(configure = _.attributeType = FileAttributeType.INTEGER))
+    val asIntegers = executorOf(configure = _.attributeType = FileAttributeType.INTEGER)
 
     rowsOf(asIntegers, numbers) shouldBe (1 to 10).map(n => List(n)).toList
   }
 
   it should "name each file as its input tuple names it, when it outputs the file's name" in {
-    val executor = executorOf(planned(configure = { descriptor =>
+    val executor = executorOf(configure = { descriptor =>
       descriptor.attributeType = FileAttributeType.SINGLE_STRING
       descriptor.outputFileName = true
-    }))
+    })
 
     rowsOf(executor, numbers) shouldBe List(List(numbers, (1 to 10).mkString("\n")))
   }
@@ -165,15 +174,15 @@ class FileScanOpExecSpec
       new Attribute("id", AttributeType.INTEGER),
       new Attribute("filename", AttributeType.STRING)
     )
-    val executor = executorOf(planned(configure = _.fileScanLimit = Some(1)))
+    val executor = executorOf(configure = _.fileScanLimit = Some(1))
 
     val rows = executor.processTuple(Tuple(idThenName, Array[Any](7, lines)), 0).toList
 
     rows.map(_.getFields.toList) shouldBe List(List("line1"))
   }
 
-  it should "refuse a file its plan carries no link to, whatever names it and wherever it is" in {
-    val executor = executorOf(planned())
+  it should "refuse a file its plan gives it no link to, whatever names it and wherever it is" in {
+    val executor = executorOf()
     val refused = Seq(
       // A file of the version that no File Lister upstream listed.
       s"$versionPath/unlisted.txt",
@@ -200,8 +209,8 @@ class FileScanOpExecSpec
     rowsOf(executor, numbers) should have size 10
   }
 
-  it should "refuse every file when its plan carries no link, as a plan not made to run" in {
-    val executor = executorOf(planned(links = Map.empty))
+  it should "refuse every file when its plan gives it no link, as a plan not made to run" in {
+    val executor = executorOf(links = Map.empty)
 
     intercept[FileNotFoundException](rowsOf(executor, lines)).getMessage shouldBe notListed(lines)
   }
@@ -209,7 +218,7 @@ class FileScanOpExecSpec
   it should "fail on a file whose link has expired, saying when, and go on reading the others" in {
     val expiredAt = Instant.parse("2024-02-29T12:00:00Z")
     val expired = linkTo(TestOperators.TestTextFilePath).copy(expiresAtMs = expiredAt.toEpochMilli)
-    val executor = executorOf(planned(links = listed + (lines -> expired)))
+    val executor = executorOf(links = listed + (lines -> expired))
 
     val thrown = intercept[IOException](rowsOf(executor, lines))
 
@@ -221,7 +230,7 @@ class FileScanOpExecSpec
   it should "refuse a link that leads anywhere but the object store, before it reads anything" in {
     val elsewhere =
       linkTo(TestOperators.TestTextFilePath).copy(url = "http://169.254.169.254/latest/meta-data/")
-    val executor = executorOf(planned(links = listed + (lines -> elsewhere)))
+    val executor = executorOf(links = listed + (lines -> elsewhere))
 
     val thrown = intercept[IllegalArgumentException](rowsOf(executor, lines))
 

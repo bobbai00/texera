@@ -249,6 +249,7 @@ lazy val WorkflowCompiler = (project in file("common/workflow-compiler"))
   .configs(Test)
   .dependsOn(WorkflowOperator)
   .dependsOn(WorkflowCore % "test->test") // PhysicalPlanRoundTrip, to save each compiled plan
+  .dependsOn(WorkflowOperator % "test->test") // FixtureInputs, the files compiled plans read
 lazy val WorkflowCompilingService = (project in file("workflow-compiling-service"))
   .dependsOn(WorkflowCompiler, Auth, Config, Resource, Observability)
   .configs(Test)
@@ -285,6 +286,7 @@ lazy val WorkflowExecutionService = (project in file("amber"))
   )
   .configs(Test)
   .dependsOn(DAO % "test->test", Auth % "test->test") // test scope dependency
+  .dependsOn(WorkflowOperator % "test->test") // FixtureInputs, the files a run's scans read
   .settings(
     // WorkflowMetricsRecorderSpec asserts exact counts on the process-wide WorkflowMetrics
     // instruments; run suites serially so a concurrent execution suite does not record into

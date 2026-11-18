@@ -18,12 +18,13 @@
 // A physical plan saved to be run later: what the engine needs to run it, and nothing that only
 // compiling it needs (an operator's schema propagation function, or a resource binding); with
 // what the run needs besides the plan (where it replays from, where it writes its replay log, the
-// costs an earlier run measured, what its operators read from outside it). And a change to one
-// operator of a paused run (StoredOperatorUpdate), saved in the same format version.
+// costs an earlier run measured). Each operator says what it reads from outside the run, and
+// where each of its output ports is stored. And a change to one operator of a paused run
+// (StoredOperatorUpdate), saved in the same format version.
 // PhysicalPlanCodec writes both and reads them back, as JSON with these field names.
 //
-// - A plan is always written as the same text: its operators, cost hints and inputs are sorted,
-//   and its links are in an order that the plan's ports give.
+// - A plan is always written as the same text: its operators, their files and its cost hints
+//   are sorted, and its links are in an order that the plan's ports give.
 // - A field at its default value is left out, as proto3 JSON leaves it out, and a reader takes a
 //   field left out as its default. Every enum defined here starts with an UNSPECIFIED value that
 //   no plan holds, and a oneof is always set: a reader refuses either.
@@ -69,9 +70,6 @@ message StoredPhysicalPlan {
   // What an earlier run measured, for the scheduler's cost model. Absent: no earlier run, and a
   // region costs the number of its ports whose results are stored.
   StoredCostHints costHints = 10;
-  // What the operators read from outside the run: each (operator, name) once, in the order of
-  // the operator's id, then the name.
-  repeated StoredPlanInput inputs = 11;
 }
 
 message StoredWorkflowSettings {
@@ -117,6 +115,8 @@ message StoredPhysicalOp {
   repeated string repositoryMounts = 13;
   // The Python environment the operator's workers run in. Absent: the engine's own interpreter.
   StoredPythonEnvironment pythonEnvironment = 14;
+  // What the operator reads from outside the run. Absent: nothing.
+  OperatorInputs inputs = 15;
 }
 
 message StoredPartitionRequirement {
@@ -167,6 +167,11 @@ message StoredInputPort {
 message StoredOutputPort {
   OutputPort port = 1;
   StoredSchema schema = 2;
+  // Where the port is stored when the run stores it, for a user to view or for a later region to
+  // read: the URI its result and its state hang off. A location of the plan's execution, in its
+  // warehouse, that names this port. An input port that reads stored data reads the location of
+  // the output port its link comes from.
+  string storageLocation = 3;
 }
 
 message StoredSchema {
@@ -224,17 +229,6 @@ message StoredOperatorCost {
   string logicalOperatorId = 1;
   // Finite, and at least 0.
   double seconds = 2;
-}
-
-// A file a logical operator of the plan reads from outside the run, through a link made when the
-// plan was made.
-message StoredPlanInput {
-  // An operator of the plan.
-  string logicalOperatorId = 1;
-  // The name the operator's executor knows the file by; not empty.
-  string name = 2;
-  // When the link stops working, in milliseconds since the epoch; after the epoch.
-  int64 expiresAtMs = 3;
 }
 
 // A change to one operator of a paused run, which the engine applies when the run resumes: the

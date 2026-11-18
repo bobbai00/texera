@@ -51,15 +51,3 @@ trait DatasetVersionLister {
     */
   def list(versionPath: String, atMost: Int): Seq[ListedFile]
 }
-
-object DatasetVersionLister {
-
-  /**
-    * Lists nothing. For a compile that makes no plan to run, which never asks; a plan made to run
-    * with it fails on the first version it lists rather than running without the listing.
-    */
-  val Unavailable: DatasetVersionLister = (versionPath, _) =>
-    throw new IllegalStateException(
-      s"No lister of dataset versions was given, so $versionPath cannot be listed."
-    )
-}

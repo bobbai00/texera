@@ -95,9 +95,7 @@ object StorageConfig {
   // Input-link specifics
   val inputLinksS3Endpoint: String = conf.getString("storage.input-links.s3-endpoint")
   val inputLinksTtlSeconds: Long = conf.getLong("storage.input-links.ttl-seconds")
-  // inputLinksAllowedEndpoints is a var because in test we need to override it to name the
-  // server that stands in for the object store
-  @volatile var inputLinksAllowedEndpoints: Seq[String] =
+  val inputLinksAllowedEndpoints: Seq[String] =
     conf
       .getString("storage.input-links.allowed-endpoints")
       .split(',')

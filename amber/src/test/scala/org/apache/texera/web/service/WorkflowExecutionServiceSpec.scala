@@ -24,7 +24,12 @@ import com.twitter.util.{Future, Promise}
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
+import org.apache.texera.amber.core.executor.{
+  InputFile,
+  OpExecWithClassName,
+  OpExecWithCode,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
@@ -50,7 +55,6 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   PythonEnvironment,
   PythonEnvironmentRef,
@@ -94,6 +98,7 @@ import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionR
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.StateChange
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
@@ -413,15 +418,17 @@ class WorkflowExecutionServiceSpec
 
   /** A source whose one output port, of one string column, has its results stored. */
   private val storedSource: PhysicalOp =
-    sourceOp("stored-text").copy(outputPorts =
-      Map(
-        PortIdentity() -> (
-          OutputPort(),
-          List.empty,
-          Right(Schema().add("line", AttributeType.STRING))
+    sourceOp("stored-text")
+      .copy(outputPorts =
+        Map(
+          PortIdentity() -> (
+            OutputPort(),
+            List.empty,
+            Right(Schema().add("line", AttributeType.STRING))
+          )
         )
       )
-    )
+      .withStorageLocations(None)
 
   /** The context the Dashboard saves a plan of `storedSource` alone under. */
   private def savedPlanContext(): WorkflowContext =
@@ -801,19 +808,22 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "start a plan that reads files through links, handing the engine the plan as it is" in {
-    // The links are the operators' own, in the descriptors their executors are built from: the
-    // run reads nothing of an input but that the plan lists it.
-    def input(name: String): PlanInput =
-      PlanInput(OperatorIdentity("stored-text"), name, Long.MaxValue)
+    // The links are the operator's own, among what the plan says it reads: the engine hands
+    // them to the operator's executors, and the run does nothing else with them.
+    def file(name: String): InputFile =
+      InputFile(
+        s"dataset:///dataset-12/9f3c/$name",
+        s"http://texera-rustfs:9000/texera-dataset/$name?X-Amz-Signature=5ecr3t",
+        Long.MaxValue
+      )
+    val reads = OperatorInputs(files = Seq(file("a.csv"), file("b.csv")))
     val executionPlan = readBack(
       ExecutionPlan(
         savedPlanContext(),
-        PhysicalPlan(Set(storedSource), Set.empty),
-        inputs =
-          Seq(input("dataset:///dataset-12/9f3c/a.csv"), input("dataset:///dataset-12/9f3c/b.csv"))
+        PhysicalPlan(Set(storedSource.withInputs(reads)), Set.empty)
       )
     )
-    executionPlan.inputs should have size 2
+    executionPlan.plan.getOperator(storedSource.id).inputs shouldBe reads
     val run = new StoredRun(executionPlan)
     try {
       run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
@@ -1038,6 +1048,7 @@ class WorkflowExecutionServiceSpec
         outputPorts = Map(PortIdentity() -> (OutputPort(), List(link), Right(lines))),
         pythonEnvironment = environment
       )
+      .withStorageLocations(None)
     val second = PhysicalOp
       .oneToOnePhysicalOp(secondId, workflowId, executionId, OpExecWithClassName("unused"))
       .copy(
@@ -1045,6 +1056,7 @@ class WorkflowExecutionServiceSpec
         outputPorts = Map(PortIdentity() -> (OutputPort(), List.empty, Right(lines))),
         pythonEnvironment = environment
       )
+      .withStorageLocations(None)
     writtenConsoles ++= Seq(firstId, secondId).map(id => consoleUriOf(id.logicalOpId.id))
     ExecutionPlan(
       new WorkflowContext(
@@ -1320,9 +1332,13 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "start the coordinator of a plan that replays nothing and writes no replay log as this unit's" in {
-    WorkflowExecutionService.coordinatorConfigOf(
+    val config = WorkflowExecutionService.coordinatorConfigOf(
       ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
-    ) shouldBe CoordinatorConfig.default
+    )
+
+    config shouldBe CoordinatorConfig.default
+    // Its workers read links from the endpoints this unit is set up with, and from no other.
+    config.inputLinkEndpoints shouldBe StorageConfig.inputLinksAllowedEndpoints
   }
 
   "WorkflowExecutionService.mountedUnder" should

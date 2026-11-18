@@ -30,7 +30,7 @@ import scala.collection.immutable.VectorMap
 /**
   * The message of [[WorkflowCompilationFailed]], which the log of a run that does not compile
   * shows; the run itself reports each operator's error on its own. `WorkflowCompilerSpec` covers
-  * which errors a Strict compile puts in it, and in what order.
+  * which errors a compile for a run puts in it, and in what order.
   */
 class WorkflowCompilationFailedSpec extends AnyFlatSpec {
 

@@ -19,15 +19,16 @@
 
 package org.apache.texera.amber.operator.source.dataset
 
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
-class FileListerSourceOpExec private[dataset] (descString: String) extends SourceOperatorExecutor {
+class FileListerSourceOpExec private[dataset] (descString: String, inputs: ExecutorInputs)
+    extends SourceOperatorExecutor {
   private val desc: FileListerSourceOpDesc =
     objectMapper.readValue(descString, classOf[FileListerSourceOpDesc])
-  // The plan's listing, which the compiler made: an executor lists no dataset version itself.
-  private val listing: List[String] = desc.listing.getOrElse(
+  // The plan's listing: an executor lists no dataset version itself.
+  private val listing: Seq[String] = inputs.listing.getOrElse(
     throw new IllegalStateException(
       s"${desc.operatorInfo.userFriendlyName} has no listing: its plan was not made to run."
     )

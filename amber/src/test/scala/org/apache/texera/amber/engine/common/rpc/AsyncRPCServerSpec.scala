@@ -23,6 +23,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.core.AppenderBase
 import com.twitter.util.Future
+import org.apache.texera.amber.core.executor.{InputFile, OpExecWithClassName, OperatorInputs}
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
 import org.apache.texera.amber.engine.architecture.messaginglayer.NetworkOutputGateway
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
@@ -30,7 +31,8 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ControlInvocation,
   ControlRequest,
   DebugCommandRequest,
-  EmptyRequest
+  EmptyRequest,
+  InitializeExecutorRequest
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.{
   ControlError,
@@ -190,6 +192,44 @@ class AsyncRPCServerSpec extends AnyFlatSpec with Matchers {
           only should include("(controlID: 14)")
         case other =>
           fail(s"expected exactly one command trace for echonumber, got: $other")
+      }
+    }
+  }
+
+  it should "trace a command that hands an executor a link without the link's signature" in {
+    val actorId = ActorVirtualIdentity("rpc-debug-trace-link")
+    val signature = "X-Amz-Signature=5ecr3t"
+    val fileName = "dataset:///dataset-12/9f3c/people.csv"
+    val request = InitializeExecutorRequest(
+      totalWorkerCount = 1,
+      opExecInitInfo = OpExecWithClassName("org.example.ScanExec", s"""{"fileName":"$fileName"}"""),
+      isSource = true,
+      loopStartPortUris = Map.empty,
+      inputs = OperatorInputs(files =
+        Seq(
+          InputFile(
+            fileName,
+            s"http://texera-rustfs:9000/texera-dataset/gdm5?$signature",
+            86400000L
+          )
+        )
+      ),
+      inputLinkEndpoints = Seq("http://texera-rustfs:9000")
+    )
+    withCapturedLogs(actorId, Level.DEBUG) { events =>
+      val (server, handler, _) = newFixture(actorId)
+
+      server.receive(invocation("echoNumber", 15L, request), senderId)
+
+      // The handler is handed the link whole; the trace says where it leads, and not what
+      // signs it.
+      handler.lastRequest shouldBe request
+      events().map(_.getFormattedMessage).filter(_.startsWith("receive command: ")) match {
+        case Seq(only) =>
+          only should include("http://texera-rustfs:9000/texera-dataset/gdm5")
+          only should not include signature
+        case other =>
+          fail(s"expected exactly one command trace, got: $other")
       }
     }
   }

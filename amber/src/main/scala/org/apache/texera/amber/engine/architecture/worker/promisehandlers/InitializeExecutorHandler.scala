@@ -20,6 +20,7 @@
 package org.apache.texera.amber.engine.architecture.worker.promisehandlers
 
 import com.twitter.util.Future
+import org.apache.texera.amber.core.executor.ExecutorInputs
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   AsyncRPCContext,
   InitializeExecutorRequest
@@ -44,6 +45,7 @@ trait InitializeExecutorHandler {
         )
       )
     cachedTotalWorkerCount = req.totalWorkerCount
+    executorInputs = new ExecutorInputs(req.inputs, req.inputLinkEndpoints)
     setupExecutor(req.opExecInitInfo, workerIdx, cachedTotalWorkerCount)
     EmptyReturn()
   }

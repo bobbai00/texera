@@ -20,18 +20,32 @@
 package org.apache.texera.amber.engine.architecture.worker
 
 import org.apache.texera.amber.core.executor.{
+  ExecutorInputs,
+  FileListing,
+  InputFile,
   OpExecInitInfo,
   OperatorExecutor,
+  OperatorInputs,
   OpExecWithClassName,
   OpExecWithCode
 }
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
-import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
+import org.apache.texera.amber.core.virtualidentity.{
+  ActorVirtualIdentity,
+  OperatorIdentity,
+  PhysicalOpIdentity
+}
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
+  AsyncRPCContext,
+  InitializeExecutorRequest,
+  UpdateExecutorRequest
+}
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   DPInputQueueElement,
   MainThreadDelegateMessage
 }
 import org.apache.texera.amber.engine.common.ambermessage.WorkflowFIFOMessage
+import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.scalatest.flatspec.AnyFlatSpec
 
 import java.util.concurrent.LinkedBlockingQueue
@@ -131,6 +145,76 @@ class DataProcessorRPCHandlerInitializerSpec extends AnyFlatSpec {
     assert(failure.getMessage == "Empty executor initialization info")
     assert(initializer.dp.executor == null)
   }
+
+  behavior of "DataProcessorRPCHandlerInitializer.initializeExecutor"
+
+  private val context = AsyncRPCContext(COORDINATOR, workerId)
+  private val listing = Seq("/dataset/ada@texera.io/letters/v1/b.txt")
+
+  /**
+    * A worker whose operator reads the listing above and the file `b.txt`, kept at
+    * texera-rustfs, and may read links from `linkEndpoints`: its handlers, and the executor
+    * they built.
+    */
+  private def initialized(
+      linkEndpoints: Seq[String]
+  ): (DataProcessorRPCHandlerInitializer, ReadingExec) = {
+    val initializer = newInitializer()
+    initializer.initializeExecutor(
+      InitializeExecutorRequest(
+        totalWorkerCount = 1,
+        opExecInitInfo = OpExecWithClassName(classOf[ReadingExec].getName, "as-planned"),
+        isSource = true,
+        loopStartPortUris = Map.empty,
+        inputs = OperatorInputs(
+          files = Seq(
+            InputFile("b.txt", "http://texera-rustfs:9000/texera-dataset/b", Long.MaxValue)
+          ),
+          listing = Some(FileListing(listing))
+        ),
+        inputLinkEndpoints = linkEndpoints
+      ),
+      context
+    )
+    (initializer, initializer.dp.executor.asInstanceOf[ReadingExec])
+  }
+
+  it should "hand the executor what its operator reads, and so the executor that takes its place" in {
+    val (initializer, planned) = initialized(linkEndpoints = Seq("http://texera-rustfs:9000"))
+
+    assert(planned.desc == "as-planned")
+    assert(planned.inputs.listing.contains(listing))
+    planned.inputs.open("b.txt").close()
+
+    // A change to the operator while its run is paused brings a new descriptor and nothing
+    // else: the operator goes on reading what its plan says.
+    initializer.updateExecutor(
+      UpdateExecutorRequest(
+        PhysicalOpIdentity(OperatorIdentity("dp-rpc-init"), "main"),
+        OpExecWithClassName(classOf[ReadingExec].getName, "as-changed")
+      ),
+      context
+    )
+
+    val changed = initializer.dp.executor.asInstanceOf[ReadingExec]
+    assert(changed.desc == "as-changed")
+    assert(changed.inputs.listing.contains(listing))
+    changed.inputs.open("b.txt").close()
+  }
+
+  it should "let the executor follow a link only to the endpoints its request names" in {
+    val (_, elsewhere) = initialized(linkEndpoints = Seq("http://another-store:9000"))
+    val (_, nowhere) = initialized(linkEndpoints = Seq.empty)
+
+    Seq(elsewhere, nowhere).foreach { executor =>
+      val refused = intercept[IllegalArgumentException](executor.inputs.open("b.txt"))
+      assert(
+        refused.getMessage.startsWith(
+          "Refusing to read b.txt: its link points at http://texera-rustfs:9000"
+        )
+      )
+    }
+  }
 }
 
 private object DataProcessorRPCHandlerInitializerSpec {
@@ -142,6 +226,11 @@ private object DataProcessorRPCHandlerInitializerSpec {
     */
   class DescribedExec(val desc: String, val idx: Int, val workerCount: Int)
       extends OperatorExecutor {
+    override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = Iterator.empty
+  }
+
+  /** An executor of an operator that reads from outside the run: it records what it is handed. */
+  class ReadingExec(val desc: String, val inputs: ExecutorInputs) extends OperatorExecutor {
     override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = Iterator.empty
   }
 }

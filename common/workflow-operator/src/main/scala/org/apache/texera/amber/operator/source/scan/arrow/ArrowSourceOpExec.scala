@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.arrow
 
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.TupleLike
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -30,11 +30,12 @@ import org.apache.arrow.vector.ipc.ArrowFileReader
 import java.nio.file.{Files, StandardOpenOption}
 
 class ArrowSourceOpExec(
-    descString: String
+    descString: String,
+    inputs: ExecutorInputs
 ) extends SourceOperatorExecutor {
   private val desc: ArrowSourceOpDesc =
     objectMapper.readValue(descString, classOf[ArrowSourceOpDesc])
-  private val input = desc.openInputFile()
+  private val input = inputs.open(desc.fileName.get)
   private var reader: Option[ArrowFileReader] = None
   private var root: Option[VectorSchemaRoot] = None
   private var allocator: Option[RootAllocator] = None

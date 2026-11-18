@@ -158,7 +158,8 @@
                 "attributeType": "INTEGER"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=join,layerName=main,portId=0,isInternal=false,isInput=false)"
         }
       ],
       "isOneToManyOp": true,
@@ -226,9 +227,25 @@
                 "attributeType": "ANY"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=scan,layerName=main,portId=0,isInternal=false,isInput=false)"
         }
-      ]
+      ],
+      "inputs": {
+        "files": [
+          {
+            "name": "dataset:///ds-1/d4t4/a.csv",
+            "url": "http://texera-rustfs:9000/texera-dataset/a?X-Amz-Signature=5ecr3t",
+            "expiresAtMs": "1763856000000"
+          }
+        ],
+        "listing": {
+          "files": [
+            "/dataset/a@x.io/ds/v1/a.csv"
+          ]
+        },
+        "csvParserMaxColumns": 512
+      }
     },
     {
       "id": {
@@ -377,7 +394,8 @@
                 "attributeType": "INTEGER"
               }
             ]
-          }
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=udf,layerName=main,portId=1,isInternal=false,isInput=false)"
         }
       ],
       "suggestedWorkerNum": 2,
@@ -462,12 +480,5 @@
         "seconds": 3.0
       }
     ]
-  },
-  "inputs": [
-    {
-      "logicalOperatorId": "scan",
-      "name": "dataset:///ds-1/d4t4/a.csv",
-      "expiresAtMs": "1763856000000"
-    }
-  ]
+  }
 }

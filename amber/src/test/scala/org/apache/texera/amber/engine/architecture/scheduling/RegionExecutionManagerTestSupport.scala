@@ -102,8 +102,9 @@ object RegionExecutionManagerTestSupport {
       initializeExecutorResponse: WorkerRpcCall => ControlReturn = _ => EmptyReturn()
   ) {
     val calls: mutable.ArrayBuffer[WorkerRpcCall] = mutable.ArrayBuffer()
-    // The executor each initializeExecutor call carried, in call order.
-    private val executors: mutable.ArrayBuffer[OpExecInitInfo] = mutable.ArrayBuffer()
+    // The request each initializeExecutor call carried, in call order.
+    private val initializationRequests: mutable.ArrayBuffer[InitializeExecutorRequest] =
+      mutable.ArrayBuffer()
     val inputGateway = new NetworkInputGateway(COORDINATOR)
     val outputGateway = new NetworkOutputGateway(COORDINATOR, handleOutput)
     val asyncRPCClient = new AsyncRPCClient(inputGateway, outputGateway, COORDINATOR)
@@ -113,7 +114,9 @@ object RegionExecutionManagerTestSupport {
     def initializedWorkers: Seq[ActorVirtualIdentity] =
       calls.filter(_.methodName == InitializeExecutor).map(_.receiver).toSeq
 
-    def initializedExecutors: Seq[OpExecInitInfo] = executors.toSeq
+    def initializations: Seq[InitializeExecutorRequest] = initializationRequests.toSeq
+
+    def initializedExecutors: Seq[OpExecInitInfo] = initializations.map(_.opExecInitInfo)
 
     def startedWorkers: Seq[ActorVirtualIdentity] =
       calls.filter(_.methodName == StartWorker).map(_.receiver).toSeq
@@ -146,7 +149,7 @@ object RegionExecutionManagerTestSupport {
         commandId = invocation.commandId
       )
       invocation.command match {
-        case request: InitializeExecutorRequest => executors += request.opExecInitInfo
+        case request: InitializeExecutorRequest => initializationRequests += request
         case _                                  =>
       }
       calls += call

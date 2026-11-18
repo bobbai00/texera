@@ -28,13 +28,23 @@ import org.apache.texera.amber.util.PythonTestSupport.{
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.TextNode
 import com.github.fge.jsonschema.main.JsonSchemaFactory
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{
+  ExecutorInputs,
+  OperatorInputs,
+  SourceOperatorExecutor
+}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
+import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.core.workflow.WorkflowContext.{
   DEFAULT_EXECUTION_ID,
   DEFAULT_WORKFLOW_ID
 }
-import org.apache.texera.amber.operator.{LogicalOp, StandaloneCodeGenerator, TestOperators}
+import org.apache.texera.amber.operator.{
+  FixtureInputs,
+  LogicalOp,
+  StandaloneCodeGenerator,
+  TestOperators
+}
 import org.apache.texera.amber.operator.metadata.OperatorMetadataGenerator
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csvOld.CSVOldScanSourceOpDesc
@@ -335,7 +345,8 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     )
 
     val exec = new ParallelCSVScanSourceOpExec(
-      objectMapper.writeValueAsString(TestOperators.linked(parallelCsvScanSourceOpDesc))
+      objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc),
+      FixtureInputs.inputsOf(parallelCsvScanSourceOpDesc)
     )
     exec.open()
     val rows =
@@ -360,7 +371,8 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     parallelCsvScanSourceOpDesc.setResolvedFileName(TestOperators.localFileUri(path))
 
     val exec = new ParallelCSVScanSourceOpExec(
-      objectMapper.writeValueAsString(TestOperators.linked(parallelCsvScanSourceOpDesc))
+      objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc),
+      FixtureInputs.inputsOf(parallelCsvScanSourceOpDesc)
     )
     exec.open()
     val rows =
@@ -399,7 +411,8 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     parallelCsvScanSourceOpDesc.limit = Some(2)
 
     val exec = new ParallelCSVScanSourceOpExec(
-      objectMapper.writeValueAsString(TestOperators.linked(parallelCsvScanSourceOpDesc))
+      objectMapper.writeValueAsString(parallelCsvScanSourceOpDesc),
+      FixtureInputs.inputsOf(parallelCsvScanSourceOpDesc)
     )
     exec.open()
     val rowsRead =
@@ -665,25 +678,42 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     tmpFile.toString
   }
 
-  // The compiler sets the limit, from the site's setting, and the executor reads
-  // the file under it. The schema has to be inferred under the same one, or a
-  // file the site allows would fail to compile, and one it refuses would compile
-  // and then fail its run.
-  it should "infer the schema under the column limit it carries" in {
+  /**
+    * The columns of the schema a compile under a site limit of `maxColumns` gives the scan of
+    * the file at `path`: the limit is among what the compile hands the scan it compiles.
+    */
+  private def columnNamesUnder(maxColumns: Int, path: String): List[String] = {
     val csv = new CSVScanSourceOpDesc()
-    csv.maxColumns = Some(3)
-    assert(columnNames(csv, writeWideCsv(3)) == List("c1", "c2", "c3"))
-    val overflow = intercept[RuntimeException](columnNames(csv, writeWideCsv(4)))
+    csv.setResolvedFileName(TestOperators.localFileUri(path))
+    csv
+      .getPhysicalPlan(
+        DEFAULT_WORKFLOW_ID,
+        DEFAULT_EXECUTION_ID,
+        OperatorInputs(csvParserMaxColumns = Some(maxColumns))
+      )
+      .operators
+      .head
+      .propagateSchema()
+      .outputPorts(PortIdentity())
+      ._3
+      .fold(error => throw error, _.getAttributes.map(_.getName).toList)
+  }
+
+  // A compile hands the scan the site's limit, and the executor reads the file
+  // under it. The schema has to be inferred under the same one, or a file the
+  // site allows would fail to compile, and one it refuses would compile and then
+  // fail its run.
+  it should "infer the schema under the column limit a compile hands it" in {
+    assert(columnNamesUnder(3, writeWideCsv(3)) == List("c1", "c2", "c3"))
+    val overflow = intercept[RuntimeException](columnNamesUnder(3, writeWideCsv(4)))
     assert(overflow.getMessage == "Max columns of 3 exceeded.")
 
     // Above the default as well as below it.
-    csv.maxColumns = Some(600)
-    assert(columnNames(csv, writeWideCsv(600)).size == 600)
+    assert(columnNamesUnder(600, writeWideCsv(600)).size == 600)
   }
 
   // 512 columns: the limit a site is seeded with.
-  it should "infer under the default column limit until a compile sets one" in {
-    assert(csvScanSourceOpDesc.maxColumns.isEmpty)
+  it should "infer under the default column limit outside a compile" in {
     assert(columnNames(csvScanSourceOpDesc, writeWideCsv(512)).size == 512)
 
     val overflow = intercept[RuntimeException] {
@@ -707,11 +737,11 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     csvScanSourceOpDesc.customDelimiter = Some(",")
     csvScanSourceOpDesc.hasHeader = false
     csvScanSourceOpDesc.offset = Some(10)
-    csvScanSourceOpDesc.maxColumns = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
     csvScanSourceOpDesc.setResolvedFileName(TestOperators.localFileUri(path))
 
     val exec = new CSVScanSourceOpExec(
-      objectMapper.writeValueAsString(TestOperators.linked(csvScanSourceOpDesc))
+      objectMapper.writeValueAsString(csvScanSourceOpDesc),
+      FixtureInputs.inputsOf(csvScanSourceOpDesc)
     )
     exec.open()
     val engineRows =
@@ -758,14 +788,17 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     )
     val path = tmpFile.toString
     csvScanSourceOpDesc.customDelimiter = Some(",")
-    csvScanSourceOpDesc.maxColumns = Some(CSVScanSourceOpDesc.DefaultMaxColumns)
     parallelCsvScanSourceOpDesc.customDelimiter = Some(",")
 
-    val readers
-        : Seq[(ScanSourceOpDesc with StandaloneCodeGenerator, String => SourceOperatorExecutor)] =
+    val readers: Seq[
+      (
+          ScanSourceOpDesc with StandaloneCodeGenerator,
+          (String, ExecutorInputs) => SourceOperatorExecutor
+      )
+    ] =
       Seq(
-        csvScanSourceOpDesc -> (s => new CSVScanSourceOpExec(s)),
-        parallelCsvScanSourceOpDesc -> (s => new ParallelCSVScanSourceOpExec(s))
+        csvScanSourceOpDesc -> ((s, inputs) => new CSVScanSourceOpExec(s, inputs)),
+        parallelCsvScanSourceOpDesc -> ((s, inputs) => new ParallelCSVScanSourceOpExec(s, inputs))
       )
     readers.foreach {
       case (desc, exec) =>
@@ -774,7 +807,7 @@ class CSVScanSourceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
         assert(desc.sourceSchema().getAttribute("w").getType == AttributeType.DOUBLE)
         assert(desc.sourceSchema().getAttribute("u").getType == AttributeType.DOUBLE)
 
-        val engine = exec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
+        val engine = exec(objectMapper.writeValueAsString(desc), FixtureInputs.inputsOf(desc))
         engine.open()
         val engineRows =
           try engine.produceTuple().map(_.getFields.toSeq).toList

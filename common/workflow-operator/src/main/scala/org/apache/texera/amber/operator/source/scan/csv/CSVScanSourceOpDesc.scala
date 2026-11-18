@@ -20,18 +20,17 @@
 package org.apache.texera.amber.operator.source.scan.csv
 
 import com.fasterxml.jackson.annotation.{JsonInclude, JsonProperty, JsonPropertyDescription}
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import com.univocity.parsers.csv.{CsvFormat, CsvParser, CsvParserSettings}
-import org.apache.texera.amber.core.executor.OpExecWithClassName
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorInputs}
 import org.apache.texera.amber.core.storage.model.ReadonlyVirtualDocument
 import org.apache.texera.amber.core.tuple.AttributeTypeUtils.inferSchemaFromRows
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.{PhysicalOp, SchemaPropagationFunc}
+import org.apache.texera.amber.core.workflow.{PhysicalOp, PhysicalPlan, SchemaPropagationFunc}
 import org.apache.texera.amber.operator.{StandaloneCodeGenerator, StandaloneHelpers}
 import org.apache.texera.amber.operator.StandaloneCodeGenerator.SourceFilePlaceholder
-import org.apache.texera.amber.operator.metadata.annotations.{SetByCompiler, UIWidget}
+import org.apache.texera.amber.operator.metadata.annotations.UIWidget
 import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpExec
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
@@ -56,22 +55,38 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
   @JsonPropertyDescription("whether the CSV file contains a header line")
   var hasHeader: Boolean = true
 
-  /**
-    * The most columns a row of the file may have: the site's limit as it stood when the plan
-    * was compiled. The executor reads the file under it and asks for no other, so a plan runs
-    * under the limit it was made with wherever it runs.
-    */
-  @JsonProperty("maxColumns")
-  @JsonDeserialize(contentAs = classOf[Int])
-  @SetByCompiler
-  var maxColumns: Option[Int] = None
-
   fileTypeName = Option("CSV")
 
   @throws[IOException]
   override def getPhysicalOp(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
+  ): PhysicalOp = getPhysicalOp(workflowId, executionId, CSVScanSourceOpDesc.DefaultMaxColumns)
+
+  /**
+    * The schema is inferred under the column limit of the site the workflow is compiled for,
+    * the one the plan's executor is handed to read the file under.
+    */
+  override def getPhysicalPlan(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      inputs: OperatorInputs
+  ): PhysicalPlan =
+    PhysicalPlan(
+      operators = Set(
+        getPhysicalOp(
+          workflowId,
+          executionId,
+          inputs.csvParserMaxColumns.getOrElse(CSVScanSourceOpDesc.DefaultMaxColumns)
+        )
+      ),
+      links = Set.empty
+    )
+
+  private def getPhysicalOp(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity,
+      maxColumns: Int
   ): PhysicalOp = {
     // fill in default values
     if (customDelimiter.forall(_.isEmpty)) {
@@ -91,19 +106,27 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPropagateSchema(
-        SchemaPropagationFunc(_ => Map(operatorInfo.outputPorts.head.id -> sourceSchema()))
+        SchemaPropagationFunc(_ =>
+          Map(
+            operatorInfo.outputPorts.head.id ->
+              inferSchemaFrom(openFileToInferFrom(".csv"), maxColumns)
+          )
+        )
       )
   }
 
-  /** The schema of the file, as a compile infers it ([[inferSchemaFrom]]). */
-  override def sourceSchema(): Schema = inferSchemaFrom(openFileToInferFrom(".csv"))
+  /**
+    * The schema of the file, inferred under [[CSVScanSourceOpDesc.DefaultMaxColumns]]: for a
+    * caller outside a compile. A compile infers it under the site's limit ([[getPhysicalPlan]]).
+    */
+  override def sourceSchema(): Schema =
+    inferSchemaFrom(openFileToInferFrom(".csv"), CSVScanSourceOpDesc.DefaultMaxColumns)
 
   /**
-    * The schema of the file `document` holds, inferred from its first rows, read under
-    * [[maxColumns]]; a descriptor no compile has set a limit on is read under
-    * [[CSVScanSourceOpDesc.DefaultMaxColumns]].
+    * The schema of the file `document` holds, inferred from its first rows, of at most
+    * `maxColumns` columns each.
     */
-  def inferSchemaFrom(document: ReadonlyVirtualDocument[_]): Schema = {
+  def inferSchemaFrom(document: ReadonlyVirtualDocument[_], maxColumns: Int): Schema = {
     val delimiterChar = customDelimiter.filter(_.nonEmpty).getOrElse(",").charAt(0)
     val stream = document.asInputStream()
     val inputReader =
@@ -114,8 +137,7 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
     csvFormat.setLineSeparator("\n")
     val csvSetting = new CsvParserSettings()
     csvSetting.setMaxCharsPerColumn(-1)
-    val columnLimit = maxColumns.getOrElse(CSVScanSourceOpDesc.DefaultMaxColumns)
-    csvSetting.setMaxColumns(columnLimit)
+    csvSetting.setMaxColumns(maxColumns)
     csvSetting.setFormat(csvFormat)
     csvSetting.setHeaderExtractionEnabled(hasHeader)
     // No setNullValue here, so a blank cell reads as null exactly as it does at
@@ -128,7 +150,7 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerator 
     var data: Array[Array[String]] = Array()
     val readLimit = inferSampleSize
     for (_ <- 0 until readLimit) {
-      val row = CSVScanSourceOpExec.parseNextRow(parser, columnLimit)
+      val row = CSVScanSourceOpExec.parseNextRow(parser, maxColumns)
       if (row != null) {
         data = data :+ row
       }

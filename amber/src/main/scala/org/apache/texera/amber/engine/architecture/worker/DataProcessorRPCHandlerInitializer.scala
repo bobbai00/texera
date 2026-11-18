@@ -22,6 +22,7 @@ package org.apache.texera.amber.engine.architecture.worker
 import com.twitter.util.Future
 import org.apache.texera.amber.core.executor.{
   ExecFactory,
+  ExecutorInputs,
   OpExecInitInfo,
   OpExecWithClassName,
   OpExecWithCode
@@ -64,6 +65,10 @@ class DataProcessorRPCHandlerInitializer(val dp: DataProcessor)
 
   var cachedTotalWorkerCount = 0
 
+  // What the worker's operator reads from outside the run: its plan's, which the executor the
+  // worker starts with is handed, and each executor that takes its place.
+  var executorInputs: ExecutorInputs = ExecutorInputs.none
+
   override def debugCommand(
       request: DebugCommandRequest,
       ctx: AsyncRPCContext
@@ -82,7 +87,13 @@ class DataProcessorRPCHandlerInitializer(val dp: DataProcessor)
   def setupExecutor(execInitInfo: OpExecInitInfo, workerIdx: Int, workerCount: Int): Unit = {
     dp.executor = execInitInfo match {
       case OpExecWithClassName(className, descString) =>
-        ExecFactory.newExecFromJavaClassName(className, descString, workerIdx, workerCount)
+        ExecFactory.newExecFromJavaClassName(
+          className,
+          descString,
+          workerIdx,
+          workerCount,
+          executorInputs
+        )
       case OpExecWithCode(code, _) =>
         ExecFactory.newExecFromJavaCode(code)
       case OpExecInitInfo.Empty =>

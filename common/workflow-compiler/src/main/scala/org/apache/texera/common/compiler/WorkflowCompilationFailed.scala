@@ -23,8 +23,8 @@ import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 
 /**
-  * A workflow that cannot be made into a plan to run, with why, per operator: what a
-  * [[CompilationErrorHandling.Strict]] compile throws.
+  * A workflow that cannot be made into a plan to run, with why, per operator: what a compile
+  * for a run ([[CompileFor.Run]]) throws.
   *
   * The message names the operators with errors, one per line as `"<operator id>: <message>"`, in
   * the order of `operatorErrors`, after a line that counts them. It names the first

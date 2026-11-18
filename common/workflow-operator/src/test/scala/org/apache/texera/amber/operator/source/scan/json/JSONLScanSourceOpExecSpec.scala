@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.operator.source.scan.json
 
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.operator.source.scan.FileDecodingMethod
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -37,19 +37,26 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
     path.toFile.toURI
   }
 
-  private def descString(
+  private def executorOf(
       uri: URI,
       flatten: Boolean = false,
       limit: Option[Int] = None,
-      offset: Option[Int] = None
-  ): String = {
+      offset: Option[Int] = None,
+      idx: Int = 0,
+      workerCount: Int = 1
+  ): JSONLScanSourceOpExec = {
     val desc = new JSONLScanSourceOpDesc
     desc.setResolvedFileName(uri)
     desc.fileEncoding = FileDecodingMethod.UTF_8
     desc.flatten = flatten
     desc.limit = limit
     desc.offset = offset
-    objectMapper.writeValueAsString(TestOperators.linked(desc))
+    new JSONLScanSourceOpExec(
+      objectMapper.writeValueAsString(desc),
+      FixtureInputs.inputsOf(desc),
+      idx,
+      workerCount
+    )
   }
 
   private def drain(exec: JSONLScanSourceOpExec): List[Seq[Any]] = {
@@ -60,9 +67,7 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
 
   "JSONLScanSourceOpExec" should "read each JSON line, ordering fields by sorted attribute name" in {
     // keys are written name-then-id; the output must be reordered to id-then-name
-    val exec = new JSONLScanSourceOpExec(
-      descString(writeJsonl("""{"name":"a","id":1}""", """{"name":"b","id":2}"""))
-    )
+    val exec = executorOf(writeJsonl("""{"name":"a","id":1}""", """{"name":"b","id":2}"""))
     val rows = drain(exec)
     assert(rows.size == 2)
     assert(rows.head == Seq(1, "a"))
@@ -71,36 +76,35 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
 
   it should "partition rows across workers" in {
     val uri = writeJsonl("""{"v":0}""", """{"v":1}""", """{"v":2}""", """{"v":3}""")
-    val worker0 = new JSONLScanSourceOpExec(descString(uri), idx = 0, workerCount = 2)
-    val worker1 = new JSONLScanSourceOpExec(descString(uri), idx = 1, workerCount = 2)
+    val worker0 = executorOf(uri, idx = 0, workerCount = 2)
+    val worker1 = executorOf(uri, idx = 1, workerCount = 2)
     assert(drain(worker0).map(_.head) == Seq(0, 1))
     assert(drain(worker1).map(_.head) == Seq(2, 3))
   }
 
   it should "apply the row limit" in {
     val uri = writeJsonl("""{"v":0}""", """{"v":1}""", """{"v":2}""", """{"v":3}""", """{"v":4}""")
-    val exec = new JSONLScanSourceOpExec(descString(uri, limit = Some(2)))
+    val exec = executorOf(uri, limit = Some(2))
     assert(drain(exec).map(_.head) == Seq(0, 1))
   }
 
   it should "start at the offset and keep every row after it" in {
     val uri = writeJsonl("""{"v":0}""", """{"v":1}""", """{"v":2}""", """{"v":3}""", """{"v":4}""")
-    val exec = new JSONLScanSourceOpExec(descString(uri, offset = Some(2)))
+    val exec = executorOf(uri, offset = Some(2))
     assert(drain(exec).map(_.head) == Seq(2, 3, 4))
   }
 
   it should "apply the limit relative to the offset" in {
     val uri = writeJsonl("""{"v":0}""", """{"v":1}""", """{"v":2}""", """{"v":3}""", """{"v":4}""")
     // The window is shorter than the offset itself, which used to empty it out.
-    val exec = new JSONLScanSourceOpExec(descString(uri, limit = Some(2), offset = Some(2)))
+    val exec = executorOf(uri, limit = Some(2), offset = Some(2))
     assert(drain(exec).map(_.head) == Seq(2, 3))
   }
 
   it should "split the offset window across workers, losing no row to either end" in {
     val uri = writeJsonl("""{"v":0}""", """{"v":1}""", """{"v":2}""", """{"v":3}""", """{"v":4}""")
-    val desc = descString(uri, offset = Some(1))
-    val worker0 = new JSONLScanSourceOpExec(desc, idx = 0, workerCount = 2)
-    val worker1 = new JSONLScanSourceOpExec(desc, idx = 1, workerCount = 2)
+    val worker0 = executorOf(uri, offset = Some(1), idx = 0, workerCount = 2)
+    val worker1 = executorOf(uri, offset = Some(1), idx = 1, workerCount = 2)
     assert(drain(worker0).map(_.head) == Seq(1, 2))
     assert(drain(worker1).map(_.head) == Seq(3, 4))
   }
@@ -116,9 +120,9 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
       """{"v":6}"""
     )
     // Four rows over three workers: one each, and the odd row goes to the last.
-    val desc = descString(uri, limit = Some(4), offset = Some(2))
-    val workers =
-      (0 until 3).map(i => new JSONLScanSourceOpExec(desc, idx = i, workerCount = 3))
+    val workers = (0 until 3).map(i =>
+      executorOf(uri, limit = Some(4), offset = Some(2), idx = i, workerCount = 3)
+    )
     assert(workers.map(drain(_).map(_.head)) == Seq(Seq(2), Seq(3), Seq(4, 5)))
   }
 
@@ -126,7 +130,7 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
     // 100 clean integer lines fix "v" at INTEGER (INFER_READ_LIMIT=100); line 101
     // holds a string and must be skipped but reported with its absolute line number.
     val clean = (1 to 100).map(i => s"""{"v":$i}""")
-    val exec = new JSONLScanSourceOpExec(descString(writeJsonl(clean :+ """{"v":"oops"}""": _*)))
+    val exec = executorOf(writeJsonl(clean :+ """{"v":"oops"}""": _*))
     val rows = drain(exec)
 
     assert(rows.size == 100)
@@ -141,7 +145,7 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
 
   it should "skip a malformed JSON line and report it with the generic fallback" in {
     val clean = (1 to 100).map(i => s"""{"v":$i}""")
-    val exec = new JSONLScanSourceOpExec(descString(writeJsonl(clean :+ """{"v": not json""": _*)))
+    val exec = executorOf(writeJsonl(clean :+ """{"v": not json""": _*))
     val rows = drain(exec)
 
     assert(rows.size == 100)
@@ -155,9 +159,7 @@ class JSONLScanSourceOpExecSpec extends AnyFlatSpec {
     // offset=2 skips lines 1-2; inference then samples lines 3-102 (100 clean
     // integers), and the bad value sits at file line 103.
     val clean = (1 to 102).map(i => s"""{"v":$i}""")
-    val exec = new JSONLScanSourceOpExec(
-      descString(writeJsonl(clean :+ """{"v":"oops"}""": _*), offset = Some(2))
-    )
+    val exec = executorOf(writeJsonl(clean :+ """{"v":"oops"}""": _*), offset = Some(2))
     assert(drain(exec).size == 100)
     assert(exec.getWarnings.head.contains("row 103"))
   }

@@ -73,18 +73,3 @@ trait InputLinker {
     */
   def linkListed(file: ListedFile): InputLink
 }
-
-object InputLinker {
-
-  /**
-    * Links nothing. For a compile that makes no plan to run, which never asks; a plan made to run
-    * with it fails on the first file it reads rather than running without a link to it.
-    */
-  val Unavailable: InputLinker = new InputLinker {
-    override def link(fileUri: URI): InputLink = throw noLinker(fileUri.toString)
-    override def linkListed(file: ListedFile): InputLink = throw noLinker(file.logicalPath)
-
-    private def noLinker(file: String): IllegalStateException =
-      new IllegalStateException(s"No linker for input files was given, so $file cannot be linked.")
-  }
-}

@@ -236,7 +236,9 @@ class ExecutionReconfigurationServiceSpec
       workflowId = testWorkflowId,
       executionId = testExecutionId,
       opExecInitInfo = OpExecWithClassName("limit.Class", """{"limit":1}""")
-    ).withInputPorts(List(InputPort())).withOutputPorts(List(OutputPort()))
+    ).withInputPorts(List(InputPort()))
+      .withOutputPorts(List(OutputPort()))
+      .withStorageLocations(None)
 
   private val changedExecutor = OpExecWithClassName("limit.Class", """{"limit":7}""")
 
@@ -258,7 +260,9 @@ class ExecutionReconfigurationServiceSpec
       workflowId = testWorkflowId,
       executionId = testExecutionId,
       opExecInitInfo = OpExecWithCode(udfCode, "python")
-    ).withInputPorts(List(InputPort())).withOutputPorts(List(OutputPort()))
+    ).withInputPorts(List(InputPort()))
+      .withOutputPorts(List(OutputPort()))
+      .withStorageLocations(None)
 
   private val datasetLocator = "dataset-1:abc123"
   private val unitMountRoot = Paths.get("/mnt/texera-mounts")
@@ -378,8 +382,9 @@ class ExecutionReconfigurationServiceSpec
 
     // The running operator, with the change's executor and what its code reads, in the order the
     // changes came: a user can change several operators during one pause, so the queue has to
-    // accumulate. The rest of the operator stays as the running plan has it, and the code holds
-    // the directory this unit mounts the dataset at where the change names the dataset.
+    // accumulate. The rest of the operator stays as the running plan has it, where its output
+    // port is stored included, which a change does not carry, and the code holds the directory
+    // this unit mounts the dataset at where the change names the dataset.
     val readingMounted = udfReading(unitMountRoot.resolve("dataset-1").resolve("abc123").toString)
     val queued = stateStore.reconfigurationStore.getState.unscheduledReconfigurations
     queued shouldBe List(changedUdf.copy(opExecInitInfo = readingMounted), changedLimit)
@@ -387,6 +392,9 @@ class ExecutionReconfigurationServiceSpec
       opExecInitInfo = runningUdf.opExecInitInfo,
       repositoryMounts = None
     ) shouldBe runningUdf
+    runningUdf.storageLocations should have size 1
+    queued.map(_.storageLocations) shouldBe
+      List(runningUdf.storageLocations, runningLimit.storageLocations)
 
     service.performReconfigurationOnResume()
 

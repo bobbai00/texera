@@ -23,6 +23,7 @@ import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.amber.core.workflow.{
   CostHints,
   ExecutionMode,
+  GlobalPortIdentity,
   PhysicalPlan,
   PortIdentity,
   WorkflowContext,
@@ -30,6 +31,7 @@ import org.apache.texera.amber.core.workflow.{
 }
 import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.amber.engine.architecture.scheduling.DefaultCostEstimator.DEFAULT_OPERATOR_COST
+import org.apache.texera.amber.engine.architecture.scheduling.config.OutputPortConfig
 import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
 import org.apache.texera.amber.operator.TestOperators
@@ -41,6 +43,7 @@ import org.apache.texera.common.compiler.model.LogicalLink
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.flatspec.AnyFlatSpec
 
+import java.net.URI
 import scala.jdk.CollectionConverters._
 
 class CostBasedScheduleGeneratorSpec extends AnyFlatSpec with MockFactory {
@@ -861,6 +864,96 @@ class CostBasedScheduleGeneratorSpec extends AnyFlatSpec with MockFactory {
     assert(workflow.physicalPlan.operators.size == 4)
     assert(result.regionDAG.vertexSet().size() == 4)
     assert(result.cost == 0.5 + 0.25 + 4.0 + 4.0)
+  }
+
+  /** The csv->keyword->count workflow, made to run with every link read from storage. */
+  private def materializedCsvKeywordCount(): Workflow = {
+    val csv = TestOperators.smallCsvScanOpDesc()
+    val keyword = TestOperators.keywordSearchOpDesc("Region", "Asia")
+    val count =
+      TestOperators.aggregateAndGroupByDesc("Region", AggregationFunction.COUNT, List[String]())
+    buildWorkflow(
+      List(csv, keyword, count),
+      List(
+        LogicalLink(
+          csv.operatorIdentifier,
+          PortIdentity(),
+          keyword.operatorIdentifier,
+          PortIdentity()
+        ),
+        LogicalLink(
+          keyword.operatorIdentifier,
+          PortIdentity(),
+          count.operatorIdentifier,
+          PortIdentity()
+        )
+      ),
+      contextWith(
+        None,
+        WorkflowSettings(dataTransferBatchSize = 400, executionMode = ExecutionMode.MATERIALIZED)
+      )
+    )
+  }
+
+  it should "store each port where the plan says, and read each input from where its upstream port is stored" in {
+    val workflow = materializedCsvKeywordCount()
+    // The plan's locations, each one other than the location a port of this execution is given
+    // when its plan is made: a scheduler that made locations up would not arrive at them.
+    val plan = workflow.physicalPlan.copy(operators = workflow.physicalPlan.operators.map { op =>
+      op.copy(storageLocations = op.storageLocations.map {
+        case (port, location) =>
+          port -> new URI(location.toString.replace("/wid/", "/elsewhere/wid/"))
+      })
+    })
+    assert(
+      plan.operators.flatMap(_.storageLocations.values) !=
+        workflow.physicalPlan.operators.flatMap(_.storageLocations.values)
+    )
+
+    val regions = new CostBasedScheduleGenerator(
+      workflow.context,
+      plan,
+      COORDINATOR
+    ).getFullyMaterializedSearchState.regionDAG
+      .vertexSet()
+      .asScala
+    val portConfigs = regions.flatMap(_.resourceConfig.get.portConfigs).toMap
+
+    // Stored: the output port of every link, and the port whose result the user views.
+    val stored = plan.links.map(link => GlobalPortIdentity(link.fromOpId, link.fromPortId)) ++
+      workflow.context.workflowSettings.outputPortsNeedingStorage
+    assert(stored.size == 4)
+    assert(portConfigs.keySet.filterNot(_.input) == stored)
+    stored.foreach { port =>
+      assert(
+        portConfigs(port) ==
+          OutputPortConfig(plan.getOperator(port.opId).storageLocation(port.portId))
+      )
+    }
+    // Read: the input port of every link, from its upstream port's location.
+    assert(portConfigs.keySet.count(_.input) == plan.links.size)
+    plan.links.foreach { link =>
+      assert(
+        portConfigs(GlobalPortIdentity(link.toOpId, link.toPortId, input = true)).storageURIs ==
+          List(plan.getOperator(link.fromOpId).storageLocation(link.fromPortId))
+      )
+    }
+  }
+
+  it should "schedule no plan that names no location for a port it stores" in {
+    val workflow = materializedCsvKeywordCount()
+    val plan = workflow.physicalPlan.copy(
+      operators = workflow.physicalPlan.operators.map(_.copy(storageLocations = Map.empty))
+    )
+
+    val refused = intercept[IllegalStateException] {
+      new CostBasedScheduleGenerator(
+        workflow.context,
+        plan,
+        COORDINATOR
+      ).getFullyMaterializedSearchState
+    }
+    assert(refused.getMessage.contains("has no storage location: its plan was not made to run"))
   }
 
 }

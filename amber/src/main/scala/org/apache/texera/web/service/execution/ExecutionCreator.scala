@@ -26,7 +26,7 @@ import org.apache.texera.amber.core.workflow.{ReplaySource, WorkflowContext, Wor
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.common.compiler.{RunBindings, WorkflowCompilationFailed, WorkflowCompiler}
+import org.apache.texera.common.compiler.{CompileFor, WorkflowCompilationFailed}
 import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -158,7 +158,7 @@ final class WorkflowNotCompiled(
   *     user's own executions of the workflow, are checked (400).
   *  1. The execution's row is inserted, as Created, with where it writes its replay log when
   *     replay logs are kept. No row is left by a request refused before this.
-  *  1. The workflow is compiled for the user, Strict, under the site's settings as they stand and
+  *  1. The workflow is compiled for the user's run, under the site's settings as they stand and
   *     with the cost hints of their newest completed run of it, and the plan made
   *     ([[PlanToRun.make]]): each file a scan source reads is one the user may read, and the plan
   *     carries a link to it for the computing unit to read it through; each Python environment
@@ -170,9 +170,9 @@ final class WorkflowNotCompiled(
   *     A plan that cannot be made for another reason, such as the database or the storage not
   *     answering while a file is resolved or linked, marks the row FAILED too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
-  *     from (as JSON that parses back to it, without what a compile sets,
-  *     [[LogicalPlanPojo.toJson]]), the user, the unit and the email notification. A plan larger
-  *     than the table keeps marks the row FAILED (400); so does a write that fails (500).
+  *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
+  *     the email notification. A plan larger than the table keeps marks the row FAILED (400); so
+  *     does a write that fails (500).
   *  1. Off the request's thread, the results of the workflow's ended executions on the unit that
   *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
   *     new execution replaces none until a unit runs it.
@@ -191,7 +191,7 @@ final class WorkflowNotCompiled(
   * @param compileDeadline   how long a compile may take
   */
 class ExecutionCreator(
-    bindingsFor: Integer => RunBindings = PlanToRun.bindingsFor,
+    bindingsFor: Integer => CompileFor.Run = PlanToRun.bindingsFor,
     replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     costHints: CostHintsLoader = new CostHintsLoader(),
@@ -264,13 +264,12 @@ class ExecutionCreator(
         // How long each operator took in the user's newest completed run of the workflow, for the
         // scheduler's cost model: saved with the plan, which the engine takes them from.
         context.costHints = costHints.load(checked.wid, uid)
-        // The plan compiled, as an editor sends it, loop-variable references included: written
-        // before the compile resolves its operators in place, and without what a compile sets,
-        // whatever the request sent there.
+        // The plan compiled, as the request sent it, loop-variable references included: written
+        // before the compile resolves its operators in place.
         val logical = checked.plan.toJson
-        val compiler = new WorkflowCompiler(context, bindingsFor(uid))
+        val bindings = bindingsFor(uid)
         val savedPlan = withinDeadline(eid) {
-          PlanToRun.make(compiler, checked.plan, replay, replayLog)
+          PlanToRun.make(context, bindings, checked.plan, replay, replayLog)
         }
         val planUri = ExecutionPlanStore.planUri(wid, eid, warehouse)
         val record = PlanRecord(

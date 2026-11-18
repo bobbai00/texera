@@ -26,7 +26,6 @@ import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{OutputPort, PhysicalOp, SchemaPropagationFunc}
 import org.apache.texera.amber.operator.LogicalOp
-import org.apache.texera.amber.operator.metadata.annotations.SetByCompiler
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
@@ -35,16 +34,6 @@ class FileListerSourceOpDesc extends LogicalOp {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Dataset")
   var datasetVersionPath: String = _
-
-  /**
-    * The files of the dataset version, each by its logical path
-    * (/dataset/ownerEmail/datasetName/versionName/file), as the version was listed, for the
-    * plan's user, when the plan was made to run. The executor outputs them and lists nothing
-    * itself, so a plan lists what its user could read when it was made, wherever it runs.
-    */
-  @JsonProperty("listing")
-  @SetByCompiler
-  var listing: Option[List[String]] = None
 
   override def getPhysicalOp(
       workflowId: WorkflowIdentity,

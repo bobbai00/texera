@@ -19,13 +19,13 @@
 
 package org.apache.texera.web.service
 
+import org.apache.texera.amber.core.executor.{InputFile, OperatorInputs}
 import org.apache.texera.amber.core.storage.{LakeFSDatasetVersionLister, LakeFSInputLinker}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   CostHints,
   ExecutionMode,
   PhysicalPlanCodec,
-  PlanInput,
   PortIdentity,
   ReplaySource,
   WorkflowContext,
@@ -35,13 +35,9 @@ import org.apache.texera.amber.engine.architecture.coordinator.Workflow
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
-  WorkflowCompilationFailed,
-  WorkflowCompiler
-}
+import org.apache.texera.common.compiler.{WorkflowCompilationFailed, WorkflowCompiler}
 import org.apache.texera.web.service.execution.UserEnvironmentResolver
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -106,16 +102,14 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val operators = searches(1)
     val context = newContext()
 
-    val savedPlan = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+    val savedPlan =
+      PlanToRun.make(context, TestUtils.fixtureBindings, pojo(operators, chain(operators: _*)))
 
     // The plan as the compile makes it, and the ports whose results are stored.
     val compiledContext = newContext()
     val compiled = Workflow.fromCompilationResult(
       compiledContext,
-      newCompiler(compiledContext).compile(
-        pojo(operators, chain(operators: _*)),
-        CompilationErrorHandling.Strict
-      )
+      newCompiler(compiledContext).compile(pojo(operators, chain(operators: _*)))
     )
     val storedPorts = compiledContext.workflowSettings.outputPortsNeedingStorage
     storedPorts should not be empty
@@ -132,22 +126,28 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     // Given no replay or replay log, the plan replays nothing and writes no replay log.
     executionPlan.replay shouldBe None
     executionPlan.replayLog shouldBe None
-    // The file its scan reads is its one input: read through a link, of which the plan lists
-    // when it expires.
+    // The file its scan reads is the one file the plan reads through a link: the scan's own.
     val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
-    val link = TestOperators.fixtureInputLinker.link(scanned)
-    executionPlan.inputs shouldBe Seq(
-      PlanInput(operators.head.operatorIdentifier, scanned.toASCIIString, link.expiresAtMs)
-    )
+    val link = FixtureInputs.linker.link(scanned)
+    executionPlan.plan.operators.flatMap(op => op.inputs.files.map(op.id.logicalOpId -> _)) shouldBe
+      Set(
+        operators.head.operatorIdentifier ->
+          InputFile(scanned.toASCIIString, link.url, link.expiresAtMs)
+      )
   }
 
-  it should "save a plan that reads no file with no input" in {
+  it should "save a plan that reads nothing from outside the run with no input" in {
     val text = new TextInputSourceOpDesc()
     text.textInput = "north\nsouth"
 
-    val savedPlan = PlanToRun.make(newCompiler(newContext()), pojo(List(text), List.empty))
+    val savedPlan =
+      PlanToRun.make(newContext(), TestUtils.fixtureBindings, pojo(List(text), List.empty))
 
-    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan)).inputs shouldBe empty
+    PhysicalPlanCodec
+      .decode(PhysicalPlanCodec.fromJson(savedPlan))
+      .plan
+      .operators
+      .map(_.inputs) shouldBe Set(OperatorInputs.defaultInstance)
   }
 
   it should "save the run's cost hints with the plan, whatever operators they name" in {
@@ -159,7 +159,8 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     )
     context.costHints = Some(hints)
 
-    val savedPlan = PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+    val savedPlan =
+      PlanToRun.make(context, TestUtils.fixtureBindings, pojo(operators, chain(operators: _*)))
 
     PhysicalPlanCodec
       .decode(PhysicalPlanCodec.fromJson(savedPlan))
@@ -172,7 +173,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val operators = searches(1)
     val context = newContext()
 
-    PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+    PlanToRun.make(context, TestUtils.fixtureBindings, pojo(operators, chain(operators: _*)))
 
     val untouched = newContext()
     context.workflowId shouldBe untouched.workflowId
@@ -187,7 +188,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     // More than four operators, which the plan holds in no order of their own.
     val operators = searches(5)
     val made = List.fill(2) {
-      PlanToRun.make(newCompiler(newContext()), pojo(operators, chain(operators: _*)))
+      PlanToRun.make(newContext(), TestUtils.fixtureBindings, pojo(operators, chain(operators: _*)))
     }
     made.distinct should have size 1
   }
@@ -196,7 +197,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val scan = new CSVScanSourceOpDesc() // no file chosen
 
     val failure = intercept[WorkflowCompilationFailed] {
-      PlanToRun.make(newCompiler(newContext()), pojo(List(scan), List.empty))
+      PlanToRun.make(newContext(), TestUtils.fixtureBindings, pojo(List(scan), List.empty))
     }
 
     failure.operatorErrors.keySet shouldBe Set(scan.operatorIdentifier)
@@ -213,7 +214,8 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val replayLog = new URI("file:///var/texera/logs/31/32/")
 
     val savedPlan = PlanToRun.make(
-      newCompiler(newContext()),
+      newContext(),
+      TestUtils.fixtureBindings,
       pojo(operators, chain(operators: _*)),
       Some(replay),
       Some(replayLog)
@@ -228,7 +230,8 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     val operators = searches(1)
     def make(replay: Option[ReplaySource], replayLog: Option[URI]): String =
       PlanToRun.make(
-        newCompiler(newContext()),
+        newContext(),
+        TestUtils.fixtureBindings,
         pojo(operators, chain(operators: _*)),
         replay,
         replayLog
@@ -258,7 +261,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
     context.workflowSettings = context.workflowSettings.copy(dataTransferBatchSize = 0)
 
     val failure = intercept[IllegalArgumentException] {
-      PlanToRun.make(newCompiler(context), pojo(operators, chain(operators: _*)))
+      PlanToRun.make(context, TestUtils.fixtureBindings, pojo(operators, chain(operators: _*)))
     }
 
     failure.getMessage shouldBe

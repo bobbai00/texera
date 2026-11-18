@@ -20,10 +20,14 @@
 package org.apache.texera.amber.engine.architecture.worker.managers
 
 import org.apache.texera.amber.core.executor.{
+  ExecutorInputs,
+  FileListing,
+  InputFile,
   OpExecInitInfo,
   OpExecWithClassName,
   OpExecWithCode,
-  OperatorExecutor
+  OperatorExecutor,
+  OperatorInputs
 }
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -52,12 +56,19 @@ class SerializationManagerSpec extends AnyFlatSpec {
   // return None for this, triggering the IllegalStateException guard.
   private val coordinatorActorId: ActorVirtualIdentity = ActorVirtualIdentity("coordinator")
 
-  private def mkRequest(info: OpExecInitInfo, totalWorkers: Int = 1): InitializeExecutorRequest =
+  private def mkRequest(
+      info: OpExecInitInfo,
+      totalWorkers: Int = 1,
+      inputs: OperatorInputs = OperatorInputs.defaultInstance,
+      inputLinkEndpoints: Seq[String] = Seq.empty
+  ): InitializeExecutorRequest =
     InitializeExecutorRequest(
       totalWorkerCount = totalWorkers,
       opExecInitInfo = info,
       isSource = false,
-      loopStartPortUris = Map.empty
+      loopStartPortUris = Map.empty,
+      inputs = inputs,
+      inputLinkEndpoints = inputLinkEndpoints
     )
 
   "SerializationManager.restoreExecutorState" should
@@ -91,6 +102,27 @@ class SerializationManagerSpec extends AnyFlatSpec {
     assert(executor.isInstanceOf[SerializationManagerSpec.NoArgExec])
     // Non-CheckpointSupport executor → empty restoration iterator.
     assert(iter.toList.isEmpty)
+  }
+
+  it should "hand the executor it restores what its operator reads, as it was initialized" in {
+    val mgr = new SerializationManager(workerActorId)
+    val listing = Seq("/dataset/ada@texera.io/letters/v1/b.txt")
+    val file = InputFile("b.txt", "http://texera-rustfs:9000/texera-dataset/b", Long.MaxValue)
+    mgr.setOpInitialization(
+      mkRequest(
+        OpExecWithClassName(classOf[SerializationManagerSpec.ReadingExec].getName, "described"),
+        inputs = OperatorInputs(files = Seq(file), listing = Some(FileListing(listing))),
+        inputLinkEndpoints = Seq("http://texera-rustfs:9000")
+      )
+    )
+
+    val (executor, _) = mgr.restoreExecutorState(new CheckpointState())
+
+    val restored = executor.asInstanceOf[SerializationManagerSpec.ReadingExec]
+    assert(restored.desc == "described")
+    assert(restored.inputs.listing.contains(listing))
+    // The link leads to an endpoint the initialization named, so the executor may follow it.
+    restored.inputs.open("b.txt").close()
   }
 
   it should "throw UnsupportedOperationException on OpExecInitInfo.Empty (unsupported variant)" in {
@@ -168,6 +200,11 @@ object SerializationManagerSpec {
   // the companion (top-level binary name) so Class.forName + the no-arg
   // constructor reach it without an enclosing-instance reference.
   class NoArgExec extends OperatorExecutor {
+    override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = Iterator.empty
+  }
+
+  /** An executor of an operator that reads from outside the run: it records what it is handed. */
+  class ReadingExec(val desc: String, val inputs: ExecutorInputs) extends OperatorExecutor {
     override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = Iterator.empty
   }
 

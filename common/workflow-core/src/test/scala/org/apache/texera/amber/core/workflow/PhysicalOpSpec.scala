@@ -31,6 +31,7 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 
+import java.net.URI
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 class PhysicalOpSpec extends AnyFlatSpec {
@@ -223,6 +224,45 @@ class PhysicalOpSpec extends AnyFlatSpec {
 
   // ----- propagateSchema -----
 
+  "PhysicalOp" should "name no storage location by default" in {
+    val op = newOp("a").withOutputPorts(List(OutputPort()))
+    assert(op.storageLocations.isEmpty)
+    val refused = intercept[IllegalStateException](op.storageLocation(PortIdentity()))
+    assert(
+      refused.getMessage ==
+        "Output port 0 of operator a-main has no storage location: its plan was not made to run."
+    )
+  }
+
+  "PhysicalOp.withStorageLocations" should "name where each output port of its execution is stored" in {
+    val internal = PortIdentity(1, internal = true)
+    val op = PhysicalOp
+      .oneToOnePhysicalOp(
+        opId("a"),
+        WorkflowIdentity(3),
+        ExecutionIdentity(8),
+        OpExecInitInfo.Empty
+      )
+      .withInputPorts(List(InputPort()))
+      .withOutputPorts(List(OutputPort(), OutputPort(internal)))
+    def located(port: String, warehouse: String = "") =
+      new URI(
+        s"vfs://$warehouse/wid/3/eid/8/globalportid/(logicalOpId=a,layerName=main,$port," +
+          "isInput=false)"
+      )
+
+    val shared = op.withStorageLocations(None)
+    assert(shared.storageLocations.keySet == Set(PortIdentity(), internal))
+    assert(shared.storageLocation(PortIdentity()) == located("portId=0,isInternal=false"))
+    assert(shared.storageLocation(internal) == located("portId=1,isInternal=true"))
+    assert(
+      op.withStorageLocations(Some("user-5-2")).storageLocation(PortIdentity()) ==
+        located("portId=0,isInternal=false", "/wh/user-5-2")
+    )
+    // The rest of the operator is as it was.
+    assert(shared.copy(storageLocations = Map.empty) == op)
+  }
+
   "PhysicalOp.propagateSchema" should "wait for all input schemas before running propagation" in {
     val op = newOp("a")
       .withInputPorts(List(InputPort(PortIdentity(0)), InputPort(PortIdentity(1))))
@@ -315,6 +355,13 @@ class PhysicalOpSpec extends AnyFlatSpec {
     )
     assert(!json.has("resourceBinding"), s"the binding is in $json")
     assert(binding.forced == 0)
+  }
+
+  it should "leave the storage locations out" in {
+    val op = newOp("a").withOutputPorts(List(OutputPort())).withStorageLocations(None)
+    val json = objectMapper.readTree(objectMapper.writeValueAsString(op))
+    assert(json.has("parallelizable"))
+    assert(!json.has("storageLocations"), s"the locations are in $json")
   }
 
   it should "leave the Python environment out, whichever it is" in {

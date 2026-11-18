@@ -20,27 +20,16 @@
 package org.apache.texera.common.compiler.model
 
 import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.texera.amber.core.storage.{
-  DatasetVersionLister,
-  InputLink,
-  InputLinker,
-  RepositoryVersionResolver
-}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
-import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
-import org.apache.texera.amber.operator.source.scan.json.JSONLScanSourceOpDesc
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
+  CompileFor,
   CompileSettings,
-  PythonEnvironmentResolver,
-  RunBindings,
+  PythonEnvironmentNotResolved,
   WorkflowCompilationFailed,
   WorkflowCompiler
 }
@@ -229,15 +218,15 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
       try {
         new WorkflowCompiler(
           new WorkflowContext(),
-          RunBindings(
+          CompileFor.Run(
             files = TestOperators.fixtureFileResolver,
-            inputLinker = InputLinker.Unavailable,
-            lister = DatasetVersionLister.Unavailable,
-            repositories = RepositoryVersionResolver.Unavailable,
             settings = CompileSettings.Default,
-            environments = PythonEnvironmentResolver.Unavailable
+            inputLinker = FixtureInputs.linker,
+            lister = FixtureInputs.lister,
+            repositories = TestOperators.fixtureRepositoryResolver,
+            environments = name => throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
           )
-        ).compile(pojo, CompilationErrorHandling.Strict)
+        ).compile(pojo)
         Right(())
       } catch { case failure: Throwable => Left(failure) }
     val cyclic = plan(List(op("a"), op("b")), List(link("a", "b"), link("b", "a")))
@@ -319,91 +308,6 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
     }
 
     written shouldBe expected
-  }
-
-  it should "write no property a compile sets, whatever a request sent for it" in {
-    // As a request could send them: a column limit of its own choosing, and a link to a place of
-    // its own choosing, under the name of the file the scan reads.
-    val fileName = "/dataset/owner@texera.io/sales/v1/people.csv"
-    val csv = objectMapper.readValue(
-      s"""{"operatorID":"csv","operatorType":"CSVFileScan","fileName":"$fileName",
-         |"maxColumns":100000,"inputLinks":{"$fileName":{
-         |"url":"http://169.254.169.254/latest?X-Amz-Signature=5ecr3t",
-         |"expiresAtMs":4102444800000}}}""".stripMargin,
-      classOf[LogicalOp]
-    )
-    csv.asInstanceOf[CSVScanSourceOpDesc].maxColumns shouldBe Some(100000)
-    csv.asInstanceOf[CSVScanSourceOpDesc].inputLinks should have size 1
-    // And as a compile leaves them, on a plan compiled before it is written.
-    val jsonl = TestOperators.smallJSONLScanOpDesc()
-    jsonl.setOperatorId("jsonl")
-    jsonl.inputLinks = Map(
-      "dataset:///dataset-12/9f3c/100.jsonl" ->
-        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L)
-    )
-    val sent = plan(List(csv, jsonl, op("search")), List(link("csv", "search")))
-
-    val json = sent.toJson
-
-    json should not include "5ecr3t"
-    val written = objectMapper.readTree(json).get("operators").elements().asScala.toList
-    // The file is the user's to name, so it stays; what a compile sets goes.
-    written.head.get("fileName").asText() shouldBe fileName
-    written.foreach { operator =>
-      operator.has("maxColumns") shouldBe false
-      operator.has("inputLinks") shouldBe false
-    }
-    // An operator the compiler sets nothing on is written as a mapper writes it, but for its
-    // empty sidecar.
-    val search = objectMapper.valueToTree[ObjectNode](op("search"))
-    search.remove("stateReferences")
-    written(2) shouldBe search
-    // It parses back to the plan an editor sends: no limit and no link, on any operator.
-    val read = objectMapper.readValue(json, classOf[LogicalPlanPojo])
-    ids(read) shouldBe List("csv", "jsonl", "search")
-    read.operators.head.asInstanceOf[CSVScanSourceOpDesc].maxColumns shouldBe None
-    read.operators.head.asInstanceOf[CSVScanSourceOpDesc].inputLinks shouldBe empty
-    read.operators(1).asInstanceOf[JSONLScanSourceOpDesc].inputLinks shouldBe empty
-    // The plan itself is left as it was sent, for the compile that follows to replace.
-    csv.asInstanceOf[CSVScanSourceOpDesc].maxColumns shouldBe Some(100000)
-    jsonl.inputLinks should have size 1
-  }
-
-  it should "write no listing and no link to a listed file, whatever a request sent or a compile set" in {
-    val versionPath = "/dataset/owner@texera.io/letters/v1"
-    // As a request could send them, with a listing and a link of its own choosing.
-    val lister = objectMapper.readValue(
-      s"""{"operatorID":"lister","operatorType":"FileLister","datasetVersionPath":"$versionPath",
-         |"listing":["$versionPath/a.txt","/dataset/another@texera.io/secrets/v1/keys.txt"]}""".stripMargin,
-      classOf[LogicalOp]
-    )
-    lister.asInstanceOf[FileListerSourceOpDesc].listing.map(_.size) shouldBe Some(2)
-    // And as a compile leaves them, on a plan compiled before it is written.
-    val scan = new FileScanOpDesc
-    scan.setOperatorId("scan")
-    scan.inputLinks = Map(
-      s"$versionPath/a.txt" ->
-        InputLink("http://texera-rustfs:9000/bucket/key?X-Amz-Signature=5ecr3t", 86400000L)
-    )
-    val sent = plan(List(lister, scan), List(link("lister", "scan")))
-
-    val json = sent.toJson
-
-    json should not include "5ecr3t"
-    json should not include "a.txt"
-    val written = objectMapper.readTree(json).get("operators").elements().asScala.toList
-    // The dataset version is the user's to name, so it stays; what a compile sets goes.
-    written.head.get("datasetVersionPath").asText() shouldBe versionPath
-    written.head.has("listing") shouldBe false
-    written(1).has("inputLinks") shouldBe false
-    // It parses back to the plan an editor sends: nothing listed, nothing linked.
-    val read = objectMapper.readValue(json, classOf[LogicalPlanPojo])
-    ids(read) shouldBe List("lister", "scan")
-    read.operators.head.asInstanceOf[FileListerSourceOpDesc].listing shouldBe None
-    read.operators(1).asInstanceOf[FileScanOpDesc].inputLinks shouldBe empty
-    // The plan itself is left as it was sent, for the compile that follows to replace.
-    lister.asInstanceOf[FileListerSourceOpDesc].listing.map(_.size) shouldBe Some(2)
-    scan.inputLinks should have size 1
   }
 
   it should "write a null where the plan lists one in place of an operator" in {

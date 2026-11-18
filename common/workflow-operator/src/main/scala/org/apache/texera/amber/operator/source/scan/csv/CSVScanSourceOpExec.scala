@@ -21,7 +21,7 @@ package org.apache.texera.amber.operator.source.scan.csv
 
 import com.univocity.parsers.common.TextParsingException
 import com.univocity.parsers.csv.{CsvFormat, CsvParser, CsvParserSettings}
-import org.apache.texera.amber.core.executor.SourceOperatorExecutor
+import org.apache.texera.amber.core.executor.{ExecutorInputs, SourceOperatorExecutor}
 import org.apache.texera.amber.core.tuple.{AttributeTypeUtils, Schema, TupleLike}
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -30,20 +30,21 @@ import java.io.InputStreamReader
 import scala.collection.immutable.ArraySeq
 import scala.util.Try
 
-class CSVScanSourceOpExec private[csv] (descString: String) extends SourceOperatorExecutor {
+class CSVScanSourceOpExec private[csv] (descString: String, inputs: ExecutorInputs)
+    extends SourceOperatorExecutor {
   val desc: CSVScanSourceOpDesc = objectMapper.readValue(descString, classOf[CSVScanSourceOpDesc])
-  // The plan's limit, which the compiler set: an executor asks for no setting of the site's.
-  private val maxColumns: Int = desc.maxColumns.getOrElse(
+  // The plan's limit: an executor asks for no setting of the site's.
+  private val maxColumns: Int = inputs.csvParserMaxColumns.getOrElse(
     throw new IllegalStateException(
       "The CSV scan has no column limit: its plan was not made by the compiler."
     )
   )
-  private val input = desc.openInputFile()
+  private val input = inputs.open(desc.fileName.get)
   var inputReader: InputStreamReader = _
   var parser: CsvParser = _
   var nextRow: Array[String] = _
   var numRowGenerated = 0
-  private val schema: Schema = desc.inferSchemaFrom(input)
+  private val schema: Schema = desc.inferSchemaFrom(input, maxColumns)
   private val skippedRows = new SkippedRowReporter()
 
   override def getWarnings: Seq[String] = skippedRows.warnings

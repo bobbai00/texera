@@ -23,7 +23,7 @@ import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.ipc.ArrowFileWriter
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
@@ -67,33 +67,30 @@ class ArrowSourceOpExecSpec extends AnyFlatSpec with Matchers {
     file
   }
 
-  private def descString(
+  private def executorOf(
       file: File,
       offset: Option[Int] = None,
       limit: Option[Int] = None
-  ): String = {
+  ): ArrowSourceOpExec = {
     val desc = new ArrowSourceOpDesc()
     desc.fileName = Some(file.toURI.toString)
     desc.offset = offset
     desc.limit = limit
-    objectMapper.writeValueAsString(TestOperators.linked(desc))
+    new ArrowSourceOpExec(objectMapper.writeValueAsString(desc), FixtureInputs.inputsOf(desc))
   }
 
   private def values(exec: ArrowSourceOpExec): List[String] =
     exec.produceTuple().toList.map(_.asInstanceOf[Tuple].getField[String]("s"))
 
   "ArrowSourceOpExec" should "read every row of a single-batch Arrow file" in {
-    val exec = new ArrowSourceOpExec(descString(writeArrowFile(Seq("a", "b", "c"))))
+    val exec = executorOf(writeArrowFile(Seq("a", "b", "c")))
     exec.open()
     try assert(values(exec) == List("a", "b", "c"))
     finally exec.close()
   }
 
   it should "apply offset and limit" in {
-    val exec =
-      new ArrowSourceOpExec(
-        descString(writeArrowFile(Seq("a", "b", "c", "d", "e")), Some(1), Some(2))
-      )
+    val exec = executorOf(writeArrowFile(Seq("a", "b", "c", "d", "e")), Some(1), Some(2))
     exec.open()
     try assert(values(exec) == List("b", "c"))
     finally exec.close()
@@ -103,14 +100,14 @@ class ArrowSourceOpExecSpec extends AnyFlatSpec with Matchers {
     val bogus = File.createTempFile("not-arrow-", ".arrow")
     bogus.deleteOnExit()
     Files.write(bogus.toPath, "this is not arrow".getBytes)
-    val exec = new ArrowSourceOpExec(descString(bogus))
+    val exec = executorOf(bogus)
     val ex = intercept[RuntimeException](exec.open())
     ex.getMessage shouldBe "Failed to open Arrow source"
     ex.getCause should not be null
   }
 
   it should "treat close before open as a safe no-op" in {
-    val exec = new ArrowSourceOpExec(descString(writeArrowFile(Seq("a"))))
+    val exec = executorOf(writeArrowFile(Seq("a")))
     noException should be thrownBy exec.close()
   }
 }

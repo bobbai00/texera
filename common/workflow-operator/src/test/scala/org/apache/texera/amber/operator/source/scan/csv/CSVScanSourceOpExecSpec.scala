@@ -21,7 +21,7 @@ package org.apache.texera.amber.operator.source.scan.csv
 
 import com.univocity.parsers.common.{ParsingContext, TextParsingException}
 import com.univocity.parsers.csv.{CsvParser, CsvParserSettings}
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
@@ -182,9 +182,9 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
   /**
     * Builds a CSVScanSourceOpExec over `path`. The descriptor MUST have a custom
     * delimiter and a resolved file URI *before* the exec is constructed: the
-    * constructor eagerly infers the schema from the file, which needs both. It
-    * carries what a compile that makes a plan to run would have set: the link to
-    * the file, and the column limit, the default unless a case gives another.
+    * constructor eagerly infers the schema from the file, which needs both. The
+    * exec is handed what a plan made to run would give it: the link to the file,
+    * and the column limit, the default unless a case gives another.
     */
   private def execOver(
       path: Path,
@@ -198,9 +198,11 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     desc.hasHeader = hasHeader
     desc.offset = offset
     desc.limit = limit
-    desc.maxColumns = maxColumns
     desc.setResolvedFileName(URI.create(path.toUri.toString))
-    new CSVScanSourceOpExec(objectMapper.writeValueAsString(TestOperators.linked(desc)))
+    new CSVScanSourceOpExec(
+      objectMapper.writeValueAsString(desc),
+      FixtureInputs.inputsOf(desc, maxColumns)
+    )
   }
 
   "CSVScanSourceOpExec" should "scan a header CSV and emit one tuple per data row" in {
@@ -343,10 +345,10 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
   }
 
   // ---------------------------------------------------------------------------
-  // The column limit: the one the descriptor carries, which the compiler set.
+  // The column limit: the one the plan gives, which the compiler found.
   // ---------------------------------------------------------------------------
 
-  it should "scan under the column limit its descriptor carries" in {
+  it should "scan under the column limit its plan gives it" in {
     // The 100 rows the schema is inferred from have one column, so only the scan
     // meets data row 101, which has three.
     val narrow = (1 to 100).map(_.toString).mkString("\n")
@@ -387,7 +389,7 @@ class CSVScanSourceOpExecSpec extends AnyFlatSpec with BeforeAndAfterAll {
     assert(overflow.getMessage == "Max columns of 2 exceeded.")
   }
 
-  it should "refuse a descriptor with no column limit, which the compiler did not make" in {
+  it should "refuse a plan that gives it no column limit, which the compiler did not make" in {
     val refused = intercept[IllegalStateException] {
       execOver(writeTempCsv("a,b\n1,x\n"), hasHeader = true, maxColumns = None)
     }

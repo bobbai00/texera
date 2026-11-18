@@ -58,7 +58,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   PAUSED
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
@@ -78,10 +78,9 @@ import org.apache.texera.web.service.{PlanToRun, WorkflowExecutionService}
 import org.apache.texera.web.storage.ResultUris
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{
-  CompilationErrorHandling,
+  CompileFor,
   CompileSettings,
   PythonEnvironmentNotResolved,
-  RunBindings,
   WorkflowCompiler
 }
 import org.scalatest.Assertions
@@ -117,16 +116,26 @@ object TestUtils {
     * site's settings are the defaults; and a UDF's Python environment is the fixture's, the only
     * one there is.
     */
-  val fixtureBindings: RunBindings = RunBindings(
+  val fixtureBindings: CompileFor.Run = CompileFor.Run(
     files = TestOperators.fixtureFileResolver,
-    inputLinker = TestOperators.fixtureInputLinker,
-    lister = TestOperators.fixtureDatasetVersionLister,
-    repositories = TestOperators.fixtureRepositoryResolver,
     settings = CompileSettings.Default,
+    inputLinker = FixtureInputs.linker,
+    lister = FixtureInputs.lister,
+    repositories = TestOperators.fixtureRepositoryResolver,
     environments = name =>
       if (name == fixtureEnvironment.name) fixtureEnvironment
       else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
   )
+
+  /**
+    * `config`, the configuration of a run's coordinator, for a spec whose plan is bound to the
+    * fixtures: its workers read links from the fixture server, where `fixtureBindings` links
+    * files, as a computing unit's read them from its object store.
+    */
+  def readingFixtureLinks(
+      config: CoordinatorConfig = CoordinatorConfig.default
+  ): CoordinatorConfig =
+    config.copy(inputLinkEndpoints = FixtureInputs.linkEndpoints)
 
   /** The directory the computing unit of a spec mounts datasets and models under. */
   val fixtureUnitMountRoot: Path = Paths.get("/mnt/texera-mounts")
@@ -149,10 +158,9 @@ object TestUtils {
       context: WorkflowContext,
       fromSavedPlan: Boolean = true
   ): Workflow = {
-    val workflowCompiler = new WorkflowCompiler(context, fixtureBindings)
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
     if (fromSavedPlan) {
-      val savedPlan = PlanToRun.make(workflowCompiler, logicalPlan)
+      val savedPlan = PlanToRun.make(context, fixtureBindings, logicalPlan)
       val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints
@@ -161,11 +169,11 @@ object TestUtils {
         WorkflowExecutionService.mountedUnder(readBack.plan, Some(fixtureUnitMountRoot))
       )
     } else {
-      // The compile PlanToRun.make makes a run's plan with, but not saved: strict, so an error
-      // throws rather than leaving no physical plan.
+      // The compile PlanToRun.make makes a run's plan with, but not saved: for a run, so an
+      // error throws rather than leaving no physical plan.
       Workflow.fromCompilationResult(
         context,
-        workflowCompiler.compile(logicalPlan, CompilationErrorHandling.Strict)
+        new WorkflowCompiler(context, fixtureBindings).compile(logicalPlan)
       )
     }
   }
@@ -282,7 +290,7 @@ object TestUtils {
       system,
       workflow.context,
       workflow.physicalPlan,
-      CoordinatorConfig.default,
+      readingFixtureLinks(),
       e => completion.updateIfEmpty(Throw(e))
     )
     try {
@@ -540,7 +548,7 @@ object TestUtils {
       system,
       workflow.context,
       workflow.physicalPlan,
-      CoordinatorConfig.default,
+      readingFixtureLinks(),
       error => {}
     )
     // Timeout for control-command acks (start/pause/reconfigure/resume).
