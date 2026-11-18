@@ -22,7 +22,13 @@ package org.apache.texera.amber.core.storage.result.iceberg
 import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
 import org.apache.iceberg.data.{GenericRecord, Record}
 import org.apache.iceberg.encryption.EncryptionManager
-import org.apache.iceberg.io.{FileIO, LocationProvider, SupportsPrefixOperations}
+import org.apache.iceberg.io.{
+  FileIO,
+  InputFile,
+  LocationProvider,
+  OutputFile,
+  SupportsPrefixOperations
+}
 import org.apache.iceberg.{
   BaseTable,
   DataFile,
@@ -131,15 +137,42 @@ trait RecordTables extends BeforeAndAfterAll { this: Suite =>
     * `table` as a client sees it whose catalog answers every commit as `answer` says. `answer`
     * is handed the commit: it makes it or not, and returns or throws what the catalog answers.
     */
-  protected def answeringCommits(table: Table)(answer: (() => Unit) => Unit): Table = {
+  protected def answeringCommits(table: Table)(answer: (() => Unit) => Unit): Table =
+    clientOf(table, answer, real => real)
+
+  /**
+    * `table` as a client sees it that adds to `wroteOn` the thread each file it writes is
+    * opened on: a data file, a manifest, a manifest list or the table's metadata.
+    */
+  protected def writingFilesOn(table: Table, wroteOn: java.util.Queue[Thread]): Table =
+    clientOf(
+      table,
+      commit => commit(),
+      real =>
+        new FileIO {
+          override def newInputFile(path: String): InputFile = real.newInputFile(path)
+          override def newOutputFile(path: String): OutputFile = {
+            wroteOn.add(Thread.currentThread())
+            real.newOutputFile(path)
+          }
+          override def deleteFile(path: String): Unit = real.deleteFile(path)
+        }
+    )
+
+  private def clientOf(
+      table: Table,
+      answer: (() => Unit) => Unit,
+      fileIo: FileIO => FileIO
+  ): Table = {
     val real = loaded(table).asInstanceOf[HasTableOperations].operations()
+    val clientIo = fileIo(real.io())
     new BaseTable(
       new TableOperations {
         override def current(): TableMetadata = real.current()
         override def refresh(): TableMetadata = real.refresh()
         override def commit(base: TableMetadata, metadata: TableMetadata): Unit =
           answer(() => real.commit(base, metadata))
-        override def io(): FileIO = real.io()
+        override def io(): FileIO = clientIo
         override def encryption(): EncryptionManager = real.encryption()
         override def metadataFileLocation(fileName: String): String =
           real.metadataFileLocation(fileName)
@@ -149,6 +182,25 @@ trait RecordTables extends BeforeAndAfterAll { this: Suite =>
       },
       table.name()
     )
+  }
+
+  /** The names of the manifests beside the table's metadata, part of the table or not. */
+  protected def manifestsWritten(table: Table): Set[String] =
+    table
+      .io()
+      .asInstanceOf[SupportsPrefixOperations]
+      .listPrefix(table.location())
+      .asScala
+      .map(file => nameOf(file.location()))
+      .filter(_.matches(".*-m\\d+\\.avro"))
+      .toSet
+
+  /** The names of the manifests the current snapshot reads. */
+  protected def manifestNames(table: Table): Set[String] = {
+    val current = loaded(table)
+    Option(current.currentSnapshot())
+      .map(_.allManifests(current.io()).asScala.map(manifest => nameOf(manifest.path())).toSet)
+      .getOrElse(Set.empty)
   }
 
   /**

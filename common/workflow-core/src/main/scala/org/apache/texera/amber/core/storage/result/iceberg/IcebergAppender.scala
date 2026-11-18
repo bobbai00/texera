@@ -23,13 +23,22 @@ import org.apache.iceberg.data.Record
 import org.apache.iceberg.data.parquet.GenericParquetWriter
 import org.apache.iceberg.exceptions.CleanableFailure
 import org.apache.iceberg.parquet.Parquet
-import org.apache.iceberg.{DataFile, Schema, Table, UpdateProperties}
+import org.apache.iceberg.{
+  DataFile,
+  HasTableOperations,
+  ManifestFile,
+  ManifestFiles,
+  Schema,
+  SnapshotSummary,
+  Table,
+  UpdateProperties
+}
 import org.apache.parquet.schema.MessageType
 
 import java.net.{ConnectException, NoRouteToHostException, UnknownHostException}
 import java.util.UUID
-import java.util.concurrent.ExecutorService
 import scala.annotation.tailrec
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 /**
@@ -51,24 +60,37 @@ private[storage] object IcebergAppender {
     * The append is a fast append, which adds a manifest instead of merging into the last one:
     * the table's writer tidies it ([[IcebergTidy]]), and a tidy rewrites the manifests anyway.
     *
-    * An append that fails leaves no data file behind when its commit cannot have landed (see
+    * An append that fails leaves no file behind when its commit cannot have landed (see
     * [[committing]]), so a writer that tries again and again does not fill the table's location
     * with files no table reads.
     *
-    * @param threads what Iceberg writes the commit's manifest on: by default the calling
-    *                thread, not Iceberg's shared pool ([[OnCallingThread]])
+    * Nothing of an append runs on Iceberg's shared worker pool, which takes no work once the
+    * JVM is exiting: a computing unit that is stopped records how its runs ended exactly then.
+    * So the append writes the manifest of its data file itself ([[writeManifest]]), where
+    * Iceberg would write it on that pool whatever executor the append names.
     */
   def append(
       table: Table,
       records: Iterable[Record],
       filePrefix: String,
-      properties: Map[String, String] = Map.empty,
-      threads: ExecutorService = OnCallingThread
+      properties: Map[String, String] = Map.empty
   ): Unit = {
     val transaction = table.newTransaction()
     val file = Option.when(records.nonEmpty)(writeDataFile(table, records, filePrefix))
-    committing(table, file) { () =>
-      file.foreach(transaction.newFastAppend().scanManifestsWith(threads).appendFile(_).commit())
+    // What the append wrote that no table reads before the commit lands.
+    val written = mutable.ListBuffer.from(file.map(_.location()))
+    committing(table, written) { () =>
+      file.foreach { added =>
+        val manifest = writeManifest(table, added)
+        written += manifest.path()
+        transaction
+          .newFastAppend()
+          .scanManifestsWith(OnCallingThread)
+          .appendManifest(manifest)
+          // A manifest that is handed over is counted by its files and rows alone.
+          .set(SnapshotSummary.ADDED_FILE_SIZE_PROP, added.fileSizeInBytes().toString)
+          .commit()
+      }
       if (properties.nonEmpty) set(transaction.updateProperties(), properties).commit()
     } { () =>
       // One commit to the catalog for both, and none when there was neither.
@@ -77,18 +99,20 @@ private[storage] object IcebergAppender {
   }
 
   /**
-    * Makes `file`, which is written and not yet part of `table`, part of it: `prepare` gets the
-    * commit ready without asking the catalog, and `commit` asks it. When either fails, the
-    * failure is thrown as it is, and `file` is deleted if the commit cannot have landed: nothing
-    * would ever read it.
+    * Makes the files at `written`, which `table` does not read yet, part of it: `prepare` gets
+    * the commit ready without asking the catalog, and `commit` asks it. When either fails, the
+    * failure is thrown as it is, and the files are deleted if the commit cannot have landed:
+    * nothing would ever read them. `written` is read when that happens, so `prepare` can add
+    * to it.
     *
     * It cannot have landed when the catalog was not asked yet, when the failure is one Iceberg
     * marks as safe to clean up after ([[CleanableFailure]]: the catalog refused the commit, or
     * has no such table), and when the catalog could not be connected to. After any other
     * failure the commit may have landed, as when the catalog's answer was lost
-    * (`CommitStateUnknownException`) or never came: the table then reads `file`, so it stays.
+    * (`CommitStateUnknownException`) or never came: the table then reads the files, so they
+    * stay.
     */
-  private[iceberg] def committing(table: Table, file: Option[DataFile])(
+  private[iceberg] def committing(table: Table, written: Iterable[String])(
       prepare: () => Unit
   )(commit: () => Unit): Unit = {
     var asked = false
@@ -99,8 +123,8 @@ private[storage] object IcebergAppender {
     } catch {
       case NonFatal(failure) =>
         if (!asked || cannotHaveLanded(failure)) {
-          file.foreach { orphan =>
-            try table.io().deleteFile(orphan.location())
+          written.foreach { orphan =>
+            try table.io().deleteFile(orphan)
             catch { case NonFatal(notDeleted) => failure.addSuppressed(notDeleted) }
           }
         }
@@ -152,6 +176,26 @@ private[storage] object IcebergAppender {
     try records.iterator.foreach(writer.write)
     finally writer.close()
     writer.toDataFile
+  }
+
+  /**
+    * Writes the manifest that adds `file` to `table`, on the calling thread, beside the table's
+    * other metadata. The manifest is not part of the table yet. Its entry takes the snapshot
+    * and the sequence number of the commit that adds it, as a table of format version 2 has
+    * them inherited: Iceberg makes no other by default.
+    */
+  private def writeManifest(table: Table, file: DataFile): ManifestFile = {
+    val operations = table.asInstanceOf[HasTableOperations].operations()
+    val location = operations.metadataFileLocation(s"${UUID.randomUUID()}-m0.avro")
+    val writer = ManifestFiles.write(
+      operations.current().formatVersion(),
+      table.spec(),
+      table.io().newOutputFile(location),
+      null
+    )
+    try writer.add(file)
+    finally writer.close()
+    writer.toManifestFile
   }
 
   private def set(update: UpdateProperties, properties: Map[String, String]): UpdateProperties =

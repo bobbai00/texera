@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.core.storage.result.iceberg
 
+import org.apache.iceberg.util.ThreadPools
 import org.apache.iceberg.{DataFile, Table}
 
 import scala.util.Using
@@ -56,7 +57,10 @@ private[storage] object IcebergTidy {
   def tidy(table: Table, atEnd: Boolean): Unit =
     // A table nothing was appended to has nothing to tidy.
     if (table.currentSnapshot() != null) {
-      mergeSmallFiles(table, TargetFileBytes)
+      // Iceberg writes the manifest of a merge on its shared worker pool, whatever executor the
+      // merge names, and that pool takes no work once the JVM is exiting: a tidy made then,
+      // as by a computing unit that is stopped, merges nothing.
+      if (!ThreadPools.getWorkerPool.isShutdown) mergeSmallFiles(table, TargetFileBytes)
       rewriteManifests(table)
       if (atEnd) expire(table, retainLast = 1, olderThanMs = Long.MaxValue)
       else expire(table, RetainSnapshots, System.currentTimeMillis() - RetainMillis)
@@ -93,7 +97,7 @@ private[storage] object IcebergTidy {
         .validateFromSnapshot(planned)
         .dataSequenceNumber(small.last.dataSequenceNumber())
       // A merge that fails leaves no merged file behind, as an append leaves no data file.
-      IcebergAppender.committing(table, Some(merged)) { () =>
+      IcebergAppender.committing(table, Seq(merged.location())) { () =>
         small.foreach(rewrite.deleteFile(_: DataFile))
         rewrite.addFile(merged)
         beforeCommit()

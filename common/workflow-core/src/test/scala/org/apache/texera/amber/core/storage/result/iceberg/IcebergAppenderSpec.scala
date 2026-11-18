@@ -31,6 +31,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.{ConnectException, SocketTimeoutException}
+import scala.jdk.CollectionConverters._
 
 class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
 
@@ -74,33 +75,39 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
     readSeqs(table) shouldBe List(1L, 1L)
   }
 
-  it should "write its commit where it is called, not on Iceberg's shared pool" in {
+  it should "write every file of its commit where it is called, not on Iceberg's shared pool" in {
     // Iceberg's shared worker pool is shut down as the JVM exits. A computing unit that is
     // stopped writes how its runs ended exactly then, so an append must not need that pool.
     val table = newTable()
-    val caller = Thread.currentThread()
-    val ranOn = new java.util.concurrent.ConcurrentLinkedQueue[Thread]()
-    val recording = new java.util.concurrent.AbstractExecutorService {
-      override def execute(task: Runnable): Unit = { ranOn.add(Thread.currentThread()); task.run() }
-      override def shutdown(): Unit = ()
-      override def shutdownNow(): java.util.List[Runnable] = java.util.Collections.emptyList()
-      override def isShutdown: Boolean = false
-      override def isTerminated: Boolean = false
-      override def awaitTermination(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean =
-        false
-    }
+    val wroteOn = new java.util.concurrent.ConcurrentLinkedQueue[Thread]()
 
     IcebergAppender.append(
-      table,
+      writingFilesOn(table, wroteOn),
       Seq(record(table, 1L, textOf(1L))),
-      "rows",
-      threads = recording
+      "rows"
     )
 
-    // The commit's manifest is written by the executor the append hands Iceberg ...
-    ranOn should not be empty
+    // The data file, its manifest, the manifest list and the table's metadata.
+    wroteOn.size should be >= 3
+    wroteOn.asScala.toSet shouldBe Set(Thread.currentThread())
     readSeqs(table) shouldBe List(1L)
-    // ... which by default is one that runs a task where it is submitted.
+  }
+
+  it should "record in the snapshot what the table holds: its files, rows and bytes" in {
+    val table = newTable()
+    append(table, Seq(1L, 2L))
+    append(table, Seq(3L))
+
+    val summary = loaded(table).currentSnapshot().summary()
+    summary.get("added-data-files") shouldBe "1"
+    summary.get("added-records") shouldBe "1"
+    summary.get("total-data-files") shouldBe "2"
+    summary.get("total-records") shouldBe "3"
+    summary.get("total-files-size").toLong shouldBe dataFiles(table).map(_.fileSizeInBytes()).sum
+  }
+
+  it should "run a task of Iceberg's where the task is handed over" in {
+    val caller = Thread.currentThread()
     OnCallingThread.submit(() => Thread.currentThread()).get() should be theSameInstanceAs caller
     OnCallingThread.isShutdown shouldBe false
   }
@@ -161,7 +168,7 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
   // an append that fails
   // ---------------------------------------------------------------------------
 
-  it should "leave no data file behind when the catalog refuses the commit, however often it is tried" in {
+  it should "leave no file behind when the catalog refuses the commit, however often it is tried" in {
     val table = newTable()
     append(table, Seq(1L))
     // 503, as a catalog that is overloaded answers: the commit was not made.
@@ -176,17 +183,19 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
 
     // Only the file of the append that was made: a try that failed left none.
     filesWritten(table, "rows") shouldBe dataFileNames(table)
+    manifestsWritten(table) shouldBe manifestNames(table)
     readSeqs(table) shouldBe List(1L)
     snapshotCount(table) shouldBe 1
 
     // The append that gets through at last writes the one file the table reads.
     append(table, Seq(2L, 3L))
     filesWritten(table, "rows") shouldBe dataFileNames(table)
+    manifestsWritten(table) shouldBe manifestNames(table)
     dataFileNames(table) should have size 2
     readSeqs(table) shouldBe List(1L, 2L, 3L)
   }
 
-  it should "leave no data file behind when another commit got there first" in {
+  it should "leave no file behind when another commit got there first" in {
     val table = newTable()
     // A conflict is tried again as often as the table says: not at all here.
     table.updateProperties().set(TableProperties.COMMIT_NUM_RETRIES, "0").commit()
@@ -197,10 +206,11 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
     a[CommitFailedException] should be thrownBy append(conflicting, Seq(1L))
 
     filesWritten(table, "rows") shouldBe empty
+    manifestsWritten(table) shouldBe empty
     readSeqs(table) shouldBe empty
   }
 
-  it should "leave no data file behind when the catalog could not be connected to" in {
+  it should "leave no file behind when the catalog could not be connected to" in {
     // The request was never sent, whether the connection was refused or timed out.
     Seq(
       new ConnectException("Connection refused"),
@@ -214,10 +224,11 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
       a[RESTException] should be thrownBy append(unreachable, Seq(1L))
 
       withClue(s"after $notConnected: ")(filesWritten(table, "rows") shouldBe empty)
+      withClue(s"after $notConnected: ")(manifestsWritten(table) shouldBe empty)
     }
   }
 
-  it should "keep the data file when the commit's outcome is unknown, since the commit may have landed" in {
+  it should "keep its files when the commit's outcome is unknown, since the commit may have landed" in {
     val table = newTable()
     // The commit is made, and its answer is lost on the way back.
     val answerLost = answeringCommits(table) { commit =>
@@ -230,10 +241,11 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
     // The table reads the file: deleting it would have broken every read of the table.
     dataFileNames(table) should have size 1
     filesWritten(table, "rows") shouldBe dataFileNames(table)
+    manifestsWritten(table) shouldBe manifestNames(table)
     readSeqs(table) shouldBe List(1L, 2L)
   }
 
-  it should "keep the data file when the catalog's answer never came" in {
+  it should "keep its files when the catalog's answer never came" in {
     val table = newTable()
     // The request was sent, and the client stopped waiting for its answer: the REST client
     // reports that as any other failure of the connection.
@@ -248,6 +260,7 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
     a[RESTException] should be thrownBy append(timingOut, Seq(1L, 2L))
 
     filesWritten(table, "rows") shouldBe dataFileNames(table)
+    manifestsWritten(table) shouldBe manifestNames(table)
     readSeqs(table) shouldBe List(1L, 2L)
   }
 
