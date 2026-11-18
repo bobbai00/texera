@@ -33,10 +33,39 @@ import org.apache.texera.service.util.ObjectStorePresigner
 import java.net.{HttpURLConnection, URI}
 import java.time.Duration
 
-object LakeFSInputLinker {
+/**
+  * Says where LakeFS keeps the files of datasets and models: LakeFS is asked which object holds
+  * a file a resolver resolved. It needs LakeFS only, and none of the object store's keys.
+  */
+object LakeFSInputFileLocator extends InputFileLocator {
 
   /** The schemes of the files LakeFS keeps, as `FileResolver` resolves their names. */
   private val LakeFSSchemes = Set(DATASET_FILE_URI_SCHEME, MODEL_FILE_URI_SCHEME)
+
+  /**
+    * @param fileUri {dataset|model}:///{repositoryName}/{versionHash}/{file}, as `FileResolver`
+    *                resolves a file's name
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the version holds no such file
+    */
+  override def locate(fileUri: URI): String = {
+    if (!LakeFSSchemes.contains(fileUri.getScheme)) {
+      throw new UnsupportedOperationException(
+        s"Unsupported URI scheme: ${fileUri.getScheme} for locating an input file"
+      )
+    }
+    val (repositoryName, versionHash, fileRelativePath) = LakeFSFileDocument.locate(fileUri)
+    try {
+      LakeFSStorageClient
+        .statObject(repositoryName, versionHash, fileRelativePath.toString)
+        .getPhysicalAddress
+    } catch {
+      case missing: ApiException if missing.getCode == HttpURLConnection.HTTP_NOT_FOUND =>
+        throw new FileNotFoundException(fileUri)
+    }
+  }
+}
+
+object LakeFSInputLinker {
 
   /**
     * The linker of this deployment. Its links are signed for the object store as computing units
@@ -60,44 +89,20 @@ object LakeFSInputLinker {
   * object that holds a file's bytes is signed here, by `presigner`. LakeFS signs links too, but
   * for the one address it is set up with, which is the address browsers reach the store at.
   *
-  * Which object holds a file, LakeFS says: it is asked for a file a resolver resolved, and has
-  * already answered for a file of a listing.
+  * Which object holds a file, the plan says: LakeFS answered it when the plan was made
+  * ([[LakeFSInputFileLocator]], or the listing of a dataset version), and is asked nothing
+  * here.
   *
   * @param presigner signs the links, for the object store as their readers reach it
   * @param lifetime  how long a link works
   */
 class LakeFSInputLinker(presigner: ObjectStorePresigner, lifetime: Duration) extends InputLinker {
 
-  /**
-    * @param fileUri {dataset|model}:///{repositoryName}/{versionHash}/{file}, as `FileResolver`
-    *                resolves a file's name
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the version holds no such file
-    */
-  override def link(fileUri: URI): InputLink = {
-    if (!LakeFSInputLinker.LakeFSSchemes.contains(fileUri.getScheme)) {
-      throw new UnsupportedOperationException(
-        s"Unsupported URI scheme: ${fileUri.getScheme} for linking an input file"
-      )
-    }
-    val (repositoryName, versionHash, fileRelativePath) = LakeFSFileDocument.locate(fileUri)
-    val file =
-      try LakeFSStorageClient.statObject(repositoryName, versionHash, fileRelativePath.toString)
-      catch {
-        case missing: ApiException if missing.getCode == HttpURLConnection.HTTP_NOT_FOUND =>
-          throw new FileNotFoundException(fileUri)
-      }
-    linkTo(fileUri.toString, file.getPhysicalAddress)
-  }
-
-  /** Links `file` from the address its listing gives, with no request to LakeFS. */
-  override def linkListed(file: ListedFile): InputLink =
-    linkTo(file.logicalPath, file.physicalAddress)
-
-  /** Signs a GET of the object at `physicalAddress`, which holds the file called `name`. */
-  private def linkTo(name: String, physicalAddress: String): InputLink = {
+  /** Signs a GET of the object at `physicalAddress`, with no request to LakeFS. */
+  override def link(physicalAddress: String): InputLink = {
     if (!physicalAddress.startsWith("s3://")) {
       throw new IllegalStateException(
-        s"$name is kept at $physicalAddress, which is not in an S3 object store, so no link " +
+        s"A file is kept at $physicalAddress, which is not in an S3 object store, so no link " +
           "to it can be signed."
       )
     }

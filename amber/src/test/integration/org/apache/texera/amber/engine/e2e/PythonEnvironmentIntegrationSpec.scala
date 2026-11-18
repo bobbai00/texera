@@ -77,7 +77,6 @@ import org.apache.texera.common.config.PythonUtils
 import org.apache.texera.web.service.{
   ExecutionConsoleService,
   ExecutionResultService,
-  PlanToRun,
   WorkflowExecutionService
 }
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
@@ -225,28 +224,27 @@ class PythonEnvironmentIntegrationSpec
     /** The UDF, as the run's errors and consoles name it. */
     val udfId: String = udf.operatorIdentifier.id
 
-    private val savedPlan = PlanToRun
-      .make(
-        workflowContext(specId),
-        fixtureBindings.copy(environments =
-          name =>
-            if (name == environment.name) environment
-            else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
+    private val savedPlan = TestUtils.savedPlan(
+      workflowContext(specId),
+      LogicalPlanPojo(
+        List(text, udf),
+        List(
+          LogicalLink(
+            text.operatorIdentifier,
+            PortIdentity(),
+            udf.operatorIdentifier,
+            PortIdentity()
+          )
         ),
-        LogicalPlanPojo(
-          List(text, udf),
-          List(
-            LogicalLink(
-              text.operatorIdentifier,
-              PortIdentity(),
-              udf.operatorIdentifier,
-              PortIdentity()
-            )
-          ),
-          List(),
-          List()
-        )
+        List(),
+        List()
+      ),
+      fixtureBindings.copy(environments =
+        name =>
+          if (name == environment.name) environment
+          else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
       )
+    )
     private val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
     private val context = executionPlan.context
     written ++= executionPlan.plan.operators.flatMap(op =>

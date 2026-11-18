@@ -28,9 +28,17 @@ import org.apache.texera.amber.core.storage.InputLink
   */
 trait LinkedFile { this: InputFile =>
 
+  /** Whether the file has its link; until it has, it has the address its link is signed for. */
+  def isLinked: Boolean = url.nonEmpty
+
   /** The link the file is read through. */
   def link: InputLink = InputLink(url, expiresAtMs)
 
+  /** This file read through `link`, which takes its address's place. */
+  def linkedThrough(link: InputLink): InputFile =
+    InputFile(name, link.url, link.expiresAtMs)
+
   override def toString: String =
-    s"InputFile($name, ${InputLink.withoutQuery(url)}, expiresAtMs=$expiresAtMs)"
+    if (isLinked) s"InputFile($name, ${InputLink.withoutQuery(url)}, expiresAtMs=$expiresAtMs)"
+    else s"InputFile($name, at $physicalAddress)"
 }

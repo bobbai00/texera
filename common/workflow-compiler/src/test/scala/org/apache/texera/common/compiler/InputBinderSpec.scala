@@ -24,8 +24,7 @@ import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.executor.{FileListing, InputFile, OperatorInputs}
 import org.apache.texera.amber.core.storage.{
   DatasetVersionLister,
-  InputLink,
-  InputLinker,
+  InputFileLocator,
   ListedFile,
   ScanFileResolver
 }
@@ -54,10 +53,10 @@ import scala.collection.mutable.ArrayBuffer
 
 /**
   * What a compile finds each operator reads from outside the run. How a name becomes a URI is the
-  * resolver's business, how a file gets a link the linker's, and which files a dataset version
+  * resolver's business, where a file is kept the locator's, and which files a dataset version
   * holds the lister's; all three are passed in. Here the resolver is the fixture resolver, which
-  * knows local files, unless a case gives another, and the linkers and listers record what they
-  * are asked.
+  * knows local files, unless a case gives another, and the locators and listers record what they
+  * are asked. No compile links a file: a plan made to run says where each is kept.
   *
   * An operator's own error is appended to the error list by its id, and the others are bound all
   * the same: the editing compile returns every bad operator's error so the UI can surface them at
@@ -78,21 +77,21 @@ class InputBinderSpec extends AnyFlatSpec {
 
   /**
     * What the operators of `plan` read, as an [[InputBinder]] finds it: for a run when `run`
-    * gives what links its files and lists its dataset versions, and for editing otherwise.
+    * gives what locates its files and lists its dataset versions, and for editing otherwise.
     */
   private def inputsOf(
       plan: LogicalPlan,
       files: ScanFileResolver = TestOperators.fixtureFileResolver,
       settings: CompileSettings = CompileSettings.Default,
-      run: Option[(InputLinker, DatasetVersionLister)] = None,
+      run: Option[(InputFileLocator, DatasetVersionLister)] = None,
       errors: ArrayBuffer[(OperatorIdentity, Throwable)] = ArrayBuffer.empty
   ): Map[OperatorIdentity, OperatorInputs] = {
     val purpose = run match {
-      case Some((linker, lister)) =>
+      case Some((locator, lister)) =>
         CompileFor.Run(
           files,
           settings,
-          linker,
+          locator,
           lister,
           repositories = versionPath => fail(s"asked to pin $versionPath"),
           environments = name => fail(s"asked to resolve the environment $name")
@@ -111,13 +110,8 @@ class InputBinderSpec extends AnyFlatSpec {
   private val listsNothing: DatasetVersionLister =
     (versionPath, _) => fail(s"asked to list $versionPath")
 
-  /** A linker that is asked for nothing. */
-  private val linksNothing: InputLinker =
-    new InputLinker {
-      override def link(fileUri: URI): InputLink = fail(s"asked to link $fileUri")
-      override def linkListed(file: ListedFile): InputLink =
-        fail(s"asked to link the listed file ${file.logicalPath}")
-    }
+  /** A locator that is asked for nothing. */
+  private val locatesNothing: InputFileLocator = fileUri => fail(s"asked to locate $fileUri")
 
   // ---------------------------------------------------------------------------
   // Scan sources
@@ -130,30 +124,18 @@ class InputBinderSpec extends AnyFlatSpec {
     op
   }
 
-  /** The link `recordingLinker` makes for `file`. */
-  private def linkOf(file: URI): InputLink =
-    InputLink(s"http://texera-rustfs:9000/bucket${file.getPath}?X-Amz-Signature=5ecr3t", 86400000L)
+  /** Where `recordingLocator` says `file` is kept. */
+  private def addressOf(file: URI): String = s"s3://texera-dataset/bucket${file.getPath}"
 
-  /** `file` as an operator reads it through the link `recordingLinker` makes for it. */
-  private def linked(file: URI): InputFile =
-    InputFile(file.toASCIIString, linkOf(file).url, linkOf(file).expiresAtMs)
+  /** `file` as a plan made to run names it: where `recordingLocator` says it is kept, unlinked. */
+  private def located(file: URI): InputFile =
+    InputFile(file.toASCIIString, physicalAddress = addressOf(file))
 
-  /**
-    * A linker of the files resolvers resolve, each as `linkFile` links it. It is asked for no
-    * file of a listing: a scan source's file is named, not listed.
-    */
-  private def linkerOf(linkFile: URI => InputLink): InputLinker =
-    new InputLinker {
-      override def link(fileUri: URI): InputLink = linkFile(fileUri)
-      override def linkListed(file: ListedFile): InputLink =
-        fail(s"asked to link the listed file ${file.logicalPath}")
-    }
-
-  /** A linker that links any file, and lists the files it was asked to link in `asked`. */
-  private def recordingLinker(asked: ArrayBuffer[URI]): InputLinker =
-    linkerOf { file =>
+  /** A locator that locates any file, and lists the files it was asked for in `asked`. */
+  private def recordingLocator(asked: ArrayBuffer[URI]): InputFileLocator =
+    file => {
       asked += file
-      linkOf(file)
+      addressOf(file)
     }
 
   "InputBinder" should
@@ -213,7 +195,7 @@ class InputBinderSpec extends AnyFlatSpec {
     assert(inputs.isEmpty)
   }
 
-  it should "link each file it resolved, for a plan made to run, under its resolved name" in {
+  it should "say where each file it resolved is kept, for a plan made to run, under its resolved name" in {
     val csvFile = new URI("dataset:///repository/commit/data.csv")
     val jsonlFile = new URI("model:///models/commit/a%20b/rows.jsonl")
     val scanCsv = named(TestOperators.headerlessSmallCsvScanOpDesc(), "scan-csv")
@@ -226,26 +208,28 @@ class InputBinderSpec extends AnyFlatSpec {
     val inputs = inputsOf(
       LogicalPlan(List(scanCsv, keyword(), scanJsonl), List.empty),
       files = fileName => if (fileName.startsWith("/dataset/")) csvFile else jsonlFile,
-      run = Some((recordingLinker(asked), listsNothing)),
+      run = Some((recordingLocator(asked), listsNothing)),
       errors = errors
     )
 
     assert(errors.isEmpty)
-    // The linker is handed what the resolver resolved, and nothing else.
+    // The locator is handed what the resolver resolved, and nothing else.
     assert(asked.toList == List(csvFile, jsonlFile))
-    // The executor asks for its file by the name its descriptor knows it by.
+    // The executor asks for its file by the name its descriptor knows it by. No file has a
+    // link: a compile holds none of the object store's keys.
+    assert(inputs.values.flatMap(_.files).forall(!_.isLinked))
     assert(scanCsv.fileName.contains(csvFile.toASCIIString))
     assert(scanJsonl.fileName.contains(jsonlFile.toASCIIString))
     assert(
       inputs == Map(
         OperatorIdentity("scan-csv") ->
-          OperatorInputs(files = Seq(linked(csvFile)), csvParserMaxColumns = defaultColumnLimit),
-        OperatorIdentity("scan-jsonl") -> OperatorInputs(files = Seq(linked(jsonlFile)))
+          OperatorInputs(files = Seq(located(csvFile)), csvParserMaxColumns = defaultColumnLimit),
+        OperatorIdentity("scan-jsonl") -> OperatorInputs(files = Seq(located(jsonlFile)))
       )
     )
   }
 
-  it should "link no file whose name did not resolve, whatever the name is" in {
+  it should "locate no file whose name did not resolve, whatever the name is" in {
     // A request names a file by a URI of its own making, of a dataset its user may
     // not read. A user's resolver resolves no such name.
     val refusesResolvedNames: ScanFileResolver =
@@ -258,16 +242,16 @@ class InputBinderSpec extends AnyFlatSpec {
     val inputs = inputsOf(
       LogicalPlan(List(scan), List.empty),
       files = refusesResolvedNames,
-      run = Some((recordingLinker(asked), listsNothing)),
+      run = Some((recordingLocator(asked), listsNothing)),
       errors = errors
     )
 
     assert(errors.map(_._1).toList == List(scan.operatorIdentifier))
-    assert(asked.isEmpty, "the linker was handed a file the resolver did not resolve")
+    assert(asked.isEmpty, "the locator was handed a file the resolver did not resolve")
     assert(inputs.isEmpty)
   }
 
-  it should "report a file the linker does not find as its scan source's error" in {
+  it should "report a file the locator does not find as its scan source's error" in {
     val missing = named(TestOperators.smallJSONLScanOpDesc(), "missing")
     val found = named(TestOperators.smallJSONLScanOpDesc(), "found")
     val notFound = new FileNotFoundException("no such file in the version")
@@ -279,10 +263,10 @@ class InputBinderSpec extends AnyFlatSpec {
       LogicalPlan(List(missing, found), List.empty),
       run = Some(
         (
-          linkerOf { file =>
+          { file =>
             asked += 1
-            if (asked == 1) throw notFound else linkOf(file)
-          },
+            if (asked == 1) throw notFound else addressOf(file)
+          }: InputFileLocator,
           listsNothing
         )
       ),
@@ -291,12 +275,12 @@ class InputBinderSpec extends AnyFlatSpec {
 
     assert(errors.toList == List((missing.operatorIdentifier, notFound)))
     assert(missing.fileName.contains(missingFile.toASCIIString), "the name was resolved")
-    // The scan after it is linked all the same.
+    // The scan after it is located all the same.
     assert(inputs.keySet == Set(found.operatorIdentifier))
     assert(inputs(found.operatorIdentifier).files.map(_.name) == Seq(found.fileName.get))
   }
 
-  it should "throw, as it is, a failure of the resolver or the linker that is no scan's error" in {
+  it should "throw, as it is, a failure of the resolver or the locator that is no scan's error" in {
     // The database or the storage not answering says nothing about the file: reported on
     // the scan, it would read as the user's mistake.
     val outage = new java.io.IOException("the storage did not answer")
@@ -305,16 +289,16 @@ class InputBinderSpec extends AnyFlatSpec {
     val fromResolver = intercept[java.io.IOException] {
       inputsOf(LogicalPlan(List(csv()), List.empty), files = _ => throw outage, errors = errors)
     }
-    val fromLinker = intercept[java.io.IOException] {
+    val fromLocator = intercept[java.io.IOException] {
       inputsOf(
         LogicalPlan(List(csv()), List.empty),
-        run = Some((linkerOf(_ => throw outage), listsNothing)),
+        run = Some(((_ => throw outage): InputFileLocator, listsNothing)),
         errors = errors
       )
     }
 
     assert(fromResolver eq outage)
-    assert(fromLinker eq outage)
+    assert(fromLocator eq outage)
     assert(errors.isEmpty)
   }
 
@@ -349,34 +333,15 @@ class InputBinderSpec extends AnyFlatSpec {
 
   private val bothVersions = Map(lettersPath -> letters, almanacPath -> almanac)
 
-  /** The link `listedFileLinker` makes for `file`. */
-  private def linkOf(file: ListedFile): InputLink =
-    InputLink(
-      s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}?X-Amz-Signature=5ecr3t",
-      86400000L
-    )
-
   /**
-    * `listed` as an operator reads them through the links `listedFileLinker` makes: each under
-    * the name an input tuple carries, its logical path, in the order of the names.
+    * `listed` as a plan made to run names them for an operator that reads them: each under the
+    * name an input tuple carries, its logical path, where its listing says it is kept, in the
+    * order of the names. A listing says where its files are, so the locator is asked nothing.
     */
-  private def linked(listed: Seq[ListedFile]): Seq[InputFile] =
+  private def located(listed: Seq[ListedFile]): Seq[InputFile] =
     listed
-      .map(file => InputFile(file.logicalPath, linkOf(file).url, linkOf(file).expiresAtMs))
+      .map(file => InputFile(file.logicalPath, physicalAddress = file.physicalAddress))
       .sortBy(_.name)
-
-  /**
-    * A linker of listed files, which lists those it was asked to link in `asked`. It is asked
-    * for no file by its URI: only what was listed is linked for a File Scan From Input.
-    */
-  private def listedFileLinker(asked: ArrayBuffer[ListedFile] = ArrayBuffer.empty): InputLinker =
-    new InputLinker {
-      override def link(fileUri: URI): InputLink = fail(s"asked to link $fileUri")
-      override def linkListed(file: ListedFile): InputLink = {
-        asked += file
-        linkOf(file)
-      }
-    }
 
   private def fileLister(id: String, versionPath: String): FileListerSourceOpDesc = {
     val op = named(new FileListerSourceOpDesc, id)
@@ -404,7 +369,7 @@ class InputBinderSpec extends AnyFlatSpec {
     val inputs = inputsOf(
       LogicalPlan(List(lettersLister, keyword(), almanacLister), List.empty),
       settings = allowing(100),
-      run = Some((linksNothing, listerOf(bothVersions, asked))),
+      run = Some((locatesNothing, listerOf(bothVersions, asked))),
       errors = errors
     )
 
@@ -412,7 +377,7 @@ class InputBinderSpec extends AnyFlatSpec {
     // Each version is listed once, asked for one file more than may be listed.
     assert(asked.toList == List((lettersPath, 101), (almanacPath, 101)))
     // The files by their logical paths, in the order they were listed: not sorted again. A File
-    // Lister reads no file: with nothing downstream to read them, nothing is linked.
+    // Lister reads no file: with nothing downstream to read them, none is among its inputs.
     assert(
       inputs == Map(
         OperatorIdentity("letters") -> listingOf(letters),
@@ -421,7 +386,7 @@ class InputBinderSpec extends AnyFlatSpec {
     )
   }
 
-  it should "link, for each File Scan From Input, the files listed upstream of it, by any path" in {
+  it should "give each File Scan From Input the files listed upstream of it, by any path, where their listings keep them" in {
     // letters ─▶ direct          almanac ─▶ search ─▶ through
     // letters ─▶ union ◀─ almanac            union ─▶ both
     val lettersLister = fileLister("letters", lettersPath)
@@ -440,13 +405,13 @@ class InputBinderSpec extends AnyFlatSpec {
         link(union, both)
       )
     )
-    val asked = ArrayBuffer.empty[ListedFile]
     val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
 
+    // A listing says where each file is kept: the locator is asked nothing.
     val inputs = inputsOf(
       plan,
       settings = allowing(100),
-      run = Some((listedFileLinker(asked), listerOf(bothVersions))),
+      run = Some((locatesNothing, listerOf(bothVersions))),
       errors = errors
     )
 
@@ -456,34 +421,31 @@ class InputBinderSpec extends AnyFlatSpec {
       inputs == Map(
         OperatorIdentity("letters") -> listingOf(letters),
         OperatorIdentity("almanac") -> listingOf(almanac),
-        OperatorIdentity("direct") -> OperatorInputs(files = linked(letters)),
-        OperatorIdentity("through") -> OperatorInputs(files = linked(almanac)),
-        OperatorIdentity("both") -> OperatorInputs(files = linked(letters ++ almanac))
+        OperatorIdentity("direct") -> OperatorInputs(files = located(letters)),
+        OperatorIdentity("through") -> OperatorInputs(files = located(almanac)),
+        OperatorIdentity("both") -> OperatorInputs(files = located(letters ++ almanac))
       )
     )
-    // The linker is handed what was listed, a file for each operator that reads it.
-    assert(asked.toList == (letters ++ almanac) ++ letters ++ almanac)
+    assert(inputs.values.flatMap(_.files).forall(!_.isLinked))
   }
 
-  it should "link a file that two File Listers upstream list once" in {
+  it should "give a file that two File Listers upstream list once" in {
     val first = fileLister("first", lettersPath)
     val second = fileLister("second", lettersPath)
     val scan = fileScan("scan")
     val plan = LogicalPlan(List(first, second, scan), List(link(first, scan), link(second, scan)))
-    val asked = ArrayBuffer.empty[ListedFile]
 
     // Two files between them: no more than it can read.
     val inputs = inputsOf(
       plan,
       settings = allowing(2),
-      run = Some((listedFileLinker(asked), listerOf(bothVersions)))
+      run = Some((locatesNothing, listerOf(bothVersions)))
     )
 
-    assert(asked.toList == letters)
-    assert(inputs(OperatorIdentity("scan")) == OperatorInputs(files = linked(letters)))
+    assert(inputs(OperatorIdentity("scan")) == OperatorInputs(files = located(letters)))
   }
 
-  it should "list and link nothing for a compile that makes no plan to run" in {
+  it should "list nothing, and give no file, for a compile that makes no plan to run" in {
     val lister = fileLister("letters", lettersPath)
     val scan = fileScan("scan")
     val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
@@ -496,7 +458,7 @@ class InputBinderSpec extends AnyFlatSpec {
   }
 
   it should "report a File Scan From Input with no File Lister upstream, in every compile" in {
-    Seq(None, Some((listedFileLinker(), listerOf(bothVersions)))).foreach { run =>
+    Seq(None, Some((locatesNothing, listerOf(bothVersions)))).foreach { run =>
       // Names from a Text Input, no input at all, and a File Lister that is in the plan but
       // not upstream; then one that a File Lister does feed.
       val names = named(new TextInputSourceOpDesc, "names")
@@ -535,7 +497,7 @@ class InputBinderSpec extends AnyFlatSpec {
       val inputs = inputsOf(
         LogicalPlan(List(unset, blank, scan), List(link(unset, scan))),
         settings = allowing(100),
-        run = Option.when(makesPlanToRun)((linksNothing, listerOf(bothVersions, asked))),
+        run = Option.when(makesPlanToRun)((locatesNothing, listerOf(bothVersions, asked))),
         errors = errors
       )
 
@@ -566,7 +528,7 @@ class InputBinderSpec extends AnyFlatSpec {
     val inputs = inputsOf(
       plan,
       settings = allowing(100),
-      run = Some((listedFileLinker(), listerOf(bothVersions))),
+      run = Some((locatesNothing, listerOf(bothVersions))),
       errors = errors
     )
 
@@ -581,7 +543,7 @@ class InputBinderSpec extends AnyFlatSpec {
     assert(
       inputs == Map(
         OperatorIdentity("found") -> listingOf(letters),
-        OperatorIdentity("scan") -> OperatorInputs(files = linked(letters))
+        OperatorIdentity("scan") -> OperatorInputs(files = located(letters))
       )
     )
   }
@@ -600,7 +562,7 @@ class InputBinderSpec extends AnyFlatSpec {
     val inputs = inputsOf(
       LogicalPlan(List(within, beyond), List.empty),
       settings = allowing(2),
-      run = Some((linksNothing, listerOf(versions, asked))),
+      run = Some((locatesNothing, listerOf(versions, asked))),
       errors = errors
     )
 
@@ -627,12 +589,11 @@ class InputBinderSpec extends AnyFlatSpec {
 
     // Each version is within what a File Lister may list; the three files between them are
     // one more than a File Scan From Input may read.
-    val asked = ArrayBuffer.empty[ListedFile]
     val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
     val tooMany = inputsOf(
       plan(),
       settings = allowing(2),
-      run = Some((listedFileLinker(asked), listerOf(bothVersions))),
+      run = Some((locatesNothing, listerOf(bothVersions))),
       errors = errors
     )
 
@@ -641,18 +602,18 @@ class InputBinderSpec extends AnyFlatSpec {
       errors.head._2.toString == "java.lang.IllegalArgumentException: The File Listers " +
         "upstream of File Scan From Input list 3 files, and it can read at most 2."
     )
-    assert(asked.isEmpty && !tooMany.contains(OperatorIdentity("scan")))
+    assert(!tooMany.contains(OperatorIdentity("scan")))
 
-    // At exactly as many as it can read, they are linked.
+    // At exactly as many as it can read, it is given them.
     val none = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
     val withinLimit = inputsOf(
       plan(),
       settings = allowing(3),
-      run = Some((listedFileLinker(), listerOf(bothVersions))),
+      run = Some((locatesNothing, listerOf(bothVersions))),
       errors = none
     )
     assert(none.isEmpty)
-    assert(withinLimit(OperatorIdentity("scan")).files == linked(letters ++ almanac))
+    assert(withinLimit(OperatorIdentity("scan")).files == located(letters ++ almanac))
   }
 
   it should "ask for as many files as there can be when no fewer may be listed" in {
@@ -661,13 +622,13 @@ class InputBinderSpec extends AnyFlatSpec {
     inputsOf(
       LogicalPlan(List(fileLister("letters", lettersPath)), List.empty),
       settings = allowing(Int.MaxValue),
-      run = Some((linksNothing, listerOf(bothVersions, asked)))
+      run = Some((locatesNothing, listerOf(bothVersions, asked)))
     )
 
     assert(asked.toList == List((lettersPath, Int.MaxValue)))
   }
 
-  it should "throw, as it is, a failure of the lister or the linker that is no operator's error" in {
+  it should "throw, as it is, a failure of the lister that is no operator's error" in {
     // The database or the storage not answering says nothing about the version: reported on
     // the File Lister, it would read as the user's mistake.
     val outage = new java.io.IOException("the storage did not answer")
@@ -679,26 +640,10 @@ class InputBinderSpec extends AnyFlatSpec {
     }
 
     val fromLister = intercept[java.io.IOException] {
-      inputsOf(plan(), run = Some((linksNothing, (_, _) => throw outage)), errors = errors)
-    }
-    val fromLinker = intercept[java.io.IOException] {
-      inputsOf(
-        plan(),
-        run = Some(
-          (
-            new InputLinker {
-              override def link(fileUri: URI): InputLink = fail(s"asked to link $fileUri")
-              override def linkListed(file: ListedFile): InputLink = throw outage
-            },
-            listerOf(bothVersions)
-          )
-        ),
-        errors = errors
-      )
+      inputsOf(plan(), run = Some((locatesNothing, (_, _) => throw outage)), errors = errors)
     }
 
     assert(fromLister eq outage)
-    assert(fromLinker eq outage)
     assert(errors.isEmpty)
   }
 
@@ -707,7 +652,7 @@ class InputBinderSpec extends AnyFlatSpec {
   // ---------------------------------------------------------------------------
 
   it should "give every CSV scan the site's column limit, in every compile" in {
-    Seq(None, Some((recordingLinker(ArrayBuffer.empty), listsNothing))).foreach { run =>
+    Seq(None, Some((recordingLocator(ArrayBuffer.empty), listsNothing))).foreach { run =>
       val first = named(csv(), "first")
       val second = named(csv(), "second")
       val jsonl = named(TestOperators.smallJSONLScanOpDesc(), "jsonl")
@@ -737,7 +682,7 @@ class InputBinderSpec extends AnyFlatSpec {
     val inputs = inputsOf(
       LogicalPlan(List(keyword(), new LimitOpDesc(), new TextInputSourceOpDesc), List.empty),
       files = fileName => fail(s"asked to resolve $fileName"),
-      run = Some((linksNothing, listsNothing)),
+      run = Some((locatesNothing, listsNothing)),
       errors = errors
     )
 
@@ -774,7 +719,7 @@ class InputBinderSpec extends AnyFlatSpec {
         val inputs = inputsOf(
           LogicalPlan(List(operator.getConstructor().newInstance()), List.empty),
           files = fileName => fail(s"asked to resolve $fileName"),
-          run = Some((linksNothing, listsNothing)),
+          run = Some((locatesNothing, listsNothing)),
           errors = errors
         )
 
@@ -794,20 +739,12 @@ class InputBinderSpec extends AnyFlatSpec {
 
     val inputs = inputsOf(
       LogicalPlan(operators, List(link(lister, listedScan))),
-      run = Some(
-        (
-          new InputLinker {
-            override def link(fileUri: URI): InputLink = linkOf(fileUri)
-            override def linkListed(file: ListedFile): InputLink = linkOf(file)
-          },
-          listerOf(bothVersions)
-        )
-      )
+      run = Some((recordingLocator(ArrayBuffer.empty), listerOf(bothVersions)))
     )
 
     // The compile found something for each of the three to read ...
     assert(inputs.keySet.map(_.id) == Set("scan", "letters", "listed-scan"))
-    // ... and none of it is in a descriptor: a link, a listing and a limit are the plan's.
+    // ... and none of it is in a descriptor: an address, a listing and a limit are the plan's.
     written.head.put("fileName", resolvedName)
     assert(operators.map(objectMapper.valueToTree[ObjectNode]) == written)
   }

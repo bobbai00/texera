@@ -61,17 +61,24 @@ message OperatorInputs {
   optional int32 csvParserMaxColumns = 3;
 }
 
-// A file an operator reads, through a link made when its plan was made.
+// A file an operator reads. The compile that makes a plan says where the file is kept; the
+// service that holds the object store's keys then signs a link to that address and puts it in
+// the address's place. So a file has its address or its link, never both, and a plan a computing
+// unit runs has links only.
 // Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message InputFile {
   option (scalapb.message).extends = "org.apache.texera.amber.core.executor.LinkedFile";
   // The name the operator's executor knows the file by; not empty.
   string name = 1;
   // The link: where a GET reads the file from the object store. A secret, as whoever holds it
-  // reads the file until it expires; not empty.
+  // reads the file until it expires. Empty until the file is linked.
   string url = 2;
-  // When the link stops working, in milliseconds since the epoch; after the epoch.
+  // When the link stops working, in milliseconds since the epoch; after the epoch. 0 until the
+  // file is linked.
   int64 expiresAtMs = 3;
+  // The object that holds the file's bytes, in the store that keeps it (s3://bucket/key): what
+  // the link is signed for. Empty once the file is linked.
+  string physicalAddress = 4;
 }
 
 // The files of a dataset version, as the version was listed when the plan was made.

@@ -386,7 +386,8 @@ services:
       timeout: 3s
       retries: 10
 
-  # WorkflowCompilingService provides endpoints for sanity check and schema propagation while workflows are being edited
+  # WorkflowCompilingService provides endpoints for sanity check and schema propagation while workflows are being edited,
+  # and makes the plan of each execution the DashboardService creates
   workflow-compiling-service:
     image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-workflow-compiling-service:${IMAGE_TAG:-latest}
     container_name: workflow-compiling-service
@@ -394,6 +395,9 @@ services:
     depends_on:
       file-service:
         condition: service_started
+      # The plan of a run says where LakeFS keeps each dataset file the workflow reads.
+      lakefs:
+        condition: service_healthy
     env_file:
       - .env
     healthcheck:
@@ -431,8 +435,8 @@ services:
         condition: service_healthy
       file-service:
         condition: service_healthy
-      # Creating an execution writes its plan to the lake, in a warehouse of Lakekeeper's, and
-      # resolves the files the workflow reads through LakeFS.
+      # Creating an execution asks the compiling service for its plan (above), and writes the
+      # plan to the lake, in a warehouse of Lakekeeper's.
       lakekeeper:
         condition: service_healthy
       lakekeeper-init:

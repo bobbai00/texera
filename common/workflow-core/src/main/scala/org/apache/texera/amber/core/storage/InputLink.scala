@@ -49,27 +49,42 @@ object InputLink {
 }
 
 /**
-  * Makes the links a plan's operators read their files through, when the plan is made to run.
+  * Says where the files a plan's operators read are kept, when the plan is made to run. A plan
+  * carries each file's address, so whatever signs the plan's links asks no service where a file
+  * is.
   *
-  * A linker checks no access: it links whatever file it is handed. It is to be handed only files
-  * a [[ScanFileResolver]] resolved, or a [[DatasetVersionLister]] listed, for the plan's user,
-  * which is where access is checked.
+  * A locator checks no access: it locates whatever file it is handed. It is to be handed only
+  * files a [[ScanFileResolver]] resolved for the plan's user, which is where access is checked.
+  * A file a [[DatasetVersionLister]] listed needs no locator: its listing says where it is kept.
   */
-trait InputLinker {
+trait InputFileLocator {
 
   /**
-    * Links the file at `fileUri`, a URI a [[ScanFileResolver]] resolved a name to.
+    * The object that holds the bytes of the file at `fileUri`, a URI a [[ScanFileResolver]]
+    * resolved a name to: its address in the store that keeps it (s3://bucket/key).
     *
     * @throws org.apache.commons.vfs2.FileNotFoundException if there is no such file. Any other
     *                                                       failure, such as the storage not
     *                                                       answering, is thrown as it is.
     */
-  def link(fileUri: URI): InputLink
+  def locate(fileUri: URI): String
+}
+
+/**
+  * Makes the links a plan's operators read their files through, once the plan is made: only a
+  * service that holds the object store's keys can.
+  *
+  * A linker checks no access: it links whatever address it is handed. It is to be handed only
+  * the addresses of a plan made for its user, which is where access was checked.
+  */
+trait InputLinker {
 
   /**
-    * Links `file`, a file a [[DatasetVersionLister]] listed. Its listing says where the file is
-    * kept, so nothing is asked about it: thousands of listed files are linked without a lookup
-    * for each.
+    * Links the object at `physicalAddress`, as an [[InputFileLocator]] or the listing of a
+    * dataset version gives a file's. Nothing is asked about it: thousands of files are linked
+    * without a lookup for each.
+    *
+    * @throws IllegalStateException if the address is of no store a link can be signed for
     */
-  def linkListed(file: ListedFile): InputLink
+  def link(physicalAddress: String): InputLink
 }

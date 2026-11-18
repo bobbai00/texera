@@ -24,6 +24,7 @@ import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.executor.{ExecutorInputs, InputFile, OperatorInputs}
 import org.apache.texera.amber.core.storage.{
   DatasetVersionLister,
+  InputFileLocator,
   InputLink,
   InputLinker,
   ListedFile
@@ -38,27 +39,37 @@ import java.util.concurrent.{ConcurrentHashMap, Executors, TimeUnit}
 
 /**
   * What stands in, in tests, for the object store a plan's operators read their files from: a
-  * server of this JVM's that serves fixture files of the local disk, the linker that links
-  * them, and a dataset version of two of them with its lister. An executor reads the links only
-  * when it is given the server's address ([[linkEndpoints]]), as a computing unit reads links
-  * from the object store it is set up with.
+  * server of this JVM's that serves fixture files of the local disk, the locator that says
+  * where they are kept, the linker that links them, and a dataset version of two of them with
+  * its lister. An executor reads the links only when it is given the server's address
+  * ([[linkEndpoints]]), as a computing unit reads links from the object store it is set up with.
   */
 object FixtureInputs {
 
   private lazy val server = new FileServer
 
   /**
-    * Links the fixture files, as a plan made to run links the files of a dataset: each to a GET
-    * on the server. Tests hand this to the compiler in place of the deployment's linker, which
-    * signs links to the object store. A file is linked once, so two compiles of one workflow
-    * make one plan.
+    * Says where the fixture files are kept, as a compile for a run asks where LakeFS keeps a
+    * dataset's: a fixture file is kept where it is, on the local disk. Tests hand this to the
+    * compiler in place of the deployment's locator, which asks LakeFS.
     */
-  val linker: InputLinker = new InputLinker {
-    override def link(fileUri: URI): InputLink = server.link(Paths.get(fileUri))
-
-    override def linkListed(file: ListedFile): InputLink =
-      server.link(Paths.get(new URI(file.physicalAddress)))
+  val locator: InputFileLocator = fileUri => {
+    if (!Files.isRegularFile(Paths.get(fileUri))) {
+      throw new FileNotFoundException(s"Local file ${Paths.get(fileUri)} does not exist")
+    }
+    fileUri.toString
   }
+
+  /**
+    * Links the fixture files from where [[locator]] and [[lister]] say they are kept, as the
+    * Dashboard service links the files of a plan: each to a GET on the server. Tests link a
+    * compiled plan with this in place of the deployment's linker, which signs links to the
+    * object store. A file is linked once, so two compiles of one workflow make one plan.
+    */
+  val linker: InputLinker = physicalAddress => server.link(Paths.get(new URI(physicalAddress)))
+
+  /** The link to the fixture file at `fileUri`, as a plan made to run and then linked has it. */
+  def linkTo(fileUri: URI): InputLink = linker.link(locator.locate(fileUri))
 
   /** The endpoints an executor is given to read what [[linker]] links: the server's. */
   def linkEndpoints: Seq[String] = Seq(server.endpoint)
@@ -107,7 +118,7 @@ object FixtureInputs {
   /** As `inputsOf(scan)`, with the column limit a plan gives, or none. */
   def inputsOf(scan: ScanSourceOpDesc, csvParserMaxColumns: Option[Int]): ExecutorInputs = {
     val fileName = scan.fileName.get
-    val link = linker.link(new URI(fileName))
+    val link = linkTo(new URI(fileName))
     executorInputs(
       OperatorInputs(
         files = Seq(InputFile(fileName, link.url, link.expiresAtMs)),

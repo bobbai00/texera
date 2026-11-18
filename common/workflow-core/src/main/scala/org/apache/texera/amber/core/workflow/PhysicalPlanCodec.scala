@@ -73,6 +73,12 @@ import scala.util.control.NonFatal
   * again: each port keeps its schema, but no operator keeps the function that derived it
   * ([[ReadBackSchemaPropagation]] takes its place).
   *
+  * A plan is saved in the same format before its files are linked ([[encodeUnlinked]],
+  * [[decodeUnlinked]]): as the compile that made it hands it to the service that signs its
+  * links, each file with the address of the object that holds it where its link will be.
+  * [[encode]] and [[decode]] take only a plan whose files all have their links, which is the
+  * plan a computing unit runs.
+  *
   * A change to an operator is saved as a [[StoredOperatorUpdate]], in the same format version:
   * only what the engine applies to the running operator, its executor and what its code reads.
   */
@@ -161,13 +167,23 @@ object PhysicalPlanCodec {
     * Saves `plan`. The ids, settings, warehouse and cost hints come from its context.
     *
     * @throws IllegalArgumentException if the physical plan is not one made to run under the
-    *                                  context, or what else the run needs is not what [[decode]]
-    *                                  reads back
+    *                                  context, with a link to each file its operators read, or
+    *                                  what else the run needs is not what [[decode]] reads back
     */
-  def encode(plan: ExecutionPlan): StoredPhysicalPlan = {
+  def encode(plan: ExecutionPlan): StoredPhysicalPlan = encode(plan, linked = true)
+
+  /**
+    * Saves `plan` as [[encode]] does, before its files are linked: each file its operators read
+    * has the address of the object that holds it, and no link.
+    *
+    * @throws IllegalArgumentException as [[encode]] does, and if a file has a link or no address
+    */
+  def encodeUnlinked(plan: ExecutionPlan): StoredPhysicalPlan = encode(plan, linked = false)
+
+  private def encode(plan: ExecutionPlan, linked: Boolean): StoredPhysicalPlan = {
     val context = plan.context
     val physicalPlan = plan.plan
-    physicalPlan.operators.foreach(requireRunnableUnder(context, _))
+    physicalPlan.operators.foreach(requireRunnableUnder(context, _, linked))
     requireConsistent(physicalPlan, context.workflowSettings.outputPortsNeedingStorage)
     requirePortsListTheirLinks(physicalPlan)
     StoredPhysicalPlan(
@@ -198,7 +214,17 @@ object PhysicalPlanCodec {
     *                                  value this version does not know, or is not a plan
     *                                  [[encode]] saves
     */
-  def decode(stored: StoredPhysicalPlan): ExecutionPlan = {
+  def decode(stored: StoredPhysicalPlan): ExecutionPlan = decode(stored, linked = true)
+
+  /**
+    * Reads back a plan saved before its files were linked, as [[decode]] reads one whose files
+    * are: a plan [[encodeUnlinked]] saves.
+    *
+    * @throws IllegalArgumentException as [[decode]] does, and if a file has a link or no address
+    */
+  def decodeUnlinked(stored: StoredPhysicalPlan): ExecutionPlan = decode(stored, linked = false)
+
+  private def decode(stored: StoredPhysicalPlan, linked: Boolean): ExecutionPlan = {
     val workflowId = stored.workflowId.getOrElse(refuse("The plan names no workflow."))
     val executionId = stored.executionId.getOrElse(refuse("The plan names no execution."))
     val settings = decodeSettings(stored.settings.getOrElse(refuse("The plan has no settings.")))
@@ -206,7 +232,7 @@ object PhysicalPlanCodec {
     val linksInto = stored.links.groupBy(link => (link.toOpId, link.toPortId))
     val linksOutOf = stored.links.groupBy(link => (link.fromOpId, link.fromPortId))
     val operators = stored.operators.map(
-      decodeOperator(workflowId, executionId, stored.warehouse, linksInto, linksOutOf)
+      decodeOperator(workflowId, executionId, stored.warehouse, linksInto, linksOutOf, linked)
     )
     requireDistinct(operators.map(_.id))(id => s"Operator ${show(id)}")
     val plan = PhysicalPlan(operators.toSet, stored.links.toSet)
@@ -312,7 +338,11 @@ object PhysicalPlanCodec {
 
   // ----- encoding -----
 
-  private def requireRunnableUnder(context: WorkflowContext, op: PhysicalOp): Unit = {
+  private def requireRunnableUnder(
+      context: WorkflowContext,
+      op: PhysicalOp,
+      linked: Boolean
+  ): Unit = {
     val name = show(op.id)
     if (op.resourceBinding.isDefined) {
       refuse(
@@ -353,7 +383,7 @@ object PhysicalPlanCodec {
           refuse(s"The $side port ${show(id)} of operator $name has no schema: ${error.getMessage}")
         }
     }
-    requireInputs(name, op.inputs)
+    requireInputs(name, op.inputs, linked)
     op.storageLocations.keys.find(!op.outputPorts.contains(_)).foreach { id =>
       refuse(
         s"Operator $name has a storage location for its output port ${show(id)}, which it does " +
@@ -583,7 +613,8 @@ object PhysicalPlanCodec {
       executionId: ExecutionIdentity,
       warehouse: Option[String],
       linksInto: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]],
-      linksOutOf: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]]
+      linksOutOf: Map[(PhysicalOpIdentity, PortIdentity), Seq[PhysicalLink]],
+      linked: Boolean
   )(stored: StoredPhysicalOp): PhysicalOp = {
     val id = stored.id.getOrElse(refuse("An operator of the plan has no id."))
     val name = show(id)
@@ -634,7 +665,7 @@ object PhysicalPlanCodec {
       port.portId -> location
     }.toMap
     val inputs = stored.inputs.getOrElse(OperatorInputs.defaultInstance)
-    requireInputs(name, inputs)
+    requireInputs(name, inputs, linked)
     PhysicalOp(
       id = id,
       workflowId = workflowId,
@@ -953,19 +984,39 @@ object PhysicalPlanCodec {
   }
 
   /**
-    * Fails unless each file operator `operator` reads has a name, is given once and in the order
-    * of the names, and is read through a link that expires after the epoch; and the operator
-    * reads a CSV file, if it reads one, under a limit of at least one column.
+    * Fails unless each file operator `operator` reads has a name, and is given once and in the
+    * order of the names; and the operator reads a CSV file, if it reads one, under a limit of at
+    * least one column. In a plan whose files are `linked`, each file is read through a link that
+    * expires after the epoch, and names no address; in one whose files are not, each names the
+    * address its link is to be signed for, and has no link.
     */
-  private def requireInputs(operator: String, inputs: OperatorInputs): Unit = {
+  private def requireInputs(operator: String, inputs: OperatorInputs, linked: Boolean): Unit = {
     inputs.files.foreach { file =>
       if (file.name.isEmpty) refuse(s"A file operator $operator reads has no name.")
-      if (file.url.isEmpty) refuse(s"Operator $operator has no link to its file ${file.name}.")
-      if (file.expiresAtMs < 1) {
-        refuse(
-          s"The link to the file ${file.name} of operator $operator expires at " +
-            s"${file.expiresAtMs} ms since the epoch, which is not after it."
-        )
+      if (linked) {
+        if (file.url.isEmpty) refuse(s"Operator $operator has no link to its file ${file.name}.")
+        if (file.expiresAtMs < 1) {
+          refuse(
+            s"The link to the file ${file.name} of operator $operator expires at " +
+              s"${file.expiresAtMs} ms since the epoch, which is not after it."
+          )
+        }
+        if (file.physicalAddress.nonEmpty) {
+          refuse(
+            s"The file ${file.name} of operator $operator has its link and still names where " +
+              "it is kept: a link takes the address's place."
+          )
+        }
+      } else {
+        if (file.physicalAddress.isEmpty) {
+          refuse(s"The file ${file.name} of operator $operator does not say where it is kept.")
+        }
+        if (file.url.nonEmpty || file.expiresAtMs != 0) {
+          refuse(
+            s"The file ${file.name} of operator $operator has a link already: only a plan " +
+              "whose files are not linked yet names where they are kept."
+          )
+        }
       }
     }
     val names = inputs.files.map(_.name)

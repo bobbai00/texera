@@ -27,7 +27,7 @@ import org.apache.texera.amber.core.executor.{
   OpExecWithCode,
   OperatorInputs
 }
-import org.apache.texera.amber.core.storage.ExecutionPlanStore
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, InputLink, InputLinker}
 import org.apache.texera.amber.core.storedplan.StoredAttribute.{AttributeType => StoredType}
 import org.apache.texera.amber.core.storedplan.StoredPartitionInfo.Kind
 import org.apache.texera.amber.core.storedplan.StoredPartitionRequirement.Requirement
@@ -272,6 +272,120 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   "PhysicalPlanCodec" should "save a plan that sets every field and read the same plan back" in {
     assertRoundTrips(fullExecutionPlan)
+  }
+
+  // ----- a plan whose files are not linked yet -----
+
+  /** Where `file` is kept: the object a link to it is signed for. */
+  private def addressOf(file: InputFile): String =
+    s"s3://texera-dataset/data/${file.name.hashCode.toHexString}"
+
+  /** `plan` as a compile makes it: each file where it is kept, with no link. */
+  private def unlinked(plan: PhysicalPlan): PhysicalPlan =
+    PhysicalPlan(
+      plan.operators.map { op =>
+        op.withInputs(op.inputs.copy(files = op.inputs.files.map { file =>
+          InputFile(file.name, physicalAddress = addressOf(file))
+        }))
+      },
+      plan.links
+    )
+
+  private val fullUnlinkedPlan = fullExecutionPlan.copy(plan = unlinked(fullPlan))
+
+  it should "save a plan whose files are not linked yet, each where it is kept, and read the same plan back" in {
+    val json = PhysicalPlanRoundTrip.assertRoundTripsUnlinked(fullUnlinkedPlan)
+
+    // Nothing of a link is written for a file that has none.
+    assert(!json.contains("\"url\"") && !json.contains("\"expiresAtMs\""))
+    assert(json.contains("\"physicalAddress\": \"s3://texera-dataset/data/"))
+    // But for its files, the plan is the linked plan's.
+    val linker: InputLinker = address =>
+      fullPlan.operators
+        .flatMap(_.inputs.files)
+        .find(addressOf(_) == address)
+        .map(_.link)
+        .getOrElse(fail(s"asked to link $address, which no file of the plan is kept at"))
+    assertSameExecutionPlan(
+      fullExecutionPlan,
+      fullUnlinkedPlan.copy(plan = fullUnlinkedPlan.plan.linkedBy(linker))
+    )
+  }
+
+  it should "link each address of a plan once, however many operators read the file kept there, and leave a linked plan as it is" in {
+    val asked = mutable.ListBuffer.empty[String]
+    val linker: InputLinker = address => {
+      asked += address
+      InputLink(s"http://texera-rustfs:9000/${address.stripPrefix("s3://")}?X-Amz-Signature=s", 9L)
+    }
+    // The scan's first file is also the only file the local aggregate reads.
+    val shared = InputFile("dataset:///ds-1/d4t4/a.csv", physicalAddress = "s3://bucket/a")
+    val other = InputFile("dataset:///ds-1/d4t4/b.csv", physicalAddress = "s3://bucket/b")
+    val plan = fullPlan
+      .setOperator(fullPlan.getOperator(scan.id).withInputs(OperatorInputs(Seq(shared, other))))
+      .setOperator(fullPlan.getOperator(localAgg.id).withInputs(OperatorInputs(Seq(shared))))
+
+    val linked = plan.linkedBy(linker)
+
+    assert(asked.toList.sorted == List("s3://bucket/a", "s3://bucket/b"))
+    assert(
+      linked.getOperator(scan.id).inputs.files == Seq(
+        InputFile(shared.name, "http://texera-rustfs:9000/bucket/a?X-Amz-Signature=s", 9L),
+        InputFile(other.name, "http://texera-rustfs:9000/bucket/b?X-Amz-Signature=s", 9L)
+      )
+    )
+    assert(
+      linked.getOperator(localAgg.id).inputs.files ==
+        Seq(InputFile(shared.name, "http://texera-rustfs:9000/bucket/a?X-Amz-Signature=s", 9L))
+    )
+    // What an operator reads besides its files, and the operators that read none, are as they
+    // were; and a plan whose files have their links is asked nothing about.
+    assert(linked.getOperator(udf.id) == fullPlan.getOperator(udf.id))
+    assert(linked.links == plan.links)
+    assert(linked.linkedBy(_ => fail("asked to link a linked plan")) == linked)
+    assert(fullPlan.linkedBy(_ => fail("asked to link a linked plan")) == fullPlan)
+  }
+
+  it should "refuse, as a plan to run, one whose files are not linked; and as one not linked yet, one whose files are" in {
+    // The UDF alone reads a file, so that it is its file each refusal names.
+    val readsNone = Seq(scan.id, localAgg.id).foldLeft(fullPlan) { (plan, id) =>
+      plan.setOperator(plan.getOperator(id).withInputs(OperatorInputs()))
+    }
+    def reading(file: InputFile): ExecutionPlan =
+      fullExecutionPlan.copy(plan =
+        readsNone
+          .setOperator(readsNone.getOperator(udf.id).withInputs(OperatorInputs(Seq(file))))
+      )
+    val linked = InputFile("dataset:///ds-1/d4t4/a.csv", linkTo("a"), 5L)
+    val file = InputFile(linked.name, physicalAddress = "s3://texera-dataset/data/a")
+    // A computing unit reads a plan with `decode`: one the compile made is not yet one to run.
+    assertRefused(PhysicalPlanCodec.encode(reading(file)))(
+      s"Operator udf-main has no link to its file ${file.name}"
+    )
+    assertRefused(PhysicalPlanCodec.decode(PhysicalPlanCodec.encodeUnlinked(reading(file))))(
+      s"Operator udf-main has no link to its file ${file.name}"
+    )
+    assertRefused(PhysicalPlanCodec.encodeUnlinked(reading(linked)))(
+      s"The file ${file.name} of operator udf-main does not say where it is kept"
+    )
+    assertRefused(PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.encode(reading(linked))))(
+      s"The file ${file.name} of operator udf-main does not say where it is kept"
+    )
+    // A file has its address or its link, never both.
+    val both = reading(linked.copy(physicalAddress = file.physicalAddress))
+    assertRefused(PhysicalPlanCodec.encode(both))(
+      s"The file ${file.name} of operator udf-main has its link and still names where it is kept"
+    )
+    assertRefused(PhysicalPlanCodec.encodeUnlinked(both))(
+      s"The file ${file.name} of operator udf-main has a link already"
+    )
+    assertRefused(PhysicalPlanCodec.encodeUnlinked(reading(file.copy(expiresAtMs = 5L))))(
+      s"The file ${file.name} of operator udf-main has a link already"
+    )
+    // What every plan's files are held to, linked or not.
+    assertRefused(PhysicalPlanCodec.encodeUnlinked(reading(file.copy(name = ""))))(
+      "A file operator udf-main reads has no name"
+    )
   }
 
   it should "save and read back every partitioning, as a requirement and as a fixed rule" in {
@@ -984,6 +1098,21 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       ExecutionPlan(goldenMaterializedContext, planOf(Seq(goldenSource), Nil))
   )
 
+  // The first plan as the compile that made it hands it on, before its files are linked: its
+  // scan's file where it is kept, and none of what is added by what stores the plan.
+  private val goldenUnlinkedFile = "physical-plan-v1-unlinked.json"
+  private val goldenUnlinkedPlan = ExecutionPlan(
+    contextOf(goldenContext.workflowSettings, goldenContext.warehouse),
+    PhysicalPlan(
+      goldenPlan.operators.map { op =>
+        op.withInputs(op.inputs.copy(files = op.inputs.files.map { file =>
+          InputFile(file.name, physicalAddress = "s3://texera-dataset/dataset-1/data/gdm5/a")
+        }))
+      },
+      goldenPlan.links
+    )
+  )
+
   // The UDF's code changed while the run is paused; it reads the same datasets and models.
   private val goldenUpdateFile = "operator-update-v1.json"
   private val goldenUpdateId = "update-1"
@@ -1007,7 +1136,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   it should "write each golden plan and change exactly as its golden file has it" in {
     val written = goldenPlans.map {
       case (file, plan) => file -> PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(plan))
-    } :+ goldenUpdateFile -> PhysicalPlanCodec.updateToJson(
+    } :+ goldenUnlinkedFile -> PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec.encodeUnlinked(goldenUnlinkedPlan)
+    ) :+ goldenUpdateFile -> PhysicalPlanCodec.updateToJson(
       PhysicalPlanCodec.encodeUpdate(executionId, goldenUpdateId, goldenChangedUdf)
     )
     val differing = written.flatMap {
@@ -1036,6 +1167,13 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
           )
         }
     }
+    withClue(s"$goldenUnlinkedFile: ") {
+      assert(golden(goldenUnlinkedFile).nonEmpty, "the golden file is missing")
+      assertSameExecutionPlan(
+        goldenUnlinkedPlan,
+        PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.fromJson(golden(goldenUnlinkedFile)))
+      )
+    }
     withClue(s"$goldenUpdateFile: ") {
       assert(golden(goldenUpdateFile).nonEmpty, "the golden file is missing")
       assert(
@@ -1046,7 +1184,9 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
   }
 
   it should "use every field, oneof case and enum value of the format in its golden files" in {
-    val text = (goldenPlans.map(_._1) :+ goldenUpdateFile).map(golden).mkString("\n")
+    val text = (goldenPlans.map(_._1) :+ goldenUnlinkedFile :+ goldenUpdateFile)
+      .map(golden)
+      .mkString("\n")
     // Every field (a oneof's cases are fields too) and enum value, at any depth, reused messages
     // included; an UNSPECIFIED value is in no plan.
     val fields = mutable.SortedSet[String]()

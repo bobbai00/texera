@@ -63,7 +63,7 @@ import org.apache.texera.amber.operator.udf.python.{
   PythonUDFOpDescV2,
   PythonUdfUiParameterInjector
 }
-import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, StateTransferFunc, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
@@ -103,6 +103,7 @@ import org.apache.texera.web.model.http.response.execution.{
   OperatorUpdateResponse
 }
 import org.apache.texera.web.resource.dashboard.user.workflow.ExecutionResource
+import org.apache.texera.web.service.execution.WorkflowCompilingService.CompileRefused
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.exception.DataAccessException
 import org.scalatest.BeforeAndAfterAll
@@ -115,8 +116,9 @@ import java.sql.Timestamp
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{InternalServerErrorException, WebApplicationException}
 import scala.collection.mutable
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
-import scala.util.{Failure, Try}
+import scala.util.{Failure, Try, Using}
 
 /**
   * Changing an operator of a paused execution at the Dashboard service, through
@@ -290,7 +292,8 @@ class OperatorUpdatesSpec
   /** Creates executions with the fixture bindings and no cost hints. */
   private class FixtureCreator(warehouses: Boolean = false)
       extends ExecutionCreator(
-        bindingsFor = _ => TestUtils.fixtureBindings,
+        compiling = new FixtureCompilingService(),
+        linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = warehouses,
         costHints = NoHints,
@@ -305,33 +308,39 @@ class OperatorUpdatesSpec
   private type Reconfiguration = Try[(PhysicalOp, Option[StateTransferFunc])]
 
   /**
-    * The updates under test, which pin a change's datasets and models with `resolver` (the
-    * fixtures', unless a case gives another), and set up as the case needs: `reconfiguration`
-    * stands in for the answer of the operator a change is made to. `resolverUsers` records the
-    * user each change was bound for: a resolver is asked for on every change that reaches the
-    * binding, whether or not it names a dataset or a model.
+    * The updates under test, whose compiling service compiles in this JVM and pins a change's
+    * datasets and models with `resolver` (the fixtures', unless a case gives another), and set
+    * up as the case needs: `reconfiguration` stands in for the answer of the operator a change
+    * is made to. `resolverUsers` records the user each change was bound for: a resolver is
+    * asked for on every change the service is asked to make, whether or not it names a dataset
+    * or a model.
     */
   private class FixtureUpdates(
       warehouses: Boolean = false,
       failAppend: Option[RuntimeException] = None,
       resolver: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
       reconfiguration: Option[() => Reconfiguration] = None,
-      val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
+      val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty,
+      compiling: Option[WorkflowCompilingService] = None
   ) extends OperatorUpdates(
-        repositoriesFor = uid => {
-          resolverUsers += uid
-          resolver
-        },
+        compiling = compiling.getOrElse(
+          new FixtureCompilingService(
+            repositoriesFor = uid => {
+              resolverUsers += uid
+              resolver
+            },
+            reconfigure = (current, changed, workflowId, executionId) =>
+              reconfiguration.fold(
+                current.runtimeReconfiguration(workflowId, executionId, current, changed)
+              )(_())
+          )
+        ),
         warehousesEnabled = warehouses,
         appendUpdate = (planUri, record, logical) =>
           failAppend match {
             case Some(failure) => throw failure
             case None          => ExecutionPlanStore.appendUpdate(planUri, record, logical)
-          },
-        reconfigure = (current, changed, workflowId, executionId) =>
-          reconfiguration.fold(
-            current.runtimeReconfiguration(workflowId, executionId, current, changed)
-          )(_())
+          }
       )
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -496,7 +505,7 @@ class OperatorUpdatesSpec
       wid = testWid,
       executionName = "operator-updates-spec",
       engineVersion = "1.4.0-spec",
-      logicalPlan = plan,
+      logicalPlan = TestUtils.sentPlan(plan),
       workflowSettings = None,
       computingUnitId = unitCuid,
       warehouseId = warehouseId,
@@ -512,7 +521,12 @@ class OperatorUpdatesSpec
       target: Option[String] = None
   ): CreateExecutionResponse = {
     val response = resource(fixtureCreator = creator)
-      .create(createRequest(plan, warehouseId, target), sessionUser(creatorUid), uriInfo)
+      .create(
+        createRequest(plan, warehouseId, target),
+        sessionUser(creatorUid),
+        uriInfo,
+        FixtureCompilingService.authorizationOf(creatorUid)
+      )
     withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 201 }
     val execution = response.getEntity.asInstanceOf[CreateExecutionResponse]
     madePlans += new URI(execution.planUri)
@@ -526,7 +540,13 @@ class OperatorUpdatesSpec
       updates: OperatorUpdates = new FixtureUpdates()
   ): Response =
     resource(fixtureUpdates = updates)
-      .postUpdate(eid, OperatorUpdateRequestBody(operator), sessionUser(uid))
+      .postUpdate(
+        eid,
+        // As the editor sends the operator: its JSON, which the Dashboard hands on.
+        OperatorUpdateRequestBody(Option(operator).map(TestUtils.sentOperator).orNull),
+        sessionUser(uid),
+        FixtureCompilingService.authorizationOf(uid)
+      )
 
   /** The update a 201 stored. */
   private def stored(response: Response): OperatorUpdateResponse = {
@@ -744,7 +764,12 @@ class OperatorUpdatesSpec
     )
 
     val update = stored(
-      resource().postUpdate(execution.eid, body, sessionUser(creatorUid))
+      resource().postUpdate(
+        execution.eid,
+        body,
+        sessionUser(creatorUid),
+        FixtureCompilingService.authorizationOf(creatorUid)
+      )
     )
 
     update.operatorId shouldBe "limit"
@@ -830,14 +855,23 @@ class OperatorUpdatesSpec
     updateRows(execution.planUri) shouldBe List(earlier.updateId)
   }
 
-  it should "throw, as it is, a fatal error of the operator a change is made to" in {
-    // Not the change's refusal: it is thrown on, so the user is not told the change was at fault.
+  it should "answer 500, not the change's refusal, when the compiling service fails" in {
+    // The service's own failure, of which the Dashboard has only the status: the user is not
+    // told the change was at fault.
     val execution = created()
-    val updates =
-      new FixtureUpdates(reconfiguration = Some(() => throw new InterruptedException("stop")))
+    val updates = new FixtureUpdates(
+      compiling = Some(new FixtureCompilingService(repositoriesFor = _ => {
+        throw new IllegalStateException("the compiling service is broken")
+      }))
+    )
 
-    an[InterruptedException] should be thrownBy
+    val failure = intercept[InternalServerErrorException] {
       post(execution.eid, limit("limit", 7), updates = updates)
+    }
+
+    failure.getResponse.getStatus shouldBe 500
+    failure.getMessage shouldBe s"The change to execution ${execution.eid} could not be made."
+    failure.getCause shouldBe a[CompileRefused]
     updateRows(execution.planUri) shouldBe empty
   }
 
@@ -928,15 +962,15 @@ class OperatorUpdatesSpec
     updateRows(execution.planUri) shouldBe empty
   }
 
-  it should "throw, as it is, a failure to pin a version that is not the change's error" in {
+  it should "answer 500 for a failure to pin a version that is not the change's error" in {
     // A version that does not exist, or that the creator may not read, is the change's error
-    // (400). A database that does not answer is not: it is thrown as it is, which the Dashboard
-    // answers 500, so it is not taken for the user's mistake.
+    // (400). A database that does not answer the compiling service is not: it is the service's
+    // failure, which the Dashboard answers 500, so it is not taken for the user's mistake.
     val execution = created()
     val databaseDown = new DataAccessException("the database did not answer")
     val updates = new FixtureUpdates(resolver = _ => throw databaseDown)
 
-    val thrown = intercept[DataAccessException] {
+    val failure = intercept[InternalServerErrorException] {
       post(
         execution.eid,
         udf(
@@ -947,8 +981,147 @@ class OperatorUpdatesSpec
       )
     }
 
-    thrown should be theSameInstanceAs databaseDown
+    failure.getMessage shouldBe s"The change to execution ${execution.eid} could not be made."
+    failure.getCause shouldBe a[CompileRefused]
     updates.resolverUsers.toList shouldBe List(Integer.valueOf(creatorUid))
+    updateRows(execution.planUri) shouldBe empty
+  }
+
+  // --- the compiling service, asked over HTTP ---
+
+  /** Updates that ask the compiling service at `endpoint`, as the deployment's do. */
+  private def updatesAsking(
+      endpoint: URI,
+      deadline: FiniteDuration = ExecutionCreator.CompileDeadline
+  ): OperatorUpdates =
+    new OperatorUpdates(
+      compiling = new WorkflowCompilingServiceClient(endpoint, connectTimeout = 2.seconds),
+      warehousesEnabled = false,
+      compileDeadline = deadline
+    )
+
+  it should "ask the compiling service to make the change, with the caller's own token, and store what it answers" in {
+    val execution = created()
+    Using.resource(StubCompilingServer.compiling()) { server =>
+      val update = stored(
+        post(execution.eid, limit("limit", 9), updates = updatesAsking(server.endpoint))
+      )
+
+      // Asked once, as the caller: with the request's own Authorization header.
+      val asked = server.requests
+      asked.map(ask => (ask.path, ask.authorization)) shouldBe
+        List(("/api/compile/update", FixtureCompilingService.authorizationOf(creatorUid)))
+      val body = asked.head.body
+      body.fieldNames().asScala.toSet shouldBe
+        Set("workflowId", "executionId", "updateId", "logicalPlan", "operator", "running")
+      body.get("workflowId").asLong() shouldBe testWid
+      body.get("executionId").asLong() shouldBe execution.eid
+      body.get("updateId").asText() shouldBe update.updateId
+      // The workflow the plan was compiled from, as it is kept beside the plan, and the change
+      // as the editor sent it.
+      body.get("logicalPlan") shouldBe
+        objectMapper.readTree(logicalOf(execution, ExecutionPlanStore.PlanEntryId))
+      body.get("operator") shouldBe TestUtils.sentOperator(limit("limit", 9))
+      // What the plan runs for the operator: the service does not hold the plan.
+      body.get("running") shouldBe objectMapper.readTree("""[{"layerName": "main"}]""")
+
+      val limitUpdate = decoded(readUpdate(execution, update.updateId))
+      limitUpdate.executionId shouldBe ExecutionIdentity(execution.eid)
+      limitUpdate.updateId shouldBe update.updateId
+      limitUpdate.opId shouldBe PhysicalOpIdentity(OperatorIdentity("limit"), "main")
+      objectMapper
+        .readTree(logicalOf(execution, update.updateId))
+        .get("limit")
+        .asInt() shouldBe 9
+    }
+  }
+
+  it should "tell the compiling service the Python environment the running operator runs in" in {
+    val inMl = created(plan = udfPlan(environment = Some("ml")))
+    Using.resource(StubCompilingServer.compiling()) { server =>
+      val updates = updatesAsking(server.endpoint)
+
+      stored(
+        post(inMl.eid, udf(code = changedCode("v2"), environment = Some("ml")), updates = updates)
+      )
+      refused(400)(post(inMl.eid, udf(), updates = updates)) shouldBe
+        "The operator's Python environment cannot change while the run is paused."
+
+      server.requests.map(_.body.get("running")).distinct shouldBe List(
+        objectMapper.readTree("""[{"layerName": "main", "pythonEnvironment": "ml"}]""")
+      )
+    }
+  }
+
+  it should "relay the compiling service's refusals of a change, with their status" in {
+    val execution = created()
+    Using.resource(StubCompilingServer.compiling()) { server =>
+      val updates = updatesAsking(server.endpoint)
+
+      refused(404)(post(execution.eid, limit("ghost", 7), updates = updates)) shouldBe
+        s"Operator ghost is not in the workflow execution ${execution.eid} runs."
+      refused(400)(post(execution.eid, limit("udf", 3), updates = updates)) shouldBe
+        "Operator udf is a Python UDF; a change cannot make it a Limit."
+    }
+    updateRows(execution.planUri) shouldBe empty
+  }
+
+  it should "answer 504 when the compiling service does not answer by the deadline, and 503 when it cannot be reached" in {
+    val execution = created()
+    val slow = new StubCompilingServer(_ => {
+      Thread.sleep(3000)
+      StubCompilingServer.Answer(200, "{}")
+    })
+    try {
+      refused(504) {
+        post(execution.eid, limit("limit", 7), updates = updatesAsking(slow.endpoint, 500.millis))
+      } shouldBe s"The change to execution ${execution.eid} could not be made: the workflow " +
+        "compiling service took longer than 500 milliseconds."
+    } finally slow.close()
+
+    // An address nothing listens at any more.
+    refused(503) {
+      post(execution.eid, limit("limit", 7), updates = updatesAsking(slow.endpoint))
+    } shouldBe s"The change to execution ${execution.eid} could not be made: the workflow " +
+      "compiling service could not be reached. Try again in a moment."
+    updateRows(execution.planUri) shouldBe empty
+  }
+
+  it should "answer 500 when the compiling service answers what is no update of the execution" in {
+    val execution = created()
+    val another = created()
+    // An update as the service makes one, of another execution, and one under another id.
+    val made = TestUtils.fixtureCompiling.updateToRun(
+      WorkflowCompilingService.UpdateRequest(
+        testWid,
+        another.eid,
+        "update-of-another",
+        objectMapper.readTree(logicalOf(another, ExecutionPlanStore.PlanEntryId)),
+        TestUtils.sentOperator(limit("limit", 7)),
+        Seq(WorkflowCompilingService.RunningOperator("main", None))
+      ),
+      FixtureCompilingService.authorizationOf(creatorUid),
+      ExecutionCreator.CompileDeadline
+    )
+    Seq(
+      objectMapper
+        .createObjectNode()
+        .put("update", made.update)
+        .put("operator", made.operator)
+        .toString,
+      """{"update": "{}", "operator": "{}"}""",
+      """{"operator": "{}"}""",
+      "not JSON"
+    ).foreach { answer =>
+      Using.resource(new StubCompilingServer(_ => StubCompilingServer.Answer(200, answer))) {
+        server =>
+          val failure = intercept[InternalServerErrorException] {
+            post(execution.eid, limit("limit", 7), updates = updatesAsking(server.endpoint))
+          }
+          failure.getMessage shouldBe
+            s"The change to execution ${execution.eid} could not be made."
+      }
+    }
     updateRows(execution.planUri) shouldBe empty
   }
 
@@ -1063,7 +1236,12 @@ class OperatorUpdatesSpec
     val updates = new FixtureUpdates()
 
     refused(400) {
-      resource(fixtureUpdates = updates).postUpdate(execution.eid, null, sessionUser(creatorUid))
+      resource(fixtureUpdates = updates).postUpdate(
+        execution.eid,
+        null,
+        sessionUser(creatorUid),
+        FixtureCompilingService.authorizationOf(creatorUid)
+      )
     } shouldBe "The request has no body."
     refused(400)(post(execution.eid, null, updates = updates)) shouldBe
       "The request names no operator."

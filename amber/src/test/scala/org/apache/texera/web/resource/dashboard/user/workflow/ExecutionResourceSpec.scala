@@ -19,7 +19,6 @@
 
 package org.apache.texera.web.resource.dashboard.user.workflow
 
-import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import io.dropwizard.setup.Bootstrap
 import org.apache.texera.amber.core.executor.{
@@ -38,6 +37,7 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLogEntry,
   ExecutionLogStore,
   ExecutionPlanStore,
+  InputFileLocator,
   InputLink,
   InputLinker,
   ListedFile,
@@ -79,7 +79,7 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.CompileFor
+import org.apache.texera.common.compiler.{CompileFor, PlanToRun}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.{MockTexeraDB, SiteSettings, WorkflowExecutionStatus}
@@ -135,7 +135,8 @@ import org.apache.texera.web.model.http.response.execution.{
 import org.apache.texera.web.resource.EmailMessage
 import org.apache.texera.web.service.WorkflowEmailNotifier
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
-import org.apache.texera.web.service.{ExecutionConsoleService, PlanToRun, WorkflowService}
+import org.apache.texera.web.service.{ExecutionConsoleService, WorkflowService}
+import org.apache.texera.web.service.execution.WorkflowCompilingService.CompileRefused
 import org.apache.texera.web.service.execution.{
   ClosingRecord,
   CostHintsLoader,
@@ -143,7 +144,11 @@ import org.apache.texera.web.service.execution.{
   ExecutionCreator,
   ExecutionRecordReader,
   ExecutionRecords,
-  OperatorUpdates
+  FixtureCompilingService,
+  OperatorUpdates,
+  StubCompilingServer,
+  WorkflowCompilingService,
+  WorkflowCompilingServiceClient
 }
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.JSONB
@@ -156,7 +161,7 @@ import java.lang.reflect.Proxy
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.sql.Timestamp
-import java.util.concurrent.{CountDownLatch, Executor, ExecutorService, Executors, TimeUnit}
+import java.util.concurrent.Executor
 import javax.ws.rs.core.{Response, UriInfo}
 import javax.ws.rs.{
   BadRequestException,
@@ -167,7 +172,7 @@ import javax.ws.rs.{
 import scala.collection.mutable
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
-import scala.util.Try
+import scala.util.{Try, Using}
 
 /**
   * Creating an execution at the Dashboard service, through [[ExecutionResource]].
@@ -175,10 +180,12 @@ import scala.util.Try
   * The rows are in `MockTexeraDB`; plans, results and consoles are tables of the catalog the
   * build's tests use (the Postgres JDBC catalog in CI), named after this suite's own workflow and
   * execution ids. The executions it creates take ids after 962000, set in `beforeAll`, so their
-  * plan tables and their large binaries' prefixes are this suite's own too. Plans are compiled
-  * with the fixture resolvers and linker of `TestOperators` (scan files on the local disk, read
-  * through links to its server) unless a case binds them otherwise, and the cost hints, the
-  * replay log root and the warehouse switch are the creator's seams.
+  * plan tables and their large binaries' prefixes are this suite's own too. The compiling
+  * service is a fixture that compiles in this JVM ([[FixtureCompilingService]]), with the
+  * fixture resolvers of `TestOperators` (scan files on the local disk) unless a case binds
+  * them otherwise, or a server a case asks over HTTP ([[StubCompilingServer]]); files are
+  * linked to the fixture server, and the cost hints, the replay log root and the warehouse
+  * switch are the creator's seams.
   *
   * Users: `creatorUid` owns the workflows and most units; `readerUid` may only read
   * `testWid`, only read `unitCuid`, and owns `readerCuid`; `strangerUid` has no right to
@@ -236,9 +243,6 @@ class ExecutionResourceSpec
 
   private val requestUri = new URI("http://texera.example:4200/api/executions")
   private val logRoot = new URI("file:///tmp/texera-spec-replay-logs/")
-
-  /** The pool the suite's creators compile on, unless a case gives one its own. */
-  private val compilePool: ExecutorService = Executors.newCachedThreadPool()
 
   /** Every plan, log, result and console table this suite makes, dropped after it. */
   private val madePlans = mutable.ListBuffer.empty[URI]
@@ -364,7 +368,6 @@ class ExecutionResourceSpec
       madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
       madeTables.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
     } finally {
-      compilePool.shutdownNow()
       closeConnectionPool()
       super.afterAll()
     }
@@ -492,13 +495,17 @@ class ExecutionResourceSpec
     )
 
   /**
-    * The creator under test, bound to the fixture files, links and versions in place of a
-    * user's, and set up as the case needs. `resolvedFor` records the user each plan was
-    * bound for. The site's settings stay the ones the database holds, and what a create leaves
-    * for after its answer is done before it returns, unless a case says otherwise.
+    * The creator under test, set up as the case needs. Its compiling service compiles in this
+    * JVM, bound to the fixture files and versions in place of a user's, and its files are
+    * linked to the fixture server. `resolvedFor` records the user each plan was bound for, and
+    * `written` each plan table written. The site's settings stay the ones the database holds,
+    * and what a create leaves for after its answer is done before it returns, unless a case
+    * says otherwise.
     *
-    * @param bindings what a plan is bound to, given what the deployment binds it to for its
-    *                 user; the fixtures', unless a case gives another
+    * @param bindings  what the compiling service binds a plan to, given what the deployment
+    *                  binds it to for its user; the fixtures', unless a case gives another
+    * @param linker    signs the plan's links; the fixture server's, unless a case gives another
+    * @param compiling the compiling service, for a case that asks one of its own
     */
   private class FixtureCreator(
       logRoot: Option[URI] = None,
@@ -506,28 +513,34 @@ class ExecutionResourceSpec
       val hints: RecordingHints = new RecordingHints(None),
       failWrite: Option[RuntimeException] = None,
       bindings: CompileFor.Run => CompileFor.Run = _ => TestUtils.fixtureBindings,
+      linker: InputLinker = FixtureInputs.linker,
       background: Executor = _.run(),
       closer: ExecutionCloser = recordingCloser(),
-      compiles: ExecutorService = compilePool,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
-      val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
+      val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty,
+      val written: mutable.ListBuffer[URI] = mutable.ListBuffer.empty,
+      compiling: Option[WorkflowCompilingService] = None
   ) extends ExecutionCreator(
-        bindingsFor = uid => {
-          resolvedFor += uid
-          val forUser = PlanToRun.bindingsFor(uid)
-          bindings(forUser).copy(settings = forUser.settings)
-        },
+        compiling = compiling.getOrElse(
+          new FixtureCompilingService(bindingsFor = uid => {
+            resolvedFor += uid
+            val forUser = PlanToRun.bindingsFor(uid)
+            bindings(forUser).copy(settings = forUser.settings)
+          })
+        ),
+        linker = linker,
         replayLogRoot = logRoot,
         warehousesEnabled = warehouses,
         costHints = hints,
-        writePlan = (planUri, record, logical) =>
+        writePlan = (planUri, record, logical) => {
+          written += planUri
           failWrite match {
             case Some(failure) => throw failure
             case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
-          },
+          }
+        },
         background = background,
         closer = closer,
-        compiles = compiles,
         compileDeadline = compileDeadline
       )
 
@@ -559,7 +572,7 @@ class ExecutionResourceSpec
       creator: FixtureCreator = new FixtureCreator()
   ): Response =
     new ExecutionResource(creator, new OperatorUpdates())
-      .create(request, sessionUser(uid), uriInfo)
+      .create(request, sessionUser(uid), uriInfo, FixtureCompilingService.authorizationOf(uid))
 
   private def named[T <: LogicalOp](op: T, id: String): T = {
     op.setOperatorId(id)
@@ -609,7 +622,7 @@ class ExecutionResourceSpec
       wid = wid,
       executionName = "spec-execution",
       engineVersion = "1.4.0-spec",
-      logicalPlan = plan,
+      logicalPlan = Option(plan).map(TestUtils.sentPlan).orNull,
       workflowSettings = settings,
       emailNotificationEnabled = emailNotificationEnabled,
       computingUnitId = cuid,
@@ -651,18 +664,6 @@ class ExecutionResourceSpec
       .fetchOneInto(classOf[Integer])
       .intValue()
 
-  /**
-    * `plan` as a request sends it, written as JSON, but for each operator's loop-variable sidecar,
-    * which a parse sets from scratch and the plan row leaves out.
-    */
-  private def asSent(plan: LogicalPlanPojo): JsonNode = {
-    val tree = objectMapper.readTree(objectMapper.writeValueAsString(plan))
-    tree.get("operators").elements().asScala.foreach {
-      _.asInstanceOf[ObjectNode].remove(StateReferencing.SIDECAR_PROPERTY)
-    }
-    tree
-  }
-
   /** The descriptor the stored `plan` gives the executor of operator `id`, as JSON. */
   private def descriptorOf(plan: ExecutionPlan, id: String): JsonNode =
     plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity(id)).head.opExecInitInfo match {
@@ -681,6 +682,9 @@ class ExecutionResourceSpec
     LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
   }
 
+  /** Where LakeFS keeps the creator's dataset file, as the compiling service finds it. */
+  private val notesAddress = "s3://texera-dataset/dataset-9631/data/gdm5"
+
   /** A link as the deployment's linker signs one. */
   private val signedLink = InputLink(
     "http://texera-rustfs:9000/texera-dataset/dataset-9631/data/gdm5?X-Amz-Signature=5ecr3t",
@@ -693,20 +697,19 @@ class ExecutionResourceSpec
       Seq(InputFile(notesUri.toASCIIString, signedLink.url, signedLink.expiresAtMs))
     )
 
-  /** A linker of the files resolvers resolve, each as `link` links it, and of no listed file. */
-  private def linkerOf(linkFile: URI => InputLink): InputLinker =
-    new InputLinker {
-      override def link(fileUri: URI): InputLink = linkFile(fileUri)
-      override def linkListed(file: ListedFile): InputLink =
-        fail(s"asked to link the listed file ${file.logicalPath}")
-    }
-
   /**
-    * A creator bound as the deployment binds a plan for its user, files resolved as the user may
-    * read them, but for the links, which `link` makes in place of LakeFS and the object store.
+    * A creator whose compiling service binds a plan as the deployment binds it for its user,
+    * files resolved as the user may read them, but for where a file is kept, which `locate`
+    * says in place of LakeFS, and whose links `link` signs in place of the object store's keys.
     */
-  private def creatorLinkingWith(link: URI => InputLink): FixtureCreator =
-    new FixtureCreator(bindings = _.copy(inputLinker = linkerOf(link)))
+  private def creatorLinkingWith(
+      link: String => InputLink,
+      locate: URI => String = _ => notesAddress
+  ): FixtureCreator =
+    new FixtureCreator(
+      bindings = _.copy(locator = (file => locate(file)): InputFileLocator),
+      linker = address => link(address)
+    )
 
   /** The dataset version of the creator's private dataset, as a File Lister names it. */
   private val notesVersionPath = s"/dataset/$creatorEmail/execution-resource-notes/v1"
@@ -740,6 +743,26 @@ class ExecutionResourceSpec
   }
 
   /**
+    * The message of the 400 `body` throws for a workflow the compiling service cannot read. The
+    * service is asked once the execution's row exists, so the refusal leaves the execution
+    * behind, failed, and closed by its create with why.
+    */
+  private def refusedByCompiler(body: => Any): String = {
+    val before = executionCount
+    val since = System.currentTimeMillis()
+    val refusal = intercept[BadRequestException](body)
+    refusal.getResponse.getStatus shouldBe 400
+    executionCount shouldBe before + 1
+    val eid = newestEid.toLong
+    row(eid).getStatus shouldBe 4.toByte
+    closedAtCreate(eid, s"compile error: ${refusal.getMessage}", since)
+    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
+    )
+    refusal.getMessage
+  }
+
+  /**
     * Fails unless the create of execution `eid`, which failed after `since`, closed the row
     * itself: as failed for `reason`, by no log, and as an execution no unit ever started, whose
     * results are marked expired and which holds nothing.
@@ -768,7 +791,7 @@ class ExecutionResourceSpec
     "record the execution as Created, write its plan for the creator and answer 201" in {
     val creator = new FixtureCreator()
     val sent = request()
-    val sentPlan = asSent(sent.logicalPlan)
+    val sentPlan = sent.logicalPlan
     val before = System.currentTimeMillis()
 
     val execution = created(post(sent, creator = creator))
@@ -827,8 +850,13 @@ class ExecutionResourceSpec
     files.head.expiresAtMs should be > System.currentTimeMillis()
     inputsOf(plan, "search") shouldBe OperatorInputs.defaultInstance
 
-    // Compiled as the creator may read files, datasets and models.
+    // The link took the place of where the plan said the file is kept.
+    files.head.physicalAddress shouldBe empty
+    record.body should not include "physicalAddress"
+
+    // Compiled as the creator may read files, datasets and models, and stored once.
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(creatorUid))
+    creator.written.toList shouldBe List(new URI(execution.planUri))
   }
 
   it should "save the cost hints of the creator's runs of the workflow with the plan" in {
@@ -915,23 +943,33 @@ class ExecutionResourceSpec
   }
 
   it should "link each file the creator may read, in the plan it stores and nowhere else" in {
-    val linked = mutable.ListBuffer.empty[URI]
-    val creator = creatorLinkingWith { file =>
-      linked += file
-      signedLink
-    }
+    val located = mutable.ListBuffer.empty[URI]
+    val linked = mutable.ListBuffer.empty[String]
+    val creator = creatorLinkingWith(
+      link = { address =>
+        linked += address
+        signedLink
+      },
+      locate = { file =>
+        located += file
+        notesAddress
+      }
+    )
 
     val execution = created(post(request(plan = notesPlan()), creator = creator))
     val (record, plan) = storedPlan(execution)
 
-    // Resolved for the creator, by the name as typed, and that file linked.
-    linked.toList shouldBe List(notesUri)
+    // Resolved for the creator, by the name as typed; that file located, and a link signed for
+    // where it is kept.
+    located.toList shouldBe List(notesUri)
+    linked.toList shouldBe List(notesAddress)
     inputsOf(plan, "notes") shouldBe readThroughSignedLink
     descriptorOf(plan, "notes").get("fileName").asText() shouldBe notesUri.toASCIIString
     // The link is a secret of the plan to run, which holds it once: in what the scan reads, and
     // not in the scan's descriptor. The logical plan beside it is the workflow as its user
     // wrote it: the file by its name, and no link.
     record.body.split("X-Amz-Signature=5ecr3t", -1) should have length 2
+    record.body should not include notesAddress
     descriptorOf(plan, "notes").toString should not include "X-Amz-Signature"
     logicalPlanOf(execution) should not include "X-Amz-Signature"
     logicalOperators(execution).head.get("fileName").asText() shouldBe notesPath
@@ -940,9 +978,9 @@ class ExecutionResourceSpec
   it should "refuse a file its creator may not read as the scan's error, and make no link to it" in {
     // The reader may read the workflow and run it on a unit of their own, but not the dataset
     // its scan names, which is the creator's and private.
-    val linked = mutable.ListBuffer.empty[URI]
-    val creator = creatorLinkingWith { file =>
-      linked += file
+    val linked = mutable.ListBuffer.empty[String]
+    val creator = creatorLinkingWith { address =>
+      linked += address
       signedLink
     }
     def createdByReader(): Response =
@@ -971,7 +1009,7 @@ class ExecutionResourceSpec
     try {
       val (_, plan) = storedPlan(created(createdByReader()))
 
-      linked.toList shouldBe List(notesUri)
+      linked.toList shouldBe List(notesAddress)
       inputsOf(plan, "notes") shouldBe readThroughSignedLink
     } finally {
       getDSLContext
@@ -1119,7 +1157,10 @@ class ExecutionResourceSpec
     }
 
     failure.getResponse.getStatus shouldBe 500
-    failure.getCause shouldBe databaseDown
+    // The compiling service's own failure, of which the Dashboard has only the status.
+    failure.getCause shouldBe a[CompileRefused]
+    failure.getMessage shouldBe
+      s"Execution $newestEid could not be created: its plan could not be made."
     row(newestEid.toLong).getStatus shouldBe 4.toByte
   }
 
@@ -1233,15 +1274,13 @@ class ExecutionResourceSpec
                 f"s3://texera-dataset/dataset-9631/data/gq0e7ts6d4ks72q1bql0/cq0e7ts6d4ks$i%06d"
               )
             },
-          inputLinker = new InputLinker {
-            override def link(fileUri: URI): InputLink = fail(s"asked to link the file $fileUri")
-            override def linkListed(file: ListedFile): InputLink =
-              InputLink(
-                (s"http://texera-rustfs:9000/${file.physicalAddress.stripPrefix("s3://")}" +
-                  "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=").padTo(linkLength, 'a'),
-                expiresAtMs
-              )
-          }
+          locator = (file => fail(s"asked where the file $file is kept")): InputFileLocator
+        ),
+      linker = address =>
+        InputLink(
+          (s"http://texera-rustfs:9000/${address.stripPrefix("s3://")}" +
+            "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=").padTo(linkLength, 'a'),
+          expiresAtMs
         )
     )
   }
@@ -1310,11 +1349,11 @@ class ExecutionResourceSpec
       List("search")
   }
 
-  it should "refuse a target the workflow does not have" in {
-    refused(400)(post(request(target = Some("ghost")))) shouldBe
+  it should "refuse a target the workflow does not have, in the compiling service's words" in {
+    refusedByCompiler(post(request(target = Some("ghost")))) shouldBe
       "The workflow has no operator ghost to run up to."
     // Not the whole workflow in its place.
-    refused(400)(post(request(target = Some("")))) shouldBe
+    refusedByCompiler(post(request(target = Some("")))) shouldBe
       "The workflow has no operator  to run up to."
   }
 
@@ -1342,7 +1381,7 @@ class ExecutionResourceSpec
     // is.
     Seq(Some("y"), None).foreach { target =>
       withClue(s"target $target: ") {
-        refused(400)(post(request(plan = withCycleElsewhere(), target = target))) shouldBe
+        refusedByCompiler(post(request(plan = withCycleElsewhere(), target = target))) shouldBe
           "The workflow's links form a cycle: x -> y -> x."
       }
     }
@@ -1420,7 +1459,12 @@ class ExecutionResourceSpec
       val fixture = new FixtureCreator()
 
       val response = new ExecutionResource(fixture, new OperatorUpdates())
-        .create(request(emailNotificationEnabled = true), noAddress, uriInfo)
+        .create(
+          request(emailNotificationEnabled = true),
+          noAddress,
+          uriInfo,
+          FixtureCompilingService.authorizationOf(creatorUid)
+        )
 
       withClue(s"email '$email': ") {
         row(created(response).eid).getNotification shouldBe null
@@ -1623,105 +1667,306 @@ class ExecutionResourceSpec
     hasTable(console) shouldBe true
   }
 
-  it should "compile on a pool of its own, not on the request's thread" in {
-    val pool = Executors.newSingleThreadExecutor(task => new Thread(task, "spec-compile"))
-    val linkedOn = mutable.ListBuffer.empty[String]
-    val creator = new FixtureCreator(
-      bindings = _.copy(inputLinker = linkerOf { _ =>
-        linkedOn += Thread.currentThread().getName
-        signedLink
-      }),
-      compiles = pool
+  // --- the compiling service, asked over HTTP ---
+
+  /** A creator that asks the compiling service at `endpoint`, as the deployment's creator does. */
+  private def creatorAsking(
+      endpoint: URI,
+      deadline: FiniteDuration = ExecutionCreator.CompileDeadline,
+      linker: InputLinker = FixtureInputs.linker
+  ): FixtureCreator =
+    new FixtureCreator(
+      compiling = Some(new WorkflowCompilingServiceClient(endpoint, connectTimeout = 2.seconds)),
+      compileDeadline = deadline,
+      linker = linker
     )
 
-    try created(post(request(plan = notesPlan()), creator = creator))
-    finally pool.shutdownNow()
-
-    linkedOn.toList shouldBe List("spec-compile")
-  }
-
-  it should "answer 504 and record the execution FAILED when its compile takes longer than the deadline" in {
-    // A source that never answers: the link of the scan's file is still being made when the
-    // deadline passes.
-    val linking = new CountDownLatch(1)
-    val interrupted = new CountDownLatch(1)
-    val creator = new FixtureCreator(
-      bindings = _.copy(inputLinker = linkerOf { _ =>
-        linking.countDown()
-        try new CountDownLatch(1).await()
-        catch { case _: InterruptedException => interrupted.countDown() }
-        signedLink
-      }),
-      compileDeadline = 1.second
-    )
-    val before = executionCount
-    val since = System.currentTimeMillis()
-
-    val failure = intercept[WebApplicationException] {
-      post(request(plan = notesPlan()), creator = creator)
+  /**
+    * The create of an execution of the search plan that the compiling service `answer`s: what
+    * it answers `status`, with the execution left failed, and closed with `reason`.
+    */
+  private def refusedAfterAsking(
+      status: Int,
+      reason: String,
+      deadline: FiniteDuration = ExecutionCreator.CompileDeadline
+  )(answer: StubCompilingServer.Request => StubCompilingServer.Answer): String =
+    Using.resource(new StubCompilingServer(answer)) { server =>
+      val before = executionCount
+      val since = System.currentTimeMillis()
+      val failure = intercept[WebApplicationException] {
+        post(request(), creator = creatorAsking(server.endpoint, deadline))
+      }
+      failure.getResponse.getStatus shouldBe status
+      server.requests should have size 1
+      executionCount shouldBe before + 1
+      val eid = newestEid.toLong
+      row(eid).getStatus shouldBe 4.toByte
+      closedAtCreate(eid, reason, since)
+      a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
+        ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
+      )
+      failure.getMessage
     }
 
-    failure.getResponse.getStatus shouldBe 504
-    linking.getCount shouldBe 0
-    executionCount shouldBe before + 1
-    val eid = newestEid
-    failure.getMessage shouldBe
-      s"Execution $eid could not be created: compiling the workflow took longer than 1 second."
-    row(eid.toLong).getStatus shouldBe 4.toByte
-    closedAtCreate(eid.toLong, "its plan could not be made", since)
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
-    )
-    // The compile is not left running.
-    interrupted.await(10, TimeUnit.SECONDS) shouldBe true
+  it should "ask the compiling service for the plan with the caller's own token, sign a link to each file it names and store the plan once" in {
+    val signed = mutable.ListBuffer.empty[String]
+    val expiresAtMs = System.currentTimeMillis() + 2 * 3600L * 1000
+    val linker: InputLinker = address => {
+      signed += address
+      InputLink(
+        "http://texera-rustfs:9000/texera-dataset/sales?X-Amz-Signature=5ecr3t",
+        expiresAtMs
+      )
+    }
+    Using.resource(StubCompilingServer.compiling()) { server =>
+      val creator = creatorAsking(server.endpoint, linker = linker)
+      val sent = request()
+
+      val execution = created(post(sent, creator = creator))
+
+      // Asked once, as the caller: with the request's own Authorization header.
+      val asked = server.requests.toList
+      asked.map(ask => (ask.path, ask.authorization)) shouldBe
+        List(("/api/compile/run", FixtureCompilingService.authorizationOf(creatorUid)))
+      val body = asked.head.body
+      body.fieldNames().asScala.toSet shouldBe
+        Set("workflowId", "executionId", "settings", "logicalPlan")
+      body.get("workflowId").asLong() shouldBe testWid
+      body.get("executionId").asLong() shouldBe execution.eid
+      body.get("settings") shouldBe objectMapper.readTree(
+        """{"dataTransferBatchSize": 77, "executionMode": "MATERIALIZED"}"""
+      )
+      // The workflow as the request sent it: the Dashboard reads nothing in it.
+      body.get("logicalPlan") shouldBe sent.logicalPlan
+
+      // The link is signed for where the plan says the scan's file is kept, and takes the
+      // address's place in the plan stored, with the expiry the linker gave it.
+      val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
+      signed.toList shouldBe List(scanned.toString)
+      val (record, plan) = storedPlan(execution)
+      inputsOf(plan, "scan").files shouldBe Seq(
+        InputFile(
+          scanned.toASCIIString,
+          "http://texera-rustfs:9000/texera-dataset/sales?X-Amz-Signature=5ecr3t",
+          expiresAtMs
+        )
+      )
+      record.body.split("X-Amz-Signature=5ecr3t", -1) should have length 2
+      record.body should not include "physicalAddress"
+      creator.written.toList shouldBe List(new URI(execution.planUri))
+      // The logical plan kept is the one the service answered.
+      objectMapper.readTree(logicalPlanOf(execution)) shouldBe sent.logicalPlan
+      // What a unit checks before it starts the execution passes.
+      WorkflowService
+        .checkStoredStart(
+          execution.eid,
+          new URI(execution.planUri),
+          sessionUser(creatorUid).getUser,
+          unitCuid,
+          Some(testWid.toLong)
+        )
+        .isRight shouldBe true
+    }
   }
 
-  it should "answer 503 and record the execution FAILED when no more compiles can wait" in {
-    val full = Executors.newSingleThreadExecutor()
-    full.shutdown()
+  it should "send the warehouse and the target of the run to the compiling service" in {
+    Using.resource(StubCompilingServer.compiling()) { server =>
+      val creator = new FixtureCreator(
+        warehouses = true,
+        compiling = Some(new WorkflowCompilingServiceClient(server.endpoint))
+      )
+
+      val execution = created(
+        post(
+          request(warehouseId = Some(creatorWhid), target = Some("scan")),
+          creator = creator
+        )
+      )
+
+      val body = server.requests.toList.head.body
+      body.get("warehouse").asText() shouldBe creatorWarehouse
+      body.get("targetOperatorId").asText() shouldBe "scan"
+      val (_, plan) = storedPlan(execution)
+      plan.context.warehouse shouldBe Some(creatorWarehouse)
+      plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan")
+    }
+  }
+
+  it should "relay each operator's error as the compiling service answers it, and record the execution FAILED" in {
+    Using.resource(StubCompilingServer.compiling()) { server =>
+      val since = System.currentTimeMillis()
+
+      val failure =
+        compileFailure(post(request(plan = brokenPlan()), creator = creatorAsking(server.endpoint)))
+
+      failure.code shouldBe 400
+      failure.message should startWith("The workflow does not compile: 2 operators have errors.")
+      // In the order the service wrote them: an operator before those downstream of it.
+      failure.operatorErrors.keys.toList shouldBe List("scan", "search")
+      failure.operatorErrors("scan").message should include("No file selected")
+      failure.operatorErrors.foreach {
+        case (operator, error) =>
+          error.`type` shouldBe COMPILATION_ERROR
+          error.operatorId shouldBe operator
+          error.timestamp.seconds should be >= (since / 1000 - 1)
+          error.details should not be empty
+      }
+      row(failure.eid).getStatus shouldBe 4.toByte
+      closedAtCreate(
+        failure.eid,
+        s"compile error: ${failure.operatorErrors("scan").message}",
+        since
+      )
+    }
+  }
+
+  it should "relay what the compiling service says of a workflow it cannot read, and record the execution FAILED" in {
+    refusedAfterAsking(400, "compile error: The workflow's links form a cycle: a -> b -> a.") { _ =>
+      StubCompilingServer.Answer(
+        400,
+        """{"code": 400, "message": "The workflow's links form a cycle: a -> b -> a."}"""
+      )
+    } shouldBe "The workflow's links form a cycle: a -> b -> a."
+  }
+
+  it should "answer 504 and record the execution FAILED when the compiling service does not answer by the deadline" in {
+    val message = refusedAfterAsking(504, "its plan could not be made", deadline = 500.millis) {
+      _ =>
+        Thread.sleep(3000)
+        StubCompilingServer.Answer(200, "{}")
+    }
+
+    message shouldBe s"Execution $newestEid could not be created: compiling the workflow took " +
+      "longer than 500 milliseconds."
+  }
+
+  it should "answer 504 when the compiling service gives a compile up at its own deadline" in {
+    refusedAfterAsking(504, "its plan could not be made") { _ =>
+      StubCompilingServer.Answer(
+        504,
+        """{"code": 504, "message": "Compiling the workflow took longer than 60 seconds."}"""
+      )
+    } shouldBe s"Execution $newestEid could not be created: compiling the workflow took longer " +
+      "than 60 seconds."
+  }
+
+  it should "answer 503 and record the execution FAILED when the compiling service has too many compiles waiting" in {
+    refusedAfterAsking(503, "its plan could not be made") { _ =>
+      StubCompilingServer.Answer(
+        503,
+        """{"code": 503, "message": "Too many workflows are being compiled. Try again in a moment."}"""
+      )
+    } shouldBe s"Execution $newestEid could not be created: too many workflows are being " +
+      "compiled. Try again in a moment."
+  }
+
+  it should "answer 503 and record the execution FAILED when the compiling service cannot be reached" in {
+    // An address nothing listens at: the server that had it is closed.
+    val server = new StubCompilingServer(_ => StubCompilingServer.Answer(200, "{}"))
+    val endpoint = server.endpoint
+    server.close()
     val before = executionCount
     val since = System.currentTimeMillis()
 
     val failure = intercept[WebApplicationException] {
-      post(request(), creator = new FixtureCreator(compiles = full))
+      post(request(), creator = creatorAsking(endpoint))
     }
 
     failure.getResponse.getStatus shouldBe 503
     executionCount shouldBe before + 1
     val eid = newestEid
-    failure.getMessage shouldBe
-      s"Execution $eid could not be created: too many workflows are being compiled. Try again " +
-        "in a moment."
+    failure.getMessage shouldBe s"Execution $eid could not be created: the workflow compiling " +
+      "service could not be reached. Try again in a moment."
     row(eid.toLong).getStatus shouldBe 4.toByte
     closedAtCreate(eid.toLong, "its plan could not be made", since)
   }
 
-  it should "answer 500, not the scan's error, when a file cannot be resolved or linked for a reason not the workflow's" in {
+  it should "answer 500 and record the execution FAILED when the compiling service fails, or answers what is no plan" in {
+    Seq[(String, StubCompilingServer.Answer)](
+      "its own failure" -> StubCompilingServer.Answer(
+        500,
+        """{"code": 500, "message": "There was an error processing your request."}"""
+      ),
+      "a refusal of the caller's token" -> StubCompilingServer.Answer(401, ""),
+      "no JSON" -> StubCompilingServer.Answer(200, "<html>a proxy's page</html>"),
+      "no plan" -> StubCompilingServer.Answer(200, """{"logicalPlan": "{}"}"""),
+      "text that is no plan" ->
+        StubCompilingServer.Answer(200, """{"plan": "{}", "logicalPlan": "{}"}""")
+    ).foreach {
+      case (what, answer) =>
+        withClue(s"$what: ") {
+          refusedAfterAsking(500, "its plan could not be made")(_ => answer) shouldBe
+            s"Execution $newestEid could not be created: its plan could not be made."
+        }
+    }
+  }
+
+  it should "answer 500 when the compiling service answers the plan of another execution" in {
+    // A plan as the service makes one, of an execution the Dashboard did not ask for.
+    val others = TestUtils.fixtureCompiling
+      .planToRun(
+        WorkflowCompilingService.PlanRequest(
+          testWid,
+          firstCreatedEid - 1L,
+          None,
+          sentSettings,
+          request().logicalPlan,
+          None
+        ),
+        FixtureCompilingService.authorizationOf(creatorUid),
+        ExecutionCreator.CompileDeadline
+      )
+
+    refusedAfterAsking(500, "its plan could not be made") { _ =>
+      StubCompilingServer.Answer(
+        200,
+        objectMapper.writeValueAsString(
+          objectMapper
+            .createObjectNode()
+            .put("plan", others.plan)
+            .put("logicalPlan", others.logicalPlan)
+        )
+      )
+    } shouldBe s"Execution $newestEid could not be created: its plan could not be made."
+  }
+
+  it should "answer 500, not the scan's error, when a file cannot be resolved, located or linked for a reason not the workflow's" in {
     // The database or the storage not answering says nothing about the file a scan names: it is
     // the server's failure, and not an error of the workflow for its user to fix.
     val databaseDown = new DataAccessException("the database does not answer")
     val storageDown = new java.io.IOException("the storage does not answer")
-    Seq[(CompileFor.Run => CompileFor.Run, Exception)](
-      (_ => TestUtils.fixtureBindings.copy(files = _ => throw databaseDown), databaseDown),
-      (
-        _ => TestUtils.fixtureBindings.copy(inputLinker = linkerOf(_ => throw storageDown)),
-        storageDown
-      )
+    val keysGone = new IllegalStateException("the object store's keys are gone")
+    Seq[(FixtureCreator, Option[Exception])](
+      // In the compiling service, of whose failure the Dashboard has only the status.
+      new FixtureCreator(
+        bindings = _ => TestUtils.fixtureBindings.copy(files = _ => throw databaseDown)
+      ) -> None,
+      new FixtureCreator(
+        bindings = _ =>
+          TestUtils.fixtureBindings
+            .copy(locator = (_ => throw storageDown): InputFileLocator)
+      ) -> None,
+      // In the Dashboard itself, as it signs the plan's links.
+      new FixtureCreator(linker = _ => throw keysGone) -> Some(keysGone)
     ).foreach {
-      case (bindings, outage) =>
+      case (creator, cause) =>
         val before = executionCount
 
         val failure = intercept[InternalServerErrorException] {
-          post(request(), creator = new FixtureCreator(bindings = bindings))
+          post(request(), creator = creator)
         }
 
         failure.getResponse.getStatus shouldBe 500
-        failure.getCause shouldBe outage
+        cause match {
+          case Some(own) => failure.getCause shouldBe own
+          case None      => failure.getCause shouldBe a[CompileRefused]
+        }
         executionCount shouldBe before + 1
         val eid = newestEid
         failure.getMessage shouldBe
           s"Execution $eid could not be created: its plan could not be made."
         row(eid.toLong).getStatus shouldBe 4.toByte
+        creator.written shouldBe empty
         a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
           ExecutionPlanStore
             .planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
@@ -1994,7 +2239,7 @@ class ExecutionResourceSpec
 
   // --- refused: malformed ---
 
-  it should "refuse a workflow whose links form a cycle or name an operator it does not have" in {
+  it should "refuse a workflow whose links form a cycle or name an operator it does not have, in the compiling service's words" in {
     val cyclic = LogicalPlanPojo(
       List(
         named(TestOperators.keywordSearchOpDesc("Region", "Asia"), "a"),
@@ -2006,9 +2251,9 @@ class ExecutionResourceSpec
     )
     val dangling = searchPlan().copy(links = List(link("scan", "ghost")))
 
-    refused(400)(post(request(plan = cyclic))) shouldBe
+    refusedByCompiler(post(request(plan = cyclic))) shouldBe
       "The workflow's links form a cycle: a -> b -> a."
-    refused(400)(post(request(plan = dangling))) shouldBe
+    refusedByCompiler(post(request(plan = dangling))) shouldBe
       "The link from scan to ghost names operator ghost, which the workflow does not have."
   }
 
@@ -2022,6 +2267,12 @@ class ExecutionResourceSpec
     refused(400)(post(request().copy(engineVersion = null))) shouldBe
       "The request names no engine version."
     refused(400)(post(request(plan = null))) shouldBe "The request has no logical plan."
+    // A logical plan is an object: the Dashboard reads nothing else of it.
+    Seq(objectMapper.readTree("[]"), objectMapper.readTree("\"a plan\""), objectMapper.nullNode())
+      .foreach { notAPlan =>
+        refused(400)(post(request().copy(logicalPlan = notAPlan))) shouldBe
+          "The request has no logical plan."
+      }
   }
 
   it should "refuse a name or an engine version longer than the row keeps" in {

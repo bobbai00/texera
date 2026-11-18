@@ -36,11 +36,11 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters._
 
 /**
-  * Spec for [[LakeFSInputLinker]]: what it asks LakeFS, the link it makes from the answer, and
-  * which failures are a file that is not there; and that it asks nothing to link a file of a
-  * listing.
+  * Spec for [[LakeFSInputFileLocator]] and [[LakeFSInputLinker]]: what the locator asks LakeFS,
+  * the address it answers and which failures are a file that is not there; and the link the
+  * linker signs for an address, asking nothing.
   *
-  * LakeFS is a loopback [[HttpServer]] that answers the one lookup a link to a resolved file
+  * LakeFS is a loopback [[HttpServer]] that answers the one lookup locating a resolved file
   * takes, `objects/stat`. Signing asks nothing, so the object store the links are signed for is
   * only a name here.
   *
@@ -137,48 +137,39 @@ class LakeFSInputLinkerSpec
 
   private def hits: List[Hit] = requests.asScala.toList
 
-  "LakeFSInputLinker" should "link a dataset's file to its object, at the store its links are signed for" in {
-    val before = System.currentTimeMillis()
-    val link = linker.link(new URI(s"dataset:///dataset-12/$commit/people.csv"))
-    val after = System.currentTimeMillis()
+  private val locator = LakeFSInputFileLocator
 
-    val url = new URI(link.url)
-    (url.getScheme, url.getHost, url.getPort) shouldBe (("http", "texera-rustfs", 9000))
-    // Path-style: the bucket, then the key, of the file's physical address.
-    url.getPath shouldBe "/texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
-    url.getRawQuery should include("X-Amz-Signature=")
-    url.getRawQuery should include("X-Amz-Expires=7200")
-    // The link lasts the two hours it was made to, to the second the link itself names.
-    link.expiresAtMs should be > before + Duration.ofHours(2).toMillis - 1000
-    link.expiresAtMs should be <= after + Duration.ofHours(2).toMillis
+  "LakeFSInputFileLocator" should "say which object holds a dataset's file" in {
+    locator.locate(new URI(s"dataset:///dataset-12/$commit/people.csv")) shouldBe
+      "s3://texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
   }
 
   it should "ask LakeFS once, where the file is, and not for a link of LakeFS's own" in {
-    linker.link(new URI(s"dataset:///dataset-12/$commit/people.csv"))
+    locator.locate(new URI(s"dataset:///dataset-12/$commit/people.csv"))
 
     hits shouldBe List(Hit(statPath("dataset-12"), Map("path" -> "people.csv")))
   }
 
-  it should "link a file by its whole path within the version, and a model's as a dataset's" in {
-    linker.link(new URI("dataset", "", s"/dataset-12/$commit/2024/q1/sales+report.csv", null))
-    val weights = linker.link(new URI(s"model:///model-7/$commit/weights/model.pt"))
+  it should "locate a file by its whole path within the version, and a model's as a dataset's" in {
+    locator.locate(new URI("dataset", "", s"/dataset-12/$commit/2024/q1/sales+report.csv", null))
+    val weights = locator.locate(new URI(s"model:///model-7/$commit/weights/model.pt"))
 
     hits shouldBe List(
       Hit(statPath("dataset-12"), Map("path" -> "2024/q1/sales report.csv")),
       Hit(statPath("model-7"), Map("path" -> "weights/model.pt"))
     )
-    new URI(weights.url).getPath shouldBe "/texera-dataset/model-7/data/w"
+    weights shouldBe "s3://texera-dataset/model-7/data/w"
   }
 
   it should "report a file its version does not hold as not found" in {
     val missing = new URI(s"dataset:///dataset-12/$commit/missing.csv")
 
-    val thrown = intercept[FileNotFoundException](linker.link(missing))
+    val thrown = intercept[FileNotFoundException](locator.locate(missing))
 
     thrown.getMessage should include(missing.toString)
     // So is a file of a repository or a commit LakeFS does not have.
     intercept[FileNotFoundException] {
-      linker.link(new URI(s"dataset:///dataset-99/$commit/people.csv"))
+      locator.locate(new URI(s"dataset:///dataset-99/$commit/people.csv"))
     }
   }
 
@@ -186,83 +177,65 @@ class LakeFSInputLinkerSpec
     Seq("unreadable.csv" -> 500, "forbidden.csv" -> 401).foreach {
       case (file, status) =>
         val thrown = intercept[ApiException] {
-          linker.link(new URI(s"dataset:///dataset-12/$commit/$file"))
+          locator.locate(new URI(s"dataset:///dataset-12/$commit/$file"))
         }
         thrown.getCode shouldBe status
     }
   }
 
-  it should "refuse to link a file that LakeFS keeps outside an S3 object store" in {
-    val thrown = intercept[IllegalStateException] {
-      linker.link(new URI(s"dataset:///dataset-12/$commit/on-disk.csv"))
-    }
-
-    thrown.getMessage shouldBe s"dataset:///dataset-12/$commit/on-disk.csv is kept at " +
-      "local:///data/dataset-12/on-disk.csv, which is not in an S3 object store, so no link to " +
-      "it can be signed."
+  it should "answer the address of a file LakeFS keeps outside an S3 object store as it is" in {
+    // Whether a link can be signed for it is the linker's to say.
+    locator.locate(new URI(s"dataset:///dataset-12/$commit/on-disk.csv")) shouldBe
+      "local:///data/dataset-12/on-disk.csv"
   }
 
   it should "refuse a file LakeFS does not keep, without asking LakeFS" in {
     val thrown = intercept[UnsupportedOperationException] {
-      linker.link(new URI("file:///etc/passwd"))
+      locator.locate(new URI("file:///etc/passwd"))
     }
 
-    thrown.getMessage shouldBe "Unsupported URI scheme: file for linking an input file"
+    thrown.getMessage shouldBe "Unsupported URI scheme: file for locating an input file"
     hits shouldBe empty
   }
 
-  it should "link a listed file to the object its listing names, asking LakeFS nothing" in {
-    val listed = ListedFile(
-      "/dataset/ada@texera.io/letters/v1/2024/q1/sales report.csv",
-      "s3://texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
-    )
+  "LakeFSInputLinker" should "link an address to its object, at the store its links are signed for, asking LakeFS nothing" in {
     val before = System.currentTimeMillis()
-    val link = linker.linkListed(listed)
+    val link = linker.link("s3://texera-dataset/dataset-12/data/gdm5/c8a,_Zs")
     val after = System.currentTimeMillis()
 
     val url = new URI(link.url)
     (url.getScheme, url.getHost, url.getPort) shouldBe (("http", "texera-rustfs", 9000))
+    // Path-style: the bucket, then the key, of the address.
     url.getPath shouldBe "/texera-dataset/dataset-12/data/gdm5/c8a,_Zs"
     url.getRawQuery should include("X-Amz-Signature=")
     url.getRawQuery should include("X-Amz-Expires=7200")
+    // The link lasts the two hours it was made to, to the second the link itself names.
     link.expiresAtMs should be > before + Duration.ofHours(2).toMillis - 1000
     link.expiresAtMs should be <= after + Duration.ofHours(2).toMillis
     hits shouldBe empty
   }
 
   it should "link the files of a whole listing, each to its own object, asking LakeFS nothing" in {
-    val listing = (1 to 10000).map { i =>
-      ListedFile(s"/dataset/ada@texera.io/letters/v1/file-$i.txt", s"s3://texera-dataset/k/$i")
-    }
-
-    val links = listing.map(linker.linkListed)
+    val links = (1 to 10000).map(i => linker.link(s"s3://texera-dataset/k/$i"))
 
     links.map(link => new URI(link.url).getPath) shouldBe
       (1 to 10000).map(i => s"/texera-dataset/k/$i")
     hits shouldBe empty
   }
 
-  it should "refuse to link a listed file that LakeFS keeps outside an S3 object store" in {
+  it should "refuse to link a file that LakeFS keeps outside an S3 object store" in {
     val thrown = intercept[IllegalStateException] {
-      linker.linkListed(
-        ListedFile(
-          "/dataset/ada@texera.io/letters/v1/on-disk.csv",
-          "local:///data/dataset-12/on-disk.csv"
-        )
-      )
+      linker.link("local:///data/dataset-12/on-disk.csv")
     }
 
-    thrown.getMessage shouldBe "/dataset/ada@texera.io/letters/v1/on-disk.csv is kept at " +
-      "local:///data/dataset-12/on-disk.csv, which is not in an S3 object store, so no link to " +
-      "it can be signed."
+    thrown.getMessage shouldBe "A file is kept at local:///data/dataset-12/on-disk.csv, which " +
+      "is not in an S3 object store, so no link to it can be signed."
     hits shouldBe empty
   }
 
   "The deployment's linker" should
     "sign for the endpoint, with the keys and for the lifetime the deployment is set up with" in {
-    val link = LakeFSInputLinker.forDeployment.link(
-      new URI(s"dataset:///dataset-12/$commit/people.csv")
-    )
+    val link = LakeFSInputLinker.forDeployment.link("s3://texera-dataset/dataset-12/data/gdm5")
 
     val url = new URI(link.url)
     val endpoint = new URI(StorageConfig.inputLinksS3Endpoint)
@@ -274,11 +247,11 @@ class LakeFSInputLinkerSpec
   }
 
   // Last: it takes LakeFS away.
-  "LakeFSInputLinker" should "throw a lookup that LakeFS does not answer as it is" in {
+  "LakeFSInputFileLocator" should "throw a lookup that LakeFS does not answer as it is" in {
     lakefs.stop(0)
 
     val thrown = intercept[ApiException] {
-      linker.link(new URI(s"dataset:///dataset-12/$commit/people.csv"))
+      locator.locate(new URI(s"dataset:///dataset-12/$commit/people.csv"))
     }
 
     thrown.getCode shouldBe 0

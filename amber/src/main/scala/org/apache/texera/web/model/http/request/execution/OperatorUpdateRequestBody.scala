@@ -19,13 +19,14 @@
 
 package org.apache.texera.web.model.http.request.execution
 
-import org.apache.texera.amber.operator.LogicalOp
+import com.fasterxml.jackson.databind.JsonNode
 
 /**
   * The body of `POST /api/executions/{eid}/updates`: a change to one operator of a paused
   * execution.
   *
   * @param operator the operator as the editor holds it once changed, under the id it has in the
-  *                 workflow the execution runs
+  *                 workflow the execution runs. The Dashboard reads its id, and hands the rest
+  *                 to the compiling service as it is.
   */
-case class OperatorUpdateRequestBody(operator: LogicalOp)
+case class OperatorUpdateRequestBody(operator: JsonNode)

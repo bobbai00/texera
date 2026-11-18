@@ -267,8 +267,10 @@ lazy val WorkflowCompilingService = (project in file("workflow-compiling-service
     Test / parallelExecution := false
   )
 
+// The engine and the Dashboard service run plans the compiling service made: the compiler is
+// on their classpath for tests only, which compile the workflows they run.
 lazy val WorkflowExecutionService = (project in file("amber"))
-  .dependsOn(WorkflowCompiler, Auth, Config, Observability)
+  .dependsOn(WorkflowOperator, Auth, Config, Observability)
   .settings(commonModuleSettings)
   .settings(
     dependencyOverrides ++= Seq(
@@ -287,6 +289,7 @@ lazy val WorkflowExecutionService = (project in file("amber"))
   .configs(Test)
   .dependsOn(DAO % "test->test", Auth % "test->test") // test scope dependency
   .dependsOn(WorkflowOperator % "test->test") // FixtureInputs, the files a run's scans read
+  .dependsOn(WorkflowCompiler % "test->compile") // specs compile the workflows they run
   .settings(
     // WorkflowMetricsRecorderSpec asserts exact counts on the process-wide WorkflowMetrics
     // instruments; run suites serially so a concurrent execution suite does not record into

@@ -42,7 +42,9 @@ spec:
           ports:
             - containerPort: {{ .Values.workflowCompilingService.service.port }}
           env:
-            # LakeFS Access
+            # LakeFS Access: a compile reads the files a workflow scans, and the compile of a
+            # run asks where each dataset file is kept and which files a dataset version holds.
+            # No object-store key is set here: the Dashboard signs the links to those files.
             - name: STORAGE_LAKEFS_ENDPOINT
               value: http://{{ .Release.Name }}-lakefs:8000/api/v1
             - name: STORAGE_LAKEFS_AUTH_USERNAME

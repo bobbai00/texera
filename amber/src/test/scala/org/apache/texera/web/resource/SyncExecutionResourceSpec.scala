@@ -68,7 +68,7 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorStatistics
 }
 import org.apache.texera.amber.engine.e2e.TestUtils
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
@@ -98,7 +98,11 @@ import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
 import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.model.websocket.event.WorkflowStateEvent
-import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator}
+import org.apache.texera.web.service.execution.{
+  CostHintsLoader,
+  ExecutionCreator,
+  FixtureCompilingService
+}
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.{ExecutionStateStore, ResultUris}
 import org.scalatest.flatspec.AnyFlatSpec
@@ -1117,7 +1121,8 @@ class SyncExecutionResourceSpec
   /** The Dashboard's create, with the fixture bindings and no cost hints. */
   private object FixtureCreator
       extends ExecutionCreator(
-        bindingsFor = _ => TestUtils.fixtureBindings,
+        compiling = new FixtureCompilingService(),
+        linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = false,
         costHints = NoHints,
@@ -1144,11 +1149,13 @@ class SyncExecutionResourceSpec
         CreateExecutionRequest(
           wid = testWid.toLong,
           engineVersion = "1.4.0-spec",
-          logicalPlan = LogicalPlanPojo(
-            List(lines, limit),
-            List(link("lines", "limit")),
-            List.empty,
-            List.empty
+          logicalPlan = TestUtils.sentPlan(
+            LogicalPlanPojo(
+              List(lines, limit),
+              List(link("lines", "limit")),
+              List.empty,
+              List.empty
+            )
           ),
           workflowSettings = None,
           computingUnitId = testCuid,
@@ -1157,7 +1164,8 @@ class SyncExecutionResourceSpec
           targetOperatorId = Some("limit")
         ),
         syncUser().getUser,
-        new URI("http://texera.example/api/executions")
+        new URI("http://texera.example/api/executions"),
+        FixtureCompilingService.authorizationOf(testUid)
       )
     madePlans += new URI(response.planUri)
     response

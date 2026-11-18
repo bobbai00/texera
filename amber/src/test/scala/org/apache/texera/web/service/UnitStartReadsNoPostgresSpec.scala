@@ -19,7 +19,7 @@
 
 package org.apache.texera.web.service
 
-import org.apache.texera.amber.core.storage.{FileResolver, InputLink, InputLinker, ListedFile}
+import org.apache.texera.amber.core.storage.FileResolver
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.filter.{
@@ -85,7 +85,8 @@ class UnitStartReadsNoPostgresSpec
 
   /**
     * The fixtures' bindings, and the dataset's file: resolved for the creator from the dataset's
-    * rows, as the deployment resolves it, and linked to the fixture file that holds its bytes.
+    * rows, as the deployment resolves it, and kept where the fixture file that holds its bytes
+    * is, which is what the Dashboard links.
     */
   override protected def bindings: CompileFor.Run = {
     val fixtures = TestUtils.fixtureBindings
@@ -93,14 +94,11 @@ class UnitStartReadsNoPostgresSpec
       files = fileName =>
         if (fileName == notesPath) FileResolver.forUser(creatorUid).resolve(fileName)
         else fixtures.files.resolve(fileName),
-      inputLinker = new InputLinker {
-        override def link(fileUri: URI): InputLink =
-          fixtures.inputLinker.link(
-            if (fileUri == notesUri) TestOperators.localFileUri(TestOperators.TestTextFilePath)
-            else fileUri
-          )
-        override def linkListed(file: ListedFile): InputLink = fixtures.inputLinker.linkListed(file)
-      }
+      locator = fileUri =>
+        fixtures.locator.locate(
+          if (fileUri == notesUri) TestOperators.localFileUri(TestOperators.TestTextFilePath)
+          else fileUri
+        )
     )
   }
 

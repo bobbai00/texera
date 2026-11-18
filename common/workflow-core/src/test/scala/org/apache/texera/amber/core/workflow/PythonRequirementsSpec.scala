@@ -23,6 +23,8 @@ import org.apache.texera.amber.core.workflow.PythonRequirements._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
+import scala.util.Success
+
 class PythonRequirementsSpec extends AnyFlatSpec with Matchers {
 
   /** The problem `canonicalLines` reports for `packages`, failing the test if it reports none. */
@@ -272,5 +274,30 @@ class PythonRequirementsSpec extends AnyFlatSpec with Matchers {
   it should "refuse an empty or missing line" in {
     lineRefusalOf("") shouldBe "A requirement line is empty."
     lineRefusalOf(null) shouldBe "A requirement line is empty."
+  }
+
+  "PythonRequirements.storedPackages" should "read the packages a row keeps, each name with its version spec" in {
+    storedPackages("""{"Tabulate": "==0.9.0", "numpy": ""}""") shouldBe
+      Success(Map("Tabulate" -> "==0.9.0", "numpy" -> ""))
+    storedPackages("{}") shouldBe Success(Map.empty)
+  }
+
+  it should "read a row with no value as one that lists no package" in {
+    storedPackages(null) shouldBe Success(Map.empty)
+  }
+
+  it should "fail on a value that is not a JSON object of strings" in {
+    Seq(
+      """["tabulate==0.9.0"]""",
+      "\"tabulate\"",
+      """{"tabulate": {"version": "0.9.0"}}""",
+      "null",
+      "not JSON",
+      ""
+    ).foreach { stored =>
+      withClue(s"[$stored]: ") {
+        storedPackages(stored).isFailure shouldBe true
+      }
+    }
   }
 }

@@ -118,6 +118,8 @@ object ApplicationConfig {
     getConfSource.getBoolean("web-server.clean-all-execution-results-on-server-start")
   val maxWorkflowWebsocketRequestPayloadSizeKb: Int =
     getConfSource.getInt("web-server.max-workflow-websocket-request-payload-size-kb")
+  val workflowCompilingServiceEndpoint: String =
+    getConfSource.getString("web-server.workflow-compiling-service-endpoint")
 
   // AI Assistant
   val aiAssistantConfig: Option[Config] =

@@ -48,7 +48,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.e2e.TestUtils
-import org.apache.texera.amber.operator.LogicalOp
+import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp}
 import org.apache.texera.common.compiler.CompileFor
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
@@ -80,7 +80,8 @@ import org.apache.texera.web.model.websocket.event.{
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
   ExecutionCreator,
-  ExecutionResources
+  ExecutionResources,
+  FixtureCompilingService
 }
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
@@ -109,8 +110,8 @@ import scala.util.Try
   * run's record is kept in the lake as a unit keeps it, in the same catalog.
   *
   * A plan is bound to the fixtures (`TestUtils.fixtureBindings`), unless a suite binds it
-  * otherwise: the files it reads are fixture files, linked to the fixture server, which stands in
-  * for the object store.
+  * otherwise: the files it reads are fixture files, which the Dashboard links to the fixture
+  * server, which stands in for the object store.
   *
   * LakeFS is out of the unit's reach: for the whole suite its address is one nothing listens at,
   * so a unit that asked LakeFS for a file would fail its run. `LakeFSStorageClient` keeps the
@@ -140,7 +141,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   protected val creatorEmail = "unit-start-creator@example.com"
   private val unitCuid = 9785
 
-  /** What the Dashboard binds each plan to. */
+  /** What the compiling service binds each plan to. */
   protected def bindings: CompileFor.Run = TestUtils.fixtureBindings
 
   private var recorder: StatementRecorder = _
@@ -223,10 +224,11 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
-  /** The Dashboard's create, bound as the suite binds its plans. */
+  /** The Dashboard's create, its plans bound as the suite binds them. */
   private object Dashboard
       extends ExecutionCreator(
-        bindingsFor = _ => bindings,
+        compiling = new FixtureCompilingService(bindingsFor = _ => bindings),
+        linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = false,
         costHints = NoHints,
@@ -355,14 +357,16 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         CreateExecutionRequest(
           wid = wid.toLong,
           engineVersion = "1.4.0-spec",
-          logicalPlan = LogicalPlanPojo(operators, links, List.empty, List.empty),
+          logicalPlan =
+            TestUtils.sentPlan(LogicalPlanPojo(operators, links, List.empty, List.empty)),
           workflowSettings = None,
           computingUnitId = unitCuid,
           warehouseId = None,
           replayFromExecution = None
         ),
         creator,
-        new URI("http://texera.example/api/executions")
+        new URI("http://texera.example/api/executions"),
+        FixtureCompilingService.authorizationOf(creatorUid)
       )
     created += execution
 

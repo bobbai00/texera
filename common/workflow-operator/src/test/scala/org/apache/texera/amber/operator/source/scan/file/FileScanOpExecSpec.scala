@@ -75,7 +75,7 @@ class FileScanOpExecSpec
 
   /** A link to the bytes of the local file at `path`, as a plan made to run carries one. */
   private def linkTo(path: String): InputLink =
-    FixtureInputs.linker.link(TestOperators.localFileUri(path))
+    FixtureInputs.linkTo(TestOperators.localFileUri(path))
 
   /** The links of a plan whose File Listers listed the two files above. */
   private def listed: Map[String, InputLink] =

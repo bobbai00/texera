@@ -27,3 +27,17 @@ case class WorkflowSettings(
       ExecutionMode.valueOf(GuiConfig.guiWorkflowWorkspaceDefaultExecutionMode),
     outputPortsNeedingStorage: Set[GlobalPortIdentity] = Set.empty
 )
+
+object WorkflowSettings {
+
+  /**
+    * Why no plan can be made to run under `settings`, if none can: batches of fewer than one
+    * tuple. In the words of the editor's setting, for a caller that refuses such settings before
+    * it asks for a plan; whatever makes or saves the plan refuses them too.
+    */
+  def problemOf(settings: WorkflowSettings): Option[String] =
+    Option.when(settings.dataTransferBatchSize < 1)(
+      s"The workflow's Data Transfer Batch Size is ${settings.dataTransferBatchSize}; set it to " +
+        "1 or more."
+    )
+}

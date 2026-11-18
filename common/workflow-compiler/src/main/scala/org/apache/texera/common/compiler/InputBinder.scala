@@ -38,18 +38,20 @@ import scala.collection.mutable.ArrayBuffer
   *
   *  - A scan source reads the file it names. The name is resolved to the URI of a file the
   *    plan's user may read, which is set on the operator (`setResolvedFileName`), where its
-  *    schema is read from. For a run, the file is then linked.
+  *    schema is read from. For a run, the file is then located.
   *  - A CSV scan reads its file under the site's column limit.
   *  - A File Lister outputs the files of the dataset version it names. For a run, the version
   *    is listed, as the plan's user may read it.
   *  - A File Scan From Input reads the files its input tuples name, and the names arrive only
   *    while the plan runs, when nothing resolves a name any more. So it reads only what the
   *    File Listers upstream of it list, through any path of operators, and one with no File
-  *    Lister upstream is an error, whatever the compile is for. For a run, it is linked to the
-  *    files listed upstream of it, from where the listings say they are kept.
+  *    Lister upstream is an error, whatever the compile is for. For a run, it reads the files
+  *    listed upstream of it, at the addresses the listings give.
   *
-  * What an operator reads comes from here alone: the only links in a plan are to files this
-  * found for the plan's user.
+  * A file of a run is given the address of the object that holds it, and no link: links are
+  * signed later, from the addresses, by a service that holds the object store's keys. What an
+  * operator reads comes from here alone: the only addresses in a plan are of files this found
+  * for the plan's user.
   *
   * An operator's own error is appended to `errors`, and the operator is given no file and no
   * listing: a scan that names no file, or one that does not exist or that the plan's user may
@@ -59,8 +61,8 @@ import scala.collection.mutable.ArrayBuffer
   * Any other failure, such as the database or the storage not answering, is no error of an
   * operator's, and is thrown as it is.
   *
-  * @param purpose what the workflow is compiled for: only for a run are files linked and dataset
-  *                versions listed
+  * @param purpose what the workflow is compiled for: only for a run are files located and
+  *                dataset versions listed
   */
 private[compiler] class InputBinder(
     purpose: CompileFor,
@@ -69,7 +71,7 @@ private[compiler] class InputBinder(
 
   private val settings = purpose.settings
 
-  // What links files and lists dataset versions; None unless the plan is made to run.
+  // What locates files and lists dataset versions; None unless the plan is made to run.
   private val forRun: Option[CompileFor.Run] = purpose match {
     case run: CompileFor.Run   => Some(run)
     case _: CompileFor.Editing => None
@@ -100,7 +102,7 @@ private[compiler] class InputBinder(
 
   private def readBy(scan: ScanSourceOpDesc): OperatorInputs =
     OperatorInputs(
-      files = linkTo(scan).toSeq,
+      files = fileOf(scan).toSeq,
       csvParserMaxColumns = scan match {
         case _: CSVScanSourceOpDesc => Some(settings.csvParserMaxColumns)
         case _                      => None
@@ -108,10 +110,10 @@ private[compiler] class InputBinder(
     )
 
   /**
-    * Resolves the file `scan` names and sets it on the scan; for a run, the file linked under
+    * Resolves the file `scan` names and sets it on the scan; for a run, the file located, under
     * its resolved name, which is the name the scan's executor knows it by.
     */
-  private def linkTo(scan: ScanSourceOpDesc): Option[InputFile] =
+  private def fileOf(scan: ScanSourceOpDesc): Option[InputFile] =
     scan.fileName match {
       case None =>
         errors.append(
@@ -128,8 +130,7 @@ private[compiler] class InputBinder(
           val file = purpose.files.resolve(name)
           scan.setResolvedFileName(file)
           forRun.map { run =>
-            val link = run.inputLinker.link(file)
-            InputFile(scan.fileName.get, link.url, link.expiresAtMs)
+            InputFile(scan.fileName.get, physicalAddress = run.locator.locate(file))
           }
         } catch {
           case notFound: FileNotFoundException =>
@@ -139,8 +140,8 @@ private[compiler] class InputBinder(
     }
 
   /**
-    * The files `fileScan` reads, linked for a run: those the File Listers upstream of it list.
-    * A file two of them list is one file.
+    * The files `fileScan` reads, for a run: those the File Listers upstream of it list, each
+    * where its listing says it is kept. A file two of them list is one file.
     */
   private def readBy(
       fileScan: FileScanOpDesc,
@@ -164,14 +165,12 @@ private[compiler] class InputBinder(
           s"most ${settings.maxListedFiles}."
       )
     } else {
-      OperatorInputs(files = forRun.toSeq.flatMap { run =>
+      // Listed only for a run, so only then is there a file to read.
+      OperatorInputs(files =
         listed
-          .map { file =>
-            val link = run.inputLinker.linkListed(file)
-            InputFile(file.logicalPath, link.url, link.expiresAtMs)
-          }
+          .map(file => InputFile(file.logicalPath, physicalAddress = file.physicalAddress))
           .sortBy(_.name)
-      })
+      )
     }
   }
 

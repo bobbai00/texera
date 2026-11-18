@@ -23,6 +23,7 @@ import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.storage.{
   InputLink,
   LakeFSDatasetVersionLister,
+  LakeFSInputFileLocator,
   LakeFSInputLinker,
   ListedFile
 }
@@ -39,11 +40,12 @@ import java.nio.charset.StandardCharsets
 import java.time.Duration
 
 /**
-  * A dataset's files, linked and read as a run reads them, against a real LakeFS and a real
-  * object store (RustFS), each in a container: the Dashboard service's half
-  * ([[LakeFSInputLinker]]: where LakeFS keeps a file, and a link to that object signed here;
-  * [[LakeFSDatasetVersionLister]]: the files of a version, with where LakeFS keeps each) and the
-  * computing unit's half ([[LinkDocument]]: a file's bytes, from the object store alone).
+  * A dataset's files, located, linked and read as a run reads them, against a real LakeFS and a
+  * real object store (RustFS), each in a container: the compiling service's half
+  * ([[LakeFSInputFileLocator]]: where LakeFS keeps a file; [[LakeFSDatasetVersionLister]]: the
+  * files of a version, with where LakeFS keeps each), the Dashboard service's half
+  * ([[LakeFSInputLinker]]: a link to that object, signed here) and the computing unit's half
+  * ([[LinkDocument]]: a file's bytes, from the object store alone).
   */
 class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS {
 
@@ -90,6 +92,10 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
       Duration.ofHours(1)
     )
 
+  /** The link `linker` signs to `file`, a resolved file, where LakeFS says it keeps it. */
+  private def linkTo(linker: LakeFSInputLinker, file: URI): InputLink =
+    linker.link(LakeFSInputFileLocator.locate(file))
+
   /** What a computing unit that reads links from `storeEndpoint` reads through `link`. */
   private def readThrough(link: InputLink, storeEndpoint: String): String = {
     val stream = new LinkDocument(link, fileRelativePath, Seq(storeEndpoint)).asInputStream()
@@ -100,7 +106,7 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
   "A link to a dataset's file" should
     "be to the object LakeFS keeps the file in, at the store the linker signs for" in {
     val before = System.currentTimeMillis()
-    val link = linkerFor(objectStoreEndpoint).link(resolved(fileRelativePath))
+    val link = linkTo(linkerFor(objectStoreEndpoint), resolved(fileRelativePath))
 
     link.expiresAtMs should be > before + Duration.ofMinutes(59).toMillis
     link.expiresAtMs should be <= System.currentTimeMillis() + Duration.ofHours(1).toMillis
@@ -111,7 +117,7 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
   }
 
   it should "read the file's bytes from the object store" in {
-    val link = linkerFor(objectStoreEndpoint).link(resolved(fileRelativePath))
+    val link = linkTo(linkerFor(objectStoreEndpoint), resolved(fileRelativePath))
 
     readThrough(link, objectStoreEndpoint) shouldBe content
   }
@@ -136,14 +142,16 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
     intercept[java.io.IOException](readThrough(repointed, unitsEndpoint)).getMessage shouldBe
       s"Could not read $fileRelativePath: the object store answered HTTP 403."
     // The linker's own link, signed for that address, reads.
-    readThrough(linkerFor(unitsEndpoint).link(resolved(fileRelativePath)), unitsEndpoint) shouldBe
-      content
+    readThrough(
+      linkTo(linkerFor(unitsEndpoint), resolved(fileRelativePath)),
+      unitsEndpoint
+    ) shouldBe content
   }
 
-  it should "not be made for a file the version does not hold" in {
+  it should "not be made for a file the version does not hold, which is nowhere" in {
     val missing = resolved("2026/no such file.csv")
 
-    intercept[FileNotFoundException](linkerFor(objectStoreEndpoint).link(missing)).getMessage should
+    intercept[FileNotFoundException](LakeFSInputFileLocator.locate(missing)).getMessage should
       include(missing.toString)
   }
 
@@ -163,23 +171,24 @@ class DatasetFileInputLinkSpec extends AnyFlatSpec with Matchers with MockLakeFS
   it should "give each file a link that reads the file's bytes from the object store" in {
     val linker = linkerFor(objectStoreEndpoint)
 
-    val links = lister.list(versionPath, atMost = 100).map(linker.linkListed)
+    val links =
+      lister.list(versionPath, atMost = 100).map(file => linker.link(file.physicalAddress))
 
     links.map(readThrough(_, objectStoreEndpoint)) shouldBe Seq(content, notes)
     // To the object LakeFS names when asked for the file by itself.
     new URI(links.head.url).getPath shouldBe
-      new URI(linker.link(resolved(fileRelativePath)).url).getPath
+      new URI(linkTo(linker, resolved(fileRelativePath)).url).getPath
   }
 
   // Last: it takes LakeFS away.
   "A link to a dataset's file" should "still read once LakeFS is gone" in {
-    val link = linkerFor(objectStoreEndpoint).link(resolved(fileRelativePath))
+    val link = linkTo(linkerFor(objectStoreEndpoint), resolved(fileRelativePath))
     val listed: Seq[ListedFile] = lister.list(versionPath, atMost = 100)
     lakefs.stop()
 
     readThrough(link, objectStoreEndpoint) shouldBe content
     // And a file listed while LakeFS answered is linked, and read, without it.
-    val linkedSince = listed.map(linkerFor(objectStoreEndpoint).linkListed)
+    val linkedSince = listed.map(file => linkerFor(objectStoreEndpoint).link(file.physicalAddress))
     linkedSince.map(readThrough(_, objectStoreEndpoint)) shouldBe Seq(content, notes)
   }
 }

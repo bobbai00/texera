@@ -71,7 +71,7 @@ import org.apache.texera.amber.engine.common.executionrecord.ExecutionRecorder
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
-import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
@@ -111,7 +111,12 @@ import org.apache.texera.web.model.websocket.request.{
   WorkflowKillRequest,
   WorkflowStartRequest
 }
-import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
+import org.apache.texera.web.service.execution.{
+  CostHintsLoader,
+  ExecutionCreator,
+  FixtureCompilingService,
+  OperatorUpdates
+}
 import org.apache.texera.web.service.{
   ExecutionResultService,
   WorkflowExecutionService,
@@ -1096,7 +1101,8 @@ class WorkflowWebsocketResourceSpec
   /** The Dashboard's create, with the fixture bindings and no cost hints. */
   private object FixtureCreator
       extends ExecutionCreator(
-        bindingsFor = _ => TestUtils.fixtureBindings,
+        compiling = new FixtureCompilingService(),
+        linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = false,
         costHints = NoHints,
@@ -1106,7 +1112,7 @@ class WorkflowWebsocketResourceSpec
   /** The Dashboard's store of a change to a paused operator, with the fixture resolver. */
   private object FixtureUpdates
       extends OperatorUpdates(
-        repositoriesFor = _ => TestOperators.fixtureRepositoryResolver,
+        compiling = new FixtureCompilingService(),
         warehousesEnabled = false
       )
 
@@ -1147,14 +1153,15 @@ class WorkflowWebsocketResourceSpec
         CreateExecutionRequest(
           wid = storedWid,
           engineVersion = "1.4.0-spec",
-          logicalPlan = linesToLimit(),
+          logicalPlan = TestUtils.sentPlan(linesToLimit()),
           workflowSettings = None,
           computingUnitId = storedCuid,
           warehouseId = None,
           replayFromExecution = None
         ),
         userOf(creatorUid),
-        new URI("http://texera.example/api/executions")
+        new URI("http://texera.example/api/executions"),
+        FixtureCompilingService.authorizationOf(creatorUid)
       )
     madePlans += new URI(response.planUri)
     madeStatistics += VFSURIFactory.createRuntimeStatisticsURI(
@@ -1754,8 +1761,9 @@ class WorkflowWebsocketResourceSpec
       changed.limit = 7
       val update = FixtureUpdates.store(
         execution.eid,
-        OperatorUpdateRequestBody(changed),
-        userOf(creatorUid)
+        OperatorUpdateRequestBody(TestUtils.sentOperator(changed)),
+        userOf(creatorUid),
+        FixtureCompilingService.authorizationOf(creatorUid)
       )
       val updateFrame = frameOf(OperatorUpdateRequest(execution.eid, update.updateId))
       // Only the creator, with WRITE on the unit, applies it: a session without WRITE, another

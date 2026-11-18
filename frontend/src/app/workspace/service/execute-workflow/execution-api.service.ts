@@ -192,8 +192,8 @@ export class ExecutionApiService {
   constructor(private http: HttpClient) {}
 
   /**
-   * Creates an execution: the Dashboard checks the caller's rights, compiles the workflow for them, records
-   * the execution and writes its plan. Fails with the HTTP error: see {@link operatorErrorsOf} and
+   * Creates an execution: the Dashboard checks the caller's rights, records the execution, has the workflow
+   * compiled for them and writes its plan. Fails with the HTTP error: see {@link operatorErrorsOf} and
    * {@link failureMessage}.
    */
   public create(request: CreateExecutionRequest): Observable<CreateExecutionResponse> {

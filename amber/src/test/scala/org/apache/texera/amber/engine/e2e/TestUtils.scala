@@ -19,10 +19,13 @@
 
 package org.apache.texera.amber.engine.e2e
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.twitter.util.{Await, Duration, Promise, Return, Throw, Try}
 import org.apache.pekko.actor.ActorSystem
 import org.apache.texera.amber.core.executor.OpExecInitInfo
-import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
+import org.apache.texera.amber.core.state.StateReferencing
+import org.apache.texera.amber.core.storage.{DocumentFactory, InputLinker, VFSURIFactory}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{
@@ -31,12 +34,14 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{
+  ExecutionPlan,
   GlobalPortIdentity,
   PhysicalOp,
   PhysicalPlan,
   PhysicalPlanCodec,
   PortIdentity,
   PythonEnvironment,
+  ReplaySource,
   WorkflowContext,
   WorkflowSettings
 }
@@ -59,6 +64,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
+import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{
@@ -74,17 +80,20 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   Workflow => WorkflowPojo
 }
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.web.service.{PlanToRun, WorkflowExecutionService}
+import org.apache.texera.web.service.WorkflowExecutionService
+import org.apache.texera.web.service.execution.FixtureCompilingService
 import org.apache.texera.web.storage.ResultUris
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{
   CompileFor,
   CompileSettings,
+  PlanToRun,
   PythonEnvironmentNotResolved,
   WorkflowCompiler
 }
 import org.scalatest.Assertions
 
+import java.net.URI
 import java.nio.file.{Path, Paths}
 
 object TestUtils {
@@ -109,17 +118,17 @@ object TestUtils {
   val fixtureEnvironment: PythonEnvironment = PythonEnvironment("ml", Seq("tabulate==0.9.0"))
 
   /**
-    * What a plan compiled in a spec is bound to: its scan sources read fixture files on the local
-    * disk, through links to the fixture server, as a run reads a dataset's files through links
-    * to the object store; its File Listers list the fixture dataset version, whose files are
-    * read through such links too; a UDF's datasets and models are the fixture versions; the
-    * site's settings are the defaults; and a UDF's Python environment is the fixture's, the only
-    * one there is.
+    * What a plan compiled in a spec is bound to: its scan sources read fixture files, kept on
+    * the local disk, as a run reads a dataset's files kept in the object store; its File Listers
+    * list the fixture dataset version, whose files are kept there too; a UDF's datasets and
+    * models are the fixture versions; the site's settings are the defaults; and a UDF's Python
+    * environment is the fixture's, the only one there is. A plan made is linked to the fixture
+    * server ([[savedPlan]]), as the Dashboard service links one to the object store.
     */
   val fixtureBindings: CompileFor.Run = CompileFor.Run(
     files = TestOperators.fixtureFileResolver,
     settings = CompileSettings.Default,
-    inputLinker = FixtureInputs.linker,
+    locator = FixtureInputs.locator,
     lister = FixtureInputs.lister,
     repositories = TestOperators.fixtureRepositoryResolver,
     environments = name =>
@@ -127,9 +136,12 @@ object TestUtils {
       else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
   )
 
+  /** The compiling service of a spec that binds its plans to the fixtures. */
+  def fixtureCompiling: FixtureCompilingService = new FixtureCompilingService()
+
   /**
     * `config`, the configuration of a run's coordinator, for a spec whose plan is bound to the
-    * fixtures: its workers read links from the fixture server, where `fixtureBindings` links
+    * fixtures: its workers read links from the fixture server, where the fixture linker links
     * files, as a computing unit's read them from its object store.
     */
   def readingFixtureLinks(
@@ -140,14 +152,46 @@ object TestUtils {
   /** The directory the computing unit of a spec mounts datasets and models under. */
   val fixtureUnitMountRoot: Path = Paths.get("/mnt/texera-mounts")
 
+  /** `plan` as a request to create an execution sends it: the JSON the editor holds. */
+  def sentPlan(plan: LogicalPlanPojo): JsonNode = objectMapper.readTree(plan.toJson)
+
+  /** `operator` as a request to change a paused operator sends it. */
+  def sentOperator(operator: LogicalOp): JsonNode =
+    StateReferencing.restoreReferences(objectMapper.valueToTree[ObjectNode](operator))
+
+  /**
+    * The plan of `logicalPlan` made to run under `context`, as the Dashboard service stores an
+    * execution's: compiled as the compiling service compiles it (`PlanToRun.make`), then each
+    * file linked from where the plan says it is kept, by `linker`, and the context's cost hints,
+    * the replay and the replay log added.
+    */
+  def savedPlan(
+      context: WorkflowContext,
+      logicalPlan: LogicalPlanPojo,
+      bindings: CompileFor.Run = fixtureBindings,
+      replay: Option[ReplaySource] = None,
+      replayLog: Option[URI] = None,
+      linker: InputLinker = FixtureInputs.linker
+  ): String = {
+    val made = PhysicalPlanCodec.decodeUnlinked(
+      PhysicalPlanCodec.fromJson(PlanToRun.make(context, bindings, logicalPlan).plan)
+    )
+    made.context.costHints = context.costHints
+    PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec.encode(
+        ExecutionPlan(made.context, made.plan.linkedBy(linker), replay, replayLog)
+      )
+    )
+  }
+
   /**
     * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
-    * made and saved as text (`PlanToRun.make`), and the engine's plan read back from that as the
-    * fixture unit runs it (`WorkflowExecutionService.mountedUnder`), so a spec runs what a run
-    * would. `context` takes the settings and cost hints saved with the plan,
-    * the ports whose results are stored among them. The text stays in memory: the Dashboard writes
-    * it to the execution's plan table and a computing unit reads it back from there, which these
-    * specs need no catalog for.
+    * made, linked and saved as text ([[savedPlan]]), and the engine's plan read back from that
+    * as the fixture unit runs it (`WorkflowExecutionService.mountedUnder`), so a spec runs what a
+    * run would. `context` takes the settings and cost hints saved with the plan, the ports whose
+    * results are stored among them. The text stays in memory: the Dashboard writes it to the
+    * execution's plan table and a computing unit reads it back from there, which these specs
+    * need no catalog for.
     *
     * @param fromSavedPlan false to keep the plan as the compile made it, never saved. Only for
     *                      comparing a run of that plan with a run of the plan read back.
@@ -160,8 +204,8 @@ object TestUtils {
   ): Workflow = {
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
     if (fromSavedPlan) {
-      val savedPlan = PlanToRun.make(context, fixtureBindings, logicalPlan)
-      val readBack = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
+      val readBack =
+        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan(context, logicalPlan)))
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints
       Workflow(
@@ -169,13 +213,13 @@ object TestUtils {
         WorkflowExecutionService.mountedUnder(readBack.plan, Some(fixtureUnitMountRoot))
       )
     } else {
-      // The compile PlanToRun.make makes a run's plan with, but not saved: for a run, so an
-      // error throws rather than leaving no physical plan.
+      // The compile PlanToRun.make makes a run's plan with, linked but not saved: for a run, so
+      // an error throws rather than leaving no physical plan.
       val result = new WorkflowCompiler(context, fixtureBindings).compile(logicalPlan)
       context.workflowSettings = context.workflowSettings.copy(
         outputPortsNeedingStorage = result.outputPortsNeedingStorage
       )
-      Workflow(context, result.physicalPlan.get)
+      Workflow(context, result.physicalPlan.get.linkedBy(FixtureInputs.linker))
     }
   }
 
