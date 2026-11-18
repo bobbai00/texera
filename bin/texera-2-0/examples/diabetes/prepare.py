@@ -23,6 +23,9 @@ the 154 women the onset-risk model never saw.
 
     python prepare.py --out ~/texera-diabetes
 
+Each run writes datasets/, models/ and uploads/ afresh, so no file an earlier run left there is
+loaded; the downloads and brand/ stay.
+
 The data is downloaded from where its authors published it; nothing is redistributed here:
 
 - Pima Indians Diabetes (NIDDK, via the UCI repository): 768 Pima women aged 21 or more, eight
@@ -69,6 +72,7 @@ import io
 import json
 import pathlib
 import re
+import shutil
 import urllib.request
 import zipfile
 
@@ -880,7 +884,8 @@ A logistic regression fitted with scikit-learn {sklearn} on {train} women of the
 cohort. A 0 in Glucose, BloodPressure or BMI is read as a measurement not taken and replaced by the
 median of the fitted women; the features are then standardized.
 
-On {test} women it never saw: AUC {test_auc}, accuracy {test_accuracy} at a threshold of 0.5.
+On {test} women it never saw, who are not in the Pima diabetes cohort: AUC {test_auc}, accuracy
+{test_accuracy} at a threshold of 0.5.
 
 predict adds `predicted`, 1 for diabetes within five years, and `risk`, its probability.
 """
@@ -1355,6 +1360,10 @@ def main() -> None:
         help="where the downloads are kept (default: <out>/downloads)",
     )
     args = parser.parse_args()
+    # An earlier run's files go first: load.py loads every file of a folder, so one this run no
+    # longer writes would be loaded with the rest.
+    for written in ("datasets", "models", "uploads"):
+        shutil.rmtree(args.out / written, ignore_errors=True)
     cache = args.cache or args.out / "downloads"
     team, screening = pima(cache, args.out)
     encounters = hospitals(cache, args.out)
