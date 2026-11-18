@@ -376,7 +376,7 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     jersey.statusOf("GET", "/executions/12/updates") should (be(404) or be(405))
   }
 
-  it should "route an execution's state and its log, beside the routes that take a workflow's id first" in {
+  it should "route an execution's state, its log and its console output, beside the routes that take a workflow's id first" in {
     assume(
       databaseReachable,
       "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
@@ -386,6 +386,8 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     // By an execution's id: each needs a signed-in user.
     jersey.statusOf("GET", "/executions/12/state") shouldBe 401
     jersey.statusOf("GET", "/executions/12/log") shouldBe 401
+    jersey.statusOf("GET", "/executions/12/console") shouldBe 401
+    jersey.statusOf("GET", "/executions/12/console?operatorId=&afterSeq=0&limit=1000") shouldBe 401
     // By a workflow's id, as before: their last segments are none of those.
     jersey.statusOf("GET", "/executions/12/latest") shouldBe 401
     jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
@@ -393,6 +395,7 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     // Read, not written, and of one execution.
     jersey.statusOf("POST", "/executions/12/state") should (be(404) or be(405))
     jersey.statusOf("DELETE", "/executions/12/log") should (be(404) or be(405))
+    jersey.statusOf("POST", "/executions/12/console") should (be(404) or be(405))
     jersey.statusOf("GET", "/executions/12/state/34") should (be(404) or be(405))
   }
 

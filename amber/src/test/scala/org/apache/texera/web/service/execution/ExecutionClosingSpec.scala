@@ -60,7 +60,8 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
       notification = None,
       unitTerminatedAtMs = unitTerminatedAtMs.orElse(terminated.map(_ => nowMs - 1000L)),
       unitTerminationReason = terminated,
-      closing = closing
+      closing = closing,
+      resultsExpiredAtMs = None
     )
 
   private def label(

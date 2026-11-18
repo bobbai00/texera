@@ -20,13 +20,21 @@
 package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{ExecutionLabel, ExecutionLogEntry, ExecutionLogStore}
+import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
+  ConsoleRow,
+  ExecutionLabel,
+  ExecutionLogEntry,
+  ExecutionLogStore
+}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.WorkflowExecutionStatus
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.http.response.execution.{
   ExecutionClosingResponse,
+  ExecutionConsoleMessageResponse,
+  ExecutionConsoleResponse,
   ExecutionLogEntryResponse,
   ExecutionLogResponse,
   ExecutionStateResponse
@@ -34,14 +42,25 @@ import org.apache.texera.web.model.http.response.execution.{
 
 import java.net.URI
 import javax.ws.rs.core.Response
-import javax.ws.rs.{ForbiddenException, InternalServerErrorException, WebApplicationException}
+import javax.ws.rs.{
+  BadRequestException,
+  ForbiddenException,
+  InternalServerErrorException,
+  WebApplicationException
+}
 import scala.util.control.NonFatal
 
+object ExecutionRecordReader {
+
+  /** The most console messages one page holds. */
+  val MaxConsolePage = 5000
+}
+
 /**
-  * Reads what one execution recorded, for a user: what `GET /api/executions/{eid}/state` and
-  * `GET /api/executions/{eid}/log` on the Dashboard service answer. A closed execution's state
-  * is its closing record; an open one's is the label of its log in the lake. No computing unit
-  * is asked, so both answer for a run whose unit is gone.
+  * Reads what one execution recorded, for a user: what `GET /api/executions/{eid}/state`,
+  * `/log` and `/console` on the Dashboard service answer. A closed execution's state is its
+  * closing record; an open one's is the label of its log in the lake. No computing unit is
+  * asked, so each answers for a run whose unit is gone.
   *
   * The caller must have created the execution, or own or have been granted its workflow
   * ([[ExecutionRecords.mayRead]]). Otherwise, and for an execution there is not, the answer is
@@ -49,11 +68,16 @@ import scala.util.control.NonFatal
   *
   * @param label             reads the label of the log at a URI; None when there is no log
   * @param rows              reads the rows of the log at a URI
+  * @param messages          reads a page of the console table at a URI: the first so many
+  *                          messages after a `seq`, of one operator or of all, and whether more
+  *                          follow
   * @param warehousesEnabled whether runs write into per-user warehouses
   */
 class ExecutionRecordReader(
     label: URI => Option[ExecutionLabel] = ExecutionLogStore.label,
     rows: URI => Seq[ExecutionLogEntry] = ExecutionLogStore.read,
+    messages: (URI, Option[String], Long, Int) => (Seq[ConsoleRow], Boolean) =
+      ConsoleMessageStore.read,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled
 ) extends LazyLogging {
 
@@ -149,6 +173,86 @@ class ExecutionRecordReader(
         )
       )
     )
+  }
+
+  /**
+    * A page of the console output execution `eid` stored, for `user` (see
+    * [[ExecutionConsoleResponse]]): the first `limit` messages after message `afterSeq`, of
+    * operator `operatorId` or of all operators (None). A page holds at most
+    * [[ExecutionRecordReader.MaxConsolePage]] messages, whatever `limit` asks for. An execution
+    * whose results have expired holds no console output: its page is empty, and nothing is
+    * read for it.
+    *
+    * @throws ForbiddenException           (403) unless `user` may read the execution
+    * @throws BadRequestException          (400) if `limit` is negative
+    * @throws WebApplicationException      (409) if the console output is in a warehouse this
+    *                                      deployment cannot reach: it is not answered as none
+    * @throws InternalServerErrorException (500) if the lake cannot be read
+    */
+  def console(
+      eid: Long,
+      user: User,
+      operatorId: Option[String],
+      afterSeq: Long,
+      limit: Int
+  ): ExecutionConsoleResponse = {
+    val execution = readable(eid, user)
+    if (limit < 0) {
+      throw new BadRequestException(s"A page holds 0 or more messages, not $limit.")
+    }
+    val (page, more) =
+      if (execution.resultsExpiredAtMs.nonEmpty) (Nil, false)
+      else
+        storedMessages(
+          execution,
+          operatorId,
+          afterSeq,
+          math.min(limit, ExecutionRecordReader.MaxConsolePage)
+        )
+    ExecutionConsoleResponse(
+      eid,
+      page.map(row =>
+        ExecutionConsoleMessageResponse(
+          seq = row.seq,
+          timeMs = row.timeMs,
+          operatorId = row.operatorId,
+          workerId = row.workerId,
+          msgType = row.msgType,
+          source = row.source,
+          title = row.title,
+          message = row.message
+        )
+      ),
+      page.lastOption.fold(afterSeq)(_.seq),
+      more
+    )
+  }
+
+  /** A page of the console table of `execution`, read from the lake, or the 409 or the 500. */
+  private def storedMessages(
+      execution: ExecutionRecord,
+      operatorId: Option[String],
+      afterSeq: Long,
+      limit: Int
+  ): (Seq[ConsoleRow], Boolean) = {
+    if (unavailable(execution)) {
+      throw new WebApplicationException(
+        s"The console output of execution ${execution.eid} is in a warehouse that is no " +
+          "longer available" +
+          execution.warehouse.fold(".")(name =>
+            s": per-user warehouses are disabled in this deployment, and it is in '$name'."
+          ),
+        Response.Status.CONFLICT
+      )
+    }
+    try messages(execution.consoleUri, operatorId, afterSeq, limit)
+    catch {
+      case NonFatal(failure) =>
+        throw new InternalServerErrorException(
+          s"The console output of execution ${execution.eid} could not be read.",
+          failure
+        )
+    }
   }
 
   /** Execution `eid`'s row, or 403 when there is none or `user` may not read it. */
