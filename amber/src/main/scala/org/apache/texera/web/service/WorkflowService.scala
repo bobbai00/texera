@@ -52,7 +52,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.observability.WorkflowMetricsRecorder
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
-import org.apache.texera.web.service.execution.{ExecutionResources, StoredExecutionStart}
+import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
 
@@ -244,15 +244,12 @@ class WorkflowService(
 
   /**
     * What becomes of this service once nobody has used the workflow for the clean-up timeout: the
-    * storage of the run it holds is cleared, and the service leaves the registry and lets go of
-    * every subscription, shutting that run's engine down. A run that has not ended is then
-    * recorded KILLED, as nobody watched it. A service that holds no run clears nothing. The run
-    * is the one this service holds, not the newest of the workflow on its unit, which another
-    * service, or an execution made and not yet started, may own.
+    * service leaves the registry and lets go of every subscription, shutting the engine of the
+    * run it holds down. A run that has not ended is then recorded KILLED, as nobody watched it.
+    * What the run stored stays: a unit drops nothing, and the Dashboard service expires results.
     */
   private[service] def cleanUpAfterIdle(): Unit = {
     val held = Option(executionService.getValue)
-    held.foreach(run => ExecutionResources.clearExecutionResources(run.workflowContext.executionId))
     WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
     unsubscribeAll()
     // Once the run is let go of, as when it is superseded: the kill does not arm the clean-up

@@ -26,7 +26,14 @@ import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.iceberg.exceptions.CommitFailedException
 import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
+import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
+  DocumentFactory,
+  ExecutionPlanStore,
+  ExecutionTables,
+  PlanRecord,
+  VFSURIFactory
+}
 import org.apache.texera.amber.core.storage.result.{OperatorResultMetadata, WorkflowResultStore}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -38,6 +45,7 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{
   ExecutionPlan,
+  GlobalPortIdentity,
   OutputPort,
   PhysicalOp,
   PhysicalPlan,
@@ -126,22 +134,9 @@ import scala.util.Try
   * (the pattern `WorkflowExecutionServiceSpec` establishes: construction does no external work), so
   * the events observed here travel through the production diff handler.
   *
-  * The idle clean-up cases reach `ExecutionResources.clearExecutionResources`, which reaches real
-  * storage, so only part of it is observable in process. Pinned here: which execution the service
-  * clears, the one it holds, and that it deletes exactly that execution's registry rows;
-  * `ExecutionResourcesSpec` owns what clearing an execution does to its documents. Admitted
-  * survivors, listed so the coverage numbers are not mistaken for behaviour:
-  *   - `LargeBinaryManager.deleteByExecution` (the last line). Its injectable overload is
-  *     `private[util]` and the call site uses the one-arg one, so deleting the line, or handing
-  *     it a different execution id, is invisible here. It also issues a REAL S3 delete against
-  *     the configured endpoint on every run of this suite (`http://localhost:9000` by default).
-  *     That is why the fixtures below pin explicit eids in the 941100 range instead of taking the
-  *     `SERIAL`: a fresh `MockTexeraDB` database hands out eid 1, and `objects/1/` is the prefix
-  *     `LargeBinaryManager` shares with its DEFAULT_EXECUTION_ID sentinel — a developer with
-  *     `bin/local-dev.sh up` running would have that prefix recursively deleted for real.
-  *   - the runtime-statistics block, and which arm of `WarehouseReadGuard.skipWhileDisabled`
-  *     either loop takes. The URI columns are NULL in every fixture, so the loop bodies run zero
-  *     times.
+  * The idle clean-up cases pin that the service lets go of the run it holds and records how
+  * that run ended, and that it clears no storage: what a run stored is the Dashboard service's
+  * to expire (`ExecutionExpirySpec`).
   *
   * The superseded-run and idle clean-up cases run on executions of their own, on computing units
   * no other case uses.
@@ -300,16 +295,13 @@ class WorkflowServiceSpec
   /** The unit the executions started by id were created for. */
   private val storedCuid = 9423
 
-  // Executions carry explicit eids rather than the SERIAL's: see the header on
-  // LargeBinaryManager.
+  // Executions carry explicit eids rather than the SERIAL's: the tables the cases make in the
+  // lake are named after them.
 
   /** The superseded-run cases' execution, on `supersedeCuid`. */
   private val supersededEid = 941105
 
-  /**
-    * The execution the idle clean-up case's service holds, on `idleCuid`: older than
-    * `newerIdleEid`, so a clean-up that took the newest execution of the unit would take the other.
-    */
+  /** The execution the idle clean-up cases' service holds, on `idleCuid`. */
   private val heldIdleEid = 941106
 
   /** A newer execution of `testWid` on `idleCuid`, which the service does not hold. */
@@ -829,27 +821,39 @@ class WorkflowServiceSpec
     recorder.record(service.supersedeCurrentRun(replacingEid)) shouldBe empty
   }
 
-  it should "clear the run it holds once idle, not the newest run of the workflow on its unit" in {
-    // The service holds the older of two executions on its unit, as one whose run was made and
-    // not yet started would sit behind a newer one.
+  it should "let go of the run it holds once idle, and leave what the run stored where it is" in {
     val service = new TestWorkflowService(testWid.toLong, idleCuid)
     val held = newExecution(Some(heldIdleEid))
     service.executionService.onNext(held)
     val ownSubscription = new TrackingDisposable
     service.addSubscription(ownSubscription)
-    operatorRowCount(heldIdleEid) shouldBe 2
-    portRowCount(heldIdleEid) shouldBe 2
+    // What the run stored: the result of a port, and its console.
+    val (wid, eid) = (WorkflowIdentity(testWid.toLong), ExecutionIdentity(heldIdleEid.toLong))
+    val result = VFSURIFactory.resultURI(
+      VFSURIFactory.createPortBaseURI(
+        wid,
+        eid,
+        GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("lines"), "main"), PortIdentity())
+      )
+    )
+    DocumentFactory.createDocument(result, Schema().add("line", AttributeType.STRING))
+    val console = ConsoleMessageStore.consoleUri(wid, eid, None)
+    ConsoleMessageStore.create(console)
+    try {
+      val statements = recorder.record(service.cleanUpAfterIdle())
 
-    service.cleanUpAfterIdle()
-
-    operatorRowCount(heldIdleEid) shouldBe 0
-    portRowCount(heldIdleEid) shouldBe 0
-    executionRowCount(heldIdleEid) shouldBe 1
-    operatorRowCount(newerIdleEid) shouldBe 1
-    portRowCount(newerIdleEid) shouldBe 1
-    // and the service lets go of everything, the run it holds included, which never started
-    ownSubscription.isDisposed shouldBe true
-    service.results.unsubscribeCount shouldBe 1
+      // A unit drops nothing: neither a table, nor a row that says where one is.
+      Seq(result, console).foreach { uri =>
+        withClue(s"$uri: ") { ExecutionTables.exists(uri) shouldBe true }
+      }
+      operatorRowCount(heldIdleEid) shouldBe 2
+      portRowCount(heldIdleEid) shouldBe 2
+      executionRowCount(heldIdleEid) shouldBe 1
+      statements.map(_.verb) should not contain "DELETE"
+      // and the service lets go of everything, the run it holds included, which never started
+      ownSubscription.isDisposed shouldBe true
+      service.results.unsubscribeCount shouldBe 1
+    } finally Seq(result, console).foreach(ExecutionTables.drop)
   }
 
   it should "record a run that has not ended as killed once idle, saying that nobody watched it" in {
@@ -896,7 +900,7 @@ class WorkflowServiceSpec
     }
   }
 
-  it should "clear nothing once idle when it holds no run" in {
+  it should "send the database nothing once idle when it holds no run" in {
     val service = new TestWorkflowService(testWid.toLong, idleCuid)
     val ownSubscription = new TrackingDisposable
     service.addSubscription(ownSubscription)

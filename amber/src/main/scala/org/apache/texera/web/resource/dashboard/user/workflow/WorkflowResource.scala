@@ -21,14 +21,7 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionResultUris,
-  WarehouseReadGuard
-}
-import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.auth.util.OwnerAccess
 import org.apache.texera.auth.util.WorkflowAccess
@@ -42,11 +35,10 @@ import org.apache.texera.dao.jooq.generated.tables.daos.{
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos._
 import org.apache.texera.dao.jooq.generated.tables.records.WorkflowRecord
-import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.resource.dashboard.hub.EntityType
 import org.apache.texera.web.resource.dashboard.hub.HubResource.recordCloneAction
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource._
-import org.apache.texera.web.service.execution.ExecutionResources
+import org.apache.texera.web.service.execution.ExecutionExpiry
 import org.jooq.impl.DSL
 import org.jooq.impl.DSL.max
 import org.jooq.{DSLContext, Record10, Result, SelectOnConditionStep, TableField}
@@ -335,7 +327,10 @@ object WorkflowResource {
 
 @Produces(Array(MediaType.APPLICATION_JSON))
 @Path("/workflow")
-class WorkflowResource extends LazyLogging {
+class WorkflowResource(expiry: ExecutionExpiry) {
+
+  // Jersey makes a resource for each request, with the service's own expiry.
+  def this() = this(ExecutionExpiry.forDeployment)
 
   /**
     * This method returns all workflow IDs that the user has access to
@@ -617,7 +612,9 @@ class WorkflowResource extends LazyLogging {
   }
 
   /**
-    * Deletes workflows from the database and cleans up associated resources.
+    * Deletes workflows from the database, with everything their executions keep in the lake
+    * ([[ExecutionExpiry.dropAll]]), which goes before the rows that find it do. An execution
+    * that is still open goes like any other: its unit finds its tables gone, and its run fails.
     *
     * @param workflowIDs The IDs of workflows to delete
     * @param sessionUser Current authenticated user
@@ -643,56 +640,19 @@ class WorkflowResource extends LazyLogging {
         .asScala
         .toList
 
-      // Collect all URIs related to executions for cleanup
-      val uris = eids.flatMap { eid =>
-        val executionId = ExecutionIdentity(eid.longValue())
-
-        // Gather URIs from all execution resources
-        val resultUris = ExecutionResultUris.getResultUrisByExecutionId(executionId)
-        val consoleMessagesUris =
-          WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(executionId)
-        val runtimeStatsUris =
-          WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(executionId).toList
-
-        resultUris ++ consoleMessagesUris ++ runtimeStatsUris
+      // Checked for every workflow before anything goes: a refused request drops no table.
+      for (wid <- workflowIDs.wids) {
+        if (!WorkflowAccess.isOwner(wid, user.getUid)) {
+          throw new BadRequestException("The workflow does not exist.")
+        }
       }
-      // The executions' plan tables, which only their rows locate.
-      val planUris =
-        ExecutionResources.planUrisOf(eids.map(eid => ExecutionIdentity(eid.longValue()))).values
+      eids.foreach(eid => expiry.dropAll(eid.longValue()))
 
       // Delete workflows in a transaction
       context.transaction { _ =>
         for (wid <- workflowIDs.wids) {
-          if (WorkflowAccess.isOwner(wid, user.getUid)) {
-            workflowDao.deleteById(wid)
-          } else {
-            throw new BadRequestException("The workflow does not exist.")
-          }
+          workflowDao.deleteById(wid)
         }
-      }
-
-      // Delete large binaries for each execution belonging to the workflows being
-      // removed. Done after the transaction (like the document cleanup below).
-      eids.foreach(eid => LargeBinaryManager.deleteByExecution(eid.longValue()))
-      ExecutionResources.dropPlanTables(planUris)
-
-      // Clean up document storage. While per-user warehouses are disabled, cleanup must
-      // not reach into them (#6930) — those URIs are skipped.
-      try {
-        uris.filterNot(WarehouseReadGuard.skipWhileDisabled(_)).foreach { uri =>
-          try {
-            val (document, _) = DocumentFactory.openDocument(uri)
-            document.clear()
-          } catch {
-            case e: IllegalArgumentException if e.getMessage.contains("No storage is found") =>
-              logger.warn(s"Storage for URI $uri not found, ignoring: ${e.getMessage}")
-            case NonFatal(e) =>
-              logger.error(s"Failed to clear document for URI $uri", e)
-          }
-        }
-      } catch {
-        case NonFatal(e) =>
-          logger.error("Failed to clean up execution results", e)
       }
     } catch {
       case _: BadRequestException =>

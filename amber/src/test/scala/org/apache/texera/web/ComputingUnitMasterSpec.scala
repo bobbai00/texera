@@ -54,13 +54,6 @@ import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.{MockTexeraDB, SqlServer}
-import org.apache.texera.dao.jooq.generated.Tables.{
-  USER,
-  WORKFLOW,
-  WORKFLOW_EXECUTIONS,
-  WORKFLOW_VERSION
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
 import org.apache.texera.web.resource.dashboard.user.workflow.{
   ExecutionResource,
   WorkflowExecutionsResource
@@ -86,9 +79,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 
 import java.lang.reflect.Proxy
-import java.net.URISyntaxException
 import java.nio.file.{Files, Path}
-import java.sql.Timestamp
 import java.util.concurrent.ConcurrentLinkedQueue
 import javax.servlet.http.{HttpServletRequest, HttpServletResponse}
 import javax.servlet.{DispatcherType, FilterChain, ServletContext, ServletContextEvent}
@@ -114,11 +105,11 @@ class ComputingUnitMasterSpec
   implicit override val patienceConfig: PatienceConfig =
     PatienceConfig(timeout = Span(20, Seconds), interval = Span(100, Millis))
 
-  // ComputingUnitMaster.run schedules the result-cleanup task through AmberRuntime's
-  // process-wide actor system, and only touches `.scheduler`, so a plain ActorSystem is
-  // enough here; AmberRuntime.startActorMaster would additionally bind pekko artery on
-  // 2552 and join a cluster. Preserve and restore the shared reference because amber
-  // suites share one JVM (same approach as WorkflowLifecycleManagerSpec).
+  // ComputingUnitMaster.createAmberRuntime builds a run's client on AmberRuntime's
+  // process-wide actor system, for which a plain ActorSystem is enough here;
+  // AmberRuntime.startActorMaster would additionally bind pekko artery on 2552 and join a
+  // cluster. Preserve and restore the shared reference because amber suites share one JVM
+  // (same approach as WorkflowLifecycleManagerSpec).
   private lazy val testSystem: ActorSystem = ActorSystem("computing-unit-master-spec")
   private var previousActorSystem: AnyRef = _
 
@@ -136,7 +127,6 @@ class ComputingUnitMasterSpec
 
   override protected def afterAll(): Unit = {
     amberRuntimeActorSystemField.set(AmberRuntime, previousActorSystem)
-    // Terminating the system also cancels the recurring cleanup task run() scheduled.
     testSystem.terminate()
     // run() repoints the JVM-wide SqlServer singleton at StorageConfig.jdbcUrl and closes the
     // pool it replaced. Point it back at this suite's embedded database before tearing that down,
@@ -159,6 +149,12 @@ class ComputingUnitMasterSpec
   /** The SqlServer singletons seen either side of the single run() call. */
   private var sqlServerBeforeRun: AnyRef = _
   private var sqlServerAfterRun: AnyRef = _
+
+  /**
+    * What the runtime logged of a task it was asked to schedule while run() had no actor system
+    * to schedule it on: the runtime skips such a task, and says so.
+    */
+  private var skippedSchedulesDuringRun: Seq[String] = Nil
 
   /**
     * The name the server recorded for the connections of the pool run() opened. Read straight
@@ -184,7 +180,13 @@ class ComputingUnitMasterSpec
   private lazy val ranEnvironment: Environment = {
     val environment = newEnvironment("computing-unit-master-spec-run")
     sqlServerBeforeRun = SqlServer.getInstance()
-    master.run(new Configuration(), environment)
+    // With no actor system, whatever run() asked the runtime to schedule is skipped and logged.
+    amberRuntimeActorSystemField.set(AmberRuntime, null)
+    try {
+      skippedSchedulesDuringRun = loggedAt(AmberRuntime.getClass.getName, Level.WARN) {
+        master.run(new Configuration(), environment)
+      }
+    } finally amberRuntimeActorSystemField.set(AmberRuntime, testSystem)
     sqlServerAfterRun = SqlServer.getInstance()
     applicationNameAfterRun = Try(
       SqlServer
@@ -268,58 +270,6 @@ class ComputingUnitMasterSpec
 
   private def loggedAt[T](loggerName: String, level: Level)(body: => T): Seq[String] =
     eventsLoggedAt(loggerName, level)(body).map(_.getFormattedMessage)
-
-  private val masterLoggerName = classOf[ComputingUnitMaster].getName
-
-  /**
-    * The cleanup helpers are private, and in production they are only reached through the
-    * scheduled task (which fires on a day-long interval) or the CLEANUP_ALL_EXECUTION_RESULTS
-    * branch (gated on a load-time val amber's unforked Test config cannot set), so they are
-    * invoked reflectively here.
-    */
-  private def invokeCleanupHelper(
-      name: String,
-      parameterTypes: Seq[Class[_]],
-      args: Seq[AnyRef]
-  ): Unit = {
-    val method = classOf[ComputingUnitMaster].getDeclaredMethod(name, parameterTypes: _*)
-    method.setAccessible(true)
-    try method.invoke(master, args: _*)
-    catch {
-      case invocation: java.lang.reflect.InvocationTargetException => throw invocation.getCause
-    }
-  }
-
-  private def dropCollections(result: String): Unit =
-    invokeCleanupHelper("dropCollections", Seq(classOf[String]), Seq(result))
-
-  private def deleteReplayLog(logLocation: String): Unit =
-    invokeCleanupHelper("deleteReplayLog", Seq(classOf[String]), Seq(logLocation))
-
-  private def recurringCheckExpiredResults(timeToLive: Int): Unit =
-    invokeCleanupHelper(
-      "recurringCheckExpiredResults",
-      Seq(java.lang.Integer.TYPE),
-      Seq(java.lang.Integer.valueOf(timeToLive))
-    )
-
-  private def cleanExecutions(
-      executions: List[WorkflowExecutions],
-      statusChangeFunc: Short => Short
-  ): Unit =
-    invokeCleanupHelper(
-      "cleanExecutions",
-      Seq(classOf[List[_]], classOf[Function1[_, _]]),
-      Seq(executions, statusChangeFunc)
-    )
-
-  private def execution(eid: Int, result: String, logLocation: String): WorkflowExecutions = {
-    val entry = new WorkflowExecutions()
-    entry.setEid(eid)
-    entry.setResult(result)
-    entry.setLogLocation(logLocation)
-    entry
-  }
 
   "parseArgs" should "return no options when the master receives no arguments" in {
     ComputingUnitMaster.parseArgs(Array.empty[String]) shouldBe Map.empty
@@ -685,6 +635,12 @@ class ComputingUnitMasterSpec
     jersey.statusOf("POST", "/execution/12/3/run") shouldBe 404
   }
 
+  it should "schedule no clean-up of what executions stored: a unit drops nothing" in {
+    ranEnvironment
+
+    skippedSchedulesDuringRun shouldBe empty
+  }
+
   it should "have the server end the unit's runs as it stops" in {
     ranEnvironment.lifecycle().getManagedObjects.asScala.collect {
       case managed: JettyManaged => managed.getManaged
@@ -882,241 +838,4 @@ class ComputingUnitMasterSpec
     stub(classOf[HttpServletResponse]) {
       case ("getStatus", _) => java.lang.Integer.valueOf(status)
     }
-
-  "dropCollections" should "skip an execution whose result pointer is empty" in {
-    // Without the early return an empty string parses to a missing node and the
-    // "results" lookup would blow up into a cleanup-failed warning.
-    loggedAt(masterLoggerName, Level.WARN)(dropCollections("")) shouldBe empty
-    loggedAt(masterLoggerName, Level.WARN)(dropCollections(null)) shouldBe empty
-  }
-
-  it should "accept an iceberg result pointer without warning" in {
-    val result =
-      """{"results":[{"storageType":"iceberg","storageKey":"k1"},
-        |{"storageType":"iceberg","storageKey":"k2"}]}""".stripMargin
-
-    loggedAt(masterLoggerName, Level.WARN)(dropCollections(result)) shouldBe empty
-  }
-
-  it should "warn instead of propagating when the result pointer is unparsable" in {
-    val events = eventsLoggedAt(masterLoggerName, Level.WARN)(dropCollections("{not json"))
-
-    events.map(_.getFormattedMessage) shouldBe Seq("result collection cleanup failed.")
-    // The cause is asserted, not just the text. "result collection cleanup failed." names
-    // neither the execution nor the pointer nor the failure, so the attached stack trace is
-    // the entire diagnostic content of this line -- and dropping the second argument (the
-    // one-arg Logger.warn overload) leaves the message identical and the operator blind.
-    events.head.getThrowableProxy should not be null
-  }
-
-  it should "warn instead of propagating on an unsupported storage type" in {
-    // The unsupported entry is the last one, so a loop that stopped early would also
-    // fail this expectation rather than silently reporting success.
-    val result =
-      """{"results":[{"storageType":"iceberg","storageKey":"k1"},
-        |{"storageType":"mongodb","storageKey":"k2"}]}""".stripMargin
-
-    val messages = loggedAt(masterLoggerName, Level.WARN)(dropCollections(result))
-
-    messages shouldBe Seq("result collection cleanup failed.")
-  }
-
-  it should "stay silent about an unparsable pointer once warn logging is switched off" in {
-    // A failed cleanup is advisory, so it has to sit at warn and vanish completely when
-    // TEXERA_SERVICE_LOG_LEVEL is raised to error; the warn-level tests above pass just as
-    // well if the catch block is promoted to logger.error, which would keep shouting at a
-    // deployment that asked for quiet. The swallow still has to hold with logging off.
-    val events = eventsLoggedAt(masterLoggerName, Level.ERROR) {
-      noException should be thrownBy dropCollections("{not json")
-    }
-
-    events shouldBe empty
-  }
-
-  "deleteReplayLog" should "skip an execution with no log location" in {
-    // Without the early return the empty location becomes a scheme-less URI and the
-    // storage lookup would blow up into a delete-failed warning.
-    loggedAt(masterLoggerName, Level.WARN)(deleteReplayLog("")) shouldBe empty
-    loggedAt(masterLoggerName, Level.WARN)(deleteReplayLog(null)) shouldBe empty
-  }
-
-  it should "delete the log folder the location points at" in {
-    val logFolder: Path = Files.createTempDirectory("computing-unit-master-spec-log")
-    Files.createFile(logFolder.resolve("0.log"))
-
-    val messages =
-      loggedAt(masterLoggerName, Level.WARN)(deleteReplayLog(logFolder.toUri.toString))
-
-    messages shouldBe empty
-    Files.exists(logFolder) shouldBe false
-  }
-
-  it should "warn instead of propagating when the log location is unusable" in {
-    // A scheme-less location cannot be resolved to any record storage.
-    val events = eventsLoggedAt(masterLoggerName, Level.WARN)(deleteReplayLog("no-scheme/logs"))
-
-    events.map(_.getFormattedMessage) shouldBe Seq("failed to delete log at no-scheme/logs")
-    // As in dropCollections, the cause is asserted and not merely the text: the message says
-    // which location failed but nothing about why, so dropping the throwable argument would
-    // leave an advisory line that cannot be acted on.
-    events.head.getThrowableProxy should not be null
-  }
-
-  it should "propagate a syntactically invalid log location instead of warning it" in {
-    // Documented, NOT endorsed. `new URI(logLocation)` sits outside the try, so this is the
-    // one failure mode deleteReplayLog does not swallow: the checked URISyntaxException
-    // travels out through cleanExecutions' foreach and aborts the cleanup of every remaining
-    // execution in the batch, which reads as an oversight next to the advisory warn every
-    // other failure here gets. Pinned because it is invisible otherwise -- the four other
-    // inputs this suite uses are all syntactically valid -- and because a fix should be a
-    // deliberate change to this test, not a silent one. `new URI` rejects the space at index 3.
-    an[URISyntaxException] should be thrownBy deleteReplayLog("has space/logs")
-  }
-
-  it should "stay silent about an unusable location once warn logging is switched off" in {
-    // Same contract as the dropCollections case: the delete failure is advisory, so raising
-    // the service log level to error must silence it outright rather than merely reword it.
-    val events = eventsLoggedAt(masterLoggerName, Level.ERROR) {
-      noException should be thrownBy deleteReplayLog("no-scheme/logs")
-    }
-
-    events shouldBe empty
-  }
-
-  "cleanExecutions" should "clean every execution it is handed" in {
-    val executions = List(
-      execution(eid = 90001, result = "{not json", logLocation = "no-scheme/first"),
-      execution(eid = 90002, result = "{not json", logLocation = "no-scheme/second")
-    )
-
-    val messages =
-      loggedAt(masterLoggerName, Level.WARN)(cleanExecutions(executions, identity))
-
-    // Two entries, so a fold that stopped after the head would show up here.
-    messages shouldBe Seq(
-      "result collection cleanup failed.",
-      "failed to delete log at no-scheme/first",
-      "result collection cleanup failed.",
-      "failed to delete log at no-scheme/second"
-    )
-  }
-
-  it should "clear the stored pointers and rewrite the status of the persisted execution" in {
-    // ExecutionsMetadataPersistService swallows every throwable, so with no row behind the
-    // eid the update step is indistinguishable from a no-op; only a real row shows that the
-    // pointers are cleared and the status is run through statusChangeFunc.
-    val eid = seedExecution(
-      result = """{"results":[]}""",
-      logLocation = "file:///seeded-log",
-      status = 3
-    )
-
-    cleanExecutions(
-      // Empty pointers on the POJO: the update step reads the row, not the POJO, and this
-      // keeps dropCollections/deleteReplayLog out of the way of what is being asserted.
-      List(execution(eid.intValue(), result = "", logLocation = "")),
-      statusByte => (statusByte + 1).toShort
-    )
-
-    val updated = storedExecution(eid)
-    updated.getResult shouldBe ""
-    updated.getLogLocation shouldBe null
-    updated.getStatus shouldBe 4.toShort
-  }
-
-  /**
-    * Seeds one workflow_executions row plus the user/workflow/version parents its foreign
-    * keys require, and returns the generated eid. The execution is closed, as `status`,
-    * `endedAgeMillis` ago, which stays far below result-cleanup.ttl-in-seconds (a day), so the
-    * cleanup task run() scheduled never selects these rows and cannot clear one behind a
-    * test's back.
-    */
-  private def seedExecution(
-      result: String,
-      logLocation: String,
-      status: Short,
-      endedAgeMillis: Long = 0
-  ): Integer = {
-    val context = getDSLContext
-    val now = System.currentTimeMillis()
-    // The user email is UNIQUE, so every seeded row needs its own parents.
-    val tag = "computing-unit-master-spec-" + java.util.UUID.randomUUID()
-    val uid = context
-      .insertInto(USER)
-      .set(USER.NAME, "computing-unit-master-spec")
-      .set(USER.EMAIL, tag + "@example.com")
-      .returning(USER.UID)
-      .fetchOne()
-      .getUid
-    val wid = context
-      .insertInto(WORKFLOW)
-      .set(WORKFLOW.NAME, "computing-unit-master-spec")
-      .set(WORKFLOW.CONTENT, "{}")
-      .returning(WORKFLOW.WID)
-      .fetchOne()
-      .getWid
-    val vid = context
-      .insertInto(WORKFLOW_VERSION)
-      .set(WORKFLOW_VERSION.WID, wid)
-      .set(WORKFLOW_VERSION.CONTENT, "{}")
-      .returning(WORKFLOW_VERSION.VID)
-      .fetchOne()
-      .getVid
-    context
-      .insertInto(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.VID, vid)
-      .set(WORKFLOW_EXECUTIONS.UID, uid)
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
-      .set(WORKFLOW_EXECUTIONS.RESULT, result)
-      .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation)
-      .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "computing-unit-master-spec")
-      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(now - endedAgeMillis))
-      .set(WORKFLOW_EXECUTIONS.OUTCOME, java.lang.Short.valueOf(status))
-      .set(WORKFLOW_EXECUTIONS.ENDED_AT, new Timestamp(now - endedAgeMillis))
-      .returning(WORKFLOW_EXECUTIONS.EID)
-      .fetchOne()
-      .getEid
-  }
-
-  private def storedExecution(eid: Integer): WorkflowExecutions =
-    getDSLContext
-      .selectFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(eid))
-      .fetchOneInto(classOf[WorkflowExecutions])
-
-  "recurringCheckExpiredResults" should "clean the executions past the time to live without touching their status" in {
-    val eid = seedExecution(
-      result = """{"results":[]}""",
-      logLocation = "file:///seeded-recurring-log",
-      status = 3,
-      endedAgeMillis = 10000
-    )
-
-    // A time to live of zero makes this row expired for the call under test while leaving it
-    // well inside the day-long window the task run() scheduled uses, so the two can never
-    // select the same row and the background task cannot make this assertion pass.
-    recurringCheckExpiredResults(timeToLive = 0)
-
-    val updated = storedExecution(eid)
-    updated.getResult shouldBe ""
-    updated.getLogLocation shouldBe null
-    // The recurring path passes the status through unchanged, unlike the post-restart path,
-    // which flips anything incomplete to FAILED.
-    updated.getStatus shouldBe 3.toShort
-  }
-
-  it should "leave an execution that is still inside the time to live alone" in {
-    val eid = seedExecution(
-      result = """{"results":[]}""",
-      logLocation = "file:///seeded-fresh-log",
-      status = 3,
-      endedAgeMillis = 10000
-    )
-
-    recurringCheckExpiredResults(timeToLive = 3600)
-
-    val untouched = storedExecution(eid)
-    untouched.getResult shouldBe """{"results":[]}"""
-    untouched.getLogLocation shouldBe "file:///seeded-fresh-log"
-  }
 }

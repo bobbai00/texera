@@ -33,10 +33,22 @@ import java.net.URI
   * ids and its warehouse name ([[ownTables]]), and the result and the state of each output port
   * where its stored plan says the port is stored ([[portTables]]).
   *
+  * An execution with no stored plan names no port, so its tables are then found by their names
+  * ([[dropNamed]]): one made before plans were stored, or one whose plan is gone.
+  *
   * As in the stores, a table that is not there is an answer, and a catalog or an object store
   * that cannot answer is thrown.
   */
 object ExecutionTables {
+
+  /** The kinds of table that hold what a run produced: its results, their states, its console. */
+  val ProducedKinds: Seq[VFSResourceType.Value] =
+    Seq(VFSResourceType.RESULT, VFSResourceType.STATE, VFSResourceType.CONSOLE_MESSAGES)
+
+  /** Every kind of table an execution keeps. */
+  val AllKinds: Seq[VFSResourceType.Value] =
+    ProducedKinds ++
+      Seq(VFSResourceType.RUNTIME_STATISTICS, VFSResourceType.EXECUTION_LOG, VFSResourceType.PLAN)
 
   /**
     * The plan, log, statistics and console table of execution `eid` of workflow `wid`, which
@@ -90,6 +102,31 @@ object ExecutionTables {
         tables
       }
   }
+
+  /** Whether there is a table at `uri`. */
+  def exists(uri: URI): Boolean = DocumentFactory.icebergTableOf(uri).isDefined
+
+  /**
+    * Drops the table at `uri`, with its rows.
+    *
+    * @return false when there was no such table
+    */
+  def drop(uri: URI): Boolean = DocumentFactory.dropTable(uri)
+
+  /**
+    * Drops the tables of execution `eid` of workflow `wid` that are of one of `kinds`, in
+    * `warehouse` (None: the default), going by their names: every table of an execution is
+    * named after its workflow and the execution. This finds a table that no plan names, and
+    * lists the whole namespace of each kind to do so.
+    *
+    * @return the names of the tables dropped
+    */
+  def dropNamed(
+      wid: WorkflowIdentity,
+      eid: ExecutionIdentity,
+      warehouse: Option[String],
+      kinds: Seq[VFSResourceType.Value]
+  ): Seq[String] = kinds.flatMap(DocumentFactory.dropTablesOf(wid, eid, warehouse, _))
 
   /**
     * Whether `port` is output port `portId` of logical operator `operatorId` as the workflow's

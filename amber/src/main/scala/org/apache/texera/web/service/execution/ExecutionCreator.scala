@@ -189,8 +189,8 @@ final class WorkflowNotCompiled(
   *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
   *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
   *     is replaced like any other. Then the results of its closed executions on the unit that a
-  *     later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
-  *     new execution replaces none until a unit runs it.
+  *     later one has replaced are expired ([[ExecutionExpiry.expireReplaced]]). The new
+  *     execution replaces none until a unit runs it, which the closing job finds.
   *
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
   * as `{"code", "message"}`. One that fails once its row exists closes the row itself
@@ -208,6 +208,7 @@ final class WorkflowNotCompiled(
   * @param background        runs what a create leaves to be done after it has answered
   * @param closer            closes the earlier executions a create finds ended
   * @param compileDeadline   how long the compiling service may take to answer a plan
+  * @param expiry            expires the results of the earlier executions a later one replaced
   */
 class ExecutionCreator(
     compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
@@ -217,12 +218,13 @@ class ExecutionCreator(
     costHints: CostHintsLoader = new CostHintsLoader(),
     writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan,
     background: Executor = ExecutionCreator.daemonThreads(
-      "execution-clearing",
+      "execution-replacing",
       threads = 1,
       waiting = new LinkedBlockingQueue[Runnable]()
     ),
     closer: ExecutionCloser = new ExecutionCloser(),
-    compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline
+    compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
+    expiry: ExecutionExpiry = ExecutionExpiry.forDeployment
 ) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, MaxColumnLength}
 
@@ -329,7 +331,7 @@ class ExecutionCreator(
     }
     background.execute(() => {
       closeEndedBefore(eid, wid, checked.computingUnitId)
-      ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
+      expiry.expireReplaced(wid.id, checked.computingUnitId, eid.id)
     })
     CreateExecutionResponse(eid.id, planUri.toString)
   }

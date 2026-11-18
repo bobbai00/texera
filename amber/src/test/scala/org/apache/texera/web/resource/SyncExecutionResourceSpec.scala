@@ -101,6 +101,7 @@ import org.apache.texera.web.model.websocket.event.WorkflowStateEvent
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
   ExecutionCreator,
+  ExecutionExpiry,
   FixtureCompilingService
 }
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
@@ -1126,7 +1127,9 @@ class SyncExecutionResourceSpec
         replayLogRoot = None,
         warehousesEnabled = false,
         costHints = NoHints,
-        background = _.run()
+        background = _.run(),
+        // No large binary is deleted for what a create finds replaced.
+        expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
       )
 
   private def syncUser(uid: Int = testUid): SessionUser = {

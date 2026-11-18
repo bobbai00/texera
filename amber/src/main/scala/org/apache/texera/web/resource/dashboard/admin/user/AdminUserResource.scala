@@ -31,6 +31,7 @@ import org.apache.texera.web.resource.GmailResource.sendEmail
 import org.apache.texera.web.resource.dashboard.admin.user.AdminUserResource.userDao
 import org.apache.texera.web.resource.dashboard.user.dataset.utils.DatasetStatisticsUtils.getUserCreatedDatasets
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource._
+import org.apache.texera.web.service.execution.ExecutionExpiry
 
 import java.util
 import java.util.UUID
@@ -63,7 +64,10 @@ object AdminUserResource {
 
 @Path("/admin/user")
 @RolesAllowed(Array("ADMIN"))
-class AdminUserResource {
+class AdminUserResource(expiry: ExecutionExpiry) {
+
+  // Jersey makes a resource for each request, with the service's own expiry.
+  def this() = this(ExecutionExpiry.forDeployment)
 
   /**
     * This method returns the list of users
@@ -198,6 +202,6 @@ class AdminUserResource {
   @DELETE
   @Path("/deleteCollection/{eid}")
   def deleteCollection(@PathParam("eid") eid: Integer): Unit = {
-    deleteExecutionCollection(eid)
+    deleteExecutionCollection(eid, expiry)
   }
 }

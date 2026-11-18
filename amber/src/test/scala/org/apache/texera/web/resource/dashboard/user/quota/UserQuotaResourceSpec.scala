@@ -19,8 +19,21 @@
 
 package org.apache.texera.web.resource.dashboard.user.quota
 
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionPlanStore,
+  ExecutionTables,
+  PlanRecord,
+  VFSURIFactory
+}
+import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  PhysicalOpIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -43,11 +56,14 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowUserAccess,
   WorkflowVersion
 }
+import org.apache.texera.web.service.execution.ExecutionExpiry
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 
+import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters._
 import javax.ws.rs.WebApplicationException
 
@@ -67,7 +83,16 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
   private var testUser: User = _
   private var testWorkflow: Workflow = _
   private var testVersion: WorkflowVersion = _
-  private val resource = new UserQuotaResource
+
+  /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
+  private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
+
+  /** An expiry whose lake calls are the stores', and which deletes no large binary. */
+  private val expiry = new ExecutionExpiry(
+    warehousesEnabled = false,
+    deleteBinaries = eid => binariesDeletedFor.add(eid)
+  )
+  private val resource = new UserQuotaResource(expiry)
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
@@ -380,23 +405,23 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
 
   // ─── deleteExecutionCollection / deleteCollection ──────────────────────────
 
-  "deleteExecutionCollection" should "delete the execution row from WORKFLOW_EXECUTIONS" in {
-    resetFixtures()
+  /** An execution that is closed, as one that a delete takes is. */
+  private def insertClosedExecution(): WorkflowExecutions = {
     val execution = insertExecution()
-
-    UserQuotaResource.deleteExecutionCollection(execution.getEid)
-
-    assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, Short.box(3.toShort))
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, new Timestamp(System.currentTimeMillis()))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
+      .execute()
+    execution
   }
 
-  it should "drop the execution's plan table" in {
-    resetFixtures()
-    val execution = insertExecution()
-    val planUri = ExecutionPlanStore.planUri(
-      WorkflowIdentity(testWid.toLong),
-      ExecutionIdentity(execution.getEid.longValue()),
-      None
-    )
+  /** Gives `execution` a plan table and the result table of a port, and returns them. */
+  private def storeTablesOf(execution: WorkflowExecutions): Seq[URI] = {
+    val (wid, eid) =
+      (WorkflowIdentity(testWid.toLong), ExecutionIdentity(execution.getEid.longValue()))
+    val planUri = ExecutionPlanStore.planUri(wid, eid, None)
     ExecutionPlanStore.writePlan(
       planUri,
       PlanRecord(
@@ -408,22 +433,77 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
       "{}"
     )
     ExecutionPlanStore.claimStart(planUri)
+    val result = VFSURIFactory.resultURI(
+      VFSURIFactory.createPortBaseURI(
+        wid,
+        eid,
+        GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("scan"), "main"), PortIdentity())
+      )
+    )
+    DocumentFactory.createDocument(result, Schema().add("line", AttributeType.STRING))
+    Seq(planUri, result)
+  }
 
+  "deleteExecutionCollection" should "delete the execution row from WORKFLOW_EXECUTIONS" in {
+    resetFixtures()
+    val execution = insertClosedExecution()
+
+    UserQuotaResource.deleteExecutionCollection(execution.getEid, expiry)
+
+    assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
+  }
+
+  it should "drop every table of the execution, with its large binaries" in {
+    resetFixtures()
+    val execution = insertClosedExecution()
+    val tables = storeTablesOf(execution)
+    binariesDeletedFor.clear()
+
+    UserQuotaResource.deleteExecutionCollection(execution.getEid, expiry)
+
+    tables.foreach(uri => assert(!ExecutionTables.exists(uri), uri))
+    assert(binariesDeletedFor.asScala.toSeq == Seq(execution.getEid.longValue()))
+  }
+
+  it should "refuse an execution that is still open with 409, and drop nothing" in {
+    resetFixtures()
+    val execution = insertExecution()
+    val tables = storeTablesOf(execution)
+    binariesDeletedFor.clear()
     try {
-      UserQuotaResource.deleteExecutionCollection(execution.getEid)
+      val refused = intercept[WebApplicationException] {
+        UserQuotaResource.deleteExecutionCollection(execution.getEid, expiry)
+      }
 
-      intercept[NoStoredPlanException](ExecutionPlanStore.readPlan(planUri))
-    } finally ExecutionPlanStore.drop(planUri)
+      assert(refused.getResponse.getStatus == 409)
+      assert(refused.getMessage == s"execution ${execution.getEid} is still open; kill it first")
+      assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) != null)
+      tables.foreach(uri => assert(ExecutionTables.exists(uri), uri))
+      assert(binariesDeletedFor.isEmpty)
+    } finally expiry.dropAll(execution.getEid.longValue())
   }
 
   "deleteCollection (endpoint)" should "delete the execution row for a caller with access" in {
     resetFixtures()
     insertWriteAccess()
-    val execution = insertExecution()
+    val execution = insertClosedExecution()
 
     resource.deleteCollection(execution.getEid, new SessionUser(testUser))
 
     assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
+  }
+
+  it should "refuse an execution that is still open with 409" in {
+    resetFixtures()
+    insertWriteAccess()
+    val execution = insertExecution()
+
+    val refused = intercept[WebApplicationException] {
+      resource.deleteCollection(execution.getEid, new SessionUser(testUser))
+    }
+
+    assert(refused.getResponse.getStatus == 409)
+    assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) != null)
   }
 
   it should "reject a caller who has mistaken the eid" in {

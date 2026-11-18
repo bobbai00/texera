@@ -24,15 +24,17 @@ import org.apache.pekko.serialization.SerializationExtension
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
 import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
   DocumentFactory,
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
   ExecutionPlanStore,
-  NoStoredPlanException,
+  ExecutionTables,
   PlanRecord,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
+  VFSURIFactory,
   WarehouseUnavailableException
 }
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
@@ -46,7 +48,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, SessionUser}
-import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder, WorkflowExecutionStatus}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
@@ -81,7 +82,7 @@ import org.apache.texera.amber.engine.common.storage.VFSRecordStorage
 import org.apache.texera.web.model.http.request.result.{OperatorExportInfo, ResultExportRequest}
 import org.apache.texera.web.model.http.response.result.ResultExportResponse
 import org.apache.texera.web.service.ExecutionResultService
-import org.apache.texera.web.service.execution.OpenExecutionStatuses
+import org.apache.texera.web.service.execution.{ExecutionExpiry, OpenExecutionStatuses}
 import org.jose4j.jwt.JwtClaims
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, PrivateMethodTester}
@@ -103,6 +104,7 @@ import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue, TimeUnit}
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.jdk.CollectionConverters._
 
 class WorkflowExecutionsResourceSpec
     extends AnyFlatSpec
@@ -476,77 +478,6 @@ class WorkflowExecutionsResourceSpec
     )
   }
 
-  // ─── new: getExpiredExecutionsWithResultOrLog ─────────────────────────────
-
-  "getExpiredExecutionsWithResultOrLog" should "match the executions that ended before the time to live and have a result" in {
-    val expired = insertExecution(
-      name = "expired-with-result",
-      result = "some-result",
-      startOffsetMillis = TimeUnit.SECONDS.toMillis(180),
-      endedOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
-    )
-    // Ended within the time to live, although it was created before it → must not match.
-    val fresh = insertExecution(
-      name = "fresh",
-      result = "some-result",
-      startOffsetMillis = TimeUnit.SECONDS.toMillis(180),
-      endedOffsetMillis = Some(0L)
-    )
-    // Ended long ago but empty result+log → must not match.
-    val empty = insertExecution(
-      name = "stale-but-empty",
-      startOffsetMillis = TimeUnit.SECONDS.toMillis(180),
-      endedOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
-    )
-
-    val matched = WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60)
-
-    val eids = matched.map(_.getEid).toSet
-    assert(eids.contains(expired.getEid))
-    assert(!eids.contains(fresh.getEid))
-    assert(!eids.contains(empty.getEid))
-    assert(matched.forall(e => e.getResult.nonEmpty || Option(e.getLogLocation).exists(_.nonEmpty)))
-  }
-
-  it should "match an execution that ended before the time to live and has a log_location" in {
-    val expired = insertExecution(
-      name = "log-stale",
-      logLocation = "file:///tmp/log",
-      endedOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
-    )
-    val fresh = insertExecution(
-      name = "log-fresh",
-      logLocation = "file:///tmp/log-2",
-      endedOffsetMillis = Some(0L)
-    )
-
-    val eids =
-      WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60).map(_.getEid).toSet
-    assert(eids.contains(expired.getEid))
-    assert(!eids.contains(fresh.getEid))
-  }
-
-  // Its run may be going on, whatever status a unit last wrote into the row.
-  it should "never match an open execution, however long ago it was created" in {
-    val open = insertExecution(
-      name = "open-for-days",
-      result = "some-result",
-      logLocation = "file:///tmp/log-3",
-      status = WorkflowExecutionStatus.Completed.toByte,
-      startOffsetMillis = TimeUnit.DAYS.toMillis(3)
-    )
-
-    val eids =
-      WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60).map(_.getEid).toSet
-    assert(!eids.contains(open.getEid))
-    assert(
-      !WorkflowExecutionsResource
-        .getExpiredExecutionsWithResultOrLog(-1)
-        .map(_.getEid)
-        .contains(open.getEid)
-    )
-  }
-
   // ─── new: insertOperatorExecutions ────────────────────────────────────────
 
   "insertOperatorExecutions" should "insert one OPERATOR_EXECUTIONS row" in {
@@ -720,22 +651,20 @@ class WorkflowExecutionsResourceSpec
     assert(consoleRows == 0)
   }
 
-  // ─── new: removeAllExecutionFiles (DB delete branch) ──────────────────────
+  // ─── removeAllExecutionFiles ──────────────────────────────────────────────
 
-  "removeAllExecutionFiles" should "delete the listed executions from WORKFLOW_EXECUTIONS" in {
-    val a = insertExecution()
-    val b = insertExecution()
-    // Distractor that should survive.
-    val survivor = insertExecution()
+  /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
+  private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
 
-    WorkflowExecutionsResource.removeAllExecutionFiles(Array(a.getEid, b.getEid))
+  /** An expiry whose lake calls are the stores', and which deletes no large binary. */
+  private val expiry = new ExecutionExpiry(
+    warehousesEnabled = false,
+    deleteBinaries = eid => binariesDeletedFor.add(eid)
+  )
 
-    val survivors = workflowExecutionsDao.findAll()
-    val survivorEids = survivors.toArray.map(_.asInstanceOf[WorkflowExecutions].getEid).toSet
-    assert(!survivorEids.contains(a.getEid))
-    assert(!survivorEids.contains(b.getEid))
-    assert(survivorEids.contains(survivor.getEid))
-  }
+  /** An execution that is closed, as one that a delete takes is. */
+  private def closedExecution(whid: Integer = null): WorkflowExecutions =
+    insertExecution(endedOffsetMillis = Some(0L), whid = whid)
 
   /** Writes a plan table for `execution`, where its row says the plan is, and returns its URI. */
   private def storePlanOf(execution: WorkflowExecutions, warehouse: Option[String] = None): URI = {
@@ -757,33 +686,120 @@ class WorkflowExecutionsResourceSpec
     uri
   }
 
-  private def hasPlanTable(uri: URI): Boolean =
-    try {
-      ExecutionPlanStore.readPlan(uri)
-      true
-    } catch {
-      case _: NoStoredPlanException => false
-    }
-
-  it should "drop the plan tables of the executions it removes, and no other's" in {
-    val removed = insertExecution()
-    val claimed = insertExecution()
-    val kept = insertExecution()
-    val removedPlan = storePlanOf(removed)
-    val claimedPlan = storePlanOf(claimed)
-    ExecutionPlanStore.claimStart(claimedPlan)
-    val keptPlan = storePlanOf(kept)
-    try {
-      WorkflowExecutionsResource.removeAllExecutionFiles(Array(removed.getEid, claimed.getEid))
-
-      assert(!hasPlanTable(removedPlan))
-      assert(!hasPlanTable(claimedPlan))
-      assert(hasPlanTable(keptPlan))
-    } finally ExecutionPlanStore.drop(keptPlan)
+  /**
+    * Gives `execution` a table of each kind a run leaves: its plan, its log, its statistics,
+    * its console, and the result and the state of a port. Returns them.
+    */
+  private def storeTablesOf(execution: WorkflowExecutions): Seq[URI] = {
+    val (wid, eid) =
+      (WorkflowIdentity(testWorkflowWid.toLong), ExecutionIdentity(execution.getEid.longValue()))
+    val port = VFSURIFactory.createPortBaseURI(
+      wid,
+      eid,
+      GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("scan"), "main"), PortIdentity())
+    )
+    val log = ExecutionLogStore.logUri(wid, eid, None)
+    ExecutionLogStore.create(log, System.currentTimeMillis(), 30000L)
+    val statistics = RuntimeStatisticsStore.statisticsUri(wid, eid, None)
+    RuntimeStatisticsStore.create(statistics)
+    val console = ConsoleMessageStore.consoleUri(wid, eid, None)
+    ConsoleMessageStore.create(console)
+    val ofPort = Seq(VFSURIFactory.resultURI(port), VFSURIFactory.stateURI(port))
+    ofPort.foreach(DocumentFactory.createDocument(_, Schema().add("line", AttributeType.STRING)))
+    Seq(storePlanOf(execution), log, statistics, console) ++ ofPort
   }
 
-  it should "leave the plan table of an execution in a per-user warehouse alone while those are disabled" in {
-    assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
+  private def hasTable(uri: URI): Boolean = ExecutionTables.exists(uri)
+
+  private def hasRow(execution: WorkflowExecutions): Boolean =
+    workflowExecutionsDao.fetchOneByEid(execution.getEid) != null
+
+  "removeAllExecutionFiles" should "delete the listed executions from WORKFLOW_EXECUTIONS" in {
+    val a = closedExecution()
+    val b = closedExecution()
+    // Distractor that should survive.
+    val survivor = closedExecution()
+
+    WorkflowExecutionsResource.removeAllExecutionFiles(Array(a.getEid, b.getEid, a.getEid), expiry)
+
+    assert(!hasRow(a))
+    assert(!hasRow(b))
+    assert(hasRow(survivor))
+  }
+
+  it should "drop every table of the executions it removes, with their large binaries, and no other's" in {
+    val removed = closedExecution()
+    val claimed = closedExecution()
+    val kept = closedExecution()
+    val removedTables = storeTablesOf(removed) ++ storeTablesOf(claimed)
+    ExecutionPlanStore.claimStart(removedTables.head)
+    val keptTables = storeTablesOf(kept)
+    binariesDeletedFor.clear()
+    try {
+      WorkflowExecutionsResource.removeAllExecutionFiles(
+        Array(removed.getEid, claimed.getEid),
+        expiry
+      )
+
+      removedTables.foreach(uri => assert(!hasTable(uri), uri))
+      keptTables.foreach(uri => assert(hasTable(uri), uri))
+      assert(
+        binariesDeletedFor.asScala.toSeq ==
+          Seq(removed.getEid.longValue(), claimed.getEid.longValue())
+      )
+    } finally expiry.dropAll(kept.getEid.longValue())
+  }
+
+  it should "refuse to delete an execution that is still open, with 409, and delete nothing" in {
+    val closed = closedExecution()
+    val open = insertExecution()
+    val tables = storeTablesOf(closed) ++ storeTablesOf(open)
+    binariesDeletedFor.clear()
+    try {
+      val refused = intercept[WebApplicationException] {
+        WorkflowExecutionsResource.removeAllExecutionFiles(
+          Array(closed.getEid, open.getEid),
+          expiry
+        )
+      }
+
+      assert(refused.getResponse.getStatus == 409)
+      assert(refused.getMessage == s"execution ${open.getEid} is still open; kill it first")
+      tables.foreach(uri => assert(hasTable(uri), uri))
+      assert(hasRow(closed))
+      assert(hasRow(open))
+      assert(binariesDeletedFor.isEmpty)
+    } finally Seq(closed, open).foreach(execution => expiry.dropAll(execution.getEid.longValue()))
+  }
+
+  it should "keep the row of an execution whose tables could not be dropped, to find them by" in {
+    val lakeDown = new IllegalStateException("the lake is out of reach")
+    val failing =
+      new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => throw lakeDown)
+    val first = closedExecution()
+    val second = closedExecution()
+
+    val failure = intercept[IllegalStateException] {
+      WorkflowExecutionsResource.removeAllExecutionFiles(
+        Array(first.getEid, second.getEid),
+        failing
+      )
+    }
+
+    assert(failure eq lakeDown)
+    assert(hasRow(first))
+    assert(hasRow(second))
+  }
+
+  it should "pass over an id that names no execution" in {
+    val execution = closedExecution()
+
+    WorkflowExecutionsResource.removeAllExecutionFiles(Array(execution.getEid, 987654321), expiry)
+
+    assert(!hasRow(execution))
+  }
+
+  it should "leave the tables of an execution in a per-user warehouse alone while those are disabled" in {
     val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
     warehouse.setUid(testUser.getUid)
     warehouse.setName("plan-drop-warehouse")
@@ -791,14 +807,14 @@ class WorkflowExecutionsResourceSpec
     warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
     warehouse.setFlavor(UserWarehouseFlavorEnum.local)
     warehouse.store()
-    val execution = insertExecution(whid = warehouse.getWhid)
+    val execution = closedExecution(whid = warehouse.getWhid)
     // Under any catalog but the REST one, a warehouse's URI names the same table as the default's.
     val planUri = storePlanOf(execution, Some(warehouse.getLakekeeperWarehouseName))
     try {
-      WorkflowExecutionsResource.removeAllExecutionFiles(Array(execution.getEid))
+      WorkflowExecutionsResource.removeAllExecutionFiles(Array(execution.getEid), expiry)
 
-      assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
-      assert(hasPlanTable(planUri))
+      assert(!hasRow(execution))
+      assert(hasTable(planUri))
     } finally ExecutionPlanStore.drop(planUri)
   }
 
@@ -1847,16 +1863,24 @@ class WorkflowExecutionsResourceSpec
     assert(workflowExecutionsDao.fetchOneByEid(exec.getEid).getName == "new-name")
   }
 
-  "groupDeleteExecutionsOfWorkflow" should "delete the execution rows" in {
+  // Deleting is `removeAllExecutionFiles`, whose cases are above; the route is asked for an
+  // execution it refuses, so that nothing is dropped through the service's own expiry.
+  "groupDeleteExecutionsOfWorkflow" should "refuse an execution that is still open with 409, deleting none of those listed" in {
     grantWriteAccess()
-    val e1 = insertExecution()
-    val e2 = insertExecution()
-    resource.groupDeleteExecutionsOfWorkflow(
-      ExecutionGroupDeleteRequest(testWorkflowWid, Array(e1.getEid, e2.getEid)),
-      session(testUser)
-    )
-    assert(workflowExecutionsDao.fetchOneByEid(e1.getEid) == null)
-    assert(workflowExecutionsDao.fetchOneByEid(e2.getEid) == null)
+    val closed = insertExecution(endedOffsetMillis = Some(0L))
+    val open = insertExecution()
+
+    val refused = intercept[WebApplicationException] {
+      resource.groupDeleteExecutionsOfWorkflow(
+        ExecutionGroupDeleteRequest(testWorkflowWid, Array(closed.getEid, open.getEid)),
+        session(testUser)
+      )
+    }
+
+    assert(refused.getResponse.getStatus == 409)
+    assert(refused.getMessage == s"execution ${open.getEid} is still open; kill it first")
+    assert(workflowExecutionsDao.fetchOneByEid(closed.getEid) != null)
+    assert(workflowExecutionsDao.fetchOneByEid(open.getEid) != null)
   }
 
   // The statistics of an execution are where its ids and its warehouse say, in the lake: the

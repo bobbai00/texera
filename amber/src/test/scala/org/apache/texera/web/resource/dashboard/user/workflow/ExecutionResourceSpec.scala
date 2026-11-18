@@ -145,6 +145,7 @@ import org.apache.texera.web.service.execution.{
   CostHintsLoader,
   ExecutionCloser,
   ExecutionCreator,
+  ExecutionExpiry,
   ExecutionRecordReader,
   ExecutionRecords,
   FixtureCompilingService,
@@ -218,6 +219,7 @@ class ExecutionResourceSpec
   private val sharedCuid = 9627
   private val closingCuid = 9628
   private val closingOtherCuid = 9629
+  private val lastRunCuid = 9630
   private val unknownCuid = 9699
 
   /**
@@ -308,7 +310,8 @@ class ExecutionResourceSpec
       (clearingCuid, creatorUid, false),
       (sharedCuid, creatorUid, false),
       (closingCuid, creatorUid, false),
-      (closingOtherCuid, creatorUid, false)
+      (closingOtherCuid, creatorUid, false),
+      (lastRunCuid, creatorUid, false)
     ).foreach {
       case (cuid, owner, terminated) =>
         val unit = new WorkflowComputingUnit
@@ -497,6 +500,10 @@ class ExecutionResourceSpec
       emailThread = _.run()
     )
 
+  /** An expiry whose lake calls are the stores', and which deletes no large binary. */
+  private val expiryWithoutBinaries =
+    new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+
   /**
     * The creator under test, set up as the case needs. Its compiling service compiles in this
     * JVM, bound to the fixture files and versions in place of a user's, and its files are
@@ -519,6 +526,7 @@ class ExecutionResourceSpec
       linker: InputLinker = FixtureInputs.linker,
       background: Executor = _.run(),
       closer: ExecutionCloser = recordingCloser(),
+      expiry: ExecutionExpiry = expiryWithoutBinaries,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty,
       val written: mutable.ListBuffer[URI] = mutable.ListBuffer.empty,
@@ -544,7 +552,8 @@ class ExecutionResourceSpec
         },
         background = background,
         closer = closer,
-        compileDeadline = compileDeadline
+        compileDeadline = compileDeadline,
+        expiry = expiry
       )
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -1641,11 +1650,11 @@ class ExecutionResourceSpec
 
   it should "answer 500 and record the execution FAILED when its plan cannot be made for a reason not the workflow's" in {
     // An ended run of the workflow on the unit that a later one replaced: a create that goes
-    // through clears its results.
+    // through expires its results.
     insertExecution(961921, testWid, unitCuid, status = 3)
     insertExecution(961923, testWid, unitCuid, status = 1)
     val console = withConsole(testWid, 961921)
-    withConsole(testWid, 961923)
+    logged(961923, "READY", "RUNNING")
     val databaseDown = new RuntimeException("db down")
     val before = executionCount
     val since = System.currentTimeMillis()
@@ -1665,9 +1674,10 @@ class ExecutionResourceSpec
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
     )
-    // A create that fails clears nothing.
+    // A create that fails expires nothing.
     consolesOf(961921) shouldBe 1
     hasTable(console) shouldBe true
+    row(961921).getResultsExpiredAt shouldBe null
   }
 
   // --- the compiling service, asked over HTTP ---
@@ -1977,9 +1987,9 @@ class ExecutionResourceSpec
     }
   }
 
-  // --- clearing earlier runs ---
+  // --- expiring what earlier runs left ---
 
-  it should "leave the results of the unit's last run alone until a later execution has run" in {
+  it should "leave the results of the unit's last run alone until a unit has started a later execution" in {
     insertExecution(961911, testWid, clearingCuid, status = 3) // what the unit ran last
     insertExecution(961913, testWid, otherUnitCuid, status = 3) // another unit's
     insertExecution(961914, otherWid, clearingCuid, status = 3) // another workflow's
@@ -1993,6 +2003,7 @@ class ExecutionResourceSpec
         withClue(s"execution $eid: ") {
           consolesOf(eid.toInt) shouldBe 1
           hasTable(consoles(eid)) shouldBe true
+          row(eid).getResultsExpiredAt shouldBe null
         }
       }
 
@@ -2004,23 +2015,26 @@ class ExecutionResourceSpec
     row(abandoned.eid).getStatus shouldBe WorkflowExecutionStatus.Created
     kept(961911, 961913, 961914)
 
-    // The unit starts the second, whose run writes its first console message.
-    setStatus(started.eid, WorkflowExecutionStatus.Running)
+    // The unit starts the second: its log names the run's first states.
+    logged(started.eid, "READY", "RUNNING")
     consoles += started.eid -> withConsole(testWid, started.eid.toInt)
     created(post(request(cuid = clearingCuid)))
 
     consolesOf(961911) shouldBe 0
     hasTable(consoles(961911)) shouldBe false
+    row(961911).getResultsExpiredAt should not be null
+    row(961911).getStoredBytes shouldBe 0L
     kept(961913, 961914, started.eid)
-    // Cleared, not deleted: the execution stays in the history as it ended.
+    // Expired, not deleted: the execution stays in the history as it ended.
     row(961911).getStatus shouldBe 3.toByte
+    row(961911).getOutcome shouldBe 3
   }
 
-  it should "clear what a run replaced once it has answered, not while the request waits" in {
+  it should "expire what a run replaced once it has answered, not while the request waits" in {
     insertExecution(961941, testWid, clearingCuid, status = 3)
     insertExecution(961942, testWid, clearingCuid, status = 1)
     val replaced = withConsole(testWid, 961941)
-    withConsole(testWid, 961942)
+    logged(961942, "READY", "RUNNING")
     val left = mutable.ListBuffer.empty[Runnable]
 
     created(
@@ -2037,13 +2051,14 @@ class ExecutionResourceSpec
     hasTable(replaced) shouldBe false
   }
 
-  it should "clear what a run of another user replaced on a unit they share" in {
+  it should "expire what a run of another user replaced on a unit they share" in {
     // The creator's last run on a unit the reader may also run workflows on, and the reader's
     // run after it.
     insertExecution(961931, testWid, sharedCuid, status = 3)
     insertExecution(961932, testWid, sharedCuid, status = 1, uid = readerUid)
     val creators = withConsole(testWid, 961931)
     val readers = withConsole(testWid, 961932)
+    logged(961932, "READY", "RUNNING")
 
     val execution = created(post(request(cuid = sharedCuid), uid = readerUid))
 
@@ -2063,7 +2078,7 @@ class ExecutionResourceSpec
     log
   }
 
-  it should "close an earlier execution whose log shows an ending while its row is still open, then clear what was replaced" in {
+  it should "close an earlier execution whose log shows an ending while its row is still open, then expire what was replaced" in {
     // The unit ran three executions and has just ended the second; a fourth was created and
     // never started. The closing job has looked at none of them, so every row is open.
     val Seq(first, second, third, unstarted) =
@@ -2094,12 +2109,16 @@ class ExecutionResourceSpec
     // What they hold was measured as they were closed: a plan and a log, at least.
     row(first.eid).getStoredBytes.longValue() should be > 0L
     row(second.eid).getStoredBytes.longValue() should be > 0L
-    // The first, which later runs replaced, is cleared.
+    // The first, which later runs replaced, is expired: its plan and its log stay.
     consolesOf(first.eid.toInt) shouldBe 0
     hasTable(consoles(first.eid)) shouldBe false
-    // The second, closed and replaced as well, is cleared too.
+    row(first.eid).getResultsExpiredAt should not be null
+    hasTable(new URI(first.planUri)) shouldBe true
+    hasTable(logOfUri(first.eid)) shouldBe true
+    // The second, closed and replaced by the third's run as well, is expired too.
     consolesOf(second.eid.toInt) shouldBe 0
     hasTable(consoles(second.eid)) shouldBe false
+    row(second.eid).getResultsExpiredAt should not be null
     // The one that runs is left open, and untouched; so are the ones no unit started, and
     // the other unit's.
     Seq(third, unstarted, next, elsewhere).foreach { execution =>
@@ -2112,6 +2131,25 @@ class ExecutionResourceSpec
     }
     consolesOf(third.eid.toInt) shouldBe 1
     hasTable(consoles(third.eid)) shouldBe true
+  }
+
+  it should "keep the results of the run it has just closed, which the unit ran last, and expire those of the run before it" in {
+    // The unit ran two executions, one after the other; the closing job has looked at neither.
+    val Seq(before, last) = (1 to 2).map(_ => created(post(request(cuid = lastRunCuid))))
+    logged(before.eid, "READY", "RUNNING", "COMPLETED")
+    logged(last.eid, "READY", "RUNNING", "COMPLETED")
+    val consoles = Seq(before, last)
+      .map(execution => execution.eid -> withConsole(testWid, execution.eid.toInt))
+      .toMap
+
+    created(post(request(cuid = lastRunCuid)))
+
+    Seq(before, last).foreach(execution => row(execution.eid).getEndedAt should not be null)
+    hasTable(consoles(before.eid)) shouldBe false
+    row(before.eid).getResultsExpiredAt should not be null
+    // What the unit still shows, until it starts the execution just created.
+    hasTable(consoles(last.eid)) shouldBe true
+    row(last.eid).getResultsExpiredAt shouldBe null
   }
 
   it should "leave earlier executions to the closing job when their logs cannot be read" in {
@@ -2324,10 +2362,13 @@ class ExecutionResourceSpec
   /** When execution `eid` was created, as its row says. */
   private def createdAt(eid: Long): Long = row(eid).getStartingTime.getTime
 
+  /** Where the log of execution `eid` is. */
+  private def logOfUri(eid: Long, warehouse: Option[String] = None): URI =
+    ExecutionLogStore.logUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), warehouse)
+
   /** Makes the log of execution `eid`, empty, as its unit does when it starts the run. */
   private def logOf(eid: Long, warehouse: Option[String] = None): URI = {
-    val uri =
-      ExecutionLogStore.logUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), warehouse)
+    val uri = logOfUri(eid, warehouse)
     ExecutionLogStore.create(uri, createdAt(eid), 30000L)
     madeLogs += uri
     uri

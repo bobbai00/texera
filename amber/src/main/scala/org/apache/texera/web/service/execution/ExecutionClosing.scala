@@ -68,6 +68,8 @@ object ExecutionClosing {
     * @param neverStartedAfterSeconds how long an execution may wait for a unit to start it
     * @param reviseVerdictForSeconds  how long after a verdict the job still reads the log for
     *                                 an ending to put in its place
+    * @param resultTtlSeconds         how long after an execution ended its results are kept
+    * @param expiryIntervalSeconds    how often the job looks for results older than that
     * @param warehousesEnabled        whether runs write into per-user warehouses
     */
   final case class Settings(
@@ -75,6 +77,8 @@ object ExecutionClosing {
       lostAfterSeconds: Int,
       neverStartedAfterSeconds: Int,
       reviseVerdictForSeconds: Int,
+      resultTtlSeconds: Int,
+      expiryIntervalSeconds: Int,
       warehousesEnabled: Boolean
   ) {
     require(
@@ -93,6 +97,15 @@ object ExecutionClosing {
       reviseVerdictForSeconds >= 0,
       s"execution-closing.revise-verdict-for-seconds must be >= 0 (got $reviseVerdictForSeconds)"
     )
+    require(
+      resultTtlSeconds >= 0,
+      s"result-cleanup.ttl-in-seconds must be >= 0 (got $resultTtlSeconds)"
+    )
+    require(
+      expiryIntervalSeconds > 0,
+      "result-cleanup.collection-check-interval-in-seconds must be > 0 " +
+        s"(got $expiryIntervalSeconds)"
+    )
   }
 
   object Settings {
@@ -104,6 +117,8 @@ object ExecutionClosing {
         lostAfterSeconds = ApplicationConfig.executionClosingLostAfterInSecs,
         neverStartedAfterSeconds = ApplicationConfig.executionClosingNeverStartedAfterInSecs,
         reviseVerdictForSeconds = ApplicationConfig.executionClosingReviseVerdictForInSecs,
+        resultTtlSeconds = ApplicationConfig.sinkStorageTTLInSecs,
+        expiryIntervalSeconds = ApplicationConfig.sinkStorageCleanUpCheckIntervalInSecs,
         warehousesEnabled = StorageConfig.warehouseEnabled
       )
   }
@@ -242,6 +257,17 @@ object ExecutionClosing {
 
   private def endingOf(label: ExecutionLabel): Ending =
     Ending(ExecutionStatus.of(label.state.get), label.reason, label.stateTimeMs)
+
+  /** The time an execution must have ended by, at `nowMs`, for its results to be past their age. */
+  def expiredByMs(settings: Settings, nowMs: Long): Long =
+    nowMs - settings.resultTtlSeconds * 1000L
+
+  /**
+    * Whether a pass over the results past their age is due at `nowMs`: the job has made none
+    * yet, or made its last one, at `lastPassMs`, at least `expiryIntervalSeconds` ago.
+    */
+  def expiryDue(settings: Settings, lastPassMs: Option[Long], nowMs: Long): Boolean =
+    lastPassMs.forall(last => nowMs - last >= settings.expiryIntervalSeconds * 1000L)
 
   /** The time a verdict must not be older than, at `nowMs`, for the job to still read its log. */
   def reviseSinceMs(settings: Settings, nowMs: Long): Long =
