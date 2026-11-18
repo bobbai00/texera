@@ -226,6 +226,9 @@ describe("WorkflowFormComponent (rendered template)", () => {
             // of from here. Nothing is in flight in these tests.
             getExecutionState: () => ({ state: ExecutionState.Uninitialized }),
             getExecutionDurationStream: () => EMPTY,
+            // Every run in these tests is one its unit shows.
+            isFollowingAtDashboard: () => false,
+            getFollowingAtDashboardStream: () => EMPTY,
             executeWorkflow: vi.fn(),
             killWorkflow: vi.fn(),
             resetExecutionAndWorkers: vi.fn(),

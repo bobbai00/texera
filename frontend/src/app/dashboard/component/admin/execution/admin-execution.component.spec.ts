@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { DebugElement } from "@angular/core";
 import { ComponentFixture, inject, TestBed } from "@angular/core/testing";
 import { By } from "@angular/platform-browser";
 import { AdminExecutionComponent } from "./admin-execution.component";
@@ -28,6 +29,7 @@ import { commonTestProviders } from "../../../../common/testing/test-utils";
 import { Execution } from "../../../../common/type/execution";
 import { NzTableComponent, NzTableQueryParams, NzThAddOnComponent } from "ng-zorro-antd/table";
 import { NzModalService } from "ng-zorro-antd/modal";
+import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 import { WorkflowWebsocketService } from "../../../../workspace/service/workflow-websocket/workflow-websocket.service";
 import { NO_SORT } from "./admin-execution.component";
 import { of } from "rxjs";
@@ -687,6 +689,34 @@ describe("AdminExecutionComponent template rendering", () => {
     expect(isDisabled("pause")).toBe(true);
     expect(isDisabled("redo")).toBe(true);
     expect(isDisabled("history")).toBe(false);
+  });
+
+  it("says why an execution is in its status, under the status, when the Dashboard gives a reason", () => {
+    renderRows([
+      makeExecution({ executionStatus: "FAILED", reason: "unit lost", workflowId: 61 }),
+      makeExecution({ executionStatus: "FAILED", reason: null, workflowId: 62 }),
+      makeExecution({ executionStatus: "COMPLETED", workflowId: 63 }),
+      makeExecution({ executionStatus: "KILLED", reason: "", workflowId: 64 }),
+    ]);
+
+    const statusCell = (rowIndex: number): DebugElement => dataRows()[rowIndex].queryAll(By.css("td"))[3];
+    const reasonOf = (rowIndex: number): DebugElement | null => statusCell(rowIndex).query(By.css(".execution-reason"));
+
+    // The status first, then the reason on a line of its own, which says all of it when pointed at.
+    expect(statusCell(0).query(By.css("b")).nativeElement.textContent.trim()).toBe("FAILED");
+    expect(reasonOf(0)?.nativeElement.textContent.trim()).toBe("unit lost");
+    expect(reasonOf(0)?.injector.get(NzTooltipDirective).title).toBe("unit lost");
+    // No line for an execution with no reason: none given, none to give, or an empty one.
+    expect(reasonOf(1)).toBeNull();
+    expect(reasonOf(2)).toBeNull();
+    expect(reasonOf(3)).toBeNull();
+    expect(cellsOf(1)[3]).toBe("FAILED");
+  });
+
+  it("reads the status of an execution whose state could not be read as the Dashboard names it", () => {
+    renderRows([makeExecution({ executionStatus: "UNKNOWN", workflowId: 65 })]);
+
+    expect(cellsOf(0)[3]).toBe("UNKNOWN");
   });
 
   it("paints each row's status cell with that status's colour", () => {

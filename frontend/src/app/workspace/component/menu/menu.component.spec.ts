@@ -20,7 +20,7 @@
 import { DatePipe, Location } from "@angular/common";
 import { ComponentFixture, TestBed } from "@angular/core/testing";
 import { By } from "@angular/platform-browser";
-import { HttpClientTestingModule } from "@angular/common/http/testing";
+import { HttpClientTestingModule, HttpTestingController } from "@angular/common/http/testing";
 import { RouterTestingModule } from "@angular/router/testing";
 import { NzModalService, NzModalModule, NzModalRef } from "ng-zorro-antd/modal";
 import { BehaviorSubject, of, Subject, throwError } from "rxjs";
@@ -40,7 +40,10 @@ import { ComputingUnitStatusService } from "../../../common/service/computing-un
 import { UserService } from "../../../common/service/user/user.service";
 import { StubUserService } from "../../../common/service/user/stub-user.service";
 import { commonTestProviders } from "../../../common/testing/test-utils";
-import { ExecuteWorkflowService } from "../../service/execute-workflow/execute-workflow.service";
+import {
+  ExecuteWorkflowService,
+  FOLLOWED_EXECUTION_POLL_INTERVAL_MS,
+} from "../../service/execute-workflow/execute-workflow.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { ValidationWorkflowService, ValidationOutput } from "../../service/validation/validation-workflow.service";
 import { PanelService } from "../../service/panel/panel.service";
@@ -452,6 +455,21 @@ describe("MenuComponent", () => {
       fixture.detectChanges();
       expect(killButton().disabled).toBe(false);
     });
+
+    // The unit is back and holds no run, or says nothing at all: it has no such run to kill.
+    it("is disabled for a run the unit does not show, and enabled again once the unit shows it", () => {
+      component.executionState = ExecutionState.Running;
+      component.computingUnitStatus = ComputingUnitState.Running;
+      setConnected(true);
+      const offUnit = vi.spyOn(executeWorkflowService, "isFollowingAtDashboard").mockReturnValue(true);
+
+      fixture.detectChanges();
+      expect(killButton().disabled).toBe(true);
+
+      offUnit.mockReturnValue(false);
+      fixture.detectChanges();
+      expect(killButton().disabled).toBe(false);
+    });
   });
 
   describe("a run that fails", () => {
@@ -529,6 +547,27 @@ describe("MenuComponent", () => {
       unitSends({ type: "WorkflowErrorEvent", fatalErrors: [fatalError("first"), fatalError("second")] });
 
       expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // The unit died, came back and holds no run: how the run ended is the Dashboard's to say.
+    it("is announced with the reason the Dashboard gives for a run its unit lost", () => {
+      vi.useFakeTimers();
+      try {
+        unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 7 });
+        unitSends({ type: "WorkflowStateEvent", state: ExecutionState.Uninitialized });
+        expect(component.executionState).toBe(ExecutionState.Running);
+
+        vi.advanceTimersByTime(FOLLOWED_EXECUTION_POLL_INTERVAL_MS);
+        TestBed.inject(HttpTestingController)
+          .expectOne("api/executions/7/state")
+          .flush({ eid: 7, status: 4, open: false, reason: "unit lost", timeMs: 1794873600000 });
+
+        expect(errorSpy.mock.calls).toEqual([["Run failed: unit lost"]]);
+        expect(component.executionState).toBe(ExecutionState.Failed);
+        expect(component.runIsOffUnit).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("is not announced on a page that opens on a run that had failed already", () => {
@@ -804,6 +843,70 @@ describe("MenuComponent", () => {
       expect(behavior.icon).toBe("play-circle");
       expect(behavior.disable).toBe(false);
       expect(runSpy).toHaveBeenCalledTimes(1);
+    });
+
+    describe("for a run the computing unit does not show", () => {
+      beforeEach(() => {
+        component.isWorkflowValid = true;
+        component.isWorkflowEmpty = false;
+        component.computingUnitStatus = ComputingUnitState.Running;
+        vi.spyOn(executeWorkflowService, "isFollowingAtDashboard").mockReturnValue(true);
+      });
+
+      // A unit that restarted answers its socket and holds no run: nothing to pause or resume, and it can run.
+      it.each([
+        ExecutionState.Initializing,
+        ExecutionState.Running,
+        ExecutionState.Pausing,
+        ExecutionState.Paused,
+        ExecutionState.Resuming,
+        ExecutionState.Recovering,
+      ])("returns 'Run' while the run shows as %s and the socket is connected", state => {
+        connected();
+        component.executionState = state;
+        const runSpy = vi.spyOn(component, "runWorkflow").mockImplementation(() => {});
+        const pauseSpy = vi.spyOn(executeWorkflowService, "pauseWorkflow").mockImplementation(() => {});
+        const resumeSpy = vi.spyOn(executeWorkflowService, "resumeWorkflow").mockImplementation(() => {});
+
+        const behavior = component.getRunButtonBehavior();
+        behavior.onClick();
+
+        expect([behavior.text, behavior.icon, behavior.disable]).toEqual(["Run", "play-circle", false]);
+        expect(runSpy).toHaveBeenCalledTimes(1);
+        expect(pauseSpy).not.toHaveBeenCalled();
+        expect(resumeSpy).not.toHaveBeenCalled();
+      });
+
+      it("returns 'Connecting' while the socket is down", () => {
+        Object.defineProperty(component.workflowWebsocketService, "isConnected", {
+          get: () => false,
+          configurable: true,
+        });
+        component.executionState = ExecutionState.Running;
+
+        const behavior = component.getRunButtonBehavior();
+
+        expect([behavior.text, behavior.icon, behavior.disable]).toEqual(["Connecting", "loading", true]);
+      });
+
+      // The button would start a run, so what holds a run back holds it back here too.
+      it("returns 'Invalid Workflow' when the workflow does not compile", () => {
+        connected();
+        component.executionState = ExecutionState.Running;
+        component.isWorkflowCompilable = false;
+
+        expect(component.getRunButtonBehavior().text).toBe("Invalid Workflow");
+      });
+
+      it("offers to create a warehouse when one is required but missing", () => {
+        connected();
+        component.executionState = ExecutionState.Running;
+        component.computingUnitSelectionComponent = {
+          warehouseRequiredButMissing: true,
+        } as unknown as Mocked<ComputingUnitSelectionComponent>;
+
+        expect(component.getRunButtonBehavior().text).toBe("Warehouse");
+      });
     });
 
     it("keeps Pause in control of a running execution even when the warehouse disappears", () => {
@@ -2214,6 +2317,34 @@ describe("MenuComponent", () => {
         expect(stateComponent.runButtonText).toBe("Resume");
       } finally {
         stateFixture.destroy();
+      }
+    });
+
+    // The state on screen stays Running across both changes: only who answers for it changes.
+    it("re-applies the run button behavior when the unit stops showing the run, and when it shows it again", () => {
+      const following$ = new BehaviorSubject<boolean>(false);
+      vi.spyOn(executeWorkflowService, "getFollowingAtDashboardStream").mockReturnValue(following$.asObservable());
+      vi.spyOn(executeWorkflowService, "isFollowingAtDashboard").mockImplementation(() => following$.value);
+      const followingFixture = TestBed.createComponent(MenuComponent);
+      const followingComponent = followingFixture.componentInstance;
+      followingFixture.detectChanges();
+      followingComponent.isWorkflowValid = true;
+      followingComponent.isWorkflowEmpty = false;
+      followingComponent.computingUnitStatus = ComputingUnitState.Running;
+      followingComponent.executionState = ExecutionState.Running;
+      Object.defineProperty(followingComponent.workflowWebsocketService, "isConnected", {
+        get: () => true,
+        configurable: true,
+      });
+
+      try {
+        following$.next(true);
+        expect(followingComponent.runButtonText).toBe("Run");
+
+        following$.next(false);
+        expect(followingComponent.runButtonText).toBe("Pause");
+      } finally {
+        followingFixture.destroy();
       }
     });
 

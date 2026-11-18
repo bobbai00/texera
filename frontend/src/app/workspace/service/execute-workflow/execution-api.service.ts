@@ -71,6 +71,25 @@ export type OperatorUpdateResponse = Readonly<{
 }>;
 
 /**
+ * How `GET /api/executions/{eid}/state` answers: the state the Dashboard service holds of execution `eid`. While
+ * the execution is open, the state its computing unit recorded last; once it is closed, how it ended.
+ */
+export type ExecutionStateResponse = Readonly<{
+  eid: number;
+  /**
+   * The state as the execution history numbers it: 0 initializing, 1 running, 2 paused, 3 completed, 4 failed,
+   * 5 killed, 6 created and started by no unit yet; -1 when the stored state could not be read.
+   */
+  status: number;
+  /** Whether the execution can still change state: false once the Dashboard service has closed it. */
+  open: boolean;
+  /** Why the execution is in this state, when there is a reason to give: "unit lost", an error's message. */
+  reason?: string | null;
+  /** When the execution entered this state, or ended, in milliseconds since the epoch. */
+  timeMs: number;
+}>;
+
+/**
  * How the Dashboard service answers a request it does not serve: the HTTP status, and why. When the workflow
  * of a `POST /api/executions` does not compile (400), also the execution, which is recorded as failed, and
  * the first error of each operator that has one, by the operator's id.
@@ -164,7 +183,7 @@ export function failureMessage(error: unknown): string {
 /**
  * The Dashboard service's executions. An execution is created here, with its plan, and then started on its
  * computing unit by id; a change to one of its operators, while it is paused, is stored here, and then named
- * to the unit by id.
+ * to the unit by id. Its state is kept here too, for a page whose computing unit does not show its run.
  */
 @Injectable({
   providedIn: "root",
@@ -187,5 +206,13 @@ export class ExecutionApiService {
    */
   public postUpdate(eid: number, operator: LogicalOperator): Observable<OperatorUpdateResponse> {
     return this.http.post<OperatorUpdateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/updates`, { operator });
+  }
+
+  /**
+   * The state the Dashboard service holds of execution `eid`, read when it is asked: the answer for an open
+   * execution changes as its run goes on. Fails with the HTTP error: see {@link failureMessage}.
+   */
+  public getState(eid: number): Observable<ExecutionStateResponse> {
+    return this.http.get<ExecutionStateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/state`);
   }
 }

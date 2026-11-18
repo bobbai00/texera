@@ -22,6 +22,7 @@ import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import {
   CREATED_EXECUTION_STATUS,
   EXECUTION_STATUS_CODE,
+  UNKNOWN_EXECUTION_STATUS,
   WorkflowExecutionsEntry,
 } from "../../../../type/workflow-executions-entry";
 import { WorkflowExecutionsService } from "../../../../service/user/workflow-executions/workflow-executions.service";
@@ -191,6 +192,7 @@ export class WorkflowExecutionHistoryComponent implements OnInit, AfterViewInit 
     ["completed", 3],
     ["failed", 4],
     ["killed", 5],
+    ["unknown", UNKNOWN_EXECUTION_STATUS],
   ]);
   public showORhide: boolean[] = [false, false, false, false, true];
   public avatarColors: { [key: string]: string } = {};
@@ -356,7 +358,17 @@ export class WorkflowExecutionHistoryComponent implements OnInit, AfterViewInit 
       case CREATED_EXECUTION_STATUS:
         return [EXECUTION_STATUS_CODE[CREATED_EXECUTION_STATUS], "clock-circle", "steelblue"];
     }
-    return ["", "question-circle", "gray"];
+    // A state that could not be read, and a code this page does not know.
+    return [EXECUTION_STATUS_CODE[UNKNOWN_EXECUTION_STATUS], "question-circle", "gray"];
+  }
+
+  /**
+   * What the status icon of `execution` says when it is pointed at: the status and, when the Dashboard
+   * service gives one, why the execution is in it ("Failed: unit lost").
+   */
+  getExecutionStatusText(execution: WorkflowExecutionsEntry): string {
+    const status = this.getExecutionStatus(execution.status)[0];
+    return execution.reason ? `${status}: ${execution.reason}` : status;
   }
 
   onBookmarkToggle(row: WorkflowExecutionsEntry) {

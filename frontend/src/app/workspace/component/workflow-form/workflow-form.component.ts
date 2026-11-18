@@ -460,6 +460,11 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
       .getConnectionStatusStream()
       .pipe(untilDestroyed(this))
       .subscribe(() => this.cdr.markForCheck());
+    // Whether the unit shows the run on screen decides between Stop and Run, without a change of state.
+    this.executeWorkflowService
+      .getFollowingAtDashboardStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(() => this.cdr.markForCheck());
     // Validity from the canvas's own stream, so a broken graph disables Run ("Invalid") here
     // exactly as it does there.
     this.validationWorkflowService
@@ -1753,6 +1758,14 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Whether the run on screen is one its computing unit can be asked to stop. A run the unit does not show
+   * has its state from the Dashboard service: the unit holds nothing to stop, and can start another run.
+   */
+  public get canStopRun(): boolean {
+    return this.isRunning && !this.executeWorkflowService.isFollowingAtDashboard();
+  }
+
+  /**
    * A run has started and ended, as opposed to never having run. Lets the empty results section say
    * "this run produced nothing" after a completed-but-empty run, instead of the "press Run" hint
    * that wrongly implies nothing has run yet.
@@ -1823,9 +1836,10 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     }
     // Stop is shown only while the socket can deliver the kill, and the unit takes it from this
     // reader: a unit shared read-only refuses it. A run on a unit that died or vanished mid-run
-    // falls through, so a later branch names the problem.
+    // falls through, so a later branch names the problem; so does a run its unit does not show,
+    // which a unit that is back and holds no run offers to run again.
     const mayStop = this.selectedUnit === null || this.hasUnitWriteAccess;
-    if (this.isRunning && this.workflowWebsocketService.isConnected && mayStop) {
+    if (this.canStopRun && this.workflowWebsocketService.isConnected && mayStop) {
       return { label: "Stop", icon: "stop", disabled: false };
     }
     if (!this.isWorkflowValid) {
@@ -1860,7 +1874,7 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
   }
 
   public onRun(): void {
-    if (this.isRunning) {
+    if (this.canStopRun) {
       this.executeWorkflowService.killWorkflow();
       return;
     }

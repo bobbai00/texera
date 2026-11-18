@@ -215,7 +215,7 @@
             <td nzEllipsis>
               <i
                 [ngStyle]="{'color': getExecutionStatus(row.status)[2]}"
-                [nzTooltipTitle]="getExecutionStatus(row.status)[0]"
+                [nzTooltipTitle]="getExecutionStatusText(row)"
                 [nzType]="getExecutionStatus(row.status)[1]"
                 class="status-icon"
                 nz-icon

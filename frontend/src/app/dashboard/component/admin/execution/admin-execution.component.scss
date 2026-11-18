@@ -29,3 +29,11 @@
   grid-row-start: 3;
   grid-row-end: 4;
 }
+
+.execution-reason {
+  overflow: hidden;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

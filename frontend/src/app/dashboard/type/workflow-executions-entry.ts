@@ -31,6 +31,11 @@ export interface WorkflowExecutionsEntry {
   startingTime: number;
   completionTime: number;
   status: number;
+  /**
+   * Why the execution is in its status, when the Dashboard service gives a reason: "unit lost", an error's
+   * message. Null or left out when there is none, and for a caller who may not read the execution's log.
+   */
+  reason?: string | null;
   result: string;
   bookmarked: boolean;
   logLocation: string;
@@ -43,7 +48,11 @@ export interface WorkflowExecutionsEntry {
  */
 export const CREATED_EXECUTION_STATUS = 6;
 
+/** The status of an open execution whose stored state the Dashboard service could not read. */
+export const UNKNOWN_EXECUTION_STATUS = -1;
+
 export const EXECUTION_STATUS_CODE: Record<number, string> = {
+  [UNKNOWN_EXECUTION_STATUS]: "Unknown",
   0: ExecutionState.Initializing,
   1: ExecutionState.Running,
   2: ExecutionState.Paused,
