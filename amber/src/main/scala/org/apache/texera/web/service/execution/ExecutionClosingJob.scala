@@ -1,0 +1,244 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.texera.web.service.execution
+
+import com.typesafe.scalalogging.LazyLogging
+import io.dropwizard.lifecycle.Managed
+import org.apache.texera.amber.core.storage.ExecutionLabel
+import org.apache.texera.web.service.execution.ExecutionClosing.{
+  CheckRowsThenLose,
+  ClaimThenClose,
+  CloseEnded,
+  CloseUnavailable,
+  Decision,
+  Read,
+  Wait,
+  Watch
+}
+
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{
+  Callable,
+  CancellationException,
+  ConcurrentHashMap,
+  ExecutionException,
+  ExecutorService,
+  Executors,
+  LinkedBlockingQueue,
+  ScheduledExecutorService,
+  ThreadPoolExecutor,
+  TimeUnit
+}
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
+
+object ExecutionClosingJob {
+
+  /** How many executions a tick looks at at once, and how long it gives each. */
+  val Concurrency = 8
+  val LookLimit: FiniteDuration = 5.seconds
+
+  /** Daemon threads for the looks of a tick, let go of after a minute without one. */
+  private def lookThreads(): ExecutorService = {
+    val count = new AtomicInteger()
+    val pool = new ThreadPoolExecutor(
+      Concurrency,
+      Concurrency,
+      1,
+      TimeUnit.MINUTES,
+      new LinkedBlockingQueue[Runnable](),
+      (task: Runnable) => {
+        val thread = new Thread(task, s"execution-closing-look-${count.incrementAndGet()}")
+        thread.setDaemon(true)
+        thread
+      }
+    )
+    pool.allowCoreThreadTimeOut(true)
+    pool
+  }
+}
+
+/**
+  * Writes each execution's closing record, at the Dashboard service: every
+  * `execution-closing.interval-seconds` it looks at the executions that are still open, decides
+  * about each with [[ExecutionClosing]] and acts through [[ExecutionCloser]]. An execution is
+  * closed with the ending its log holds; one whose log holds none is closed as failed once its
+  * unit is terminated or shows no sign of life, once no unit started it in time, or when its
+  * warehouse is gone.
+  *
+  * The same tick looks at the executions it closed by such a verdict in the last
+  * `execution-closing.revise-verdict-for-seconds`, and gives one the ending its log shows by
+  * then: a unit that was cut off from the lake for a while is not lost.
+  *
+  * Any number of Dashboard replicas run the job, with no leader: every write is a conditional
+  * UPDATE or an Iceberg tag, which one of them wins. What a replica remembers between its ticks
+  * (how long each beat has stood still) is its own, so a replica that just started only decides
+  * later, never wrongly.
+  *
+  * Whatever fails while one execution is looked at is logged, and the execution is looked at
+  * again on the next tick.
+  *
+  * @param settings             the job's interval and limits
+  * @param closer               reads an execution's lake and closes it
+  * @param openExecutions       the executions with no closing record
+  * @param closedByVerdictSince the executions closed by a verdict at or after a time
+  * @param lookLimit            how long a tick gives the look at one execution
+  * @param now                  the Dashboard service's clock, in epoch milliseconds
+  */
+class ExecutionClosingJob(
+    settings: ExecutionClosing.Settings = ExecutionClosing.Settings.configured,
+    closer: ExecutionCloser = new ExecutionCloser(),
+    openExecutions: () => Seq[ExecutionRecord] = () => ExecutionRecords.open(),
+    closedByVerdictSince: Long => Seq[ExecutionRecord] = ExecutionRecords.closedByVerdictSince,
+    lookLimit: FiniteDuration = ExecutionClosingJob.LookLimit,
+    now: () => Long = () => System.currentTimeMillis()
+) extends Managed
+    with LazyLogging {
+
+  private var scheduler: ScheduledExecutorService = _
+  private val lookThreads = ExecutionClosingJob.lookThreads()
+
+  // What this job saw of each open execution's beat on its earlier ticks.
+  private val watches = new ConcurrentHashMap[Long, Watch]()
+
+  override def start(): Unit = {
+    scheduler = Executors.newSingleThreadScheduledExecutor((runnable: Runnable) => {
+      val thread = new Thread(runnable, "execution-closing")
+      thread.setDaemon(true)
+      thread
+    })
+    scheduler.scheduleWithFixedDelay(
+      () => runScheduledTick(),
+      settings.intervalSeconds.toLong,
+      settings.intervalSeconds.toLong,
+      TimeUnit.SECONDS
+    )
+  }
+
+  override def stop(): Unit = {
+    if (scheduler != null) scheduler.shutdownNow()
+    lookThreads.shutdownNow()
+  }
+
+  /**
+    * Runs one tick for the scheduler. Catches every Throwable, since one that escaped would
+    * cancel the schedule: no execution would be closed again until the service restarts.
+    */
+  private[execution] def runScheduledTick(): Unit =
+    try tick()
+    catch {
+      case _: InterruptedException => Thread.currentThread().interrupt()
+      case t: Throwable            => logger.error("A tick of the execution closing job failed.", t)
+    }
+
+  /**
+    * One tick: looks at every open execution, then at every execution closed by a verdict that
+    * its log may still replace, at most [[ExecutionClosingJob.Concurrency]] at a time.
+    */
+  private[execution] def tick(): Unit = {
+    val open = openExecutions()
+    val verdicts = closedByVerdictSince(ExecutionClosing.reviseSinceMs(settings, now()))
+    // An execution that is no longer open is no longer watched.
+    watches.keySet().retainAll(open.map(_.eid).toSet.asJava)
+    lookAtEach(open)(lookAtOpen)
+    lookAtEach(verdicts)(lookAtVerdict)
+  }
+
+  private def lookAtOpen(execution: ExecutionRecord): Unit =
+    ExecutionClosing.withoutReading(execution, settings) match {
+      case Some(decision) => act(execution, decision, label = None)
+      case None =>
+        val read =
+          try closer.read(execution)
+          catch {
+            case NonFatal(failure) =>
+              // Each tick, without the trace: a lake that is down says so for every execution.
+              logger.warn(
+                s"The log of execution ${execution.eid} could not be read, so nothing is " +
+                  s"decided about it on this tick: $failure"
+              )
+              Read.Failed
+          }
+        val (decision, watch) =
+          ExecutionClosing.decide(
+            execution,
+            read,
+            Option(watches.get(execution.eid)),
+            settings,
+            now()
+          )
+        watch match {
+          case Some(watched) => watches.put(execution.eid, watched)
+          case None          => watches.remove(execution.eid)
+        }
+        act(
+          execution,
+          decision,
+          read match {
+            case Read.Log(label) => Some(label)
+            case _               => None
+          }
+        )
+    }
+
+  private def act(
+      execution: ExecutionRecord,
+      decision: Decision,
+      label: Option[ExecutionLabel]
+  ): Unit =
+    decision match {
+      case Wait                      => ()
+      case CloseEnded(ending)        => closer.close(execution, ending, fromLog = true)
+      case ClaimThenClose            => closer.claimThenClose(execution)
+      case CheckRowsThenLose(reason) => closer.loseUnlessEnded(execution, reason, label)
+      case CloseUnavailable          => closer.closeUnavailable(execution)
+    }
+
+  private def lookAtVerdict(execution: ExecutionRecord): Unit =
+    if (ExecutionClosing.revisable(execution, settings, now())) closer.reviseIfEnded(execution)
+
+  /**
+    * Runs `look` on each of `executions`, a batch at a time, giving a batch `lookLimit`: a look
+    * that takes longer is interrupted. A look that fails or is cut short is logged.
+    */
+  private def lookAtEach(executions: Seq[ExecutionRecord])(look: ExecutionRecord => Unit): Unit =
+    executions.grouped(ExecutionClosingJob.Concurrency).foreach { batch =>
+      val looks = batch.map(execution => (() => look(execution)): Callable[Unit])
+      val looked = lookThreads.invokeAll(looks.asJava, lookLimit.toMillis, TimeUnit.MILLISECONDS)
+      batch.zip(looked.asScala).foreach {
+        case (execution, result) =>
+          try result.get()
+          catch {
+            case _: CancellationException =>
+              logger.warn(
+                s"Looking at execution ${execution.eid} took longer than $lookLimit; it is " +
+                  "looked at again on the next tick."
+              )
+            case failed: ExecutionException =>
+              logger.warn(
+                s"Execution ${execution.eid} could not be looked at; it is looked at again on " +
+                  "the next tick.",
+                failed.getCause
+              )
+          }
+      }
+    }
+}

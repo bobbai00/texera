@@ -27,6 +27,7 @@ import com.github.dirkraft.dropwizard.fileassets.FileAssetServlet
 import io.dropwizard.auth.{AuthDynamicFeature, AuthValueFactoryProvider}
 import io.dropwizard.jackson.Jackson
 import io.dropwizard.jersey.validation.Validators
+import io.dropwizard.lifecycle.JettyManaged
 import io.dropwizard.setup.{Bootstrap, Environment}
 import org.apache.texera.auth.JwtAuth
 import org.apache.texera.common.config.StorageConfig
@@ -54,6 +55,7 @@ import org.apache.texera.web.resource.dashboard.user.workflow.{
   WorkflowResource,
   WorkflowVersionResource
 }
+import org.apache.texera.web.service.execution.ExecutionClosingJob
 import org.eclipse.jetty.server.Server
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder, FilterMapping}
@@ -372,6 +374,38 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     // A route neither resource serves is not answered 401: what resolves is told from what does not.
     jersey.statusOf("DELETE", "/executions") should (be(404) or be(405))
     jersey.statusOf("GET", "/executions/12/updates") should (be(404) or be(405))
+  }
+
+  it should "route an execution's state and its log, beside the routes that take a workflow's id first" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+
+    // By an execution's id: each needs a signed-in user.
+    jersey.statusOf("GET", "/executions/12/state") shouldBe 401
+    jersey.statusOf("GET", "/executions/12/log") shouldBe 401
+    // By a workflow's id, as before: their last segments are none of those.
+    jersey.statusOf("GET", "/executions/12/latest") shouldBe 401
+    jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
+    jersey.statusOf("GET", "/executions/12/interactions/34") shouldBe 401
+    // Read, not written, and of one execution.
+    jersey.statusOf("POST", "/executions/12/state") should (be(404) or be(405))
+    jersey.statusOf("DELETE", "/executions/12/log") should (be(404) or be(405))
+    jersey.statusOf("GET", "/executions/12/state/34") should (be(404) or be(405))
+  }
+
+  it should "have the server run the job that closes executions, one of it" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+    // Managed, so it ticks from the server's start to its stop: run() itself starts nothing.
+    ranEnvironment.lifecycle().getManagedObjects.asScala.collect {
+      case managed: JettyManaged if managed.getManaged.isInstanceOf[ExecutionClosingJob] =>
+        managed.getManaged
+    } should have size 1
   }
 
   it should "make the resource of the create and its updates for a signed-in user's request" in {

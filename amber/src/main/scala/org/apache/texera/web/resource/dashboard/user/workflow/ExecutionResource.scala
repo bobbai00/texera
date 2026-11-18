@@ -25,45 +25,59 @@ import org.apache.texera.web.model.http.request.execution.{
   CreateExecutionRequest,
   OperatorUpdateRequestBody
 }
-import org.apache.texera.web.model.http.response.execution.CreateExecutionFailure
+import org.apache.texera.web.model.http.response.execution.{
+  CreateExecutionFailure,
+  ExecutionLogResponse,
+  ExecutionStateResponse
+}
 import org.apache.texera.web.service.execution.{
   ExecutionCreator,
+  ExecutionRecordReader,
   OperatorUpdates,
   WorkflowNotCompiled
 }
 
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs.core.{Context, MediaType, Response, UriInfo}
-import javax.ws.rs.{Consumes, POST, Path, PathParam, Produces}
+import javax.ws.rs.{Consumes, GET, POST, Path, PathParam, Produces}
 
 object ExecutionResource {
 
   // Jersey makes a resource for each request; these are the service's, shared by them all.
   private lazy val creator = new ExecutionCreator()
   private lazy val updates = new OperatorUpdates()
+  private lazy val records = new ExecutionRecordReader()
 }
 
 /**
-  * Executions as the Dashboard service creates them, before any computing unit is involved, and
-  * the changes made to their operators while they are paused.
+  * Executions as the Dashboard service creates them, before any computing unit is involved, the
+  * changes made to their operators while they are paused, and what each one recorded: its
+  * state and its log, which are answered whether or not its computing unit is still there.
   *
   * Registered only by the Dashboard. It shares its path with [[WorkflowExecutionsResource]],
   * which a computing unit registers too; Jersey merges the two, and none of their methods share a
   * path and a method. The first path segment after `/executions` is a workflow's id in that
-  * resource's routes and an execution's id in this one's.
+  * resource's routes and an execution's id in this one's, whose last segments (`updates`,
+  * `state`, `log`) are none of that resource's.
   *
   * A request that is not served is answered `{code, message}`, whatever its status.
   *
   * @param creator creates the executions
   * @param updates stores the changes to paused operators
+  * @param records reads what an execution recorded
   */
 @Path("/executions")
 @Consumes(Array(MediaType.APPLICATION_JSON))
 @Produces(Array(MediaType.APPLICATION_JSON))
-class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
+class ExecutionResource(
+    creator: ExecutionCreator,
+    updates: OperatorUpdates,
+    records: ExecutionRecordReader = new ExecutionRecordReader()
+) {
 
   // No-arg constructor for Jersey reflection. Tests use the param-ful form.
-  def this() = this(ExecutionResource.creator, ExecutionResource.updates)
+  def this() =
+    this(ExecutionResource.creator, ExecutionResource.updates, ExecutionResource.records)
 
   /**
     * Creates an execution of a workflow, to run on a computing unit: checks the caller's rights,
@@ -124,4 +138,34 @@ class ExecutionResource(creator: ExecutionCreator, updates: OperatorUpdates) {
       .status(Response.Status.CREATED)
       .entity(updates.store(eid, request, user.getUser))
       .build()
+
+  /**
+    * The state of execution `eid`: how it ended, from its closing record, once it is closed;
+    * while it is open, the newest state in its log (see [[ExecutionRecordReader.state]]).
+    *
+    * @return 200 with `{eid, status, open, reason, timeMs}` ([[ExecutionStateResponse]]);
+    *         `status` is -1 for an open execution whose log cannot be read. Otherwise 403
+    *         unless the caller created the execution, or owns or was granted its workflow, also
+    *         for an execution there is not.
+    */
+  @GET
+  @Path("/{eid}/state")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getState(@PathParam("eid") eid: Long, @Auth user: SessionUser): ExecutionStateResponse =
+    records.state(eid, user.getUser)
+
+  /**
+    * The log of execution `eid`, the changes of its run's state as its engine recorded them,
+    * and its closing record (see [[ExecutionRecordReader.log]]).
+    *
+    * @return 200 with `{eid, entries, closing}` ([[ExecutionLogResponse]]): `entries` is empty
+    *         for an execution with no log, and `closing` null while it is open. Otherwise 403
+    *         as for the state; 409 when the log is in a warehouse this deployment cannot reach;
+    *         500 when the lake cannot be read.
+    */
+  @GET
+  @Path("/{eid}/log")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getLog(@PathParam("eid") eid: Long, @Auth user: SessionUser): ExecutionLogResponse =
+    records.log(eid, user.getUser)
 }
