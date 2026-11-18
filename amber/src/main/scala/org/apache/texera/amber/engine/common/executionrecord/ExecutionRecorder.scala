@@ -77,9 +77,6 @@ object ExecutionRecorder {
   /** How often the end of a run that could not be written yet is tried again. */
   val EndRetryMs = 5000L
 
-  /** How long the end of a run is tried to be written, before its log is left without it. */
-  val EndPatienceMs = 120000L
-
   /** Starts the record of the run of `context`'s execution: makes its log, and beats in it. */
   def start(context: WorkflowContext): ExecutionRecorder =
     new LakeExecutionRecorder(
@@ -99,6 +96,9 @@ object ExecutionRecorder {
   }
 }
 
+/** What a recorder logs of one kind of write: that it failed, and that it is made again. */
+private final case class WriteKind(failed: String, madeAgain: String)
+
 /**
   * Writes a run's log: a row for each change of state, with the label that repeats the newest
   * one, and a beat on every tick, which tells the log's readers that the run's unit is alive.
@@ -108,9 +108,9 @@ object ExecutionRecorder {
   * the queued rows oldest first, beats, and after the run's last row tidies the table and ends.
   * A write that fails leaves its rows queued for the next tick, so a lake that is out of reach
   * delays the log and never reorders it. While the end of the run waits to be written the ticks
-  * come every `endRetryMs`, for [[ExecutionRecorder.EndPatienceMs]]; after that the log is left
-  * without it, and its beat stops. A table that is gone was dropped with its execution: it is
-  * not made again, and the recorder stops.
+  * come every `endRetryMs`, for as long as the unit lives: a log left without its end would be
+  * read as the log of a run whose unit was lost. A table that is gone was dropped with its
+  * execution: it is not made again, and the recorder stops.
   *
   * @param logUri      the execution's log table
   * @param beatEveryMs how often the recorder ticks, which the label tells the log's readers
@@ -147,12 +147,24 @@ private[executionrecord] final class LakeExecutionRecorder(
   private var lastState: Option[String] = None
   // No row is queued once the run's end is, or once the recorder has stopped.
   private var closed = false
-  private var giveUpAtMs = Long.MaxValue
 
   // Used on the recorder's thread alone.
   private var tableMade = false
-  private var failing = false
   private var timer: Option[ScheduledFuture[_]] = None
+
+  // The kinds of write, each with what is logged when it starts to fail and when it is made
+  // again. A beat is apart from a write of rows: it reaches the catalog alone, so it goes on
+  // while the object store is out of reach.
+  private val LogWrite = WriteKind(
+    s"A write to the log of execution $executionId failed; what it left unwritten is tried " +
+      "again on every tick.",
+    s"The log of execution $executionId is written again."
+  )
+  private val Beat = WriteKind(
+    s"A beat of execution $executionId failed; the next tick beats again.",
+    s"Execution $executionId beats again."
+  )
+  private val failing = mutable.Set.empty[WriteKind]
 
   private val thread = Executors.newSingleThreadScheduledExecutor { task =>
     val thread = new Thread(task, s"execution-record-$executionId")
@@ -181,10 +193,7 @@ private[executionrecord] final class LakeExecutionRecorder(
         lastSeq += 1
         lastState = Some(state)
         unwritten += ExecutionLogEntry.state(lastSeq, now, state, reason, errors)
-        if (ending) {
-          closed = true
-          giveUpAtMs = now + ExecutionRecorder.EndPatienceMs
-        }
+        if (ending) closed = true
         thread.execute { () =>
           write()
           // The end of a run that could not be written is tried again soon, not a beat later.
@@ -223,15 +232,8 @@ private[executionrecord] final class LakeExecutionRecorder(
   private def onTick(): Unit =
     try {
       if (makeTable()) {
-        attempt(beat(logUri, clock()))
+        attempt(Beat)(beat(logUri, clock()))
         write()
-      }
-      if (withLock(unwritten.nonEmpty && clock() >= giveUpAtMs)) {
-        logger.error(
-          s"The end of execution $executionId could not be logged in " +
-            s"${ExecutionRecorder.EndPatienceMs / 1000} seconds: its log is left without it."
-        )
-        stop()
       }
     } catch {
       case failure: Throwable =>
@@ -239,16 +241,16 @@ private[executionrecord] final class LakeExecutionRecorder(
     }
 
   private def makeTable(): Boolean = {
-    if (!tableMade) tableMade = attempt(create(logUri, clock(), beatEveryMs))
+    if (!tableMade) tableMade = attempt(LogWrite)(create(logUri, clock(), beatEveryMs))
     tableMade
   }
 
   /** Appends the queued rows in one commit; after the run's last row, tidies the log and stops. */
   private def write(): Unit = {
     val rows = withLock(unwritten.toList)
-    if (rows.nonEmpty && makeTable() && attempt(append(logUri, rows, clock()))) {
+    if (rows.nonEmpty && makeTable() && attempt(LogWrite)(append(logUri, rows, clock()))) {
       if (rows.last.state.exists(ExecutionLogStore.EndStates.contains)) {
-        attempt(tidy(logUri, true))
+        attempt(LogWrite)(tidy(logUri, true))
         stop()
       } else {
         withLock {
@@ -261,13 +263,13 @@ private[executionrecord] final class LakeExecutionRecorder(
 
   /**
     * Makes one write to the lake, and says whether it was made. One that fails is reported once
-    * for as long as writes keep failing, and what it left queued is written on a later tick.
+    * for as long as writes of its kind keep failing, and what it left queued is written on a
+    * later tick.
     */
-  private def attempt(write: => Unit): Boolean =
+  private def attempt(kind: WriteKind)(write: => Unit): Boolean =
     try {
       write
-      if (failing) logger.info(s"The log of execution $executionId is written again.")
-      failing = false
+      if (failing.remove(kind)) logger.info(kind.madeAgain)
       true
     } catch {
       case _: NoSuchExecutionTableException =>
@@ -278,14 +280,7 @@ private[executionrecord] final class LakeExecutionRecorder(
         stop()
         false
       case NonFatal(failure) =>
-        if (!failing) {
-          logger.warn(
-            s"A write to the log of execution $executionId failed; what it left unwritten is " +
-              "tried again on every tick.",
-            failure
-          )
-        }
-        failing = true
+        if (failing.add(kind)) logger.warn(kind.failed, failure)
         false
     }
 

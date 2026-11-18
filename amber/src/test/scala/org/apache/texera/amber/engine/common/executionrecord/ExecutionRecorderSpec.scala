@@ -340,7 +340,7 @@ class ExecutionRecorderSpec
     f.appended.asScala.toSeq shouldBe Seq(Seq(1L, 2L))
   }
 
-  it should "write on the next tick what a lake out of reach left unwritten, and report the outage once" in {
+  it should "write on the next tick what a lake out of reach left unwritten, and report the outage once for rows and once for beats" in {
     val outage = new Outage(startsOn = false)
     val f = new Fixture(
       append = (uri, rows, nowMs) => outage.unless(ExecutionLogStore.append(uri, rows, nowMs)),
@@ -373,8 +373,42 @@ class ExecutionRecorderSpec
     f.rows shouldBe Seq((1L, "READY", None), (2L, "RUNNING", None))
     f.label.beatMs shouldBe f.clock.get()
     f.appended.asScala.toSeq shouldBe Seq(Seq(1L, 2L))
-    // Six writes failed and two were made: the outage was reported once, and its end once.
+    // Six writes failed and two were made: the outage was reported once for the rows and once
+    // for the beats, and so was its end.
     outage.calls.get() shouldBe 8
+    lines shouldBe Seq(
+      (
+        Level.WARN,
+        s"A write to the log of execution $eid failed; what it left unwritten is tried again on " +
+          "every tick."
+      ),
+      (Level.WARN, s"A beat of execution $eid failed; the next tick beats again."),
+      (Level.INFO, s"Execution $eid beats again."),
+      (Level.INFO, s"The log of execution $eid is written again.")
+    )
+  }
+
+  it should "report once that rows cannot be written, though every beat between the tries is made" in {
+    // As when the object store is out of reach and the catalog is not.
+    val outage = new Outage(startsOn = false)
+    val f = new Fixture(
+      append = (uri, rows, nowMs) => outage.unless(ExecutionLogStore.append(uri, rows, nowMs))
+    )
+    f.recorder.tick()
+    val eid = executionIdOf(f.uri)
+
+    val lines = logged {
+      outage.on.set(true)
+      f.clock.addAndGet(1000)
+      f.recorder.state("COMPLETED")
+      (1 to 5).foreach(_ => f.tick())
+      outage.on.set(false)
+      f.tick()
+      f.recorder.awaitIdle(30.seconds) shouldBe true
+    }
+
+    // The first tick and the six after it each beat.
+    f.beats.get() shouldBe 7
     lines shouldBe Seq(
       (
         Level.WARN,
@@ -603,7 +637,7 @@ class ExecutionRecorderSpec
     eventually(f.threadAlive shouldBe false)
   }
 
-  it should "be given up when it could not be written for two minutes, and the recorder stop" in {
+  it should "be tried again for as long as the lake is out of reach, and written once it answers" in {
     val outage = new Outage(startsOn = false)
     val f = new Fixture(
       append = (uri, rows, nowMs) => outage.unless(ExecutionLogStore.append(uri, rows, nowMs))
@@ -613,25 +647,31 @@ class ExecutionRecorderSpec
     outage.calls.set(0)
     f.clock.addAndGet(1000)
     f.recorder.state("COMPLETED")
-
-    // Tried on every tick until two minutes have passed since the run ended.
-    f.clock.addAndGet(ExecutionRecorder.EndPatienceMs - 1)
-    f.recorder.tick()
     f.recorder.awaitIdle(100.millis) shouldBe false
-    outage.calls.get() shouldBe 2
-    f.threadAlive shouldBe true
+    val endedAtMs = f.clock.get()
 
-    f.clock.addAndGet(1)
-    f.recorder.tick()
+    // Hours pass, and every tick tries again: a log without its ending would be read as the
+    // log of a run whose unit was lost.
+    Seq(2L, 10L, 60L, 24L * 60).foreach { minutes =>
+      f.clock.addAndGet(minutes * 60000)
+      f.recorder.tick()
+      f.recorder.awaitIdle(50.millis) shouldBe false
+      f.threadAlive shouldBe true
+    }
+    outage.calls.get() shouldBe 5
+    // The unit beats meanwhile: it is alive, and its run is not over to a reader.
+    f.label.beatMs shouldBe f.clock.get()
+    f.label.ended shouldBe false
 
-    // Left without its ending: nothing more is written, and the beat stops.
-    f.recorder.awaitIdle(1.second) shouldBe true
-    eventually(f.threadAlive shouldBe false)
     outage.on.set(false)
     f.recorder.tick()
-    outage.calls.get() shouldBe 3
-    f.rows shouldBe Seq((1L, "RUNNING", None))
-    f.label.ended shouldBe false
+
+    f.recorder.awaitIdle(30.seconds) shouldBe true
+    f.rows shouldBe Seq((1L, "RUNNING", None), (2L, "COMPLETED", None))
+    f.label.ended shouldBe true
+    // The run ended when it did, however late its ending was written.
+    f.label.stateTimeMs shouldBe endedAtMs
+    eventually(f.threadAlive shouldBe false)
   }
 
   // ---------------------------------------------------------------------------
