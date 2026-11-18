@@ -26,10 +26,17 @@ import org.apache.arrow.vector.ipc.ArrowFileReader
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionPlanStore,
+  PlanRecord,
   VFSURIFactory,
   WarehouseUnavailableException
 }
 import org.apache.texera.amber.core.storage.model.{BufferedItemWriter, VirtualDocument}
+import org.apache.texera.amber.core.storedplan.{
+  StoredOutputPort,
+  StoredPhysicalOp,
+  StoredPhysicalPlan
+}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -37,12 +44,20 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
 import org.apache.texera.amber.util.ArrowUtils
-import org.apache.texera.auth.JwtAuth
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{OPERATOR_PORT_EXECUTIONS, WORKFLOW_EXECUTIONS}
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
+import org.apache.texera.auth.{JwtAuth, SessionUser}
+import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
+import org.apache.texera.dao.jooq.generated.Tables.{
+  USER_WAREHOUSE,
+  WORKFLOW_EXECUTIONS,
+  WORKFLOW_USER_ACCESS
+}
+import org.apache.texera.dao.jooq.generated.enums.{
+  PrivilegeEnum,
+  UserWarehouseFlavorEnum,
+  WorkflowComputingUnitTypeEnum
+}
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   UserDao,
   WorkflowComputingUnitDao,
@@ -59,6 +74,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 }
 import org.apache.texera.web.model.http.request.result.{OperatorExportInfo, ResultExportRequest}
 import org.apache.texera.web.model.http.response.result.ResultExportResponse
+import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, PrivateMethodTester}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -75,8 +91,9 @@ import java.nio.charset.StandardCharsets
 import java.sql.Timestamp
 import java.util.UUID
 import java.util.zip.{ZipException, ZipInputStream}
-import javax.ws.rs.WebApplicationException
+import javax.ws.rs.{NotFoundException, WebApplicationException}
 import javax.ws.rs.core.{Response, StreamingOutput}
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 /**
@@ -89,12 +106,17 @@ import scala.collection.mutable.ArrayBuffer
   *
   *  - The request-level entry points (exportToLocal / exportToDataset /
   *    exportOperatorResultAsStream / exportOperatorsAsZip) and the upload
-  *    plumbing, which read the execution and version tables. Those run against
-  *    MockTexeraDB's embedded Postgres — plus, where an operator needs actual
-  *    rows, a real Iceberg result table in the configured catalog — and, for
-  *    the upload, against a local stand-in for the file service.
+  *    plumbing, which read the execution's row and the version table. Those run
+  *    against MockTexeraDB's embedded Postgres — plus, where an operator needs
+  *    actual rows, a real plan table and a real Iceberg result table in the
+  *    configured catalog — and, for the upload, against a local stand-in for
+  *    the file service.
   *
-  * Breakage caught: an operator whose result is missing silently producing a
+  * Breakage caught: an export reaching the results of an execution that is not
+  * the workflow's, or of one whose results have expired; an export reading the
+  * workflow's newest execution in place of the one it was asked for; a port
+  * between an operator's own physical operators taken for its result; an
+  * operator whose result is missing silently producing a
   * truncated download instead of a hard failure or a placeholder ZIP entry; a
   * per-operator failure aborting a whole multi-operator dataset export instead
   * of being collected; one ZIP entry's writer closing the shared archive stream
@@ -104,8 +126,8 @@ import scala.collection.mutable.ArrayBuffer
   * off; the generated file name losing the workflow version,
   * the parquet→zip extension mapping, or the path-separator stripping that
   * keeps it a single path segment; and the dataset upload posting to the wrong
-  * URL, dropping the URL-encoding of the file path, or omitting the signed
-  * bearer token that authenticates the exporting user to the file service.
+  * URL, dropping the URL-encoding of the file path, or carrying any bearer
+  * token but the caller's own, which is what the file service authorizes.
   */
 class ResultExportServiceSpec
     extends AnyFlatSpec
@@ -115,7 +137,7 @@ class ResultExportServiceSpec
     with BeforeAndAfterEach
     with MockTexeraDB {
 
-  private val service = new ResultExportService(WorkflowIdentity(1L), computingUnitId = 0)
+  private val service = new ResultExportService(WorkflowIdentity(1L), executionId = 0)
 
   private def requestWith(operators: List[OperatorExportInfo]): ResultExportRequest =
     ResultExportRequest(
@@ -127,7 +149,7 @@ class ResultExportServiceSpec
       rowIndex = 0,
       columnIndex = 0,
       filename = "",
-      computingUnitId = 0
+      executionId = 0
     )
 
   // -- fakes for the export writers -------------------------------------------
@@ -381,16 +403,18 @@ class ResultExportServiceSpec
   }
 
   // ===========================================================================
-  // Request-level entry points. These read WORKFLOW_EXECUTIONS /
-  // OPERATOR_PORT_EXECUTIONS / WORKFLOW_VERSION, so they need the embedded
-  // Postgres. Tests that only need the guards and the error mapping stop short
+  // Request-level entry points. These read the execution's row and the workflow's
+  // version, so they need the embedded Postgres, and they find an operator's
+  // result where the execution's stored plan says its port is stored, so every
+  // execution that has results here has a real plan table in the configured
+  // catalog. Tests that only need the guards and the error mapping stop short
   // of opening a result document; tests of the writer dispatch and the ZIP
-  // framing store real rows first, as real Iceberg result tables in the
-  // configured catalog (the arrangement ExecutionResultServiceSpec uses). A
-  // result table's storage key is derived from the URI path and creating one
-  // overwrites whatever is already there, so every row-bearing operator id
-  // below carries a `rexs-` prefix that is unique in the repository — sbt runs
-  // amber suites in parallel inside one JVM.
+  // framing store real rows first, as real Iceberg result tables in the same
+  // catalog (the arrangement ExecutionResultServiceSpec uses). A result table's
+  // storage key is derived from the URI path and creating one overwrites
+  // whatever is already there, so every row-bearing operator id below carries a
+  // `rexs-` prefix that is unique in the repository — sbt runs amber suites in
+  // parallel inside one JVM.
   // ===========================================================================
 
   // Fixed, not randomised. MockTexeraDB hands every suite its own UUID-named database
@@ -398,11 +422,33 @@ class ResultExportServiceSpec
   // only make a failure message that quotes one impossible to reproduce.
   private val testWorkflowWid = 5001
   private val testUserId = 5002
+  // A second workflow, so a test can build the service for an execution that is real and
+  // belongs to a workflow other than the one it exports.
+  private val otherWorkflowWid = 5003
 
   private var testUser: User = _
   private var testVersion: WorkflowVersion = _
+  private var otherVersion: WorkflowVersion = _
   private var testComputingUnit: WorkflowComputingUnit = _
   private var workflowExecutionsDao: WorkflowExecutionsDao = _
+
+  private def insertWorkflow(wid: Int): WorkflowVersion = {
+    val workflow = new Workflow
+    workflow.setWid(wid)
+    workflow.setName("wf-" + UUID.randomUUID().toString.substring(0, 8))
+    workflow.setContent("{}")
+    workflow.setDescription("")
+    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
+    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
+    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
+
+    val version = new WorkflowVersion
+    version.setWid(wid)
+    version.setContent("{}")
+    version.setCreationTime(new Timestamp(System.currentTimeMillis()))
+    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
+    version
+  }
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
@@ -413,20 +459,15 @@ class ResultExportServiceSpec
     testUser.setEmail("export@example.com")
     new UserDao(getDSLContext.configuration()).insert(testUser)
 
-    val workflow = new Workflow
-    workflow.setWid(testWorkflowWid)
-    workflow.setName("wf-" + UUID.randomUUID().toString.substring(0, 8))
-    workflow.setContent("{}")
-    workflow.setDescription("")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-
-    testVersion = new WorkflowVersion
-    testVersion.setWid(testWorkflowWid)
-    testVersion.setContent("{}")
-    testVersion.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(getDSLContext.configuration()).insert(testVersion)
+    testVersion = insertWorkflow(testWorkflowWid)
+    otherVersion = insertWorkflow(otherWorkflowWid)
+    // The export routes ask for the right to read the workflow before they build the service.
+    getDSLContext
+      .insertInto(WORKFLOW_USER_ACCESS)
+      .set(WORKFLOW_USER_ACCESS.WID, Integer.valueOf(testWorkflowWid))
+      .set(WORKFLOW_USER_ACCESS.UID, Integer.valueOf(testUserId))
+      .set(WORKFLOW_USER_ACCESS.PRIVILEGE, PrivilegeEnum.READ)
+      .execute()
 
     testComputingUnit = new WorkflowComputingUnit
     testComputingUnit.setUid(testUserId)
@@ -440,32 +481,24 @@ class ResultExportServiceSpec
     workflowExecutionsDao = new WorkflowExecutionsDao(getDSLContext.configuration())
   }
 
-  // Executions are per-test state: several cases below distinguish "no
-  // execution at all" from "an execution with no stored result URI".
+  // Executions are per-test state: several cases below distinguish "no such
+  // execution" from "an execution that stored no result".
   override protected def afterEach(): Unit = {
-    val eids = getDSLContext
-      .select(WORKFLOW_EXECUTIONS.EID)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.VID.eq(testVersion.getVid))
-    getDSLContext
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(eids))
-      .execute()
     getDSLContext
       .deleteFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.VID.eq(testVersion.getVid))
+      .where(WORKFLOW_EXECUTIONS.VID.in(testVersion.getVid, otherVersion.getVid))
       .execute()
+    planned.clear()
   }
 
   override protected def afterAll(): Unit = closeConnectionPool()
 
-  // The service under test, bound to the seeded workflow and computing unit so
-  // that getLatestExecutionId resolves against the rows this spec inserts.
-  private def exportService: ResultExportService =
-    new ResultExportService(
-      WorkflowIdentity(testWorkflowWid.longValue()),
-      computingUnitId = testComputingUnit.getCuid
-    )
+  /** The service under test, built for `execution` as an execution of the seeded workflow. */
+  private def exportServiceOf(execution: WorkflowExecutions): ResultExportService =
+    exportServiceOf(execution.getEid.longValue())
+
+  private def exportServiceOf(eid: Long): ResultExportService =
+    new ResultExportService(WorkflowIdentity(testWorkflowWid.longValue()), eid)
 
   private def dbRequestWith(
       operators: List[OperatorExportInfo],
@@ -477,13 +510,23 @@ class ResultExportServiceSpec
       workflowId = testWorkflowWid,
       workflowName = workflowName,
       datasetIds = datasetIds,
-      filename = filename,
-      computingUnitId = testComputingUnit.getCuid
+      filename = filename
     )
 
-  private def insertExecution(): WorkflowExecutions = {
+  private def planUriOf(eid: Integer, wid: Int = testWorkflowWid): URI =
+    ExecutionPlanStore.planUri(
+      WorkflowIdentity(wid.longValue()),
+      ExecutionIdentity(eid.longValue()),
+      None
+    )
+
+  /** An execution of the seeded workflow, or of `version`'s, with no stored plan. */
+  private def insertExecution(
+      version: WorkflowVersion = testVersion,
+      whid: Integer = null
+  ): WorkflowExecutions = {
     val execution = new WorkflowExecutions
-    execution.setVid(testVersion.getVid)
+    execution.setVid(version.getVid)
     execution.setUid(testUser.getUid)
     execution.setStatus(0.toByte)
     execution.setResult("")
@@ -493,74 +536,193 @@ class ResultExportServiceSpec
     execution.setName("export-execution")
     execution.setEnvironmentVersion("test-env-1.0")
     execution.setCuid(testComputingUnit.getCuid)
+    execution.setWhid(whid)
     workflowExecutionsDao.insert(execution)
+    // The lake outlives this suite's database, and each run of the suite makes the same
+    // execution ids: a plan an earlier run stored under this id is not this execution's.
+    ExecutionPlanStore.drop(planUriOf(execution.getEid, version.getWid))
     execution
   }
 
-  private def insertResultUri(eid: Integer, resultUri: String): Unit =
+  /** Marks the results of `execution` expired, as the Dashboard's expiry does. */
+  private def expireResultsOf(execution: WorkflowExecutions): Unit =
     getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .columns(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
-        OPERATOR_PORT_EXECUTIONS.RESULT_URI
-      )
-      .values(eid, "port-" + UUID.randomUUID().toString.substring(0, 8), resultUri)
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, new Timestamp(System.currentTimeMillis() - 86400000L))
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, Short.box(WorkflowExecutionStatus.Completed))
+      .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, new Timestamp(System.currentTimeMillis()))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
       .execute()
 
-  // A well-formed external-output result URI, i.e. exactly the shape
-  // getResultUriByLogicalPortId decodes and matches against.
-  private def resultUriOf(
-      eid: Integer,
+  // The output ports the stored plan of each execution names, in the order they were added.
+  private val planned = mutable.Map.empty[Integer, Vector[GlobalPortIdentity]]
+
+  /** Port 0 of logical operator `operatorId` as its users see it, on physical operator `layer`. */
+  private def outputPortOf(
       operatorId: String,
-      warehouse: Option[String] = None
-  ): String =
-    VFSURIFactory
-      .resultURI(
-        VFSURIFactory.createPortBaseURI(
-          WorkflowIdentity(testWorkflowWid.longValue()),
-          ExecutionIdentity(eid.longValue()),
-          GlobalPortIdentity(
-            PhysicalOpIdentity(OperatorIdentity(operatorId), "main"),
-            PortIdentity(),
-            input = false
-          ),
-          warehouse
+      layer: String = "main",
+      internal: Boolean = false
+  ): GlobalPortIdentity =
+    GlobalPortIdentity(
+      PhysicalOpIdentity(OperatorIdentity(operatorId), layer),
+      PortIdentity(0, internal),
+      input = false
+    )
+
+  /** Where `port` of execution `eid` of the seeded workflow is stored, as a plan names it. */
+  private def locationOf(eid: Integer, port: GlobalPortIdentity): URI =
+    VFSURIFactory.createPortBaseURI(
+      WorkflowIdentity(testWorkflowWid.longValue()),
+      ExecutionIdentity(eid.longValue()),
+      port
+    )
+
+  /** Stores `body` as the plan of execution `eid` of the seeded workflow. */
+  private def storePlanBody(eid: Integer, body: String): Unit =
+    ExecutionPlanStore.writePlan(
+      planUriOf(eid),
+      PlanRecord(ExecutionPlanStore.PlanEntryId, body, testUserId, testComputingUnit.getCuid, None),
+      """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
+    )
+
+  /**
+    * Stores the plan of execution `eid` again, naming `port` beside the ports it named: an
+    * export finds an operator's result where the plan says its port is stored. Answers the
+    * port's result table, which the plan names whether or not the run stores it.
+    */
+  private def planPort(eid: Integer, port: GlobalPortIdentity): URI = {
+    val ports = planned.getOrElse(eid, Vector.empty) :+ port
+    planned(eid) = ports
+    storePlanBody(
+      eid,
+      PhysicalPlanCodec.toJson(
+        StoredPhysicalPlan(
+          formatVersion = PhysicalPlanCodec.FormatVersion,
+          operators = ports.map(planned =>
+            StoredPhysicalOp(outputPorts =
+              Seq(StoredOutputPort(storageLocation = locationOf(eid, planned).toString))
+            )
+          )
         )
       )
-      .toString
+    )
+    VFSURIFactory.resultURI(locationOf(eid, port))
+  }
 
-  /** Creates a real Iceberg result table holding `rows`, and records its URI for `eid`. */
-  private def storeResult(eid: Integer, operatorId: String, rows: Seq[Tuple]): Unit = {
-    val uri = resultUriOf(eid, operatorId)
+  /** Creates a real Iceberg result table holding `rows`, where the plan of `eid` names `port`. */
+  private def storeResultAt(eid: Integer, port: GlobalPortIdentity, rows: Seq[Tuple]): Unit = {
     val writer = DocumentFactory
-      .createDocument(new URI(uri), schema)
+      .createDocument(planPort(eid, port), schema)
       .writer("rexs")
       .asInstanceOf[BufferedItemWriter[Tuple]]
     writer.open()
     rows.foreach(writer.putOne)
     writer.close()
-    insertResultUri(eid, uri)
   }
+
+  /** Stores `rows` as the result of `operatorId` in execution `eid`, and plans its port. */
+  private def storeResult(eid: Integer, operatorId: String, rows: Seq[Tuple]): Unit =
+    storeResultAt(eid, outputPortOf(operatorId), rows)
 
   private val timestampPattern = """\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"""
 
-  // -- exportOperatorResultAsStream -------------------------------------------
+  // -- the execution an export is of ---------------------------------------------
 
-  "exportOperatorResultAsStream" should "yield no stream when the workflow never ran" in {
-    val op = OperatorExportInfo("op-1", "csv")
-    exportService.exportOperatorResultAsStream(dbRequestWith(List(op)), op) shouldBe None
+  /** The exports a route can ask for, each of two operators' results unless it says one. */
+  private def everyExportOf(service: ResultExportService): Seq[(String, () => Any)] = {
+    val one = OperatorExportInfo("rexs-any", "csv")
+    val two = List(one, OperatorExportInfo("rexs-other", "csv"))
+    Seq(
+      "exportToDataset" -> (() => service.exportToDataset("a-token", dbRequestWith(two))),
+      "exportToLocal, one operator" -> (() => service.exportToLocal(dbRequestWith(List(one)))),
+      "exportToLocal, an archive" -> (() => service.exportToLocal(dbRequestWith(two))),
+      "exportOperatorResultAsStream" ->
+        (() => service.exportOperatorResultAsStream(dbRequestWith(List(one)), one)),
+      "exportOperatorsAsZip" -> (() => service.exportOperatorsAsZip(dbRequestWith(two)))
+    )
   }
 
-  it should "yield no stream when no stored result URI belongs to the operator" in {
+  "ResultExportService" should "refuse an execution the workflow does not have, in every export" in {
+    // One of another workflow, with a result an export that forgot the workflow would find,
+    // and an id that names no execution.
+    val foreign = insertExecution(otherVersion)
+    storeResult(foreign.getEid, "rexs-any", Seq(tupleOf("another workflow's", 1)))
+
+    Seq(foreign.getEid.longValue(), foreign.getEid + 100000L, 0L).foreach { eid =>
+      everyExportOf(exportServiceOf(eid)).foreach {
+        case (export, run) =>
+          withClue(s"$export of execution $eid: ") {
+            val refusal = intercept[NotFoundException](run())
+            refusal.getMessage shouldBe s"Workflow $testWorkflowWid has no execution $eid."
+            refusal.getResponse.getStatus shouldBe 404
+          }
+      }
+    }
+  }
+
+  it should "refuse an execution whose results have expired with 410, in every export" in {
     val execution = insertExecution()
-    // A result URI exists for the execution, but for a *different* logical
-    // operator: the lookup must decode it, reject it, and fall through to the
-    // null-document guard rather than handing back someone else's result.
-    insertResultUri(execution.getEid, resultUriOf(execution.getEid, "other-op"))
+    // The tables are still there: the row's word that they have expired is what refuses.
+    storeResult(execution.getEid, "rexs-any", Seq(tupleOf("a", 1)))
+    storeResult(execution.getEid, "rexs-other", Seq(tupleOf("b", 2)))
+    everyExportOf(exportServiceOf(execution)).foreach {
+      case (export, run) => withClue(s"$export, before: ") { noException should be thrownBy run() }
+    }
+
+    expireResultsOf(execution)
+
+    everyExportOf(exportServiceOf(execution)).foreach {
+      case (export, run) =>
+        withClue(s"$export: ") {
+          val refusal = intercept[WebApplicationException](run())
+          refusal.getMessage shouldBe s"the results of execution ${execution.getEid} have expired"
+          refusal.getResponse.getStatus shouldBe 410
+        }
+    }
+  }
+
+  it should "export the execution it is built for, not the workflow's newest" in {
+    val older = insertExecution()
+    storeResult(older.getEid, "rexs-of", Seq(tupleOf("old", 1)))
+    val newer = insertExecution()
+    storeResult(newer.getEid, "rexs-of", Seq(tupleOf("new", 2)))
+    val newest = insertExecution() // and it stored no result
+    val op = OperatorExportInfo("rexs-of", "csv")
+
+    def exported(execution: WorkflowExecutions): Option[List[String]] =
+      exportServiceOf(execution).exportOperatorResultAsStream(dbRequestWith(List(op)), op).map {
+        case (stream, _) =>
+          val out = new ByteArrayOutputStream()
+          stream.write(out)
+          csvLines(out)
+      }
+
+    exported(older) shouldBe Some(List("name,count", "old,1"))
+    exported(newer) shouldBe Some(List("name,count", "new,2"))
+    // The earlier executions' rows do not leak into the export of one that stored none.
+    exported(newest) shouldBe None
+  }
+
+  // -- exportOperatorResultAsStream -------------------------------------------
+
+  "exportOperatorResultAsStream" should "yield no stream for an execution with no stored plan" in {
+    val execution = insertExecution()
+    val op = OperatorExportInfo("op-1", "csv")
+
+    exportServiceOf(execution).exportOperatorResultAsStream(dbRequestWith(List(op)), op) shouldBe
+      None
+  }
+
+  it should "yield no stream when no port the plan names belongs to the operator" in {
+    val execution = insertExecution()
+    // A result is stored for the execution, but for a *different* logical operator: the
+    // lookup must decode where it is, reject it, and fall through to the null-document
+    // guard rather than handing back someone else's result.
+    storeResult(execution.getEid, "other-op", Seq(tupleOf("not op-1's", 1)))
 
     val op = OperatorExportInfo("op-1", "csv")
-    exportService.exportOperatorResultAsStream(dbRequestWith(List(op)), op) shouldBe None
+    exportServiceOf(execution).exportOperatorResultAsStream(dbRequestWith(List(op)), op) shouldBe
+      None
   }
 
   it should "round-trip CSV special characters through the streamed export" in {
@@ -569,7 +731,7 @@ class ResultExportServiceSpec
     storeResult(execution.getEid, "rexs-special", Seq(tupleOf(special, 42)))
 
     val op = OperatorExportInfo("rexs-special", "csv")
-    val (stream, fileName) = exportService
+    val (stream, fileName) = exportServiceOf(execution)
       .exportOperatorResultAsStream(dbRequestWith(List(op)), op)
       .getOrElse(fail("expected a stream"))
 
@@ -585,46 +747,25 @@ class ResultExportServiceSpec
       List(List("name", "count"), List(special, "42"))
   }
 
-  it should "resolve against the latest execution, not any execution with results" in {
-    val older = insertExecution()
-    storeResult(older.getEid, "rexs-latest", Seq(tupleOf("old", 1)))
-    insertExecution() // newer, and it registered no result
-
-    val op = OperatorExportInfo("rexs-latest", "csv")
-    // The older execution's rows must not leak into the newest execution's export.
-    exportService.exportOperatorResultAsStream(dbRequestWith(List(op)), op) shouldBe None
-  }
-
-  it should "read the newest execution's rows when several executions stored results" in {
-    val older = insertExecution()
-    storeResult(older.getEid, "rexs-latest2", Seq(tupleOf("old", 1)))
-    val newer = insertExecution()
-    storeResult(newer.getEid, "rexs-latest2", Seq(tupleOf("new", 2)))
-
-    val op = OperatorExportInfo("rexs-latest2", "csv")
-    val (stream, _) = exportService
-      .exportOperatorResultAsStream(dbRequestWith(List(op)), op)
-      .getOrElse(fail("expected a stream"))
-
-    val out = new ByteArrayOutputStream()
-    stream.write(out)
-    csvLines(out) shouldBe List("name,count", "new,2")
-  }
-
   // The "data" outputType through the public path: a real two-row document, so
   // the index guards run against genuine Iceberg reads rather than a FakeDoc
   // (the FakeDoc rejections are covered in the streamCellData section above).
 
-  private def storeCellFixture(): Unit = {
+  private def storeCellFixture(): WorkflowExecutions = {
     val execution = insertExecution()
     storeResult(execution.getEid, "rexs-cell", Seq(tupleOf("a", 1), tupleOf("b", 2)))
+    execution
   }
 
-  private def streamCell(rowIndex: Int, columnIndex: Int): ByteArrayOutputStream = {
+  private def streamCell(
+      execution: WorkflowExecutions,
+      rowIndex: Int,
+      columnIndex: Int
+  ): ByteArrayOutputStream = {
     val op = OperatorExportInfo("rexs-cell", "data")
     val request =
       dbRequestWith(List(op)).copy(rowIndex = rowIndex, columnIndex = columnIndex)
-    val (stream, _) = exportService
+    val (stream, _) = exportServiceOf(execution)
       .exportOperatorResultAsStream(request, op)
       .getOrElse(fail("expected a stream"))
     val out = new ByteArrayOutputStream()
@@ -633,91 +774,69 @@ class ResultExportServiceSpec
   }
 
   it should "stream the last cell when both indexes are at their maxima" in {
-    storeCellFixture()
+    val execution = storeCellFixture()
 
-    utf8(streamCell(rowIndex = 1, columnIndex = 1)) shouldBe "2"
+    utf8(streamCell(execution, rowIndex = 1, columnIndex = 1)) shouldBe "2"
   }
 
   it should "reject a rowIndex equal to the row count with the exact reason" in {
-    storeCellFixture()
+    val execution = storeCellFixture()
 
-    val ex = intercept[WebApplicationException] { streamCell(rowIndex = 2, columnIndex = 0) }
+    val ex = intercept[WebApplicationException] {
+      streamCell(execution, rowIndex = 2, columnIndex = 0)
+    }
     ex.getMessage shouldBe "Invalid rowIndex (2). Total rows: 2"
   }
 
   it should "reject a columnIndex equal to the field count with the exact reason" in {
-    storeCellFixture()
+    val execution = storeCellFixture()
 
-    val ex = intercept[WebApplicationException] { streamCell(rowIndex = 0, columnIndex = 2) }
+    val ex = intercept[WebApplicationException] {
+      streamCell(execution, rowIndex = 0, columnIndex = 2)
+    }
     ex.getMessage shouldBe "Invalid columnIndex (2). Total columns: 2"
   }
 
   it should "surface an internal error for a negative rowIndex, which the guard lets through" in {
-    storeCellFixture()
+    val execution = storeCellFixture()
 
     // Characterization, not a contract: the guard only checks `rowIndex >= count`,
     // so -1 reaches the Iceberg reader and fails as its internal seek error
     // instead of the "Invalid rowIndex" message.
-    val ex = intercept[RuntimeException] { streamCell(rowIndex = -1, columnIndex = 0) }
+    val ex = intercept[RuntimeException] {
+      streamCell(execution, rowIndex = -1, columnIndex = 0)
+    }
     ex.getMessage shouldBe "seek operation should not be called"
   }
 
   it should "surface an index error for a negative columnIndex, which the guard lets through" in {
-    storeCellFixture()
+    val execution = storeCellFixture()
 
     // Characterization: the guard only checks `columnIndex >= length`, so -1
     // reaches the raw field-array access.
     an[ArrayIndexOutOfBoundsException] should be thrownBy
-      streamCell(rowIndex = 0, columnIndex = -1)
+      streamCell(execution, rowIndex = 0, columnIndex = -1)
   }
 
   // -- exportToLocal -----------------------------------------------------------
 
-  // The next two tests assert the same message because both guards in
-  // `exportOperatorAsStream` raise it. The FIXTURE is what tells them apart: the first
-  // seeds no execution (so only the `execIdOpt.isEmpty` guard can fire), the second seeds
-  // one (so that guard cannot fire, and reaching the throw proves the null-document guard
-  // did). Naming them for the guard they actually hit keeps that honest.
-
-  "exportToLocal" should "fail loudly when the workflow has no execution at all" in {
+  "exportToLocal" should "fail loudly when the operator stored no result" in {
+    val execution = insertExecution()
     val request = dbRequestWith(List(OperatorExportInfo("op-1", "csv")))
 
     val ex = intercept[RuntimeException] {
-      exportService.exportToLocal(request)
+      exportServiceOf(execution).exportToLocal(request)
     }
     ex.getMessage shouldBe "Failed to export operator"
-  }
-
-  it should "fail loudly when the execution exists but the operator stored no result" in {
-    // An execution row exists, so `getLatestExecutionId` returns a value and the first
-    // guard is out of play; the operator simply never registered a result URI.
-    insertExecution()
-    val request = dbRequestWith(List(OperatorExportInfo("op-1", "csv")))
-
-    val ex = intercept[RuntimeException] {
-      exportService.exportToLocal(request)
-    }
-    ex.getMessage shouldBe "Failed to export operator"
-  }
-
-  it should "reject a multi-operator export when the workflow never ran" in {
-    val request = dbRequestWith(
-      List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "arrow"))
-    )
-
-    val ex = intercept[WebApplicationException] {
-      exportService.exportToLocal(request)
-    }
-    ex.getMessage shouldBe s"No execution result for workflow $testWorkflowWid"
   }
 
   it should "stream a ZIP with one placeholder entry per result-less operator" in {
-    insertExecution()
+    val execution = insertExecution()
     val request = dbRequestWith(
       List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "arrow"))
     )
 
-    val response = exportService.exportToLocal(request)
+    val response = exportServiceOf(execution).exportToLocal(request)
 
     response.getStatus shouldBe Response.Status.OK.getStatusCode
     response.getMediaType.toString shouldBe "application/zip"
@@ -754,24 +873,23 @@ class ResultExportServiceSpec
 
   // -- exportOperatorsAsZip -----------------------------------------------------
 
-  private def writeZipBody(request: ResultExportRequest): Array[Byte] = {
-    val (stream, _) = exportService.exportOperatorsAsZip(request)
+  private def writeZipBody(
+      execution: WorkflowExecutions,
+      request: ResultExportRequest
+  ): Array[Byte] = {
+    val (stream, _) = exportServiceOf(execution).exportOperatorsAsZip(request)
     val body = new ByteArrayOutputStream()
     stream.write(body)
     body.toByteArray
   }
 
-  "exportOperatorsAsZip" should "throw rather than yield no stream when the workflow never ran" in {
+  "exportOperatorsAsZip" should "refuse an execution that is not the workflow's before it answers, not while it streams" in {
     val request = dbRequestWith(
       List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "csv"))
     )
 
-    // Deliberate asymmetry with exportOperatorResultAsStream, which reports the
-    // same condition as None and leaves the failure to its caller.
-    val ex = intercept[WebApplicationException] {
-      exportService.exportOperatorsAsZip(request)
-    }
-    ex.getMessage shouldBe s"No execution result for workflow $testWorkflowWid"
+    // A refusal met while the archive is written would come after its 200.
+    a[NotFoundException] should be thrownBy exportServiceOf(987654L).exportOperatorsAsZip(request)
   }
 
   it should "name the archive after the workflow and write each entry in its operator's own format" in {
@@ -790,7 +908,7 @@ class ResultExportServiceSpec
       )
     )
 
-    val (stream, zipName) = exportService.exportOperatorsAsZip(request)
+    val (stream, zipName) = exportServiceOf(execution).exportOperatorsAsZip(request)
     zipName should fullyMatch regex s"""wf-$timestampPattern\\.zip"""
 
     val body = new ByteArrayOutputStream()
@@ -846,7 +964,7 @@ class ResultExportServiceSpec
     // ZipOutputStream; the second entry surviving the first entry's writer is
     // that wrapper actually being routed through, not just existing (its own
     // close-suppression is unit-tested above).
-    val entries = readZipEntries(writeZipBody(request))
+    val entries = readZipEntries(writeZipBody(execution, request))
 
     entries.map(_._1) should have size 2
     entries.map(_._2.linesIterator.toList) shouldBe List(
@@ -872,7 +990,7 @@ class ResultExportServiceSpec
       )
     )
 
-    val entries = readZipEntries(writeZipBody(request))
+    val entries = readZipEntries(writeZipBody(execution, request))
 
     entries should have size 4
     entries(1) shouldBe ("rexs-missing-empty.txt" -> "Operator rexs-missing has no results")
@@ -894,7 +1012,7 @@ class ResultExportServiceSpec
       Seq(10, 11, 12).map(n => OperatorExportInfo(s"rexs-chunk$n", "csv")).toList
     )
 
-    val entries = readZipEntries(writeZipBody(request))
+    val entries = readZipEntries(writeZipBody(execution, request))
 
     entries.map(_._2.linesIterator.toList) shouldBe Seq(10, 11, 12).map { n =>
       "name,count" +: (1 to n).map(i => s"r$i,$i").toList
@@ -908,7 +1026,7 @@ class ResultExportServiceSpec
     val request = dbRequestWith(
       List(OperatorExportInfo("rexs-dup", "csv"), OperatorExportInfo("rexs-dup", "csv"))
     )
-    val (stream, _) = exportService.exportOperatorsAsZip(request)
+    val (stream, _) = exportServiceOf(execution).exportOperatorsAsZip(request)
 
     // Both entries generate the same second-granularity file name; align to the
     // start of a second so the two generateFileName calls cannot straddle one.
@@ -929,28 +1047,18 @@ class ResultExportServiceSpec
 
   // -- exportToDataset ---------------------------------------------------------
 
-  "exportToDataset" should "report an error when the workflow never ran" in {
-    val response =
-      exportService.exportToDataset(
-        testUser,
-        dbRequestWith(List(OperatorExportInfo("op-1", "csv")))
-      )
+  // What the caller sent as its own bearer token: no token this service could sign.
+  private val callerToken = "the-callers-own-token"
 
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getEntity shouldBe ResultExportResponse(
-      "error",
-      s"Workflow $testWorkflowWid has no execution result"
-    )
-  }
-
-  it should "collect one message per operator rather than stopping at the first" in {
-    insertExecution()
+  "exportToDataset" should "collect one message per operator rather than stopping at the first" in {
+    val execution = insertExecution()
     val request = dbRequestWith(
       List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "arrow"))
     )
 
-    val response = exportService.exportToDataset(testUser, request)
+    val response = exportServiceOf(execution).exportToDataset(callerToken, request)
 
+    response.getStatus shouldBe Response.Status.OK.getStatusCode
     response.getEntity shouldBe ResultExportResponse(
       "error",
       "No results to export for operator OperatorExportInfo(op-1,csv)\n" +
@@ -960,18 +1068,17 @@ class ResultExportServiceSpec
 
   it should "turn a thrown per-operator failure into an error entry and keep going" in {
     val execution = insertExecution()
-    // A stored URI the VFS decoder rejects outright, so the lookup throws
-    // instead of returning None — the path the per-operator catch exists for.
-    insertResultUri(execution.getEid, "mock:///not-a-vfs-uri")
+    // A stored plan this version does not read, so the lookup throws instead of
+    // finding nothing — the path the per-operator catch exists for.
+    storePlanBody(execution.getEid, """{"formatVersion":2}""")
 
-    // TWO operators. The bad URI is stored against the execution rather than a single
-    // operator, so both lookups throw — which is exactly the point: the try/catch lives
-    // INSIDE the foreach (ResultExportService.scala:105-114), so op-2 must still be
-    // attempted after op-1 blows up. Hoist the catch outside the loop and only op-1's
-    // line survives, failing the second assertion.
+    // TWO operators. The plan is the execution's rather than a single operator's, so both
+    // lookups throw — which is exactly the point: the try/catch lives INSIDE the foreach,
+    // so op-2 must still be attempted after op-1 blows up. Hoist the catch outside the loop
+    // and only op-1's line survives, failing the second assertion.
     val response =
-      exportService.exportToDataset(
-        testUser,
+      exportServiceOf(execution).exportToDataset(
+        callerToken,
         dbRequestWith(List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "csv")))
       )
 
@@ -989,8 +1096,8 @@ class ResultExportServiceSpec
     val execution = insertExecution()
     storeResult(execution.getEid, "rexs-ds-zero", Seq.empty)
 
-    val response = exportService.exportToDataset(
-      testUser,
+    val response = exportServiceOf(execution).exportToDataset(
+      callerToken,
       dbRequestWith(List(OperatorExportInfo("rexs-ds-zero", "csv")))
     )
 
@@ -1003,7 +1110,7 @@ class ResultExportServiceSpec
     )
   }
 
-  // The next two tests exercise exportSingleOperatorToDataset's success path, so
+  // The next cases exercise exportSingleOperatorToDataset's success path, so
   // they store real rows and receive the uploads with the stub file service
   // defined further below (withUploadServer).
 
@@ -1022,7 +1129,7 @@ class ResultExportServiceSpec
         filename = "chosen.csv"
       )
 
-      val response = exportService.exportToDataset(testUser, request)
+      val response = exportServiceOf(execution).exportToDataset(callerToken, request)
 
       response.getEntity shouldBe ResultExportResponse(
         "success",
@@ -1036,6 +1143,8 @@ class ResultExportServiceSpec
       recorded.head.body.linesIterator.toList shouldBe List("name,count", "a,1", "b,2")
       // An unrecognised output type falls back to the CSV writer here too.
       recorded(1).body.linesIterator.toList shouldBe List("name,count", "c,3")
+      // Each upload is the caller's: the file service decides it as it decides the caller's.
+      recorded.map(_.authorization).toList shouldBe List.fill(2)(s"Bearer $callerToken")
     }
   }
 
@@ -1050,7 +1159,7 @@ class ResultExportServiceSpec
         filename = "f.csv"
       )
 
-      val response = exportService.exportToDataset(testUser, request)
+      val response = exportServiceOf(execution).exportToDataset(callerToken, request)
 
       // The partial-success policy: one success makes the whole response a
       // "success", and the per-operator error lines are dropped, not appended.
@@ -1062,16 +1171,57 @@ class ResultExportServiceSpec
     }
   }
 
+  // Through the route, as the browser asks: the token of the request's Authorization
+  // header is the one the file service is shown, not one this service signs for the user.
+  it should "upload with the token of the request the route was sent" in {
+    withUploadServer(200) { recorded =>
+      val execution = insertExecution()
+      storeResult(execution.getEid, "rexs-ds-route", Seq(tupleOf("a", 1)))
+      val request = dbRequestWith(
+        List(OperatorExportInfo("rexs-ds-route", "csv")),
+        datasetIds = List(7),
+        filename = "f.csv"
+      ).copy(executionId = execution.getEid.longValue())
+      // A token as the Dashboard issues one, with a claim of its own to tell it by.
+      val claims = JwtAuth.jwtClaims(testUser)
+      claims.setClaim("issuedFor", "result-export-service-spec")
+      val token = JwtAuth.jwtToken(claims)
+
+      val response = new WorkflowExecutionsResource()
+        .exportResultToDataset(request, s"Bearer $token", new SessionUser(testUser))
+
+      response.getStatus shouldBe Response.Status.OK.getStatusCode
+      response.getEntity shouldBe ResultExportResponse(
+        "success",
+        "csv export done for operator rexs-ds-route -> file: f.csv"
+      )
+      recorded.map(_.authorization).toList shouldBe List(s"Bearer $token")
+      recorded.map(_.path).toList shouldBe List("/api/dataset/7/upload")
+    }
+  }
+
   // -- getOperatorDocument -------------------------------------------------------
 
   private val getOperatorDocument =
     PrivateMethod[VirtualDocument[Tuple]](Symbol("getOperatorDocument"))
 
-  "getOperatorDocument" should "return null when the operator stored no result URI" in {
-    insertExecution()
+  "getOperatorDocument" should "return null for an operator the stored plan names no port of" in {
+    val execution = insertExecution()
+    val unplanned = exportServiceOf(execution) invokePrivate getOperatorDocument("op-1")
+    unplanned shouldBe null
 
-    val doc =
-      exportService invokePrivate getOperatorDocument("op-1", testComputingUnit.getCuid.intValue())
+    storeResult(execution.getEid, "rexs-doc-other", Seq(tupleOf("a", 1)))
+    val unnamed = exportServiceOf(execution) invokePrivate getOperatorDocument("op-1")
+    unnamed shouldBe null
+  }
+
+  it should "return null for a port the plan names and the run did not store" in {
+    val execution = insertExecution()
+    // A plan names where every output port is stored; a run stores only some of them.
+    val unstored = planPort(execution.getEid, outputPortOf("rexs-doc-unstored"))
+    if (DocumentFactory.documentExists(unstored)) DocumentFactory.openDocument(unstored)._1.clear()
+
+    val doc = exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-doc-unstored")
 
     doc shouldBe null
   }
@@ -1080,32 +1230,50 @@ class ResultExportServiceSpec
     val execution = insertExecution()
     storeResult(execution.getEid, "rexs-doc", Seq(tupleOf("a", 1), tupleOf("b", 2)))
 
-    val doc =
-      exportService invokePrivate getOperatorDocument(
-        "rexs-doc",
-        testComputingUnit.getCuid.intValue()
-      )
+    val doc = exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-doc")
 
     doc.getCount shouldBe 2
     doc.get().map(_.getField[String]("name")).toList shouldBe List("a", "b")
   }
 
-  it should "refuse a result whose warehouse the URI cannot resolve" in {
+  it should "open the result of the operator's external port, not of a port between its physical operators" in {
     val execution = insertExecution()
-    // No table is needed: the WarehouseReadGuard check (#6930) fires on the URI,
-    // before any catalog access. An unresolvable /wh/ prefix is refused in either
-    // flag state, so this pins the wiring rather than the shipping default;
-    // WarehouseReadGuardSpec pins the enabled and disabled behaviour itself.
-    val resolvable = resultUriOf(execution.getEid, "rexs-wh", Some("byo"))
-    insertResultUri(execution.getEid, resolvable.toString.replace("/wh/byo/", "/wh/a%2Fb/"))
+    // An operator made of two physical operators: what the first hands the second is
+    // stored too, on an internal port, and is not the operator's result.
+    storeResultAt(
+      execution.getEid,
+      outputPortOf("rexs-doc-layers", layer = "localAgg", internal = true),
+      Seq(tupleOf("partial", 1), tupleOf("partial", 2))
+    )
+    storeResultAt(
+      execution.getEid,
+      outputPortOf("rexs-doc-layers", layer = "globalAgg"),
+      Seq(tupleOf("final", 3))
+    )
+
+    val doc = exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-doc-layers")
+
+    doc.get().map(_.getField[String]("name")).toList shouldBe List("final")
+  }
+
+  it should "refuse an execution in a per-user warehouse while those are disabled" in {
+    // Read there, its plan would be looked for in the shared warehouse, and its results
+    // answered as not stored: the refusal names the warehouse instead (#6930).
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(testUser.getUid)
+    warehouse.setName("export-warehouse")
+    warehouse.setLakekeeperWarehouseName("rexs-byo")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    val execution = insertExecution(whid = warehouse.getWhid)
 
     val ex = intercept[WarehouseUnavailableException] {
-      exportService invokePrivate getOperatorDocument(
-        "rexs-wh",
-        testComputingUnit.getCuid.intValue()
-      )
+      exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-wh")
     }
-    ex.getMessage should include("unresolvable warehouse URI")
+    ex.getMessage shouldBe
+      "this result is stored in warehouse 'rexs-byo'; " +
+        "per-user warehouses are disabled in this deployment"
   }
 
   // -- generateFileName --------------------------------------------------------
@@ -1113,13 +1281,13 @@ class ResultExportServiceSpec
   private val generateFileName = PrivateMethod[String](Symbol("generateFileName"))
 
   "generateFileName" should "combine workflow name, operator id, latest version and timestamp" in {
-    val name = exportService invokePrivate generateFileName(dbRequestWith(Nil), "sink", "csv")
+    val name = service invokePrivate generateFileName(dbRequestWith(Nil), "sink", "csv")
 
     name should fullyMatch regex s"""wf-opsink-v${testVersion.getVid}-$timestampPattern\\.csv"""
   }
 
   it should "give a parquet export a .zip extension because the payload is an archive" in {
-    val name = exportService invokePrivate generateFileName(dbRequestWith(Nil), "sink", "parquet")
+    val name = service invokePrivate generateFileName(dbRequestWith(Nil), "sink", "parquet")
 
     name should fullyMatch regex s"""wf-opsink-v${testVersion.getVid}-$timestampPattern\\.zip"""
   }
@@ -1127,7 +1295,7 @@ class ResultExportServiceSpec
   it should "strip path separators so the name stays a single path segment" in {
     val request = dbRequestWith(Nil, workflowName = "a/b\\c")
 
-    val name = exportService invokePrivate generateFileName(request, "d/e\\f", "csv")
+    val name = service invokePrivate generateFileName(request, "d/e\\f", "csv")
 
     name should startWith("abc-opdef-v")
     name should not include "/"
@@ -1143,9 +1311,9 @@ class ResultExportServiceSpec
 
   "saveStreamToDataset" should "name the export with the generated file name" in {
     val (success, error) =
-      exportService invokePrivate saveStreamToDataset(
+      service invokePrivate saveStreamToDataset(
         "sink",
-        testUser,
+        callerToken,
         dbRequestWith(Nil),
         "csv",
         noopWriter
@@ -1158,9 +1326,9 @@ class ResultExportServiceSpec
 
   it should "prefer the request's filename override over the generated name" in {
     val (success, error) =
-      exportService invokePrivate saveStreamToDataset(
+      service invokePrivate saveStreamToDataset(
         "sink",
-        testUser,
+        callerToken,
         dbRequestWith(Nil, filename = "chosen.csv"),
         "csv",
         noopWriter
@@ -1185,7 +1353,9 @@ class ResultExportServiceSpec
   /**
     * Stands a throw-away HTTP server up on the very host/port the production
     * upload endpoint points at, since that endpoint is fixed at class-load time
-    * from the environment and cannot be redirected from a test.
+    * from the environment and cannot be redirected from a test. Where another
+    * process holds that port, the environment redirects both: run the suite with
+    * FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT naming a free loopback port.
     */
   private def withUploadServer(status: Int)(body: ArrayBuffer[RecordedUpload] => Unit): Unit = {
     // The stub server can only stand in for an endpoint that is plain-HTTP, loopback and
@@ -1218,7 +1388,9 @@ class ResultExportServiceSpec
         case e: Exception =>
           fail(
             s"cannot bind port ${uploadEndpoint.getPort} for the stub upload server: " +
-              s"${e.getMessage}. That is the file-service port — stop the local stack and re-run."
+              s"${e.getMessage}. That is the file-service port — stop the local stack, or " +
+              "set FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT to " +
+              "http://localhost:<a free port>/api/dataset/did/upload, and re-run."
           )
       }
     server.createContext(
@@ -1244,7 +1416,7 @@ class ResultExportServiceSpec
     finally server.stop(0)
   }
 
-  it should "POST the exported bytes to the file service once per dataset" in {
+  it should "POST the exported bytes to the file service once per dataset, as the caller" in {
     withUploadServer(200) { recorded =>
       val request = dbRequestWith(
         Nil,
@@ -1254,9 +1426,9 @@ class ResultExportServiceSpec
       )
 
       val (success, error) =
-        exportService invokePrivate saveStreamToDataset(
+        service invokePrivate saveStreamToDataset(
           "sink",
-          testUser,
+          callerToken,
           request,
           "csv",
           (out: OutputStream) => out.write("hello".getBytes(StandardCharsets.UTF_8))
@@ -1276,13 +1448,9 @@ class ResultExportServiceSpec
         // Both query values are URL-encoded, so the spaces survive as '+'.
         upload.rawQuery shouldBe "filePath=my+file.csv&message=Export+from+workflow+wf+name"
         upload.body shouldBe "hello"
-        // A genuinely signed token for the exporting user, not a placeholder:
-        // the consumer verifies the HMAC against the service's own secret.
-        upload.authorization should startWith("Bearer ")
-        val claims =
-          JwtAuth.jwtConsumer.processToClaims(upload.authorization.stripPrefix("Bearer "))
-        claims.getSubject shouldBe testUser.getName
-        claims.getClaimValue("email") shouldBe testUser.getEmail
+        // The caller's own token, as it was handed over: the service signs none of its
+        // own, so the file service authorizes the upload as it authorizes the caller.
+        upload.authorization shouldBe s"Bearer $callerToken"
       }
     }
   }
@@ -1292,9 +1460,9 @@ class ResultExportServiceSpec
       val request = dbRequestWith(Nil, datasetIds = List(9), filename = "f.csv")
 
       val (success, error) =
-        exportService invokePrivate saveStreamToDataset(
+        service invokePrivate saveStreamToDataset(
           "sink",
-          testUser,
+          callerToken,
           request,
           "csv",
           noopWriter

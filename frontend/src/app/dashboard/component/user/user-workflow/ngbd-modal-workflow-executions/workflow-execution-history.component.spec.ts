@@ -795,9 +795,10 @@ describe("WorkflowExecutionHistoryComponent", () => {
       const modalRef = {} as NzModalRef;
       const createSpy = vi.spyOn(modalService, "create").mockReturnValue(modalRef);
 
-      component.showRuntimeStatistics(2, 5);
+      component.showRuntimeStatistics(2);
 
-      expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(1, 2, 5);
+      // By the workflow and the execution alone: the unit the execution ran on may be gone.
+      expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(1, 2);
       expect(createSpy).toHaveBeenCalledTimes(1);
       const options = createSpy.mock.calls[0][0] as ModalOptions;
       expect(options.nzContent).toBe(WorkflowRuntimeStatisticsComponent);
@@ -1083,8 +1084,8 @@ describe("WorkflowExecutionHistoryComponent", () => {
 
       rowButtons(bodyRows()[0]).statistics.triggerEventHandler("click", new MouseEvent("click"));
 
-      // row 0 is eId 1 on computing unit 3
-      expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(1, 1, 3);
+      // row 0 is eId 1, asked for by the workflow and the execution alone, not by its unit (3)
+      expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(1, 1);
       expect((createSpy.mock.calls[0][0] as ModalOptions).nzData).toEqual({ workflowRuntimeStatistics: stats });
     });
 

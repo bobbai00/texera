@@ -36,7 +36,8 @@ import { WorkflowGraph } from "../workflow-graph/model/workflow-graph";
 import { HttpResponse } from "@angular/common/http";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { MockGuiConfigService } from "../../../common/service/gui-config.service.mock";
-import { DashboardWorkflowComputingUnit } from "../../../common/type/workflow-computing-unit";
+import { WorkflowExecutionsService } from "../../../dashboard/service/user/workflow-executions/workflow-executions.service";
+import { WorkflowExecutionsEntry } from "../../../dashboard/type/workflow-executions-entry";
 describe("WorkflowResultExportService", () => {
   let service: WorkflowResultExportService;
   let workflowActionServiceSpy: Mocked<WorkflowActionService>;
@@ -44,6 +45,7 @@ describe("WorkflowResultExportService", () => {
   let executeWorkflowServiceSpy: Mocked<ExecuteWorkflowService>;
   let workflowResultServiceSpy: Mocked<WorkflowResultService>;
   let downloadServiceSpy: Mocked<DownloadService>;
+  let workflowExecutionsServiceSpy: Mocked<WorkflowExecutionsService>;
 
   let jointGraphWrapperSpy: Mocked<JointGraphWrapper>;
   let texeraGraphSpy: Mocked<WorkflowGraph>;
@@ -86,9 +88,12 @@ describe("WorkflowResultExportService", () => {
     waSpy.getWorkflow.mockReturnValue({ wid: "workflow1", name: "Test Workflow" });
 
     const ntSpy = { success: vi.fn(), error: vi.fn(), loading: vi.fn() };
-    const ewSpy = { getExecutionStateStream: vi.fn(), getExecutionState: vi.fn() };
+    const ewSpy = { getExecutionStateStream: vi.fn(), getExecutionState: vi.fn(), getCurrentExecutionId: vi.fn() };
     ewSpy.getExecutionStateStream.mockReturnValue(of({ previous: {}, current: { state: ExecutionState.Completed } }));
     ewSpy.getExecutionState.mockReturnValue({ state: ExecutionState.Completed });
+    // The run on screen, as its computing unit names it.
+    ewSpy.getCurrentExecutionId.mockReturnValue(345);
+    const executionsSpy = { retrieveLatestWorkflowExecution: vi.fn() };
 
     const wrSpy = { hasAnyResult: vi.fn(), getResultService: vi.fn(), getPaginatedResultService: vi.fn() };
     const downloadSpy = {
@@ -113,6 +118,7 @@ describe("WorkflowResultExportService", () => {
         { provide: WorkflowResultService, useValue: wrSpy },
         { provide: DownloadService, useValue: downloadSpy },
         { provide: DatasetService, useValue: datasetSpy },
+        { provide: WorkflowExecutionsService, useValue: executionsSpy },
         ...commonTestProviders,
       ],
     });
@@ -125,6 +131,9 @@ describe("WorkflowResultExportService", () => {
     executeWorkflowServiceSpy = TestBed.inject(ExecuteWorkflowService) as unknown as Mocked<ExecuteWorkflowService>;
     workflowResultServiceSpy = TestBed.inject(WorkflowResultService) as unknown as Mocked<WorkflowResultService>;
     downloadServiceSpy = TestBed.inject(DownloadService) as unknown as Mocked<DownloadService>;
+    workflowExecutionsServiceSpy = TestBed.inject(
+      WorkflowExecutionsService
+    ) as unknown as Mocked<WorkflowExecutionsService>;
     TestBed.inject(DatasetService) as unknown as Mocked<DatasetService>;
 
     // Reset the GuiConfig to a known baseline (export disabled) so tests that
@@ -174,10 +183,6 @@ describe("WorkflowResultExportService", () => {
   function enableExport(): void {
     const config = TestBed.inject(GuiConfigService) as unknown as MockGuiConfigService;
     config.setConfig({ exportExecutionResultEnabled: true });
-  }
-
-  function makeUnit(): DashboardWorkflowComputingUnit {
-    return { computingUnit: { cuid: 1, type: "local" } } as unknown as DashboardWorkflowComputingUnit;
   }
 
   /** Stubs the export-flow methods the real DownloadService exposes but the base spy omits. */
@@ -251,24 +256,10 @@ describe("WorkflowResultExportService", () => {
       const download = stubDownloadService();
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.loading).not.toHaveBeenCalled();
       expect(notificationServiceSpy.error).not.toHaveBeenCalled();
-      expect(download.exportWorkflowResultToDataset).not.toHaveBeenCalled();
-    });
-
-    it("errors when the computing unit is null", () => {
-      enableExport();
-      const download = stubDownloadService();
-      texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
-
-      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", null, ["op1"]);
-
-      expect(notificationServiceSpy.error).toHaveBeenCalledWith(
-        "Cannot export result: computing unit is not available"
-      );
-      expect(notificationServiceSpy.loading).not.toHaveBeenCalled();
       expect(download.exportWorkflowResultToDataset).not.toHaveBeenCalled();
     });
 
@@ -278,7 +269,7 @@ describe("WorkflowResultExportService", () => {
       const download = stubDownloadService();
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith("Cannot export result: workflow ID is not available");
       expect(download.exportWorkflowResultToDataset).not.toHaveBeenCalled();
@@ -288,7 +279,7 @@ describe("WorkflowResultExportService", () => {
       enableExport();
       const download = stubDownloadService();
 
-      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", makeUnit(), []);
+      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", []);
 
       expect(notificationServiceSpy.loading).not.toHaveBeenCalled();
       expect(notificationServiceSpy.error).not.toHaveBeenCalled();
@@ -304,7 +295,7 @@ describe("WorkflowResultExportService", () => {
       jointGraphWrapperSpy.getCurrentHighlightedOperatorIDs.mockReturnValue(["opHighlighted"]);
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "opA" }, { operatorID: "opB" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", makeUnit(), ["opNamed"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", ["opNamed"]);
 
       expect(download.exportWorkflowResultToDataset).toHaveBeenCalledWith(
         "csv",
@@ -315,7 +306,7 @@ describe("WorkflowResultExportService", () => {
         1,
         2,
         "file",
-        expect.anything()
+        345
       );
     });
 
@@ -329,7 +320,7 @@ describe("WorkflowResultExportService", () => {
       downloadServiceSpy.getWorkflowResultDownloadability.mockReturnValue(pending as any);
       const liveSelection = ["opA"];
 
-      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", makeUnit(), liveSelection);
+      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", liveSelection);
       liveSelection.push("opB");
       pending.next({});
       pending.complete();
@@ -343,7 +334,7 @@ describe("WorkflowResultExportService", () => {
         1,
         2,
         "file",
-        expect.anything()
+        345
       );
     });
 
@@ -351,7 +342,7 @@ describe("WorkflowResultExportService", () => {
       enableExport();
       const download = stubDownloadService();
 
-      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", makeUnit(), ["opA", "opB"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", ["opA", "opB"]);
 
       expect(download.exportWorkflowResultToDataset).toHaveBeenCalledWith(
         "csv",
@@ -365,7 +356,7 @@ describe("WorkflowResultExportService", () => {
         1,
         2,
         "file",
-        expect.anything()
+        345
       );
     });
 
@@ -374,7 +365,7 @@ describe("WorkflowResultExportService", () => {
       const download = stubDownloadService({ downloadability: { op1: ["ds1 (a@x.com)"] } });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith(
         "Cannot export result: selection depends on dataset(s) that are not downloadable: ds1 (a@x.com)"
@@ -390,7 +381,7 @@ describe("WorkflowResultExportService", () => {
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }, { operatorID: "op2" }] as any);
 
       // Both are in scope; only op2 is blocked, which is what makes this the partial case.
-      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", makeUnit(), ["op1", "op2"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", ["op1", "op2"]);
 
       expect(notificationServiceSpy.warning).toHaveBeenCalledWith(
         "Some operators were skipped because their results depend on dataset(s) that are not downloadable" +
@@ -406,7 +397,7 @@ describe("WorkflowResultExportService", () => {
         1,
         2,
         "file",
-        expect.anything()
+        345
       );
       expect(notificationServiceSpy.success).toHaveBeenCalledWith("Result exported successfully");
     });
@@ -418,7 +409,7 @@ describe("WorkflowResultExportService", () => {
       const download = stubDownloadService({ downloadability: { op1: [] } });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [1], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith(
         "Cannot export result: selection depends on dataset(s) that are not downloadable"
@@ -434,7 +425,7 @@ describe("WorkflowResultExportService", () => {
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }, { operatorID: "op2" }] as any);
 
       // Both are in scope; only op2 is blocked, which is what makes this the partial case.
-      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", makeUnit(), ["op1", "op2"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", ["op1", "op2"]);
 
       expect(notificationServiceSpy.warning).toHaveBeenCalledWith(
         "Some operators were skipped because their results depend on dataset(s) that are not downloadable"
@@ -450,7 +441,7 @@ describe("WorkflowResultExportService", () => {
         1,
         2,
         "file",
-        expect.anything()
+        345
       );
     });
 
@@ -460,7 +451,7 @@ describe("WorkflowResultExportService", () => {
       const download = stubDownloadService();
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.warning).not.toHaveBeenCalled();
       expect(notificationServiceSpy.loading).toHaveBeenCalledWith("Exporting...");
@@ -475,7 +466,7 @@ describe("WorkflowResultExportService", () => {
       });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith("quota exceeded");
       expect(notificationServiceSpy.success).not.toHaveBeenCalled();
@@ -486,7 +477,7 @@ describe("WorkflowResultExportService", () => {
       stubDownloadService({ datasetResponse: new HttpResponse({}) });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith("An error occurred during export");
     });
@@ -496,7 +487,7 @@ describe("WorkflowResultExportService", () => {
       stubDownloadService({ datasetError: { error: { message: "server exploded" } } });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith(
         "An error happened in exporting operator results: server exploded"
@@ -509,10 +500,25 @@ describe("WorkflowResultExportService", () => {
       stubDownloadService({ datasetError: { error: "dataset quota exceeded" } });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith(
         "An error happened in exporting operator results: dataset quota exceeded"
+      );
+    });
+
+    // What the Dashboard service answers an export it refuses: `{"error": why}`, with the refusal's status.
+    it("reports why the Dashboard service refused the export, as for results that have expired", () => {
+      enableExport();
+      stubDownloadService({
+        datasetError: { status: 410, error: { error: "the results of execution 345 have expired" } },
+      });
+      texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
+
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
+
+      expect(notificationServiceSpy.error).toHaveBeenCalledWith(
+        "An error happened in exporting operator results: the results of execution 345 have expired"
       );
     });
 
@@ -522,7 +528,7 @@ describe("WorkflowResultExportService", () => {
       stubDownloadService({ datasetError: "connection reset by peer" });
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("csv", "wf", [5], 0, 0, "file", "dataset", ["op1"]);
 
       expect(notificationServiceSpy.error).toHaveBeenCalledWith(
         "An error happened in exporting operator results: connection reset by peer"
@@ -534,7 +540,7 @@ describe("WorkflowResultExportService", () => {
       const download = stubDownloadService();
       texeraGraphSpy.getAllOperators.mockReturnValue([{ operatorID: "op1" }] as any);
 
-      service.exportWorkflowExecutionResult("json", "wf", [], 3, 4, "local-file", "local", makeUnit(), ["op1"]);
+      service.exportWorkflowExecutionResult("json", "wf", [], 3, 4, "local-file", "local", ["op1"]);
 
       expect(notificationServiceSpy.loading).toHaveBeenCalledWith("Exporting...");
       expect(download.exportWorkflowResultToLocal).toHaveBeenCalledWith(
@@ -545,9 +551,82 @@ describe("WorkflowResultExportService", () => {
         3,
         4,
         "local-file",
-        expect.anything()
+        345
       );
       expect(download.exportWorkflowResultToDataset).not.toHaveBeenCalled();
+    });
+
+    // No computing unit is asked for an export, so none is handed over: what is exported is an execution's.
+    describe("the execution whose results are exported", () => {
+      function latestExecution(eId: number): WorkflowExecutionsEntry {
+        return { eId } as unknown as WorkflowExecutionsEntry;
+      }
+
+      /** The execution the download service was last asked to export, to either destination. */
+      function exportedExecution(download: ReturnType<typeof stubDownloadService>, destination: "dataset" | "local") {
+        const calls =
+          destination === "dataset"
+            ? download.exportWorkflowResultToDataset.mock.calls
+            : download.exportWorkflowResultToLocal.mock.calls;
+        expect(calls).toHaveLength(1);
+        return calls[0][calls[0].length - 1];
+      }
+
+      (["dataset", "local"] as const).forEach(destination => {
+        it(`is the one of the run on screen, without asking for the workflow's latest (${destination})`, () => {
+          enableExport();
+          const download = stubDownloadService();
+          executeWorkflowServiceSpy.getCurrentExecutionId.mockReturnValue(400);
+
+          service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", destination, ["op1"]);
+
+          expect(exportedExecution(download, destination)).toBe(400);
+          expect(workflowExecutionsServiceSpy.retrieveLatestWorkflowExecution).not.toHaveBeenCalled();
+        });
+
+        // After a reload, or once the unit is gone: the results on screen are of the workflow's latest
+        // execution, which the Dashboard service exports from what it stored.
+        it(`is the workflow's latest when the computing unit names no run (${destination})`, () => {
+          enableExport();
+          const download = stubDownloadService();
+          executeWorkflowServiceSpy.getCurrentExecutionId.mockReturnValue(undefined);
+          workflowExecutionsServiceSpy.retrieveLatestWorkflowExecution.mockReturnValue(of(latestExecution(77)));
+
+          service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", destination, ["op1"]);
+
+          expect(workflowExecutionsServiceSpy.retrieveLatestWorkflowExecution).toHaveBeenCalledWith("workflow1");
+          expect(exportedExecution(download, destination)).toBe(77);
+        });
+      });
+
+      it("is asked for only once the export is known to go ahead", () => {
+        enableExport();
+        const download = stubDownloadService({ downloadability: { op1: ["ds1 (a@x.com)"] } });
+        executeWorkflowServiceSpy.getCurrentExecutionId.mockReturnValue(undefined);
+
+        // Every operator is blocked, so nothing is exported, and no execution is looked up.
+        service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", ["op1"]);
+
+        expect(workflowExecutionsServiceSpy.retrieveLatestWorkflowExecution).not.toHaveBeenCalled();
+        expect(download.exportWorkflowResultToDataset).not.toHaveBeenCalled();
+      });
+
+      it("says that the workflow has no execution when there is none to export", () => {
+        enableExport();
+        const download = stubDownloadService();
+        executeWorkflowServiceSpy.getCurrentExecutionId.mockReturnValue(undefined);
+        workflowExecutionsServiceSpy.retrieveLatestWorkflowExecution.mockReturnValue(
+          throwError(() => ({ status: 403, error: { message: "Executions doesn't exist" } }))
+        );
+
+        service.exportWorkflowExecutionResult("csv", "wf", [7], 1, 2, "file", "dataset", ["op1"]);
+
+        expect(notificationServiceSpy.error).toHaveBeenCalledWith(
+          "Cannot export result: the workflow has no execution"
+        );
+        expect(download.exportWorkflowResultToDataset).not.toHaveBeenCalled();
+        expect(download.exportWorkflowResultToLocal).not.toHaveBeenCalled();
+      });
     });
   });
 

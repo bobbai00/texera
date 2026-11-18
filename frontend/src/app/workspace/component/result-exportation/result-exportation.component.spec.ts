@@ -31,7 +31,6 @@ import {
 import { DatasetService } from "../../../dashboard/service/user/dataset/dataset.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { WorkflowResultService } from "../../service/workflow-result/workflow-result.service";
-import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { UserDatasetCreatorComponent } from "../../../dashboard/component/user/user-dataset/user-dataset-creator/user-dataset-creator.component";
 import { DashboardDataset } from "../../../dashboard/type/dashboard-dataset.interface";
 import { NZ_MODAL_DATA, NzModalRef, NzModalService } from "ng-zorro-antd/modal";
@@ -108,10 +107,6 @@ describe("ResultExportationComponent", () => {
             }),
           },
         },
-        {
-          provide: ComputingUnitStatusService,
-          useValue: { getSelectedComputingUnit: vi.fn().mockReturnValue(of(null)) },
-        },
       ],
     }).compileComponents();
 
@@ -133,7 +128,6 @@ describe("ResultExportationComponent", () => {
     expect(component.userAccessibleDatasets).toEqual([writeDataset]);
     expect(component.filteredUserAccessibleDatasets).toEqual([writeDataset]);
     expect(component.downloadability).toBeDefined();
-    expect(component.selectedComputingUnit).toBeNull();
   });
 
   it("onClickExportResult('dataset', ds) exports to the dataset destination and closes the modal", () => {
@@ -145,6 +139,8 @@ describe("ResultExportationComponent", () => {
     expect(args[1]).toBe("my-workflow"); // workflowName
     expect(args[2]).toEqual([1]); // datasetIds resolved from ds.dataset.did
     expect(args[6]).toBe("dataset"); // destination
+    // And the scope, last: the export names no computing unit, so the dialog asks for none.
+    expect(args).toHaveLength(8);
     expect(modalClose).toHaveBeenCalledTimes(1);
   });
 
@@ -164,7 +160,7 @@ describe("ResultExportationComponent", () => {
   describe("the scope the dialog exports", () => {
     const exportedOperatorIds = (): readonly string[] => {
       component.onClickExportResult("local");
-      return exportWorkflowExecutionResult.mock.calls[0][8];
+      return exportWorkflowExecutionResult.mock.calls[0][7];
     };
     const graph = () => TestBed.inject(WorkflowActionService).getTexeraGraph() as any;
     const wrapper = () => TestBed.inject(WorkflowActionService).getJointGraphWrapper() as any;
@@ -840,10 +836,6 @@ describe("ResultExportationComponent (context-menu source with default modal dat
             }),
           },
         },
-        {
-          provide: ComputingUnitStatusService,
-          useValue: { getSelectedComputingUnit: vi.fn().mockReturnValue(of(null)) },
-        },
       ],
     }).compileComponents();
 
@@ -889,7 +881,7 @@ describe("ResultExportationComponent (context-menu source with default modal dat
 
     component.onClickExportResult("local");
 
-    expect(exportService.mock.calls[0][8]).toEqual(["hl-1", "hl-2"]);
+    expect(exportService.mock.calls[0][7]).toEqual(["hl-1", "hl-2"]);
   });
 });
 
@@ -955,10 +947,6 @@ describe("ResultExportationComponent (a caller that names its operators)", () =>
             }),
           },
         },
-        {
-          provide: ComputingUnitStatusService,
-          useValue: { getSelectedComputingUnit: vi.fn().mockReturnValue(of(null)) },
-        },
       ],
     }).compileComponents();
     fixture = TestBed.createComponent(ResultExportationComponent);
@@ -988,6 +976,6 @@ describe("ResultExportationComponent (a caller that names its operators)", () =>
     component.onClickExportResult("local");
 
     expect(exportService).toHaveBeenCalledTimes(1);
-    expect(exportService.mock.calls[0][8]).toEqual(["op-named"]);
+    expect(exportService.mock.calls[0][7]).toEqual(["op-named"]);
   });
 });

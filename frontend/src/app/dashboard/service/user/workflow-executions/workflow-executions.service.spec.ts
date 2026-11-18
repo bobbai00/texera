@@ -97,13 +97,15 @@ describe("WorkflowExecutionsService", () => {
     req.flush({});
   });
 
-  it("retrieveWorkflowRuntimeStatistics issues GET with the cuid param", () => {
+  it("retrieveWorkflowRuntimeStatistics asks the Dashboard service for the execution's statistics, naming no computing unit", () => {
     let result: WorkflowRuntimeStatistics[] | undefined;
-    service.retrieveWorkflowRuntimeStatistics(1, 10, 5).subscribe(res => (result = res));
+    service.retrieveWorkflowRuntimeStatistics(1, 10).subscribe(res => (result = res));
 
-    const req = httpMock.expectOne(r => r.url === `${WORKFLOW_EXECUTIONS_API_BASE_URL}/1/stats/10`);
+    // The one URL of every deployment: a `cuid` would have the Kubernetes gateway look for a computing unit.
+    const req = httpMock.expectOne(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/1/stats/10`);
     expect(req.request.method).toBe("GET");
-    expect(req.request.params.get("cuid")).toBe("5");
+    expect(req.request.urlWithParams).toBe(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/1/stats/10`);
+    expect(req.request.params.keys()).toEqual([]);
     const stats: WorkflowRuntimeStatistics[] = [];
     req.flush(stats);
     expect(result).toEqual(stats);

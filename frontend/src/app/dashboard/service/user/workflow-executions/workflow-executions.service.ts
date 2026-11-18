@@ -85,10 +85,11 @@ export class WorkflowExecutionsService {
     });
   }
 
-  retrieveWorkflowRuntimeStatistics(wid: number, eId: number, cuid: number): Observable<WorkflowRuntimeStatistics[]> {
-    const params = new HttpParams().set("cuid", cuid.toString());
-    return this.http.get<WorkflowRuntimeStatistics[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/stats/${eId}`, {
-      params,
-    });
+  /**
+   * The statistics execution `eId` of workflow `wid` stored, oldest first. The Dashboard service reads them
+   * from what the execution stored, in every deployment: no computing unit is named, and none is needed.
+   */
+  retrieveWorkflowRuntimeStatistics(wid: number, eId: number): Observable<WorkflowRuntimeStatistics[]> {
+    return this.http.get<WorkflowRuntimeStatistics[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/stats/${eId}`);
   }
 }

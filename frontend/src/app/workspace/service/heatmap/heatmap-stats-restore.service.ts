@@ -82,7 +82,7 @@ export class HeatmapStatsRestoreService {
           if (run === undefined) {
             return EMPTY;
           }
-          return this.workflowExecutionsService.retrieveWorkflowRuntimeStatistics(wid, run.eId, run.cuId);
+          return this.workflowExecutionsService.retrieveWorkflowRuntimeStatistics(wid, run.eId);
         }),
         // Only the fetches are best-effort. Placed above the map so a mapping or ingestion
         // failure still surfaces instead of looking like a run with nothing to restore.

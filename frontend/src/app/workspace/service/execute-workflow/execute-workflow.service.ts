@@ -397,6 +397,14 @@ export class ExecuteWorkflowService {
     return this.currentState;
   }
 
+  /**
+   * The execution of the run on screen, for a request about what that run stored; undefined while the
+   * computing unit names none, as before a run and for a run whose unit no longer shows it.
+   */
+  public getCurrentExecutionId(): number | undefined {
+    return this.currentExecutionId;
+  }
+
   /** How long the current run has been going, worked out from the anchor. */
   public getExecutionDuration(): number {
     const { reported, at, isRunning } = this.durationAnchor;

@@ -45,7 +45,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, Us
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
 import org.apache.texera.web.service.ResultExportService
-import org.apache.texera.web.service.execution.ExecutionResources
+import org.apache.texera.web.service.execution.{ExecutionRecords, ExecutionResources}
 import org.jooq.DSLContext
 import play.api.libs.json.Json
 
@@ -54,7 +54,7 @@ import java.sql.Timestamp
 import java.util.concurrent.TimeUnit
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
-import javax.ws.rs.core.{MediaType, Response}
+import javax.ws.rs.core.{HttpHeaders, MediaType, Response}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
@@ -692,36 +692,16 @@ class WorkflowExecutionsResource {
   ): List[WorkflowRuntimeStatistics] = {
     validateUserCanAccessWorkflow(sessionUser.getUser.getUid, wid)
 
-    // Create URI for runtime statistics
-    val uriString: String = context
-      .select(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(
-        WORKFLOW_EXECUTIONS.EID
-          .eq(eid)
-          .and(
-            WORKFLOW_EXECUTIONS.VID.in(
-              context
-                .select(WORKFLOW_VERSION.VID)
-                .from(WORKFLOW_VERSION)
-                .where(WORKFLOW_VERSION.WID.eq(wid))
-            )
-          )
-      )
-      .fetchOneInto(classOf[String])
-
-    if (uriString == null || uriString.isEmpty) {
-      throw new NoSuchElementException(
-        "No runtime statistics URI found for the given execution ID."
-      )
-    }
-
-    val uri: URI = new URI(uriString)
+    // Where an execution's statistics are follows from its own row, which says whose it is.
+    val execution = ExecutionRecords
+      .findOf(wid.longValue(), eid.longValue())
+      .getOrElse(throw new NotFoundException(s"Workflow $wid has no execution $eid."))
+    val uri = execution.statisticsUri
     // Refuse to read per-user-warehouse statistics while the feature is off (#6930).
     WarehouseReadGuard.assertReadable(uri)
 
     // The rows as the run's record stored them, oldest first; none from a table written before
-    // statistics were stored as they are now.
+    // statistics were stored as they are now, and none while the run has made no table.
     RuntimeStatisticsStore
       .read(uri)
       .map(row =>
@@ -855,25 +835,52 @@ class WorkflowExecutionsResource {
     Response.ok(restrictionMap).build()
   }
 
+  /**
+    * An export that was not made, answered `{"error": message}`: with the status of the
+    * refusal when it is one (404 for an execution that is not the workflow's, 410 for one
+    * whose results have expired), else 500.
+    */
+  private def exportFailureResponse(failure: Exception): Response = {
+    val status = failure match {
+      case refusal: WebApplicationException => refusal.getResponse.getStatus
+      case _                                => Response.Status.INTERNAL_SERVER_ERROR.getStatusCode
+    }
+    Response
+      .status(status)
+      .`type`(MediaType.APPLICATION_JSON)
+      .entity(Map("error" -> failure.getMessage).asJava)
+      .build()
+  }
+
+  /** The token of an `Authorization: Bearer <token>` header; empty when it carries none. */
+  private def bearerTokenOf(authorization: String): String =
+    Option(authorization)
+      .map(_.trim.split("\\s+", 2))
+      .collect { case Array(scheme, token) if scheme.equalsIgnoreCase("Bearer") => token.trim }
+      .getOrElse("")
+
+  /**
+    * Exports results of execution `request.executionId` of the workflow into datasets, each
+    * upload to the file service made with the caller's own token.
+    */
   @POST
   @Path("/result/export/dataset")
   @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def exportResultToDataset(request: ResultExportRequest, @Auth user: SessionUser): Response = {
+  def exportResultToDataset(
+      request: ResultExportRequest,
+      @HeaderParam(HttpHeaders.AUTHORIZATION) authorization: String,
+      @Auth user: SessionUser
+  ): Response = {
     if (!WorkflowAccess.hasReadAccess(request.workflowId, user.getUser.getUid)) {
       workflowAccessDeniedResponse
     } else {
       try {
         val resultExportService =
-          new ResultExportService(WorkflowIdentity(request.workflowId), request.computingUnitId)
-        resultExportService.exportToDataset(user.user, request)
+          new ResultExportService(WorkflowIdentity(request.workflowId), request.executionId)
+        resultExportService.exportToDataset(bearerTokenOf(authorization), request)
 
       } catch {
-        case ex: Exception =>
-          Response
-            .status(Response.Status.INTERNAL_SERVER_ERROR)
-            .`type`(MediaType.APPLICATION_JSON)
-            .entity(Map("error" -> ex.getMessage).asJava)
-            .build()
+        case ex: Exception => exportFailureResponse(ex)
       }
     }
   }
@@ -903,17 +910,12 @@ class WorkflowExecutionsResource {
         workflowAccessDeniedResponse
       } else {
         val resultExportService =
-          new ResultExportService(WorkflowIdentity(request.workflowId), request.computingUnitId)
+          new ResultExportService(WorkflowIdentity(request.workflowId), request.executionId)
         resultExportService.exportToLocal(request)
       }
 
     } catch {
-      case ex: Exception =>
-        Response
-          .status(Response.Status.INTERNAL_SERVER_ERROR)
-          .`type`(MediaType.APPLICATION_JSON)
-          .entity(Map("error" -> ex.getMessage).asJava)
-          .build()
+      case ex: Exception => exportFailureResponse(ex)
     }
   }
 }
