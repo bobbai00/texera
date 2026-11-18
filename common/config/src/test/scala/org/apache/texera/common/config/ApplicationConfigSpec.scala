@@ -115,6 +115,21 @@ class ApplicationConfigSpec extends AnyFlatSpec with Matchers {
     )
   }
 
+  "ApplicationConfig execution closing" should "load the closing job's defaults" in {
+    ifUnset("EXECUTION_CLOSING_INTERVAL_SECONDS")(
+      ApplicationConfig.executionClosingIntervalInSecs shouldBe 30
+    )
+    ifUnset("EXECUTION_CLOSING_LOST_AFTER_SECONDS")(
+      ApplicationConfig.executionClosingLostAfterInSecs shouldBe 180
+    )
+    ifUnset("EXECUTION_CLOSING_NEVER_STARTED_AFTER_SECONDS")(
+      ApplicationConfig.executionClosingNeverStartedAfterInSecs shouldBe 600
+    )
+    ifUnset("EXECUTION_CLOSING_REVISE_VERDICT_FOR_SECONDS")(
+      ApplicationConfig.executionClosingReviseVerdictForInSecs shouldBe 3600
+    )
+  }
+
   "ApplicationConfig web server" should "load web-server defaults" in {
     ifUnset("WEB_SERVER_PYTHON_CONSOLE_BUFFER_SIZE")(
       ApplicationConfig.operatorConsoleBufferSize shouldBe 100

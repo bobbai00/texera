@@ -34,6 +34,8 @@ import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionLogEntry,
+  ExecutionLogStore,
   ExecutionPlanStore,
   InputLink,
   InputLinker,
@@ -61,7 +63,11 @@ import org.apache.texera.amber.core.workflow.{
   ReplaySource,
   WorkflowSettings
 }
-import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILATION_ERROR
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
+  COMPILATION_ERROR,
+  EXECUTION_FAILURE
+}
+import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpDesc}
@@ -119,11 +125,22 @@ import org.apache.texera.web.model.http.request.execution.{
 }
 import org.apache.texera.web.model.http.response.execution.{
   CreateExecutionFailure,
-  CreateExecutionResponse
+  CreateExecutionResponse,
+  ExecutionClosingResponse,
+  ExecutionLogEntryResponse,
+  ExecutionLogResponse,
+  ExecutionStateResponse
 }
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.{PlanToRun, WorkflowService}
-import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
+import org.apache.texera.web.service.execution.{
+  CostHintsLoader,
+  ExecutionCloser,
+  ExecutionCreator,
+  ExecutionRecordReader,
+  ExecutionRecords,
+  OperatorUpdates
+}
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.JSONB
 import org.jooq.exception.DataAccessException
@@ -137,7 +154,12 @@ import java.nio.charset.StandardCharsets
 import java.sql.Timestamp
 import java.util.concurrent.{CountDownLatch, Executor, ExecutorService, Executors, TimeUnit}
 import javax.ws.rs.core.{Response, UriInfo}
-import javax.ws.rs.{BadRequestException, InternalServerErrorException, WebApplicationException}
+import javax.ws.rs.{
+  BadRequestException,
+  ForbiddenException,
+  InternalServerErrorException,
+  WebApplicationException
+}
 import scala.collection.mutable
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
@@ -212,8 +234,9 @@ class ExecutionResourceSpec
   /** The pool the suite's creators compile on, unless a case gives one its own. */
   private val compilePool: ExecutorService = Executors.newCachedThreadPool()
 
-  /** Every plan, result and console table this suite makes, dropped after it. */
+  /** Every plan, log, result and console table this suite makes, dropped after it. */
   private val madePlans = mutable.ListBuffer.empty[URI]
+  private val madeLogs = mutable.ListBuffer.empty[URI]
   private val madeTables = mutable.ListBuffer.empty[URI]
 
   override protected def beforeAll(): Unit = {
@@ -330,6 +353,7 @@ class ExecutionResourceSpec
   override protected def afterAll(): Unit =
     try {
       madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
+      madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
       madeTables.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
     } finally {
       compilePool.shutdownNow()
@@ -674,6 +698,22 @@ class ExecutionResourceSpec
     refusal.getMessage
   }
 
+  /**
+    * Fails unless the create of execution `eid`, which failed after `since`, closed the row
+    * itself: as failed for `reason`, by no log, and as an execution no unit ever started, whose
+    * results are marked expired and which holds nothing.
+    */
+  private def closedAtCreate(eid: Long, reason: String, since: Long): Unit = {
+    val closed = row(eid)
+    closed.getOutcome shouldBe WorkflowExecutionStatus.Failed
+    closed.getOutcomeReason shouldBe reason
+    closed.getOutcomeFromLog shouldBe false
+    closed.getEndedAt.getTime should be >= (since - 1000)
+    closed.getEndedAt.getTime should be <= (System.currentTimeMillis() + 1000)
+    closed.getResultsExpiredAt shouldBe closed.getEndedAt
+    closed.getStoredBytes shouldBe 0L
+  }
+
   private lazy val dashboardMapper: ObjectMapper = {
     val application = new TexeraWebApplication
     val bootstrap = new Bootstrap[TexeraWebConfiguration](application)
@@ -700,6 +740,13 @@ class ExecutionResourceSpec
     // Created, which no reader takes for a run in progress: the column's default is Running, and
     // Initializing is what the unit records once it has started the execution.
     stored.getStatus shouldBe WorkflowExecutionStatus.Created
+    // Open: nothing of its closing record is written until it is over.
+    stored.getOutcome shouldBe null
+    stored.getOutcomeReason shouldBe null
+    stored.getEndedAt shouldBe null
+    stored.getOutcomeFromLog shouldBe false
+    stored.getResultsExpiredAt shouldBe null
+    stored.getStoredBytes shouldBe null
     stored.getStartingTime.getTime should be >= (before - 1000)
     stored.getUid shouldBe creatorUid
     stored.getCuid shouldBe unitCuid
@@ -1388,6 +1435,12 @@ class ExecutionResourceSpec
     val failed = row(failure.eid)
     failed.getStatus shouldBe 4.toByte
     failed.getLastUpdateTime.getTime should be >= (before - 1000)
+    // Closed by its create, with the error of one operator: the first by its id.
+    closedAtCreate(
+      failure.eid,
+      s"compile error: ${failure.operatorErrors("scan").message}",
+      since = before
+    )
     // No plan was made, so none was written.
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore
@@ -1432,6 +1485,7 @@ class ExecutionResourceSpec
   it should "answer 500 and record the execution FAILED when its plan cannot be written" in {
     val lakeDown = new RuntimeException("the catalog does not answer")
     val before = executionCount
+    val since = System.currentTimeMillis()
 
     val failure = intercept[InternalServerErrorException] {
       post(request(), creator = new FixtureCreator(failWrite = Some(lakeDown)))
@@ -1444,11 +1498,13 @@ class ExecutionResourceSpec
     failure.getMessage shouldBe
       s"Execution $eid could not be created: its plan could not be written to the lake."
     row(eid.toLong).getStatus shouldBe 4.toByte
+    closedAtCreate(eid.toLong, "its plan could not be stored", since)
   }
 
   it should "answer 400 with how large the plan is and may be, and record the execution FAILED, when its plan is larger than its table keeps" in {
     // A thousand files, whose links alone fill what a plan may hold.
     val before = executionCount
+    val since = System.currentTimeMillis()
 
     val failure = intercept[BadRequestException] {
       post(
@@ -1465,6 +1521,7 @@ class ExecutionResourceSpec
         "may be at most 16 MiB\\. A plan holds a link to each file its operators read, so a " +
         "workflow that lists fewer files makes a smaller plan\\."
     row(eid.toLong).getStatus shouldBe 4.toByte
+    closedAtCreate(eid.toLong, "its plan could not be stored", since)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
     )
@@ -1479,6 +1536,7 @@ class ExecutionResourceSpec
     withConsole(testWid, 961923)
     val databaseDown = new RuntimeException("db down")
     val before = executionCount
+    val since = System.currentTimeMillis()
 
     val failure = intercept[InternalServerErrorException] {
       post(request(), creator = new FixtureCreator(hints = new FailingHints(databaseDown)))
@@ -1491,6 +1549,7 @@ class ExecutionResourceSpec
     failure.getMessage shouldBe
       s"Execution $eid could not be created: its plan could not be made."
     row(eid.toLong).getStatus shouldBe 4.toByte
+    closedAtCreate(eid.toLong, "its plan could not be made", since)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
     )
@@ -1531,6 +1590,7 @@ class ExecutionResourceSpec
       compileDeadline = 1.second
     )
     val before = executionCount
+    val since = System.currentTimeMillis()
 
     val failure = intercept[WebApplicationException] {
       post(request(plan = notesPlan()), creator = creator)
@@ -1543,6 +1603,7 @@ class ExecutionResourceSpec
     failure.getMessage shouldBe
       s"Execution $eid could not be created: compiling the workflow took longer than 1 second."
     row(eid.toLong).getStatus shouldBe 4.toByte
+    closedAtCreate(eid.toLong, "its plan could not be made", since)
     a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
       ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
     )
@@ -1554,6 +1615,7 @@ class ExecutionResourceSpec
     val full = Executors.newSingleThreadExecutor()
     full.shutdown()
     val before = executionCount
+    val since = System.currentTimeMillis()
 
     val failure = intercept[WebApplicationException] {
       post(request(), creator = new FixtureCreator(compiles = full))
@@ -1566,6 +1628,7 @@ class ExecutionResourceSpec
       s"Execution $eid could not be created: too many workflows are being compiled. Try again " +
         "in a moment."
     row(eid.toLong).getStatus shouldBe 4.toByte
+    closedAtCreate(eid.toLong, "its plan could not be made", since)
   }
 
   it should "answer 500, not the scan's error, when a file cannot be resolved or linked for a reason not the workflow's" in {
@@ -1827,5 +1890,503 @@ class ExecutionResourceSpec
     create.getAnnotation(classOf[javax.ws.rs.Path]) shouldBe null
     create.getAnnotation(classOf[javax.annotation.security.RolesAllowed]).value().toSet shouldBe
       Set("REGULAR", "ADMIN")
+  }
+
+  // --- what an execution recorded: its state and its log ---
+
+  /** The resource, reading what executions recorded through `records`. */
+  private def recorded(
+      records: ExecutionRecordReader = new ExecutionRecordReader(warehousesEnabled = false)
+  ): ExecutionResource = new ExecutionResource(new FixtureCreator(), new OperatorUpdates(), records)
+
+  /** When execution `eid` was created, as its row says. */
+  private def createdAt(eid: Long): Long = row(eid).getStartingTime.getTime
+
+  /** Makes the log of execution `eid`, empty, as its unit does when it starts the run. */
+  private def logOf(eid: Long, warehouse: Option[String] = None): URI = {
+    val uri =
+      ExecutionLogStore.logUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), warehouse)
+    ExecutionLogStore.create(uri, createdAt(eid), 30000L)
+    madeLogs += uri
+    uri
+  }
+
+  /**
+    * Appends row `seq` to the log at `log`: the run of execution `eid` changed to `state`,
+    * `seq` seconds after the execution was created. Answers when.
+    */
+  private def record(
+      log: URI,
+      eid: Long,
+      seq: Int,
+      state: String,
+      reason: Option[String] = None,
+      errors: Seq[WorkflowFatalError] = Nil
+  ): Long = {
+    val atMs = createdAt(eid) + seq * 1000L
+    ExecutionLogStore.append(
+      log,
+      Seq(ExecutionLogEntry.state(seq.toLong, atMs, state, reason, errors)),
+      atMs
+    )
+    atMs
+  }
+
+  private val boom = WorkflowFatalError(
+    EXECUTION_FAILURE,
+    com.google.protobuf.timestamp.Timestamp(1794873600L, 500000000),
+    "java.lang.RuntimeException: boom",
+    "<trace>",
+    "search",
+    "Worker:WF9611-search-main-0"
+  )
+
+  private def lakeDown[T](uri: URI): T = throw new IllegalStateException(s"no answer for $uri")
+
+  "ExecutionResource.getState" should "answer a closed execution from its closing record" in {
+    val failure = compileFailure(post(request(plan = brokenPlan())))
+
+    val state = recorded().getState(failure.eid, sessionUser(creatorUid))
+
+    state shouldBe ExecutionStateResponse(
+      eid = failure.eid,
+      status = WorkflowExecutionStatus.Failed,
+      open = false,
+      reason = Some(s"compile error: ${failure.operatorErrors("scan").message}"),
+      timeMs = row(failure.eid).getEndedAt.getTime
+    )
+  }
+
+  it should "answer an open execution from the newest state in its log" in {
+    val execution = created(post(request()))
+    val log = logOf(execution.eid)
+    val resource = recorded()
+    def state = resource.getState(execution.eid, sessionUser(creatorUid))
+
+    Seq("READY" -> 0, "RUNNING" -> 1, "PAUSED" -> 2, "RUNNING" -> 1).zipWithIndex.foreach {
+      case ((recordedState, status), index) =>
+        val atMs = record(log, execution.eid, index + 1, recordedState)
+        withClue(s"$recordedState: ") {
+          state shouldBe
+            ExecutionStateResponse(execution.eid, status.toShort, open = true, None, atMs)
+        }
+    }
+    // Ended, and not closed yet: the closing job has to tick first.
+    val endedAtMs = record(log, execution.eid, 5, "FAILED", errors = Seq(boom))
+    state shouldBe ExecutionStateResponse(
+      execution.eid,
+      WorkflowExecutionStatus.Failed,
+      open = true,
+      Some("java.lang.RuntimeException: boom"),
+      endedAtMs
+    )
+    row(execution.eid).getEndedAt shouldBe null
+  }
+
+  it should "answer Created, as of the create, for an open execution no unit has written a state for" in {
+    val execution = created(post(request()))
+    val resource = recorded()
+    val unstarted = ExecutionStateResponse(
+      execution.eid,
+      WorkflowExecutionStatus.Created,
+      open = true,
+      None,
+      createdAt(execution.eid)
+    )
+
+    // No log at all, and then a log its unit has made and not written to.
+    resource.getState(execution.eid, sessionUser(creatorUid)) shouldBe unstarted
+    logOf(execution.eid)
+    resource.getState(execution.eid, sessionUser(creatorUid)) shouldBe unstarted
+  }
+
+  it should "never answer a state's time before the execution was created" in {
+    val execution = created(post(request()))
+    val log = logOf(execution.eid)
+    // A unit whose clock runs an hour behind.
+    ExecutionLogStore.append(
+      log,
+      Seq(ExecutionLogEntry.state(1L, createdAt(execution.eid) - 3600000L, "RUNNING")),
+      createdAt(execution.eid) - 3600000L
+    )
+
+    recorded().getState(execution.eid, sessionUser(creatorUid)) shouldBe ExecutionStateResponse(
+      execution.eid,
+      WorkflowExecutionStatus.Running,
+      open = true,
+      None,
+      createdAt(execution.eid)
+    )
+  }
+
+  it should "answer -1 for an open execution whose log cannot be read, and a closed one as ever" in {
+    val open = created(post(request()))
+    record(logOf(open.eid), open.eid, 1, "RUNNING")
+    val closed = compileFailure(post(request(plan = brokenPlan())))
+    val resource = recorded(new ExecutionRecordReader(label = lakeDown, warehousesEnabled = false))
+
+    resource.getState(open.eid, sessionUser(creatorUid)) shouldBe ExecutionStateResponse(
+      open.eid,
+      WorkflowExecutionStatus.Unknown,
+      open = true,
+      None,
+      createdAt(open.eid)
+    )
+    resource.getState(closed.eid, sessionUser(creatorUid)).status shouldBe
+      WorkflowExecutionStatus.Failed
+  }
+
+  it should "answer -1, reading nothing, for an open execution in a warehouse that cannot be reached" in {
+    val execution = created(
+      post(
+        request(warehouseId = Some(creatorWhid)),
+        creator = new FixtureCreator(warehouses = true)
+      )
+    )
+    val log = logOf(execution.eid, Some(creatorWarehouse))
+    record(log, execution.eid, 1, "RUNNING")
+    val read = mutable.ListBuffer.empty[URI]
+    def reading(warehouses: Boolean) =
+      recorded(
+        new ExecutionRecordReader(
+          label = uri => {
+            read += uri
+            ExecutionLogStore.label(uri)
+          },
+          warehousesEnabled = warehouses
+        )
+      )
+
+    // Read while warehouses are off, its log would be looked for in the shared warehouse.
+    reading(warehouses = false).getState(execution.eid, sessionUser(creatorUid)).status shouldBe
+      WorkflowExecutionStatus.Unknown
+    read shouldBe empty
+
+    reading(warehouses = true).getState(execution.eid, sessionUser(creatorUid)).status shouldBe
+      WorkflowExecutionStatus.Running
+    read.toList shouldBe List(log)
+  }
+
+  it should "answer the ending the log gave in place of a verdict, once the verdict is revised" in {
+    val execution = created(post(request()))
+    val start = createdAt(execution.eid)
+    val log = logOf(execution.eid)
+    record(log, execution.eid, 1, "READY")
+    record(log, execution.eid, 2, "RUNNING")
+    val resource = recorded()
+    def state = resource.getState(execution.eid, sessionUser(creatorUid))
+    def closing = resource.getLog(execution.eid, sessionUser(creatorUid)).closing
+
+    // The unit was cut off from the lake, and the closing job gave it up for lost.
+    ExecutionRecords.close(
+      execution.eid,
+      WorkflowExecutionStatus.Failed,
+      Some("unit lost"),
+      start + 2000L,
+      fromLog = false
+    ) shouldBe true
+    val lost = ExecutionStateResponse(
+      execution.eid,
+      WorkflowExecutionStatus.Failed,
+      open = false,
+      Some("unit lost"),
+      start + 2000L
+    )
+    state shouldBe lost
+    closing shouldBe Some(
+      ExecutionClosingResponse(
+        WorkflowExecutionStatus.Failed,
+        Some("unit lost"),
+        start + 2000L,
+        false
+      )
+    )
+
+    // It was not gone: the run ends. The verdict stands until the closing job reads the log.
+    record(log, execution.eid, 9, "COMPLETED")
+    state shouldBe lost
+    new ExecutionCloser(now = () => start + 60000L)
+      .reviseIfEnded(ExecutionRecords.find(execution.eid).get) shouldBe true
+
+    state shouldBe ExecutionStateResponse(
+      execution.eid,
+      WorkflowExecutionStatus.Completed,
+      open = false,
+      None,
+      start + 9000L
+    )
+    closing shouldBe
+      Some(ExecutionClosingResponse(WorkflowExecutionStatus.Completed, None, start + 9000L, true))
+    resource.getLog(execution.eid, sessionUser(creatorUid)).entries.map(_.state) shouldBe
+      Seq(Some("READY"), Some("RUNNING"), Some("COMPLETED"))
+  }
+
+  "ExecutionResource.getLog" should "answer the rows of the log, oldest first, with why each state was taken, and no closing record while the execution is open" in {
+    val execution = created(post(request()))
+    val start = createdAt(execution.eid)
+    val log = logOf(execution.eid)
+    record(log, execution.eid, 1, "READY")
+    record(log, execution.eid, 2, "RUNNING")
+    record(log, execution.eid, 3, "PAUSED")
+    record(log, execution.eid, 4, "FAILED", reason = Some("the run gave up"), errors = Seq(boom))
+
+    val answered = recorded().getLog(execution.eid, sessionUser(creatorUid))
+
+    answered.eid shouldBe execution.eid
+    answered.closing shouldBe None
+    answered.entries.take(3) shouldBe Seq(
+      ExecutionLogEntryResponse(1L, start + 1000L, "state", Some("READY"), None, None),
+      ExecutionLogEntryResponse(2L, start + 2000L, "state", Some("RUNNING"), None, None),
+      ExecutionLogEntryResponse(3L, start + 3000L, "state", Some("PAUSED"), None, None)
+    )
+    val failed = answered.entries(3)
+    failed.copy(errors = None) shouldBe ExecutionLogEntryResponse(
+      4L,
+      start + 4000L,
+      "state",
+      Some("FAILED"),
+      Some("the run gave up"),
+      None
+    )
+    failed.errors.map(objectMapper.writeValueAsString) shouldBe Some(
+      """[{"type":"EXECUTION_FAILURE","timeMs":1794873600500,""" +
+        """"message":"java.lang.RuntimeException: boom","details":"<trace>",""" +
+        """"operatorId":"search","workerId":"Worker:WF9611-search-main-0"}]"""
+    )
+  }
+
+  it should "answer a row that names only errors with its errors and no reason" in {
+    val execution = created(post(request()))
+    record(logOf(execution.eid), execution.eid, 1, "FAILED", errors = Seq(boom))
+
+    val entries = recorded().getLog(execution.eid, sessionUser(creatorUid)).entries
+    entries should have size 1
+    val failed = entries.head
+
+    failed.reason shouldBe None
+    failed.errors.map(_.size()) shouldBe Some(1)
+  }
+
+  it should "answer the closing record beside the rows once the execution is closed" in {
+    val execution = created(post(request()))
+    val start = createdAt(execution.eid)
+    val log = logOf(execution.eid)
+    record(log, execution.eid, 1, "RUNNING")
+    record(log, execution.eid, 2, "KILLED", reason = Some("killed by the user"))
+    new ExecutionCloser(now = () => start + 60000L)
+      .closeIfEnded(ExecutionRecords.find(execution.eid).get) shouldBe true
+
+    val answered = recorded().getLog(execution.eid, sessionUser(creatorUid))
+
+    answered.entries.map(_.seq) shouldBe Seq(1L, 2L)
+    answered.entries.last.reason shouldBe Some("killed by the user")
+    answered.closing shouldBe Some(
+      ExecutionClosingResponse(
+        WorkflowExecutionStatus.Killed,
+        Some("killed by the user"),
+        start + 2000L,
+        fromLog = true
+      )
+    )
+  }
+
+  it should "answer no rows for an execution with no log" in {
+    val unstarted = created(post(request()))
+    val notCompiled = compileFailure(post(request(plan = brokenPlan())))
+    val resource = recorded()
+
+    resource.getLog(unstarted.eid, sessionUser(creatorUid)) shouldBe
+      ExecutionLogResponse(unstarted.eid, Nil, None)
+    val closed = resource.getLog(notCompiled.eid, sessionUser(creatorUid))
+    closed.entries shouldBe Nil
+    closed.closing shouldBe Some(
+      ExecutionClosingResponse(
+        WorkflowExecutionStatus.Failed,
+        Some(s"compile error: ${notCompiled.operatorErrors("scan").message}"),
+        row(notCompiled.eid).getEndedAt.getTime,
+        fromLog = false
+      )
+    )
+  }
+
+  it should "answer 500, not a log with no rows, when the lake cannot be read" in {
+    val execution = created(post(request()))
+    record(logOf(execution.eid), execution.eid, 1, "RUNNING")
+    val resource = recorded(new ExecutionRecordReader(rows = lakeDown, warehousesEnabled = false))
+
+    val failure = intercept[InternalServerErrorException] {
+      resource.getLog(execution.eid, sessionUser(creatorUid))
+    }
+
+    failure.getResponse.getStatus shouldBe 500
+    failure.getMessage shouldBe s"The log of execution ${execution.eid} could not be read."
+    failure.getCause shouldBe an[IllegalStateException]
+  }
+
+  it should "answer 409, not a log with no rows, for a log in a warehouse that cannot be reached" in {
+    val execution = created(
+      post(
+        request(warehouseId = Some(creatorWhid)),
+        creator = new FixtureCreator(warehouses = true)
+      )
+    )
+    record(logOf(execution.eid, Some(creatorWarehouse)), execution.eid, 1, "RUNNING")
+
+    val refusal = intercept[WebApplicationException] {
+      recorded().getLog(execution.eid, sessionUser(creatorUid))
+    }
+
+    refusal.getResponse.getStatus shouldBe 409
+    refusal.getMessage shouldBe
+      s"The log of execution ${execution.eid} is in a warehouse that is no longer available: " +
+        s"per-user warehouses are disabled in this deployment, and it is in '$creatorWarehouse'."
+    // With warehouses on, it is read where it is.
+    recorded(new ExecutionRecordReader(warehousesEnabled = true))
+      .getLog(execution.eid, sessionUser(creatorUid))
+      .entries
+      .map(_.state) shouldBe Seq(Some("RUNNING"))
+  }
+
+  // --- who may read what an execution recorded ---
+
+  /** The status of each of the two routes for `uid` asking about execution `eid`. */
+  private def answersTo(uid: Int, eid: Long): Seq[Int] = {
+    val resource = recorded()
+    Seq[() => Any](
+      () => resource.getState(eid, sessionUser(uid)),
+      () => resource.getLog(eid, sessionUser(uid))
+    ).map { ask =>
+      try {
+        ask()
+        200
+      } catch {
+        case refusal: ForbiddenException =>
+          refusal.getMessage shouldBe s"You may not read execution $eid."
+          refusal.getResponse.getStatus
+      }
+    }
+  }
+
+  "The state and the log of an execution" should "be answered to its creator, to the owner of its workflow and to a user the workflow was granted to" in {
+    val ofOwner = created(post(request()))
+    val ofReader = created(post(request(cuid = readerCuid), uid = readerUid))
+
+    // The owner of the workflow created one, and may read the other; the reader was granted
+    // the workflow, and created the other.
+    answersTo(creatorUid, ofOwner.eid) shouldBe Seq(200, 200)
+    answersTo(creatorUid, ofReader.eid) shouldBe Seq(200, 200)
+    answersTo(readerUid, ofOwner.eid) shouldBe Seq(200, 200)
+    answersTo(readerUid, ofReader.eid) shouldBe Seq(200, 200)
+  }
+
+  it should "be refused with 403 to a user with no right to the workflow" in {
+    val execution = created(post(request()))
+
+    answersTo(strangerUid, execution.eid) shouldBe Seq(403, 403)
+  }
+
+  it should "be refused with 403 to a user who only sees the workflow because it is public" in {
+    val execution = created(post(request()))
+    getDSLContext
+      .update(WORKFLOW)
+      .set(WORKFLOW.IS_PUBLIC, java.lang.Boolean.TRUE)
+      .where(WORKFLOW.WID.eq(Integer.valueOf(testWid)))
+      .execute()
+    try {
+      // A log can quote what the run read from its creator's private datasets.
+      answersTo(strangerUid, execution.eid) shouldBe Seq(403, 403)
+      // Who ran the public workflow reads their own execution of it.
+      val own = created(post(request(cuid = strangerCuid), uid = strangerUid))
+      answersTo(strangerUid, own.eid) shouldBe Seq(200, 200)
+    } finally {
+      getDSLContext
+        .update(WORKFLOW)
+        .set(WORKFLOW.IS_PUBLIC, java.lang.Boolean.FALSE)
+        .where(WORKFLOW.WID.eq(Integer.valueOf(testWid)))
+        .execute()
+    }
+  }
+
+  it should "be refused with 403 for an execution there is not, as for one the user may not read" in {
+    Seq(0L, -1L, 969999L, Int.MaxValue.toLong + 1, Long.MaxValue).foreach { eid =>
+      withClue(s"execution $eid: ") { answersTo(creatorUid, eid) shouldBe Seq(403, 403) }
+    }
+  }
+
+  it should "be served at GET /executions/{eid}/state and /log, to regular users and admins" in {
+    Seq("getState" -> "/{eid}/state", "getLog" -> "/{eid}/log").foreach {
+      case (name, path) =>
+        val route = classOf[ExecutionResource].getMethods.find(_.getName == name).get
+        route.getAnnotation(classOf[javax.ws.rs.GET]) should not be null
+        route.getAnnotation(classOf[javax.ws.rs.Path]).value() shouldBe path
+        route.getAnnotation(classOf[javax.annotation.security.RolesAllowed]).value().toSet shouldBe
+          Set("REGULAR", "ADMIN")
+    }
+  }
+
+  // --- as written ---
+
+  "A state" should "be written as {eid, status, open, reason, timeMs}, the reason null when there is none" in {
+    val open = ExecutionStateResponse(345L, 1, open = true, None, 1794873600000L)
+    val closed = ExecutionStateResponse(345L, 4, open = false, Some("unit lost"), 1794873600000L)
+
+    dashboardMapper.readTree(dashboardMapper.writeValueAsString(open)) shouldBe
+      objectMapper.readTree(
+        """{"eid": 345, "status": 1, "open": true, "reason": null, "timeMs": 1794873600000}"""
+      )
+    dashboardMapper.readTree(dashboardMapper.writeValueAsString(closed)) shouldBe
+      objectMapper.readTree(
+        """{"eid": 345, "status": 4, "open": false, "reason": "unit lost",
+          | "timeMs": 1794873600000}""".stripMargin
+      )
+  }
+
+  "A log" should "be written with each row's own fields only, and a null closing while the execution is open" in {
+    val errors = objectMapper.readTree("""[{"type": "EXECUTION_FAILURE", "message": "boom"}]""")
+    val log = ExecutionLogResponse(
+      345L,
+      Seq(
+        ExecutionLogEntryResponse(1L, 1794873600000L, "state", Some("READY"), None, None),
+        ExecutionLogEntryResponse(
+          2L,
+          1794873601000L,
+          "state",
+          Some("FAILED"),
+          Some("why"),
+          Some(errors)
+        )
+      ),
+      None
+    )
+
+    dashboardMapper.readTree(dashboardMapper.writeValueAsString(log)) shouldBe
+      objectMapper.readTree(
+        """{"eid": 345,
+          | "entries": [
+          |   {"seq": 1, "timeMs": 1794873600000, "kind": "state", "state": "READY"},
+          |   {"seq": 2, "timeMs": 1794873601000, "kind": "state", "state": "FAILED",
+          |    "reason": "why", "errors": [{"type": "EXECUTION_FAILURE", "message": "boom"}]}],
+          | "closing": null}""".stripMargin
+      )
+  }
+
+  it should "be written with its closing record as {outcome, reason, endedAtMs, fromLog}" in {
+    val log = ExecutionLogResponse(
+      345L,
+      Nil,
+      Some(ExecutionClosingResponse(4, Some("unit lost"), 1794873600000L, fromLog = false))
+    )
+    val byItsLog = log.copy(closing = Some(ExecutionClosingResponse(3, None, 1794873600000L, true)))
+
+    dashboardMapper.readTree(dashboardMapper.writeValueAsString(log)) shouldBe
+      objectMapper.readTree(
+        """{"eid": 345, "entries": [],
+          | "closing": {"outcome": 4, "reason": "unit lost", "endedAtMs": 1794873600000,
+          |             "fromLog": false}}""".stripMargin
+      )
+    dashboardMapper.readTree(dashboardMapper.writeValueAsString(byItsLog)).get("closing") shouldBe
+      objectMapper.readTree(
+        """{"outcome": 3, "reason": null, "endedAtMs": 1794873600000, "fromLog": true}"""
+      )
   }
 }

@@ -96,6 +96,16 @@ object ApplicationConfig {
   val sinkStorageCleanUpCheckIntervalInSecs: Int =
     getConfSource.getInt("result-cleanup.collection-check-interval-in-seconds")
 
+  // Closing executions
+  val executionClosingIntervalInSecs: Int =
+    getConfSource.getInt("execution-closing.interval-seconds")
+  val executionClosingLostAfterInSecs: Int =
+    getConfSource.getInt("execution-closing.lost-after-seconds")
+  val executionClosingNeverStartedAfterInSecs: Int =
+    getConfSource.getInt("execution-closing.never-started-after-seconds")
+  val executionClosingReviseVerdictForInSecs: Int =
+    getConfSource.getInt("execution-closing.revise-verdict-for-seconds")
+
   // Web server
   val operatorConsoleBufferSize: Int = getConfSource.getInt("web-server.python-console-buffer-size")
   val consoleMessageDisplayLength: Int =

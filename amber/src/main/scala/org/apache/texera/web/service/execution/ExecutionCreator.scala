@@ -28,7 +28,7 @@ import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{CompileFor, WorkflowCompilationFailed}
 import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
-import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
   WORKFLOW_COMPUTING_UNIT,
   WORKFLOW_EXECUTIONS,
@@ -164,21 +164,25 @@ final class WorkflowNotCompiled(
   *     carries a link to it for the computing unit to read it through; each Python environment
   *     an operator names is one the user keeps, and the plan carries its packages for the unit
   *     to install. A workflow that does not compile, a scan of a file the user may not read or
-  *     an operator in an environment the user does not have among them, marks the row FAILED and
-  *     is answered with each operator's error ([[WorkflowNotCompiled]], 400). The compile runs
-  *     on a pool of its own with a deadline, and one that passes it marks the row FAILED (504).
-  *     A plan that cannot be made for another reason, such as the database or the storage not
-  *     answering while a file is resolved or linked, marks the row FAILED too (500).
+  *     an operator in an environment the user does not have among them, closes the row as
+  *     failed, "compile error: …" with one operator's error, and is answered with each
+  *     operator's error ([[WorkflowNotCompiled]], 400). The compile runs on a pool of its own
+  *     with a deadline, and one that passes it closes the row as failed, "its plan could not be
+  *     made" (504). A plan that cannot be made for another reason, such as the database or the
+  *     storage not answering while a file is resolved or linked, closes the row so too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
   *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
-  *     the email notification. A plan larger than the table keeps marks the row FAILED (400); so
-  *     does a write that fails (500).
+  *     the email notification. A plan larger than the table keeps closes the row as failed,
+  *     "its plan could not be stored" (400); so does a write that fails (500).
   *  1. Off the request's thread, the results of the workflow's ended executions on the unit that
   *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
   *     new execution replaces none until a unit runs it.
   *
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
-  * as `{"code", "message"}`.
+  * as `{"code", "message"}`. One that fails once its row exists closes the row itself
+  * ([[ExecutionRecords.close]]): no engine and no log will ever say how such an execution
+  * ended. Until every reader takes an ending from the closing record, the row's status is
+  * FAILED as well.
   *
   * @param bindingsFor       what a plan is bound to, for a user
   * @param replayLogRoot     where runs keep their replay logs; None when they keep none
@@ -256,57 +260,94 @@ class ExecutionCreator(
       s"Execution ${eid.id} of workflow ${checked.wid} is created for user $uid on computing " +
         s"unit ${checked.computingUnitId}."
     )
-    // From here the row exists: whatever fails marks it FAILED, so it does not stay Created
-    // although no unit can ever start it.
-    val planUri =
-      try {
-        val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
-        // How long each operator took in the user's newest completed run of the workflow, for the
-        // scheduler's cost model: saved with the plan, which the engine takes them from.
-        context.costHints = costHints.load(checked.wid, uid)
-        // The plan compiled, as the request sent it, loop-variable references included: written
-        // before the compile resolves its operators in place.
-        val logical = checked.plan.toJson
-        val bindings = bindingsFor(uid)
-        val savedPlan = withinDeadline(eid) {
-          PlanToRun.make(context, bindings, checked.plan, replay, replayLog)
-        }
-        val planUri = ExecutionPlanStore.planUri(wid, eid, warehouse)
-        val record = PlanRecord(
-          entryId = ExecutionPlanStore.PlanEntryId,
-          body = savedPlan,
-          createdBy = uid.intValue(),
-          computingUnitId = checked.computingUnitId,
-          notification = notificationFor(checked, user, requestUri).map(Notification.toJson)
-        )
-        try writePlan(planUri, record, logical)
-        catch {
-          // The workflow's doing, not the lake's.
-          case tooLarge: PlanTooLargeException =>
-            throw new BadRequestException(
-              s"Execution ${eid.id} could not be created. ${tooLarge.getMessage} A plan holds a " +
-                "link to each file its operators read, so a workflow that lists fewer files " +
-                "makes a smaller plan.",
-              tooLarge
-            )
-          case NonFatal(failure) =>
-            throw new InternalServerErrorException(
-              s"Execution ${eid.id} could not be created: its plan could not be written to " +
-                "the lake.",
-              failure
-            )
-        }
-        planUri
-      } catch {
-        case NonFatal(failure) =>
-          ExecutionsMetadataPersistService.markFailed(eid)
-          throw answerTo(eid, failure)
+    // From here the row exists: whatever fails closes it as failed, with why, so it does not
+    // stay open although no unit can ever start it.
+    val (planUri, record, logical) = closingOnFailure(eid, planNotMade) {
+      val context = new WorkflowContext(wid, eid, checked.settings, warehouse)
+      // How long each operator took in the user's newest completed run of the workflow, for the
+      // scheduler's cost model: saved with the plan, which the engine takes them from.
+      context.costHints = costHints.load(checked.wid, uid)
+      // The plan compiled, as the request sent it, loop-variable references included: written
+      // before the compile resolves its operators in place.
+      val logical = checked.plan.toJson
+      val bindings = bindingsFor(uid)
+      val savedPlan = withinDeadline(eid) {
+        PlanToRun.make(context, bindings, checked.plan, replay, replayLog)
       }
+      val record = PlanRecord(
+        entryId = ExecutionPlanStore.PlanEntryId,
+        body = savedPlan,
+        createdBy = uid.intValue(),
+        computingUnitId = checked.computingUnitId,
+        notification = notificationFor(checked, user, requestUri).map(Notification.toJson)
+      )
+      (ExecutionPlanStore.planUri(wid, eid, warehouse), record, logical)
+    }
+    closingOnFailure(eid, _ => ExecutionClosing.PlanNotStored) {
+      try writePlan(planUri, record, logical)
+      catch {
+        // The workflow's doing, not the lake's.
+        case tooLarge: PlanTooLargeException =>
+          throw new BadRequestException(
+            s"Execution ${eid.id} could not be created. ${tooLarge.getMessage} A plan holds a " +
+              "link to each file its operators read, so a workflow that lists fewer files " +
+              "makes a smaller plan.",
+            tooLarge
+          )
+        case NonFatal(failure) =>
+          throw new InternalServerErrorException(
+            s"Execution ${eid.id} could not be created: its plan could not be written to " +
+              "the lake.",
+            failure
+          )
+      }
+    }
     background.execute(() =>
       ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
     )
     CreateExecutionResponse(eid.id, planUri.toString)
   }
+
+  /**
+    * `step`, a step of the create of execution `eid` after its row exists. When it fails, the
+    * row is closed as failed for `reason` of the failure, and marked FAILED for the lists that
+    * still read its status, and the create fails with [[answerTo]] the failure.
+    *
+    * The row is closed as one no unit ever started, which it is: nothing looks for its results.
+    * A close that fails is logged, not thrown, since the caller is owed the create's own
+    * failure; the closing job then closes the row as never started.
+    */
+  private def closingOnFailure[T](eid: ExecutionIdentity, reason: Throwable => String)(
+      step: => T
+  ): T =
+    try step
+    catch {
+      case NonFatal(failure) =>
+        ExecutionsMetadataPersistService.markFailed(eid)
+        try {
+          ExecutionRecords.close(
+            eid.id,
+            WorkflowExecutionStatus.Failed,
+            Some(reason(failure)),
+            System.currentTimeMillis(),
+            fromLog = false,
+            neverStarted = true
+          )
+        } catch {
+          case NonFatal(unclosed) =>
+            logger.warn(s"Execution ${eid.id}, whose create failed, could not be closed.", unclosed)
+        }
+        throw answerTo(eid, failure)
+    }
+
+  /** Why an execution whose plan could not be made is closed, given what failed. */
+  private def planNotMade(failure: Throwable): String =
+    failure match {
+      case failed: WorkflowCompilationFailed =>
+        // One operator's error, the same one whenever the workflow is compiled.
+        ExecutionClosing.compileError(failed.operatorErrors.minBy(_._1.id)._2.message)
+      case _ => ExecutionClosing.PlanNotMade
+    }
 
   /**
     * `compile`, the compile of execution `eid`'s workflow, run on a thread of the pool of

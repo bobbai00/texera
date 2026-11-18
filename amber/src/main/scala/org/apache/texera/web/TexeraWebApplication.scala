@@ -53,6 +53,7 @@ import org.apache.texera.web.resource.dashboard.user.workflow.{
   WorkflowResource,
   WorkflowVersionResource
 }
+import org.apache.texera.web.service.execution.ExecutionClosingJob
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder}
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
@@ -167,6 +168,9 @@ class TexeraWebApplication
     environment.jersey.register(classOf[HuggingFaceModelResource])
     environment.jersey.register(classOf[WarehouseResource])
     environment.jersey.register(classOf[EnvironmentResource])
+
+    // Records how each execution ended, from its log in the lake: no computing unit writes it.
+    environment.lifecycle().manage(new ExecutionClosingJob())
 
     AuthResource.createAdminUser()
 
