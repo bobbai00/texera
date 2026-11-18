@@ -20,10 +20,26 @@
 package org.apache.texera.amber.clustering
 
 import org.apache.pekko.actor.{ActorRef, ActorSystem, Address, Props}
-import org.apache.pekko.cluster.Cluster
+import org.apache.pekko.cluster.ClusterEvent.MemberRemoved
+import org.apache.pekko.cluster.{Cluster, MemberStatus}
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.WorkflowContext
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  COMPLETED,
+  FAILED,
+  PAUSED,
+  RUNNING
+}
 import org.apache.texera.amber.engine.common.AmberRuntime
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.StateChange
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.web.SessionState
+import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
+import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.BeforeAndAfterAll
@@ -49,12 +65,12 @@ import scala.concurrent.duration._
   * The suite runs a real single-node cluster: `AmberRuntime.pekkoConfig` selects the cluster
   * provider with artery bound on port 0, so joining the node to itself produces genuine
   * `MemberUp` events. That matters because `Member` is `private[cluster]` and cannot be
-  * synthesized — a real join is the only way to exercise the event path at all.
+  * synthesized — a real join is the only way to exercise the event path at all. A member that
+  * is removed is made of that one, which is all a `MemberRemoved` needs.
   *
-  * Not covered, and deliberately: the `MemberRemoved` recovery arm. It walks
-  * `WorkflowService.getAllWorkflowServices` and calls `client.notifyNodeFailure` or
-  * `forcefullyStop` on each live execution, so it needs real executions with real Amber clients —
-  * integration scope, not this.
+  * Not covered, and deliberately: recovery after a member is removed, on a unit that keeps
+  * replay logs. It calls `client.notifyNodeFailure` on each live execution, so it needs real
+  * executions with real Amber clients — integration scope, not this.
   */
 class ClusterListenerSpec
     extends TestKit(ActorSystem("ClusterListenerSpec", AmberRuntime.pekkoConfig))
@@ -219,6 +235,73 @@ class ClusterListenerSpec
     } finally {
       // Stopped for the same reason the others are: it subscribed in preStart, and a listener left
       // running keeps iterating the shared SessionState registry on every membership event.
+      watch(listener)
+      system.stop(listener)
+      expectTerminated(listener, 10.seconds)
+      unwatch(listener)
+    }
+  }
+
+  /**
+    * A run in `state`, held by the service of workflow `wid` in the unit's registry, which is
+    * the JVM's: the run stays in it, so a case gives it a workflow of its own.
+    */
+  private def heldRun(
+      wid: Long,
+      state: WorkflowAggregatedState
+  ): (ExecutionStateStore, RecordingExecutionRecorder) = {
+    val recorder = new RecordingExecutionRecorder
+    val store = new ExecutionStateStore(recorder)
+    store.metadataStore.updateState(_.withState(state))
+    val context =
+      new WorkflowContext(workflowId = WorkflowIdentity(wid), executionId = ExecutionIdentity(wid))
+    WorkflowService
+      .getOrCreate(WorkflowIdentity(wid), computingUnitId = 1)
+      .executionService
+      .onNext(new WorkflowExecutionService(context, null, store, _ => (), None))
+    (store, recorder)
+  }
+
+  it should "end each run that has not ended as failed when a member is removed, on a unit that keeps no replay logs" in {
+    // What the build's configuration says of this unit: a run on it cannot recover.
+    ApplicationConfig.isFaultToleranceEnabled shouldBe false
+    awaitAssert(Cluster(system).state.members should not be empty, 15.seconds, 500.millis)
+    val removed = Cluster(system).state.members.head.copy(MemberStatus.Removed)
+    val live = Seq(RUNNING, PAUSED).zipWithIndex.map {
+      case (state, index) => heldRun(970801L + index, state)
+    }
+    val (completed, completedRecorder) = heldRun(970811L, COMPLETED)
+    // A workflow whose service holds no run.
+    WorkflowService.getOrCreate(WorkflowIdentity(970812L), computingUnitId = 1)
+
+    val listener = TestActorRef[ClusterListener](Props[ClusterListener]())
+    try {
+      val before = System.currentTimeMillis()
+      listener.receive(MemberRemoved(removed, MemberStatus.Up))
+      val after = System.currentTimeMillis()
+
+      live.foreach {
+        case (store, recorder) =>
+          store.metadataStore.getState.state shouldBe FAILED
+          store.statsStore.getState.endTimeStamp should (be >= before and be <= after)
+          // The run's one error says why, and is no operator's.
+          val errors = store.metadataStore.getState.fatalErrors
+          errors.map(error => (error.`type`, error.message, error.operatorId)) shouldBe Seq(
+            (
+              EXECUTION_FAILURE,
+              "java.lang.RuntimeException: fault tolerance is not enabled",
+              "unknown operator"
+            )
+          )
+          // Its record is told of the end, with the error.
+          recorder.changes shouldBe Seq(StateChange("FAILED", errors, None))
+      }
+      // A run that had ended is left as it ended.
+      completed.metadataStore.getState.state shouldBe COMPLETED
+      completed.metadataStore.getState.fatalErrors shouldBe empty
+      completed.statsStore.getState.endTimeStamp shouldBe 0L
+      completedRecorder.changes shouldBe empty
+    } finally {
       watch(listener)
       system.stop(listener)
       expectTerminated(listener, 10.seconds)
