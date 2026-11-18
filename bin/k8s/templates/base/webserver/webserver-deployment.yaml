@@ -42,6 +42,11 @@ spec:
           ports:
             - containerPort: {{ .Values.webserver.service.port }}
           env:
+            # The compiling service, which the Dashboard asks for the plan of each execution it
+            # creates and of each change to a paused operator, with the caller's own token. It
+            # waits 5 seconds for a connection and 60 seconds for an answer.
+            - name: WORKFLOW_COMPILING_SERVICE_ENDPOINT
+              value: http://{{ .Values.workflowCompilingService.name }}-svc:{{ .Values.workflowCompilingService.service.port }}
             # TexeraDB Access
             - name: STORAGE_JDBC_URL
               value: jdbc:postgresql://{{ .Release.Name }}-postgresql:5432/texera_db?currentSchema=texera_db,public
@@ -75,8 +80,9 @@ spec:
             - name: STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET
               value: {{ .Values.lakekeeperInit.warehouse.s3Bucket | quote }}
             # Object storage, which the Dashboard uses directly: for example, it registers each
-            # user's warehouse with Lakekeeper against this store and deletes executions' large
-            # binaries from it.
+            # user's warehouse with Lakekeeper against this store, deletes executions' large
+            # binaries from it, and signs, with these keys, the links a run reads its input
+            # files through. The compiling service is given none of them.
             - name: STORAGE_S3_ENDPOINT
               value: {{ include "texera.s3.endpoint" . }}
             {{- if .Values.storage.s3.endpoint }}

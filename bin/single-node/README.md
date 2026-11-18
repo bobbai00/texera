@@ -173,7 +173,7 @@ To change these ports, open the `.env` file and update the corresponding variabl
 - For the JupyterLab port (9100): change `JUPYTER_PORT=9100` to your desired port, e.g., `JUPYTER_PORT=9101`.
 
 ### Change how runs read files and install Python environments
-When Texera creates an execution, it links each dataset file the run reads, and the computing unit reads the file through the link. A run's Python environments are installed on the computing unit the first time a run needs them. Each of the following has a default, so add a line to the `.env` file only to override one:
+When Texera creates an execution, the compiling service makes its plan and finds where each dataset file the run reads is kept, the Dashboard service signs a link to each, and the computing unit reads the file through the link. A run's Python environments are installed on the computing unit the first time a run needs them. Each of the following has a default, so add a line to the `.env` file only to override one:
 
 | Variable | What it sets | Default |
 | --- | --- | --- |

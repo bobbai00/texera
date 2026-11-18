@@ -66,7 +66,7 @@ function makeWorkflowError(type: WorkflowFatalErrorType, message: string, operat
 /**
  * The body of `POST /api/executions` on the Dashboard service (amber's `CreateExecutionRequest`).
  * The Dashboard creates the execution without a computing unit: it checks the user's rights,
- * compiles the workflow for them and stores the plan that the unit is then asked to run.
+ * has the workflow compiled for them and stores the plan that the unit is then asked to run.
  */
 export interface CreateExecutionRequest {
   wid: number;
