@@ -64,7 +64,6 @@ object LinkDocument {
         if (uri.getPort == -1) defaultPort else uri.getPort
       )
 
-    /** The endpoint a deployment's setting names. */
     def configured(setting: String): Endpoint =
       Try(new URI(setting)).toOption.flatMap(of).getOrElse {
         throw new IllegalStateException(
@@ -77,8 +76,7 @@ object LinkDocument {
 
 /**
   * A file read through a link ([[InputLink]]): how a computing unit reads what a plan's operators
-  * read from outside the run. Reading asks no service where the file is. The link is all there
-  * is, and it is followed only if it leads to the object store.
+  * read from outside the run.
   *
   * A link comes out of a plan, so it is not trusted to name what the unit should fetch. It must
   * point at one of `allowedEndpoints`, by scheme, host and port; any other link is refused here,
@@ -89,12 +87,10 @@ object LinkDocument {
   * fails, naming when it expired, without asking the store.
   *
   * The file is streamed ([[asInputStream]]), or copied once to a temporary file for a reader
-  * that needs one ([[asFile]]); [[close]] removes that copy. No failure's message holds the
-  * link's query, which is its signature.
+  * that needs one ([[asFile]]), which [[close]] removes. No failure's message holds the link's
+  * query, which is its signature.
   *
-  * @param link             the link to the file
-  * @param name             what failures call the file: the name its operator knows it by
-  * @param allowedEndpoints the object-store endpoints a link may point at
+  * @param name what failures call the file: the name its operator knows it by
   * @throws IllegalArgumentException if the link does not point at one of `allowedEndpoints`
   */
 class LinkDocument(link: InputLink, name: String, allowedEndpoints: Seq[String])
@@ -179,7 +175,6 @@ class LinkDocument(link: InputLink, name: String, allowedEndpoints: Seq[String])
       file
     }.toFile
 
-  /** Removes the copy [[asFile]] made, if it made one. */
   override def close(): Unit = {
     copy.foreach(Files.deleteIfExists)
     copy = None

@@ -52,10 +52,7 @@ object CostHintsLoader {
   // and the nanoseconds it spent processing data and control messages.
   private val CostColumns = Set("operatorId", "dataProcessingTime", "controlProcessingTime")
 
-  /**
-    * The rows of the runtime statistics at `uri`, with the columns costs are read from alone.
-    * None from a table written before statistics were stored as they are now.
-    */
+  /** The rows of the runtime statistics at `uri`, with the columns costs are read from alone. */
   def statisticsAt(uri: URI): Seq[RuntimeStatisticsRow] =
     RuntimeStatisticsStore.read(uri, CostColumns)
 }
@@ -63,8 +60,7 @@ object CostHintsLoader {
 /**
   * Finds the cost hints of a run: how long each logical operator of the workflow took in the
   * newest completed run of it by the same user, for the scheduler's cost model. The hints are
-  * saved with the plan, and the engine takes them from the run's context: it reads no statistics
-  * and no database to schedule a run.
+  * stored with the plan ([[CostHints]]).
   *
   * The costs come from that run's runtime statistics, which are where its row says its tables
   * are: the statistics table of its workflow and execution, in the warehouse it wrote into. An
@@ -75,16 +71,13 @@ object CostHintsLoader {
   * A run's statistics no longer change once it has completed, and reading those of a long run
   * can take seconds, so the costs read from a run are kept, by its execution id, for the
   * `cacheCapacity` runs used most recently. A read that fails, or finds no cost, is not kept.
-  * Loads that miss the same run at the same time share one read of its statistics, and its
-  * outcome: a load that comes after the read ended reads again if it kept nothing. A load waits
-  * for another's read for at most `waitLimit`, and gives its run no hints if the read takes longer:
-  * a read that stalls holds up only the load that makes it.
+  * Loads that miss the same run at the same time share one read of its statistics. A load waits
+  * for another's read for at most `waitLimit`, and gives its run no hints if the read takes
+  * longer: a read that stalls holds up only the load that makes it.
   *
-  * @param cacheCapacity  how many runs' costs to keep, at least 1
-  * @param waitLimit      how long a load waits for the read another load makes, more than 0: by
-  *                       default a quarter of the time a create is given
-  * @param openStatistics reads the rows of the runtime statistics at a URI: each row's
-  *                       operator and processing times
+  * @param cacheCapacity how many runs' costs to keep, at least 1
+  * @param waitLimit     how long a load waits for the read another load makes, more than 0: by
+  *                      default a quarter of the time a create is given
   */
 class CostHintsLoader(
     cacheCapacity: Int = 256,
@@ -97,8 +90,7 @@ class CostHintsLoader(
     s"A load waits for another's read for more than no time, not $waitLimit."
   )
 
-  // The reads of statistics under way, by the execution id of the run read. A load that misses a
-  // run being read waits for that read rather than reading the statistics again.
+  // The reads of statistics under way, by the execution id of the run read.
   private val reading =
     new ConcurrentHashMap[java.lang.Long, CompletableFuture[Option[CostHints]]]()
 

@@ -51,8 +51,7 @@ trait UdfUiParameterSupport {
   /**
     * What the plan made to run pins for this UDF, None when no parameter names a dataset or
     * model: each version path resolved to its repository commit, and the code rebuilt with the
-    * commit's locator in the path's place. The computing unit that runs the plan puts the
-    * directory it mounts the commit at there ([[UdfRepositoryDirectories]]).
+    * commit's locator in the path's place (see [[UdfRepositoryDirectories]]).
     */
   protected final def resourceBinding(code: String): Option[ResourceBinding] =
     Option.when(Option(uiParameters).exists(_.exists(isResource))) {

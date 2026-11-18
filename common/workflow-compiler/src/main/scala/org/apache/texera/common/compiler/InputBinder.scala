@@ -33,8 +33,7 @@ import scala.collection.mutable.ArrayBuffer
 
 /**
   * Finds what each operator of a workflow reads from outside the run ([[OperatorInputs]]),
-  * before the workflow is expanded: the compile binds it to the operator's physical operators,
-  * and the engine hands it to each executor beside its descriptor.
+  * before the workflow is expanded; the compile binds it to the operator's physical operators.
   *
   *  - A scan source reads the file it names. The name is resolved to the URI of a file the
   *    plan's user may read, which is set on the operator (`setResolvedFileName`), where its
@@ -54,15 +53,8 @@ import scala.collection.mutable.ArrayBuffer
   * for the plan's user.
   *
   * An operator's own error is appended to `errors`, and the operator is given no file and no
-  * listing: a scan that names no file, or one that does not exist or that the plan's user may
-  * not read; a File Lister that names no dataset version, or one that does not exist, that the
-  * user may not read or that holds more files than the settings allow; a File Scan From Input
-  * with no File Lister upstream, or with more files listed upstream than the settings allow.
-  * Any other failure, such as the database or the storage not answering, is no error of an
-  * operator's, and is thrown as it is.
-  *
-  * @param purpose what the workflow is compiled for: only for a run are files located and
-  *                dataset versions listed
+  * listing: a file or dataset version that is not named, does not exist or may not be read by
+  * the plan's user, or more files listed than the settings allow.
   */
 private[compiler] class InputBinder(
     purpose: CompileFor,

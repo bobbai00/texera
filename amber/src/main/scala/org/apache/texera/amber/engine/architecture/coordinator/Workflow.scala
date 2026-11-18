@@ -21,7 +21,6 @@ package org.apache.texera.amber.engine.architecture.coordinator
 
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 
-/** What the engine runs: a physical plan, and the context it runs under. */
 case class Workflow(
     context: WorkflowContext,
     physicalPlan: PhysicalPlan

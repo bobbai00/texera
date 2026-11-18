@@ -31,10 +31,10 @@ import org.scalatest.matchers.should.Matchers
 import java.util.UUID
 
 /**
-  * Specs for [[ExecutionResources]]: the warehouse an execution writes into. The rows are in
+  * Specs for [[ExecutionWarehouse]]: the warehouse an execution writes into. The rows are in
   * `MockTexeraDB`.
   */
-class ExecutionResourcesSpec
+class ExecutionWarehouseSpec
     extends AnyFlatSpec
     with Matchers
     with BeforeAndAfterAll
@@ -54,7 +54,7 @@ class ExecutionResourcesSpec
     initializeDBAndReplaceDSLContext()
     val cfg = getDSLContext.configuration()
 
-    Seq(testUid -> "execution_resources_spec_user", intruderUid -> "execution_resources_intruder")
+    Seq(testUid -> "execution_warehouse_spec_user", intruderUid -> "execution_warehouse_intruder")
       .foreach {
         case (uid, name) =>
           val user = new User
@@ -76,28 +76,28 @@ class ExecutionResourcesSpec
 
   override protected def afterAll(): Unit = closeConnectionPool()
 
-  "ExecutionResources.resolveLakekeeperWarehouseName" should "require a pick while warehouses are enabled" in {
+  "ExecutionWarehouse.resolveLakekeeperWarehouseName" should "require a pick while warehouses are enabled" in {
     // A run must name the warehouse it writes into, the same way it names a computing unit;
     // falling back to the shared default would route a caller that forgot to pick into shared
     // storage (#7751).
     val error = intercept[IllegalArgumentException] {
-      ExecutionResources.resolveLakekeeperWarehouseName(None, testUid, enabled = true)
+      ExecutionWarehouse.resolveLakekeeperWarehouseName(None, testUid, enabled = true)
     }
     error.getMessage shouldBe "A warehouse must be selected for this execution."
   }
 
   it should "keep the shared default warehouse when nothing is picked and the feature is off" in {
-    ExecutionResources.resolveLakekeeperWarehouseName(None, testUid, enabled = false) shouldBe None
+    ExecutionWarehouse.resolveLakekeeperWarehouseName(None, testUid, enabled = false) shouldBe None
   }
 
   it should "resolve an owned warehouse to its Lakekeeper name" in {
-    ExecutionResources.resolveLakekeeperWarehouseName(Some(whid), testUid, enabled = true) shouldBe
+    ExecutionWarehouse.resolveLakekeeperWarehouseName(Some(whid), testUid, enabled = true) shouldBe
       Some(warehouseName)
   }
 
   it should "refuse another user's warehouse" in {
     val error = intercept[IllegalArgumentException] {
-      ExecutionResources.resolveLakekeeperWarehouseName(Some(whid), intruderUid, enabled = true)
+      ExecutionWarehouse.resolveLakekeeperWarehouseName(Some(whid), intruderUid, enabled = true)
     }
     error.getMessage shouldBe s"You have no warehouse with id $whid."
   }
@@ -105,7 +105,7 @@ class ExecutionResourcesSpec
   it should "refuse an explicit pick while warehouses are disabled" in {
     // Never route the run into the shared warehouse silently (#6930).
     val error = intercept[IllegalArgumentException] {
-      ExecutionResources.resolveLakekeeperWarehouseName(Some(whid), testUid, enabled = false)
+      ExecutionWarehouse.resolveLakekeeperWarehouseName(Some(whid), testUid, enabled = false)
     }
     error.getMessage shouldBe "Per-user warehouses are disabled in this deployment."
   }

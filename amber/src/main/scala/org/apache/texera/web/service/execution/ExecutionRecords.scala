@@ -45,11 +45,10 @@ import scala.jdk.CollectionConverters._
 /**
   * How an execution ended, as its row records it once it is over.
   *
-  * @param outcome   completed, failed or killed, as a code of [[WorkflowExecutionStatus.Ended]]
-  * @param reason    why, in words for the user; None when the outcome says it all
-  * @param endedAtMs when, in epoch milliseconds
-  * @param fromLog   whether the outcome is the ending the execution's log holds; false for a
-  *                  verdict the Dashboard service made without one
+  * @param outcome completed, failed or killed, as a code of [[WorkflowExecutionStatus.Ended]]
+  * @param reason  why, in words for the user; None when the outcome says it all
+  * @param fromLog whether the outcome is the ending the execution's log holds; false for a
+  *                verdict the Dashboard service made without one
   */
 final case class ClosingRecord(
     outcome: Short,
@@ -61,17 +60,15 @@ final case class ClosingRecord(
 /**
   * An execution's row, with what closing it reads beside it.
   *
-  * @param wid                   its workflow, through its version
-  * @param uid                   the user who created it
-  * @param warehouse             the name of the warehouse it writes into; None when its row
-  *                              names none, or names one that was deleted since
-  * @param startingTimeMs        when it was created, in epoch milliseconds
-  * @param notification          where its email goes, as JSON; None sends none
-  * @param unitTerminatedAtMs    when its computing unit was terminated, if it was
-  * @param unitTerminationReason why the unit was terminated
-  * @param closing               how it ended; None while it is open
-  * @param resultsExpiredAtMs    when its results and its console output were dropped, in
-  *                              epoch milliseconds; None while it may hold them
+  * @param wid                its workflow, through its version
+  * @param uid                the user who created it
+  * @param warehouse          the name of the warehouse it writes into; None when its row names
+  *                           none, or names one that was deleted since
+  * @param startingTimeMs     when it was created, in epoch milliseconds
+  * @param notification       where its email goes, as JSON; None sends none
+  * @param closing            how it ended; None while it is open
+  * @param resultsExpiredAtMs when its results and its console output were dropped, in epoch
+  *                           milliseconds; None while it may hold them
   */
 final case class ExecutionRecord(
     eid: Long,
@@ -89,16 +86,10 @@ final case class ExecutionRecord(
   def workflowId: WorkflowIdentity = WorkflowIdentity(wid)
   def executionId: ExecutionIdentity = ExecutionIdentity(eid)
 
-  /** Its plan table, in the warehouse its row names. */
+  // Its tables, in the warehouse its row names.
   def planUri: URI = ExecutionPlanStore.planUri(workflowId, executionId, warehouse)
-
-  /** Its log table, in the warehouse its row names. */
   def logUri: URI = ExecutionLogStore.logUri(workflowId, executionId, warehouse)
-
-  /** Its statistics table, in the warehouse its row names. */
   def statisticsUri: URI = RuntimeStatisticsStore.statisticsUri(workflowId, executionId, warehouse)
-
-  /** Its console table, in the warehouse its row names. */
   def consoleUri: URI = ConsoleMessageStore.consoleUri(workflowId, executionId, warehouse)
 }
 
@@ -137,10 +128,7 @@ object ExecutionRecords {
         .and(WORKFLOW_EXECUTIONS.ENDED_AT.ge(timeOf(sinceMs)))
     )
 
-  /**
-    * The executions of workflow `wid` on computing unit `cuid` with no closing record that were
-    * made before execution `before`, oldest first.
-    */
+  /** The open executions of workflow `wid` on unit `cuid` made before `before`, oldest first. */
   def openBefore(wid: Long, cuid: Int, before: Long): Seq[ExecutionRecord] =
     select(
       WORKFLOW_EXECUTIONS.ENDED_AT.isNull
@@ -227,16 +215,12 @@ object ExecutionRecords {
     (closed.toSeq ++ open).reduceOption(_.or(_)).getOrElse(DSL.noCondition())
   }
 
-  /** Execution `eid`'s row; None when there is none. */
   def find(eid: Long): Option[ExecutionRecord] =
     Option
       .when(eid >= 1 && eid <= Int.MaxValue)(eid)
       .flatMap(id => select(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(id.toInt))).headOption)
 
-  /**
-    * Execution `eid`'s row, when it is an execution of workflow `wid`; None when there is no
-    * such execution, and for an execution of another workflow.
-    */
+  /** Execution `eid`'s row; None unless it is an execution of workflow `wid`. */
   def findOf(wid: Long, eid: Long): Option[ExecutionRecord] = find(eid).filter(_.wid == wid)
 
   /**
@@ -338,7 +322,6 @@ object ExecutionRecords {
       .where(rowOf(eid))
       .execute()
 
-  /** Records what the tables of execution `eid` hold in the lake. */
   def setStoredBytes(eid: Long, bytes: Long): Unit =
     context
       .update(WORKFLOW_EXECUTIONS)

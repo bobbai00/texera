@@ -44,7 +44,6 @@ import scala.util.Try
   * imports its packages from, which they are, and what tells it from any other interpreter.
   *
   * @param executable the interpreter, as a command: a path, or a name on the PATH
-  * @param processes  runs the interpreter
   */
 final class EngineInterpreter(val executable: String, processes: ProcessRunner) {
 

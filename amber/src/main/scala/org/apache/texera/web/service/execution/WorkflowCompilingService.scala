@@ -39,12 +39,12 @@ import scala.util.Try
 object WorkflowCompilingService {
 
   /**
-    * The plan of a run, as the compiling service is asked for it.
+    * The plan of a run, as the compiling service is asked for it: what
+    * [[org.apache.texera.common.compiler.PlanToRun.make]] takes.
     *
-    * @param warehouse        the warehouse the execution writes into; None for the shared one
-    * @param settings         the run's batch size and execution mode
+    * @param warehouse        None for the shared one
     * @param logicalPlan      the workflow to run, as the request to create the execution sent it
-    * @param targetOperatorId the operator the run executes up to; None for the whole workflow
+    * @param targetOperatorId None for the whole workflow
     */
   final case class PlanRequest(
       workflowId: Long,
@@ -66,19 +66,17 @@ object WorkflowCompilingService {
   final case class MadePlan(plan: String, logicalPlan: String)
 
   /**
-    * A physical operator an execution's plan runs for the operator a change is made to: its
-    * layer, and the name of the Python environment its workers run in, if not the engine's own.
+    * A physical operator the execution's plan runs for the operator that changes, as
+    * [[org.apache.texera.common.compiler.UpdateToRun.RunningOperator]] has it.
     */
   final case class RunningOperator(layerName: String, pythonEnvironment: Option[String])
 
   /**
-    * A change to one operator of a paused execution, as the compiling service is asked to make
-    * it into the operator that runs in its place.
+    * A change to a paused operator, as the compiling service is asked to make it to run: what
+    * [[org.apache.texera.common.compiler.UpdateToRun.make]] takes.
     *
     * @param updateId    the id the change is stored under
     * @param logicalPlan the workflow the execution's plan was compiled from
-    * @param operator    the operator as the editor holds it once changed
-    * @param running     the physical operators the execution's plan runs for that operator
     */
   final case class UpdateRequest(
       workflowId: Long,
@@ -104,9 +102,9 @@ object WorkflowCompilingService {
     *                       change to an operator the workflow does not have, 503 when too many
     *                       compiles wait, 504 when the compile passed the service's own deadline;
     *                       any other for a failure of the service
-    * @param operatorErrors the first error of each operator that has one, by the operator's id,
-    *                       an operator before those downstream of it; empty unless the workflow
-    *                       does not compile
+    * @param operatorErrors by the operator's id, in the order of
+    *                       [[org.apache.texera.common.compiler.WorkflowCompilationFailed]]; empty
+    *                       unless the workflow does not compile
     */
   final class CompileRefused(
       val status: Int,
@@ -144,21 +142,13 @@ object WorkflowCompilingService {
 trait WorkflowCompilingService {
 
   /**
-    * Asks for the plan of a run.
-    *
     * @param authorization the `Authorization` header of the user the plan is made for
-    * @param deadline      how long to wait for the answer
     * @throws CompileRefused    if the service refuses
     * @throws CompileUnanswered if it cannot be reached, or does not answer by the deadline
     */
   def planToRun(request: PlanRequest, authorization: String, deadline: FiniteDuration): MadePlan
 
-  /**
-    * Asks for a change to a paused operator, made to run.
-    *
-    * @throws CompileRefused    if the service refuses
-    * @throws CompileUnanswered if it cannot be reached, or does not answer by the deadline
-    */
+  /** As [[planToRun]], for a change to a paused operator. */
   def updateToRun(
       request: UpdateRequest,
       authorization: String,
@@ -170,8 +160,7 @@ trait WorkflowCompilingService {
   * The compiling service at `endpoint`, asked over HTTP: `POST /api/compile/run` and
   * `POST /api/compile/update`.
   *
-  * @param endpoint       the service's address, up to its port
-  * @param connectTimeout how long to wait for a connection
+  * @param endpoint the service's address, up to its port
   */
 class WorkflowCompilingServiceClient(
     endpoint: URI,
@@ -225,10 +214,8 @@ class WorkflowCompilingServiceClient(
   }
 
   /**
-    * The JSON the service answers a POST of `body` to `path` with, when it answers 200.
-    *
-    * @throws CompileRefused    for any other status, with the message the answer gives
-    * @throws CompileUnanswered if the service cannot be reached or does not answer in time
+    * The JSON the service answers a POST of `body` to `path` with, when it answers 200. Any
+    * other status is a [[CompileRefused]], with the message the answer gives.
     */
   private def post(
       path: String,

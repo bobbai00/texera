@@ -46,11 +46,10 @@ object DefaultCostEstimator {
 }
 
 /**
-  * A default cost estimator using past statistics: the run's cost hints ([[WorkflowContext.costHints]]), how long
-  * each logical operator took in an earlier execution of the workflow, which the plan to run was saved with. With
-  * them, the cost of a region is the execution time of its longest-running operator, an operator they do not name
-  * costing [[DefaultCostEstimator.DEFAULT_OPERATOR_COST]]. Without them, the cost is the number of materialized ports
-  * in the region. The estimator reads no statistics itself.
+  * A default cost estimator using past statistics: the run's cost hints ([[WorkflowContext.costHints]]). With them,
+  * the cost of a region is the execution time of its longest-running operator, an operator they do not name costing
+  * [[DefaultCostEstimator.DEFAULT_OPERATOR_COST]]. Without them, the cost is the number of materialized ports in the
+  * region. The estimator reads no statistics itself.
   */
 class DefaultCostEstimator(
     workflowContext: WorkflowContext,

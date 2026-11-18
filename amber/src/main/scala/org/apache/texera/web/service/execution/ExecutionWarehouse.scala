@@ -28,7 +28,7 @@ import org.apache.texera.dao.jooq.generated.Tables.USER_WAREHOUSE
   * ([[resolveLakekeeperWarehouseName]]). What an execution keeps there is dropped by
   * [[ExecutionExpiry]].
   */
-object ExecutionResources {
+object ExecutionWarehouse {
 
   /**
     * Maps an execution's chosen warehouse (its user_warehouse row id) to its Lakekeeper
@@ -42,8 +42,7 @@ object ExecutionResources {
     * With warehouses disabled, an explicit pick is refused loudly rather than silently
     * routed into the shared warehouse, and no pick keeps the shared default (#6930).
     *
-    * @throws IllegalArgumentException if the pick breaks one of these rules, in words the user
-    *                                  can act on
+    * @throws IllegalArgumentException if the pick breaks one of these rules, in words for the user
     */
   def resolveLakekeeperWarehouseName(
       warehouseId: Option[Int],

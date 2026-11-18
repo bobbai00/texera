@@ -48,19 +48,14 @@ object FileResolver {
     */
   def forUser(uid: Integer): ScanFileResolver = fileName => resolveForUser(fileName, uid)
 
-  /**
-    * Builds a [[RepositoryVersionResolver]] scoped to `uid`: it pins only versions `uid` may read.
-    */
+  /** A [[RepositoryVersionResolver]] that pins only the versions `uid` may read. */
   def repositoryVersionResolverForUser(uid: Integer): RepositoryVersionResolver =
     versionPath => resolveRepositoryVersion(versionPath, uid)
 
   /**
     * Resolves a versioned-resource logical path on behalf of `uid`.
     *
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve for `uid`.
-    *                                                       A lookup that fails, because the
-    *                                                       database does not answer, is thrown as
-    *                                                       it is.
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve for `uid`
     */
   def resolveForUser(fileName: String, uid: Integer): URI =
     resolveLogicalPath(fileName, reader = Some(uid))
@@ -68,9 +63,7 @@ object FileResolver {
   /**
     * Resolves a versioned-resource logical path without a user scope.
     *
-    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve. A lookup
-    *                                                       that fails, because the database does
-    *                                                       not answer, is thrown as it is.
+    * @throws org.apache.commons.vfs2.FileNotFoundException if the path does not resolve
     */
   def resolveVersionedResource(fileName: String): URI =
     resolveLogicalPath(fileName, reader = None)
@@ -78,9 +71,9 @@ object FileResolver {
   /**
     * A name that resolves to nothing is a [[FileNotFoundException]] of that name: one already
     * resolved, one that is no versioned-resource path, or one of a resource or version that does
-    * not exist or that `reader` may not read. Whatever else fails is the lookup's own failure,
-    * not the name's, and is thrown as it is, so that a database that cannot answer is never
-    * taken for a file that is not there.
+    * not exist or that `reader` may not read. Whatever else fails is the lookup's own failure
+    * and is thrown as it is, so that a database that cannot answer is never taken for a file
+    * that is not there.
     */
   private def resolveLogicalPath(fileName: String, reader: Option[Integer]): URI = {
     if (isFileResolved(fileName)) {

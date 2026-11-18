@@ -52,7 +52,7 @@ object PythonWorkflowWorker {
 
   /**
     * @param environmentsRoot the directory the worker finds its operator's Python environment
-    *                         installed under: this unit's, unless its run installed under another
+    *                         installed under
     */
   def props(
       workerConfig: WorkerConfig,

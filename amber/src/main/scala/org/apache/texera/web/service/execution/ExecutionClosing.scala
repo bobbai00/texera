@@ -33,7 +33,7 @@ import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTerminati
   * a verdict of the Dashboard service's own, when its warehouse is gone, when its computing
   * unit was terminated or shows no sign of life, or when no unit started it in time. A verdict
   * gives way to the log: an execution closed as lost whose log shows an ending later is given
-  * that ending ([[revisionOf]]).
+  * that ending ([[revisable]]).
   */
 object ExecutionClosing {
 
@@ -47,9 +47,8 @@ object ExecutionClosing {
   val WarehouseUnavailable = "its warehouse is no longer available"
 
   /**
-    * Why an execution whose workflow does not compile is closed, given the message of an
-    * operator's error, of which at most [[ExecutionLogStore.MaxReasonLength]] characters are
-    * kept.
+    * Why an execution whose workflow does not compile is closed: the message of an operator's
+    * error, cut to [[ExecutionLogStore.MaxReasonLength]] characters.
     */
   def compileError(message: String): String = {
     val limit = ExecutionLogStore.MaxReasonLength
@@ -110,7 +109,6 @@ object ExecutionClosing {
 
   object Settings {
 
-    /** The deployment's settings. */
     def configured: Settings =
       Settings(
         intervalSeconds = ApplicationConfig.executionClosingIntervalInSecs,
@@ -130,7 +128,6 @@ object ExecutionClosing {
     /** The lake could not answer. It says nothing of the execution, least of all "no log". */
     case object Failed extends Read
 
-    /** The execution's log is there, with this label. */
     final case class Log(label: ExecutionLabel) extends Read
 
     /**
@@ -278,10 +275,9 @@ object ExecutionClosing {
 
   /**
     * Whether the log of `execution` is still read for an ending to put in place of the verdict
-    * it was closed by: it was closed by a verdict, no longer ago than
-    * `revise-verdict-for-seconds`, and its warehouse can be reached. Then [[endingIn]] the label
-    * a tick reads is what replaces the verdict; a label with no ending, no log at all and a read
-    * that failed all leave it.
+    * that closed it: a verdict closed it, no longer ago than `revise-verdict-for-seconds`, and
+    * its warehouse can be reached. Only an ending in the label a tick reads ([[endingIn]])
+    * replaces the verdict.
     */
   def revisable(execution: ExecutionRecord, settings: Settings, nowMs: Long): Boolean =
     execution.closing.exists(closing =>

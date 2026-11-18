@@ -49,10 +49,7 @@ class RepositoryMountManager(
 
   private val mapper = new ObjectMapper()
 
-  /**
-    * The directory this computing unit mounts repositories under, or None when it can mount
-    * none. The code it runs reads each repository from a directory below it.
-    */
+  /** The directory this computing unit mounts repositories under; None when it can mount none. */
   def mountRoot: Option[Path] =
     env(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT)
       .map(_.trim)
@@ -135,8 +132,6 @@ object RepositoryMountManager
     * Where `locator` is, or will be, readable on a computing unit that mounts repositories under
     * `root`. Pure: it neither mounts nor checks anything, because an operator's code is given
     * this path before the region is launched and the mount actually happens.
-    *
-    * @throws IllegalArgumentException if `locator` is not "<repositoryName>:<commitHash>"
     */
   def mountPoint(root: Path, locator: String): Path = {
     val (repository, commit) = RepositoryMounts.parseLocator(locator)

@@ -57,11 +57,7 @@ object ExecutionStateStore {
     }
 }
 
-/**
-  * The states of one run.
-  *
-  * @param recorder keeps the run's record in the lake
-  */
+/** The states of one run. */
 class ExecutionStateStore(val recorder: ExecutionRecorder = ExecutionRecorder.none) {
   val statsStore = new StateStore(ExecutionStatsStore())
   val metadataStore = new StateStore(ExecutionMetadataStore())

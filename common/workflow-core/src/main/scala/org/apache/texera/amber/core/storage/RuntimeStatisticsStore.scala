@@ -33,15 +33,12 @@ import java.net.URI
 
 /**
   * The statistics of one operator of an execution at one time. Counts, sizes and times are
-  * totals since the execution started.
+  * totals since the execution started; the three times are in nanoseconds.
   *
-  * @param operatorId            the logical operator.
-  * @param timeMs                when the sample was stored, in epoch milliseconds; the rows of
-  *                              one append share it.
-  * @param dataProcessingTime    nanoseconds spent processing data.
-  * @param controlProcessingTime nanoseconds spent processing control messages.
-  * @param idleTime              nanoseconds spent idle.
-  * @param status                the operator's state, as its status code.
+  * @param operatorId the logical operator.
+  * @param timeMs     when the sample was stored, in epoch milliseconds; the rows of one append
+  *                   share it.
+  * @param status     the operator's state, as its status code.
   */
 final case class RuntimeStatisticsRow(
     operatorId: String,
@@ -58,16 +55,9 @@ final case class RuntimeStatisticsRow(
 )
 
 /**
-  * Keeps each execution's runtime statistics in the lake: one Iceberg table per execution, in
-  * the warehouse the execution writes into, at the URI [[statisticsUri]] names (namespace
-  * `storage.iceberg.table.runtime-statistics-namespace`, table
-  * `wid_<wid>_eid_<eid>_runtimestatistics`). The engine that runs the execution is the table's
-  * one writer.
-  *
-  * Every method takes only a URI [[statisticsUri]] could have built, and refuses any other. To
-  * a read, a table that is not there is empty; to a write it is a
-  * [[NoSuchExecutionTableException]]. Any other failure of the catalog or the object store is
-  * thrown as it is.
+  * Keeps each execution's runtime statistics table, one of its [[ExecutionTables]], at the URI
+  * [[statisticsUri]] names (namespace `storage.iceberg.table.runtime-statistics-namespace`,
+  * table `wid_<wid>_eid_<eid>_runtimestatistics`).
   */
 object RuntimeStatisticsStore {
 
@@ -88,24 +78,15 @@ object RuntimeStatisticsStore {
   /** The table's columns, which are the fields of [[RuntimeStatisticsRow]]. */
   val Columns: Set[String] = schema.getAttributeNames.toSet
 
-  /** The statistics table of execution `eid` of workflow `wid`, in `warehouse` (None: the default). */
   def statisticsUri(wid: WorkflowIdentity, eid: ExecutionIdentity, warehouse: Option[String]): URI =
     VFSURIFactory.createRuntimeStatisticsURI(wid, eid, warehouse)
 
-  /**
-    * Makes the statistics table, empty. A table already at this URI can only be stale, since an
-    * execution id is run once, so it is replaced.
-    */
   def create(uri: URI): Unit = {
     requireStatisticsUri(uri)
     DocumentFactory.createDocument(uri, schema)
   }
 
-  /**
-    * Appends `rows` in one commit; no rows, no commit.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
-    */
+  /** Appends `rows` in one commit; no rows, no commit. */
   def append(uri: URI, rows: Seq[RuntimeStatisticsRow]): Unit = {
     requireStatisticsUri(uri)
     if (rows.nonEmpty) {
@@ -118,17 +99,13 @@ object RuntimeStatisticsStore {
     * The rows in the order they were appended. Only `columns` are read from the table; every
     * other field of a row is 0 or empty.
     *
-    * Empty when the table does not exist, and when it has no `timeMs` column: that is a
-    * statistics table from before statistics were stored through this store, with other
-    * columns under the same name.
+    * Empty when the table has no `timeMs` column: that is a statistics table that was not
+    * written through this store, with other columns under the same name.
     */
   def read(uri: URI, columns: Set[String] = Columns): Seq[RuntimeStatisticsRow] =
     read(uri, columns, afterPlan = () => ())
 
-  /**
-    * [[read]], running `afterPlan` between each plan of the table's files and the read of them,
-    * the window in which a tidy can delete them. Tests tidy there.
-    */
+  /** [[read]], with the hook `afterPlan` that [[IcebergReader.read]] gives tests. */
   private[storage] def read(
       uri: URI,
       columns: Set[String],
@@ -148,18 +125,12 @@ object RuntimeStatisticsStore {
       .getOrElse(Nil)
   }
 
-  /**
-    * Tidies the table (see [[IcebergTidy.tidy]]). For the table's writer alone, between its
-    * appends, and with `atEnd` once it has appended its last row.
-    *
-    * @throws NoSuchExecutionTableException if the table does not exist.
-    */
+  /** Tidies the table, as [[ExecutionLogStore.tidy]] tidies the log. */
   def tidy(uri: URI, atEnd: Boolean): Unit = {
     requireStatisticsUri(uri)
     IcebergTidy.tidy(existingTable(uri), atEnd)
   }
 
-  /** Drops the table with its rows; nothing happens when there is no table. */
   def drop(uri: URI): Unit = {
     requireStatisticsUri(uri)
     DocumentFactory.dropTable(uri)
@@ -167,8 +138,7 @@ object RuntimeStatisticsStore {
 
   private def requireStatisticsUri(uri: URI): Unit = {
     val components = VFSURIFactory.decodeURI(uri)
-    // Rebuilding the URI from what it decodes to refuses extra segments, which would address a
-    // different table name in the statistics namespace.
+    // An extra segment would name another table, so the URI must equal the one rebuilt from it.
     require(
       components.resourceType == VFSResourceType.RUNTIME_STATISTICS &&
         uri == statisticsUri(components.workflowId, components.executionId, components.warehouse),

@@ -38,7 +38,6 @@ class WorkflowContext(
     // The Lakekeeper catalog name this execution writes into; becomes the `/wh/<name>`
     // URI segment. None routes to the shared default warehouse.
     var warehouse: Option[String] = None,
-    // How long each operator took in an earlier execution, for the scheduler's cost model; saved
-    // with the plan to run. None when there is no such execution.
+    // For the scheduler's cost model (see CostHints). None when no earlier execution gives any.
     var costHints: Option[CostHints] = None
 )

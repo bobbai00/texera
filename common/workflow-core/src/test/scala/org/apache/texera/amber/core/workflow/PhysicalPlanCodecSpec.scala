@@ -757,7 +757,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
         val refused = intercept[UnsupportedOperationException] {
           op.propagateSchema.func(Map(PortIdentity(0) -> keyed))
         }
-        assert(refused.getMessage.contains("read back from a saved plan"))
+        assert(refused.getMessage.contains("read back from a stored plan"))
         // Deriving the schemas leaves that error on every output port, rather than a schema
         // copied from an input port.
         op.propagateSchema().outputPorts.values.foreach {
@@ -852,7 +852,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
     )
   }
 
-  // ----- what a saved plan holds -----
+  // ----- what a stored plan holds -----
 
   /** Fails unless each of `fields` is listed as saved or as left out, and nothing else is. */
   private def assertAccountedFor(
@@ -867,7 +867,7 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
       unlisted.isEmpty,
       s"$what has fields this spec does not list: ${unlisted.mkString(", ")}. Save each in " +
         "PhysicalPlanCodec, with a new format version and golden files, or list it as one a " +
-        "saved plan leaves out, and why."
+        "stored plan leaves out, and why."
     )
     val gone = listed.filterNot(fields.contains)
     assert(gone.isEmpty, s"$what no longer has ${gone.mkString(", ")}")

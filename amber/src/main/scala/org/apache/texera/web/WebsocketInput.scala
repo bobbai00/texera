@@ -59,11 +59,7 @@ class WebsocketInput {
     })
   }
 
-  /**
-    * Hands `req` to its handlers, on the calling thread.
-    *
-    * @throws Throwable what the first handler to fail threw
-    */
+  /** Hands `req` to its handlers on the calling thread, and throws what the first to fail threw. */
   def onNext(req: TexeraWebSocketRequest, uidOpt: Option[Integer]): Unit = {
     val failures = mutable.ListBuffer.empty[Throwable]
     wsInput.onNext(Asked(req, uidOpt, failures))

@@ -122,7 +122,6 @@ private[storage] object IcebergTidy {
     }
   }
 
-  /** Rewrites the current snapshot's manifests into one, when it has more than one. */
   def rewriteManifests(table: Table): Unit =
     if (Option(table.currentSnapshot()).exists(_.allManifests(table.io()).size() > 1)) {
       table

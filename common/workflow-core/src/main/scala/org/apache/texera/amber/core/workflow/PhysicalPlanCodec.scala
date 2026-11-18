@@ -52,35 +52,26 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 /**
-  * Saves an execution's plan, a physical plan made to run with the context it runs under and
-  * what else the run needs ([[ExecutionPlan]]), and reads it back; and likewise a change to one
-  * operator of a paused run ([[OperatorUpdate]]).
+  * Saves an execution's plan ([[ExecutionPlan]]) and reads it back, and likewise a change to one
+  * operator of a paused run ([[OperatorUpdate]]). A plan is saved as a [[StoredPhysicalPlan]]
+  * message (storedplan.proto), a change as a [[StoredOperatorUpdate]] in the same format
+  * version, and the message as JSON text.
   *
-  * A plan is saved as a [[StoredPhysicalPlan]] message (storedplan.proto), and the message as
-  * JSON text. Reading it back gives the plan the engine runs: the same operators, executors,
-  * ports, schemas, links and settings, with what each operator reads from outside the run, where
-  * each output port is stored, the run's cost hints, where it replays from and where it writes
-  * its replay log. Each operator read back iterates its ports, and each port its links, in the
-  * order the saved plan did.
-  *
-  * A plan is saved as the same text every time. Its operators and its cost hints are saved in
-  * the order of their operators' ids, and the files an operator reads in the order of their
-  * names. Its links are saved once, in an order every port finds its own links in.
+  * A plan is saved as the same text every time: its operators and its cost hints in the order
+  * of their operators' ids, the files an operator reads in the order of their names, and its
+  * links once, in an order every port finds its own links in. Each operator read back iterates
+  * its ports, and each port its links, in the order the stored plan did.
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding or names a
   * Python environment that was never resolved, every port has its schema, every output port its
   * storage location, and the links form no cycle. A plan read back can be run but not compiled
-  * again: each port keeps its schema, but no operator keeps the function that derived it
-  * ([[ReadBackSchemaPropagation]] takes its place).
+  * again ([[ReadBackSchemaPropagation]]).
   *
   * A plan is saved in the same format before its files are linked ([[encodeUnlinked]],
   * [[decodeUnlinked]]): as the compile that made it hands it to the service that signs its
   * links, each file with the address of the object that holds it where its link will be.
   * [[encode]] and [[decode]] take only a plan whose files all have their links, which is the
   * plan a computing unit runs.
-  *
-  * A change to an operator is saved as a [[StoredOperatorUpdate]], in the same format version:
-  * only what the engine applies to the running operator, its executor and what its code reads.
   */
 object PhysicalPlanCodec {
 
@@ -88,7 +79,7 @@ object PhysicalPlanCodec {
   val FormatVersion: Int = 1
 
   /**
-    * The schema propagation function of every operator read back. A saved plan holds each port's
+    * The schema propagation function of every operator read back. A stored plan holds each port's
     * schema but not the function the compile derived it with, so an operator read back cannot
     * derive schemas again: this function fails, and `PhysicalOp.propagateSchema` records the
     * failure on each output port. PhysicalOp's default, the identity, would instead copy each
@@ -98,7 +89,7 @@ object PhysicalPlanCodec {
     */
   val ReadBackSchemaPropagation: SchemaPropagationFunc = SchemaPropagationFunc(_ =>
     throw new UnsupportedOperationException(
-      "This operator was read back from a saved plan, which holds its schemas but not the " +
+      "This operator was read back from a stored plan, which holds its schemas but not the " +
         "function that derived them, so it cannot derive them again."
     )
   )
@@ -150,9 +141,8 @@ object PhysicalPlanCodec {
     * A kind of message the codec saves as text, for what is shared between them: reading and
     * writing JSON.
     *
-    * @param noun      what messages call one: "plan", say
-    * @param title     what it is, for a message that says text is not one
-    * @param companion the message's companion
+    * @param noun  what messages call one: "plan", say
+    * @param title what it is, for a message that says text is not one
     */
   private final case class Saved[M <: GeneratedMessage](
       noun: String,
@@ -160,15 +150,14 @@ object PhysicalPlanCodec {
       companion: GeneratedMessageCompanion[M]
   )
 
-  private val SavedPlan = Saved("plan", "saved physical plan", StoredPhysicalPlan)
+  private val StoredPlan = Saved("plan", "stored physical plan", StoredPhysicalPlan)
   private val SavedUpdate = Saved("operator update", "saved operator update", StoredOperatorUpdate)
 
   /**
     * Saves `plan`. The ids, settings, warehouse and cost hints come from its context.
     *
-    * @throws IllegalArgumentException if the physical plan is not one made to run under the
-    *                                  context, with a link to each file its operators read, or
-    *                                  what else the run needs is not what [[decode]] reads back
+    * @throws IllegalArgumentException if the plan is not one made to run under its context, with
+    *                                  a link to each file its operators read
     */
   def encode(plan: ExecutionPlan): StoredPhysicalPlan = encode(plan, linked = true)
 
@@ -201,18 +190,13 @@ object PhysicalPlanCodec {
   }
 
   /**
-    * Reads a saved plan back, with the context it runs under: the plan's ids, settings,
-    * warehouse and cost hints.
+    * Reads a stored plan back, with the context it runs under.
     *
-    * The plan is for running, not for compiling again. Each port has the schema the compile gave
-    * it, but each operator's `propagateSchema` is [[ReadBackSchemaPropagation]], since the
-    * function the compile used is not saved: propagating schemas through the plan, or adding a
-    * link to it, leaves each output port it reaches with that function's error instead of a
-    * schema. Operators and links are built as saved, with no schema propagated.
+    * The plan is for running, not for compiling again: each operator's `propagateSchema` is
+    * [[ReadBackSchemaPropagation]]. Operators and links are built as saved, with no schema
+    * propagated.
     *
-    * @throws IllegalArgumentException if the plan leaves out something it must have, holds a
-    *                                  value this version does not know, or is not a plan
-    *                                  [[encode]] saves
+    * @throws IllegalArgumentException if the plan is not one [[encode]] saves in this version
     */
   def decode(stored: StoredPhysicalPlan): ExecutionPlan = decode(stored, linked = true)
 
@@ -251,26 +235,22 @@ object PhysicalPlanCodec {
     )
   }
 
-  /** The JSON text of a saved plan. */
-  def toJson(stored: StoredPhysicalPlan): String = write(SavedPlan, stored)
+  def toJson(stored: StoredPhysicalPlan): String = write(StoredPlan, stored)
 
   /**
-    * Parses the JSON text of a saved plan; [[decode]] checks what it holds.
+    * Parses the JSON text of a stored plan; [[decode]] checks what it holds.
     *
-    * @throws IllegalArgumentException if the text is not one JSON object, has a field twice or a
-    *                                  field the format does not have, or is in another format
-    *                                  version
+    * @throws IllegalArgumentException if the text is not one JSON object in this format version,
+    *                                  or has a field twice or a field the format does not have
     */
-  def fromJson(json: String): StoredPhysicalPlan = read(SavedPlan, json)
+  def fromJson(json: String): StoredPhysicalPlan = read(StoredPlan, json)
 
   /**
     * Saves a change to operator `op` of the paused execution `executionId`, under `updateId`:
-    * the operator's id, its executor, and the datasets and models its code reads. Nothing else of
-    * the operator is saved; the engine keeps the rest as the running plan has it.
+    * only what an [[OperatorUpdate]] carries.
     *
     * @throws IllegalArgumentException if `updateId` is blank, or `op` is not one made to run in
-    *                                  that execution: it still holds a resource binding, has no
-    *                                  executor, or belongs to another execution
+    *                                  that execution
     */
   def encodeUpdate(
       executionId: ExecutionIdentity,
@@ -305,9 +285,7 @@ object PhysicalPlanCodec {
   /**
     * Reads a saved change to an operator back.
     *
-    * @throws IllegalArgumentException if the change names no execution or operator, has a blank
-    *                                  id, gives the operator no executor, or names mounts
-    *                                  [[RepositoryMounts]] refuses
+    * @throws IllegalArgumentException if the change is not one [[encodeUpdate]] saves
     */
   def decodeUpdate(stored: StoredOperatorUpdate): OperatorUpdate = {
     val executionId =
@@ -325,14 +303,11 @@ object PhysicalPlanCodec {
     )
   }
 
-  /** The JSON text of a saved change to an operator. */
   def updateToJson(stored: StoredOperatorUpdate): String = write(SavedUpdate, stored)
 
   /**
     * Parses the JSON text of a saved change to an operator, as [[fromJson]] parses a plan's;
     * [[decodeUpdate]] checks what it holds.
-    *
-    * @throws IllegalArgumentException as [[fromJson]] does, for a change to an operator
     */
   def updateFromJson(json: String): StoredOperatorUpdate = read(SavedUpdate, json)
 
@@ -694,10 +669,7 @@ object PhysicalPlanCodec {
     )
   }
 
-  /**
-    * The environment operator `operator` runs in, as [[PythonEnvironment]] takes it: only what
-    * pip may read.
-    */
+  /** The environment operator `operator` runs in, as [[PythonEnvironment]] takes it. */
   private def decodeEnvironment(
       operator: String
   )(stored: StoredPythonEnvironment): PythonEnvironmentRef =
@@ -1040,9 +1012,7 @@ object PhysicalPlanCodec {
   private def write[M <: GeneratedMessage](saved: Saved[M], message: M): String =
     jsonWriter.writeValueAsString(printer.toJson(message))
 
-  /**
-    * Parses JSON text into a message of `saved`'s kind, refusing text in another format version.
-    */
+  /** Parses JSON text into a message of `saved`'s kind, refusing another format version. */
   private def read[M <: GeneratedMessage](saved: Saved[M], json: String): M = {
     val noun = saved.noun
     val value =

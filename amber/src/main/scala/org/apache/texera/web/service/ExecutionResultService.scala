@@ -339,8 +339,7 @@ class ExecutionResultService(
   /**
     * A page of a result of the run this service last attached to, found where the run's engine
     * reported it. Before it attaches to any, as on a unit that restarted since the workflow last
-    * ran, an empty page: a unit serves the results of the run it holds, and what an execution
-    * stored is the Dashboard service's to serve.
+    * ran, an empty page: a unit serves only the results of the run it holds.
     */
   def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
     // calculate from index (pageIndex starts from 1 instead of 0)

@@ -100,24 +100,17 @@ object OperatorUpdates {
   *  1. Its plan is read from the lake: 404 without one, 409 while the per-user warehouse holding it
   *     is disabled.
   *  1. The compiling service is asked to make the change into the operator to run, with the
-  *     caller's own token ([[WorkflowCompilingService.updateToRun]]). The operator must be in
-  *     the workflow the plan was compiled from (404). The change must keep the operator's type,
-  *     refer to no loop variable, be one the operator takes while it runs, keep the Python
-  *     environment it runs in, and name only datasets and models the creator may read (400).
-  *     A service that does not answer by the deadline is a 504, and one that cannot be reached
-  *     or has too many compiles waiting a 503.
+  *     caller's own token ([[WorkflowCompilingService.updateToRun]]). An operator that is not
+  *     in the workflow the plan was compiled from is a 404, and a change the running operator
+  *     cannot take ([[org.apache.texera.common.compiler.UpdateToRun]]) a 400. A service that
+  *     does not answer by the deadline is a 504, and one that cannot be reached or has too many
+  *     compiles waiting a 503.
   *  1. The operator made to run, as its executor and what its code reads, is appended to the plan
   *     table under a new update id (as [[PhysicalPlanCodec.encodeUpdate]] saves one), with the
   *     change as the editor sent it. A change larger than the table keeps is refused (400).
   *
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
-  *
-  * @param compiling         the workflow compiling service, which makes a change into the
-  *                          operator to run
-  * @param warehousesEnabled whether runs write into per-user warehouses
-  * @param appendUpdate      appends the update row to the plan table at a URI
-  * @param compileDeadline   how long the compiling service may take to answer a change
   */
 class OperatorUpdates(
     compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
@@ -128,26 +121,14 @@ class OperatorUpdates(
   import OperatorUpdates.{ExecutionRow, OperatorIdField}
 
   /**
-    * Stores the change `request` makes to an operator of execution `eid`, for `user`.
+    * Stores the change `request` makes to an operator of execution `eid`, for `user`, in the
+    * steps this class describes.
     *
     * @param authorization the request's `Authorization` header: the user's own token, which the
     *                      compiling service is asked for the change with
-    * @return the update stored: the id the computing unit is to apply it by, and the operator
-    * @throws BadRequestException          (400) for a request that names no operator, or a change
-    *                                      the running operator cannot take or that is larger than
-    *                                      a change may be
-    * @throws ForbiddenException           (403) unless `user` created the execution and may still
-    *                                      read its workflow and run workflows on its unit
-    * @throws NotFoundException            (404) for an execution, a stored plan or an operator of
-    *                                      its workflow there is not
-    * @throws WebApplicationException      (409) if the execution has ended, or its plan is in a
-    *                                      per-user warehouse while those are disabled; (504) if
-    *                                      the compiling service does not answer by the deadline,
-    *                                      (503) if it cannot be reached or has too many compiles
-    *                                      waiting
-    * @throws InternalServerErrorException (500) if the stored plan cannot be read or was made for
-    *                                      another user or computing unit than the execution's
-    *                                      row names, or the change cannot be made or stored
+    * @throws WebApplicationException with the status of the step that refused the request; 500
+    *                                 when the stored plan cannot be read, or the change cannot
+    *                                 be made or stored
     */
   def store(
       eid: Long,
@@ -240,11 +221,6 @@ class OperatorUpdates(
     operator
   }
 
-  /**
-    * Execution `eid`'s row: its workflow (through its version), creator, computing unit, whether
-    * it has ended and the name of the warehouse it writes into. None when there is no such
-    * execution.
-    */
   private def executionOf(eid: Long): Option[ExecutionRow] =
     Option.when(eid >= 1 && eid <= Int.MaxValue)(eid).flatMap { id =>
       Option(
@@ -351,10 +327,8 @@ class OperatorUpdates(
   }
 
   /**
-    * The change `request` asks for, made into the operator to run by the compiling service, as
-    * `authorization` lets it resolve what the change names. What the service refuses is refused
-    * with its words: 404 for an operator the execution's workflow does not have, 400 for a change
-    * the running operator cannot take.
+    * The change `request` asks for, made into the operator to run by the compiling service. What
+    * the service refuses with a 400 or a 404 is refused here with its words.
     */
   private def madeToRun(
       request: UpdateRequest,

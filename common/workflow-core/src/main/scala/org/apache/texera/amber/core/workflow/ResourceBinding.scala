@@ -28,25 +28,18 @@ import org.apache.texera.amber.core.storage.RepositoryVersionResolver
   * A compile-time callback, like the schema propagation function. Pinning a version is a
   * database lookup with an access check, and the editing-time compile runs on every edit, so
   * that compile leaves the binding alone. The compile that makes a plan to run forces it once
-  * and keeps only what it gives, as data on the operator: the executor, and the repositories to
-  * mount ([[RepositoryMounts]]). The engine is never handed a binding, and never forces one.
+  * and keeps only what it gives, as data on the operator ([[BoundResources]]). The engine is
+  * never handed a binding.
   */
 trait ResourceBinding {
 
-  /**
-    * @param resolver pins a version path to the repository commit behind it, for the user the
-    *                 plan is made for
-    */
   def bind(resolver: RepositoryVersionResolver): BoundResources
 }
 
 /**
   * What a [[ResourceBinding]] gives.
   *
-  * @param opExecInitInfo the executor, with each version's locator in its path's place: the
-  *                       computing unit that runs the plan puts the directory it mounts that
-  *                       repository at there
-  * @param mountLocators  the repositories to mount, each "<repositoryName>:<commitHash>"
-  *                       ([[RepositoryMounts.locator]])
+  * @param opExecInitInfo the executor, with each version's locator in its path's place
+  * @param mountLocators  the repositories to mount, each a [[RepositoryMounts.locator]]
   */
 final case class BoundResources(opExecInitInfo: OpExecInitInfo, mountLocators: Set[String])

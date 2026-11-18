@@ -73,10 +73,6 @@ object ExecutionResource {
   * none of that resource's.
   *
   * A request that is not served is answered `{code, message}`, whatever its status.
-  *
-  * @param creator creates the executions
-  * @param updates stores the changes to paused operators
-  * @param records reads what an execution recorded
   */
 @Path("/executions")
 @Consumes(Array(MediaType.APPLICATION_JSON))
@@ -92,9 +88,7 @@ class ExecutionResource(
     this(ExecutionResource.creator, ExecutionResource.updates, ExecutionResource.records)
 
   /**
-    * Creates an execution of a workflow, to run on a computing unit: checks the caller's rights,
-    * records the execution, asks the workflow compiling service for its plan with the caller's
-    * token, and writes the plan to the lake (see [[ExecutionCreator]]).
+    * Creates an execution of a workflow, to run on a computing unit (see [[ExecutionCreator]]).
     *
     * @return 201 with `{eid, planUri}`. Otherwise 400 when the request is malformed or names a
     *         warehouse or a replay it may not; 400 when the workflow is not one the compiler can
@@ -128,9 +122,8 @@ class ExecutionResource(
     }
 
   /**
-    * Stores a change to an operator of paused execution `eid`, made to run for the user who
-    * created the execution, for its computing unit to apply when the run resumes (see
-    * [[OperatorUpdates]]).
+    * Stores a change to an operator of paused execution `eid`, for its computing unit to apply
+    * when the run resumes (see [[OperatorUpdates]]).
     *
     * @return 201 with `{updateId, operatorId}`. Otherwise 400 when the request names no operator
     *         or the running operator cannot take the change; 403 unless the caller created the
@@ -156,13 +149,10 @@ class ExecutionResource(
       .build()
 
   /**
-    * The state of execution `eid`: how it ended, from its closing record, once it is closed;
-    * while it is open, the newest state in its log (see [[ExecutionRecordReader.state]]).
+    * The state of execution `eid` (see [[ExecutionRecordReader.state]]).
     *
-    * @return 200 with `{eid, status, open, reason, timeMs}` ([[ExecutionStateResponse]]);
-    *         `status` is -1 for an open execution whose log cannot be read. Otherwise 403
-    *         unless the caller created the execution, or owns or was granted its workflow, also
-    *         for an execution there is not.
+    * @return 200 with an [[ExecutionStateResponse]]. Otherwise 403 unless the caller created the
+    *         execution, or owns or was granted its workflow, also for an execution there is not.
     */
   @GET
   @Path("/{eid}/state")
@@ -174,10 +164,8 @@ class ExecutionResource(
     * The log of execution `eid`, the changes of its run's state as its engine recorded them,
     * and its closing record (see [[ExecutionRecordReader.log]]).
     *
-    * @return 200 with `{eid, entries, closing}` ([[ExecutionLogResponse]]): `entries` is empty
-    *         for an execution with no log, and `closing` null while it is open. Otherwise 403
-    *         as for the state; 409 when the log is in a warehouse this deployment cannot reach;
-    *         500 when the lake cannot be read.
+    * @return 200 with an [[ExecutionLogResponse]]. Otherwise 403 as for the state; 409 when the
+    *         log is in a warehouse this deployment cannot reach; 500 when the lake cannot be read.
     */
   @GET
   @Path("/{eid}/log")
@@ -191,12 +179,10 @@ class ExecutionResource(
     * operators (see [[ExecutionRecordReader.console]]). The next page is asked for with the
     * `lastSeq` of this one as its `afterSeq`.
     *
-    * @return 200 with `{eid, messages, lastSeq, more}` ([[ExecutionConsoleResponse]]):
-    *         `messages` is empty for an execution that stored none, and for one whose results
-    *         have expired; a page holds at most 5,000 messages, whatever `limit` asks for.
-    *         Otherwise 400 for a negative `limit`; 403 as for the state; 409 when the console
-    *         output is in a warehouse this deployment cannot reach; 500 when the lake cannot be
-    *         read.
+    * @return 200 with an [[ExecutionConsoleResponse]]; a page holds at most 5,000 messages,
+    *         whatever `limit` asks for. Otherwise 400 for a negative `limit`; 403 as for the
+    *         state; 409 when the console output is in a warehouse this deployment cannot reach;
+    *         500 when the lake cannot be read.
     */
   @GET
   @Path("/{eid}/console")

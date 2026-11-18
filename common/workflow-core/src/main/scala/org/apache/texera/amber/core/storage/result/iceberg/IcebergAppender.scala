@@ -61,13 +61,11 @@ private[storage] object IcebergAppender {
     * the table's writer tidies it ([[IcebergTidy]]), and a tidy rewrites the manifests anyway.
     *
     * An append that fails leaves no file behind when its commit cannot have landed (see
-    * [[committing]]), so a writer that tries again and again does not fill the table's location
-    * with files no table reads.
+    * [[committing]]).
     *
-    * Nothing of an append runs on Iceberg's shared worker pool, which takes no work once the
-    * JVM is exiting: a computing unit that is stopped records how its runs ended exactly then.
-    * So the append writes the manifest of its data file itself ([[writeManifest]]), where
-    * Iceberg would write it on that pool whatever executor the append names.
+    * Nothing of an append runs on Iceberg's shared worker pool (see [[OnCallingThread]]). So
+    * the append writes the manifest of its data file itself ([[writeManifest]]), where Iceberg
+    * would write it on that pool whatever executor the append names.
     */
   def append(
       table: Table,
@@ -102,8 +100,9 @@ private[storage] object IcebergAppender {
     * Makes the files at `written`, which `table` does not read yet, part of it: `prepare` gets
     * the commit ready without asking the catalog, and `commit` asks it. When either fails, the
     * failure is thrown as it is, and the files are deleted if the commit cannot have landed:
-    * nothing would ever read them. `written` is read when that happens, so `prepare` can add
-    * to it.
+    * nothing would ever read them, and a writer that tries again and again would fill the
+    * table's location with them. `written` is read when that happens, so `prepare` can add to
+    * it.
     *
     * It cannot have landed when the catalog was not asked yet, when the failure is one Iceberg
     * marks as safe to clean up after ([[CleanableFailure]]: the catalog refused the commit, or
@@ -154,9 +153,8 @@ private[storage] object IcebergAppender {
     if (properties.nonEmpty) set(table.updateProperties(), properties).commit()
 
   /**
-    * Writes `records` to a new Parquet file `<filePrefix>_<32 hex digits>` under the table's
-    * location, the way `IcebergTableWriter` writes one. The file is not part of the table yet:
-    * [[committing]] makes it part of it.
+    * Writes `records` to a new Parquet file under the table's location, the way
+    * `IcebergTableWriter` writes one. The file is not part of the table until a commit adds it.
     */
   private[iceberg] def writeDataFile(
       table: Table,

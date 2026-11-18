@@ -92,9 +92,6 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, executionId: Long)
 
   /**
     * The execution's row, once it is known to be the workflow's and to hold its results.
-    *
-    * @throws NotFoundException       (404) if the workflow has no such execution
-    * @throws WebApplicationException (410) if the execution's results have expired
     */
   private lazy val execution: ExecutionRecord = {
     val found = ExecutionRecords
@@ -118,10 +115,7 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, executionId: Long)
     val _ = execution
   }
 
-  /**
-    * The result and state tables of the execution's output ports, as its stored plan names
-    * them. A run stores only some of its ports, so a table named here need not exist.
-    */
+  /** The result and state tables of the execution's ports ([[ExecutionTables.portTables]]). */
   private lazy val portTables: Seq[URI] = {
     // Refuse to read a plan in a per-user warehouse while the feature is off (#6930).
     WarehouseReadGuard.assertReadable(execution.planUri)

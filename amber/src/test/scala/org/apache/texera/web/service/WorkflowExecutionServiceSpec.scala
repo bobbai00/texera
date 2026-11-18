@@ -328,7 +328,7 @@ class WorkflowExecutionServiceSpec
       .withStorageLocations(None)
 
   /** The context the Dashboard saves a plan of `storedSource` alone under. */
-  private def savedPlanContext(): WorkflowContext =
+  private def storedPlanContext(): WorkflowContext =
     new WorkflowContext(
       workflowId = WorkflowIdentity(testWid.longValue()),
       executionId = ExecutionIdentity(testEid.longValue()),
@@ -344,7 +344,12 @@ class WorkflowExecutionServiceSpec
       replay: Option[ReplaySource] = None,
       replayLog: Option[URI] = None
   ): ExecutionPlan =
-    ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty), replay, replayLog)
+    ExecutionPlan(
+      storedPlanContext(),
+      PhysicalPlan(Set(storedSource), Set.empty),
+      replay,
+      replayLog
+    )
 
   "WorkflowExecutionService" should
     "surface a recorded fatal error as a WorkflowErrorEvent via the metadata-store handler" in {
@@ -654,7 +659,7 @@ class WorkflowExecutionServiceSpec
       opExecInitInfo = udfReading(datasetLocator),
       repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
     )
-    readBack(ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(reading), Set.empty)))
+    readBack(ExecutionPlan(storedPlanContext(), PhysicalPlan(Set(reading), Set.empty)))
   }
 
   it should "run a plan's code with the directory this unit mounts each dataset at" in {
@@ -701,7 +706,7 @@ class WorkflowExecutionServiceSpec
     val reads = OperatorInputs(files = Seq(file("a.csv"), file("b.csv")))
     val executionPlan = readBack(
       ExecutionPlan(
-        savedPlanContext(),
+        storedPlanContext(),
         PhysicalPlan(Set(storedSource.withInputs(reads)), Set.empty)
       )
     )
@@ -1172,7 +1177,7 @@ class WorkflowExecutionServiceSpec
     "start the coordinator replaying the plan's replay log, and writing its own where the plan says" in {
     val config = WorkflowExecutionService.coordinatorConfigOf(
       ExecutionPlan(
-        savedPlanContext(),
+        storedPlanContext(),
         PhysicalPlan(Set(storedSource), Set.empty),
         Some(replaySource),
         Some(replayLogLocation)
@@ -1193,7 +1198,7 @@ class WorkflowExecutionServiceSpec
 
   it should "start the coordinator of a plan that replays nothing and writes no replay log as this unit's" in {
     val config = WorkflowExecutionService.coordinatorConfigOf(
-      ExecutionPlan(savedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
+      ExecutionPlan(storedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
     )
 
     config shouldBe CoordinatorConfig.default

@@ -22,8 +22,8 @@ package org.apache.texera.web.model.http.request.execution
 import com.fasterxml.jackson.databind.JsonNode
 
 /**
-  * The body of `POST /api/executions/{eid}/updates`: a change to one operator of a paused
-  * execution.
+  * The body of `POST /api/executions/{eid}/updates`, which asks for an
+  * [[org.apache.texera.amber.core.workflow.OperatorUpdate]].
   *
   * @param operator the operator as the editor holds it once changed, under the id it has in the
   *                 workflow the execution runs. The Dashboard reads its id, and hands the rest

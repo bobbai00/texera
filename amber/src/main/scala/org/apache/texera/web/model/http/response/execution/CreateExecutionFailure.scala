@@ -26,16 +26,12 @@ import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
   * the `code` and `message` of every refusal, and beside them the execution, which is recorded
   * as failed, and its operators' errors.
   *
-  * Each error is a `WorkflowFatalError` as the compiling service writes its operators' errors
-  * (`{type: {name}, timestamp: {seconds, nanos}, message, details, operatorId, workerId}`), so the
-  * browser shows them as it shows those.
-  *
-  * @param code           400
-  * @param message        that the workflow does not compile, and how many operators have errors
-  * @param eid            the execution, recorded as failed
-  * @param operatorErrors the first error of each operator that has one, by the operator's id, as
-  *                       the compiling service's answer has them. A JSON object has no order: a
-  *                       client that lists them orders them itself.
+  * @param operatorErrors the first error of each operator that has one, by the operator's id
+  *                       ([[org.apache.texera.common.compiler.WorkflowCompilationFailed]]),
+  *                       written as the compiling service writes its operators' errors
+  *                       (`{type: {name}, timestamp: {seconds, nanos}, message, details,
+  *                       operatorId, workerId}`), so the browser shows them alike. A JSON object
+  *                       has no order: a client that lists them orders them itself.
   */
 case class CreateExecutionFailure(
     code: Int,

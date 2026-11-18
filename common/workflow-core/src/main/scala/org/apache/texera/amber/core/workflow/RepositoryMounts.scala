@@ -20,13 +20,11 @@
 package org.apache.texera.amber.core.workflow
 
 /**
-  * The repositories an operator's code reads, named when a plan to run is made, so the computing
-  * unit that runs the plan only has to mount them. An operator that reads none holds no value at
-  * all.
+  * The repositories an operator's code reads, named when its plan is made to run and mounted by
+  * the computing unit that runs it. An operator that reads none holds no value at all.
   *
   * @param locators the repositories to mount, each "<repositoryName>:<commitHash>"
-  * @throws IllegalArgumentException if `locators` is empty or holds something that is not a
-  *                                  locator
+  * @throws IllegalArgumentException if `locators` is empty or holds something that is no locator
   */
 final case class RepositoryMounts(locators: Set[String]) {
   require(locators != null && locators.nonEmpty, "Mounts name no repository.")
@@ -47,9 +45,7 @@ object RepositoryMounts {
   /**
     * The repository name and commit hash `locator` names.
     *
-    * @throws IllegalArgumentException if it is not "<repositoryName>:<commitHash>", each of
-    *                                  letters, digits, '.', '_' and '-', starting with a letter
-    *                                  or digit
+    * @throws IllegalArgumentException if it is not "<repositoryName>:<commitHash>"
     */
   def parseLocator(locator: String): (String, String) =
     Option(locator).getOrElse("").split(":", 2) match {

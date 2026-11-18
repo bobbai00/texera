@@ -23,11 +23,10 @@ package org.apache.texera.web.model.http.response.execution
   * What `GET /api/executions/{eid}/console` answers: one page of the console output the
   * execution stored, oldest first.
   *
-  * @param messages the page; empty for an execution that stored no console output, and for
-  *                 one whose results have expired, its console output with them
-  * @param lastSeq  the `seq` of the last message of the page, and the `afterSeq` that was
-  *                 asked for when the page is empty: the `afterSeq` of the next page
-  * @param more     whether messages follow the page
+  * @param messages empty for an execution that stored no console output, and for one whose
+  *                 results have expired, its console output with them
+  * @param lastSeq  the `afterSeq` of the next page: the `seq` of the page's last message, or the
+  *                 `afterSeq` that was asked for when the page is empty
   */
 case class ExecutionConsoleResponse(
     eid: Long,
@@ -41,8 +40,8 @@ case class ExecutionConsoleResponse(
   *
   * @param seq        1, 2, 3, … in the order the engine received the execution's messages
   * @param timeMs     the message's own time, in epoch milliseconds
-  * @param operatorId the logical operator the message is from; empty for the engine's note
-  *                   that messages were not stored
+  * @param operatorId a logical operator's id; empty for the engine's note that messages were
+  *                   not stored
   * @param msgType    `PRINT`, `ERROR`, `COMMAND` or `DEBUGGER`
   */
 case class ExecutionConsoleMessageResponse(

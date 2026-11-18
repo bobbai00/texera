@@ -162,18 +162,19 @@ object PhysicalOp {
 
 // In Scala case classes, @JsonIgnore on constructor parameters is not recognized by Jackson.
 // Use @JsonIgnoreProperties at the class level instead.
+// A plan is stored by PhysicalPlanCodec, not by Jackson.
 @JsonIgnoreProperties(
   Array(
     "opExecInitInfo", // function type, ignore it
-    "outputPartitionRule", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
+    "outputPartitionRule", // no Jackson type info
     "inputPorts", // may contain very long stacktrace, ignore it
     "outputPorts", // same reason with above
     "propagateSchema", // function type, so ignore it
     "locationPreference", // ignore it for the deserialization
     "partitionRequirement", // ignore it for deserialization
-    "pythonEnvironment", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
-    "inputs", // may hold links, which are secrets; a saved plan carries them (PhysicalPlanCodec)
-    "storageLocations", // of a plan made to run only; a saved plan carries them
+    "pythonEnvironment", // no Jackson type info
+    "inputs", // may hold links, which are secrets
+    "storageLocations", // of a plan made to run only
     "resourceBinding" // function type, so ignore it; see ResourceBinding
   )
 )
@@ -193,8 +194,7 @@ case class PhysicalOp(
     // requirement of partition policy (hash/range/single/none) on inputs
     partitionRequirement: List[Option[PartitionInfo]] = List(),
     // how the output is partitioned, given the input partitions
-    // if not specified, the output is partitioned like the head of the inputs the scheduler
-    // hands the rule; with several input ports that need not be port 0 (see PartitionRule)
+    // if not specified, the output is partitioned like the head of the inputs (see PartitionRule)
     outputPartitionRule: PartitionRule = PartitionRule.FirstInput,
     // input/output ports of the physical operator
     // for operators with multiple input/output ports: must set these variables properly
@@ -221,20 +221,16 @@ case class PhysicalOp(
     isLoopStart: Boolean = false,
     // hint for number of workers
     suggestedWorkerNum: Option[Int] = None,
-    // the Python environment the operator's workers run in; one the operator asks for by name is
-    // resolved by the compile that makes a plan to run (see PythonEnvironmentRef)
+    // the Python environment the operator's workers run in (see PythonEnvironmentRef)
     pythonEnvironment: PythonEnvironmentRef = PythonEnvironmentRef.EngineDefault,
-    // the repositories opExecInitInfo's code reads: named when the plan was made, and mounted
-    // by the computing unit that runs it before the operator runs
+    // the repositories opExecInitInfo's code reads (see RepositoryMounts)
     repositoryMounts: Option[RepositoryMounts] = None,
-    // what the operator reads from outside the run, which a compile finds for it: its executor
-    // is handed this beside its descriptor, and reads nothing else from outside
+    // what the operator reads from outside the run (see ExecutorInputs)
     inputs: OperatorInputs = OperatorInputs.defaultInstance,
     // where each output port is stored when the run stores it: the base URI its result and state
     // hang off (VFSURIFactory.resultURI / stateURI), named when the plan is made to run
     storageLocations: Map[PortIdentity, URI] = Map.empty,
-    // datasets and models the operator names that no plan has pinned yet: a compile-time
-    // callback, forced and cleared by the compile that makes a plan to run (see ResourceBinding)
+    // datasets and models the operator names that no plan has pinned yet (see ResourceBinding)
     resourceBinding: Option[ResourceBinding] = None
 ) extends LazyLogging {
 

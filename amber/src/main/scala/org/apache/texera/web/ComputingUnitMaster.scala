@@ -68,7 +68,11 @@ object ComputingUnitMaster {
     )
   }
 
-  /** What a use of the database on a computing unit fails with. */
+  /**
+    * A computing unit keeps nothing in Postgres: a run's state, statistics, console and results
+    * are kept in the lake, and the Dashboard service keeps the executions' rows. A use of the
+    * database on a unit fails with this reason.
+    */
   val NoDatabase = "a computing unit keeps nothing in Postgres"
 
   /** How long a unit that is stopped waits for the ends of its runs to be recorded. */
@@ -150,8 +154,7 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     org.apache.texera.web.observability.WorkflowMetricsRecorder.init()
     ObjectMapperUtils.warmupObjectMapperForOperatorsSerde()
 
-    // A run's state, statistics, console and results are kept in the lake, and the Dashboard
-    // service keeps the executions' rows: whatever asks this process for the database is a bug.
+    // Whatever asks this process for the database is a bug.
     SqlServer.withoutDatabase(ComputingUnitMaster.NoDatabase)
 
     environment.jersey.setUrlPattern("/api/*")
@@ -181,8 +184,6 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       .addServletListeners(
         new WebsocketPayloadSizeTuner(ApplicationConfig.maxWorkflowWebsocketRequestPayloadSizeKb)
       )
-
-    // No clean-up is scheduled: a unit drops nothing, and the Dashboard service expires results.
 
     // What an execution stored is the Dashboard service's to serve: this unit serves the run
     // it holds, over its websocket and to the agent service.

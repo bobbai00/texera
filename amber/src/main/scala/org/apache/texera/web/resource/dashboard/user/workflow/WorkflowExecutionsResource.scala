@@ -364,11 +364,10 @@ object WorkflowExecutionsResource {
   /**
     * Deletes the executions `eids`: first everything each keeps in the lake
     * ([[ExecutionExpiry.dropAll]]), then its row, so that a table that cannot be dropped leaves
-    * a row to find it by. An id with no row is passed over.
+    * a row to find it by. An id with no row is passed over. None is deleted while one of them is
+    * open: without its row, nothing would find the tables its unit goes on writing.
     *
-    * @throws WebApplicationException 409 if one of them is still open, and then none is
-    *                                 deleted: without its row, nothing would find the tables
-    *                                 its unit goes on writing
+    * @throws WebApplicationException 409 if one of them is still open
     */
   def removeAllExecutionFiles(
       eids: Array[Integer],
@@ -397,16 +396,14 @@ object WorkflowExecutionsResource {
   /**
     * An execution as a workflow's history lists it, for one user.
     *
-    * @param status         its status code. Closed: how it ended (3 completed, 4 failed,
-    *                       5 killed). Open: the newest state in its log (0 initializing,
-    *                       1 running, 2 paused, or an ending the closing job has yet to
-    *                       record); 6, created, when no unit has written a state; -1 when its
-    *                       log cannot be read.
+    * @param status         a code of [[org.apache.texera.dao.WorkflowExecutionStatus]]: how it
+    *                       ended, once it is closed; while it is open, what its log shows
+    *                       ([[org.apache.texera.web.service.execution.OpenStatus]])
     * @param reason         why it ended as it did, when its closing record says, for a user
     *                       who may read what it recorded (`ExecutionRecords.mayRead`); else null
-    * @param completionTime when it ended, once it is closed. While it is open: when it took
-    *                       the state it is in, and when it was created while its log shows no
-    *                       state or cannot be read. Never null.
+    * @param completionTime when it ended, once it is closed; while it is open, when it took the
+    *                       state it is in, or when it was created while its log shows no state
+    *                       or cannot be read. Never null.
     * @param logLocation    where its replay log is, for the user who created it, the only one
     *                       who can replay it; else null
     */
@@ -565,8 +562,8 @@ class WorkflowExecutionsResource(openStatuses: OpenExecutionStatuses) {
     // Refuse to read per-user-warehouse statistics while the feature is off (#6930).
     WarehouseReadGuard.assertReadable(uri)
 
-    // The rows as the run's record stored them, oldest first; none from a table written before
-    // statistics were stored as they are now, and none while the run has made no table.
+    // The rows as the run's record stored them, oldest first; none from a table that was not
+    // written through RuntimeStatisticsStore, and none while the run has made no table.
     RuntimeStatisticsStore
       .read(uri)
       .map(row =>

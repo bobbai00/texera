@@ -137,8 +137,8 @@ function stateAnsweredFor(answer: ExecutionStateResponse, shown: ExecutionStateI
 
 /**
  * The errors of a run of `plan` whose execution the Dashboard service did not create, `error` being how the
- * request for it failed. For a workflow that does not compile: each operator's error, an operator before
- * those downstream of it. For any other failure: its reason, as one error that belongs to no operator.
+ * request for it failed: the operators' errors when the workflow does not compile ({@link operatorErrorsOf}),
+ * or else the failure's reason, as one error that belongs to no operator.
  */
 function errorsOfFailedCreate(error: unknown, plan: LogicalPlan): ReadonlyArray<WorkflowFatalError> {
   const operatorErrors = operatorErrorsOf(error, plan);
@@ -696,8 +696,8 @@ export class ExecuteWorkflowService {
   /**
    * Changes operator `operatorID` of the paused run to what the editor holds: the change is stored at the
    * Dashboard service, for the execution the computing unit names as the paused one, then named to the unit,
-   * which answers with a ModifyLogicResponse and applies it when the run resumes. A change the Dashboard does
-   * not store is reported in a toast, and nothing is sent to the unit.
+   * which answers with a ModifyLogicResponse. A change the Dashboard does not store is reported in a toast,
+   * and nothing is sent to the unit.
    */
   public modifyOperatorLogic(operatorID: string): void {
     if (this.currentState.state !== ExecutionState.Paused) {
@@ -765,13 +765,11 @@ export class ExecuteWorkflowService {
     this.stopFollowingAtDashboard();
   }
 
-  /** Follows no execution any more. */
   private unfollow(): void {
     this.followedExecutionId = undefined;
     this.stopFollowingAtDashboard();
   }
 
-  /** Whether the run on screen is in flight and is of an execution this page follows. */
   private isFollowedRunInFlight(): boolean {
     return this.followedExecutionId !== undefined && this.isExecutionInFlight(this.currentState.state);
   }

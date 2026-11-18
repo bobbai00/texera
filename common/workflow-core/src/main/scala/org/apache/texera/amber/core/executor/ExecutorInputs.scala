@@ -22,12 +22,10 @@ package org.apache.texera.amber.core.executor
 import org.apache.texera.amber.core.storage.model.LinkDocument
 
 /**
-  * What an operator reads from outside the run, as its executor is handed it beside its
-  * descriptor: what the operator's plan states ([[OperatorInputs]]), read the way the computing
-  * unit that runs the plan reads it. An executor reads nothing from outside the run but through
-  * this, so it reads only what its plan was made with.
+  * What an operator reads from outside the run: what its plan states ([[OperatorInputs]]), handed
+  * to its executor beside its descriptor. An executor reads nothing from outside the run but
+  * through this, so it reads only what its plan was made with.
   *
-  * @param inputs        what the plan states the operator reads
   * @param linkEndpoints the object-store endpoints the unit reads links from; a link that points
   *                      anywhere else is refused
   */

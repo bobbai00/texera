@@ -1232,9 +1232,9 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(toRun.outputPortsNeedingStorage == edited.outputPortsNeedingStorage)
     assert(inputsOf(toRun, scan).files.map(_.name) == Seq(scan.fileName.get))
     assert(inputsOf(edited, scan).files.isEmpty)
-    // The saved plans, each without the files its operators read through links.
-    def withoutFiles(savedPlan: String): JsonNode = {
-      val plan = objectMapper.readTree(savedPlan)
+    // The stored plans, each without the files its operators read through links.
+    def withoutFiles(storedPlan: String): JsonNode = {
+      val plan = objectMapper.readTree(storedPlan)
       plan.get("operators").elements().asScala.foreach { operator =>
         Option(operator.get("inputs")).foreach(_.asInstanceOf[ObjectNode].remove("files"))
       }
@@ -1888,7 +1888,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
     assert(linkedPlan.toString.contains("http://texera-rustfs:9000/bucket"))
     assert(!linkedPlan.toString.contains(signature))
     assert(!read.toString.contains(signature))
-    // The saved plan holds it once, in the scan's block.
+    // The stored plan holds it once, in the scan's block.
     assert(saved.split(signature, -1).length == 2)
   }
 

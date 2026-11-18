@@ -327,9 +327,7 @@ export class WorkflowResultExportService {
       });
   }
 
-  /**
-   * Asks the Dashboard service to export the results of execution `executionId`, and reports how it went.
-   */
+  /** Asks the Dashboard service to export the results of execution `executionId`, and reports how it went. */
   private requestExport(
     exportType: string,
     workflowId: number,

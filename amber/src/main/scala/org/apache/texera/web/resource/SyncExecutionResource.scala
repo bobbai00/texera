@@ -57,13 +57,13 @@ import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
 
 /**
-  * The body of `POST /api/execution/{eid}/run`: run an execution the Dashboard service created, on
-  * this computing unit, and answer with what it produced.
+  * The body of `POST /api/execution/{eid}/run`: run an execution the Dashboard service created,
+  * on this computing unit, and answer with what it produced.
   *
   * @param planUri           the execution's plan table, as `POST /api/executions` answered it
   * @param computingUnitId   the computing unit the execution was created for: this one
   * @param targetOperatorIds the operators whose results are answered; with exactly one, the
-  *                          execution was created to run up to it, and is answered once it completes
+  *                          execution was created to run up to it
   */
 case class SyncRunRequest(
     planUri: String,
@@ -144,12 +144,10 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     * computing unit, from the plan stored in its plan table, and answers once it ends, once its
     * targets complete, or once an operator logs an error.
     *
-    * The workflow is the one the plan table belongs to; the execution must have been created for
-    * the caller, on `computingUnitId`, and not started before. The start is checked
-    * ([[WorkflowService.checkStoredStart]]) before the workflow's service is asked for, so a start
-    * its checks refuse leaves no service behind; then it is started on that service
-    * ([[WorkflowService.startChecked]]). A start that is refused is answered at once, as an error
-    * that names why, and writes nothing.
+    * The start is checked ([[WorkflowService.checkStoredStart]]) before the workflow's service is
+    * asked for, so a start its checks refuse leaves no service behind; then it is started on that
+    * service ([[WorkflowService.startChecked]]). A start that is refused is answered at once, as
+    * an error that names why, and writes nothing.
     */
   @POST
   @Path("/{eid}/run")

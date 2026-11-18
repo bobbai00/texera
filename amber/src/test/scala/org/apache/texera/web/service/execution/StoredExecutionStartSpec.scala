@@ -111,7 +111,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     * saved as the Dashboard saves it: of `lines` alone, which reads none, unless a case gives
     * others.
     */
-  private def savedPlan(
+  private def storedPlan(
       workflow: Long = wid,
       execution: Long = eid,
       warehouse: Option[String] = None,
@@ -144,7 +144,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     )
 
   private def record(
-      body: String = savedPlan(),
+      body: String = storedPlan(),
       createdBy: Int = uid,
       computingUnitId: Int = cuid
   ): PlanRecord =
@@ -290,7 +290,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     )
 
     val inOwnWarehouse = checkRecord(
-      record(body = savedPlan(warehouse = Some(ownWarehouse))),
+      record(body = storedPlan(warehouse = Some(ownWarehouse))),
       uri = planUri(warehouse = Some(ownWarehouse))
     ).getOrElse(fail("refused"))
     inOwnWarehouse.context.warehouse shouldBe Some(ownWarehouse)
@@ -319,11 +319,11 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       startWith("The plan is not JSON")
     // A plan in a format this unit does not read yet is refused for its format, whatever it
     // holds that this unit does not know.
-    val nextFormat = savedPlan().replaceFirst(
+    val nextFormat = storedPlan().replaceFirst(
       s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
       s""""formatVersion": ${PhysicalPlanCodec.FormatVersion + 1}, "aFieldOfTheNextFormat": 1,"""
     )
-    nextFormat should not be savedPlan()
+    nextFormat should not be storedPlan()
     checkRecord(record(body = nextFormat)) shouldBe Left(
       s"The plan is in format version ${PhysicalPlanCodec.FormatVersion + 1}, but this reader " +
         s"reads version ${PhysicalPlanCodec.FormatVersion}."
@@ -332,9 +332,9 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   it should "refuse a plan of another workflow, execution or warehouse than the table it is in" in {
     Seq(
-      savedPlan(workflow = wid + 1),
-      savedPlan(execution = eid + 1),
-      savedPlan(warehouse = Some(ownWarehouse))
+      storedPlan(workflow = wid + 1),
+      storedPlan(execution = eid + 1),
+      storedPlan(warehouse = Some(ownWarehouse))
     ).foreach { body =>
       checkRecord(record(body = body)) shouldBe Left("The plan's ids do not match its location.")
     }
@@ -350,13 +350,13 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       "lines" -> Seq(file("a.csv", now + 60000)),
       "numbers" -> Seq(file("b.csv", now + 30000), file("c.csv", earliest))
     )
-    checkRecord(record(body = savedPlan(reads = reads))) shouldBe Left(
+    checkRecord(record(body = storedPlan(reads = reads))) shouldBe Left(
       s"The plan's input links expired at ${Instant.ofEpochMilli(earliest)}. Run the workflow " +
         "again."
     )
     // A link that expires now has expired.
     checkRecord(
-      record(body = savedPlan(reads = Map("lines" -> Seq(file("a.csv", now)))))
+      record(body = storedPlan(reads = Map("lines" -> Seq(file("a.csv", now)))))
     ) shouldBe Left(
       s"The plan's input links expired at ${Instant.ofEpochMilli(now)}. Run the workflow again."
     )
@@ -364,7 +364,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   it should "pass a plan whose input links have not expired, and one that reads no input" in {
     val reads = Map("lines" -> Seq(file("a.csv", now + 1)))
-    val plan = checkRecord(record(body = savedPlan(reads = reads))).getOrElse(fail("refused"))
+    val plan = checkRecord(record(body = storedPlan(reads = reads))).getOrElse(fail("refused"))
     plan.plan.operators.map(_.inputs) shouldBe Set(OperatorInputs(files = reads("lines")))
     checkRecord(record()).map(_.plan.operators.map(_.inputs)) shouldBe
       Right(Set(OperatorInputs.defaultInstance))
@@ -375,7 +375,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     val replayed = logRoot.resolve(s"$wid/${eid - 1}/")
     val written = new URI(s"file:/var/texera/replay-logs/$wid/$eid/")
     val plan = checkRecord(
-      record(body = savedPlan(replay = Some(replayed), replayLog = Some(written)))
+      record(body = storedPlan(replay = Some(replayed), replayLog = Some(written)))
     ).getOrElse(fail("refused"))
     plan.replay.map(_.logLocation) shouldBe Some(replayed)
     plan.replayLog shouldBe Some(written)
@@ -383,7 +383,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     // A root that names no directory is resolved against as the Dashboard resolves against it.
     val noSlash = new URI("file:///var/texera/replay-logs")
     checkRecord(
-      record(body = savedPlan(replayLog = Some(noSlash.resolve(s"$wid/$eid/")))),
+      record(body = storedPlan(replayLog = Some(noSlash.resolve(s"$wid/$eid/")))),
       replayLogRoot = Some(noSlash)
     ).isRight shouldBe true
     // A plan that names no replay log needs the unit to keep none.
@@ -411,11 +411,11 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
     elsewhere.foreach {
       case (log, shown) =>
         withClue(s"$log: ") {
-          checkRecord(record(body = savedPlan(replay = Some(new URI(log))))) shouldBe Left(
+          checkRecord(record(body = storedPlan(replay = Some(new URI(log))))) shouldBe Left(
             s"The plan replays the log at $shown, outside where this computing unit keeps " +
               "replay logs."
           )
-          checkRecord(record(body = savedPlan(replayLog = Some(new URI(log))))) shouldBe Left(
+          checkRecord(record(body = storedPlan(replayLog = Some(new URI(log))))) shouldBe Left(
             s"The plan writes its replay log to $shown, outside where this computing unit " +
               "keeps replay logs."
           )
@@ -426,15 +426,15 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
   it should "refuse a plan that names a replay log on a unit that keeps none" in {
     val log = Some(logRoot.resolve(s"$wid/$eid/"))
     val shown = s"file:/var/texera/replay-logs/$wid/$eid/"
-    checkRecord(record(body = savedPlan(replay = log)), replayLogRoot = None) shouldBe
+    checkRecord(record(body = storedPlan(replay = log)), replayLogRoot = None) shouldBe
       Left(s"The plan replays the log at $shown, and this computing unit keeps no replay logs.")
-    checkRecord(record(body = savedPlan(replayLog = log)), replayLogRoot = None) shouldBe Left(
+    checkRecord(record(body = storedPlan(replayLog = log)), replayLogRoot = None) shouldBe Left(
       s"The plan writes its replay log to $shown, and this computing unit keeps no replay logs."
     )
   }
 
   it should "check the plan's replay logs before its input links" in {
-    val body = savedPlan(
+    val body = storedPlan(
       reads = Map("lines" -> Seq(file("a.csv", now - 1000))),
       replayLog = Some(new URI("file:///etc/texera/"))
     )

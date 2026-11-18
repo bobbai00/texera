@@ -76,27 +76,20 @@ object PlanToRun {
     )
 
   /**
-    * Makes, from `workflow`, the plan to run for `run`.
+    * Compiles `workflow` or, with a target, the target and the part of the workflow upstream of
+    * it: only that part has to be a graph the compiler reads, and a part the run does not reach
+    * is neither compiled nor checked. The run's ids stamp every operator. The compile finds the
+    * files the operators read and where each is kept, lists the dataset versions File Listers
+    * name, resolves the Python environments and pins the datasets and models the operators
+    * name, names where each output port is stored, and finds the output ports whose results are
+    * stored, which are saved with the settings in place of any the run's settings name. The
+    * run's context is left as it is.
     *
-    * The plan compiled is the workflow sent or, with a target, the target and the part of the
-    * workflow upstream of it: only that part has to be a graph the compiler reads, and a part
-    * the run does not reach is neither compiled nor checked. The run's ids stamp every operator.
-    * The compile finds the files the operators read and where each is kept, lists the dataset
-    * versions File Listers name, resolves the Python environments and pins the datasets and
-    * models the operators name, names where each output port is stored, and finds the output
-    * ports whose results are stored, which are saved with the settings in place of any the
-    * run's settings name. The run's context is left as it is.
-    *
-    * @param run      the run the plan is made for: its ids, settings and warehouse
-    * @param bindings what the plan is bound to, for the run's user ([[bindingsFor]]): files,
-    *                 datasets, models and Python environments are resolved as that user may
+    * @param bindings what the plan is bound to, for the run's user ([[bindingsFor]])
     * @param target   the operator the run executes up to; None for the whole workflow
-    * @throws WorkflowRefused           if no plan can be made under the run's settings
-    *                                   ([[WorkflowSettings.problemOf]]), the workflow has no
-    *                                   operator `target`, or the part of it to compile is not a
-    *                                   graph the compiler reads
-    * @throws WorkflowCompilationFailed if an operator has an error: with each such operator's
-    *                                   first error
+    * @throws WorkflowRefused           if the run's settings, `target` or the workflow's graph
+    *                                   allow no plan, with why
+    * @throws WorkflowCompilationFailed if an operator has an error
     */
   def make(
       run: WorkflowContext,

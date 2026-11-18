@@ -31,9 +31,8 @@ import scala.util.{Failure, Success}
   * looked at: an environment of that name that another user keeps is not this user's to run in.
   *
   * The packages of the row are made into the canonical lines a plan carries
-  * ([[PythonRequirements.canonicalLines]]). A row saved before packages were checked may hold
-  * some that pip may not read; such an environment is not resolved until its user saves it
-  * again.
+  * ([[PythonRequirements.canonicalLines]]). A row with packages pip may not read (one written by
+  * hand, say) is not resolved until its user saves it again.
   */
 final class UserEnvironmentResolver(uid: Integer) extends PythonEnvironmentResolver {
 

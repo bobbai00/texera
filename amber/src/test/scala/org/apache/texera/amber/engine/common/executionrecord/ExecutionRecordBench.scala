@@ -81,12 +81,11 @@ import scala.util.Try
   *  - `checkpoints.csv`: a row for every checkpoint, with the reads' times and what the tables
   *    held;
   *  - `ticks.csv`: a row for every write the recorder made;
-  *  - `checks.txt`: a `PASS` or `FAIL` line for each of the eight checks of the step 3 design
-  *    (section H7, where their thresholds are fixed).
+  *  - `checks.txt`: a `PASS` or `FAIL` line for each of its eight checks, against the thresholds
+  *    this file sets.
   *
   * It exits with 0 when every check passed, with 1 when one failed, and with 2 when it could not
-  * run to its end. Run it by hand against a lake, or through the harness's
-  * `bench/record-bench.sh`, which brings a lake up for it:
+  * run to its end. Run it by hand against a lake:
   * {{{
   *   sbt -batch "WorkflowExecutionService/Test/runMain \
   *     org.apache.texera.amber.engine.common.executionrecord.ExecutionRecordBench --out <dir>"
@@ -177,7 +176,7 @@ object ExecutionRecordBench {
     }
 
   // ---------------------------------------------------------------------------
-  // what the checks hold the record to (step 3 design, section H7)
+  // what the checks hold the record to
   // ---------------------------------------------------------------------------
 
   private val LabelP95Ms = 50.0
@@ -737,7 +736,7 @@ object ExecutionRecordBench {
   // the checks
   // ---------------------------------------------------------------------------
 
-  /** Writes the line of each check of the design's section H7, and says whether all passed. */
+  /** Writes the line of each check, and says whether all passed. */
   private def report(config: Config, outcome: Outcome, outputs: Outputs): Boolean = {
     def check(name: String, pass: Boolean, evidence: String): Boolean = {
       val line = s"${if (pass) "PASS" else "FAIL"} $name: $evidence"

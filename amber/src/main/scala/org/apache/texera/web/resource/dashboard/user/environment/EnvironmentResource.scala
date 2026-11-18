@@ -47,11 +47,7 @@ object EnvironmentResource {
 
   private val mapper: ObjectMapper = new ObjectMapper().registerModule(DefaultScalaModule)
 
-  /**
-    * The packages a row holds in `stored`, each name mapped to its version spec: none for a row
-    * with no value. A failure for a value that is not a JSON object of strings, as a row written
-    * by hand, or by an older release, may hold.
-    */
+  /** The packages a row holds in `stored` ([[PythonRequirements.storedPackages]]). */
   def packagesOf(stored: JSONB): Try[Map[String, String]] =
     PythonRequirements.storedPackages(Option(stored).map(_.data()).orNull)
 }
@@ -62,7 +58,7 @@ object EnvironmentResource {
   *
   * The rows belong to a user, not to any computing unit, so the Dashboard serves them. Every
   * write passes [[PythonRequirements]], the grammar shared with the engine, so a saved environment
-  * holds only package names and plain version bounds. A row written before that check existed is
+  * holds only package names and plain version bounds. A stored row that does not pass it is
   * listed as stored, and has to pass it to be saved again.
   */
 @Path("/environments")
@@ -180,8 +176,8 @@ class EnvironmentResource extends LazyLogging {
   private def toRow(record: VirtualEnvironmentsRecord): EnvironmentRow =
     EnvironmentRow(record.getVeid, record.getName, packagesOf(record))
 
-  // A row is listed as stored. One whose packages are not a JSON object of strings (written by
-  // hand, or by an older release) is listed with none rather than failing the caller's list.
+  // A row is listed as stored. One whose packages are not a JSON object of strings is listed
+  // with none rather than failing the caller's list.
   private def packagesOf(record: VirtualEnvironmentsRecord): Map[String, String] =
     EnvironmentResource.packagesOf(record.getPackages).getOrElse {
       logger.warn(

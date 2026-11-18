@@ -31,11 +31,10 @@ object LakeFSDatasetVersionLister {
   /**
     * The path of the dataset version `versionPath` names, as every file of the version is named
     * under it: /dataset/ownerEmail/datasetName/versionName. A path may leave the /dataset prefix
-    * out, as paths stored before the prefix existed do, and whatever follows the version is
-    * dropped.
+    * out, as some stored paths do, and whatever follows the version is dropped.
     *
-    * @throws FileNotFoundException if the path names no dataset version: it stops short of a
-    *                               version, or it is the path of another kind of resource
+    * @throws FileNotFoundException if the path stops short of a version, or is the path of
+    *                               another kind of resource
     */
   private[storage] def canonicalVersionPath(versionPath: String): String = {
     val segments = Option(versionPath).getOrElse("").split("/").filter(_.nonEmpty)

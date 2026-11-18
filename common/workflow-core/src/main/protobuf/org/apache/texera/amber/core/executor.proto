@@ -28,19 +28,19 @@ option (scalapb.options) = {
 };
 
 
-// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
+// Every message of this file is part of the stored physical plan (storedplan.proto): a change
+// to one needs a new formatVersion.
+
 message OpExecWithCode {
   string code = 1;
   string language = 2;
 }
 
-// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message OpExecWithClassName {
   string className = 1;
   string descString = 2;
 }
 
-// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message OpExecInitInfo {
   oneof sealed_value {
     OpExecWithClassName opExecWithClassName = 1;
@@ -48,9 +48,8 @@ message OpExecInitInfo {
   }
 }
 
-// What an operator reads from outside the run, as the plan made to run it states it. The
-// operator's executor is handed this beside its descriptor, and reads nothing else from outside.
-// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
+// What an operator reads from outside the run, as the plan made to run it states it. Its executor
+// reads it through ExecutorInputs.
 message OperatorInputs {
   // The files the operator reads, each once, in the order of their names.
   repeated InputFile files = 1;
@@ -65,7 +64,6 @@ message OperatorInputs {
 // service that holds the object store's keys then signs a link to that address and puts it in
 // the address's place. So a file has its address or its link, never both, and a plan a computing
 // unit runs has links only.
-// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message InputFile {
   option (scalapb.message).extends = "org.apache.texera.amber.core.executor.LinkedFile";
   // The name the operator's executor knows the file by; not empty.
@@ -82,7 +80,6 @@ message InputFile {
 }
 
 // The files of a dataset version, as the version was listed when the plan was made.
-// Part of the stored physical plan (storedplan.proto): a change here needs a new formatVersion.
 message FileListing {
   // Each file by its path: /dataset/ownerEmail/datasetName/versionName/file.
   repeated string files = 1;

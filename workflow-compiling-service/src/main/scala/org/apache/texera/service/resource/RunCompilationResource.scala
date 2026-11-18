@@ -74,11 +74,7 @@ object RunCompilationResource {
   private val CompileThreads = 8
   private val CompilesWaiting = 32
 
-  /**
-    * The pool the compiles share: daemon threads, which hold the work they are all busy
-    * with in a bounded queue, refuse work once that is full, and let go of a thread that has had
-    * none for a minute.
-    */
+  /** The pool the compiles share. Its queue is bounded: work is refused once it is full. */
   private lazy val compiles: ExecutorService = {
     val count = new AtomicInteger()
     val pool = new ThreadPoolExecutor(
@@ -98,16 +94,14 @@ object RunCompilationResource {
   }
 
   /**
-    * The body of `POST /compile/run`: the plan of a run to make.
+    * The body of `POST /compile/run`: the run, the workflow and the target that
+    * [[PlanToRun.make]] makes a plan from.
     *
-    * @param workflowId       the workflow the execution is of
     * @param executionId      the execution, whose id stamps every operator and names where each
     *                         output port is stored
     * @param warehouse        the warehouse the execution writes into; None for the shared one
-    * @param settings         the run's batch size and execution mode. The output ports whose
-    *                         results are stored are the compiler's to find, so any sent here
-    *                         are ignored.
-    * @param logicalPlan      the workflow to run, as the editor holds it
+    * @param settings         the run's settings, but for the output ports whose results are
+    *                         stored: those are the compiler's to find, so any sent are ignored
     * @param targetOperatorId the operator the run executes up to: only it and the operators
     *                         upstream of it are compiled. None for the whole workflow.
     */
@@ -121,20 +115,15 @@ object RunCompilationResource {
   )
 
   /**
-    * What `POST /compile/run` answers (200).
-    *
-    * @param plan        the plan to run, as the text `PhysicalPlanCodec` writes, before its
-    *                    files are linked: each file names where it is kept
-    * @param logicalPlan the workflow the plan was compiled from, as JSON text: with a target,
-    *                    the part of the workflow sent that was compiled
+    * What `POST /compile/run` answers (200), as a [[PlanToRun.Made]] holds it: the plan before
+    * its files are linked, and the workflow it was compiled from.
     */
   case class RunCompileResponse(plan: String, logicalPlan: String)
 
   /**
-    * The body of `POST /compile/update`: a change to one operator of a paused execution, to
-    * make into the operator that runs in its place.
+    * The body of `POST /compile/update`: the change that [[UpdateToRun.make]] makes into an
+    * operator to run, with what it is made from.
     *
-    * @param updateId    the id the change is saved under
     * @param logicalPlan the workflow the execution's plan was compiled from
     * @param operator    the operator as the editor holds it once changed
     * @param running     the physical operators the execution's plan runs for that operator
@@ -149,20 +138,16 @@ object RunCompilationResource {
   )
 
   /**
-    * What `POST /compile/update` answers (200).
-    *
-    * @param update   the operator made to run, as the text `PhysicalPlanCodec` writes an update
-    * @param operator the change as it was sent, as JSON text
+    * What `POST /compile/update` answers (200), as an [[UpdateToRun.Made]] holds it: the
+    * operator made to run, as the text of a stored update, and the change as it was sent.
     */
   case class UpdateCompileResponse(update: String, operator: String)
 
   /**
     * The body of the 400 a workflow that does not compile is answered with: the `code` and
-    * `message` of every refusal of this service, and each operator's error beside them, as the
-    * editor's compile writes an operator's.
-    *
-    * @param operatorErrors the first error of each operator that has one, by the operator's id,
-    *                       an operator before those downstream of it
+    * `message` of every refusal of this service, and beside them the operators' errors, each as
+    * the editor's compile writes an operator's, by the operator's id, in the order
+    * [[WorkflowCompilationFailed]] holds them in.
     */
   case class CompilationRefusal(
       code: Int,
@@ -173,12 +158,11 @@ object RunCompilationResource {
 
 /**
   * The compiles a run needs, which the Dashboard service asks for with the token of the user the
-  * run is for: the plan of an execution it creates, and a change to an operator of a paused
-  * one. Whatever a plan names is resolved here as that user may read it: scan files, the
-  * listings of dataset versions, the datasets and models a UDF names, and the Python
-  * environments the user keeps.
+  * run is for: the plan of an execution it creates ([[PlanToRun]]), and a change to an operator
+  * of a paused one ([[UpdateToRun]]). Whatever a plan names is resolved here as that user may
+  * read it.
   *
-  * Nothing here takes one of the object store's keys. A plan says where each file its operators
+  * Nothing here takes one of the object store's keys: a plan says where each file its operators
   * read is kept, and the Dashboard service signs the links from that.
   *
   * A request that is refused is answered `{code, message}`: 400 when the workflow or the change
@@ -188,8 +172,6 @@ object RunCompilationResource {
   *
   * @param bindingsFor     what a run's plan is bound to, for a user
   * @param repositoriesFor pins the dataset and model versions a change names, for a user
-  * @param compiles        runs the compiles, a bounded number at once
-  * @param compileDeadline how long a compile may take
   */
 @Consumes(Array(MediaType.APPLICATION_JSON))
 @Produces(Array(MediaType.APPLICATION_JSON))
@@ -212,13 +194,8 @@ class RunCompilationResource(
     )
 
   /**
-    * Makes the plan of a run, for the caller: the workflow compiled strictly, with everything it
-    * names resolved as the caller may read it ([[PlanToRun.make]]).
-    *
-    * A compile reads what the workflow's operators name, such as the files of its scans or the
-    * database of a SQL source, at addresses the request chose. It runs on a thread of the pool
-    * of compiles while the request's thread waits for it, for no longer than the deadline, so a
-    * source that does not answer holds one of the pool's threads, not the service's.
+    * Makes the plan of a run, for the caller ([[PlanToRun.make]]), on the pool of compiles and
+    * under the deadline ([[withinDeadline]]).
     */
   @POST
   @Path("/run")
@@ -270,8 +247,8 @@ class RunCompilationResource(
 
   /**
     * Makes a change to an operator of a paused execution into the operator to run in its place,
-    * for the caller, who created the execution ([[UpdateToRun.make]]): on the pool of compiles
-    * and under the deadline, as a run's plan is made.
+    * for the caller, who created the execution ([[UpdateToRun.make]]), as [[compileRun]] makes a
+    * plan.
     */
   @POST
   @Path("/update")
@@ -299,11 +276,13 @@ class RunCompilationResource(
 
   /**
     * `compile`, run on a thread of the pool of compiles while the request's thread waits for it,
-    * for no longer than the deadline.
+    * for no longer than the deadline. A compile reads what the workflow's operators name, such as
+    * the files of its scans or the database of a SQL source, at addresses the request chose: a
+    * source that does not answer holds one of the pool's threads, not the service's.
     *
-    * @throws WebApplicationException (504) if the deadline passes, when the compile is
-    *                                 interrupted, or (503) if as many compiles as the pool holds
-    *                                 wait already
+    * @throws WebApplicationException 504 if the deadline passes, and the compile is then
+    *                                 interrupted; 503 if as many compiles as the pool holds wait
+    *                                 already
     */
   private def withinDeadline[T](compile: => T): T = {
     val compiling =

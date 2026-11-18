@@ -47,17 +47,14 @@ import scala.util.control.NonFatal
   */
 object StoredExecutionStart {
 
-  /** Why a start that names anything but an execution's plan table is refused. */
+  // Why a start is refused, in words for the user.
   val NotAPlan = "The request does not name an execution's plan."
 
-  /** Why a request for an execution whose plan table holds no plan is refused. */
   def noStoredPlan(executionId: Long): String = s"Execution $executionId has no stored plan."
 
-  /** Why a start from a plan of workflow `workflowId` is refused, asked of another workflow. */
   def ofAnotherWorkflow(workflowId: Long): String =
     s"The plan belongs to workflow $workflowId, not to this one."
 
-  /** Why a start is refused when `failure` keeps the stored plan from being read. */
   def unreadablePlan(executionId: Long, failure: Throwable): String =
     s"The stored plan of execution $executionId cannot be read" +
       Option(failure.getMessage).fold(".")(why => s": $why")
@@ -121,11 +118,7 @@ object StoredExecutionStart {
     *
     * The plan is read only once the row was found to be one the user may start here.
     *
-    * @param location      the plan table's workflow, execution and warehouse, as [[checkUri]]
-    *                      gave them
-    * @param uid           the user who asks to start the execution
     * @param cuid          the computing unit asked to start it: this one
-    * @param nowMs         the time, in milliseconds since the epoch
     * @param replayLogRoot what executions' replay logs are resolved against on this unit; None
     *                      when it keeps none
     * @return the plan the row holds, with the context it runs under, which names no computing unit

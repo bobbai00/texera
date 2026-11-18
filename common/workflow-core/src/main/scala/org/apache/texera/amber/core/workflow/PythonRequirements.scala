@@ -46,7 +46,6 @@ import scala.util.{Failure, Success, Try}
   */
 object PythonRequirements {
 
-  /** The most packages one environment may list. */
   private val MaxPackages = 200
 
   private val MaxPackageNameLength = 128
@@ -85,9 +84,8 @@ object PythonRequirements {
     *
     * @param packages each package name mapped to its version spec: empty for any version, or
     *                 `==V`, `>=V` or `<=V`. A null map lists no packages; a null spec is empty.
-    * @return one `<normalized name><spec>` line per distinct requirement, sorted (a package
-    *         listed under two spellings with different bounds gives one line per bound); or what
-    *         is wrong with the first package, by name, that breaks the grammar
+    * @return the canonical lines; or what is wrong with the first package, by name, that breaks
+    *         the grammar
     */
   def canonicalLines(packages: Map[String, String]): Either[String, Seq[String]] = {
     val entries = Option(packages).getOrElse(Map.empty[String, String]).toSeq
@@ -109,8 +107,7 @@ object PythonRequirements {
   /**
     * The packages an environment's row holds in `stored`, the JSON its `packages` column keeps:
     * each name mapped to its version spec, none for a row with no value. A failure for a value
-    * that is not a JSON object of strings, as a row written by hand, or by an older release,
-    * may hold.
+    * that is not a JSON object of strings, as a row written by hand may hold.
     */
   def storedPackages(stored: String): Try[Map[String, String]] =
     Option(stored).fold[Try[Map[String, String]]](Success(Map.empty)) { json =>
@@ -129,8 +126,7 @@ object PythonRequirements {
 
   /**
     * `line` if it is a canonical requirement line, as `canonicalLines` writes them: a normalized
-    * package name, then nothing or `==V`, `>=V` or `<=V`. For checking lines that arrive from
-    * elsewhere before pip reads them.
+    * package name, then nothing or `==V`, `>=V` or `<=V`.
     */
   def validateLine(line: String): Either[String, String] =
     if (line == null || line.isEmpty) Left("A requirement line is empty.")

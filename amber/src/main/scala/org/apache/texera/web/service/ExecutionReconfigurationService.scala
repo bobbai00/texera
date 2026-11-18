@@ -50,18 +50,14 @@ import java.util.UUID
 import scala.util.control.NonFatal
 
 /**
-  * Changes to the operators of a paused run, which the engine applies when the run resumes: the
-  * changes the Dashboard service made and stored in the execution's plan table
-  * ([[applyStoredUpdate]]).
+  * Changes to the operators of a paused run ([[OperatorUpdate]]): those the Dashboard service
+  * stored in the execution's plan table ([[applyStoredUpdate]]).
   *
-  * @param planUri    the plan table of the execution the run runs, where the Dashboard stores
-  *                   the changes to its operators
-  * @param creator    the user who created the execution: only the changes they stored apply,
-  *                   when they ask for them
-  * @param mountRoot  the directory this computing unit mounts datasets and models under, which
-  *                   the code of a stored change is given to read them from; None on a unit that
-  *                   mounts none
-  * @param readUpdate reads the change stored under an id in the plan table at a URI
+  * @param planUri   the plan table of the execution the run runs
+  * @param creator   the user who created the execution: only the changes they stored apply, when
+  *                  they ask for them
+  * @param mountRoot the directory this computing unit mounts datasets and models under; None on
+  *                  a unit that mounts none
   */
 class ExecutionReconfigurationService(
     client: AmberClient,
@@ -82,15 +78,12 @@ class ExecutionReconfigurationService(
   registerCompletionDiffHandler()
 
   /**
-    * Queues the change to an operator that the Dashboard service stored as `updateId` in the plan
-    * table of the execution this run runs, to be applied when the run resumes
-    * ([[performReconfigurationOnResume]]).
+    * Queues the change stored as `updateId` in the execution's plan table, to be applied when the
+    * run resumes ([[performReconfigurationOnResume]]).
     *
     * Only the execution's creator may ask for it, and the change must be one they stored, for
     * this execution, of an operator the running plan has, which reads no dataset or model unless
-    * this unit mounts them. The operator queued is the running one with the change's executor,
-    * its code given where this unit mounts what it reads; the rest of it, its ports and links
-    * included, stays as the running plan has it.
+    * this unit mounts them.
     *
     * @param requester the user who asks for the change; None for a request of no user
     * @return valid, naming the logical operator that changes; or invalid, saying why the change is
@@ -118,9 +111,8 @@ class ExecutionReconfigurationService(
   private def executionId: Long = workflow.context.executionId.id
 
   /**
-    * The change stored as `updateId`, read for `requester`, in this order: only the execution's
-    * creator may ask, then the update row is read, and must be one the creator stored, in the
-    * format this unit reads.
+    * The change stored as `updateId`. Whether `requester` may ask is checked before the update
+    * row is read.
     *
     * @return why the change is refused (Left), or the change (Right)
     */
@@ -158,9 +150,7 @@ class ExecutionReconfigurationService(
     }
 
   /**
-    * The running operator as `update`, stored as `updateId`, changes it: the change must be this
-    * execution's, stored under the id it names itself, of an operator the running plan has, and
-    * read nothing this unit cannot mount.
+    * The running operator as `update`, stored as `updateId`, changes it.
     *
     * @return why the change is refused (Left), or the changed operator (Right)
     */

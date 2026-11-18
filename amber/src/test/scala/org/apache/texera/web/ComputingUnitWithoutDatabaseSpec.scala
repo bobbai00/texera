@@ -200,7 +200,7 @@ class ComputingUnitWithoutDatabaseSpec
       planUri,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        body = TestUtils.savedPlan(context, LogicalPlanPojo(operators, links, List(), List())),
+        body = TestUtils.storedPlan(context, LogicalPlanPojo(operators, links, List(), List())),
         createdBy = creator.getUid,
         computingUnitId = unitCuid
       ),

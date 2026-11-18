@@ -23,13 +23,8 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 
 /**
-  * What `GET /api/executions/{eid}/log` answers: the rows of the execution's log, oldest first,
-  * and its closing record.
-  *
-  * @param entries the changes of the run's state, as its engine recorded them; empty for an
-  *                execution with no log
-  * @param closing how the Dashboard service recorded that the execution ended; null while it
-  *                is open
+  * What `GET /api/executions/{eid}/log` answers: the rows of the execution's log, oldest first
+  * (none for an execution with no log), and its closing record (null while it is open).
   */
 case class ExecutionLogResponse(
     eid: Long,
@@ -42,7 +37,6 @@ case class ExecutionLogResponse(
   * row says why the state changed, `"reason"` and `"errors"`.
   *
   * @param timeMs when the engine made the row, in epoch milliseconds on its unit's clock
-  * @param reason why, in words
   * @param errors the run's fatal errors behind the change, each
   *               `{"type", "timeMs", "message", "details", "operatorId", "workerId"}`
   */
@@ -60,8 +54,8 @@ case class ExecutionLogEntryResponse(
   * An execution's closing record.
   *
   * @param outcome   3 completed, 4 failed, 5 killed
-  * @param reason    why, in words; null when the outcome says it all
-  * @param endedAtMs when it ended, in epoch milliseconds
+  * @param reason    null when the outcome says it all
+  * @param endedAtMs in epoch milliseconds
   * @param fromLog   whether the outcome is the ending the execution's log holds; false for a
   *                  verdict the Dashboard service made without one, such as "unit lost"
   */

@@ -31,7 +31,6 @@ trait LinkedFile { this: InputFile =>
   /** Whether the file has its link; until it has, it has the address its link is signed for. */
   def isLinked: Boolean = url.nonEmpty
 
-  /** The link the file is read through. */
   def link: InputLink = InputLink(url, expiresAtMs)
 
   /** This file read through `link`, which takes its address's place. */

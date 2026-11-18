@@ -101,24 +101,17 @@ object ExecutionClosingJob {
 /**
   * Writes each execution's closing record, at the Dashboard service: every
   * `execution-closing.interval-seconds` it looks at the executions that are still open, decides
-  * about each with [[ExecutionClosing]] and acts through [[ExecutionCloser]]. An execution is
-  * closed with the ending its log holds; one whose log holds none is closed as failed once its
-  * unit is terminated or shows no sign of life, once no unit started it in time, or when its
-  * warehouse is gone.
+  * about each with [[ExecutionClosing]] and acts through [[ExecutionCloser]].
   *
-  * The same tick looks at the executions it closed by such a verdict in the last
+  * The same tick looks at the executions a verdict closed in the last
   * `execution-closing.revise-verdict-for-seconds`, and gives one the ending its log shows by
   * then: a unit that was cut off from the lake for a while is not lost.
-  *
-  * The user of an execution that asked for an email is sent one when the execution is closed,
-  * and one more if its verdict is replaced ([[ExecutionCloser]]).
   *
   * The job also expires results ([[ExecutionExpiry]]), on a thread of its own: those a run has
   * replaced, once a tick finds that a unit has started a later execution of the workflow on
   * the unit, or closes an execution that one has replaced; and, at most every
   * `result-cleanup.collection-check-interval-in-seconds` and first on its first tick, those of
-  * the executions that ended longer ago than `result-cleanup.ttl-in-seconds`. A verdict that
-  * the tick may still replace keeps its results until then.
+  * the executions that ended longer ago than `result-cleanup.ttl-in-seconds`.
   *
   * Any number of Dashboard replicas run the job, with no leader: every write is a conditional
   * UPDATE or an Iceberg tag, which one of them wins. What a replica remembers between its ticks
@@ -128,14 +121,9 @@ object ExecutionClosingJob {
   * Whatever fails while one execution is looked at is logged, and the execution is looked at
   * again on the next tick.
   *
-  * @param settings             the job's interval and limits
-  * @param closer               reads an execution's lake and closes it
-  * @param openExecutions       the executions with no closing record
-  * @param closedByVerdictSince the executions closed by a verdict at or after a time
-  * @param lookLimit            how long a tick gives the look at one execution
-  * @param now                  the Dashboard service's clock, in epoch milliseconds
-  * @param expiry               expires results
-  * @param expiryThread         runs what is expired, off the thread that ticks
+  * @param lookLimit    how long a tick gives the look at one execution
+  * @param now          the Dashboard service's clock, in epoch milliseconds
+  * @param expiryThread runs what is expired, off the thread that ticks
   */
 class ExecutionClosingJob(
     settings: ExecutionClosing.Settings = ExecutionClosing.Settings.configured,

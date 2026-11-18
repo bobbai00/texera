@@ -159,14 +159,11 @@ object DocumentFactory {
   }
 
   /**
-    * The Iceberg table a VFS URI resolves to, loaded from its warehouse's catalog, or None
-    * when the catalog has no such table, or no such namespace. Any other failure to load it,
-    * such as a catalog that cannot answer, is thrown, so it is never taken for a missing table
-    * (`IcebergUtil.loadTableMetadata` reads every failure as None). For the storage layer's own
-    * use of Iceberg features that a document does not expose, such as the tag that marks an
-    * execution's plan started.
-    *
-    * @throws UnsupportedOperationException if the URI scheme is not `vfs`.
+    * The Iceberg table a VFS URI resolves to; None when its catalog has no such table or
+    * namespace. Any other failure to load it is thrown, so a catalog that cannot answer is never
+    * taken for a missing table (`IcebergUtil.loadTableMetadata` reads every failure as None).
+    * For the storage layer's use of Iceberg features that a document does not expose, such as
+    * the tag that marks an execution's plan started.
     */
   private[storage] def icebergTableOf(uri: URI): Option[Table] =
     uri.getScheme match {
@@ -184,11 +181,10 @@ object DocumentFactory {
     }
 
   /**
-    * Drops the Iceberg table a VFS URI resolves to, with its rows and its tags.
+    * Drops the Iceberg table a VFS URI resolves to, with its rows and its tags. Failures are
+    * told apart as in [[icebergTableOf]].
     *
-    * @return false when there was no such table, or no such namespace. Any other failure, such
-    *         as a catalog that cannot answer, is thrown, so it is never taken for a missing table.
-    * @throws UnsupportedOperationException if the URI scheme is not `vfs`.
+    * @return false when there was no such table or namespace
     */
   private[storage] def dropTable(uri: URI): Boolean =
     uri.getScheme match {
@@ -206,13 +202,11 @@ object DocumentFactory {
     }
 
   /**
-    * Drops every table that execution `eid` of workflow `wid` has in the namespace of
-    * `resourceType`, in `warehouse` (None: the default), going by the tables' names: a table
-    * is named after the path of its URI, which starts with its workflow and its execution. So
-    * it finds a table that nothing else names, at the cost of listing the namespace.
+    * Drops every table the execution has in the namespace of `resourceType`, going by the
+    * tables' names (see [[ExecutionTables.dropNamed]]): a table is named after the path of its
+    * URI, which starts with its workflow and its execution.
     *
-    * @return the names of the tables dropped; none when there is no such namespace. A catalog
-    *         that cannot answer is thrown.
+    * @return the names of the tables dropped; none when there is no such namespace
     */
   private[storage] def dropTablesOf(
       wid: WorkflowIdentity,

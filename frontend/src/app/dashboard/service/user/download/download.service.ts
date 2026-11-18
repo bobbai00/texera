@@ -178,7 +178,7 @@ export class DownloadService {
     rowIndex: number,
     columnIndex: number,
     filename: string,
-    executionId: number // the execution whose results are exported
+    executionId: number
   ): Observable<HttpResponse<Blob> | HttpResponse<ExportWorkflowJsonResponse>> {
     const requestBody = {
       exportType,
@@ -219,7 +219,7 @@ export class DownloadService {
     rowIndex: number,
     columnIndex: number,
     filename: string,
-    executionId: number // the execution whose results are exported
+    executionId: number
   ): void {
     const datasetIds: number[] = [];
     const requestBody = {

@@ -90,17 +90,12 @@ object UpdateToRun {
     *                     in `workflow`
     * @param running      the physical operators the execution's plan runs for that operator
     * @param repositories pins the dataset and model versions the change names, for the user who
-    *                     created the execution, as the compile of the execution's plan pinned
-    *                     the plan's ([[WorkflowCompiler.bindResources]])
-    * @param reconfigure  builds the operator a change makes of an operator; by default the
-    *                     operator builds it itself
+    *                     created the execution ([[WorkflowCompiler.bindResources]])
     * @throws NoSuchOperator        if `workflow` has no operator of the change's id
     * @throws WorkflowRefused       if the change names no operator by an id, or is not one the
     *                               running operator can take, with why
     * @throws IllegalStateException if `workflow` is not a graph the compiler reads, which a
-    *                               workflow a plan was compiled from is. Any other failure, such
-    *                               as the database not answering while a dataset version is
-    *                               pinned, is thrown as it is.
+    *                               workflow a plan was compiled from always is
     */
   def make(
       workflowId: WorkflowIdentity,
@@ -146,8 +141,7 @@ object UpdateToRun {
     // An operator that offers to be changed while it runs, and overrides nothing to take a
     // change, is left with LogicalOp's own runtimeReconfiguration, which throws rather than
     // answering a Failure; so does a descriptor that cannot build its operator from the change.
-    // Either refuses the change, in the failure's words, or by its type when it has none. A fatal
-    // error is thrown as it is.
+    // Either refuses the change, in the failure's words, or by its type when it has none.
     val reconfigured =
       Try(reconfigure(current, changed, workflowId, executionId)).flatten match {
         case Success((op, _)) => op

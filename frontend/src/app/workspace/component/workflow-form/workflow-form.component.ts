@@ -1758,8 +1758,8 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Whether the run on screen is one its computing unit can be asked to stop. A run the unit does not show
-   * has its state from the Dashboard service: the unit holds nothing to stop, and can start another run.
+   * Whether the run on screen is one its computing unit can be asked to stop: a run the unit does not show
+   * (ExecuteWorkflowService.isFollowingAtDashboard) is not.
    */
   public get canStopRun(): boolean {
     return this.isRunning && !this.executeWorkflowService.isFollowingAtDashboard();

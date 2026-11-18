@@ -204,7 +204,6 @@ object WorkflowCompiler {
     * This is the only place a binding is forced. A paused execution's edited operator goes
     * through it too, so it is bound the way the rest of its plan was.
     *
-    * @param repositories pins the versions, for the plan's user
     * @throws org.apache.commons.vfs2.FileNotFoundException if a version does not exist, or the
     *                                                       plan's user cannot read it
     */
@@ -273,16 +272,14 @@ case class WorkflowCompilationResult(
   *
   * @param context the workflow and execution the compiler makes plans for: their ids stamp
   *                every operator
-  * @param purpose what the plans are compiled for
   */
 class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends LazyLogging {
 
   /**
     * Pins what the operators of `plan` name, as [[bindResources]] does, each operator by itself,
-    * so that every operator's binding error is found. An operator's own error -- a version that
-    * does not exist or that the plan's user may not read -- leaves it as it was, and is appended
-    * to `errors`. Any other failure, such as the database not answering, is no error of the
-    * operator's, and is thrown as it is.
+    * so that every operator's binding error is found. An operator's own error, a version that
+    * does not exist or that the plan's user may not read, leaves it as it was and is appended to
+    * `errors`.
     */
   private def bindPlanResources(
       plan: PhysicalPlan,
@@ -310,8 +307,7 @@ class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends La
     *
     * An environment the plan's user does not have, or has with packages pip may not read, is the
     * error of every operator that names it: each is left as it was, and its error appended to
-    * `errors`. Any other failure, such as the database not answering, is no error of an
-    * operator's, and is thrown as it is.
+    * `errors`.
     */
   private def bindPlanEnvironments(
       plan: PhysicalPlan,
@@ -372,10 +368,8 @@ class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends La
     }
 
   /**
-    * Fails a compile for a run with `errors`: each operator's first, listed in the order of
-    * `logicalPlan`, an operator before those downstream of it, so that the cause of a chain of
-    * errors comes first. The error of the operator listed first is the failure's cause, so that
-    * a log of the failure shows where that error was thrown.
+    * Fails a compile for a run with `errors`, as a [[WorkflowCompilationFailed]] holds them: each
+    * operator's first, in the order of `logicalPlan`, an operator before those downstream of it.
     */
   private def failWith(
       logicalPlan: LogicalPlan,
@@ -520,11 +514,7 @@ class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends La
     * @param logicalPlanPojo the POJO parsed from the workflow string provided by the user
     * @return WorkflowCompilationResult, containing the physical plan, output schemas per op, errors
     *         per op, and the output ports that need storage
-    * @throws WorkflowCompilationFailed if the compile is for a run and an operator has an error:
-    *                                   with each such operator's first error, upstream operators
-    *                                   first. A failure that is no operator's error, such as the
-    *                                   database or the storage not answering, is thrown as it is,
-    *                                   whatever the compile is for.
+    * @throws WorkflowCompilationFailed if the compile is for a run and an operator has an error
     */
   def compile(logicalPlanPojo: LogicalPlanPojo): WorkflowCompilationResult = {
     // Every step below appends an operator's error here and goes on with the other operators, so
@@ -535,10 +525,7 @@ class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends La
     // 1. convert the pojo to logical plan
     val logicalPlan: LogicalPlan = LogicalPlan(logicalPlanPojo)
 
-    // 2. find what each operator reads from outside the run: the file of each scan source,
-    // resolved, and the site's settings it is read under; and, for a run, where that file is
-    // kept, the listing of each File Lister's dataset version, and where the files listed
-    // upstream of each File Scan From Input are kept
+    // 2. find what each operator reads from outside the run (see InputBinder)
     val inputs = new InputBinder(purpose, errors).inputsOf(logicalPlan)
 
     // 3. expand the logical plan to the physical plan, and get the output ports that need storage
@@ -560,9 +547,7 @@ class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends La
         if (errors.nonEmpty) failWith(logicalPlan, errors)
         // 5. a plan made to run resolves the Python environments its operators name, pins
         // their datasets and models and names where its output ports are stored, last, once the
-        // plan is otherwise valid: the engine is handed what to install, the final code, the
-        // repositories to mount and the locations to write to, never a name to look up, a
-        // binding or a location to make up.
+        // plan is otherwise valid.
         val boundPlan = locateOutputPorts(
           bindPlanResources(
             bindPlanEnvironments(expandedPlan, run.environments, errors),

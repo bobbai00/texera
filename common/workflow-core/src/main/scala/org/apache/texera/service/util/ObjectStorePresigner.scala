@@ -74,9 +74,7 @@ object ObjectStorePresigner {
   * of a store has its endpoint's scheme, host and port, whatever the bucket.
   *
   * @param endpoint  the store's endpoint, as the links' readers reach it
-  * @param region    the store's region, which the signature covers
   * @param accessKey the key the links are signed with, which must be allowed to read the objects
-  * @param secretKey that key's secret
   */
 class ObjectStorePresigner(endpoint: URI, region: String, accessKey: String, secretKey: String) {
 

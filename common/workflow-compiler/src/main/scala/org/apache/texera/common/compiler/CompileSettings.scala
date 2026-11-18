@@ -25,15 +25,12 @@ import org.apache.texera.dao.SiteSettings
 
 /**
   * The site's settings that a compile makes a plan under. They are read once, when the plan is
-  * compiled, and what they decide is fixed in the plan, in the operators they apply to, so what
-  * runs the plan asks the site for nothing.
+  * compiled, and what they decide is fixed in the operators they apply to.
   *
   * @param csvParserMaxColumns the most columns a row of a CSV file may have (site setting
-  *                            `csv_parser_max_columns`): the limit of every CSV scan
-  * @param maxListedFiles      the most files of dataset versions that an operator of a plan made
-  *                            to run may list or read (`constants.max-listed-files` of the
-  *                            deployment's configuration): the limit of every File Lister's
-  *                            listing, and of the files every File Scan From Input reads
+  *                            `csv_parser_max_columns`)
+  * @param maxListedFiles      the most files a File Lister may list, or a File Scan From Input
+  *                            read, in a plan made to run (`constants.max-listed-files`)
   */
 final case class CompileSettings(csvParserMaxColumns: Int, maxListedFiles: Int)
 
@@ -47,11 +44,10 @@ object CompileSettings {
     )
 
   /**
-    * The site's settings as they stand now, for a service that has Postgres, the Dashboard and
-    * the compiling service: what the site's administrators set is read from there, and the rest
-    * is the deployment's configuration. A setting the site holds none of, or holds as no number,
-    * is the default's. A read Postgres does not answer is thrown as it is: a plan compiled under
-    * the default could run under another limit than the site's.
+    * The site's settings as they stand now, for a service that has Postgres: what the site's
+    * administrators set is read from there, and the rest is the deployment's configuration. A
+    * read Postgres does not answer is thrown as it is: a plan compiled under the default could
+    * run under another limit than the site's.
     */
   def fromSiteSettings(): CompileSettings =
     Default.copy(
