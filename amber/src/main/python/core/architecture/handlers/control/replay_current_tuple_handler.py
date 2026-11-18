@@ -33,6 +33,11 @@ class RetryCurrentTupleHandler(ControlHandler):
             # finish (DataProcessor.process_tuple): letting the worker go on is
             # what has it processed once more. Nothing is put back on the input
             # iterator, which would process the tuple twice.
+            #
+            # The exception it stopped on is over. Left recorded, it would stop
+            # the worker again at MainLoop's next check, whatever the tuple
+            # does this time.
+            self.context.exception_manager.get_exc_info()
             self.context.pause_manager.resume(PauseType.USER_PAUSE)
             self.context.pause_manager.resume(PauseType.EXCEPTION_PAUSE)
         return EmptyReturn()

@@ -24,6 +24,7 @@ import pytest
 from core.architecture.handlers.control.replay_current_tuple_handler import (
     RetryCurrentTupleHandler,
 )
+from core.architecture.managers.exception_manager import ExceptionManager
 from core.architecture.managers.pause_manager import PauseType
 from proto.org.apache.texera.amber.engine.architecture.rpc import (
     EmptyRequest,
@@ -43,6 +44,7 @@ def _build_handler(state: WorkerState, current_tuple, remaining_iter):
             current_input_tuple_iter=iter(remaining_iter),
         ),
         pause_manager=MagicMock(),
+        exception_manager=ExceptionManager(),
     )
     return instance
 
@@ -70,6 +72,28 @@ class TestRetryCurrentTupleHandler:
             running_handler.context.tuple_processing_manager.current_input_tuple_iter
         )
         assert remaining == [{"col": "next"}]
+
+    def test_forgets_the_exception_the_worker_stopped_on(self, running_handler):
+        # MainLoop stops the worker whenever an exception is recorded. One left
+        # recorded after a retry would stop it again at the next check, though
+        # the tuple went through this time.
+        error = ValueError("cannot be processed")
+        running_handler.context.exception_manager.set_exception_info(
+            (type(error), error, None)
+        )
+        asyncio.run(running_handler.retry_current_tuple(EmptyRequest()))
+        assert not running_handler.context.exception_manager.has_exception()
+
+    def test_keeps_the_exception_of_a_completed_worker(self):
+        completed_handler = _build_handler(
+            WorkerState.COMPLETED, current_tuple=None, remaining_iter=[]
+        )
+        error = ValueError("cannot be processed")
+        completed_handler.context.exception_manager.set_exception_info(
+            (type(error), error, None)
+        )
+        asyncio.run(completed_handler.retry_current_tuple(EmptyRequest()))
+        assert completed_handler.context.exception_manager.has_exception()
 
     def test_resumes_user_and_exception_pause_in_order(self, running_handler):
         asyncio.run(running_handler.retry_current_tuple(EmptyRequest()))
