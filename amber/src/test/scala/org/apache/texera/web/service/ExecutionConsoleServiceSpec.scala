@@ -24,6 +24,8 @@ import com.twitter.util.{Future => TwitterFuture}
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
+import org.apache.texera.amber.core.storage.{ConsoleMessageStore, DocumentFactory}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
@@ -34,7 +36,22 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionConsoleStore
+import org.apache.texera.dao.MockTexeraDB
+import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
+import org.apache.texera.dao.jooq.generated.tables.daos.{
+  UserDao,
+  WorkflowDao,
+  WorkflowExecutionsDao,
+  WorkflowVersionDao
+}
+import org.apache.texera.dao.jooq.generated.tables.pojos.{
+  User,
+  Workflow,
+  WorkflowExecutions,
+  WorkflowVersion
+}
 import org.apache.texera.web.WebsocketInput
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.event.python.ConsoleUpdateEvent
@@ -42,38 +59,90 @@ import org.apache.texera.web.model.websocket.request.python.DebugCommandRequest
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.BeforeAndAfterAll
-import org.scalatest.concurrent.Eventually.eventually
-import org.scalatest.concurrent.PatienceConfiguration.{Interval, Timeout}
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.time.{Millis, Span}
 
+import java.net.URI
+import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
-import java.util.concurrent.ExecutorService
 import scala.collection.mutable.ListBuffer
+import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
 
 /**
   * The `ConsoleMessageProcessor` object is covered by the first half of this suite. The service
-  * class around it was entirely uncovered: it owns the console diff that decides what the frontend
-  * is told, the worker-to-operator keying that decides where a message lands, and the websocket
-  * handlers behind the debugger.
+  * class around it owns the console diff that decides what the frontend is told, the
+  * worker-to-operator keying that decides where a message lands, the websocket handlers behind
+  * the debugger, and what it hands the run's record, which stores the console in the lake
+  * (`ExecutionRecorderSpec` has what the record does with it).
   *
   * Everything here runs on an empty-plan AmberClient with a mocked coordinator, so no engine is
-  * involved. Note that ExecutionConsoleService still schedules asynchronous console persistence
-  * (writer creation + operator-executions insertion); this suite focuses on console routing/diffing
-  * and does not assert on the persistence side effects.
+  * involved, for an execution of this suite's own: its console table is registered on its row.
   */
 class ExecutionConsoleServiceSpec
     extends TestKit(ActorSystem("ExecutionConsoleServiceSpec"))
     with AnyFlatSpecLike
     with Matchers
     with MockFactory
-    with BeforeAndAfterAll {
+    with BeforeAndAfterAll
+    with MockTexeraDB {
+
+  // No other suite's ids: the console table they name is this suite's to look for.
+  private val testUid: Integer = 9117
+  private val testWid: Integer = 9117
+  private val testEid: Integer = 9118
+
+  private val consoleUri: URI = ConsoleMessageStore.consoleUri(
+    WorkflowIdentity(testWid.longValue()),
+    ExecutionIdentity(testEid.longValue()),
+    None
+  )
+
+  override protected def beforeAll(): Unit = {
+    super.beforeAll()
+    initializeDBAndReplaceDSLContext()
+    // Whatever an earlier build of this suite left in the catalog the tests share.
+    ConsoleMessageStore.drop(consoleUri)
+
+    val user = new User
+    user.setUid(testUid)
+    user.setName("execution-console-test-user")
+    user.setEmail(s"u$testUid@example.com")
+    new UserDao(getDSLContext.configuration()).insert(user)
+
+    val workflow = new Workflow
+    workflow.setWid(testWid)
+    workflow.setName(s"execution-console-test-$testWid")
+    workflow.setContent("{}")
+    workflow.setDescription("")
+    workflow.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
+    workflow.setLastModifiedTime(new SqlTimestamp(System.currentTimeMillis()))
+    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
+
+    val version = new WorkflowVersion
+    version.setWid(testWid)
+    version.setContent("{}")
+    version.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
+    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
+
+    // The execution row is what the constructor registers the console table for, by eid.
+    val execution = new WorkflowExecutions
+    execution.setEid(testEid)
+    execution.setVid(version.getVid)
+    execution.setUid(testUid)
+    execution.setStatus(0.toByte)
+    execution.setStartingTime(new SqlTimestamp(System.currentTimeMillis()))
+    execution.setBookmarked(false)
+    execution.setName("execution-console-test-execution")
+    execution.setEnvironmentVersion("test-env")
+    new WorkflowExecutionsDao(getDSLContext.configuration()).insert(execution)
+  }
 
   override def afterAll(): Unit = {
-    try TestKit.shutdownActorSystem(system)
-    finally super.afterAll()
+    try {
+      TestKit.shutdownActorSystem(system)
+      closeConnectionPool()
+    } finally super.afterAll()
   }
 
   // Constants for testing
@@ -304,7 +373,8 @@ class ExecutionConsoleServiceSpec
       val coordinator: CoordinatorServiceFs2Grpc[TwitterFuture, Unit],
       val stateStore: ExecutionStateStore,
       val wsInput: WebsocketInput,
-      val service: ExecutionConsoleService
+      val service: ExecutionConsoleService,
+      val recorder: RecordingExecutionRecorder
   ) {
     def close(): Unit = {
       service.unsubscribeAll()
@@ -312,14 +382,35 @@ class ExecutionConsoleServiceSpec
     }
   }
 
-  private def fixture(): Fixture = {
+  /** A service for a run of execution `eid` of the fixture workflow. */
+  private def fixture(eid: Integer = testEid): Fixture = {
     val coordinator = mock[CoordinatorServiceFs2Grpc[TwitterFuture, Unit]]
     val client = new TestAmberClient(coordinator)
-    val stateStore = new ExecutionStateStore
+    val recorder = new RecordingExecutionRecorder
+    val stateStore = new ExecutionStateStore(recorder)
     val wsInput = new WebsocketInput()
-    val service = new ExecutionConsoleService(client, stateStore, wsInput, new WorkflowContext())
-    new Fixture(client, coordinator, stateStore, wsInput, service)
+    val service = new ExecutionConsoleService(
+      client,
+      stateStore,
+      wsInput,
+      new WorkflowContext(
+        workflowId = WorkflowIdentity(testWid.longValue()),
+        executionId = ExecutionIdentity(eid.longValue())
+      )
+    )
+    new Fixture(client, coordinator, stateStore, wsInput, service, recorder)
   }
+
+  /** The console tables registered for execution `eid`: each with its operator. */
+  private def registeredConsoles(eid: Integer = testEid): Seq[(String, String)] =
+    getDSLContext
+      .select(OPERATOR_EXECUTIONS.OPERATOR_ID, OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
+      .from(OPERATOR_EXECUTIONS)
+      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid))
+      .fetch()
+      .asScala
+      .map(row => (row.value1(), row.value2()))
+      .toSeq
 
   private def message(
       workerId: String = "Worker:WF1-udf1-main-0",
@@ -500,25 +591,80 @@ class ExecutionConsoleServiceSpec
     }
   }
 
-  "unsubscribeAll" should "shutdown consoleWriterThread" in {
+  "the run's record" should "be handed every message whole, under its logical operator, in the order they came" in {
     withFixture { f =>
-      f.client.consoleCallback(message(title = "test"))
+      (f.coordinator.debugCommand _).expects(*, *).returning(TwitterFuture.value(EmptyReturn()))
+      val long = "d" * (f.service.consoleMessageDisplayLength + 50)
+      val printed = message(workerId = "Worker:WF1-udf1-main-0", title = long)
+      val failed = message(
+        workerId = "Worker:WF1-udf2-main-1",
+        title = "ValueError",
+        msgType = ConsoleMessageType.ERROR
+      )
 
-      val threadField = classOf[ExecutionConsoleService].getDeclaredField("consoleWriterThread")
-      threadField.setAccessible(true)
-      val executor = threadField.get(f.service).asInstanceOf[ExecutorService]
+      f.client.consoleCallback(printed)
+      f.service.addUnitMessage("udf2", ConsoleMessageType.PRINT, "Python environment 'ml' reused")
+      f.client.consoleCallback(failed)
+      f.wsInput.onNext(DebugCommandRequest("udf1", "Worker:WF1-udf1-main-0", "cont"), Some(7))
 
-      // Verify it is initially active
-      executor.isShutdown shouldBe false
+      val told = f.recorder.consoles
+      told.map(_._1) shouldBe Seq("udf1", "udf2", "udf2", "udf1")
+      // What the sessions are shown is cut to the display length; the record is not.
+      told.head._2 shouldBe printed
+      f.stateStore.consoleStore.getState.operatorConsole("udf1").consoleMessages.head.title should
+        have length f.service.consoleMessageDisplayLength.toLong
+      told(1)._2.title shouldBe "Python environment 'ml' reused"
+      told(1)._2.source shouldBe ExecutionConsoleService.ComputingUnitSource
+      told(2)._2 shouldBe failed
+      (told(3)._2.msgType, told(3)._2.source, told(3)._2.title) shouldBe
+        ((ConsoleMessageType.COMMAND, "USER-7", "cont"))
+      // The record is told on the thread the message came on: the service has no thread of
+      // its own, and waits for no lake.
+      f.recorder.tellers.distinct shouldBe Seq(Thread.currentThread())
+    }
+  }
 
-      // Trigger the teardown
+  "the service" should "write nothing to the lake itself: the run's record makes the console table" in {
+    // The record here keeps what it is told and writes nothing, so a table could only be the
+    // service's own.
+    withFixture { f =>
+      f.client.consoleCallback(message())
+      f.service.addUnitMessage("udf1", ConsoleMessageType.PRINT, "installed")
       f.service.unsubscribeAll()
 
-      // Use Eventually to wait for async termination without blocking arbitrarily
-      eventually(Timeout(Span(2000, Millis)), Interval(Span(50, Millis))) {
-        executor.isShutdown shouldBe true
-        executor.isTerminated shouldBe true
-      }
+      DocumentFactory.documentExists(consoleUri) shouldBe false
     }
+  }
+
+  it should "register the execution's one console table, where the clean-up of results looks for it" in {
+    getDSLContext
+      .deleteFrom(OPERATOR_EXECUTIONS)
+      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(testEid))
+      .execute()
+
+    withFixture { f =>
+      // Spelled out rather than rebuilt from the store: a wid and eid mixed up have to show.
+      registeredConsoles() shouldBe
+        Seq(("*", s"vfs:///wid/$testWid/eid/$testEid/consolemessages"))
+
+      // Not once more for each operator that writes to its console.
+      f.client.consoleCallback(message(workerId = "Worker:WF1-udf1-main-0"))
+      f.client.consoleCallback(message(workerId = "Worker:WF1-udf2-main-0"))
+      registeredConsoles() should have size 1
+    }
+    // Nor once more by another service of the execution's run.
+    withFixture(_ => registeredConsoles() should have size 1)
+  }
+
+  it should "be built though the console table cannot be registered: the run goes on" in {
+    // An execution with no row, which no console table can be registered for.
+    val unknownEid: Integer = 9119
+    val f = fixture(unknownEid)
+    try {
+      f.client.consoleCallback(message())
+
+      f.recorder.consoles should have size 1
+      registeredConsoles(unknownEid) shouldBe empty
+    } finally f.close()
   }
 }

@@ -23,22 +23,16 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
   DocumentFactory,
   WarehouseReadGuard,
   WarehouseUnavailableException
 }
 import org.apache.texera.amber.core.tuple.{Tuple, TupleUtils}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, PortIdentity}
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
-  ConsoleMessage,
-  ConsoleMessageType
-}
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.common.executionruntimestate.{
@@ -48,8 +42,6 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
 }
 import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.ResultUris
@@ -60,6 +52,7 @@ import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.MediaType
 import scala.collection.mutable
+import scala.concurrent.duration.DurationInt
 import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
 
@@ -140,6 +133,11 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
 
   // Why a run is killed at its caller's timeout, or when one of its operators logs an error.
   private val StoppedByCaller = "stopped by its caller"
+
+  // How long an answer waits for the run's record to reach the lake, where the console is read
+  // from, and how many of an operator's console messages it carries at most.
+  private val RecordPatience = 5.seconds
+  private val MaxConsoleMessages = 5000
 
   /**
     * Runs execution `executionId`, which the Dashboard service created for the caller, on this
@@ -353,16 +351,14 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     // Let the result writer flush before we read storage.
     Thread.sleep(500)
 
-    // Console DB writes lag the in-memory store; pass the latter so error extraction
-    // can fall back when the row hasn't landed yet.
+    // The console in the lake lags the in-memory store; pass the latter so error extraction
+    // can fall back when the messages have not landed yet.
     val inMemoryConsoleState = terminationReason match {
       case ConsoleErrorDetected(consoleState) => Some(consoleState)
       case _                                  => None
     }
 
-    val executionId = executionService.workflowContext.executionId
     val operatorInfos = collectOperatorInfos(
-      executionId,
       executionService,
       targetOperatorIds,
       maxOperatorResultCharLimit,
@@ -393,7 +389,6 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
   }
 
   private def collectOperatorInfos(
-      executionId: ExecutionIdentity,
       executionService: WorkflowExecutionService,
       targetOperatorIds: List[String],
       maxOperatorResultCharLimit: Int,
@@ -401,6 +396,13 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
       inMemoryConsoleState: Option[ExecutionConsoleStore] = None
   ): Map[String, OperatorInfo] = {
     val operatorInfos = mutable.Map[String, OperatorInfo]()
+
+    // The console is read from the lake, where the run's record stores it: the run has ended,
+    // so its record is written out, and this waits a moment for that.
+    executionService.executionStateStore.recorder.awaitIdle(RecordPatience)
+    val context = executionService.workflowContext
+    val consoleUri =
+      ConsoleMessageStore.consoleUri(context.workflowId, context.executionId, context.warehouse)
 
     val statsState = executionService.executionStateStore.statsStore.getState
     val operatorStats = statsState.operatorInfo
@@ -447,10 +449,10 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
           maxOperatorResultCellCharLimit
         )
 
-      // DB is authoritative once written; fall back to in-memory state for in-flight runs
-      // where the console row hasn't been persisted yet.
-      val dbConsoleLogs = collectConsoleLogs(executionId, opId)
-      val consoleLogs = dbConsoleLogs.orElse {
+      // The lake is authoritative once written; fall back to in-memory state for runs whose
+      // console has not been stored yet.
+      val storedConsoleLogs = collectConsoleLogs(consoleUri, opId)
+      val consoleLogs = storedConsoleLogs.orElse {
         inMemoryConsoleState.flatMap { consoleState =>
           consoleState.operatorConsole
             .get(opId)
@@ -749,61 +751,27 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     }
   }
 
+  /**
+    * The console messages of operator `opId` in the console table at `consoleUri`, oldest
+    * first, at most [[MaxConsoleMessages]]; None when the table holds none of the operator's,
+    * or cannot be read.
+    */
   private def collectConsoleLogs(
-      executionId: ExecutionIdentity,
+      consoleUri: URI,
       opId: String
   ): Option[List[ConsoleMessageInfo]] = {
     try {
-      val uriOption = getConsoleMessageUri(executionId, OperatorIdentity(opId))
-
-      uriOption.flatMap { uri =>
-        // Refuse to read per-user-warehouse console messages while the feature is off (#6930).
-        WarehouseReadGuard.assertReadable(uri)
-        val document = DocumentFactory
-          .openDocument(uri)
-          ._1
-          .asInstanceOf[VirtualDocument[Tuple]]
-
-        val messages = document.get().toList.flatMap { tuple =>
-          try {
-            val protoString = tuple.getField[String](0)
-            val msg = ConsoleMessage.fromAscii(protoString)
-            Some(
-              ConsoleMessageInfo(
-                msgType = msg.msgType.name,
-                title = msg.title,
-                message = msg.message
-              )
-            )
-          } catch {
-            case _: Exception => None
-          }
-        }
-
-        if (messages.nonEmpty) Some(messages) else None
-      }
+      // Refuse to read per-user-warehouse console messages while the feature is off (#6930).
+      WarehouseReadGuard.assertReadable(consoleUri)
+      val (rows, _) = ConsoleMessageStore.read(consoleUri, Some(opId), 0, MaxConsoleMessages)
+      val messages = rows.map(row => ConsoleMessageInfo(row.msgType, row.title, row.message))
+      if (messages.nonEmpty) Some(messages.toList) else None
     } catch {
       // A kill-switch refusal must reach the caller instead of degrading into an
       // empty result (#6930); every other failure keeps the existing behavior.
       case e: WarehouseUnavailableException => throw e
       case _: Exception                     => None
     }
-  }
-
-  private def getConsoleMessageUri(
-      eid: ExecutionIdentity,
-      opId: OperatorIdentity
-  ): Option[URI] = {
-    val context = SqlServer.getInstance().createDSLContext()
-    Option(
-      context
-        .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
-        .from(OPERATOR_EXECUTIONS)
-        .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-        .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-        .fetchOneInto(classOf[String])
-    ).filter(uri => uri != null && uri.nonEmpty)
-      .map(s => URI.create(s))
   }
 
   private def isTerminalState(state: WorkflowAggregatedState): Boolean = {

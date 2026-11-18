@@ -20,6 +20,7 @@
 package org.apache.texera.amber.core.storage.result.iceberg
 
 import org.apache.iceberg.Table
+import org.apache.iceberg.exceptions.{CommitStateUnknownException, ServiceUnavailableException}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -178,6 +179,41 @@ class IcebergTidySpec extends AnyFlatSpec with Matchers with RecordTables {
 
     dataFiles(table).map(_.recordCount()) shouldBe List(3L, 1L)
     readSeqs(table) shouldBe List(1L, 2L, 3L, 4L)
+  }
+
+  it should "leave no merged file behind when the catalog refuses the merge" in {
+    val table = newTable()
+    (1L to 3L).foreach(seq => append(table, Seq(seq)))
+    val before = dataFiles(table).map(_.location())
+    val refusing = answeringCommits(table) { _ =>
+      throw new ServiceUnavailableException("the catalog is overloaded")
+    }
+
+    (1 to 2).foreach { _ =>
+      a[ServiceUnavailableException] should be thrownBy
+        IcebergTidy.mergeSmallFiles(refusing, IcebergTidy.TargetFileBytes)
+    }
+
+    filesWritten(table, "merged") shouldBe empty
+    dataFiles(table).map(_.location()) shouldBe before
+    readSeqs(table) shouldBe List(1L, 2L, 3L)
+  }
+
+  it should "keep the merged file when the merge's outcome is unknown" in {
+    val table = newTable()
+    (1L to 3L).foreach(seq => append(table, Seq(seq)))
+    val answerLost = answeringCommits(table) { commit =>
+      commit()
+      throw new CommitStateUnknownException(new RuntimeException("502 Bad Gateway"))
+    }
+
+    a[CommitStateUnknownException] should be thrownBy
+      IcebergTidy.mergeSmallFiles(answerLost, IcebergTidy.TargetFileBytes)
+
+    // The merge landed: the table reads the merged file.
+    filesWritten(table, "merged") should have size 1
+    filesWritten(table, "merged") shouldBe dataFileNames(table)
+    readSeqs(table) shouldBe List(1L, 2L, 3L)
   }
 
   "IcebergTidy.expire" should "keep the newest snapshots, however old, and every snapshot that is not old enough" in {

@@ -20,8 +20,11 @@
 package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{DocumentFactory, WarehouseReadGuard}
-import org.apache.texera.amber.core.tuple.Tuple
+import org.apache.texera.amber.core.storage.{
+  RuntimeStatisticsRow,
+  RuntimeStatisticsStore,
+  WarehouseReadGuard
+}
 import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.amber.core.workflow.CostHints
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
@@ -41,9 +44,16 @@ import scala.util.control.NonFatal
 
 object CostHintsLoader {
 
-  /** The rows of the runtime statistics at `uri`, as the lake holds them. */
-  def statisticsAt(uri: URI): Iterator[Tuple] =
-    DocumentFactory.openDocument(uri)._1.get().map(_.asInstanceOf[Tuple])
+  // The columns of the runtime statistics that costs are read from: the logical operator's id,
+  // and the nanoseconds it spent processing data and control messages.
+  private val CostColumns = Set("operatorId", "dataProcessingTime", "controlProcessingTime")
+
+  /**
+    * The rows of the runtime statistics at `uri`, with the columns costs are read from alone.
+    * None from a table written before statistics were stored as they are now.
+    */
+  def statisticsAt(uri: URI): Seq[RuntimeStatisticsRow] =
+    RuntimeStatisticsStore.read(uri, CostColumns)
 }
 
 /**
@@ -67,25 +77,19 @@ object CostHintsLoader {
   * @param cacheCapacity  how many runs' costs to keep, at least 1
   * @param waitLimit      how long a load waits for the read another load makes, more than 0: by
   *                       default a quarter of the time a create is given
-  * @param openStatistics reads the rows of the runtime statistics at a URI
+  * @param openStatistics reads the rows of the runtime statistics at a URI: each row's
+  *                       operator and processing times
   */
 class CostHintsLoader(
     cacheCapacity: Int = 256,
     waitLimit: FiniteDuration = 30.seconds,
-    openStatistics: URI => Iterator[Tuple] = CostHintsLoader.statisticsAt
+    openStatistics: URI => Seq[RuntimeStatisticsRow] = CostHintsLoader.statisticsAt
 ) extends LazyLogging {
   require(cacheCapacity >= 1, s"Cost hints are kept for at least 1 run, not $cacheCapacity.")
   require(
     waitLimit > Duration.Zero,
     s"A load waits for another's read for more than no time, not $waitLimit."
   )
-
-  // The columns of the runtime statistics (ResultSchema.runtimeStatisticsSchema) that costs are
-  // read from: the logical operator's id, and the nanoseconds it spent processing data and
-  // control messages.
-  private val OperatorIdField = "operatorId"
-  private val DataProcessingTimeField = "dataProcessingTime"
-  private val ControlProcessingTimeField = "controlProcessingTime"
 
   // The reads of statistics under way, by the execution id of the run read. A load that misses a
   // run being read waits for that read rather than reading the statistics again.
@@ -210,17 +214,13 @@ class CostHintsLoader(
   private def readCosts(source: ExecutionIdentity, uri: URI): Option[CostHints] = {
     val start = System.nanoTime()
     val seconds = openStatistics(uri).foldLeft(Map.empty[String, Double]) { (costs, row) =>
-      val operatorId = row.getField[String](OperatorIdField)
       // A plan is not saved with the cost of an operator with no id.
-      if (operatorId == null || operatorId.isEmpty) costs
+      if (row.operatorId.isEmpty) costs
       else {
-        val processingNanos =
-          row.getField[Long](DataProcessingTimeField) + row.getField[Long](
-            ControlProcessingTimeField
-          )
+        val processingNanos = row.dataProcessingTime + row.controlProcessingTime
         costs.updated(
-          operatorId,
-          math.max(costs.getOrElse(operatorId, 0.0), processingNanos / 1e9)
+          row.operatorId,
+          math.max(costs.getOrElse(row.operatorId, 0.0), processingNanos / 1e9)
         )
       }
     }

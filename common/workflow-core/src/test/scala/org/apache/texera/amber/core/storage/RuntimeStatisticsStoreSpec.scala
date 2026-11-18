@@ -22,8 +22,7 @@ package org.apache.texera.amber.core.storage
 import org.apache.iceberg.exceptions.ServiceUnavailableException
 import org.apache.texera.amber.core.storage.RuntimeStatisticsStore._
 import org.apache.texera.amber.core.storage.model.VirtualDocument
-import org.apache.texera.amber.core.storage.result.ResultSchema
-import org.apache.texera.amber.core.tuple.{AttributeType, Tuple}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
@@ -82,17 +81,32 @@ class RuntimeStatisticsStoreSpec extends AnyFlatSpec with Matchers with Embedded
       .get("total-data-files")
       .toInt
 
+  // The columns of a statistics table before this store: its time was a timestamp.
+  private val earlierSchema = new Schema(
+    new Attribute("operatorId", AttributeType.STRING),
+    new Attribute("time", AttributeType.TIMESTAMP),
+    new Attribute("inputTupleCnt", AttributeType.LONG),
+    new Attribute("inputTupleSize", AttributeType.LONG),
+    new Attribute("outputTupleCnt", AttributeType.LONG),
+    new Attribute("outputTupleSize", AttributeType.LONG),
+    new Attribute("dataProcessingTime", AttributeType.LONG),
+    new Attribute("controlProcessingTime", AttributeType.LONG),
+    new Attribute("idleTime", AttributeType.LONG),
+    new Attribute("numWorkers", AttributeType.INTEGER),
+    new Attribute("status", AttributeType.INTEGER)
+  )
+
   /** A statistics table as Texera made it before this store, with a row in it. */
   private def statisticsOfAnEarlierVersion(): URI = {
     val uri = freshStatisticsUri()
     val writer = DocumentFactory
-      .createDocument(uri, ResultSchema.runtimeStatisticsSchema)
+      .createDocument(uri, earlierSchema)
       .asInstanceOf[VirtualDocument[Tuple]]
       .writer("runtime_statistics")
     writer.open()
     writer.putOne(
       Tuple(
-        ResultSchema.runtimeStatisticsSchema,
+        earlierSchema,
         Array[Any]("Filter-operator-2", new Timestamp(startMs), 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8, 9)
       )
     )

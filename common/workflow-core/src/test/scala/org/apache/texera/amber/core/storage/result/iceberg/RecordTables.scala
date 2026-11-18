@@ -21,7 +21,16 @@ package org.apache.texera.amber.core.storage.result.iceberg
 
 import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
 import org.apache.iceberg.data.{GenericRecord, Record}
-import org.apache.iceberg.{DataFile, HasTableOperations, Table}
+import org.apache.iceberg.encryption.EncryptionManager
+import org.apache.iceberg.io.{FileIO, LocationProvider, SupportsPrefixOperations}
+import org.apache.iceberg.{
+  BaseTable,
+  DataFile,
+  HasTableOperations,
+  Table,
+  TableMetadata,
+  TableOperations
+}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.util.IcebergUtil
 import org.scalatest.{BeforeAndAfterAll, Suite}
@@ -117,4 +126,48 @@ trait RecordTables extends BeforeAndAfterAll { this: Suite =>
   /** How many commits the table has had since it was created. */
   protected def commitCount(table: Table): Int =
     loaded(table).asInstanceOf[HasTableOperations].operations().current().previousFiles().size()
+
+  /**
+    * `table` as a client sees it whose catalog answers every commit as `answer` says. `answer`
+    * is handed the commit: it makes it or not, and returns or throws what the catalog answers.
+    */
+  protected def answeringCommits(table: Table)(answer: (() => Unit) => Unit): Table = {
+    val real = loaded(table).asInstanceOf[HasTableOperations].operations()
+    new BaseTable(
+      new TableOperations {
+        override def current(): TableMetadata = real.current()
+        override def refresh(): TableMetadata = real.refresh()
+        override def commit(base: TableMetadata, metadata: TableMetadata): Unit =
+          answer(() => real.commit(base, metadata))
+        override def io(): FileIO = real.io()
+        override def encryption(): EncryptionManager = real.encryption()
+        override def metadataFileLocation(fileName: String): String =
+          real.metadataFileLocation(fileName)
+        override def locationProvider(): LocationProvider = real.locationProvider()
+        override def newSnapshotId(): Long = real.newSnapshotId()
+        override def requireStrictCleanup(): Boolean = real.requireStrictCleanup()
+      },
+      table.name()
+    )
+  }
+
+  /**
+    * The names of the files under the table's location that start with `prefix` and an
+    * underscore, as [[IcebergAppender]] names the files it writes: part of the table or not.
+    */
+  protected def filesWritten(table: Table, prefix: String): Set[String] =
+    table
+      .io()
+      .asInstanceOf[SupportsPrefixOperations]
+      .listPrefix(table.location())
+      .asScala
+      .map(file => nameOf(file.location()))
+      .filter(_.matches(s"${prefix}_[0-9a-f]{32}"))
+      .toSet
+
+  /** The names of the current snapshot's data files. */
+  protected def dataFileNames(table: Table): Set[String] =
+    dataFiles(table).map(file => nameOf(file.location())).toSet
+
+  private def nameOf(location: String): String = location.substring(location.lastIndexOf('/') + 1)
 }

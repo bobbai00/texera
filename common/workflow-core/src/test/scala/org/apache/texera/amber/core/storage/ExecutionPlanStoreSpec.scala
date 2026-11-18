@@ -23,11 +23,7 @@ import org.apache.iceberg.exceptions.{CommitFailedException, ServiceUnavailableE
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.tuple.Tuple
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
@@ -585,11 +581,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
   /** URIs that are no execution's plan table, though the first five are of this deployment. */
   private val notPlanUris = Seq(
     VFSURIFactory.createRuntimeStatisticsURI(workflowId, ExecutionIdentity(1)),
-    VFSURIFactory.createConsoleMessagesURI(
-      workflowId,
-      ExecutionIdentity(1),
-      OperatorIdentity("op")
-    ),
+    VFSURIFactory.createConsoleMessagesURI(workflowId, ExecutionIdentity(1)),
     // Segments the store did not write would address another table in the plan namespace.
     new URI("vfs:///wid/12/eid/1/opid/op/plan"),
     new URI("vfs:///wid/12/eid/1/PLAN"),

@@ -56,6 +56,11 @@ import scala.jdk.CollectionConverters._
   */
 object IcebergUtil {
 
+  // The catalog properties that limit a call of Iceberg's REST client, which names them in a
+  // class of its own package only (org.apache.iceberg.rest.HTTPClient).
+  private val RestConnectionTimeoutMs = "rest.client.connection-timeout-ms"
+  private val RestSocketTimeoutMs = "rest.client.socket-timeout-ms"
+
   // Unique suffix for LARGE_BINARY field encoding
   private val LARGE_BINARY_FIELD_SUFFIX = "__texera_large_binary_ptr"
 
@@ -126,13 +131,25 @@ object IcebergUtil {
     *
     * TODO: Add authentication support, such as OAuth2, using `OAuth2Properties`.
     *
-    * @param catalogName the name of the catalog.
-    * @param warehouse   the root path for the warehouse where the tables are stored.
+    * Every call to the catalog, the one that initializes it included, waits at most
+    * `connectionTimeoutMs` for a connection and `socketTimeoutMs` for the catalog to answer,
+    * and fails after that. Iceberg's client sets no limit of its own, so a catalog that
+    * accepted a request and never answered would hold its caller for good: a computing unit's
+    * recorder, say, whose beat then stops though the unit is alive.
+    *
+    * @param catalogName         the name of the catalog.
+    * @param warehouse           the root path for the warehouse where the tables are stored.
+    * @param uri                 where the catalog is.
+    * @param connectionTimeoutMs how long a call waits for a connection, in milliseconds.
+    * @param socketTimeoutMs     how long a call waits for the catalog to answer, in milliseconds.
     * @return the initialized RESTCatalog instance.
     */
   def createRestCatalog(
       catalogName: String,
-      warehouse: String
+      warehouse: String,
+      uri: String = StorageConfig.icebergRESTCatalogUri,
+      connectionTimeoutMs: Long = StorageConfig.icebergRESTCatalogConnectionTimeoutMs,
+      socketTimeoutMs: Int = StorageConfig.icebergRESTCatalogSocketTimeoutMs
   ): RESTCatalog = {
     val catalog = new RESTCatalog()
 
@@ -140,8 +157,10 @@ object IcebergUtil {
     // catalog server at runtime.
     val properties = Map(
       "warehouse" -> warehouse,
-      CatalogProperties.URI -> StorageConfig.icebergRESTCatalogUri,
-      CatalogProperties.FILE_IO_IMPL -> classOf[S3FileIO].getName
+      CatalogProperties.URI -> uri,
+      CatalogProperties.FILE_IO_IMPL -> classOf[S3FileIO].getName,
+      RestConnectionTimeoutMs -> connectionTimeoutMs.toString,
+      RestSocketTimeoutMs -> socketTimeoutMs.toString
     )
 
     catalog.initialize(catalogName, properties.asJava)

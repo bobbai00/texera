@@ -21,35 +21,21 @@ package org.apache.texera.web.service
 
 import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.model.BufferedItemWriter
-import org.apache.texera.amber.core.storage.result.ResultSchema
-import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
-import org.apache.texera.amber.core.tuple.Tuple
+import org.apache.texera.amber.core.storage.RuntimeStatisticsStore
 import org.apache.texera.amber.core.workflow.WorkflowContext
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{
-  ExecutionStateUpdate,
   ExecutionStatsUpdate,
   FatalError,
   RuntimeStatisticsPersist,
   WorkerAssignmentUpdate,
   WorkflowRecoveryStatus
 }
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
-  FAILED,
-  KILLED
-}
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.FAILED
 import org.apache.texera.amber.engine.common.Utils
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.engine.common.executionruntimestate.{
-  OperatorMetrics,
-  OperatorStatistics,
-  OperatorWorkerMapping
-}
+import org.apache.texera.amber.engine.common.executionruntimestate.OperatorWorkerMapping
 import org.apache.texera.amber.error.ErrorUtils.{
   getOperatorFromActorIdOpt,
   getStackTraceWithAllCauses
@@ -65,32 +51,29 @@ import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutions
 import org.apache.texera.web.storage.ExecutionStateStore
 
 import java.time.Instant
-import java.util.concurrent.Executors
 
+/**
+  * The statistics of one run: what the engine reports of its operators is shown to the
+  * sessions on the workflow, from memory, and handed to the run's record, which stores it in
+  * the lake on its own thread.
+  */
 class ExecutionStatsService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
     workflowContext: WorkflowContext
 ) extends SubscriptionManager
     with LazyLogging {
-  private val (metricsPersistThread, runtimeStatsWriter) = {
-    val thread = Executors.newSingleThreadExecutor()
-    val uri = VFSURIFactory.createRuntimeStatisticsURI(
+
+  // Where the run's record stores its statistics, on the execution's row for those who read
+  // them from there.
+  WorkflowExecutionsResource.updateRuntimeStatsUri(
+    workflowContext.executionId.id,
+    RuntimeStatisticsStore.statisticsUri(
       workflowContext.workflowId,
       workflowContext.executionId,
-      warehouse = workflowContext.warehouse
+      workflowContext.warehouse
     )
-    val writer = DocumentFactory
-      .createDocument(uri, ResultSchema.runtimeStatisticsSchema)
-      .writer("runtime_statistics")
-      .asInstanceOf[BufferedItemWriter[Tuple]]
-    WorkflowExecutionsResource.updateRuntimeStatsUri(workflowContext.executionId.id, uri)
-    writer.open()
-    (thread, writer)
-  }
-
-  private var lastPersistedMetrics: Map[String, OperatorMetrics] =
-    Map.empty[String, OperatorMetrics]
+  )
 
   registerCallbacks()
 
@@ -189,80 +172,14 @@ class ExecutionStatsService(
         })
     )
 
-    // Register callback for statistics persistence (persistence only, no UI update)
+    // Register callback for statistics persistence (persistence only, no UI update): the run's
+    // record keeps the newest numbers, and stores them at its next commit.
     addSubscription(
       client
         .registerCallback[RuntimeStatisticsPersist]((evt: RuntimeStatisticsPersist) => {
-          metricsPersistThread.execute(() => {
-            storeRuntimeStatistics(computeStatsDiff(evt.operatorMetrics))
-            lastPersistedMetrics = evt.operatorMetrics
-          })
+          stateStore.recorder.statistics(evt.operatorMetrics)
         })
     )
-  }
-
-  addSubscription(
-    client.registerCallback[ExecutionStateUpdate] {
-      case ExecutionStateUpdate(state: WorkflowAggregatedState.Recognized)
-          if Set(COMPLETED, FAILED, KILLED).contains(state) =>
-        logger.info("Workflow execution terminated. Commit runtime statistics.")
-        try {
-          runtimeStatsWriter.close()
-        } catch {
-          case e: Exception =>
-            logger.error("Failed to close runtime statistics writer", e)
-        }
-      case _ =>
-    }
-  )
-
-  private def computeStatsDiff(
-      newMetrics: Map[String, OperatorMetrics]
-  ): Map[String, OperatorMetrics] = {
-    // Default metrics for new operators
-    val defaultMetrics = OperatorMetrics(
-      WorkflowAggregatedState.UNINITIALIZED,
-      OperatorStatistics(Seq.empty, Seq.empty, 0, 0, 0, 0)
-    )
-
-    // Determine new and old keys
-    val newKeys = newMetrics.keySet.diff(lastPersistedMetrics.keySet)
-    val oldKeys = lastPersistedMetrics.keySet.diff(newMetrics.keySet)
-
-    // Update last metrics with default metrics for new keys
-    val updatedLastMetrics = lastPersistedMetrics ++ newKeys.map(_ -> defaultMetrics)
-
-    // Combine new metrics with old metrics for keys that are no longer present
-    newMetrics ++ oldKeys.map(key => key -> updatedLastMetrics(key))
-  }
-
-  private def storeRuntimeStatistics(
-      operatorStatistics: scala.collection.immutable.Map[String, OperatorMetrics]
-  ): Unit = {
-    try {
-      operatorStatistics.foreach {
-        case (operatorId, stat) =>
-          val runtimeStats = new Tuple(
-            ResultSchema.runtimeStatisticsSchema,
-            Array(
-              operatorId,
-              new java.sql.Timestamp(System.currentTimeMillis()),
-              stat.operatorStatistics.inputMetrics.map(_.tupleMetrics.count).sum,
-              stat.operatorStatistics.inputMetrics.map(_.tupleMetrics.size).sum,
-              stat.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum,
-              stat.operatorStatistics.outputMetrics.map(_.tupleMetrics.size).sum,
-              stat.operatorStatistics.dataProcessingTime,
-              stat.operatorStatistics.controlProcessingTime,
-              stat.operatorStatistics.idleTime,
-              stat.operatorStatistics.numWorkers,
-              maptoStatusCode(stat.operatorState).toInt
-            )
-          )
-          runtimeStatsWriter.putOne(runtimeStats)
-      }
-    } catch {
-      case err: Throwable => logger.error("error occurred when storing runtime statistics", err)
-    }
   }
 
   private[this] def registerCallbackOnWorkerAssignedUpdate(): Unit = {

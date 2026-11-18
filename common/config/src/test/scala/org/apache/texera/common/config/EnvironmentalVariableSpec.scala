@@ -78,6 +78,13 @@ class EnvironmentalVariableSpec extends AnyFlatSpec with Matchers {
 
     storage should include("${?" + EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS + "}")
     storage should include("${?" + EnvironmentalVariable.ENV_ICEBERG_TABLE_PLAN_NAMESPACE + "}")
+    storage should include(
+      "${?" + EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS + "}"
+    )
+    storage should include(
+      "${?" + EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS + "}"
+    )
+    storage should include("${?" + EnvironmentalVariable.ENV_ICEBERG_TABLE_COMMIT_INTERVAL_MS + "}")
     udf should include("${?" + EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT + "}")
     udf should include(
       "${?" + EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES + "}"

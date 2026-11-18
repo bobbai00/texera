@@ -23,6 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
 import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
+  ConsoleRow,
   DocumentFactory,
   ExecutionPlanStore,
   PlanRecord,
@@ -72,9 +74,9 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
-  OPERATOR_EXECUTIONS,
   OPERATOR_PORT_EXECUTIONS,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_OF_USER
@@ -105,8 +107,9 @@ import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
 
 import java.net.URI
 import java.sql.Timestamp
-import java.util.concurrent.{FutureTask, TimeUnit}
+import java.util.concurrent.{ConcurrentLinkedQueue, FutureTask, TimeUnit}
 import scala.collection.concurrent.TrieMap
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -137,9 +140,6 @@ import scala.util.Try
   *   - the engine shutdown of the run a sync run stops or supersedes. The runs here have no
   *     engine; that ending a run shuts its engine down is `WorkflowExecutionServiceSpec`'s. What
   *     stopping and superseding record is pinned below.
-  *   - the document-reading half of `collectConsoleLogs`. Reachable by the same fixture technique
-  *     (a console-messages document whose single column holds ASCII-serialized `ConsoleMessage`
-  *     protos), just not done here; its database half, `getConsoleMessageUri`, is pinned below.
   *   - a run that ends while `runStoredExecution` waits for it. The runs here are in the state
   *     the wait ends on by the time it looks, or stay as they are until its timeout.
   */
@@ -161,7 +161,7 @@ class SyncExecutionResourceSpec
   /** The computing unit the executions run by id are created for. */
   private val testCuid = 9317
 
-  /** A second computing unit, which the console-URI and result fixtures belong to. */
+  /** A second computing unit, which the console and result fixtures belong to. */
   private val fixtureCuid = 9318
 
   private val resource = new SyncExecutionResource()
@@ -177,17 +177,19 @@ class SyncExecutionResourceSpec
   private val isVisualizationTuple = PrivateMethod[Boolean](Symbol("isVisualizationTuple"))
   private val collectOperatorInfos =
     PrivateMethod[Map[String, OperatorInfo]](Symbol("collectOperatorInfos"))
-  private val getConsoleMessageUri = PrivateMethod[Option[URI]](Symbol("getConsoleMessageUri"))
 
   private type CollectedResult = (String, Option[Any], Option[Int], Option[Int], Option[Boolean])
   private val collectOperatorResult =
     PrivateMethod[CollectedResult](Symbol("collectOperatorResult"))
 
-  /** eid of the row `getConsoleMessageUri`'s cases hang their operator_executions rows off. */
+  /** eid of the execution whose console table the `collectOperatorInfos` cases read. */
   private var consoleEid: Int = 0
 
-  /** A second eid, so the query's execution-id predicate is not vacuous. */
+  /** A second eid, whose console must stay out of the first one's answer. */
   private var otherEid: Int = 0
+
+  /** eid of an execution whose run stored no console: what is answered of it is in memory. */
+  private var quietEid: Int = 0
 
   /** eid of the execution the `collectOperatorResult` fixtures' result URIs name. */
   private var resultEid: Int = 0
@@ -234,6 +236,9 @@ class SyncExecutionResourceSpec
 
     consoleEid = insertExecution("console-fixture")
     otherEid = insertExecution("console-fixture-other")
+    quietEid = insertExecution("console-fixture-none")
+    // Whatever an earlier build of this suite left in the catalog the tests share.
+    ConsoleMessageStore.drop(consoleUriOf(quietEid))
     resultEid = insertExecution("result-fixture")
 
     // The user owns the workflow, so the Dashboard creates executions of it for them.
@@ -247,9 +252,14 @@ class SyncExecutionResourceSpec
   /** The plan tables of the executions the start-by-id cases create, dropped after the suite. */
   private val madePlans = scala.collection.mutable.ArrayBuffer.empty[URI]
 
+  /** The console tables the `collectOperatorInfos` cases make, dropped after the suite. */
+  private val madeConsoles = scala.collection.mutable.ArrayBuffer.empty[URI]
+
   override protected def afterAll(): Unit =
-    try madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
-    finally closeConnectionPool()
+    try {
+      madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
+      madeConsoles.foreach(uri => Try(ConsoleMessageStore.drop(uri)))
+    } finally closeConnectionPool()
 
   private def insertExecution(name: String): Int = {
     import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
@@ -270,13 +280,40 @@ class SyncExecutionResourceSpec
       .getEid
   }
 
-  private def insertConsoleUri(eid: Int, opId: String, uri: String): Unit = {
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .set(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid))
-      .set(OPERATOR_EXECUTIONS.OPERATOR_ID, opId)
-      .set(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI, uri)
-      .execute()
+  /** The console table of execution `eid` of the fixture workflow, in the default warehouse. */
+  private def consoleUriOf(eid: Int): URI =
+    ConsoleMessageStore.consoleUri(
+      WorkflowIdentity(testWid.toLong),
+      ExecutionIdentity(eid.toLong),
+      None
+    )
+
+  /** A console row as a run's record stores one: `message` is whole, however long. */
+  private def consoleRow(
+      seq: Long,
+      opId: String,
+      msgType: ConsoleMessageType,
+      title: String,
+      message: String = ""
+  ): ConsoleRow =
+    ConsoleRow(
+      seq,
+      1794873600000L + seq,
+      opId,
+      s"Worker:WF$testWid-$opId-main-0",
+      msgType.name,
+      "udf.py",
+      title,
+      message
+    )
+
+  /** Makes the console table of execution `eid`, holding `rows`. */
+  private def storeConsole(eid: Int, rows: ConsoleRow*): URI = {
+    val uri = consoleUriOf(eid)
+    ConsoleMessageStore.create(uri)
+    madeConsoles += uri
+    ConsoleMessageStore.append(uri, rows)
+    uri
   }
 
   private def globalPortIdOf(opId: String): GlobalPortIdentity =
@@ -359,11 +396,14 @@ class SyncExecutionResourceSpec
     */
   private def newExecution(
       stateStore: ExecutionStateStore,
-      eid: Option[Int] = None
+      eid: Option[Int] = None,
+      warehouse: Option[String] = None
   ): WorkflowExecutionService = {
-    // Of execution `eid` when given, which its context and its metadata store then name, as a
-    // start sets them.
-    val context = new WorkflowContext()
+    // Of the fixture workflow, and of its execution `eid` when given, which its context and its
+    // metadata store then name, as a start sets them. Its console table is therefore one of
+    // this suite's, in `warehouse`.
+    val context = new WorkflowContext(workflowId = WorkflowIdentity(testWid.toLong))
+    context.warehouse = warehouse
     eid.foreach { eid =>
       context.executionId = ExecutionIdentity(eid.toLong)
       stateStore.metadataStore.updateState(_.withExecutionId(ExecutionIdentity(eid.toLong)))
@@ -641,10 +681,9 @@ class SyncExecutionResourceSpec
         )
       )
     )
-    val execution = newExecution(stateStore)
+    val execution = newExecution(stateStore, Some(quietEid))
 
     val infos = resource invokePrivate collectOperatorInfos(
-      ExecutionIdentity(consoleEid.toLong),
       execution,
       List("op-with-stats", "op-no-ports", "op-never-ran"),
       100000,
@@ -701,8 +740,7 @@ class SyncExecutionResourceSpec
     )
 
     val infos = resource invokePrivate collectOperatorInfos(
-      ExecutionIdentity(consoleEid.toLong),
-      newExecution(stateStore),
+      newExecution(stateStore, Some(quietEid)),
       List.empty,
       100000,
       20000,
@@ -740,9 +778,9 @@ class SyncExecutionResourceSpec
       )
     )
 
+    // The run's record stored nothing: every console in the answer is the one in memory.
     val infos = resource invokePrivate collectOperatorInfos(
-      ExecutionIdentity(consoleEid.toLong),
-      newExecution(stateStore),
+      newExecution(stateStore, Some(quietEid)),
       List("target"),
       100000,
       20000,
@@ -782,31 +820,99 @@ class SyncExecutionResourceSpec
     infos("silent").warnings shouldBe None
   }
 
+  it should "answer an operator's console from the lake, whole and in order, another operator's left out" in {
+    val traceback = "Traceback (most recent call last):\n" + "  File \"udf.py\"\n" * 40
+    storeConsole(
+      consoleEid,
+      consoleRow(1, "op-a", ConsoleMessageType.PRINT, "WARNING: 3 rows had no date"),
+      consoleRow(2, "op-b", ConsoleMessageType.PRINT, "another operator's line"),
+      consoleRow(3, "op-a", ConsoleMessageType.PRINT, "x" * 500),
+      consoleRow(4, "op-b", ConsoleMessageType.ERROR, "another operator's error", "its trace"),
+      consoleRow(5, "op-a", ConsoleMessageType.ERROR, "ValueError", traceback)
+    )
+    // Another execution's console, of an operator of the same name.
+    storeConsole(otherEid, consoleRow(1, "op-a", ConsoleMessageType.PRINT, "an earlier run's"))
+    val stateStore = new ExecutionStateStore()
+    stateStore.statsStore.updateState(
+      _.withOperatorInfo(Map("op-a" -> metrics(FAILED, Seq(0 -> 1L), Seq.empty)))
+    )
+    // What the sessions were shown of op-a, cut to the display length: the lake's is whole.
+    val shown = ExecutionConsoleStore(operatorConsole =
+      Map("op-a" -> console((ConsoleMessageType.PRINT, "x" * 97 + "...", "")))
+    )
+
+    val infos = resource invokePrivate collectOperatorInfos(
+      newExecution(stateStore, Some(consoleEid)),
+      List("op-a"),
+      100000,
+      20000,
+      Some(shown)
+    )
+
+    infos.keySet shouldBe Set("op-a")
+    infos("op-a").consoleLogs shouldBe Some(
+      List(
+        ConsoleMessageInfo("PRINT", "WARNING: 3 rows had no date", ""),
+        ConsoleMessageInfo("PRINT", "x" * 500, ""),
+        ConsoleMessageInfo("ERROR", "ValueError", traceback)
+      )
+    )
+    infos("op-a").error shouldBe Some(traceback)
+    infos("op-a").warnings shouldBe Some(List("WARNING: 3 rows had no date"))
+  }
+
+  it should "wait for the run's record to be written out before it reads the console from the lake" in {
+    val eid = insertExecution("console-after-the-wait")
+    val uri = storeConsole(eid)
+    // A record that stores the run's console while it is waited for, as one does whose run has
+    // just ended.
+    val waits = new ConcurrentLinkedQueue[FiniteDuration]()
+    val recorder = new RecordingExecutionRecorder {
+      override def awaitIdle(timeout: FiniteDuration): Boolean = {
+        waits.add(timeout)
+        ConsoleMessageStore.append(
+          uri,
+          Seq(consoleRow(1, "op-late", ConsoleMessageType.PRINT, "the last line"))
+        )
+        true
+      }
+    }
+    val stateStore = new ExecutionStateStore(recorder)
+
+    val infos = resource invokePrivate collectOperatorInfos(
+      newExecution(stateStore, Some(eid)),
+      List("op-late"),
+      100000,
+      20000,
+      None
+    )
+
+    infos("op-late").consoleLogs shouldBe
+      Some(List(ConsoleMessageInfo("PRINT", "the last line", "")))
+    // Once for the answer, not once for each operator, and no longer than five seconds.
+    waits.asScala.toSeq shouldBe Seq(5.seconds)
+  }
+
   it should "let a disabled-warehouse refusal reach the caller" in {
     // #6930: every other storage failure degrades into an absent result, but a kill-switch
-    // refusal must not — "no data" is indistinguishable from data loss. The URI carries an
-    // unresolvable warehouse name, which WarehouseReadGuard refuses in either flag state, so this
-    // does not depend on how the deployment has the switch set.
-    insertConsoleUri(
-      otherEid,
-      "guarded",
-      s"vfs:///wh/a%2Fb/wid/$testWid/eid/$otherEid/opid/guarded/consolemessages"
-    )
+    // refusal must not — "no data" is indistinguishable from data loss. The run's console is in
+    // the warehouse its context names, which is refused while per-user warehouses are off.
+    assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
     val stateStore = new ExecutionStateStore()
     stateStore.statsStore.updateState(
       _.withOperatorInfo(Map("guarded" -> metrics(COMPLETED, Seq.empty, Seq.empty)))
     )
 
-    a[WarehouseUnavailableException] should be thrownBy {
+    val refused = the[WarehouseUnavailableException] thrownBy {
       resource invokePrivate collectOperatorInfos(
-        ExecutionIdentity(otherEid.toLong),
-        newExecution(stateStore),
+        newExecution(stateStore, Some(otherEid), warehouse = Some("byo")),
         List("guarded"),
         100000,
         20000,
         None
       )
     }
+    refused.getMessage should include("'byo'")
   }
 
   "collectOperatorResult" should "return every row of a result that fits the char budget" in {
@@ -1000,44 +1106,6 @@ class SyncExecutionResourceSpec
     result._3 shouldBe None
     result._4 shouldBe None
     result._5 shouldBe None
-  }
-
-  "getConsoleMessageUri" should "find the console URI for one operator of one execution" in {
-    def consoleUri(eid: Int, opId: String) =
-      s"vfs:///wid/$testWid/eid/$eid/opid/$opId/consolemessages"
-
-    insertConsoleUri(consoleEid, "op-a", consoleUri(consoleEid, "op-a"))
-    insertConsoleUri(consoleEid, "op-b", consoleUri(consoleEid, "op-b"))
-    // Same operator id under a different execution: the execution predicate is what keeps this
-    // out of the answer, and a run's console must never leak into an earlier run's report.
-    insertConsoleUri(otherEid, "op-a", consoleUri(otherEid, "op-a"))
-    // A row that exists but was never given a URI (the operator produced no console output).
-    insertConsoleUri(consoleEid, "op-empty", "")
-
-    resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
-      OperatorIdentity("op-a")
-    ) shouldBe Some(URI.create(consoleUri(consoleEid, "op-a")))
-    // A second operator of the SAME execution: without the operator predicate the query matches
-    // two rows and cannot answer at all.
-    resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
-      OperatorIdentity("op-b")
-    ) shouldBe Some(URI.create(consoleUri(consoleEid, "op-b")))
-    resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(otherEid.toLong),
-      OperatorIdentity("op-a")
-    ) shouldBe Some(URI.create(consoleUri(otherEid, "op-a")))
-
-    // An empty stored URI is "nothing to read", not a URI that resolves to the storage root.
-    resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
-      OperatorIdentity("op-empty")
-    ) shouldBe None
-    resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
-      OperatorIdentity("op-absent")
-    ) shouldBe None
   }
 
   // -- running an execution the Dashboard created, by its id ---------------------------

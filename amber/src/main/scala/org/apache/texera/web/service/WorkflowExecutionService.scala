@@ -301,7 +301,7 @@ class WorkflowExecutionService(
       try {
         if (awaitsStart(run)) failure match {
           case null                                  => startEngine(run)
-          case notInstalled: EnvironmentNotInstalled => failBeforeStart(run, notInstalled)
+          case notInstalled: EnvironmentNotInstalled => failBeforeStart(notInstalled)
           case other                                 => errorHandler(other)
         }
       } catch {
@@ -328,10 +328,10 @@ class WorkflowExecutionService(
   /**
     * Ends the run before its engine starts, as one of its Python environments could not be
     * installed: FAILED, with why as its error, which names the first operator that runs in the
-    * environment and holds what the install wrote. The consoles are committed here, as the
-    * engine will report no end. A run that ended meanwhile keeps the state it ended in.
+    * environment and holds what the install wrote. A run that ended meanwhile keeps the state
+    * it ended in.
     */
-  private def failBeforeStart(run: RunServices, notInstalled: EnvironmentNotInstalled): Unit = {
+  private def failBeforeStart(notInstalled: EnvironmentNotInstalled): Unit = {
     val error = WorkflowFatalError(
       EXECUTION_FAILURE,
       Timestamp(Instant.now),
@@ -344,7 +344,6 @@ class WorkflowExecutionService(
         s"Execution ${workflowContext.executionId.id} fails before its engine starts: " +
           notInstalled.getMessage
       )
-      run.console.commitMessages()
     }
   }
 

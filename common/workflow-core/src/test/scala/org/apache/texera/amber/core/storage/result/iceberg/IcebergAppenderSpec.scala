@@ -19,9 +19,18 @@
 
 package org.apache.texera.amber.core.storage.result.iceberg
 
+import org.apache.hc.client5.http.ConnectTimeoutException
 import org.apache.iceberg.TableProperties
+import org.apache.iceberg.exceptions.{
+  CommitFailedException,
+  CommitStateUnknownException,
+  RESTException,
+  ServiceUnavailableException
+}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+
+import java.net.{ConnectException, SocketTimeoutException}
 
 class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
 
@@ -115,6 +124,100 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
 
     commitCount(table) shouldBe commitsBefore
     snapshotCount(table) shouldBe 0
+  }
+
+  // ---------------------------------------------------------------------------
+  // an append that fails
+  // ---------------------------------------------------------------------------
+
+  it should "leave no data file behind when the catalog refuses the commit, however often it is tried" in {
+    val table = newTable()
+    append(table, Seq(1L))
+    // 503, as a catalog that is overloaded answers: the commit was not made.
+    val refusing = answeringCommits(table) { _ =>
+      throw new ServiceUnavailableException("the catalog is overloaded")
+    }
+
+    (1 to 3).foreach { _ =>
+      the[ServiceUnavailableException] thrownBy append(refusing, Seq(2L, 3L)) should have message
+        "the catalog is overloaded"
+    }
+
+    // Only the file of the append that was made: a try that failed left none.
+    filesWritten(table, "rows") shouldBe dataFileNames(table)
+    readSeqs(table) shouldBe List(1L)
+    snapshotCount(table) shouldBe 1
+
+    // The append that gets through at last writes the one file the table reads.
+    append(table, Seq(2L, 3L))
+    filesWritten(table, "rows") shouldBe dataFileNames(table)
+    dataFileNames(table) should have size 2
+    readSeqs(table) shouldBe List(1L, 2L, 3L)
+  }
+
+  it should "leave no data file behind when another commit got there first" in {
+    val table = newTable()
+    // A conflict is tried again as often as the table says: not at all here.
+    table.updateProperties().set(TableProperties.COMMIT_NUM_RETRIES, "0").commit()
+    val conflicting = answeringCommits(table) { _ =>
+      throw new CommitFailedException("the table has changed")
+    }
+
+    a[CommitFailedException] should be thrownBy append(conflicting, Seq(1L))
+
+    filesWritten(table, "rows") shouldBe empty
+    readSeqs(table) shouldBe empty
+  }
+
+  it should "leave no data file behind when the catalog could not be connected to" in {
+    // The request was never sent, whether the connection was refused or timed out.
+    Seq(
+      new ConnectException("Connection refused"),
+      new ConnectTimeoutException("Connect to http://localhost:8181 timed out")
+    ).foreach { notConnected =>
+      val table = newTable()
+      val unreachable = answeringCommits(table) { _ =>
+        throw new RESTException(notConnected, "Error occurred while processing POST request")
+      }
+
+      a[RESTException] should be thrownBy append(unreachable, Seq(1L))
+
+      withClue(s"after $notConnected: ")(filesWritten(table, "rows") shouldBe empty)
+    }
+  }
+
+  it should "keep the data file when the commit's outcome is unknown, since the commit may have landed" in {
+    val table = newTable()
+    // The commit is made, and its answer is lost on the way back.
+    val answerLost = answeringCommits(table) { commit =>
+      commit()
+      throw new CommitStateUnknownException(new RuntimeException("502 Bad Gateway"))
+    }
+
+    a[CommitStateUnknownException] should be thrownBy append(answerLost, Seq(1L, 2L))
+
+    // The table reads the file: deleting it would have broken every read of the table.
+    dataFileNames(table) should have size 1
+    filesWritten(table, "rows") shouldBe dataFileNames(table)
+    readSeqs(table) shouldBe List(1L, 2L)
+  }
+
+  it should "keep the data file when the catalog's answer never came" in {
+    val table = newTable()
+    // The request was sent, and the client stopped waiting for its answer: the REST client
+    // reports that as any other failure of the connection.
+    val timingOut = answeringCommits(table) { commit =>
+      commit()
+      throw new RESTException(
+        new SocketTimeoutException("Read timed out"),
+        "Error occurred while processing POST request"
+      )
+    }
+
+    a[RESTException] should be thrownBy append(timingOut, Seq(1L, 2L))
+
+    filesWritten(table, "rows") shouldBe dataFileNames(table)
+    readSeqs(table) shouldBe List(1L, 2L)
   }
 
   "IcebergAppender.setProperties" should "set the properties in a commit that adds no snapshot" in {

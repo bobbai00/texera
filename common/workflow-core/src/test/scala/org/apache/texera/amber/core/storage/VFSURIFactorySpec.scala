@@ -82,24 +82,8 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     assert(resourceType == VFSResourceType.RUNTIME_STATISTICS)
   }
 
-  "VFSURIFactory.createConsoleMessagesURI" should "embed the operator id and the consoleMessages resource type" in {
-    val uri = VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, operatorId)
-    val path = uri.getPath
-    assert(path.contains(s"/opid/${operatorId.id}"))
-    assert(path.endsWith("/consolemessages"))
-
-    // The current `decodeURI` does not extract the operator id (it has no
-    // "opid" branch), so we only round-trip wid/eid/resourceType here.
-    val VFSUriComponents(wid, eid, globalPortIdOpt, resourceType, _) = VFSURIFactory.decodeURI(uri)
-    assert(wid == workflowId)
-    assert(eid == executionId)
-    assert(globalPortIdOpt.isEmpty)
-    assert(resourceType == VFSResourceType.CONSOLE_MESSAGES)
-  }
-
-  it should "name one table for the whole execution when it is given no operator" in {
-    val uri =
-      VFSURIFactory.createConsoleMessagesURI(WorkflowIdentity(12L), ExecutionIdentity(345L), None)
+  "VFSURIFactory.createConsoleMessagesURI" should "name one table for the whole execution, and no operator" in {
+    val uri = VFSURIFactory.createConsoleMessagesURI(WorkflowIdentity(12L), ExecutionIdentity(345L))
     assert(uri.toString == "vfs:///wid/12/eid/345/consolemessages")
     val inWarehouse = VFSURIFactory.createConsoleMessagesURI(
       WorkflowIdentity(12L),
@@ -190,12 +174,11 @@ class VFSURIFactorySpec extends AnyFlatSpec {
       VFSURIFactory.createPlanURI(workflowId, executionId) -> VFSResourceType.PLAN,
       VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId) ->
         VFSResourceType.RUNTIME_STATISTICS,
-      // An operator named "executionlog" still names a console-messages table.
-      VFSURIFactory.createConsoleMessagesURI(
-        workflowId,
-        executionId,
-        OperatorIdentity("executionlog")
-      ) -> VFSResourceType.CONSOLE_MESSAGES
+      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId) ->
+        VFSResourceType.CONSOLE_MESSAGES,
+      // A segment named "executionlog" that is not the last names no log.
+      new URI("vfs:///wid/1/eid/2/opid/executionlog/consolemessages") ->
+        VFSResourceType.CONSOLE_MESSAGES
     )
     otherTypes.foreach {
       case (uri, resourceType) =>
@@ -215,10 +198,10 @@ class VFSURIFactorySpec extends AnyFlatSpec {
       VFSURIFactory.stateURI(baseURI) -> VFSResourceType.STATE,
       VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId) ->
         VFSResourceType.RUNTIME_STATISTICS,
-      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, operatorId) ->
+      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId) ->
         VFSResourceType.CONSOLE_MESSAGES,
-      // An operator named "plan" still names a console-messages table.
-      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, OperatorIdentity("plan")) ->
+      // A segment named "plan" that is not the last names no plan.
+      new URI("vfs:///wid/1/eid/2/opid/plan/consolemessages") ->
         VFSResourceType.CONSOLE_MESSAGES
     )
     otherTypes.foreach {
@@ -276,16 +259,16 @@ class VFSURIFactorySpec extends AnyFlatSpec {
   }
 
   it should "only honour a LEADING wh segment, never one deeper in the path" in {
-    // A `wh` appearing later -- e.g. inside an operator id -- must not select a
-    // warehouse: it would disagree with DocumentFactory, which strips only a
-    // leading `wh/<name>/`, and would route the write to another user's warehouse.
+    // A `wh` appearing later must not select a warehouse: it would disagree with
+    // DocumentFactory, which strips only a leading `wh/<name>/`, and would route the
+    // write to another user's warehouse.
     assert(
       VFSURIFactory
         .decodeURI(new URI("vfs:///wid/1/eid/2/opid/a/wh/victim/b/consolemessages"))
         .warehouse
         .isEmpty
     )
-    // An operator literally named `wh` is likewise not a warehouse.
+    // A segment literally named `wh` is likewise not a warehouse.
     assert(
       VFSURIFactory
         .decodeURI(new URI("vfs:///wid/1/eid/2/opid/wh/consolemessages"))
@@ -325,17 +308,7 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     assert(components.executionId == ExecutionIdentity(2))
   }
 
-  "VFSURIFactory" should "reject an operatorId containing '/' rather than let it forge URI segments" in {
-    assertThrows[IllegalArgumentException] {
-      VFSURIFactory.createConsoleMessagesURI(
-        workflowId,
-        executionId,
-        OperatorIdentity("a/wh/victim/b")
-      )
-    }
-  }
-
-  it should "reject a warehouse name that is not safe as a URI path segment" in {
+  "VFSURIFactory" should "reject a warehouse name that is not safe as a URI path segment" in {
     Seq("a/b", "a%2Fb", "", "-lead", "sp ace").foreach { bad =>
       withClue(s"warehouse name '$bad' should be rejected: ") {
         assertThrows[IllegalArgumentException] {

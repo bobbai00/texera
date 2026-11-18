@@ -19,8 +19,10 @@
 
 package org.apache.texera.amber.util
 
+import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import org.apache.texera.amber.core.tuple.{AttributeType, LargeBinary, Schema, Tuple}
 import org.apache.texera.amber.util.IcebergUtil.toIcebergSchema
+import org.apache.texera.common.config.StorageConfig
 import org.apache.hadoop.fs.FileSystem
 import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
 import org.apache.iceberg.data.GenericRecord
@@ -30,12 +32,17 @@ import org.apache.iceberg.{Schema => IcebergSchema}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.flatspec.AnyFlatSpec
 
-import java.net.URI
+import java.net.{InetAddress, InetSocketAddress, SocketTimeoutException, URI}
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.sql.Timestamp
 import java.time.{LocalDateTime, ZoneId}
 import java.util.TimeZone
+import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
+import scala.annotation.tailrec
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 
 class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
@@ -473,6 +480,72 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
     // failure is on the server side, not from Map composition.
     intercept[RESTException] {
       IcebergUtil.createRestCatalog("test", "non-existent-warehouse")
+    }
+  }
+
+  /**
+    * Runs `body` against a REST catalog on this machine that answers every request as `answer`
+    * does, and is given the catalog's URI.
+    */
+  private def withRestCatalogAt[T](answer: HttpExchange => Unit)(body: String => T): T = {
+    val server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress, 0), 0)
+    val threads = Executors.newCachedThreadPool()
+    server.setExecutor(threads)
+    server.createContext("/", (exchange: HttpExchange) => answer(exchange))
+    server.start()
+    try body(s"http://127.0.0.1:${server.getAddress.getPort}/catalog")
+    finally {
+      server.stop(0)
+      threads.shutdownNow()
+    }
+  }
+
+  @tailrec
+  private def rootCauseOf(failure: Throwable): Throwable =
+    if (failure.getCause == null) failure else rootCauseOf(failure.getCause)
+
+  it should "fail a call that a REST catalog takes and never answers, once the socket timeout has passed" in {
+    val testOver = new CountDownLatch(1)
+    try {
+      // The catalog takes the request and says nothing, as one that hangs does.
+      withRestCatalogAt(_ => testOver.await(2, TimeUnit.MINUTES)) { uri =>
+        val startedAt = System.nanoTime()
+        val call = Future {
+          intercept[RESTException] {
+            IcebergUtil.createRestCatalog("test", "a-warehouse", uri, socketTimeoutMs = 300)
+          }
+        }(ExecutionContext.global)
+
+        // Without a limit the call never returns, and this wait fails.
+        val failure = Await.result(call, 30.seconds)
+
+        assert(rootCauseOf(failure).isInstanceOf[SocketTimeoutException])
+        assert((System.nanoTime() - startedAt) / 1000000 >= 300)
+      }
+    } finally testOver.countDown()
+  }
+
+  it should "give the REST catalog's client the configured limits for a connection and for an answer" in {
+    // A catalog that answers the one request a client makes to initialize: its configuration.
+    val config = """{"defaults": {}, "overrides": {}}""".getBytes(StandardCharsets.UTF_8)
+    withRestCatalogAt { exchange =>
+      exchange.getResponseHeaders.add("Content-Type", "application/json")
+      exchange.sendResponseHeaders(200, config.length.toLong)
+      exchange.getResponseBody.write(config)
+      exchange.close()
+    } { uri =>
+      val catalog = IcebergUtil.createRestCatalog("test", "a-warehouse", uri)
+      try {
+        val properties = catalog.properties()
+        assert(
+          properties.get("rest.client.connection-timeout-ms") ==
+            StorageConfig.icebergRESTCatalogConnectionTimeoutMs.toString
+        )
+        assert(
+          properties.get("rest.client.socket-timeout-ms") ==
+            StorageConfig.icebergRESTCatalogSocketTimeoutMs.toString
+        )
+      } finally catalog.close()
     }
   }
 }

@@ -22,9 +22,7 @@ package org.apache.texera.web.service
 import io.reactivex.rxjava3.disposables.Disposable
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
-import org.apache.texera.amber.core.storage.model.VirtualDocument
-import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
-import org.apache.texera.amber.core.tuple.Tuple
+import org.apache.texera.amber.core.storage.{DocumentFactory, RuntimeStatisticsStore}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ExecutionIdentity,
@@ -34,7 +32,6 @@ import org.apache.texera.amber.core.workflow.{PhysicalPlan, PortIdentity, Workfl
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.engine.architecture.coordinator.{
   CoordinatorConfig,
-  ExecutionStateUpdate,
   ExecutionStatsUpdate,
   FatalError,
   RuntimeStatisticsPersist,
@@ -83,28 +80,22 @@ import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 import java.sql.Timestamp
-import java.util.concurrent.ExecutorService
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
 
 /**
-  * The service class was entirely uncovered. It owns two independent outputs: the websocket
-  * diff handlers that tell the frontend what each operator is doing, and the runtime-statistics
-  * iceberg table that the dashboard replays after the execution is over.
+  * The service owns two independent outputs: the websocket diff handlers that tell the frontend
+  * what each operator is doing, and what it hands the run's record, which stores the statistics
+  * the Dashboard replays after the execution is over (`ExecutionRecorderSpec` has what the
+  * record does with them).
   *
   * Everything here runs against an empty-plan AmberClient, so no engine is involved: the test
   * fires the client events straight into the callbacks the service registered.
   *
-  * Two things about the ids below are deliberate. They must not collide with the
-  * runtime-statistics URI of any other suite, because the constructor's `createDocument`
-  * truncates whatever table is already there and sbt runs amber suites in parallel in one JVM
-  * (CostHintsLoaderSpec owns wids 9521 to 9536). They must also differ from each other, so a
-  * URI built from the wrong identity is a visibly different URI.
-  *
-  * Not covered on purpose: the catch arm around `runtimeStatsWriter.close()` (iceberg's close is
-  * a repeatable buffer flush and does not throw), and the catch arm in `storeRuntimeStatistics`
-  * (it runs on the private persist executor, which swallows anything a test could observe).
+  * The ids below are no other suite's, so the statistics table they name is this suite's to look
+  * for (CostHintsLoaderSpec owns wids 9521 to 9539). They also differ from each other, so a URI
+  * built from the wrong identity is a visibly different URI.
   */
 class ExecutionStatsServiceSpec
     extends TestKit(ActorSystem("ExecutionStatsServiceSpec"))
@@ -117,13 +108,16 @@ class ExecutionStatsServiceSpec
   private val testWid: Integer = 9107
   private val testEid: Integer = 9108
 
-  private val statsUri: URI = VFSURIFactory.createRuntimeStatisticsURI(
+  private val statsUri: URI = RuntimeStatisticsStore.statisticsUri(
     WorkflowIdentity(testWid.longValue()),
-    ExecutionIdentity(testEid.longValue())
+    ExecutionIdentity(testEid.longValue()),
+    None
   )
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
+    // Whatever an earlier build of this suite left in the catalog the tests share.
+    RuntimeStatisticsStore.drop(statsUri)
 
     val user = new User
     user.setUid(testUid)
@@ -272,28 +266,6 @@ class ExecutionStatsServiceSpec
       batch: Iterable[TexeraWebSocketEvent]
   ): Map[String, OperatorAggregatedMetrics] =
     batch.collect { case e: OperatorStatisticsUpdateEvent => e.operatorStatistics }.flatten.toMap
-
-  /**
-    * The persist callback hands its work to a private single-threaded executor. A no-op task
-    * queued behind it can only run once that work is done, which is the barrier a test needs
-    * before it closes the writer and reads the table back.
-    */
-  private def awaitPersist(service: ExecutionStatsService): Unit = {
-    val field = classOf[ExecutionStatsService].getDeclaredField("metricsPersistThread")
-    field.setAccessible(true)
-    field.get(service).asInstanceOf[ExecutorService].submit((() => ()): Runnable).get()
-  }
-
-  /** Reads the committed statistics rows. Opening (never re-creating) the document is what makes
-    * this a read: `createDocument` truncates.
-    */
-  private def persistedRows(): Seq[Tuple] =
-    DocumentFactory
-      .openDocument(statsUri)
-      ._1
-      .asInstanceOf[VirtualDocument[Tuple]]
-      .get()
-      .toSeq
 
   "the operator statistics callback" should
     "publish per-port and aggregate metrics for every operator" in {
@@ -535,73 +507,63 @@ class ExecutionStatsServiceSpec
     }
   }
 
-  "the persistence callback" should
-    "carry an operator that stopped reporting into the persisted statistics" in {
+  "the persistence callback" should "hand the run's record each report of the engine, as it came" in {
     withService { f =>
-      val opBFinal = metrics(
-        COMPLETED,
-        inputs = Seq((0, 3L, 30L)),
-        outputs = Seq((1, 4L, 40L)),
-        numWorkers = 2,
-        dataProcessingTime = 7L,
-        controlProcessingTime = 8L,
-        idleTime = 9L
-      )
-
-      f.client.fire(
-        RuntimeStatisticsPersist(
-          Map("opA" -> metrics(RUNNING, inputs = Seq((0, 1L, 10L))), "opB" -> opBFinal)
+      val first = Map(
+        "opA" -> metrics(RUNNING, inputs = Seq((0, 1L, 10L))),
+        "opB" -> metrics(
+          COMPLETED,
+          inputs = Seq((0, 3L, 30L)),
+          outputs = Seq((1, 4L, 40L)),
+          numWorkers = 2,
+          dataProcessingTime = 7L,
+          controlProcessingTime = 8L,
+          idleTime = 9L
         )
       )
-      awaitPersist(f.service)
       // opB is gone from the second report, as happens once an operator completes and stops
-      // being polled.
-      f.client.fire(RuntimeStatisticsPersist(Map("opA" -> metrics(COMPLETED))))
-      awaitPersist(f.service)
-      f.client.fire(ExecutionStateUpdate(COMPLETED))
+      // being polled: the record is told what the engine said, and keeps opB's numbers itself.
+      val second = Map("opA" -> metrics(COMPLETED))
 
-      val rows = persistedRows()
-      rows.map(_.getField[String]("operatorId")) should
-        contain theSameElementsAs Seq("opA", "opA", "opB", "opB")
+      f.client.fire(RuntimeStatisticsPersist(first))
+      f.client.fire(RuntimeStatisticsPersist(second))
 
-      // The dashboard replays these rows as a per-operator time series, so an operator that
-      // goes quiet has to keep contributing its last known numbers instead of dropping out of
-      // the chart at that point.
-      val opBRows = rows.filter(_.getField[String]("operatorId") == "opB")
-      opBRows should have size 2
-      opBRows.foreach { row =>
-        row.getField[Long]("inputTupleCnt") shouldBe 3L
-        row.getField[Long]("inputTupleSize") shouldBe 30L
-        row.getField[Long]("outputTupleCnt") shouldBe 4L
-        row.getField[Long]("outputTupleSize") shouldBe 40L
-        row.getField[Long]("dataProcessingTime") shouldBe 7L
-        row.getField[Long]("controlProcessingTime") shouldBe 8L
-        row.getField[Long]("idleTime") shouldBe 9L
-        row.getField[Int]("numWorkers") shouldBe 2
-        // COMPLETED, as a status code -- the column the dashboard colours the row by.
-        row.getField[Int]("status") shouldBe 3
-      }
+      f.recorder.samples shouldBe Seq(first, second)
+      // The record is told on the thread the engine's event came on: the service has no thread
+      // of its own, and waits for no lake.
+      f.recorder.tellers.distinct shouldBe Seq(Thread.currentThread())
     }
   }
 
-  it should "hold the statistics back until the execution reaches a terminal state" in {
-    // All three terminal states are meant to trigger the commit, and an execution reaches only
-    // one of them, so each gets its own service -- and with it a fresh statistics table.
-    Seq(COMPLETED, FAILED, KILLED).foreach { terminalState =>
-      withClue(s"terminal state $terminalState: ") {
-        withService { f =>
-          f.client.fire(RuntimeStatisticsPersist(Map("opA" -> metrics(RUNNING))))
-          awaitPersist(f.service)
-
-          // Mid-execution state changes must not commit: the writer is closed once, and closing
-          // it early would strand every later statistics row in the buffer.
-          f.client.fire(ExecutionStateUpdate(RUNNING))
-          persistedRows() shouldBe empty
-
-          f.client.fire(ExecutionStateUpdate(terminalState))
-          persistedRows() should have size 1
-        }
+  it should "show the sessions nothing: what they are shown comes with the engine's other event" in {
+    withService { f =>
+      val batches = recordBatches(f.stateStore.statsStore) {
+        f.client.fire(RuntimeStatisticsPersist(Map("opA" -> metrics(RUNNING))))
       }
+
+      batches shouldBe empty
+      f.stateStore.statsStore.getState.operatorInfo shouldBe empty
+    }
+  }
+
+  it should "leave what the sessions are shown out of the run's record" in {
+    // The engine reports to the sessions twice a second, and to the record every two.
+    withService { f =>
+      f.client.fire(ExecutionStatsUpdate(Map("opA" -> metrics(RUNNING))))
+
+      f.recorder.samples shouldBe empty
+    }
+  }
+
+  "the service" should "write nothing to the lake itself: the run's record makes the statistics table" in {
+    // The record here keeps what it is told and writes nothing, so a table could only be the
+    // service's own.
+    withService { f =>
+      f.client.fire(RuntimeStatisticsPersist(Map("opA" -> metrics(RUNNING))))
+      f.client.fire(ExecutionStatsUpdate(Map("opA" -> metrics(COMPLETED))))
+      f.stateStore.transitionTo(COMPLETED) shouldBe true
+
+      DocumentFactory.documentExists(statsUri) shouldBe false
     }
   }
 }

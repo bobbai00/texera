@@ -24,9 +24,9 @@ import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionResultUris,
   FileResolver,
+  RuntimeStatisticsStore,
   WarehouseReadGuard
 }
-import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity._
 import org.apache.texera.amber.core.workflow.GlobalPortIdentity
 import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination, ReplayLogRecord}
@@ -265,6 +265,10 @@ object WorkflowExecutionsResource {
     restrictionMap.toMap
   }
 
+  /**
+    * Registers the console table at `uri` for execution `eid`, under `opId`. Registering it
+    * again under the same `opId` changes nothing.
+    */
   def insertOperatorExecutions(
       eid: Long,
       opId: String,
@@ -278,6 +282,7 @@ object WorkflowExecutionsResource {
         OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI
       )
       .values(eid.toInt, opId, uri.toString)
+      .onConflictDoNothing()
       .execute()
   }
 
@@ -432,7 +437,9 @@ object WorkflowExecutionsResource {
   }
 
   /**
-    * Updates the size of the runtime statistics stored via Iceberg document.
+    * Updates the size of the runtime statistics stored via Iceberg document. Nothing is
+    * measured while the statistics table is not there: a run's record makes it on a thread of
+    * its own, which may be later than the run's first result.
     *
     * @param eid Execution ID associated with the runtime statistics document.
     */
@@ -444,7 +451,7 @@ object WorkflowExecutionsResource {
       .fetchOptionalInto(classOf[String])
       .map(URI.create)
 
-    if (statsUriOpt.isPresent) {
+    if (statsUriOpt.isPresent && DocumentFactory.documentExists(statsUriOpt.get)) {
       updateRuntimeStatsSize(
         eid,
         DocumentFactory.openDocument(statsUriOpt.get)._1.getTotalFileSize
@@ -712,27 +719,26 @@ class WorkflowExecutionsResource {
     val uri: URI = new URI(uriString)
     // Refuse to read per-user-warehouse statistics while the feature is off (#6930).
     WarehouseReadGuard.assertReadable(uri)
-    val document = DocumentFactory.openDocument(uri)._1
 
-    // Read all records from Iceberg and convert to WorkflowRuntimeStatistics
-    document
-      .get()
-      .map(tuple => {
-        val record = tuple.asInstanceOf[Tuple]
+    // The rows as the run's record stored them, oldest first; none from a table written before
+    // statistics were stored as they are now.
+    RuntimeStatisticsStore
+      .read(uri)
+      .map(row =>
         WorkflowRuntimeStatistics(
-          operatorId = record.getField(0).asInstanceOf[String],
-          timestamp = record.getField(1).asInstanceOf[Timestamp],
-          inputTupleCount = record.getField(2).asInstanceOf[Long],
-          inputTupleSize = record.getField(3).asInstanceOf[Long],
-          outputTupleCount = record.getField(4).asInstanceOf[Long],
-          outputTupleSize = record.getField(5).asInstanceOf[Long],
-          dataProcessingTime = record.getField(6).asInstanceOf[Long],
-          controlProcessingTime = record.getField(7).asInstanceOf[Long],
-          idleTime = record.getField(8).asInstanceOf[Long],
-          numWorkers = record.getField(9).asInstanceOf[Int],
-          status = record.getField(10).asInstanceOf[Int]
+          operatorId = row.operatorId,
+          timestamp = new Timestamp(row.timeMs),
+          inputTupleCount = row.inputTupleCnt,
+          inputTupleSize = row.inputTupleSize,
+          outputTupleCount = row.outputTupleCnt,
+          outputTupleSize = row.outputTupleSize,
+          dataProcessingTime = row.dataProcessingTime,
+          controlProcessingTime = row.controlProcessingTime,
+          idleTime = row.idleTime,
+          numWorkers = row.numWorkers,
+          status = row.status
         )
-      })
+      )
       .toList
   }
 
