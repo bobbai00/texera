@@ -157,11 +157,16 @@ class ComputingUnitIdleCleanupSpec
     unit
   }
 
+  /**
+    * An execution on `unit`, open unless `endedMinutesBefore` says when it was closed, as
+    * `outcome`. The sweep reads nothing else of it: `status` is what a unit last wrote there.
+    */
   private def insertExecution(
       unit: WorkflowComputingUnit,
-      status: Short,
       startingMinutesBefore: Long,
-      lastUpdateMinutesBefore: Option[Long] = None
+      endedMinutesBefore: Option[Long] = None,
+      outcome: Short = 3,
+      status: Short = 1
   ): Unit = {
     val execution = new WorkflowExecutions
     execution.setVid(testVersion.getVid)
@@ -169,9 +174,10 @@ class ComputingUnitIdleCleanupSpec
     execution.setCuid(unit.getCuid)
     execution.setStatus(status)
     execution.setStartingTime(timestampMinutesBefore(startingMinutesBefore))
-    lastUpdateMinutesBefore.foreach(minutes =>
-      execution.setLastUpdateTime(timestampMinutesBefore(minutes))
-    )
+    endedMinutesBefore.foreach { minutes =>
+      execution.setOutcome(outcome)
+      execution.setEndedAt(timestampMinutesBefore(minutes))
+    }
     execution.setBookmarked(false)
     execution.setName("execution-" + UUID.randomUUID().toString.substring(0, 8))
     execution.setEnvironmentVersion("test-env")
@@ -212,14 +218,9 @@ class ComputingUnitIdleCleanupSpec
     val local = insertComputingUnit("local", WorkflowComputingUnitTypeEnum.local)
     val alreadyTerminated = insertComputingUnit("already-terminated", terminated = true)
 
-    insertExecution(active, status = 1, startingMinutesBefore = 180)
-    insertExecution(
-      recent,
-      status = 3,
-      startingMinutesBefore = 180,
-      lastUpdateMinutesBefore = Some(5)
-    )
-    insertExecution(local, status = 3, startingMinutesBefore = 180)
+    insertExecution(active, startingMinutesBefore = 180)
+    insertExecution(recent, startingMinutesBefore = 180, endedMinutesBefore = Some(5))
+    insertExecution(local, startingMinutesBefore = 180, endedMinutesBefore = Some(180))
 
     val k8s = stubKubernetesClient()
     val terminated = ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
@@ -248,7 +249,7 @@ class ComputingUnitIdleCleanupSpec
 
   it should "never touch the cluster when no unit is idle" in {
     val active = insertComputingUnit("active-only")
-    insertExecution(active, status = 1, startingMinutesBefore = 180)
+    insertExecution(active, startingMinutesBefore = 180)
     val k8s = stubKubernetesClient()
 
     ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
@@ -301,12 +302,12 @@ class ComputingUnitIdleCleanupSpec
       WorkflowComputingUnitTerminationReasonEnum.GARBAGE_COLLECTED
   }
 
-  it should "keep units whose latest execution may still be running" in {
-    // 0/1/2 are UNINITIALIZED-or-READY, RUNNING and PAUSED; -1 is what maptoStatusCode collapses
-    // PAUSING, RESUMING, UNKNOWN and TERMINATED to. None of them may be read as idle.
-    val units = Seq[Short](0, 1, 2, -1).map { status =>
-      val unit = insertComputingUnit(s"active-status-$status")
-      insertExecution(unit, status = status, startingMinutesBefore = 180)
+  it should "keep a unit that has an open execution, whatever state its run is in" in {
+    // An open execution has no closing record. What its row's status says is not read: the
+    // unit that wrote it may be gone, and 3 here is a run that ended and is not closed yet.
+    val units = Seq[Short](0, 1, 2, -1, 3, 6).map { status =>
+      val unit = insertComputingUnit(s"open-status-$status")
+      insertExecution(unit, startingMinutesBefore = 180, status = status)
       unit
     }
     val k8s = stubKubernetesClient()
@@ -323,15 +324,23 @@ class ComputingUnitIdleCleanupSpec
     )
   }
 
-  it should "garbage collect a unit whose latest execution finished past the timeout" in {
-    // 3/4/5 are COMPLETED, FAILED and KILLED -- the terminal codes, so the unit counts as idle.
-    Seq[Short](3, 4, 5).foreach { status =>
-      val stale = insertComputingUnit(s"stale-status-$status")
+  it should "garbage collect a unit whose executions were all closed past the timeout" in {
+    // However they ended, and whatever status the unit left in the row: 1 is a run whose unit
+    // was lost while it ran.
+    Seq[Short](3, 4, 5).foreach { outcome =>
+      val stale = insertComputingUnit(s"stale-outcome-$outcome")
       insertExecution(
         stale,
-        status = status,
+        startingMinutesBefore = 240,
+        endedMinutesBefore = Some(200),
+        outcome = outcome
+      )
+      insertExecution(
+        stale,
         startingMinutesBefore = 180,
-        lastUpdateMinutesBefore = Some(90)
+        endedMinutesBefore = Some(90),
+        outcome = outcome,
+        status = 1
       )
       val k8s = stubKubernetesClient()
 
@@ -350,27 +359,11 @@ class ComputingUnitIdleCleanupSpec
     }
   }
 
-  it should "garbage collect a unit whose only open execution was created and never started" in {
-    // 6 is CREATED: the Dashboard service made the execution and no unit started it. It may
-    // never be started, so it does not hold its unit for good.
-    val stale = insertComputingUnit("stale-created-only")
-    insertExecution(stale, status = 6, startingMinutesBefore = 180)
-    val k8s = stubKubernetesClient()
-
-    val terminated = ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
-      idleTimeoutMinutes,
-      now,
-      k8s
-    )
-
-    terminated.map(_.cuid) shouldBe List(stale.getCuid)
-    verify(k8s).deletePod(stale.getCuid)
-  }
-
-  it should "keep a unit an execution was created for within the timeout" in {
-    // The execution may be started any moment: its creation counts as activity.
-    val unit = insertComputingUnit("fresh-created")
-    insertExecution(unit, status = 6, startingMinutesBefore = 5)
+  it should "keep a unit one of whose executions was closed within the timeout" in {
+    val unit = insertComputingUnit("closed-recently")
+    insertExecution(unit, startingMinutesBefore = 240, endedMinutesBefore = Some(200))
+    // Long running, and over only now: the time it was created at is past the timeout.
+    insertExecution(unit, startingMinutesBefore = 180, endedMinutesBefore = Some(59))
     val k8s = stubKubernetesClient()
 
     ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
@@ -381,6 +374,35 @@ class ComputingUnitIdleCleanupSpec
 
     verify(k8s, never()).deletePod(anyInt())
     workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
+  }
+
+  it should "keep a unit whose execution no unit has started until the execution is closed" in {
+    // This service reads no lake, so it cannot tell an execution that waits for its start from
+    // one that runs. The Dashboard service closes one that is never started, as failed, and
+    // only then is its unit idle.
+    val unit = insertComputingUnit("created-only")
+    insertExecution(unit, startingMinutesBefore = 180, status = 6)
+    val k8s = stubKubernetesClient()
+
+    ComputingUnitManagingResource.terminateIdleKubernetesComputingUnits(
+      idleTimeoutMinutes,
+      now,
+      k8s
+    ) shouldBe empty
+    verify(k8s, never()).deletePod(anyInt())
+
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, java.lang.Short.valueOf(4.toShort))
+      .set(WORKFLOW_EXECUTIONS.OUTCOME_REASON, "never started")
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, timestampMinutesBefore(170))
+      .where(WORKFLOW_EXECUTIONS.CUID.eq(unit.getCuid))
+      .execute()
+
+    ComputingUnitManagingResource
+      .terminateIdleKubernetesComputingUnits(idleTimeoutMinutes, now, k8s)
+      .map(_.cuid) shouldBe List(unit.getCuid)
+    verify(k8s).deletePod(unit.getCuid)
   }
 
   it should "omit an empty owner name from terminated unit info" in {
@@ -416,7 +438,7 @@ class ComputingUnitIdleCleanupSpec
     val (candidate, cutoff) = scanCandidate(unit)
 
     // The user starts a workflow on the unit after the scan listed it as idle.
-    insertExecution(unit, status = 1, startingMinutesBefore = 0)
+    insertExecution(unit, startingMinutesBefore = 0)
 
     val k8s = stubKubernetesClient()
     ComputingUnitManagingResource.terminateIdleKubernetesComputingUnitCandidate(
@@ -430,38 +452,39 @@ class ComputingUnitIdleCleanupSpec
     workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
   }
 
-  it should "leave a unit alone when an execution is created for it after the scan" in {
-    // Not a run in progress, so the status half of the guard does not fire -- only the time the
-    // execution was created places it at or after the cutoff.
+  it should "leave a unit alone when an execution created for it after the scan is closed at once" in {
+    // A create that fails closes its own execution, so the open half of the guard does not
+    // fire -- only the times of the execution place it at or after the cutoff.
     val unit = insertComputingUnit("raced-execution-created")
-    val (candidate, cutoff) = scanCandidate(unit)
-
-    insertExecution(unit, status = 6, startingMinutesBefore = 0)
-
-    val k8s = stubKubernetesClient()
-    ComputingUnitManagingResource.terminateIdleKubernetesComputingUnitCandidate(
-      candidate,
-      cutoff,
-      now,
-      k8s
-    ) shouldBe None
-
-    verifyNoInteractions(k8s)
-    workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
-  }
-
-  it should "leave a unit alone when an execution finished after the scan" in {
-    // Terminal status, so the status half of the guard does not fire -- only the activity
-    // timestamps place the execution at or after the cutoff.
-    val unit = insertComputingUnit("raced-run-finished")
     val (candidate, cutoff) = scanCandidate(unit)
 
     insertExecution(
       unit,
-      status = 3,
-      startingMinutesBefore = 1,
-      lastUpdateMinutesBefore = Some(1)
+      startingMinutesBefore = 0,
+      endedMinutesBefore = Some(0),
+      outcome = 4,
+      status = 6
     )
+
+    val k8s = stubKubernetesClient()
+    ComputingUnitManagingResource.terminateIdleKubernetesComputingUnitCandidate(
+      candidate,
+      cutoff,
+      now,
+      k8s
+    ) shouldBe None
+
+    verifyNoInteractions(k8s)
+    workflowComputingUnitDao.fetchOneByCuid(unit.getCuid).getTerminateTime shouldBe null
+  }
+
+  it should "leave a unit alone when an execution was closed after the scan" in {
+    // Closed, and created long before the cutoff, so neither the open half of the guard nor the
+    // time it was created fires -- only the time it ended places it at or after the cutoff.
+    val unit = insertComputingUnit("raced-run-finished")
+    val (candidate, cutoff) = scanCandidate(unit)
+
+    insertExecution(unit, startingMinutesBefore = 180, endedMinutesBefore = Some(1))
 
     val k8s = stubKubernetesClient()
     ComputingUnitManagingResource.terminateIdleKubernetesComputingUnitCandidate(
@@ -506,12 +529,7 @@ class ComputingUnitIdleCleanupSpec
     val unit = insertComputingUnit("unraced")
     val (candidate, cutoff) = scanCandidate(unit)
     // A stale execution, still entirely before the cutoff, must not trip the guard.
-    insertExecution(
-      unit,
-      status = 3,
-      startingMinutesBefore = 180,
-      lastUpdateMinutesBefore = Some(90)
-    )
+    insertExecution(unit, startingMinutesBefore = 180, endedMinutesBefore = Some(90))
 
     val k8s = stubKubernetesClient()
     ComputingUnitManagingResource
@@ -553,7 +571,7 @@ class ComputingUnitIdleCleanupSpec
 
     ComputingUnitManagingResource.lastComputingUnitActivityTime(
       unit,
-      latestUpdateTime = Some(timestampMinutesBefore(10)),
+      latestEndTime = Some(timestampMinutesBefore(10)),
       latestStartTime = Some(timestampMinutesBefore(30))
     ) shouldBe timestampMinutesBefore(10)
   }
@@ -564,13 +582,13 @@ class ComputingUnitIdleCleanupSpec
 
     ComputingUnitManagingResource.lastComputingUnitActivityTime(
       unit,
-      latestUpdateTime = None,
+      latestEndTime = None,
       latestStartTime = Some(timestampMinutesBefore(30))
     ) shouldBe timestampMinutesBefore(30)
 
     ComputingUnitManagingResource.lastComputingUnitActivityTime(
       unit,
-      latestUpdateTime = None,
+      latestEndTime = None,
       latestStartTime = None
     ) shouldBe timestampMinutesBefore(120)
   }

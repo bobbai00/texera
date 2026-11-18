@@ -41,7 +41,7 @@ import org.apache.texera.common.config.{
   KubernetesConfig,
   StorageConfig
 }
-import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.jooq.generated.Tables.{
   USER,
@@ -92,45 +92,25 @@ object ComputingUnitManagingResource {
   )
 
   /**
-    * The statuses of an execution that no unit is running
-    * ([[WorkflowExecutionStatus.NotRunning]]): one that has ended, or that the Dashboard service
-    * created and no unit has started, which may never be started. The sweep treats every other
-    * status as an execution still in flight. That direction matters: PAUSING, RESUMING, UNKNOWN
-    * and TERMINATED are all recorded as [[WorkflowExecutionStatus.Unknown]], so enumerating the
-    * statuses of a run in flight instead would leave a paused-or-resuming execution looking idle
-    * and get its computing unit deleted out from under its owner.
+    * What the idle sweep reads of a unit's executions: their closing records, which the
+    * Dashboard service writes. An execution with none is open, and keeps its unit off the
+    * sweep: its run may be in flight, whatever state it is in. A closed execution counts as
+    * activity when it was created and when it ended, so a unit is not terminated right after
+    * a run.
     *
-    * An execution that is not running still counts as activity at the time it was created or
-    * last updated, so a unit is not terminated between the create of an execution and its start.
-    *
-    * Known limitation: a status of a run in flight is trusted without a time bound, so a row
-    * that never ends keeps its computing unit off this sweep indefinitely -- not for one more
-    * sweep, but permanently. Two ways in:
-    *   - a row left stuck at RUNNING -- a coordinator that died in place, an OOM inside the
-    *     container -- because nothing ever rewrites it;
-    *   - a row whose *final* status is Unknown, because an execution that ended in a state with
-    *     no code of its own is recorded like one that is merely pausing. Today that is UNKNOWN,
-    *     the fallback `WorkflowExecution.getState` returns for a worker mix it cannot name.
-    *     TERMINATED is recorded as Unknown as well, but is a worker-level state:
-    *     `ExecutionUtils.aggregateStates` reports a COMPLETED-or-TERMINATED worker set as
-    *     COMPLETED, so it does not reach this column today. If amber ever persists it, it lands
-    *     in this same bucket.
-    * Neither is separable here -- an Unknown carries nothing that distinguishes an ended
-    * execution from a live one, so the fix belongs in what amber persists. Nothing else reclaims
-    * such a unit either: `ComputingUnitHelpers.reconcileVanishedKubernetesUnits` only runs when
-    * someone calls a listing endpoint, and it keys off a vanished pod rather than a stale
-    * execution row. Tracked as a follow-up in apache/texera#8618.
+    * Every execution is closed in the end, so none keeps a unit for ever: the Dashboard service
+    * closes a run whose unit shows no sign of life as lost, and an execution that no unit
+    * started in time as never started (apache/texera#8618). Until it does, such an execution
+    * is open here too: this service reads no lake, so it cannot tell an execution that waits
+    * for its start from one that runs.
     */
-  private[resource] val notRunningExecutionStatuses: Seq[java.lang.Short] =
-    WorkflowExecutionStatus.NotRunning.toSeq.map(Short.box)
-
   private[resource] def lastComputingUnitActivityTime(
       unit: WorkflowComputingUnit,
-      latestUpdateTime: Option[Timestamp],
+      latestEndTime: Option[Timestamp],
       latestStartTime: Option[Timestamp]
   ): Timestamp =
     Seq(
-      latestUpdateTime,
+      latestEndTime,
       latestStartTime,
       Option(unit.getCreationTime)
     ).flatten.maxBy(_.getTime)
@@ -175,22 +155,23 @@ object ComputingUnitManagingResource {
   private[resource] def idleKubernetesComputingUnitCandidates(
       cutoff: Timestamp
   ): List[IdleComputingUnitCandidate] = {
-    // All three questions asked per computing unit -- is any execution still active, when did an
-    // execution last report progress, when did one last start -- are aggregates over the same rows
-    // grouped by the same key, so one grouped query answers them for every unit at once. The left
-    // joins keep units that have no executions (both max() are NULL) and units whose owner row is
+    // All three questions asked per computing unit -- is any execution still open, when did an
+    // execution last end, when did one last start -- are aggregates over the same rows grouped
+    // by the same key, so one grouped query answers them for every unit at once. The left joins
+    // keep units that have no executions (both max() are NULL) and units whose owner row is
     // gone (name is NULL), matching what a per-unit scan would produce.
-    val latestUpdateTime = max(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME)
+    val latestEndTime = max(WORKFLOW_EXECUTIONS.ENDED_AT)
     val latestStartTime = max(WORKFLOW_EXECUTIONS.STARTING_TIME)
+    // A unit with no execution is joined to a row of nulls, which is no open execution.
     val hasActiveExecution =
-      boolOr(WORKFLOW_EXECUTIONS.STATUS.notIn(notRunningExecutionStatuses: _*))
+      boolOr(WORKFLOW_EXECUTIONS.EID.isNotNull.and(WORKFLOW_EXECUTIONS.ENDED_AT.isNull))
 
     withTransaction(context) { ctx =>
       ctx
         .select(
           WORKFLOW_COMPUTING_UNIT.asterisk(),
           USER.NAME,
-          latestUpdateTime,
+          latestEndTime,
           latestStartTime,
           hasActiveExecution
         )
@@ -211,11 +192,10 @@ object ComputingUnitManagingResource {
           val unit = record.into(WORKFLOW_COMPUTING_UNIT).into(classOf[WorkflowComputingUnit])
           val lastExecutionTime = lastComputingUnitActivityTime(
             unit,
-            Option(record.get(latestUpdateTime)),
+            Option(record.get(latestEndTime)),
             Option(record.get(latestStartTime))
           )
 
-          // bool_or over zero matching executions yields NULL, which means "no active execution"
           val active = Option(record.get(hasActiveExecution)).exists(_.booleanValue())
           if (shouldTerminateIdleComputingUnit(active, lastExecutionTime, cutoff)) {
             Some(
@@ -233,8 +213,8 @@ object ComputingUnitManagingResource {
   }
 
   /**
-    * Every execution row that would have kept `cuid` out of the scan's result: one that may be
-    * running, or one whose activity lands at or after `cutoff`. Re-asserted inside the
+    * Every execution row that would have kept `cuid` out of the scan's result: one that is
+    * open, or one that was created or ended at or after `cutoff`. Re-asserted inside the
     * terminating UPDATE so a run started between the scan and the update takes the unit off the
     * table -- the scan reads every candidate before terminating any of them, so that window is as
     * wide as the whole sweep, not an instant.
@@ -247,10 +227,9 @@ object ComputingUnitManagingResource {
           WORKFLOW_EXECUTIONS.CUID
             .eq(cuid)
             .and(
-              WORKFLOW_EXECUTIONS.STATUS
-                .notIn(notRunningExecutionStatuses: _*)
+              WORKFLOW_EXECUTIONS.ENDED_AT.isNull
                 .or(WORKFLOW_EXECUTIONS.STARTING_TIME.ge(cutoff))
-                .or(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME.ge(cutoff))
+                .or(WORKFLOW_EXECUTIONS.ENDED_AT.ge(cutoff))
             )
         )
     )

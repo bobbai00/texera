@@ -46,10 +46,4 @@ object WorkflowExecutionStatus {
 
   /** The codes of an execution that has ended. */
   val Ended: Set[Short] = Set(Completed, Failed, Killed)
-
-  /**
-    * The codes of an execution that no computing unit is running: one that has ended, or that
-    * none has started. Any other code, [[Unknown]] included, may be of a run in progress.
-    */
-  val NotRunning: Set[Short] = Ended + Created
 }
