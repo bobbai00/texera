@@ -25,6 +25,7 @@ import org.apache.texera.amber.core.storedplan.{
   StoredPhysicalOp,
   StoredPhysicalPlan
 }
+import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
   OperatorIdentity,
@@ -222,5 +223,111 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     whileCatalogUnavailable {
       a[ServiceUnavailableException] should be thrownBy ExecutionTables.storedBytes(log)
     }
+  }
+
+  /** Makes the table at each of `uris`, as a run's writers do. */
+  private def made(uris: URI*): Seq[URI] = {
+    uris.foreach(DocumentFactory.createDocument(_, Schema().add("line", AttributeType.STRING)))
+    uris
+  }
+
+  /** A table of execution `eid`, of workflow `wid`, that no function of today's names. */
+  private def odd(eid: ExecutionIdentity, rest: String, wid: WorkflowIdentity = workflowId): URI =
+    new URI(s"vfs:///wid/${wid.id}/eid/${eid.id}/$rest")
+
+  "ExecutionTables.exists and drop" should "tell and drop the table at a URI, and answer false where there is none" in {
+    val eid = freshExecution()
+    val result = VFSURIFactory.resultURI(locationOf(eid, port("scan", 0)))
+    val state = VFSURIFactory.stateURI(locationOf(eid, port("scan", 0)))
+
+    ExecutionTables.exists(result) shouldBe false
+    ExecutionTables.drop(result) shouldBe false
+
+    made(result, state)
+    ExecutionTables.exists(result) shouldBe true
+    ExecutionTables.drop(result) shouldBe true
+    ExecutionTables.exists(result) shouldBe false
+    // The port's other table is another table.
+    ExecutionTables.exists(state) shouldBe true
+    ExecutionTables.drop(result) shouldBe false
+  }
+
+  it should "throw, not answer false, when the catalog cannot answer" in {
+    val result = made(VFSURIFactory.resultURI(locationOf(freshExecution(), port("scan", 0)))).head
+
+    whileCatalogUnavailable {
+      a[ServiceUnavailableException] should be thrownBy ExecutionTables.exists(result)
+      a[ServiceUnavailableException] should be thrownBy ExecutionTables.drop(result)
+    }
+    ExecutionTables.exists(result) shouldBe true
+  }
+
+  "ExecutionTables.dropNamed" should "drop the execution's tables of the kinds asked for, whatever names them, and no other's" in {
+    val eid = ExecutionIdentity(3)
+    val base = locationOf(eid, port("scan", 0))
+    val (result, state) = (VFSURIFactory.resultURI(base), VFSURIFactory.stateURI(base))
+    val console = ConsoleMessageStore.consoleUri(workflowId, eid, None)
+    // One console table per operator, as executions once kept them.
+    val operatorConsole = odd(eid, "opid/scan/consolemessages")
+    val statistics = RuntimeStatisticsStore.statisticsUri(workflowId, eid, None)
+    val plan = writtenPlan(eid, Seq(Seq(base.toString)))
+    made(result, state, console, operatorConsole, statistics)
+    // Execution 34's, whose names start as execution 3's do up to the id; and execution 3 of
+    // workflow 120, whose names end as those of execution 3 of workflow 12 do.
+    val others = made(
+      VFSURIFactory.resultURI(locationOf(ExecutionIdentity(34), port("scan", 0))),
+      ConsoleMessageStore.consoleUri(workflowId, ExecutionIdentity(34), None),
+      VFSURIFactory.resultURI(locationOf(eid, port("scan", 0), wid = WorkflowIdentity(120))),
+      ConsoleMessageStore.consoleUri(WorkflowIdentity(120), eid, None)
+    )
+
+    val dropped = ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.ProducedKinds)
+
+    dropped should have size 4
+    all(dropped) should startWith("wid_12_eid_3_")
+    dropped should contain allOf (
+      "wid_12_eid_3_consolemessages",
+      "wid_12_eid_3_opid_scan_consolemessages"
+    )
+    Seq(result, state, console, operatorConsole).foreach { uri =>
+      withClue(s"$uri: ") { ExecutionTables.exists(uri) shouldBe false }
+    }
+    // Not of the kinds asked for.
+    Seq(statistics, plan).foreach(uri =>
+      withClue(s"$uri: ") {
+        ExecutionTables.exists(uri) shouldBe true
+      }
+    )
+    others.foreach(uri => withClue(s"$uri: ") { ExecutionTables.exists(uri) shouldBe true })
+    // A second time there is nothing left to find.
+    ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.ProducedKinds) shouldBe Nil
+
+    ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.AllKinds) should
+      contain theSameElementsAs Seq("wid_12_eid_3_runtimestatistics", "wid_12_eid_3_plan")
+    Seq(statistics, plan).foreach(uri =>
+      withClue(s"$uri: ") {
+        ExecutionTables.exists(uri) shouldBe false
+      }
+    )
+  }
+
+  it should "drop nothing for an execution that has no table" in {
+    ExecutionTables.dropNamed(
+      workflowId,
+      freshExecution(),
+      Some(warehouse),
+      ExecutionTables.AllKinds
+    ) shouldBe Nil
+  }
+
+  it should "throw, not drop nothing, when the catalog cannot answer" in {
+    val eid = freshExecution()
+    val result = made(VFSURIFactory.resultURI(locationOf(eid, port("scan", 0)))).head
+
+    whileCatalogUnavailable {
+      a[ServiceUnavailableException] should be thrownBy
+        ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.ProducedKinds)
+    }
+    ExecutionTables.exists(result) shouldBe true
   }
 }

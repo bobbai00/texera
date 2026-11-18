@@ -29,13 +29,15 @@ import org.apache.texera.amber.core.storage.VFSURIFactory.{VFS_FILE_URI_SCHEME, 
 import org.apache.texera.amber.core.storage.model._
 import org.apache.texera.amber.core.storage.result.iceberg.IcebergDocument
 import org.apache.texera.amber.core.tuple.{Schema, Tuple}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.util.IcebergUtil
-import org.apache.iceberg.catalog.TableIdentifier
+import org.apache.iceberg.catalog.{Namespace, TableIdentifier}
 import org.apache.iceberg.data.Record
 import org.apache.iceberg.exceptions.{NoSuchNamespaceException, NoSuchTableException}
 import org.apache.iceberg.{Table, Schema => IcebergSchema}
 
 import java.net.URI
+import scala.jdk.CollectionConverters._
 
 object DocumentFactory {
 
@@ -202,6 +204,35 @@ object DocumentFactory {
           s"Unsupported URI scheme: $unsupportedScheme for dropping the table"
         )
     }
+
+  /**
+    * Drops every table that execution `eid` of workflow `wid` has in the namespace of
+    * `resourceType`, in `warehouse` (None: the default), going by the tables' names: a table
+    * is named after the path of its URI, which starts with its workflow and its execution. So
+    * it finds a table that nothing else names, at the cost of listing the namespace.
+    *
+    * @return the names of the tables dropped; none when there is no such namespace. A catalog
+    *         that cannot answer is thrown.
+    */
+  private[storage] def dropTablesOf(
+      wid: WorkflowIdentity,
+      eid: ExecutionIdentity,
+      warehouse: Option[String],
+      resourceType: VFSResourceType.Value
+  ): Seq[String] = {
+    val catalog = IcebergCatalogInstance.getInstance(warehouse)
+    // What the name of each of the execution's tables starts with, as its plan table's does.
+    // The separator after the execution's id keeps execution 3 apart from 34.
+    val prefix = sanitizeURIPath(VFSURIFactory.createPlanURI(wid, eid))
+      .stripSuffix(PLAN.toString.toLowerCase)
+    val named =
+      try catalog.listTables(Namespace.of(resolveNamespace(resourceType))).asScala.toSeq
+      catch { case _: NoSuchNamespaceException => Seq.empty }
+    named
+      .filter(_.name().startsWith(prefix))
+      .filter(table => catalog.dropTable(table))
+      .map(_.name())
+  }
 
   /**
     * Return the document at `uri`: when `reuseExisting` is set and a document
