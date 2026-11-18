@@ -29,7 +29,6 @@ import JSZip from "jszip";
 import { exportedWorkflow, Workflow } from "../../../../common/type/workflow";
 import { HttpClient, HttpResponse } from "@angular/common/http";
 import { WORKFLOW_EXECUTIONS_API_BASE_URL } from "../workflow-executions/workflow-executions.service";
-import { DashboardWorkflowComputingUnit } from "../../../../common/type/workflow-computing-unit";
 import { TOKEN_KEY } from "../../../../common/service/user/auth.service";
 
 export const EXPORT_BASE_URL = "result/export";
@@ -164,7 +163,8 @@ export class DownloadService {
   }
 
   /**
-   * Export the workflow result to specified dataset(s).
+   * Export the results of one execution of the workflow to specified dataset(s). The Dashboard service reads
+   * them from what the execution stored, so no computing unit is named, and none is needed.
    */
   public exportWorkflowResultToDataset(
     exportType: string,
@@ -178,9 +178,8 @@ export class DownloadService {
     rowIndex: number,
     columnIndex: number,
     filename: string,
-    unit: DashboardWorkflowComputingUnit // computing unit for cluster setting
+    executionId: number // the execution whose results are exported
   ): Observable<HttpResponse<Blob> | HttpResponse<ExportWorkflowJsonResponse>> {
-    const computingUnitId = unit.computingUnit.cuid;
     const requestBody = {
       exportType,
       workflowId,
@@ -190,13 +189,10 @@ export class DownloadService {
       rowIndex,
       columnIndex,
       filename,
-      computingUnitId,
+      executionId,
     };
 
-    const urlPath =
-      unit && unit.computingUnit.type == "kubernetes" && unit.computingUnit?.cuid
-        ? `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/dataset?cuid=${unit.computingUnit.cuid}`
-        : `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/dataset`;
+    const urlPath = `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/dataset`;
 
     return this.http.post<ExportWorkflowJsonResponse>(urlPath, requestBody, {
       responseType: "json",
@@ -209,7 +205,8 @@ export class DownloadService {
   }
 
   /**
-   * Export the workflow result to local filesystem. The export is handled by the browser.
+   * Export the results of one execution of the workflow to local filesystem. The export is handled by the
+   * browser.
    */
   public exportWorkflowResultToLocal(
     exportType: string,
@@ -222,9 +219,8 @@ export class DownloadService {
     rowIndex: number,
     columnIndex: number,
     filename: string,
-    unit: DashboardWorkflowComputingUnit // computing unit for cluster setting
+    executionId: number // the execution whose results are exported
   ): void {
-    const computingUnitId = unit.computingUnit.cuid;
     const datasetIds: number[] = [];
     const requestBody = {
       exportType,
@@ -235,14 +231,11 @@ export class DownloadService {
       rowIndex,
       columnIndex,
       filename,
-      computingUnitId,
+      executionId,
     };
     const token = localStorage.getItem(TOKEN_KEY) ?? "";
 
-    const urlPath =
-      unit && unit.computingUnit.type == "kubernetes" && unit.computingUnit?.cuid
-        ? `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/local?cuid=${unit.computingUnit.cuid}`
-        : `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/local`;
+    const urlPath = `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/local`;
 
     const iframe = document.createElement("iframe");
     iframe.name = "download-iframe";

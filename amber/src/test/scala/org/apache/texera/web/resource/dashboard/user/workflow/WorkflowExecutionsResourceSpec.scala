@@ -33,7 +33,6 @@ import org.apache.texera.amber.core.storage.{
   PlanRecord,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
-  VFSURIFactory,
   WarehouseUnavailableException
 }
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
@@ -88,7 +87,12 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, PrivateMethodTester}
 import play.api.libs.json.Json
 
-import javax.ws.rs.{BadRequestException, ForbiddenException, WebApplicationException}
+import javax.ws.rs.{
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  WebApplicationException
+}
 import javax.ws.rs.core.Response
 import java.io.File
 import java.net.URI
@@ -1855,52 +1859,64 @@ class WorkflowExecutionsResourceSpec
     assert(workflowExecutionsDao.fetchOneByEid(e2.getEid) == null)
   }
 
-  "retrieveWorkflowRuntimeStatistics" should "throw when the execution has no runtime-stats URI" in {
-    grantReadAccess()
-    val exec = insertExecution() // runtimeStatsUri = null
-    assertThrows[java.util.NoSuchElementException](
-      resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
+  // The statistics of an execution are where its ids and its warehouse say, in the lake: the
+  // row names no location, and the route asks no computing unit.
+
+  /** Where the statistics of `execution`, an execution of workflow `wid`, are. */
+  private def statisticsUriOf(execution: WorkflowExecutions, wid: Int = testWorkflowWid): URI =
+    RuntimeStatisticsStore.statisticsUri(
+      WorkflowIdentity(wid.longValue()),
+      ExecutionIdentity(execution.getEid.longValue()),
+      None
     )
+
+  /** An execution of the test workflow, and where its statistics are. */
+  private def executionWithStatistics(): (WorkflowExecutions, URI) = {
+    val exec = insertExecution()
+    (exec, statisticsUriOf(exec))
   }
 
-  it should "throw when the stored runtime-stats URI is the empty string" in {
-    // The column is non-null here but blank, which `new URI("")` would turn into a
-    // scheme-less URI the storage layer cannot resolve. The empty half of the guard is
-    // the only thing that turns that into the same "no statistics" error as a NULL.
-    grantReadAccess()
-    val exec = insertExecution(runtimeStatsUri = "")
-    assertThrows[java.util.NoSuchElementException](
-      resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
-    )
-  }
+  private val scanSample =
+    RuntimeStatisticsRow("scan", 1794873600123L, 0, 0, 10, 100, 5, 6, 7, 2, 3)
 
-  it should "reject a user with no read access on the workflow" in {
-    // The URI is load-bearing: without the access check the call runs on to the storage
-    // layer and fails there with an IllegalArgumentException over the scheme, so only a
-    // WebApplicationException proves the request was refused up front.
-    val exec = insertExecution(runtimeStatsUri = "mock:///stats")
-    assertThrows[WebApplicationException](
-      resource.retrieveWorkflowRuntimeStatistics(
-        testWorkflowWid,
-        exec.getEid,
-        session(userWithoutAccess())
+  "retrieveWorkflowRuntimeStatistics" should "reject a user with no read access on the workflow" in {
+    // The stored row is load-bearing: without the access check the call answers it.
+    val (exec, uri) = executionWithStatistics()
+    RuntimeStatisticsStore.create(uri)
+    try {
+      RuntimeStatisticsStore.append(uri, Seq(scanSample))
+
+      val refusal = intercept[WebApplicationException](
+        resource.retrieveWorkflowRuntimeStatistics(
+          testWorkflowWid,
+          exec.getEid,
+          session(userWithoutAccess())
+        )
       )
-    )
+      assert(refusal.getResponse.getStatus == Response.Status.UNAUTHORIZED.getStatusCode)
+    } finally RuntimeStatisticsStore.drop(uri)
   }
 
   // The read path must refuse an execution of another workflow, or read access on any
   // workflow would expose every other workflow's operator ids, tuple counts and timings
   // by execution id alone.
-  it should "refuse an execution id that belongs to a different workflow" in {
+  it should "refuse an execution that is another workflow's, as one there is not" in {
     grantReadAccess()
-    val foreign = insertForeignExecution(runtimeStatsUri = "mock:///stats")
-    assertThrows[java.util.NoSuchElementException](
-      resource.retrieveWorkflowRuntimeStatistics(
-        testWorkflowWid,
-        foreign.getEid,
-        session(testUser)
-      )
-    )
+    val foreign = insertForeignExecution()
+    // Its statistics are there to be read, wherever a lookup that forgot the workflow looks.
+    val uris = Seq(statisticsUriOf(foreign, foreignWid), statisticsUriOf(foreign))
+    uris.foreach(RuntimeStatisticsStore.create)
+    try {
+      uris.foreach(RuntimeStatisticsStore.append(_, Seq(scanSample)))
+
+      Seq(foreign.getEid.intValue(), foreign.getEid + 100000).foreach { eid =>
+        val refusal = intercept[NotFoundException](
+          resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, eid, session(testUser))
+        )
+        assert(refusal.getMessage == s"Workflow $testWorkflowWid has no execution $eid.")
+        assert(refusal.getResponse.getStatus == 404)
+      }
+    } finally uris.foreach(RuntimeStatisticsStore.drop)
   }
 
   // Per-user warehouses are off in this deployment (#6930): a read of statistics
@@ -1908,21 +1924,18 @@ class WorkflowExecutionsResourceSpec
   // anyway resolves to the shared default and looks like data loss.
   it should "refuse to read statistics stored in a per-user warehouse while the feature is off" in {
     grantReadAccess()
-    val exec = insertExecution()
-    val uri = VFSURIFactory.createRuntimeStatisticsURI(
-      WorkflowIdentity(testWorkflowWid.longValue()),
-      ExecutionIdentity(exec.getEid.longValue()),
-      warehouse = Some("byo")
-    )
-    exec.setRuntimeStatsUri(uri.toString)
-    workflowExecutionsDao.update(exec)
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(testUser.getUid)
+    warehouse.setName("statistics-warehouse")
+    warehouse.setLakekeeperWarehouseName("byo")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    val exec = insertExecution(whid = warehouse.getWhid)
 
     val ex = intercept[WarehouseUnavailableException](
       resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
     )
-    // The whole message, not just "byo": the warehouse name is a substring of the URI
-    // the fixture supplied, so every other refusal — including the guard's
-    // "unresolvable warehouse URI" branch — would also contain it.
     assert(
       ex.getMessage ==
         "this result is stored in warehouse 'byo'; " +
@@ -1930,22 +1943,45 @@ class WorkflowExecutionsResourceSpec
     )
   }
 
-  it should "report an unreadable stats URI as a URI error, not as a warehouse refusal" in {
-    // The typed WarehouseUnavailableException is a kill-switch signal that callers
-    // deliberately let through their catch-alls, so it must be reserved for URIs the
-    // guard actually classifies as warehouse-scoped. Refusing every URI at this call
-    // site would report corrupt data as "per-user warehouses are disabled".
+  it should "read the statistics where the execution's ids say, whatever its row names as their location" in {
     grantReadAccess()
-    val exec = insertExecution(runtimeStatsUri = "mock:///stats")
-    val ex = intercept[IllegalArgumentException](
-      resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
-    )
-    // WarehouseUnavailableException is an IllegalStateException, so intercepting
-    // IllegalArgumentException already excludes it.
-    assert(ex.getMessage.contains("Invalid URI scheme"))
+    // The column a unit used to write: left empty, and then naming a place nothing is at.
+    val unnamed = insertExecution()
+    val misnamed = insertExecution(runtimeStatsUri = "mock:///stats")
+    val uris = Seq(unnamed, misnamed).map(statisticsUriOf(_))
+    uris.foreach(RuntimeStatisticsStore.create)
+    try {
+      uris.foreach(RuntimeStatisticsStore.append(_, Seq(scanSample)))
+
+      Seq(unnamed, misnamed).foreach { exec =>
+        val rows =
+          resource.retrieveWorkflowRuntimeStatistics(
+            testWorkflowWid,
+            exec.getEid,
+            session(testUser)
+          )
+        assert(rows.map(_.operatorId) == Seq("scan"))
+      }
+    } finally uris.foreach(RuntimeStatisticsStore.drop)
   }
 
-  /** An execution of the test workflow whose row names where its statistics are. */
+  it should "find the execution in one read of its row, without the column that named its statistics" in {
+    grantReadAccess()
+    val (exec, _) = executionWithStatistics()
+
+    val statements = recorder.record {
+      resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
+    }
+
+    assert(statements.forall(_.verb == "SELECT"))
+    assert(statements.count(_.tables.contains("workflow_executions")) == 1)
+    assert(!statements.exists(_.sql.toLowerCase.contains("runtime_stats_uri")))
+  }
+
+  /**
+    * An execution of the test workflow whose row names where its statistics are, as a unit
+    * that measures them reads it.
+    */
   private def executionWithStatisticsUri(): (WorkflowExecutions, URI) = {
     val exec = insertExecution()
     val uri = RuntimeStatisticsStore.statisticsUri(
@@ -1960,7 +1996,7 @@ class WorkflowExecutionsResourceSpec
 
   it should "return the rows a run's record stored, oldest first, each with its time to the millisecond" in {
     grantReadAccess()
-    val (exec, uri) = executionWithStatisticsUri()
+    val (exec, uri) = executionWithStatistics()
     // Two commits of a run: the scan's numbers moved between them, the filter's state alone.
     val firstCommitMs = 1794873600123L
     val stored = Seq(
@@ -2003,7 +2039,7 @@ class WorkflowExecutionsResourceSpec
     // An execution made before the upgrade: its table is where the store reads, with its time
     // a timestamp in a column of another name. It has no chart, and the request does not fail.
     grantReadAccess()
-    val (exec, uri) = executionWithStatisticsUri()
+    val (exec, uri) = executionWithStatistics()
     val earlierSchema = new Schema(
       new Attribute("operatorId", AttributeType.STRING),
       new Attribute("time", AttributeType.TIMESTAMP),
@@ -2042,7 +2078,7 @@ class WorkflowExecutionsResourceSpec
   it should "return no rows for an execution whose statistics table is not there" in {
     // A run that has not made its tables yet, or whose tables were dropped.
     grantReadAccess()
-    val (exec, uri) = executionWithStatisticsUri()
+    val (exec, uri) = executionWithStatistics()
     RuntimeStatisticsStore.drop(uri)
 
     assert(
@@ -2186,7 +2222,7 @@ class WorkflowExecutionsResourceSpec
 
   private def exportRequest(
       operators: List[OperatorExportInfo],
-      computingUnitId: Integer
+      executionId: Long
   ): ResultExportRequest =
     ResultExportRequest(
       exportType = "csv",
@@ -2197,8 +2233,12 @@ class WorkflowExecutionsResourceSpec
       rowIndex = 0,
       columnIndex = 0,
       filename = "",
-      computingUnitId = computingUnitId.intValue()
+      executionId = executionId
     )
+
+  private val oneOperator = List(OperatorExportInfo("op-1", "csv"))
+  private val twoOperators =
+    List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "csv"))
 
   // Mirrors what JwtAuth.jwtClaims writes at issue time, so the token below is
   // one the production consumer accepts.
@@ -2215,6 +2255,30 @@ class WorkflowExecutionsResourceSpec
 
   private def errorOf(response: Response): String =
     response.getEntity.asInstanceOf[java.util.Map[String, String]].get("error")
+
+  /** The form a browser posts to download `request`, as a regular user. */
+  private def exportToLocal(request: ResultExportRequest): Response =
+    resource.exportResultToLocal(
+      Json.stringify(Json.toJson(request)),
+      tokenFor(UserRoleEnum.REGULAR)
+    )
+
+  private def exportToDataset(request: ResultExportRequest): Response =
+    resource.exportResultToDataset(
+      request,
+      s"Bearer ${tokenFor(UserRoleEnum.REGULAR)}",
+      session(testUser)
+    )
+
+  /** Marks the results of `execution` expired, as the Dashboard's expiry does. */
+  private def expireResultsOf(execution: WorkflowExecutions): Unit =
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, new Timestamp(System.currentTimeMillis() - 86400000L))
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, Short.box(WorkflowExecutionStatus.Completed))
+      .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, new Timestamp(System.currentTimeMillis()))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
+      .execute()
 
   // This endpoint is reached by a browser form submit, which cannot carry an
   // Authorization header, so the JWT arrives as a form field and every failure
@@ -2246,7 +2310,7 @@ class WorkflowExecutionsResourceSpec
     grantReadAccess()
     Seq(UserRoleEnum.REGULAR, UserRoleEnum.ADMIN).foreach { role =>
       val response = resource.exportResultToLocal(
-        Json.stringify(Json.toJson(exportRequest(List(OperatorExportInfo("op-1", "csv")), 0))),
+        Json.stringify(Json.toJson(exportRequest(oneOperator, 0))),
         tokenFor(role)
       )
       assert(
@@ -2256,28 +2320,14 @@ class WorkflowExecutionsResourceSpec
     }
   }
 
-  // The read grant is not required by today's code — this endpoint gates on role only —
-  // but the request has to be legitimate on its own terms, or this case would go red the
-  // day the missing workflow-access check is added and would block that fix.
-  it should "parse the form-encoded request and run the export once the token checks out" in {
+  it should "parse the form-encoded request and export the execution it names once the token checks out" in {
     grantReadAccess()
-    val unit = insertComputingUnit()
-    insertExecution(cuid = unit.getCuid)
+    val execution = insertExecution()
 
     // Two operators, so the request takes the zip branch, which only reaches a 200 once
-    // the workflow id and computing unit id off the parsed body find a real execution.
-    // With either id perturbed the lookup comes back empty and the response is a 500.
-    val response = resource.exportResultToLocal(
-      Json.stringify(
-        Json.toJson(
-          exportRequest(
-            List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "csv")),
-            unit.getCuid
-          )
-        )
-      ),
-      tokenFor(UserRoleEnum.REGULAR)
-    )
+    // the workflow id and the execution id off the parsed body find an execution of the
+    // workflow.
+    val response = exportToLocal(exportRequest(twoOperators, execution.getEid.longValue()))
     assert(response.getStatus == 200)
     val disposition = response.getHeaderString("Content-Disposition")
     // The name is built from the request's own workflowName, so a body the endpoint
@@ -2286,59 +2336,129 @@ class WorkflowExecutionsResourceSpec
     assert(disposition.endsWith(".zip\""))
   }
 
-  it should "deny a valid download request from a user without workflow read access" in {
-    val unit = insertComputingUnit()
-    insertExecution(cuid = unit.getCuid)
+  it should "refuse a request that names no execution" in {
+    grantReadAccess()
+    val unnamed = Json.toJson(exportRequest(twoOperators, 1)).as[play.api.libs.json.JsObject] -
+      "executionId"
 
-    val response = resource.exportResultToLocal(
-      Json.stringify(
-        Json.toJson(
-          exportRequest(
-            List(OperatorExportInfo("op-1", "csv"), OperatorExportInfo("op-2", "csv")),
-            unit.getCuid
-          )
-        )
-      ),
-      tokenFor(UserRoleEnum.REGULAR)
-    )
+    val response =
+      resource.exportResultToLocal(Json.stringify(unnamed), tokenFor(UserRoleEnum.REGULAR))
+    assert(response.getStatus == 500)
+    assert(errorOf(response).contains("executionId"))
+  }
+
+  it should "deny a valid download request from a user without workflow read access" in {
+    val execution = insertExecution()
+
+    val response = exportToLocal(exportRequest(twoOperators, execution.getEid.longValue()))
     assert(response.getStatus == Response.Status.UNAUTHORIZED.getStatusCode)
   }
 
-  it should "report a missing execution for a single-operator request as a 500 JSON error" in {
-    // One operator takes the streaming branch instead, whose "no execution" outcome is
-    // reported through the JSON error body rather than as an escaping exception.
+  // The execution is named by the request, so read access to one workflow must not reach
+  // the results of another's execution, and an id that names none is answered the same.
+  it should "answer 404 for an execution that is not the workflow's, in one file or in an archive" in {
     grantReadAccess()
-    val response = resource.exportResultToLocal(
-      Json.stringify(Json.toJson(exportRequest(List(OperatorExportInfo("op-1", "csv")), 0))),
-      tokenFor(UserRoleEnum.REGULAR)
-    )
+    val foreign = insertForeignExecution().getEid.longValue()
+
+    for (eid <- Seq(foreign, foreign + 100000L, 0L); operators <- Seq(oneOperator, twoOperators)) {
+      val response = exportToLocal(exportRequest(operators, eid))
+      assert(response.getStatus == 404, s"execution $eid, ${operators.size} operator(s)")
+      assert(errorOf(response) == s"Workflow $testWorkflowWid has no execution $eid.")
+    }
+  }
+
+  it should "answer 410 for an execution whose results have expired, in one file or in an archive" in {
+    grantReadAccess()
+    val execution = insertExecution()
+    val eid = execution.getEid.longValue()
+    // Not expired yet: an operator that stored nothing is the single-file branch's 500.
+    assert(exportToLocal(exportRequest(oneOperator, eid)).getStatus == 500)
+    assert(exportToLocal(exportRequest(twoOperators, eid)).getStatus == 200)
+
+    expireResultsOf(execution)
+
+    Seq(oneOperator, twoOperators).foreach { operators =>
+      val response = exportToLocal(exportRequest(operators, eid))
+      assert(response.getStatus == 410, s"${operators.size} operator(s)")
+      assert(errorOf(response) == s"the results of execution $eid have expired")
+    }
+  }
+
+  it should "report an operator that stored no result as a 500 JSON error" in {
+    // One operator takes the streaming branch, whose "nothing stored" outcome is reported
+    // through the JSON error body rather than as an escaping exception.
+    grantReadAccess()
+    val execution = insertExecution()
+
+    val response = exportToLocal(exportRequest(oneOperator, execution.getEid.longValue()))
     assert(response.getStatus == 500)
     assert(errorOf(response) == "Failed to export operator")
   }
 
   "exportResultToDataset" should "report a per-operator failure inside a 200 response" in {
     grantReadAccess()
-    val unit = insertComputingUnit()
-    insertExecution(cuid = unit.getCuid)
+    val execution = insertExecution()
 
-    val response = resource.exportResultToDataset(
-      exportRequest(List(OperatorExportInfo("op-1", "csv")), unit.getCuid),
-      session(testUser)
-    )
+    val response = exportToDataset(exportRequest(oneOperator, execution.getEid.longValue()))
     assert(response.getStatus == 200)
 
     val body = response.getEntity.asInstanceOf[ResultExportResponse]
     assert(body.status == "error")
-    // The execution was found — i.e. the workflow id and computing unit the
-    // request named both reached the lookup — it just holds no result for op-1.
+    // The execution was found — i.e. the workflow id and the execution id the request
+    // named both reached the lookup — it just holds no result for op-1.
     assert(body.message.contains("No results to export"))
   }
 
   it should "deny an export request from a user without workflow read access" in {
     // No operators are needed: before the fix this returns a spurious 200 success
     // without consulting workflow access at all.
-    val response = resource.exportResultToDataset(exportRequest(Nil, 0), session(testUser))
+    val response = exportToDataset(exportRequest(Nil, 0))
     assert(response.getStatus == Response.Status.UNAUTHORIZED.getStatusCode)
+  }
+
+  it should "answer 404 for an execution that is not the workflow's, not a 200 that lists failures" in {
+    grantReadAccess()
+    val foreign = insertForeignExecution().getEid.longValue()
+
+    Seq(foreign, foreign + 100000L, 0L).foreach { eid =>
+      val response = exportToDataset(exportRequest(oneOperator, eid))
+      assert(response.getStatus == 404, s"execution $eid")
+      assert(errorOf(response) == s"Workflow $testWorkflowWid has no execution $eid.")
+    }
+  }
+
+  it should "answer 410 for an execution whose results have expired, also with no operator to export" in {
+    grantReadAccess()
+    val execution = insertExecution()
+    expireResultsOf(execution)
+
+    Seq(oneOperator, Nil).foreach { operators =>
+      val response = exportToDataset(exportRequest(operators, execution.getEid.longValue()))
+      assert(response.getStatus == 410, s"${operators.size} operator(s)")
+      assert(
+        errorOf(response) == s"the results of execution ${execution.getEid} have expired"
+      )
+    }
+  }
+
+  // The file service decides an upload by the token it comes with, so the route has to
+  // hand on the caller's own: the header's, whatever the scheme's case.
+  it should "take the caller's token from the Authorization header" in {
+    val bearerTokenOf = PrivateMethod[String](Symbol("bearerTokenOf"))
+
+    assert((resource invokePrivate bearerTokenOf("Bearer abc.def.ghi")) == "abc.def.ghi")
+    assert((resource invokePrivate bearerTokenOf("  bearer   abc.def.ghi ")) == "abc.def.ghi")
+    assert((resource invokePrivate bearerTokenOf("Basic dXNlcjpwYXNz")) == "")
+    assert((resource invokePrivate bearerTokenOf("abc.def.ghi")) == "")
+    assert((resource invokePrivate bearerTokenOf(null)) == "")
+
+    val exportToDataset = classOf[WorkflowExecutionsResource].getDeclaredMethods.toSeq
+      .find(_.getName == "exportResultToDataset")
+      .getOrElse(fail("exportResultToDataset handler not found"))
+    val headerNames = exportToDataset.getParameterAnnotations.toSeq.flatMap(
+      _.collectFirst { case header: javax.ws.rs.HeaderParam => header.value() }
+    )
+    assert(headerNames == Seq("Authorization"))
   }
 
 }

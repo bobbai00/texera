@@ -19,8 +19,12 @@
 
 package org.apache.texera.amber.core.storage
 
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
 
 import java.net.URI
 
@@ -86,6 +90,35 @@ object ExecutionTables {
         tables
       }
   }
+
+  /**
+    * Whether `port` is output port `portId` of logical operator `operatorId` as the workflow's
+    * users see it: an external port of one of the operator's physical operators. Every lookup
+    * of a logical operator's result goes by this rule.
+    */
+  def isOutputOf(
+      port: GlobalPortIdentity,
+      operatorId: OperatorIdentity,
+      portId: PortIdentity
+  ): Boolean =
+    !port.portId.internal && port.opId.logicalOpId == operatorId && port.portId == portId
+
+  /**
+    * Of `tables`, the result table of output port `portId` of logical operator `operatorId`
+    * (see [[isOutputOf]]); None when none of them is.
+    *
+    * @throws IllegalArgumentException if one of `tables` looked at is no table of an execution
+    */
+  def resultTableAmong(
+      tables: Iterable[URI],
+      operatorId: OperatorIdentity,
+      portId: PortIdentity
+  ): Option[URI] =
+    tables.find { uri =>
+      val named = VFSURIFactory.decodeURI(uri)
+      named.resourceType == VFSResourceType.RESULT &&
+      named.globalPortId.exists(isOutputOf(_, operatorId, portId))
+    }
 
   /**
     * The bytes of the data files of the table at `uri`, as its newest snapshot counts them

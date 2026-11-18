@@ -218,7 +218,8 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       recurringCheckExpiredResults(timeToLive)
     }
 
-    environment.jersey.register(classOf[WorkflowExecutionsResource])
+    // What an execution stored is the Dashboard service's to serve: this unit serves the run
+    // it holds, over its websocket and to the agent service.
     environment.jersey.register(classOf[SyncExecutionResource])
 
     environment.lifecycle().manage(ComputingUnitMaster.EndRunsOnStop)

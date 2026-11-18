@@ -188,12 +188,6 @@ spec:
         - path:
             type: PathPrefix
             value: /wsapi
-        - path:
-            type: RegularExpression
-            value: "^/api/executions/\\d+/stats/\\d+$"
-        - path:
-            type: PathPrefix
-            value: /api/executions/result/export
         {{- if .Values.notebookMigrationService.enabled }}
         # Per-user JupyterLab. ExtAuthz reads the uid from the path and rewrites Host to
         # that user's pod; the per-user Jupyter token is what authorizes the request.

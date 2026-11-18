@@ -29,12 +29,8 @@ import { firstValueFrom, lastValueFrom, of, throwError } from "rxjs";
 import { commonTestProviders } from "../../../../common/testing/test-utils";
 import type { Mocked } from "vitest";
 import { WORKFLOW_EXECUTIONS_API_BASE_URL } from "../workflow-executions/workflow-executions.service";
-import { DashboardWorkflowComputingUnit } from "../../../../common/type/workflow-computing-unit";
 import JSZip from "jszip";
 
-function computingUnit(type: string, cuid: number): DashboardWorkflowComputingUnit {
-  return { computingUnit: { cuid, type } } as unknown as DashboardWorkflowComputingUnit;
-}
 const EXPORT_OPERATORS = [{ id: "op1", outputType: "csv" }];
 
 describe("DownloadService", () => {
@@ -531,53 +527,29 @@ describe("DownloadService", () => {
 
   it("POSTs the dataset export request and returns the response body", async () => {
     const promise = lastValueFrom(
-      downloadService.exportWorkflowResultToDataset(
-        "csv",
-        1,
-        "WF",
-        EXPORT_OPERATORS,
-        [7],
-        0,
-        0,
-        "out.csv",
-        computingUnit("local", 5)
-      )
+      downloadService.exportWorkflowResultToDataset("csv", 1, "WF", EXPORT_OPERATORS, [7], 0, 0, "out.csv", 345)
     );
 
+    // The one URL of every deployment: the Dashboard service's, with no computing unit in it.
     const req = httpMock.expectOne(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/dataset`);
     expect(req.request.method).toBe("POST");
-    expect(req.request.body).toMatchObject({
+    // The whole body: it names the execution, and no computing unit.
+    expect(req.request.body).toEqual({
       exportType: "csv",
       workflowId: 1,
+      workflowName: "WF",
+      operators: EXPORT_OPERATORS,
       datasetIds: [7],
+      rowIndex: 0,
+      columnIndex: 0,
       filename: "out.csv",
-      computingUnitId: 5,
+      executionId: 345,
     });
     expect(req.request.headers.get("Accept")).toBe("application/json");
     req.flush({ status: "ok", message: "done" });
 
     const res = await promise;
     expect(res.body).toEqual({ status: "ok", message: "done" });
-  });
-
-  it("appends the cuid query param for a kubernetes computing unit", () => {
-    downloadService
-      .exportWorkflowResultToDataset(
-        "csv",
-        1,
-        "WF",
-        EXPORT_OPERATORS,
-        [7],
-        0,
-        0,
-        "out.csv",
-        computingUnit("kubernetes", 9)
-      )
-      .subscribe();
-
-    const req = httpMock.expectOne(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/dataset?cuid=9`);
-    expect(req.request.method).toBe("POST");
-    req.flush({ status: "ok", message: "done" });
   });
 
   // ─── exportWorkflowResultToLocal ──────────────────────────────────────────
@@ -617,29 +589,27 @@ describe("DownloadService", () => {
     });
 
     it("builds and submits a hidden form carrying the request and token, then cleans up on timeout", () => {
-      downloadService.exportWorkflowResultToLocal(
-        "csv",
-        1,
-        "WF",
-        EXPORT_OPERATORS,
-        0,
-        0,
-        "out.csv",
-        computingUnit("local", 5)
-      );
+      downloadService.exportWorkflowResultToLocal("csv", 1, "WF", EXPORT_OPERATORS, 0, 0, "out.csv", 345);
 
       const form = document.querySelector('form[target="download-iframe"]') as HTMLFormElement;
       expect(form).toBeTruthy();
+      // The one URL of every deployment: the Dashboard service's, with no computing unit in it.
       expect(form.getAttribute("action")).toBe(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/local`);
       expect(form.method).toBe("post");
       expect(submitSpy).toHaveBeenCalledTimes(1);
 
+      // The whole request: it names the execution, and no computing unit.
       const requestInput = form.querySelector('input[name="request"]') as HTMLInputElement;
-      expect(JSON.parse(requestInput.value)).toMatchObject({
+      expect(JSON.parse(requestInput.value)).toEqual({
         exportType: "csv",
         workflowId: 1,
-        computingUnitId: 5,
+        workflowName: "WF",
+        operators: EXPORT_OPERATORS,
         datasetIds: [],
+        rowIndex: 0,
+        columnIndex: 0,
+        filename: "out.csv",
+        executionId: 345,
       });
       expect((form.querySelector('input[name="token"]') as HTMLInputElement).value).toBe("tok-123");
 
@@ -659,35 +629,10 @@ describe("DownloadService", () => {
         removeItem: vi.fn(),
       });
 
-      downloadService.exportWorkflowResultToLocal(
-        "csv",
-        1,
-        "WF",
-        EXPORT_OPERATORS,
-        0,
-        0,
-        "out.csv",
-        computingUnit("local", 5)
-      );
+      downloadService.exportWorkflowResultToLocal("csv", 1, "WF", EXPORT_OPERATORS, 0, 0, "out.csv", 345);
 
       const form = document.querySelector('form[target="download-iframe"]') as HTMLFormElement;
       expect((form.querySelector('input[name="token"]') as HTMLInputElement).value).toBe("");
-    });
-
-    it("targets the cuid-scoped endpoint for a kubernetes computing unit", () => {
-      downloadService.exportWorkflowResultToLocal(
-        "csv",
-        1,
-        "WF",
-        EXPORT_OPERATORS,
-        0,
-        0,
-        "out.csv",
-        computingUnit("kubernetes", 9)
-      );
-
-      const form = document.querySelector('form[target="download-iframe"]') as HTMLFormElement;
-      expect(form.getAttribute("action")).toBe(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${EXPORT_BASE_URL}/local?cuid=9`);
     });
   });
 });

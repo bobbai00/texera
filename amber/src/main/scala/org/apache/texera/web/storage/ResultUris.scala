@@ -19,6 +19,7 @@
 
 package org.apache.texera.web.storage
 
+import org.apache.texera.amber.core.storage.ExecutionTables
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 
@@ -48,9 +49,6 @@ class ResultUris {
     */
   def of(operatorId: OperatorIdentity, portId: PortIdentity): Option[URI] =
     byPort.asScala.collectFirst {
-      case (port, uri)
-          if !port.portId.internal && port.opId.logicalOpId == operatorId &&
-            port.portId == portId =>
-        uri
+      case (port, uri) if ExecutionTables.isOutputOf(port, operatorId, portId) => uri
     }
 }

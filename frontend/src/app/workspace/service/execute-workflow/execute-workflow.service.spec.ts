@@ -1347,6 +1347,26 @@ describe("ExecuteWorkflowService", () => {
     expect(JSON.parse(expectCreate().request.serializeBody() as string)).not.toHaveProperty("warehouseId");
   }));
 
+  // What a run stored is asked of the Dashboard service by its execution: the one on screen is the one the
+  // unit named last, also once its run has ended, and none once the unit shows no run.
+  it("getCurrentExecutionId names the execution of the run on screen, and none when the unit shows no run", () => {
+    expect(service.getCurrentExecutionId()).toBeUndefined();
+
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+    expect(service.getCurrentExecutionId()).toBe(345);
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Completed, executionId: 345 });
+    expect(service.getCurrentExecutionId()).toBe(345);
+
+    // A run another page started on the unit takes its place.
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 400 });
+    expect(service.getCurrentExecutionId()).toBe(400);
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Completed, executionId: 400 });
+
+    // What a new socket is told first, and all a unit that holds no run says.
+    emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Uninitialized });
+    expect(service.getCurrentExecutionId()).toBeUndefined();
+  });
+
   // ---- control commands ----------------------------------------------------------------------
 
   it("pauseWorkflow sends a pause request while running, of the execution the unit named", () => {

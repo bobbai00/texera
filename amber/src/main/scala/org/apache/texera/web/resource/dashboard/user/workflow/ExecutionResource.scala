@@ -27,6 +27,7 @@ import org.apache.texera.web.model.http.request.execution.{
 }
 import org.apache.texera.web.model.http.response.execution.{
   CreateExecutionFailure,
+  ExecutionConsoleResponse,
   ExecutionLogResponse,
   ExecutionStateResponse
 }
@@ -39,7 +40,17 @@ import org.apache.texera.web.service.execution.{
 
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs.core.{Context, HttpHeaders, MediaType, Response, UriInfo}
-import javax.ws.rs.{Consumes, GET, HeaderParam, POST, Path, PathParam, Produces}
+import javax.ws.rs.{
+  Consumes,
+  DefaultValue,
+  GET,
+  HeaderParam,
+  POST,
+  Path,
+  PathParam,
+  Produces,
+  QueryParam
+}
 
 object ExecutionResource {
 
@@ -52,13 +63,14 @@ object ExecutionResource {
 /**
   * Executions as the Dashboard service creates them, before any computing unit is involved, the
   * changes made to their operators while they are paused, and what each one recorded: its
-  * state and its log, which are answered whether or not its computing unit is still there.
+  * state, its log and its console output, which are answered whether or not its computing unit
+  * is still there.
   *
-  * Registered only by the Dashboard. It shares its path with [[WorkflowExecutionsResource]],
-  * which a computing unit registers too; Jersey merges the two, and none of their methods share a
-  * path and a method. The first path segment after `/executions` is a workflow's id in that
-  * resource's routes and an execution's id in this one's, whose last segments (`updates`,
-  * `state`, `log`) are none of that resource's.
+  * Registered only by the Dashboard, as is [[WorkflowExecutionsResource]], whose path it
+  * shares; Jersey merges the two, and none of their methods share a path and a method. The
+  * first path segment after `/executions` is a workflow's id in that resource's routes and an
+  * execution's id in this one's, whose last segments (`updates`, `state`, `log`, `console`) are
+  * none of that resource's.
   *
   * A request that is not served is answered `{code, message}`, whatever its status.
   *
@@ -172,4 +184,29 @@ class ExecutionResource(
   @RolesAllowed(Array("REGULAR", "ADMIN"))
   def getLog(@PathParam("eid") eid: Long, @Auth user: SessionUser): ExecutionLogResponse =
     records.log(eid, user.getUser)
+
+  /**
+    * A page of the console output execution `eid` stored: the first `limit` messages after
+    * message `afterSeq`, oldest first, of operator `operatorId` or, with none named, of all
+    * operators (see [[ExecutionRecordReader.console]]). The next page is asked for with the
+    * `lastSeq` of this one as its `afterSeq`.
+    *
+    * @return 200 with `{eid, messages, lastSeq, more}` ([[ExecutionConsoleResponse]]):
+    *         `messages` is empty for an execution that stored none, and for one whose results
+    *         have expired; a page holds at most 5,000 messages, whatever `limit` asks for.
+    *         Otherwise 400 for a negative `limit`; 403 as for the state; 409 when the console
+    *         output is in a warehouse this deployment cannot reach; 500 when the lake cannot be
+    *         read.
+    */
+  @GET
+  @Path("/{eid}/console")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getConsole(
+      @PathParam("eid") eid: Long,
+      @QueryParam("operatorId") operatorId: String,
+      @QueryParam("afterSeq") @DefaultValue("0") afterSeq: Long,
+      @QueryParam("limit") @DefaultValue("1000") limit: Int,
+      @Auth user: SessionUser
+  ): ExecutionConsoleResponse =
+    records.console(eid, user.getUser, Option(operatorId).filter(_.nonEmpty), afterSeq, limit)
 }

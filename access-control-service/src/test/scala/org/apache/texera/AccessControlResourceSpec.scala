@@ -44,8 +44,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
-import java.net.{URI, URLEncoder}
-import java.nio.charset.StandardCharsets
+import java.net.URI
 import java.util
 
 class AccessControlResourceSpec
@@ -56,10 +55,8 @@ class AccessControlResourceSpec
     with MockTexeraDB {
 
   private val testURI: String = "http://localhost:8080/"
-  private val testPath: String = "/api/executions/1/stats/1"
-
-  // The route a browser posts its export form to, with the user's token in the form.
-  private val testExportPath: String = "/api/executions/result/export/local"
+  // The one route a computing unit serves through the gateway.
+  private val testPath: String = "/wsapi/workflow-websocket"
 
   // The host:port the managing service records for a computing unit when it
   // creates the pod. The access-control-service routes to this recorded URI.
@@ -270,7 +267,7 @@ class AccessControlResourceSpec
     when(mockHttpHeaders.getRequestHeader("Authorization")).thenReturn(new util.ArrayList[String]())
 
     val accessControlResource = new AccessControlResource()
-    val response = accessControlResource.authorizePost(mockUriInfo, mockHttpHeaders, null)
+    val response = accessControlResource.authorizePost(mockUriInfo, mockHttpHeaders)
 
     response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
   }
@@ -373,9 +370,7 @@ class AccessControlResourceSpec
     *
     * @param authorizationHeader `None` models a client that sent no Authorization
     *                            header at all — JAX-RS returns `null` from
-    *                            `getRequestHeader` in that case, which is what the
-    *                            body-token tests need so the body is the only token
-    *                            source left.
+    *                            `getRequestHeader` in that case.
     * @param accessTokenQueryParam value for the `access-token` query parameter, when
     *                              the token travels in the URL instead.
     */
@@ -414,21 +409,38 @@ class AccessControlResourceSpec
   }
 
   // The form Jersey actually hands to the resource: UriInfo.getPath returns the path relative to
-  // the base URI, so a check for /auth/api/executions/... arrives as "auth/api/executions/..." —
-  // no leading slash, and with the "auth/" segment still attached.
-  it should "return OK for the gateway-relative form of each computing unit route" in {
+  // the base URI, so a check for /auth/wsapi/... arrives as "auth/wsapi/..." — no leading slash,
+  // and with the "auth/" segment still attached.
+  it should "return OK for the gateway-relative form of the computing unit route" in {
+    val (uri, headers) =
+      mockRequest("auth/wsapi/workflow-websocket", Some(testCU.getCuid.toString))
+    val response = new AccessControlResource().authorizeGet(uri, headers)
+
+    response.getStatus shouldBe Response.Status.OK.getStatusCode
+    response.getHeaderString("Host") shouldBe testRecordedUri
+  }
+
+  // An execution's statistics and exports are read from what it stored, by the Dashboard
+  // service: routed to a unit, they would be answered only while that unit lives.
+  it should "not authorize an execution's statistics or exports as routes of a computing unit" in {
     for (
       path <- Seq(
-        "auth/wsapi/workflow-websocket",
+        "/api/executions/1/stats/1",
         "auth/api/executions/1/stats/1",
+        "/api/executions/result/export",
+        "/api/executions/result/export/dataset",
         "auth/api/executions/result/export/local"
       )
     ) withClue(path) {
+      // A user with WRITE on a routable unit, named as every unit route names it.
       val (uri, headers) = mockRequest(path, Some(testCU.getCuid.toString))
-      val response = new AccessControlResource().authorizeGet(uri, headers)
+      val resource = new AccessControlResource()
 
-      response.getStatus shouldBe Response.Status.OK.getStatusCode
-      response.getHeaderString("Host") shouldBe testRecordedUri
+      Seq(resource.authorizeGet(uri, headers), resource.authorizePost(uri, headers)).foreach {
+        response =>
+          response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
+          response.getHeaderString("Host") shouldBe null
+      }
     }
   }
 
@@ -503,14 +515,6 @@ class AccessControlResourceSpec
     response.getHeaderString("Host") shouldBe testRecordedUri
   }
 
-  it should "authorize the /api/executions/result/export route" in {
-    val (uri, headers) =
-      mockRequest("/api/executions/result/export", Some(testCU.getCuid.toString))
-    val response = new AccessControlResource().authorizeGet(uri, headers)
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-  }
-
   it should "ignore an empty access-token query parameter and fall back to the Authorization header" in {
     val (uri, headers) = mockRequest(
       testPath,
@@ -555,148 +559,28 @@ class AccessControlResourceSpec
     response.getHeaderString("Host") shouldBe testRecordedUri
   }
 
-  // ---------------------------------------------------------------------------
-  // Token carried in the request body.
-  //
-  // Each of these sends no Authorization header and no access-token query
-  // parameter, so the body is the only token source left: the 200 can only come
-  // from the body-parsing branch under test.
-  // ---------------------------------------------------------------------------
+  it should "take no request body: a unit route's token is in its URL or its headers" in {
+    // The browser's export form carried its token in its body, and no unit route does.
+    val routes = Set("authorizeGet", "authorizePost", "authorizePut", "authorizeDelete")
+    val handlers = classOf[AccessControlResource].getMethods.filter(m => routes(m.getName))
 
-  private val multipartBoundary: String = "----TexeraTestBoundary"
-  private val crlf: String = "\r\n"
-
-  /**
-    * A realistic two-part CRLF multipart document whose first part is named "token".
-    *
-    * Everything about its shape is load-bearing: the Content-Disposition line carries
-    * a trailing attribute after `name="token"`, the value is padded with spaces, and a
-    * second part follows before the closing boundary — so the capture has to stop at
-    * the *next* boundary rather than running to the last one.
-    */
-  private def multipartTwoParts(value: String): String =
-    s"--$multipartBoundary$crlf" +
-      s"""Content-Disposition: form-data; name="token"; filename="t.txt"$crlf""" +
-      crlf +
-      s" $value $crlf" +
-      s"--$multipartBoundary$crlf" +
-      s"""Content-Disposition: form-data; name="other"$crlf""" +
-      crlf +
-      s"hello$crlf" +
-      s"--$multipartBoundary--"
-
-  /**
-    * A single-part document that stops at the value, so only the run-to-end fallback
-    * can recover the token. Deliberately built unlike [[multipartTwoParts]]: LF-only
-    * line breaks (a client that does not send CRLF), whitespace around the `=` in the
-    * Content-Disposition, a trailing attribute, and a padded value.
-    */
-  private def multipartRunToEnd(value: String): String =
-    s"--$multipartBoundary\n" +
-      "Content-Disposition: form-data; name = \"token\"; filename=\"t.txt\"\n" +
-      "\n" +
-      s" $value "
-
-  private def bodyOnlyRequest(cuid: Int): (UriInfo, HttpHeaders) =
-    mockRequest(testExportPath, Some(cuid.toString), authorizationHeader = None)
-
-  it should "read the token out of an x-www-form-urlencoded body" in {
-    // A single `token=<value>` pair — the shape a form encoder produces for a one-field
-    // form, and the one body with no '&' in it at all.
-    // Encoded the way a form encoder would: the surrounding spaces become '+', so
-    // a reader that skipped URL-decoding would see "+<jwt>+" and reject it.
-    val encoded = URLEncoder.encode(s" $token ", StandardCharsets.UTF_8.name())
-    val (uri, headers) = bodyOnlyRequest(testCU.getCuid)
-
-    val response = new AccessControlResource().authorizePost(uri, headers, s"token=$encoded")
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
+    handlers.map(_.getName).toSet shouldBe routes
+    handlers.foreach { handler =>
+      withClue(handler.getName) {
+        handler.getParameterTypes.toSeq shouldBe Seq(classOf[UriInfo], classOf[HttpHeaders])
+      }
+    }
   }
 
-  it should "keep scanning an urlencoded body past a valueless token pair" in {
-    val (uri, headers) = bodyOnlyRequest(testCU.getCuid)
-
-    // The leading "token" pair has no '=' and therefore no value; it must not be
-    // accepted as the token, and the scan must continue to the real pair.
-    val response =
-      new AccessControlResource().authorizePost(uri, headers, s"token&other=1&token=$token")
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-  }
-
-  it should "take the first token pair when an urlencoded body carries duplicates" in {
-    val (uri, headers) = bodyOnlyRequest(testCU.getCuid)
-
-    // Duplicate keys are not specified by the form-encoding spec, so the resolution
-    // rule is a deliberate choice: the scan stops at the first usable value. Both
-    // tokens here are valid and testUser2 owns this unit, so both orderings return
-    // 200 — only the forwarded identity says which credential was selected.
-    val response =
-      new AccessControlResource().authorizePost(uri, headers, s"token=$token&token=$token2")
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString(HeaderField.UserId) shouldBe testUser1.getUid.toString
-  }
-
-  it should "read the token out of a JSON body" in {
-    val (uri, headers) = bodyOnlyRequest(testCU.getCuid)
-
-    // Jackson preserves the padding, so the value has to be trimmed before it reaches
-    // the JWT parser.
-    val response =
-      new AccessControlResource().authorizePost(uri, headers, s"""{"token":" $token "}""")
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
-  }
-
-  it should "read the token out of a multipart body terminated by a boundary" in {
-    val (uri, headers) = bodyOnlyRequest(testCU.getCuid)
-
-    val response =
-      new AccessControlResource().authorizePost(uri, headers, multipartTwoParts(token))
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
-  }
-
-  it should "read the token out of a multipart body that ends with the token" in {
-    val (uri, headers) = bodyOnlyRequest(testCU.getCuid)
-
-    // No closing boundary follows the value, so only the run-to-end fallback can
-    // recover the token.
-    val response =
-      new AccessControlResource().authorizePost(uri, headers, multipartRunToEnd(token))
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
-  }
-
-  it should "prefer the Authorization header over a token in the request body" in {
-    // Header and body carry *different* valid identities. testUser2 owns this unit, so
-    // either choice returns 200; only the forwarded identity reveals which token was
-    // used to authenticate.
-    val (uri, headers) = mockRequest(testExportPath, Some(testCU.getCuid.toString))
-    val response =
-      new AccessControlResource().authorizePost(uri, headers, s"token=$token2")
-
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString(HeaderField.UserId) shouldBe testUser1.getUid.toString
-  }
-
-  it should "fall back to the request body when the Authorization header is a bare bearer scheme" in {
-    // "Bearer " with nothing after it leaves an empty token; it must be discarded so
-    // the next source in the chain still gets a chance.
+  it should "refuse an Authorization header that is a bare bearer scheme" in {
     val (uri, headers) = mockRequest(
-      testExportPath,
+      testPath,
       Some(testCU.getCuid.toString),
       authorizationHeader = Some("Bearer ")
     )
-    val response = new AccessControlResource().authorizePost(uri, headers, s"token=$token")
 
-    response.getStatus shouldBe Response.Status.OK.getStatusCode
-    response.getHeaderString("Host") shouldBe testRecordedUri
+    new AccessControlResource().authorizeGet(uri, headers).getStatus shouldBe
+      Response.Status.FORBIDDEN.getStatusCode
   }
 
   // -- per-user JupyterLab routing --------------------------------------------
@@ -727,7 +611,7 @@ class AccessControlResourceSpec
       mockRequest("/jupyter/1/api/contents/work/notebook.ipynb", None, authorizationHeader = None)
     val resource = new AccessControlResource()
 
-    val saved = resource.authorizePut(uri, headers, """{"type":"notebook"}""")
+    val saved = resource.authorizePut(uri, headers)
     val deleted = resource.authorizeDelete(uri, headers)
 
     saved.getStatus shouldBe Response.Status.OK.getStatusCode

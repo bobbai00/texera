@@ -20,11 +20,7 @@
 package org.apache.texera.web.service
 
 import com.github.tototoshi.csv.CSVWriter
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionResultUris,
-  WarehouseReadGuard
-}
+import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionTables, WarehouseReadGuard}
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
@@ -36,23 +32,20 @@ import org.apache.arrow.vector._
 import org.apache.arrow.vector.ipc.ArrowFileWriter
 import org.apache.commons.io.IOUtils
 import org.apache.commons.lang3.StringUtils
-import org.apache.texera.auth.JwtAuth
-import org.apache.texera.auth.JwtAuth.jwtClaims
-import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.http.request.result.{OperatorExportInfo, ResultExportRequest}
 import org.apache.texera.web.model.http.response.result.ResultExportResponse
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource
-import org.apache.texera.web.service.WorkflowExecutionService.getLatestExecutionId
+import org.apache.texera.web.service.execution.{ExecutionRecord, ExecutionRecords}
 
 import java.io.{FilterOutputStream, IOException, OutputStream}
-import java.net.{HttpURLConnection, URL, URLEncoder}
+import java.net.{HttpURLConnection, URI, URL, URLEncoder}
 import java.nio.channels.Channels
 import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.zip.{ZipEntry, ZipOutputStream}
-import javax.ws.rs.WebApplicationException
+import javax.ws.rs.{NotFoundException, WebApplicationException}
 import javax.ws.rs.core.{MediaType, Response, StreamingOutput}
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -85,23 +78,72 @@ object ResultExportService {
       .trim
 }
 
-class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: Int) {
+/**
+  * Exports the results execution `executionId` of workflow `workflowIdentity` stored, read from
+  * the lake where the execution's stored plan says each output port is stored. No computing
+  * unit is asked, so a run whose unit is gone is exported as any other.
+  *
+  * Every export checks the execution before it reads anything of it ([[execution]]): one that
+  * is not the workflow's is refused with 404, and one whose results have expired with 410.
+  */
+class ResultExportService(workflowIdentity: WorkflowIdentity, executionId: Long) {
 
   import ResultExportService._
 
   /**
-    * Export operator results to a dataset and return the result.
+    * The execution's row, once it is known to be the workflow's and to hold its results.
+    *
+    * @throws NotFoundException       (404) if the workflow has no such execution
+    * @throws WebApplicationException (410) if the execution's results have expired
+    */
+  private lazy val execution: ExecutionRecord = {
+    val found = ExecutionRecords
+      .findOf(workflowIdentity.id, executionId)
+      .getOrElse(
+        throw new NotFoundException(
+          s"Workflow ${workflowIdentity.id} has no execution $executionId."
+        )
+      )
+    if (found.resultsExpiredAtMs.nonEmpty) {
+      throw new WebApplicationException(
+        s"the results of execution $executionId have expired",
+        Response.Status.GONE
+      )
+    }
+    found
+  }
+
+  /** Refuses the export now, where the refusal would otherwise be met later ([[execution]]). */
+  private def requireExecution(): Unit = {
+    val _ = execution
+  }
+
+  /**
+    * The result and state tables of the execution's output ports, as its stored plan names
+    * them. A run stores only some of its ports, so a table named here need not exist.
+    */
+  private lazy val portTables: Seq[URI] = {
+    // Refuse to read a plan in a per-user warehouse while the feature is off (#6930).
+    WarehouseReadGuard.assertReadable(execution.planUri)
+    ExecutionTables.portTables(execution.planUri)
+  }
+
+  /**
+    * Export operator results to a dataset and return the result. Each upload to the file
+    * service carries `token`, the caller's own, so the file service decides as for the caller.
     */
   def exportToDataset(
-      user: User,
+      token: String,
       request: ResultExportRequest
   ): Response = {
+    // Not inside an operator's export, whose failures are collected as messages.
+    requireExecution()
     val successMessages = new mutable.ListBuffer[String]()
     val errorMessages = new mutable.ListBuffer[String]()
 
     request.operators.foreach { op =>
       try {
-        val (msgOpt, errOpt) = exportSingleOperatorToDataset(user, request, op)
+        val (msgOpt, errOpt) = exportSingleOperatorToDataset(token, request, op)
         msgOpt.foreach(successMessages += _)
         errOpt.foreach(errorMessages += _)
       } catch {
@@ -151,16 +193,12 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
     * Export a single operator's result and handle different export types.
     */
   private def exportSingleOperatorToDataset(
-      user: User,
+      token: String,
       request: ResultExportRequest,
       operatorRequest: OperatorExportInfo
   ): (Option[String], Option[String]) = {
 
-    val execIdOpt = getLatestExecutionId(workflowIdentity, computingUnitId)
-    if (execIdOpt.isEmpty) {
-      return (None, Some(s"Workflow ${request.workflowId} has no execution result"))
-    }
-    val operatorDocument = getOperatorDocument(operatorRequest.id, computingUnitId)
+    val operatorDocument = getOperatorDocument(operatorRequest.id)
     if (operatorDocument == null || operatorDocument.getCount == 0)
       return (None, Some(s"No results to export for operator $operatorRequest"))
 
@@ -178,7 +216,7 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
 
     saveStreamToDataset(
       operatorId = operatorRequest.id,
-      user = user,
+      token = token,
       request = request,
       extension = operatorRequest.outputType,
       writer = writer
@@ -192,12 +230,7 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
       request: ResultExportRequest,
       operatorRequest: OperatorExportInfo
   ): Option[(StreamingOutput, String)] = {
-    val execIdOpt = getLatestExecutionId(workflowIdentity, computingUnitId)
-    if (execIdOpt.isEmpty) {
-      return None
-    }
-
-    val operatorDocument = getOperatorDocument(operatorRequest.id, computingUnitId)
+    val operatorDocument = getOperatorDocument(operatorRequest.id)
     if (operatorDocument == null || operatorDocument.getCount == 0) {
       return None
     }
@@ -236,19 +269,14 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
       .truncatedTo(ChronoUnit.SECONDS)
       .format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
     val zipFileName = s"${request.workflowName}-$timestamp.zip"
-
-    val execIdOpt = getLatestExecutionId(workflowIdentity, computingUnitId)
-    if (execIdOpt.isEmpty) {
-      throw new WebApplicationException(
-        s"No execution result for workflow ${request.workflowId}"
-      )
-    }
+    // Not while the archive is streamed, when its 200 is already answered.
+    requireExecution()
 
     val streamingOutput: StreamingOutput = new StreamingOutput {
       override def write(outputStream: OutputStream): Unit = {
         Using.resource(new ZipOutputStream(outputStream)) { zipOut =>
           request.operators.foreach { op =>
-            val operatorDocument = getOperatorDocument(op.id, computingUnitId)
+            val operatorDocument = getOperatorDocument(op.id)
             if (operatorDocument == null || operatorDocument.getCount == 0) {
               // create an "empty" file for this operator
               zipOut.putNextEntry(new ZipEntry(s"${op.id}-empty.txt"))
@@ -451,33 +479,21 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
   }
 
   /**
-    * Generate the VirtualDocument for one operator's result.
-    * Incorporates the remote code's extra parameter `None` for sub-operator ID.
+    * The result the execution stored for one operator, as a document; null when the stored
+    * plan names no such operator, and when the run stored no result for it.
     */
-  private def getOperatorDocument(
-      operatorId: String,
-      computingUnitId: Int
-  ): VirtualDocument[Tuple] = {
-    // By now the workflow should finish running
+  private def getOperatorDocument(operatorId: String): VirtualDocument[Tuple] = {
     // Only supports external port 0 for now. TODO: support multiple ports
-    val storageUri = ExecutionResultUris.getResultUriByLogicalPortId(
-      getLatestExecutionId(workflowIdentity, computingUnitId).get,
-      OperatorIdentity(operatorId),
-      PortIdentity()
-    )
-
-    storageUri
-      .map(uri => {
-        // Refuse to export a per-user-warehouse result while the feature is off (#6930).
-        WarehouseReadGuard.assertReadable(uri)
-        DocumentFactory.openDocument(uri)._1.asInstanceOf[VirtualDocument[Tuple]]
-      })
+    ExecutionTables
+      .resultTableAmong(portTables, OperatorIdentity(operatorId), PortIdentity())
+      .filter(DocumentFactory.documentExists)
+      .map(uri => DocumentFactory.openDocument(uri)._1.asInstanceOf[VirtualDocument[Tuple]])
       .orNull
   }
 
   private def saveStreamToDataset(
       operatorId: String,
-      user: User,
+      token: String,
       request: ResultExportRequest,
       extension: String,
       writer: OutputStream => Unit
@@ -487,7 +503,7 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
       else request.filename
 
     try {
-      saveToDatasets(request, user, writer, fileName)
+      saveToDatasets(request, token, writer, fileName)
       (Some(s"$extension export done for operator $operatorId -> file: $fileName"), None)
     } catch {
       case ex: Exception =>
@@ -504,11 +520,12 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
   }
 
   /**
-    * Save the pipedInputStream into the specified datasets as a new dataset version.
+    * Save the pipedInputStream into the specified datasets as a new dataset version, as the
+    * caller whose `token` it is.
     */
   private def saveToDatasets(
       request: ResultExportRequest,
-      user: User,
+      token: String,
       fileWriter: OutputStream => Unit,
       fileName: String
   ): Unit = {
@@ -529,10 +546,7 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, computingUnitId: I
         connection.setDoOutput(true)
         connection.setRequestMethod("POST")
         connection.setRequestProperty("Content-Type", "application/octet-stream")
-        connection.setRequestProperty(
-          "Authorization",
-          s"Bearer ${JwtAuth.jwtToken(jwtClaims(user))}"
-        )
+        connection.setRequestProperty("Authorization", s"Bearer $token")
         connection.setChunkedStreamingMode(0)
 
         val outputStream = connection.getOutputStream

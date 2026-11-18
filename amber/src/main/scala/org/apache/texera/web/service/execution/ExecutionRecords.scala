@@ -19,7 +19,12 @@
 
 package org.apache.texera.web.service.execution
 
-import org.apache.texera.amber.core.storage.{ExecutionLogStore, ExecutionPlanStore}
+import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
+  ExecutionLogStore,
+  ExecutionPlanStore,
+  RuntimeStatisticsStore
+}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.auth.util.WorkflowAccess
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -65,6 +70,8 @@ final case class ClosingRecord(
   * @param unitTerminatedAtMs    when its computing unit was terminated, if it was
   * @param unitTerminationReason why the unit was terminated
   * @param closing               how it ended; None while it is open
+  * @param resultsExpiredAtMs    when its results and its console output were dropped, in
+  *                              epoch milliseconds; None while it may hold them
   */
 final case class ExecutionRecord(
     eid: Long,
@@ -76,7 +83,8 @@ final case class ExecutionRecord(
     notification: Option[String],
     unitTerminatedAtMs: Option[Long],
     unitTerminationReason: Option[WorkflowComputingUnitTerminationReasonEnum],
-    closing: Option[ClosingRecord]
+    closing: Option[ClosingRecord],
+    resultsExpiredAtMs: Option[Long]
 ) {
   def workflowId: WorkflowIdentity = WorkflowIdentity(wid)
   def executionId: ExecutionIdentity = ExecutionIdentity(eid)
@@ -86,6 +94,12 @@ final case class ExecutionRecord(
 
   /** Its log table, in the warehouse its row names. */
   def logUri: URI = ExecutionLogStore.logUri(workflowId, executionId, warehouse)
+
+  /** Its statistics table, in the warehouse its row names. */
+  def statisticsUri: URI = RuntimeStatisticsStore.statisticsUri(workflowId, executionId, warehouse)
+
+  /** Its console table, in the warehouse its row names. */
+  def consoleUri: URI = ConsoleMessageStore.consoleUri(workflowId, executionId, warehouse)
 }
 
 /**
@@ -149,6 +163,12 @@ object ExecutionRecords {
     Option
       .when(eid >= 1 && eid <= Int.MaxValue)(eid)
       .flatMap(id => select(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(id.toInt))).headOption)
+
+  /**
+    * Execution `eid`'s row, when it is an execution of workflow `wid`; None when there is no
+    * such execution, and for an execution of another workflow.
+    */
+  def findOf(wid: Long, eid: Long): Option[ExecutionRecord] = find(eid).filter(_.wid == wid)
 
   /**
     * Whether user `uid` may read what `execution` recorded, its log among it: the user created
@@ -259,7 +279,8 @@ object ExecutionRecords {
         WORKFLOW_EXECUTIONS.OUTCOME,
         WORKFLOW_EXECUTIONS.OUTCOME_REASON,
         WORKFLOW_EXECUTIONS.ENDED_AT,
-        WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG
+        WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG,
+        WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT
       )
       .from(WORKFLOW_EXECUTIONS)
       .join(WORKFLOW_VERSION)
@@ -293,6 +314,7 @@ object ExecutionRecords {
           endedAtMs = endedAt.getTime,
           fromLog = row.get(WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG).booleanValue()
         )
-      }
+      },
+      resultsExpiredAtMs = Option(row.get(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT)).map(_.getTime)
     )
 }

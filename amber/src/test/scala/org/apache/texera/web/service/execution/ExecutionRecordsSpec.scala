@@ -48,6 +48,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowVersion
 }
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder, WorkflowExecutionStatus}
+import org.jooq.impl.{DSL, SQLDataType}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -230,8 +231,37 @@ class ExecutionRecordsSpec
       notification = Some("""{"email":"creator@example.com"}"""),
       unitTerminatedAtMs = None,
       unitTerminationReason = None,
-      closing = None
+      closing = None,
+      resultsExpiredAtMs = None
     )
+  }
+
+  it should "say when the execution's results were dropped, to the millisecond, and not before" in {
+    val eid = insertExecution()
+    ExecutionRecords.close(eid, completed, None, createdAtMs + 1000L, fromLog = true)
+    record(eid).resultsExpiredAtMs shouldBe None
+
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(
+        WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT,
+        DSL.value(new Timestamp(createdAtMs + 86401234L), SQLDataType.TIMESTAMP(3))
+      )
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
+      .execute()
+    record(eid).resultsExpiredAtMs shouldBe Some(createdAtMs + 86401234L)
+
+    // An execution no unit started is closed with nothing to expire.
+    val unstarted = insertExecution()
+    ExecutionRecords.close(
+      unstarted,
+      failed,
+      Some("never started"),
+      createdAtMs + 600000L,
+      fromLog = false,
+      neverStarted = true
+    )
+    record(unstarted).resultsExpiredAtMs shouldBe Some(createdAtMs + 600000L)
   }
 
   it should "name the warehouse the execution writes into, and none once that warehouse is deleted" in {
@@ -240,11 +270,19 @@ class ExecutionRecordsSpec
     record(eid).planUri.toString shouldBe s"vfs:///wh/$warehouseName/wid/$testWid/eid/$eid/plan"
     record(eid).logUri.toString shouldBe
       s"vfs:///wh/$warehouseName/wid/$testWid/eid/$eid/executionlog"
+    record(eid).statisticsUri.toString shouldBe
+      s"vfs:///wh/$warehouseName/wid/$testWid/eid/$eid/runtimestatistics"
+    record(eid).consoleUri.toString shouldBe
+      s"vfs:///wh/$warehouseName/wid/$testWid/eid/$eid/consolemessages"
 
     // What deleting the warehouse leaves: the foreign key sets the row's whid to null.
     val deleted = insertExecution(warehouse = None)
     record(deleted).warehouse shouldBe None
     record(deleted).planUri.toString shouldBe s"vfs:///wid/$testWid/eid/$deleted/plan"
+    record(deleted).statisticsUri.toString shouldBe
+      s"vfs:///wid/$testWid/eid/$deleted/runtimestatistics"
+    record(deleted).consoleUri.toString shouldBe
+      s"vfs:///wid/$testWid/eid/$deleted/consolemessages"
   }
 
   it should "say when and why the execution's unit was terminated" in {

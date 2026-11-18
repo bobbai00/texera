@@ -39,8 +39,7 @@ case class ResultExportRequest(
     rowIndex: Int, // used by "data" export
     columnIndex: Int, // used by "data" export
     filename: String, // optional filename override
-    // TODO: remove it once the lifecycle of result and compute are unbundled
-    computingUnitId: Int // the id of the computing unit
+    executionId: Long // the execution whose results are exported, one of the workflow's
 )
 
 object ResultExportRequest {

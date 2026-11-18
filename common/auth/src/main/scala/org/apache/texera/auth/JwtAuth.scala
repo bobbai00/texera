@@ -61,8 +61,8 @@ object JwtAuth {
     *
     * `googleId` is passed in rather than read off `user`, because the GOOGLE provider id lives
     * in `auth_provider` and this module must stay DB-free: the specs in
-    * `access-control-service` / `config-service` and the token re-issue paths in
-    * `ResultExportService` / `ComputingUnitManagingResource` all call this with no
+    * `access-control-service` / `config-service` and the token re-issue path in
+    * `ComputingUnitManagingResource` all call this with no
     * `auth_provider` context, as does `AuthResource.register`. Omitting the claim is harmless
     * on all of them: a service-to-service token never reaches the browser, and a freshly
     * registered LOCAL account has no Google identity to name.

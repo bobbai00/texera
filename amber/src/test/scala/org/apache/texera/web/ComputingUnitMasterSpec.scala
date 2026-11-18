@@ -646,7 +646,6 @@ class ComputingUnitMasterSpec
 
   it should "register the master's Jersey resource classes" in {
     ranEnvironment.jersey.getResourceConfig.getClasses.asScala should contain allOf (
-      classOf[WorkflowExecutionsResource],
       classOf[SyncExecutionResource],
       classOf[SessionHandler],
       classOf[RolesAllowedDynamicFeature]
@@ -658,10 +657,22 @@ class ComputingUnitMasterSpec
       classOf[ExecutionResource]
     val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
 
-    jersey.statusOf("POST", "/executions") should (be(404) or be(405))
-    jersey.statusOf("POST", "/executions/12/updates") should (be(404) or be(405))
-    // The execution routes the unit serves still resolve: answered 401 without a signed-in user.
-    jersey.statusOf("GET", "/executions/12/stats/34") shouldBe 401
+    jersey.statusOf("POST", "/executions") shouldBe 404
+    jersey.statusOf("POST", "/executions/12/updates") shouldBe 404
+  }
+
+  it should "serve nothing an execution stored: its statistics, its console output and exports of its results are the Dashboard's" in {
+    ranEnvironment.jersey.getResourceConfig.getClasses.asScala should not contain
+      classOf[WorkflowExecutionsResource]
+    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+
+    jersey.statusOf("GET", "/executions/1/stats/1") shouldBe 404
+    jersey.statusOf("GET", "/executions/1/console") shouldBe 404
+    jersey.statusOf("POST", "/executions/result/export/dataset") shouldBe 404
+    jersey.statusOf("POST", "/executions/result/export/local") shouldBe 404
+    // Nor any other route of a workflow's executions.
+    jersey.statusOf("GET", "/executions/1") shouldBe 404
+    jersey.statusOf("GET", "/executions/1/latest") shouldBe 404
   }
 
   it should "serve the agent's run of an execution the Dashboard created, and no run of a workflow sent to it" in {

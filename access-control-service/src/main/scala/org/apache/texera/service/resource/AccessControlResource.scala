@@ -17,8 +17,6 @@
 
 package org.apache.texera.service.resource
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.typesafe.scalalogging.LazyLogging
 import jakarta.annotation.security.{PermitAll, RolesAllowed}
 import jakarta.ws.rs.client.{Client, ClientBuilder, Entity}
@@ -32,20 +30,16 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.{UserJupyterDao, WorkflowComputingUnitDao}
 
-import java.net.{URI, URLDecoder}
-import java.nio.charset.StandardCharsets
+import java.net.URI
 import java.util.Optional
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsScala}
 import scala.util.matching.Regex
 
 object AccessControlResource extends LazyLogging {
 
-  private val mapper: ObjectMapper = new ObjectMapper().registerModule(DefaultScalaModule)
-
-  // Regex for the paths that require authorization
+  // The one path a computing unit serves through the gateway. What an execution stored, its
+  // statistics and exports among it, is the Dashboard service's to serve, and no unit's.
   private val wsapiWorkflowWebsocket: Regex = """.*/wsapi/workflow-websocket.*""".r
-  private val apiExecutionsStats: Regex = """.*/api/executions/[0-9]+/stats/[0-9]+.*""".r
-  private val apiExecutionsResultExport: Regex = """.*/api/executions/result/export.*""".r
   // Per-user JupyterLab. The uid is in the path because a browser cannot attach Texera
   // credentials to the requests Jupyter's own scripts make, so it is the only place the
   // owner can be read from.
@@ -66,18 +60,13 @@ object AccessControlResource extends LazyLogging {
     *                headers sent by the client (browser)
     * @return HTTP Response with appropriate status code and headers
     */
-  def authorize(
-      uriInfo: UriInfo,
-      headers: HttpHeaders,
-      bodyOpt: Option[String] = None
-  ): Response = {
+  def authorize(uriInfo: UriInfo, headers: HttpHeaders): Response = {
     val path = uriInfo.getPath
     logger.info(s"Authorizing request for path: $path")
 
     path match {
-      case jupyterPath(uid) => routeToJupyter(uid)
-      case wsapiWorkflowWebsocket() | apiExecutionsStats() | apiExecutionsResultExport() =>
-        checkComputingUnitAccess(uriInfo, headers, bodyOpt)
+      case jupyterPath(uid)         => routeToJupyter(uid)
+      case wsapiWorkflowWebsocket() => checkComputingUnitAccess(uriInfo, headers)
       case _ =>
         logger.warn(s"No authorization logic for path: $path. Denying access.")
         Response.status(Response.Status.FORBIDDEN).build()
@@ -119,11 +108,7 @@ object AccessControlResource extends LazyLogging {
     }
   }
 
-  private def checkComputingUnitAccess(
-      uriInfo: UriInfo,
-      headers: HttpHeaders,
-      bodyOpt: Option[String]
-  ): Response = {
+  private def checkComputingUnitAccess(uriInfo: UriInfo, headers: HttpHeaders): Response = {
     val queryParams: Map[String, String] = uriInfo
       .getQueryParameters()
       .asScala
@@ -142,8 +127,7 @@ object AccessControlResource extends LazyLogging {
         .map(_.replaceFirst("(?i)^Bearer\\s+", "")) // case-insensitive "Bearer "
         .map(_.trim)
         .filter(_.nonEmpty)
-      val bToken = bodyOpt.flatMap(extractTokenFromBody)
-      qToken.orElse(hToken).orElse(bToken).getOrElse("")
+      qToken.orElse(hToken).getOrElse("")
     }
     logger.info(s"token extracted from request $token")
     val cuid = queryParams.getOrElse("cuid", "")
@@ -202,57 +186,6 @@ object AccessControlResource extends LazyLogging {
       .header("Host", targetHost) // Envoy ExtAuth: Rewrite Host
       .build()
   }
-
-  // Extracts a top-level "token" field from a JSON body
-  private def extractTokenFromBody(body: String): Option[String] = {
-    // 1) Try JSON
-    val jsonToken: Option[String] =
-      try {
-        val node = mapper.readTree(body)
-        if (node != null && node.has("token"))
-          Option(node.get("token").asText()).map(_.trim).filter(_.nonEmpty)
-        else None
-      } catch {
-        case _: Exception => None
-      }
-
-    // 2) Try application/x-www-form-urlencoded
-    def extractTokenFromUrlEncoded(s: String): Option[String] = {
-      // fast path: must contain '=' or '&'
-      if (!s.contains("=")) return None
-      val pairs = s.split("&").iterator
-      var found: Option[String] = None
-      while (pairs.hasNext && found.isEmpty) {
-        val p = pairs.next()
-        val idx = p.indexOf('=')
-        val key = if (idx >= 0) p.substring(0, idx) else p
-        if (key == "token") {
-          val raw = if (idx >= 0) p.substring(idx + 1) else ""
-          val decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8.name())
-          val v = decoded.trim
-          if (v.nonEmpty) found = Some(v)
-        }
-      }
-      found
-    }
-
-    // 3) Try multipart/form-data (best-effort; parses raw body text)
-    def extractTokenFromMultipart(s: String): Option[String] = {
-      // Look for the part with name="token" and capture its content until the next boundary
-      val partWithBoundary = "(?s)name\\s*=\\s*\"token\"[^\\r\\n]*\\r?\\n\\r?\\n(.*?)\\r?\\n--".r
-      val partToEnd = "(?s)name\\s*=\\s*\"token\"[^\\r\\n]*\\r?\\n\\r?\\n(.*)".r
-
-      partWithBoundary
-        .findFirstMatchIn(s)
-        .map(_.group(1).trim)
-        .filter(_.nonEmpty)
-        .orElse(partToEnd.findFirstMatchIn(s).map(_.group(1).trim).filter(_.nonEmpty))
-    }
-
-    jsonToken
-      .orElse(extractTokenFromUrlEncoded(body))
-      .orElse(extractTokenFromMultipart(body))
-  }
 }
 // The routing proxy authenticates each request itself via parseToken in the
 // resource body (returning 403 on missing/invalid tokens), so it must opt
@@ -276,21 +209,18 @@ class AccessControlResource extends LazyLogging {
   @Path("/{path:.*}")
   def authorizePost(
       @Context uriInfo: UriInfo,
-      @Context headers: HttpHeaders,
-      body: String
+      @Context headers: HttpHeaders
   ): Response = {
-    logger.info("Request body: " + body)
-    AccessControlResource.authorize(uriInfo, headers, Option(body).map(_.trim).filter(_.nonEmpty))
+    AccessControlResource.authorize(uriInfo, headers)
   }
 
   @PUT
   @Path("/{path:.*}")
   def authorizePut(
       @Context uriInfo: UriInfo,
-      @Context headers: HttpHeaders,
-      body: String
+      @Context headers: HttpHeaders
   ): Response = {
-    AccessControlResource.authorize(uriInfo, headers, Option(body).map(_.trim).filter(_.nonEmpty))
+    AccessControlResource.authorize(uriInfo, headers)
   }
 
   @DELETE

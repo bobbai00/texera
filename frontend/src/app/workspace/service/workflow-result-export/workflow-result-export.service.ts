@@ -27,8 +27,8 @@ import { ExecutionState, isNotInExecution } from "../../types/execute-workflow.i
 import { catchError, filter, map, take } from "rxjs/operators";
 import { WorkflowResultService } from "../workflow-result/workflow-result.service";
 import { DownloadService, ExportWorkflowJsonResponse } from "../../../dashboard/service/user/download/download.service";
+import { WorkflowExecutionsService } from "../../../dashboard/service/user/workflow-executions/workflow-executions.service";
 import { HttpResponse } from "@angular/common/http";
-import { DashboardWorkflowComputingUnit } from "../../../common/type/workflow-computing-unit";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 
 /**
@@ -102,7 +102,8 @@ export class WorkflowResultExportService {
     private executeWorkflowService: ExecuteWorkflowService,
     private workflowResultService: WorkflowResultService,
     private downloadService: DownloadService,
-    private config: GuiConfigService
+    private config: GuiConfigService,
+    private workflowExecutionsService: WorkflowExecutionsService
   ) {
     this.registerResultToExportUpdateHandler();
   }
@@ -188,6 +189,18 @@ export class WorkflowResultExportService {
   }
 
   /**
+   * The execution whose results an export is of: the one of the run on screen, while its computing unit
+   * names it; else the workflow's latest, whose results are what the workspace shows once the unit holds no
+   * run, or is gone. The Dashboard service reads the results from what that execution stored.
+   */
+  private executionToExport(workflowId: number): Observable<number> {
+    const onScreen = this.executeWorkflowService.getCurrentExecutionId();
+    return onScreen !== undefined
+      ? of(onScreen)
+      : this.workflowExecutionsService.retrieveLatestWorkflowExecution(workflowId).pipe(map(latest => latest.eId));
+  }
+
+  /**
    * export the workflow execution result according the export type
    */
   exportWorkflowExecutionResult(
@@ -198,7 +211,6 @@ export class WorkflowResultExportService {
     columnIndex: number,
     filename: string,
     destination: "dataset" | "local",
-    unit: DashboardWorkflowComputingUnit | null, // computing unit for cluster setting
     // The operators this export covers. The caller resolves them: the dialog already works out
     // its own scope in order to report what a blocking dataset blocks, so it says so here rather
     // than leaving the scope to be worked out a second time, separately, from a flag and the
@@ -220,7 +232,6 @@ export class WorkflowResultExportService {
           columnIndex,
           filename,
           destination,
-          unit,
           restrictionResult,
           scope
         )
@@ -231,10 +242,11 @@ export class WorkflowResultExportService {
    * Performs the actual export operation with restriction validation.
    *
    * This method handles the core export logic:
-   * 1. Validates configuration and computing unit availability
+   * 1. Validates configuration
    * 2. Applies restriction filtering with user feedback
-   * 3. Makes the export API call
-   * 4. Handles response and shows appropriate notifications
+   * 3. Finds the execution whose results are exported
+   * 4. Makes the export API call
+   * 5. Handles response and shows appropriate notifications
    *
    * Shows error messages if all operators are blocked, warning messages if some are blocked.
    *
@@ -248,16 +260,11 @@ export class WorkflowResultExportService {
     columnIndex: number,
     filename: string,
     destination: "dataset" | "local",
-    unit: DashboardWorkflowComputingUnit | null,
     downloadability: WorkflowResultDownloadability,
     operatorIds: readonly string[]
   ): void {
-    // Validates configuration and computing unit availability
+    // Validates configuration
     if (!this.config.env.exportExecutionResultEnabled) {
-      return;
-    }
-    if (unit === null) {
-      this.notificationService.error("Cannot export result: computing unit is not available");
       return;
     }
 
@@ -299,6 +306,42 @@ export class WorkflowResultExportService {
     // show loading
     this.notificationService.loading("Exporting...");
 
+    this.executionToExport(workflowId)
+      .pipe(take(1))
+      .subscribe({
+        next: executionId =>
+          this.requestExport(
+            exportType,
+            workflowId,
+            workflowName,
+            operatorArray,
+            datasetIds,
+            rowIndex,
+            columnIndex,
+            filename,
+            destination,
+            executionId
+          ),
+        // The unit names no execution, and the workflow has none to fall back on.
+        error: () => this.notificationService.error("Cannot export result: the workflow has no execution"),
+      });
+  }
+
+  /**
+   * Asks the Dashboard service to export the results of execution `executionId`, and reports how it went.
+   */
+  private requestExport(
+    exportType: string,
+    workflowId: number,
+    workflowName: string,
+    operatorArray: { id: string; outputType: string }[],
+    datasetIds: number[],
+    rowIndex: number,
+    columnIndex: number,
+    filename: string,
+    destination: "dataset" | "local",
+    executionId: number
+  ): void {
     // Make request
     if (destination === "local") {
       // Dataset export to local filesystem (download handled by browser)
@@ -310,7 +353,7 @@ export class WorkflowResultExportService {
         rowIndex,
         columnIndex,
         filename,
-        unit
+        executionId
       );
     } else {
       // Dataset export to dataset via API call
@@ -324,7 +367,7 @@ export class WorkflowResultExportService {
           rowIndex,
           columnIndex,
           filename,
-          unit
+          executionId
         )
         .subscribe({
           next: response => {
@@ -339,7 +382,9 @@ export class WorkflowResultExportService {
             }
           },
           error: (err: unknown) => {
-            const errorMessage = (err as any)?.error?.message || (err as any)?.error || err;
+            // A refusal of the export names why as `error`: that the results have expired, say.
+            const body = (err as any)?.error;
+            const errorMessage = body?.message || body?.error || body || err;
             this.notificationService.error(`An error happened in exporting operator results: ${errorMessage}`);
           },
         });

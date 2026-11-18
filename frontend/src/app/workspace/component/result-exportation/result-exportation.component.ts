@@ -28,8 +28,6 @@ import { DatasetService } from "../../../dashboard/service/user/dataset/dataset.
 import { NZ_MODAL_DATA, NzModalRef, NzModalService } from "ng-zorro-antd/modal";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { WorkflowResultService } from "../../service/workflow-result/workflow-result.service";
-import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
-import { DashboardWorkflowComputingUnit } from "../../../common/type/workflow-computing-unit";
 import { UserDatasetCreatorComponent } from "../../../dashboard/component/user/user-dataset/user-dataset-creator/user-dataset-creator.component";
 import { NgIf, NgFor } from "@angular/common";
 import { NzAlertComponent } from "ng-zorro-antd/alert";
@@ -99,7 +97,6 @@ export class ResultExportationComponent implements OnInit {
   isVisualizationOutput: boolean = false;
   containsBinaryData: boolean = false;
   inputDatasetName = "";
-  selectedComputingUnit: DashboardWorkflowComputingUnit | null = null;
   downloadability?: WorkflowResultDownloadability;
 
   userAccessibleDatasets: DashboardDataset[] = [];
@@ -171,8 +168,7 @@ export class ResultExportationComponent implements OnInit {
     private modalService: NzModalService,
     private datasetService: DatasetService,
     private workflowActionService: WorkflowActionService,
-    private workflowResultService: WorkflowResultService,
-    private computingUnitStatusService: ComputingUnitStatusService
+    private workflowResultService: WorkflowResultService
   ) {}
 
   ngOnInit(): void {
@@ -190,13 +186,6 @@ export class ResultExportationComponent implements OnInit {
       .subscribe(downloadability => {
         this.downloadability = downloadability;
         this.updateOutputType();
-      });
-
-    this.computingUnitStatusService
-      .getSelectedComputingUnit()
-      .pipe(untilDestroyed(this))
-      .subscribe(unit => {
-        this.selectedComputingUnit = unit;
       });
   }
 
@@ -271,7 +260,6 @@ export class ResultExportationComponent implements OnInit {
       this.columnIndex,
       this.inputFileName,
       destination,
-      this.selectedComputingUnit,
       // The same scope the dialog reported on, so what is exported is what the dialog said it
       // would export.
       this.getOperatorIdsToCheck()

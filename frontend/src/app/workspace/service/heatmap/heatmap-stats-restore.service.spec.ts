@@ -117,7 +117,7 @@ describe("HeatmapStatsRestoreService", () => {
     service.restoreLatestRunStatistics().subscribe();
 
     expect(executionsService.retrieveWorkflowExecutions).toHaveBeenCalledWith(42);
-    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 1, 7);
+    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 1);
     expect(statusService.setExternalStatus).toHaveBeenCalledWith({
       op1: expect.objectContaining({
         operatorState: OperatorState.Completed,
@@ -211,7 +211,7 @@ describe("HeatmapStatsRestoreService", () => {
 
     service.restoreLatestRunStatistics().subscribe();
 
-    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 2, 8);
+    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 2);
   });
 
   it("still loads the latest run when no execution ever completed", () => {
@@ -224,7 +224,7 @@ describe("HeatmapStatsRestoreService", () => {
 
     service.restoreLatestRunStatistics().subscribe();
 
-    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 5, 11);
+    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 5);
   });
 
   it("passes over an execution that was created and not started", () => {
@@ -237,7 +237,7 @@ describe("HeatmapStatsRestoreService", () => {
 
     service.restoreLatestRunStatistics().subscribe();
 
-    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 4, 10);
+    expect(executionsService.retrieveWorkflowRuntimeStatistics).toHaveBeenCalledWith(42, 4);
   });
 
   // The error path is pinned via an explicit { error, complete } observer. RxJS 7 reports an

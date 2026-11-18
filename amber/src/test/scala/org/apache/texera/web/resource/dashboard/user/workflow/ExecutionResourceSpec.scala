@@ -32,6 +32,7 @@ import org.apache.texera.amber.core.executor.{
 import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
+  ConsoleRow,
   DocumentFactory,
   ExecutionLabel,
   ExecutionLogEntry,
@@ -128,6 +129,8 @@ import org.apache.texera.web.model.http.response.execution.{
   CreateExecutionFailure,
   CreateExecutionResponse,
   ExecutionClosingResponse,
+  ExecutionConsoleMessageResponse,
+  ExecutionConsoleResponse,
   ExecutionLogEntryResponse,
   ExecutionLogResponse,
   ExecutionStateResponse
@@ -2666,14 +2669,257 @@ class ExecutionResourceSpec
       .map(_.state) shouldBe Seq(Some("RUNNING"))
   }
 
+  // --- what an execution stored: its console output ---
+
+  /** Makes the console table of execution `eid`, empty, as its unit does when it starts the run. */
+  private def consoleOf(eid: Long, warehouse: Option[String] = None): URI = {
+    val uri =
+      ConsoleMessageStore.consoleUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), warehouse)
+    ConsoleMessageStore.create(uri)
+    madeTables += uri
+    uri
+  }
+
+  /** Message `seq` of an execution's console, printed by a worker of `operator`. */
+  private def printed(seq: Long, operator: String): ConsoleRow =
+    ConsoleRow(
+      seq = seq,
+      timeMs = 1794873600000L + seq,
+      operatorId = operator,
+      workerId = s"Worker:WF$testWid-$operator-main-0",
+      msgType = "PRINT",
+      source = s"$operator.py:process_tuple:$seq",
+      title = s"line $seq",
+      message = s"line $seq of $operator, in full"
+    )
+
+  private def answered(row: ConsoleRow): ExecutionConsoleMessageResponse =
+    ExecutionConsoleMessageResponse(
+      row.seq,
+      row.timeMs,
+      row.operatorId,
+      row.workerId,
+      row.msgType,
+      row.source,
+      row.title,
+      row.message
+    )
+
+  /** An execution whose console holds messages 1 to 6, of `udf-a` and `udf-b` in turn. */
+  private def executionWithConsole(): (Long, Seq[ConsoleRow]) = {
+    val execution = created(post(request()))
+    val rows = (1L to 6L).map(seq => printed(seq, if (seq % 2 == 1) "udf-a" else "udf-b"))
+    val console = consoleOf(execution.eid)
+    // Two commits of the run's record.
+    ConsoleMessageStore.append(console, rows.take(4))
+    ConsoleMessageStore.append(console, rows.drop(4))
+    (execution.eid, rows)
+  }
+
+  /** A reader that reads no console, and keeps what each read asked for. */
+  private class AskedMessages {
+    val asked = mutable.ListBuffer.empty[(URI, Option[String], Long, Int)]
+
+    val read: (URI, Option[String], Long, Int) => (Seq[ConsoleRow], Boolean) =
+      (uri, operatorId, afterSeq, limit) => {
+        asked += ((uri, operatorId, afterSeq, limit))
+        (Nil, false)
+      }
+  }
+
+  "ExecutionResource.getConsole" should "answer the console output the execution stored, oldest first, each message whole" in {
+    val (eid, rows) = executionWithConsole()
+
+    recorded().getConsole(eid, null, 0L, 1000, sessionUser(creatorUid)) shouldBe
+      ExecutionConsoleResponse(eid, rows.map(answered), lastSeq = 6L, more = false)
+  }
+
+  it should "answer one operator's messages when the request names one, and every operator's when it names none" in {
+    val (eid, rows) = executionWithConsole()
+    val resource = recorded()
+    def of(operatorId: String) =
+      resource.getConsole(eid, operatorId, 0L, 1000, sessionUser(creatorUid))
+
+    of("udf-b") shouldBe ExecutionConsoleResponse(
+      eid,
+      rows.filter(_.operatorId == "udf-b").map(answered),
+      lastSeq = 6L,
+      more = false
+    )
+    of("udf-a").messages.map(_.seq) shouldBe Seq(1L, 3L, 5L)
+    of("udf-a").lastSeq shouldBe 5L
+    of("no-such-operator") shouldBe ExecutionConsoleResponse(eid, Nil, lastSeq = 0L, more = false)
+    // `?operatorId=`, as a client that filters by none sends it.
+    of("").messages.map(_.seq) shouldBe (1L to 6L)
+  }
+
+  it should "answer the messages after afterSeq, a page of limit at a time, and whether more follow" in {
+    val (eid, rows) = executionWithConsole()
+    val resource = recorded()
+    def page(afterSeq: Long, limit: Int, operatorId: String = null) =
+      resource.getConsole(eid, operatorId, afterSeq, limit, sessionUser(creatorUid))
+
+    val first = page(afterSeq = 0L, limit = 4)
+    first shouldBe ExecutionConsoleResponse(eid, rows.take(4).map(answered), 4L, more = true)
+    // The next page is asked for with the last one's lastSeq.
+    val second = page(afterSeq = first.lastSeq, limit = 4)
+    second shouldBe ExecutionConsoleResponse(eid, rows.drop(4).map(answered), 6L, more = false)
+    // Past the end: nothing, and the same place to ask from again once the run prints more.
+    page(afterSeq = second.lastSeq, limit = 4) shouldBe
+      ExecutionConsoleResponse(eid, Nil, lastSeq = 6L, more = false)
+
+    // A page that ends at the last message says that none follow.
+    page(afterSeq = 2L, limit = 4).more shouldBe false
+    page(afterSeq = 2L, limit = 3) shouldBe
+      ExecutionConsoleResponse(eid, rows.slice(2, 5).map(answered), 5L, more = true)
+    // One operator's pages skip the other's messages, and count only its own.
+    page(afterSeq = 1L, limit = 1, operatorId = "udf-a") shouldBe
+      ExecutionConsoleResponse(eid, Seq(answered(rows(2))), 3L, more = true)
+    // A page of none tells whether there is anything after afterSeq.
+    page(afterSeq = 5L, limit = 0) shouldBe ExecutionConsoleResponse(eid, Nil, 5L, more = true)
+    page(afterSeq = 6L, limit = 0) shouldBe ExecutionConsoleResponse(eid, Nil, 6L, more = false)
+  }
+
+  it should "hold a page to 5,000 messages, whatever the limit asks for, and refuse a negative limit with 400" in {
+    val execution = created(post(request()))
+    val console = ConsoleMessageStore.consoleUri(
+      WorkflowIdentity(testWid),
+      ExecutionIdentity(execution.eid),
+      None
+    )
+    val messages = new AskedMessages
+    val resource =
+      recorded(new ExecutionRecordReader(messages = messages.read, warehousesEnabled = false))
+    def ask(limit: Int) =
+      resource.getConsole(execution.eid, "udf-a", 17L, limit, sessionUser(creatorUid))
+
+    Seq(1000, 4999, 5000, 5001, Int.MaxValue).foreach(ask)
+    messages.asked.toList shouldBe
+      Seq(1000, 4999, 5000, 5000, 5000).map(limit => (console, Some("udf-a"), 17L, limit))
+
+    messages.asked.clear()
+    val refusal = intercept[BadRequestException](ask(-1))
+    refusal.getResponse.getStatus shouldBe 400
+    refusal.getMessage shouldBe "A page holds 0 or more messages, not -1."
+    messages.asked shouldBe empty
+  }
+
+  it should "answer no messages for an execution that stored none" in {
+    val unstarted = created(post(request()))
+    val notCompiled = compileFailure(post(request(plan = brokenPlan())))
+    val silent = created(post(request()))
+    consoleOf(silent.eid)
+    // The lake outlives this suite's database: nothing an earlier run left is theirs.
+    Seq(unstarted.eid, notCompiled.eid).foreach { eid =>
+      ConsoleMessageStore.drop(
+        ConsoleMessageStore.consoleUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
+      )
+    }
+    val resource = recorded()
+
+    // No console table, as for a run that no unit started, and one its run printed nothing to.
+    Seq(unstarted.eid, notCompiled.eid, silent.eid).foreach { eid =>
+      withClue(s"execution $eid: ") {
+        resource.getConsole(eid, null, 0L, 1000, sessionUser(creatorUid)) shouldBe
+          ExecutionConsoleResponse(eid, Nil, lastSeq = 0L, more = false)
+      }
+    }
+  }
+
+  it should "answer no messages, and read nothing, for an execution whose results have expired" in {
+    val (eid, rows) = executionWithConsole()
+    val messages = new AskedMessages
+    val counting = (uri: URI, operatorId: Option[String], afterSeq: Long, limit: Int) => {
+      messages.read(uri, operatorId, afterSeq, limit)
+      ConsoleMessageStore.read(uri, operatorId, afterSeq, limit)
+    }
+    val resource =
+      recorded(new ExecutionRecordReader(messages = counting, warehousesEnabled = false))
+    def console = resource.getConsole(eid, null, 3L, 1000, sessionUser(creatorUid))
+
+    // Closed, and its results not expired yet: its console is read as while it ran.
+    ExecutionRecords.close(eid, WorkflowExecutionStatus.Completed, None, createdAt(eid), true)
+    console.messages shouldBe rows.drop(3).map(answered)
+    messages.asked should have size 1
+
+    // Its row says that its results are gone, its console output with them.
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, new Timestamp(createdAt(eid) + 86400000L))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
+      .execute()
+    console shouldBe ExecutionConsoleResponse(eid, Nil, lastSeq = 3L, more = false)
+    messages.asked should have size 1
+  }
+
+  it should "answer 500, not a console with no messages, when the lake cannot be read" in {
+    val (eid, _) = executionWithConsole()
+    val down =
+      (uri: URI, _: Option[String], _: Long, _: Int) => lakeDown[(Seq[ConsoleRow], Boolean)](uri)
+    val resource = recorded(new ExecutionRecordReader(messages = down, warehousesEnabled = false))
+
+    val failure = intercept[InternalServerErrorException] {
+      resource.getConsole(eid, null, 0L, 1000, sessionUser(creatorUid))
+    }
+
+    failure.getResponse.getStatus shouldBe 500
+    failure.getMessage shouldBe s"The console output of execution $eid could not be read."
+    failure.getCause shouldBe an[IllegalStateException]
+  }
+
+  it should "answer 409, not a console with no messages, for one in a warehouse that cannot be reached" in {
+    val execution = created(
+      post(
+        request(warehouseId = Some(creatorWhid)),
+        creator = new FixtureCreator(warehouses = true)
+      )
+    )
+    val console = consoleOf(execution.eid, Some(creatorWarehouse))
+    ConsoleMessageStore.append(console, Seq(printed(1L, "udf-a")))
+
+    val refusal = intercept[WebApplicationException] {
+      recorded().getConsole(execution.eid, null, 0L, 1000, sessionUser(creatorUid))
+    }
+
+    refusal.getResponse.getStatus shouldBe 409
+    refusal.getMessage shouldBe
+      s"The console output of execution ${execution.eid} is in a warehouse that is no longer " +
+        "available: per-user warehouses are disabled in this deployment, and it is in " +
+        s"'$creatorWarehouse'."
+    // With warehouses on, it is read where it is.
+    recorded(new ExecutionRecordReader(warehousesEnabled = true))
+      .getConsole(execution.eid, null, 0L, 1000, sessionUser(creatorUid))
+      .messages shouldBe Seq(answered(printed(1L, "udf-a")))
+  }
+
+  it should "be served at GET /executions/{eid}/console, a page of 1,000 from the start unless the request says otherwise" in {
+    val route = classOf[ExecutionResource].getMethods.find(_.getName == "getConsole").get
+    route.getAnnotation(classOf[javax.ws.rs.GET]) should not be null
+    route.getAnnotation(classOf[javax.ws.rs.Path]).value() shouldBe "/{eid}/console"
+    route.getAnnotation(classOf[javax.annotation.security.RolesAllowed]).value().toSet shouldBe
+      Set("REGULAR", "ADMIN")
+
+    // Each query parameter by its name, with what it is when the request leaves it out.
+    val parameters = route.getParameterAnnotations.toSeq.flatMap { annotations =>
+      annotations.collectFirst { case query: javax.ws.rs.QueryParam => query.value() }.map { name =>
+        name -> annotations.collectFirst {
+          case default: javax.ws.rs.DefaultValue => default.value()
+        }
+      }
+    }
+    parameters shouldBe
+      Seq("operatorId" -> None, "afterSeq" -> Some("0"), "limit" -> Some("1000"))
+  }
+
   // --- who may read what an execution recorded ---
 
-  /** The status of each of the two routes for `uid` asking about execution `eid`. */
+  /** The status of each of the three routes for `uid` asking about execution `eid`. */
   private def answersTo(uid: Int, eid: Long): Seq[Int] = {
     val resource = recorded()
     Seq[() => Any](
       () => resource.getState(eid, sessionUser(uid)),
-      () => resource.getLog(eid, sessionUser(uid))
+      () => resource.getLog(eid, sessionUser(uid)),
+      () => resource.getConsole(eid, null, 0L, 1000, sessionUser(uid))
     ).map { ask =>
       try {
         ask()
@@ -2686,22 +2932,22 @@ class ExecutionResourceSpec
     }
   }
 
-  "The state and the log of an execution" should "be answered to its creator, to the owner of its workflow and to a user the workflow was granted to" in {
+  "The state, the log and the console output of an execution" should "be answered to its creator, to the owner of its workflow and to a user the workflow was granted to" in {
     val ofOwner = created(post(request()))
     val ofReader = created(post(request(cuid = readerCuid), uid = readerUid))
 
     // The owner of the workflow created one, and may read the other; the reader was granted
     // the workflow, and created the other.
-    answersTo(creatorUid, ofOwner.eid) shouldBe Seq(200, 200)
-    answersTo(creatorUid, ofReader.eid) shouldBe Seq(200, 200)
-    answersTo(readerUid, ofOwner.eid) shouldBe Seq(200, 200)
-    answersTo(readerUid, ofReader.eid) shouldBe Seq(200, 200)
+    answersTo(creatorUid, ofOwner.eid) shouldBe Seq(200, 200, 200)
+    answersTo(creatorUid, ofReader.eid) shouldBe Seq(200, 200, 200)
+    answersTo(readerUid, ofOwner.eid) shouldBe Seq(200, 200, 200)
+    answersTo(readerUid, ofReader.eid) shouldBe Seq(200, 200, 200)
   }
 
   it should "be refused with 403 to a user with no right to the workflow" in {
     val execution = created(post(request()))
 
-    answersTo(strangerUid, execution.eid) shouldBe Seq(403, 403)
+    answersTo(strangerUid, execution.eid) shouldBe Seq(403, 403, 403)
   }
 
   it should "be refused with 403 to a user who only sees the workflow because it is public" in {
@@ -2712,11 +2958,11 @@ class ExecutionResourceSpec
       .where(WORKFLOW.WID.eq(Integer.valueOf(testWid)))
       .execute()
     try {
-      // A log can quote what the run read from its creator's private datasets.
-      answersTo(strangerUid, execution.eid) shouldBe Seq(403, 403)
+      // A log, and a console, can quote what the run read from its creator's private datasets.
+      answersTo(strangerUid, execution.eid) shouldBe Seq(403, 403, 403)
       // Who ran the public workflow reads their own execution of it.
       val own = created(post(request(cuid = strangerCuid), uid = strangerUid))
-      answersTo(strangerUid, own.eid) shouldBe Seq(200, 200)
+      answersTo(strangerUid, own.eid) shouldBe Seq(200, 200, 200)
     } finally {
       getDSLContext
         .update(WORKFLOW)
@@ -2728,7 +2974,7 @@ class ExecutionResourceSpec
 
   it should "be refused with 403 for an execution there is not, as for one the user may not read" in {
     Seq(0L, -1L, 969999L, Int.MaxValue.toLong + 1, Long.MaxValue).foreach { eid =>
-      withClue(s"execution $eid: ") { answersTo(creatorUid, eid) shouldBe Seq(403, 403) }
+      withClue(s"execution $eid: ") { answersTo(creatorUid, eid) shouldBe Seq(403, 403, 403) }
     }
   }
 
@@ -2807,5 +3053,40 @@ class ExecutionResourceSpec
       objectMapper.readTree(
         """{"outcome": 3, "reason": null, "endedAtMs": 1794873600000, "fromLog": true}"""
       )
+  }
+
+  "A page of console output" should "be written as {eid, messages, lastSeq, more}, each message with its eight fields" in {
+    val page = ExecutionConsoleResponse(
+      345L,
+      Seq(
+        ExecutionConsoleMessageResponse(
+          17L,
+          1794873600000L,
+          "udf-a",
+          "Worker:WF12-udf-a-main-0",
+          "PRINT",
+          "udf-a.py:process_tuple:9",
+          "hello",
+          "hello, in full"
+        )
+      ),
+      lastSeq = 17L,
+      more = false
+    )
+
+    dashboardMapper.readTree(dashboardMapper.writeValueAsString(page)) shouldBe
+      objectMapper.readTree(
+        """{"eid": 345,
+          | "messages": [
+          |   {"seq": 17, "timeMs": 1794873600000, "operatorId": "udf-a",
+          |    "workerId": "Worker:WF12-udf-a-main-0", "msgType": "PRINT",
+          |    "source": "udf-a.py:process_tuple:9", "title": "hello",
+          |    "message": "hello, in full"}],
+          | "lastSeq": 17, "more": false}""".stripMargin
+      )
+    dashboardMapper.readTree(
+      dashboardMapper.writeValueAsString(ExecutionConsoleResponse(345L, Nil, 0L, more = false))
+    ) shouldBe
+      objectMapper.readTree("""{"eid": 345, "messages": [], "lastSeq": 0, "more": false}""")
   }
 }
