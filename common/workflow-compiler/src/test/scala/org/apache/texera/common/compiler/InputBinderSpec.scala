@@ -29,14 +29,20 @@ import org.apache.texera.amber.core.storage.{
   ListedFile,
   ScanFileResolver
 }
-import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  WorkflowIdentity
+}
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.limit.LimitOpDesc
+import org.apache.texera.amber.operator.metadata.OperatorMetadataGenerator
 import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
+import org.apache.texera.amber.operator.udf.python.PythonUDFOpDescV2
 import org.apache.texera.amber.operator.union.UnionOpDesc
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -737,6 +743,45 @@ class InputBinderSpec extends AnyFlatSpec {
 
     assert(errors.isEmpty)
     assert(inputs.isEmpty)
+  }
+
+  it should "find nothing for an operator that takes a change while its run is paused" in {
+    // A change to a paused operator is made to run without this pass: only the datasets and
+    // models it names are pinned again. So what the pass finds for an operator would not follow
+    // a change to it, and an operator that is given something here must not take one.
+    val takingChanges = OperatorMetadataGenerator.operatorTypeMap.keys.toSeq
+      .filter { operator =>
+        operator
+          .getMethod(
+            "runtimeReconfiguration",
+            classOf[WorkflowIdentity],
+            classOf[ExecutionIdentity],
+            classOf[LogicalOp],
+            classOf[LogicalOp]
+          )
+          .getDeclaringClass != classOf[LogicalOp]
+      }
+      .sortBy(_.getName)
+    // Operators that override it, and those of a base that does.
+    assert(takingChanges.contains(classOf[LimitOpDesc]))
+    assert(takingChanges.contains(classOf[PythonUDFOpDescV2]))
+    assert(takingChanges.contains(classOf[KeywordSearchOpDesc]))
+
+    takingChanges.foreach { operator =>
+      withClue(s"${operator.getSimpleName}: ") {
+        val errors = ArrayBuffer.empty[(OperatorIdentity, Throwable)]
+
+        val inputs = inputsOf(
+          LogicalPlan(List(operator.getConstructor().newInstance()), List.empty),
+          files = fileName => fail(s"asked to resolve $fileName"),
+          run = Some((linksNothing, listsNothing)),
+          errors = errors
+        )
+
+        assert(errors.isEmpty)
+        assert(inputs.isEmpty)
+      }
+    }
   }
 
   it should "leave every descriptor as it was written, but for the file a scan source names" in {

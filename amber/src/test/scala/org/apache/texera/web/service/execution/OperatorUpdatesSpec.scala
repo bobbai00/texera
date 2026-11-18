@@ -45,7 +45,6 @@ import org.apache.texera.amber.core.workflow.{
   PhysicalOp,
   PhysicalPlanCodec,
   PortIdentity,
-  PythonEnvironmentRef,
   RepositoryMounts
 }
 import org.apache.texera.amber.engine.e2e.TestUtils
@@ -67,7 +66,6 @@ import org.apache.texera.amber.operator.udf.python.{
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.common.compiler.PythonEnvironmentResolver
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -307,23 +305,22 @@ class OperatorUpdatesSpec
   private type Reconfiguration = Try[(PhysicalOp, Option[StateTransferFunc])]
 
   /**
-    * The updates under test, bound to the fixtures but for `resolver` and `environments` (the
-    * fixtures', unless a case gives others), and set up as the case needs: `reconfiguration`
+    * The updates under test, which pin a change's datasets and models with `resolver` (the
+    * fixtures', unless a case gives another), and set up as the case needs: `reconfiguration`
     * stands in for the answer of the operator a change is made to. `resolverUsers` records the
-    * user each change was bound for: bindings are made for every change that reaches the binding,
-    * whether or not it names a dataset or a model.
+    * user each change was bound for: a resolver is asked for on every change that reaches the
+    * binding, whether or not it names a dataset or a model.
     */
   private class FixtureUpdates(
       warehouses: Boolean = false,
       failAppend: Option[RuntimeException] = None,
       resolver: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
-      environments: PythonEnvironmentResolver = TestUtils.fixtureBindings.environments,
       reconfiguration: Option[() => Reconfiguration] = None,
       val resolverUsers: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
   ) extends OperatorUpdates(
-        bindingsFor = uid => {
+        repositoriesFor = uid => {
           resolverUsers += uid
-          TestUtils.fixtureBindings.copy(repositories = resolver, environments = environments)
+          resolver
         },
         warehousesEnabled = warehouses,
         appendUpdate = (planUri, record, logical) =>
@@ -907,35 +904,6 @@ class OperatorUpdatesSpec
     updateRows(inMl.planUri) shouldBe empty
     // The same environment, written as the editor may, is no change of it.
     stored(post(inMl.eid, udf(code = changedCode("v2"), environment = Some("  ml  "))))
-  }
-
-  it should "take the environment a running operator has from its plan, asking for it no more" in {
-    // The operator's workers keep the interpreter the plan gave them: what the creator keeps
-    // under the environment's name by now, or no longer keeps, changes nothing for the run.
-    val execution = created(plan = udfPlan(environment = Some("ml")))
-    val running = PhysicalPlanCodec
-      .decode(
-        PhysicalPlanCodec.fromJson(ExecutionPlanStore.readPlan(new URI(execution.planUri)).body)
-      )
-      .plan
-      .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
-    running.pythonEnvironment shouldBe PythonEnvironmentRef.Resolved(TestUtils.fixtureEnvironment)
-    val asked = mutable.ListBuffer.empty[String]
-    val updates = new FixtureUpdates(environments = name => {
-      asked += name
-      fail(s"asked to resolve the environment '$name'")
-    })
-
-    val update = stored(
-      post(
-        execution.eid,
-        udf(code = changedCode("v2"), environment = Some("ml")),
-        updates = updates
-      )
-    )
-
-    asked shouldBe empty
-    updateRows(execution.planUri) shouldBe List(update.updateId)
   }
 
   it should "refuse a dataset version the creator cannot read" in {

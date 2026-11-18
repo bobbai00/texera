@@ -25,16 +25,18 @@ import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.{
   ExecutionPlanStore,
+  FileResolver,
   NoStoredPlanException,
   PlanRecord,
-  PlanTooLargeException
+  PlanTooLargeException,
+  RepositoryVersionResolver
 }
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalOp, PhysicalPlanCodec}
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
-import org.apache.texera.common.compiler.{CompileFor, WorkflowCompiler}
+import org.apache.texera.common.compiler.WorkflowCompiler
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
@@ -47,7 +49,6 @@ import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.http.request.execution.OperatorUpdateRequestBody
 import org.apache.texera.web.model.http.response.execution.OperatorUpdateResponse
-import org.apache.texera.web.service.PlanToRun
 
 import java.net.URI
 import java.util.UUID
@@ -107,14 +108,16 @@ object OperatorUpdates {
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
   *
-  * @param bindingsFor       what a change is bound to, for a user, as the execution's plan was
+  * @param repositoriesFor   pins the dataset and model versions a change names, for a user, as
+  *                          the compile of the execution's plan pinned the plan's
   * @param warehousesEnabled whether runs write into per-user warehouses
   * @param appendUpdate      appends the update row to the plan table at a URI
   * @param reconfigure       builds the operator a change makes of an operator; by default the
   *                          operator builds it itself ([[LogicalOp.runtimeReconfiguration]])
   */
 class OperatorUpdates(
-    bindingsFor: Integer => CompileFor.Run = PlanToRun.bindingsFor,
+    repositoriesFor: Integer => RepositoryVersionResolver =
+      FileResolver.repositoryVersionResolverForUser,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     appendUpdate: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.appendUpdate,
     reconfigure: OperatorUpdates.Reconfigure = (current, changed, workflowId, executionId) =>
@@ -182,7 +185,7 @@ class OperatorUpdates(
         )
       }
     val madeToRun = changeMadeToRun(workflow, running, current, changed, workflowId, executionId)
-    val bound = boundFor(uid, running, madeToRun)
+    val bound = boundFor(uid, madeToRun)
 
     val updateId = ExecutionPlanStore.UpdateEntryIdPrefix + UUID.randomUUID()
     try {
@@ -391,13 +394,16 @@ class OperatorUpdates(
   }
 
   /**
-    * `op` with the datasets and models it names pinned for user `uid`, as the compile that made
-    * `running` pinned the plan's ([[WorkflowCompiler.bindResources]]). A version that does not
-    * exist or that the user may not read is the change's error (400); any other failure, such as
-    * the database not answering, is thrown as it is.
+    * `op` with the datasets and models it names pinned for user `uid`, as the compile of the
+    * execution's plan pinned the plan's ([[WorkflowCompiler.bindResources]]). A version that
+    * does not exist or that the user may not read is the change's error (400); any other
+    * failure, such as the database not answering, is thrown as it is.
+    *
+    * Nothing else a compile finds for a run is found for a change: an operator that takes a
+    * change while it runs reads no file and no listing, and keeps its Python environment.
     */
-  private def boundFor(uid: Integer, running: ExecutionPlan, op: PhysicalOp): PhysicalOp = {
-    try WorkflowCompiler.bindResources(op, bindingsFor(uid).repositories)
+  private def boundFor(uid: Integer, op: PhysicalOp): PhysicalOp = {
+    try WorkflowCompiler.bindResources(op, repositoriesFor(uid))
     catch {
       case error: FileNotFoundException => throw new BadRequestException(error.getMessage)
     }

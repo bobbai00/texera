@@ -71,6 +71,7 @@ import org.apache.texera.amber.engine.common.executionrecord.ExecutionRecorder
 import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
+import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
@@ -1101,10 +1102,10 @@ class WorkflowWebsocketResourceSpec
         background = _.run()
       )
 
-  /** The Dashboard's store of a change to a paused operator, with the fixture bindings. */
+  /** The Dashboard's store of a change to a paused operator, with the fixture resolver. */
   private object FixtureUpdates
       extends OperatorUpdates(
-        bindingsFor = _ => TestUtils.fixtureBindings,
+        repositoriesFor = _ => TestOperators.fixtureRepositoryResolver,
         warehousesEnabled = false
       )
 
