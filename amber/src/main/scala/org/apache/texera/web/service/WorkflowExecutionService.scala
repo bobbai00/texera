@@ -51,7 +51,6 @@ import org.apache.texera.web.model.websocket.event.{
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.ExecutionEnvironmentService.EnvironmentNotInstalled
 import org.apache.texera.web.service.WorkflowExecutionService.RunServices
-import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
 
@@ -198,9 +197,8 @@ class WorkflowExecutionService(
     * is the one the plan was read back with. The plan's code is given the directories this unit
     * mounts the datasets and models it reads at ([[WorkflowExecutionService.mountedUnder]]): a
     * plan that reads any fails here on a unit that mounts none. The run replays what the plan
-    * replays, writes its replay log where the plan says, and sends its status emails where the
-    * row says. The engine and every service around the run are built on that plan, and the run
-    * is READY. The engine is asked to start once the Python environments the plan names are
+    * replays, and writes its replay log where the plan says. The engine and every service around
+    * the run are built on that plan, and the run is READY. The engine is asked to start once the Python environments the plan names are
     * ready on this unit: at once when it names none, and otherwise on a thread of the unit's
     * installer, after this has returned, and only if the run still waits for it then. A run that
     * was killed or superseded meanwhile is left as it ended, while its installs go on for the
@@ -236,7 +234,6 @@ class WorkflowExecutionService(
       workflowContext,
       WorkflowExecutionService.mountedUnder(executionPlan.plan, mountRoot)
     )
-    val notification = record.notification.map(Notification.fromJson)
     // The run's workers find its Python environments where this service installs them.
     val coordinatorConfig = WorkflowExecutionService
       .coordinatorConfigOf(executionPlan)
@@ -262,9 +259,7 @@ class WorkflowExecutionService(
           executionStateStore,
           wsInput,
           reconfiguration,
-          coordinatorConfig.faultToleranceConfOpt,
-          workflowContext.workflowId.id,
-          notification
+          coordinatorConfig.faultToleranceConfOpt
         ),
         new ExecutionConsoleService(client, executionStateStore, wsInput, workflowContext)
       )

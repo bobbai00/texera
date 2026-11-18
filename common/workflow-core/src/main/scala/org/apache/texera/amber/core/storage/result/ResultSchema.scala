@@ -49,8 +49,7 @@ object ResultSchema {
     new Attribute("body", AttributeType.STRING),
     new Attribute("logical", AttributeType.STRING),
     new Attribute("createdBy", AttributeType.INTEGER),
-    new Attribute("computingUnitId", AttributeType.INTEGER),
-    new Attribute("notification", AttributeType.STRING)
+    new Attribute("computingUnitId", AttributeType.INTEGER)
   )
 
   /** An execution's log table (see `ExecutionLogStore`): one row per change of the run's state. */

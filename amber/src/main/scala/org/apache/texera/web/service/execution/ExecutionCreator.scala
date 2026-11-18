@@ -157,7 +157,8 @@ final class WorkflowNotCompiled(
   *  1. The warehouse the run writes into and the replay log it replays, which is one of the
   *     user's own executions of the workflow, are checked (400).
   *  1. The execution's row is inserted, as Created, with where it writes its replay log when
-  *     replay logs are kept. No row is left by a request refused before this.
+  *     replay logs are kept, and where the email about how its run ended goes when the request
+  *     asks for one. No row is left by a request refused before this.
   *  1. The workflow is compiled for the user's run, under the site's settings as they stand and
   *     with the cost hints of their newest completed run of it, and the plan made
   *     ([[PlanToRun.make]]): each file a scan source reads is one the user may read, and the plan
@@ -171,9 +172,9 @@ final class WorkflowNotCompiled(
   *     made" (504). A plan that cannot be made for another reason, such as the database or the
   *     storage not answering while a file is resolved or linked, closes the row so too (500).
   *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
-  *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
-  *     the email notification. A plan larger than the table keeps closes the row as failed,
-  *     "its plan could not be stored" (400); so does a write that fails (500).
+  *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user and the unit.
+  *     A plan larger than the table keeps closes the row as failed, "its plan could not be
+  *     stored" (400); so does a write that fails (500).
   *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
   *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
   *     is replaced like any other. Then the results of its closed executions on the unit that a
@@ -183,8 +184,8 @@ final class WorkflowNotCompiled(
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
   * as `{"code", "message"}`. One that fails once its row exists closes the row itself
   * ([[ExecutionRecords.close]]): no engine and no log will ever say how such an execution
-  * ended. Until every reader takes an ending from the closing record, the row's status is
-  * FAILED as well.
+  * ended. No email is sent about it: the user is looking at the failure. Until every reader
+  * takes an ending from the closing record, the row's status is FAILED as well.
   *
   * @param bindingsFor       what a plan is bound to, for a user
   * @param replayLogRoot     where runs keep their replay logs; None when they keep none
@@ -221,8 +222,8 @@ class ExecutionCreator(
   /**
     * Creates the execution `request` asks for, for `user`, in the steps this class describes.
     *
-    * @param requestUri the URI the request came to: the email notification links to the workflow
-    *                   on its host
+    * @param requestUri the URI the request came to: the email about the run links to the
+    *                   workflow on its host
     * @return the execution created
     * @throws WebApplicationException with the status of the step that refused the request or
     *                                 failed; a [[WorkflowNotCompiled]] when the workflow does not
@@ -250,6 +251,9 @@ class ExecutionCreator(
         case refused: IllegalArgumentException => throw new BadRequestException(refused.getMessage)
       }
     val replay = checked.replay.map(replaySourceOf(checked.wid, uid, _))
+    // Kept in the row, which only this service reads: an address is no part of the plan a
+    // computing unit is handed.
+    val notification = notificationFor(checked, user, requestUri).map(Notification.toJson)
 
     val (eid, replayLog) = ExecutionsMetadataPersistService.insertCreatedExecution(
       wid,
@@ -258,7 +262,8 @@ class ExecutionCreator(
       checked.environmentVersion,
       checked.computingUnitId,
       checked.warehouseId,
-      replayLogRoot
+      replayLogRoot,
+      notification
     )
     logger.info(
       s"Execution ${eid.id} of workflow ${checked.wid} is created for user $uid on computing " +
@@ -282,8 +287,7 @@ class ExecutionCreator(
         entryId = ExecutionPlanStore.PlanEntryId,
         body = savedPlan,
         createdBy = uid.intValue(),
-        computingUnitId = checked.computingUnitId,
-        notification = notificationFor(checked, user, requestUri).map(Notification.toJson)
+        computingUnitId = checked.computingUnitId
       )
       (ExecutionPlanStore.planUri(wid, eid, warehouse), record, logical)
     }
@@ -598,8 +602,9 @@ class ExecutionCreator(
   }
 
   /**
-    * Where the run's status emails go and what they name, when the request asks for them and the
-    * user has an address: the workflow's name, and its page on the host the request came to.
+    * Where the email about how the run ended goes and what it names, when the request asks for
+    * one and the user has an address: the workflow's name, and its page on the host the request
+    * came to.
     */
   private def notificationFor(
       request: CheckedRequest,

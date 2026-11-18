@@ -70,6 +70,8 @@ object ExecutionsMetadataPersistService extends LazyLogging {
     * @param warehouseId        the user_warehouse the execution writes into; None for the shared
     *                           default warehouse
     * @param replayLogRoot      where runs keep their replay logs; None when they keep none
+    * @param notification       where the email about how the run ended goes, as JSON
+    *                           `{"email", "workflowName", "workflowUrl"}`; None sends none
     * @return the execution's id, and where it writes its replay log
     */
   def insertCreatedExecution(
@@ -79,7 +81,8 @@ object ExecutionsMetadataPersistService extends LazyLogging {
       environmentVersion: String,
       computingUnitId: Integer,
       warehouseId: Option[Int],
-      replayLogRoot: Option[URI]
+      replayLogRoot: Option[URI],
+      notification: Option[String] = None
   ): (ExecutionIdentity, Option[URI]) = {
     val vid = getLatestVersion(Math.toIntExact(workflowId.id))
     withTransaction(context) { transaction =>
@@ -92,6 +95,7 @@ object ExecutionsMetadataPersistService extends LazyLogging {
         .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
         .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, environmentVersion)
         .set(WORKFLOW_EXECUTIONS.WHID, warehouseId.map(Integer.valueOf).orNull)
+        .set(WORKFLOW_EXECUTIONS.NOTIFICATION, notification.orNull)
       val named =
         if (executionName.nonEmpty) insert.set(WORKFLOW_EXECUTIONS.NAME, executionName) else insert
       val eid = named.returning(WORKFLOW_EXECUTIONS.EID).fetchOne().getEid

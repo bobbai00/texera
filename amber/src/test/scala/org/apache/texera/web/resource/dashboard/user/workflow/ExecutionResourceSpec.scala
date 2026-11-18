@@ -34,6 +34,7 @@ import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
   ExecutionPlanStore,
@@ -131,6 +132,8 @@ import org.apache.texera.web.model.http.response.execution.{
   ExecutionLogResponse,
   ExecutionStateResponse
 }
+import org.apache.texera.web.resource.EmailMessage
+import org.apache.texera.web.service.WorkflowEmailNotifier
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.{PlanToRun, WorkflowService}
 import org.apache.texera.web.service.execution.{
@@ -470,6 +473,25 @@ class ExecutionResourceSpec
     override def load(wid: Long, uid: Int): Option[CostHints] = throw failure
   }
 
+  /** The emails the closers of this suite would have sent: none leaves it. */
+  private val sentEmails = mutable.ListBuffer.empty[EmailMessage]
+
+  /**
+    * A closer whose emails are noted in `sentEmails`, on the thread that closes, and whose lake
+    * calls are the stores' unless `label` is given.
+    */
+  private def recordingCloser(
+      label: URI => Option[ExecutionLabel] = ExecutionLogStore.label
+  ): ExecutionCloser =
+    new ExecutionCloser(
+      label = label,
+      emails = new WorkflowEmailNotifier((message, _) => {
+        sentEmails.synchronized(sentEmails += message)
+        Right(())
+      }),
+      emailThread = _.run()
+    )
+
   /**
     * The creator under test, bound to the fixture files, links and versions in place of a
     * user's, and set up as the case needs. `resolvedFor` records the user each plan was
@@ -486,7 +508,7 @@ class ExecutionResourceSpec
       failWrite: Option[RuntimeException] = None,
       bindings: CompileFor.Run => CompileFor.Run = _ => TestUtils.fixtureBindings,
       background: Executor = _.run(),
-      closer: ExecutionCloser = new ExecutionCloser(),
+      closer: ExecutionCloser = recordingCloser(),
       compiles: ExecutorService = compilePool,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
@@ -780,7 +802,8 @@ class ExecutionResourceSpec
     record.entryId shouldBe ExecutionPlanStore.PlanEntryId
     record.createdBy shouldBe creatorUid
     record.computingUnitId shouldBe unitCuid
-    record.notification shouldBe None
+    // The request asked for no email.
+    stored.getNotification shouldBe null
     // The logical plan as the request sent it, before the compile resolved its scan's file.
     objectMapper.readTree(logicalPlanOf(execution)) shouldBe sentPlan
     logicalPlanOf(execution) should include(TestOperators.CountrySalesSmallCsvPath)
@@ -1368,16 +1391,27 @@ class ExecutionResourceSpec
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(readerUid))
   }
 
-  it should "keep where the run's status emails go when the request asks for them" in {
+  it should "keep where the email about the run goes in the execution's row, when the request asks for one" in {
     val execution = created(post(request(emailNotificationEnabled = true)))
 
-    storedPlan(execution)._1.notification.map(Notification.fromJson) shouldBe Some(
+    Option(row(execution.eid).getNotification).map(Notification.fromJson) shouldBe Some(
       Notification(
         creatorEmail,
         workflowName,
         s"http://texera.example:4200/user/workspace/$testWid"
       )
     )
+  }
+
+  // A computing unit reads the plan table, and has no use for an address.
+  it should "keep the user's address out of the lake" in {
+    val execution = created(post(request(emailNotificationEnabled = true)))
+    val planUri = new URI(execution.planUri)
+
+    val columns = DocumentFactory.openDocument(planUri)._2.get.getAttributeNames
+    columns shouldBe List("entryId", "body", "logical", "createdBy", "computingUnitId")
+    storedPlan(execution)._1.body should not include creatorEmail
+    logicalPlanOf(execution) should not include creatorEmail
   }
 
   it should "keep no notification for a user with no email address, or a blank one" in {
@@ -1390,9 +1424,21 @@ class ExecutionResourceSpec
         .create(request(emailNotificationEnabled = true), noAddress, uriInfo)
 
       withClue(s"email '$email': ") {
-        storedPlan(created(response))._1.notification shouldBe None
+        row(created(response).eid).getNotification shouldBe null
       }
     }
+  }
+
+  // The user is looking at the failure.
+  it should "send no email about an execution whose create fails, though it asked for one" in {
+    val before = sentEmails.size
+
+    val failure =
+      compileFailure(post(request(plan = brokenPlan(), emailNotificationEnabled = true)))
+
+    row(failure.eid).getNotification should not be null
+    row(failure.eid).getEndedAt should not be null
+    sentEmails.size shouldBe before
   }
 
   it should "keep the plan's loop-variable references in its logical plan, as the editor sent them" in {
@@ -1824,7 +1870,7 @@ class ExecutionResourceSpec
   it should "leave earlier executions to the closing job when their logs cannot be read" in {
     val ended = created(post(request(cuid = closingOtherCuid)))
     logged(ended.eid, "READY", "RUNNING", "COMPLETED")
-    val unread = new ExecutionCloser(label = lakeDown)
+    val unread = recordingCloser(label = lakeDown)
 
     created(post(request(cuid = closingOtherCuid), creator = new FixtureCreator(closer = unread)))
 
@@ -1835,7 +1881,7 @@ class ExecutionResourceSpec
     // Its log's URI would name the shared warehouse, where a log of that name is another's.
     insertExecution(961951, testWid, closingOtherCuid, status = 1, whid = Some(creatorWhid))
     val read = mutable.ListBuffer.empty[URI]
-    val noting = new ExecutionCloser(label = uri => {
+    val noting = recordingCloser(label = uri => {
       read.synchronized(read += uri)
       ExecutionLogStore.label(uri)
     })
@@ -1844,6 +1890,24 @@ class ExecutionResourceSpec
 
     read.map(VFSURIFactory.decodeURI(_).executionId.id) should not contain 961951L
     row(961951).getEndedAt shouldBe null
+  }
+
+  it should "email the user of an earlier execution it closes how that one ended" in {
+    val asked =
+      created(post(request(cuid = closingOtherCuid, emailNotificationEnabled = true)))
+    val unasked = created(post(request(cuid = closingOtherCuid)))
+    val failing = logged(asked.eid, "READY", "RUNNING")
+    record(failing, asked.eid, 3, "FAILED", errors = Seq(boom))
+    logged(unasked.eid, "READY", "RUNNING", "COMPLETED")
+    val before = sentEmails.size
+
+    created(post(request(cuid = closingOtherCuid)))
+
+    Seq(asked, unasked).foreach(execution => row(execution.eid).getEndedAt should not be null)
+    val sent = sentEmails.drop(before).toList
+    sent.map(email => (email.receiver, email.subject)) shouldBe
+      List((creatorEmail, s"[Texera] Workflow $workflowName ($testWid): Failed"))
+    sent.head.content should include(s"- Reason: ${boom.message}\n")
   }
 
   // --- refused: rights ---

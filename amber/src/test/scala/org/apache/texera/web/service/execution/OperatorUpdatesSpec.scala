@@ -628,7 +628,6 @@ class OperatorUpdatesSpec
     record.entryId shouldBe update.updateId
     record.createdBy shouldBe creatorUid
     record.computingUnitId shouldBe unitCuid
-    record.notification shouldBe None
     // What the unit applies: the new code for the running operator, of this execution.
     decoded(record) shouldBe OperatorUpdate(
       ExecutionIdentity(execution.eid),

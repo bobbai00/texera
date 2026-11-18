@@ -125,7 +125,6 @@ import org.apache.texera.web.model.websocket.request.{
   WorkflowCheckpointRequest,
   WorkflowKillRequest
 }
-import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually
@@ -677,16 +676,12 @@ class WorkflowExecutionServiceSpec
   }
 
   /** `executionPlan`'s plan row, as the Dashboard writes it for `testUid` on `testCuid`. */
-  private def planRowOf(
-      executionPlan: ExecutionPlan,
-      notification: Option[String] = None
-  ): PlanRecord =
+  private def planRowOf(executionPlan: ExecutionPlan): PlanRecord =
     PlanRecord(
       entryId = ExecutionPlanStore.PlanEntryId,
       body = PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(executionPlan)),
       createdBy = testUid,
-      computingUnitId = testCuid,
-      notification = notification
+      computingUnitId = testCuid
     )
 
   /** `executionPlan` read back from its plan row, as a unit reads it. */
@@ -703,17 +698,12 @@ class WorkflowExecutionServiceSpec
 
   "WorkflowExecutionService.startStored" should
     "build the engine and every service around the run on the plan it is handed, and make the run READY" in {
-    val notification =
-      Notification("u@example.com", "the workflow", "http://texera.example/user/workspace/9207")
     val executionPlan =
       readBack(storedSourcePlan(Some(replaySource), Some(replayLogLocation)))
     val run = new StoredRun(executionPlan)
     try {
-      run.service.startStored(
-        executionPlan,
-        planRowOf(executionPlan, Some(Notification.toJson(notification))),
-        storedPlanTable
-      ) shouldBe None
+      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+        None
       run.errors shouldBe empty
 
       // The engine is handed the plan as it was handed to the run, under its context: the one it
@@ -733,8 +723,6 @@ class WorkflowExecutionServiceSpec
       run.coordinatorConfig shouldBe Some(
         WorkflowExecutionService.coordinatorConfigOf(executionPlan)
       )
-      // Its status emails go where the plan row says.
-      services.runtime.notification shouldBe Some(notification)
       // The run is READY, which its record is told, and the engine was asked to start.
       run.store.metadataStore.getState.state shouldBe READY
       run.recorder.states shouldBe Seq(("READY", None))
@@ -756,8 +744,6 @@ class WorkflowExecutionServiceSpec
       val config = run.coordinatorConfig.getOrElse(fail("the engine was not built"))
       config.stateRestoreConfOpt shouldBe None
       config.faultToleranceConfOpt shouldBe None
-      // Nor do its status emails go anywhere: its plan row names no one.
-      run.service.services.get.runtime.notification shouldBe None
       // So it cannot checkpoint: a checkpoint request is its sender's to hear refused, and is
       // no error of the run.
       the[UnsupportedOperationException] thrownBy
@@ -834,27 +820,6 @@ class WorkflowExecutionServiceSpec
       run.engineWorkflow.getOrElse(fail("the engine was handed no workflow")).physicalPlan shouldBe
         executionPlan.plan
       run.engine.getOrElse(fail("no engine")).answers.keySet should contain("startWorkflow")
-    } finally run.close()
-  }
-
-  it should "refuse a plan row whose notification it cannot read, before it builds the engine" in {
-    val executionPlan = readBack(storedSourcePlan())
-    val run = new StoredRun(executionPlan)
-    try {
-      val failure = run.service
-        .startStored(
-          executionPlan,
-          planRowOf(executionPlan, Some("""{"email":"someone@example.com"}""")),
-          storedPlanTable
-        )
-        .getOrElse(fail("the run started"))
-      failure shouldBe an[IllegalArgumentException]
-      failure.getMessage shouldBe
-        "The execution's notification is not {email, workflowName, workflowUrl}: " +
-          "workflowName, workflowUrl missing or not a string."
-      run.errors shouldBe Seq(failure)
-      run.engineWorkflow shouldBe None
-      run.service.services shouldBe None
     } finally run.close()
   }
 
@@ -991,8 +956,7 @@ class WorkflowExecutionServiceSpec
           PhysicalPlanCodec.encodeUpdate(ExecutionIdentity(testEid.longValue()), updateId, changed)
         ),
         createdBy = testUid,
-        computingUnitId = testCuid,
-        notification = None
+        computingUnitId = testCuid
       ),
       "{}"
     )

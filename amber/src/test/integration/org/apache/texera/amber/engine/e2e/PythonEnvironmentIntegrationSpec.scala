@@ -306,8 +306,7 @@ class PythonEnvironmentIntegrationSpec
         entryId = ExecutionPlanStore.PlanEntryId,
         body = savedPlan,
         createdBy = specId,
-        computingUnitId = specId,
-        notification = None
+        computingUnitId = specId
       )
       val planUri = ExecutionPlanStore.planUri(context.workflowId, context.executionId, None)
       service.startStored(executionPlan, planRow, planUri) shouldBe None

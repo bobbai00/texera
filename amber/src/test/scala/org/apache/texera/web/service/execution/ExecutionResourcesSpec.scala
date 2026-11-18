@@ -300,8 +300,7 @@ class ExecutionResourcesSpec
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
         createdBy = testUid,
-        computingUnitId = 1,
-        notification = None
+        computingUnitId = 1
       ),
       "{}"
     )

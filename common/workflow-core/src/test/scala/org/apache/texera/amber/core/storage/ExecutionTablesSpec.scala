@@ -82,7 +82,7 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     )
     ExecutionPlanStore.writePlan(
       uri,
-      PlanRecord(ExecutionPlanStore.PlanEntryId, body, 1, 3, None),
+      PlanRecord(ExecutionPlanStore.PlanEntryId, body, 1, 3),
       """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
     )
     uri
@@ -166,7 +166,7 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     val uri = ExecutionPlanStore.planUri(workflowId, eid, None)
     ExecutionPlanStore.writePlan(
       uri,
-      PlanRecord(ExecutionPlanStore.PlanEntryId, """{"formatVersion":2}""", 1, 3, None),
+      PlanRecord(ExecutionPlanStore.PlanEntryId, """{"formatVersion":2}""", 1, 3),
       "{}"
     )
     an[IllegalArgumentException] should be thrownBy ExecutionTables.portTables(uri)

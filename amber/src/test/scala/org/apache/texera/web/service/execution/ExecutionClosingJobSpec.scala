@@ -77,6 +77,9 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 }
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
 import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
+import org.apache.texera.web.resource.EmailMessage
+import org.apache.texera.web.service.WorkflowEmailNotifier
+import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.execution.ExecutionClosing.Settings
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually
@@ -89,7 +92,13 @@ import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong}
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue, CountDownLatch}
+import java.util.concurrent.{
+  ConcurrentHashMap,
+  ConcurrentLinkedQueue,
+  CountDownLatch,
+  Executor,
+  TimeUnit
+}
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -287,14 +296,18 @@ class ExecutionClosingJobSpec
       List.empty
     )
 
-  private def request(cuid: Int, plan: LogicalPlanPojo): CreateExecutionRequest =
+  private def request(
+      cuid: Int,
+      plan: LogicalPlanPojo,
+      notify: Boolean = false
+  ): CreateExecutionRequest =
     CreateExecutionRequest(
       wid = testWid,
       executionName = "closing-spec-execution",
       engineVersion = "1.4.0-spec",
       logicalPlan = plan,
       workflowSettings = Some(WorkflowSettings(77, ExecutionMode.MATERIALIZED)),
-      emailNotificationEnabled = false,
+      emailNotificationEnabled = notify,
       computingUnitId = cuid,
       warehouseId = None,
       replayFromExecution = None,
@@ -314,27 +327,47 @@ class ExecutionClosingJobSpec
 
   private val requestUri = new URI("http://texera.example:4200/api/executions")
 
-  /** An execution as its create leaves it: an open row, and a stored plan no unit has started. */
-  private def created(cuid: Int = liveCuid): ExecutionRecord = {
-    val response =
-      creator.create(request(cuid, plan(TestOperators.smallCsvScanOpDesc())), owner, requestUri)
+  /**
+    * An execution as its create leaves it: an open row, and a stored plan no unit has started.
+    * With `notify`, its user asked to be emailed how it ends.
+    */
+  private def created(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord = {
+    val response = creator.create(
+      request(cuid, plan(TestOperators.smallCsvScanOpDesc()), notify),
+      owner,
+      requestUri
+    )
     madePlans.add(new URI(response.planUri))
     record(response.eid)
   }
 
   /** An execution whose workflow does not compile, which its create closed itself. */
-  private def notCompiled(): ExecutionRecord = {
+  private def notCompiled(notify: Boolean = false): ExecutionRecord = {
     val refused = intercept[WorkflowNotCompiled] {
-      creator.create(request(liveCuid, plan(new CSVScanSourceOpDesc())), owner, requestUri)
+      creator.create(
+        request(liveCuid, plan(new CSVScanSourceOpDesc()), notify),
+        owner,
+        requestUri
+      )
     }
     record(refused.eid)
   }
+
+  /** Where the emails about the owner's executions go, as a create writes it into their rows. */
+  private val ownersNotification = Notification(
+    owner.getEmail,
+    "execution-closing-spec-workflow",
+    s"http://texera.example:4200/user/workspace/$testWid"
+  )
 
   /**
     * A row with no plan, as a create that died between its insert and its plan's write leaves
     * one, or of an execution in a warehouse.
     */
-  private def inserted(warehouse: Option[Integer] = None): ExecutionRecord = {
+  private def inserted(
+      warehouse: Option[Integer] = None,
+      notification: Option[String] = None
+  ): ExecutionRecord = {
     val vid = getDSLContext
       .select(WORKFLOW_VERSION.VID)
       .from(WORKFLOW_VERSION)
@@ -349,6 +382,7 @@ class ExecutionClosingJobSpec
       .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(System.currentTimeMillis()))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
       .set(WORKFLOW_EXECUTIONS.WHID, warehouse.orNull)
+      .set(WORKFLOW_EXECUTIONS.NOTIFICATION, notification.orNull)
       .returning(WORKFLOW_EXECUTIONS.EID)
       .fetchOne()
       .getEid
@@ -363,8 +397,8 @@ class ExecutionClosingJobSpec
   }
 
   /** A created execution that a unit started: its start is claimed and its log made. */
-  private def started(cuid: Int = liveCuid): ExecutionRecord = {
-    val execution = created(cuid)
+  private def started(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord = {
+    val execution = created(cuid, notify)
     ExecutionPlanStore.claimStart(execution.planUri)
     withLog(execution)
   }
@@ -387,8 +421,8 @@ class ExecutionClosingJobSpec
   }
 
   /** A started execution whose run is under way. */
-  private def running(cuid: Int = liveCuid): ExecutionRecord = {
-    val execution = started(cuid)
+  private def running(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord = {
+    val execution = started(cuid, notify)
     append(execution, "READY", 2000L)
     append(execution, "RUNNING", 3000L)
     execution
@@ -430,8 +464,10 @@ class ExecutionClosingJobSpec
 
   /**
     * A job under test and what it is made of. Its lake calls are the stores', unless a case
-    * replaces one; each label read and each measuring is noted. Making one closes what earlier
-    * cases left open and settles their verdicts, unless it is to keep them.
+    * replaces one; each label read and each measuring is noted. No email leaves it: each one
+    * it would send is noted, and `deliver` answers whether it was sent, on the thread that
+    * closes unless a case gives another. Making one closes what earlier cases left open and
+    * settles their verdicts, unless it is to keep them.
     */
   private class Fixture(
       jobSettings: Settings = settings,
@@ -442,7 +478,9 @@ class ExecutionClosingJobSpec
       storedBytes: ExecutionRecord => Long = ExecutionCloser.storedBytesOf,
       open: () => Seq[ExecutionRecord] = () => ExecutionRecords.open(),
       lookLimit: FiniteDuration = ExecutionClosingJob.LookLimit,
-      keepVerdicts: Boolean = false
+      keepVerdicts: Boolean = false,
+      deliver: EmailMessage => Either[String, Unit] = _ => Right(()),
+      emailThread: Executor = _.run()
   ) {
     if (!keepVerdicts) settle()
 
@@ -450,6 +488,7 @@ class ExecutionClosingJobSpec
     val clock = new AtomicLong(System.currentTimeMillis() + 300000L)
     val labelsRead = new ConcurrentLinkedQueue[URI]()
     val measured = new ConcurrentLinkedQueue[Long]()
+    val emails = new ConcurrentLinkedQueue[EmailMessage]()
 
     val closer = new ExecutionCloser(
       label = uri => {
@@ -463,7 +502,12 @@ class ExecutionClosingJobSpec
         measured.add(execution.eid)
         storedBytes(execution)
       },
-      now = () => clock.get()
+      now = () => clock.get(),
+      emails = new WorkflowEmailNotifier((message, _) => {
+        emails.add(message)
+        deliver(message)
+      }),
+      emailThread = emailThread
     )
     val job = new ExecutionClosingJob(
       settings = jobSettings,
@@ -1285,6 +1329,291 @@ class ExecutionClosingJobSpec
 
     closingOf(execution) shouldBe
       Some(ClosingRecord(completed, None, execution.startingTimeMs + 9000L, fromLog = true))
+  }
+
+  // --- emails ---
+
+  private val subject = s"[Texera] Workflow ${ownersNotification.workflowName} ($testWid)"
+
+  /** The content of an email that a run of the spec's workflow ended as `details` say. */
+  private def contentOf(opening: String, details: String*): String =
+    (Seq("Hello,", "", opening, "", s"- Workflow ID: $testWid") ++
+      Seq(s"- Workflow Name: ${ownersNotification.workflowName}") ++ details ++
+      Seq(
+        "",
+        s"You can view more details by visiting: ${ownersNotification.workflowUrl}",
+        "",
+        "Regards,",
+        "Texera Team"
+      )).mkString("\n")
+
+  private val ended = "The run of the workflow with the following details has ended:"
+
+  /** A time as an email writes it. */
+  private def written(timeMs: Long): String =
+    java.time.format.DateTimeFormatter
+      .ofPattern("MMMM d, yyyy, h:mm:ss a '(UTC)'")
+      .withZone(java.time.ZoneOffset.UTC)
+      .format(java.time.Instant.ofEpochMilli(timeMs))
+
+  "An email" should "tell the user of each execution that asked for one how it ended, once" in {
+    val fixture = new Fixture()
+    val done = running(notify = true)
+    append(done, "COMPLETED", 9000L)
+    val broke = running(notify = true)
+    append(broke, "FAILED", 7000L, errors = Seq(error("java.lang.RuntimeException: boom")))
+    val unit = freshUnit()
+    val gone = running(unit, notify = true)
+    terminate(unit, GARBAGE_COLLECTED)
+    val unasked = running()
+    append(unasked, "COMPLETED", 9000L)
+
+    fixture.tick()
+
+    Seq(done, broke, gone, unasked).foreach(closingOf(_) should not be empty)
+    record(done.eid).notification.map(Notification.fromJson) shouldBe Some(ownersNotification)
+    fixture.emails.asScala.map(_.receiver).toSet shouldBe Set(owner.getEmail)
+    fixture.emails.asScala.map(email => (email.subject, email.content)).toSet shouldBe Set(
+      (
+        s"$subject: Completed",
+        contentOf(
+          ended,
+          "- State: Completed",
+          s"- Timestamp: ${written(done.startingTimeMs + 9000L)}"
+        )
+      ),
+      (
+        s"$subject: Failed",
+        contentOf(
+          ended,
+          "- State: Failed",
+          "- Reason: java.lang.RuntimeException: boom",
+          s"- Timestamp: ${written(broke.startingTimeMs + 7000L)}"
+        )
+      ),
+      (
+        s"$subject: Failed",
+        contentOf(
+          ended,
+          "- State: Failed",
+          "- Reason: unit lost",
+          s"- Timestamp: ${written(gone.startingTimeMs + 3000L)}"
+        )
+      )
+    )
+    fixture.emails.size shouldBe 3
+
+    // A closed execution is not looked at again, so nothing is sent again.
+    fixture.tick(3)
+    fixture.emails.size shouldBe 3
+  }
+
+  it should "say that the warehouse of an execution is gone" in {
+    val fixture = new Fixture()
+    val execution = inserted(
+      warehouse = Some(whid),
+      notification = Some(Notification.toJson(ownersNotification))
+    )
+
+    fixture.tick()
+
+    closingOf(execution).flatMap(_.reason) shouldBe Some(ExecutionClosing.WarehouseUnavailable)
+    fixture.emails.asScala.map(_.subject).toList shouldBe List(s"$subject: Failed")
+    fixture.emails.peek().content should include(
+      "- Reason: its warehouse is no longer available\n"
+    )
+  }
+
+  // Nothing ran: the user saw the create fail, or never started what it made.
+  it should "not be sent about an execution that no unit started" in {
+    val fixture = new Fixture()
+    val unstarted = created(notify = true)
+    val failedAtCreate = notCompiled(notify = true)
+    Seq(unstarted, failedAtCreate).foreach(_.notification should not be empty)
+
+    fixture.clock.set(unstarted.startingTimeMs + 600000L)
+    fixture.tick(2)
+
+    closingOf(unstarted).flatMap(_.reason) shouldBe Some(ExecutionClosing.NeverStarted)
+    closingOf(failedAtCreate).flatMap(_.reason).get should startWith("compile error")
+    fixture.emails.asScala shouldBe empty
+  }
+
+  it should "be sent once when two jobs run on one database" in {
+    val (one, other) = (new Fixture(), new Fixture())
+    val executions = (1 to 6).map(_ => running(notify = true))
+    executions.foreach(execution =>
+      append(execution, "KILLED", 9000L, reason = Some(s"stopped as ${execution.eid}"))
+    )
+
+    atOnce(() => one.tick(), () => other.tick())
+
+    val sent = (one.emails.asScala ++ other.emails.asScala).toList
+    sent should have size 6
+    executions.foreach { execution =>
+      sent.count(_.content.contains(s"- Reason: stopped as ${execution.eid}\n")) shouldBe 1
+    }
+  }
+
+  it should "leave the execution closed, and say so once, when it cannot be sent" in {
+    Seq[(String, EmailMessage => Either[String, Unit])](
+      "java.lang.IllegalStateException: Failed to send email: no route to host" ->
+        (_ => Left("Failed to send email: no route to host")),
+      "java.lang.RuntimeException: the mail client broke" ->
+        (_ => throw new RuntimeException("the mail client broke"))
+    ).foreach {
+      case (why, deliver) =>
+        val fixture = new Fixture(deliver = deliver)
+        val execution = running(notify = true)
+        append(execution, "COMPLETED", 9000L)
+
+        val lines = logged { fixture.tick(3) }
+
+        closingOf(execution) shouldBe
+          Some(ClosingRecord(completed, None, execution.startingTimeMs + 9000L, fromLog = true))
+        row(execution).getStoredBytes.longValue() should be > 0L
+        lines.filter(_._1 == Level.WARN) shouldBe Seq(
+          (
+            Level.WARN,
+            s"The email that execution ${execution.eid} of workflow $testWid ended could not " +
+              s"be sent: $why"
+          )
+        )
+        // Tried once: the close is not undone, and nothing tries again.
+        fixture.emails.size shouldBe 1
+    }
+  }
+
+  it should "not be sent, which is logged, when the execution's notification cannot be read" in {
+    val fixture = new Fixture()
+    val execution = withLog(inserted(notification = Some("""{"email":"someone@example.com"}""")))
+    append(execution, "COMPLETED", 9000L)
+
+    val lines = logged { fixture.tick() }
+
+    closingOf(execution).map(_.outcome) shouldBe Some(completed)
+    fixture.emails.asScala shouldBe empty
+    lines.filter(_._1 == Level.WARN).map(_._2) shouldBe Seq(
+      s"The email that execution ${execution.eid} of workflow $testWid ended could not be " +
+        "sent: java.lang.IllegalArgumentException: The execution's notification is not " +
+        "{email, workflowName, workflowUrl}: workflowName, workflowUrl missing or not a string."
+    )
+  }
+
+  it should "leave the execution closed when it cannot be handed over to be sent" in {
+    val fixture = new Fixture(emailThread = _ => throw new IllegalStateException("shut down"))
+    val execution = running(notify = true)
+    append(execution, "COMPLETED", 9000L)
+
+    val lines = logged { fixture.tick() }
+
+    closingOf(execution).map(_.outcome) shouldBe Some(completed)
+    row(execution).getStoredBytes.longValue() should be > 0L
+    fixture.emails.asScala shouldBe empty
+    lines.filter(_._1 == Level.WARN).map(_._2) shouldBe Seq(
+      s"The email that execution ${execution.eid} of workflow $testWid ended was not handed " +
+        "over to be sent: java.lang.IllegalStateException: shut down"
+    )
+  }
+
+  // A mail server that does not answer holds up the one thread that sends, and no close.
+  it should "be sent on a thread of its own, a daemon, while the close goes on" in {
+    settle()
+    val sending = new CountDownLatch(1)
+    val release = new CountDownLatch(1)
+    val sender = new java.util.concurrent.atomic.AtomicReference[Thread]()
+    val closer = new ExecutionCloser(
+      emails = new WorkflowEmailNotifier((_, _) => {
+        sender.set(Thread.currentThread())
+        sending.countDown()
+        release.await(30, TimeUnit.SECONDS)
+        Right(())
+      })
+    )
+    val execution = running(notify = true)
+    append(execution, "COMPLETED", 9000L)
+
+    try {
+      closer.closeIfEnded(execution) shouldBe true
+
+      // Closed and measured, with the email still on its way.
+      sending.await(30, TimeUnit.SECONDS) shouldBe true
+      closingOf(execution).map(_.outcome) shouldBe Some(completed)
+      eventually { row(execution).getStoredBytes.longValue() should be > 0L }
+      release.getCount shouldBe 1L
+      sender.get() should not be Thread.currentThread()
+      sender.get().getName shouldBe "execution-closing-email"
+      sender.get().isDaemon shouldBe true
+    } finally release.countDown()
+  }
+
+  it should "be followed by one that says how the run really ended, when a verdict gives way" in {
+    val fixture = new Fixture()
+    val execution = running(notify = true)
+    fixture.tick(lostAfterTicks + 1)
+    closingOf(execution).flatMap(_.reason) shouldBe Some("unit lost")
+    fixture.emails.asScala.map(_.subject).toList shouldBe List(s"$subject: Failed")
+
+    // The unit is back, and the run ends.
+    append(execution, "COMPLETED", 200000L)
+    fixture.tick()
+
+    closingOf(execution).map(_.outcome) shouldBe Some(completed)
+    fixture.emails.asScala.map(_.subject).toList shouldBe
+      List(s"$subject: Failed", s"$subject: Completed")
+    val correction = fixture.emails.asScala.last
+    correction.receiver shouldBe owner.getEmail
+    correction.content shouldBe contentOf(
+      "An earlier email said that this run of your workflow had failed (unit lost). Its " +
+        "computing unit could not be reached for a while, and the run went on. This is how " +
+        "it ended:",
+      "- State: Completed",
+      s"- Timestamp: ${written(execution.startingTimeMs + 200000L)}"
+    )
+
+    // Settled: no tick sends another.
+    fixture.tick(3)
+    fixture.emails.size shouldBe 2
+  }
+
+  it should "correct a verdict once when two jobs run on one database, and not at all unasked" in {
+    val (one, other) = (new Fixture(), new Fixture())
+    val unit = freshUnit()
+    val executions = (1 to 4).map(_ => running(unit, notify = true))
+    val unasked = running(unit)
+    terminate(unit, USER_REQUESTED)
+    one.tick()
+    one.emails.asScala.map(_.subject).toList shouldBe List.fill(4)(s"$subject: Failed")
+    one.emails.clear()
+
+    (executions :+ unasked).foreach(execution =>
+      append(execution, "KILLED", 200000L, reason = Some(s"stopped as ${execution.eid}"))
+    )
+    atOnce(() => one.tick(), () => other.tick())
+
+    val corrections = (one.emails.asScala ++ other.emails.asScala).toList
+    corrections should have size 4
+    executions.foreach { execution =>
+      val about =
+        corrections.filter(_.content.contains(s"- Reason: stopped as ${execution.eid}\n"))
+      about should have size 1
+      about.head.subject shouldBe s"$subject: Killed"
+      about.head.content should include("had failed (unit terminated). Its computing unit")
+    }
+  }
+
+  it should "not follow a verdict that stands" in {
+    val fixture = new Fixture()
+    val execution = running(notify = true)
+    fixture.tick(lostAfterTicks + 1)
+    fixture.emails.size shouldBe 1
+
+    // The unit is back and beats, and its run goes on: the verdict is not revised.
+    beat(execution, 900000L)
+    fixture.tick(3)
+
+    closingOf(execution).flatMap(_.reason) shouldBe Some("unit lost")
+    fixture.emails.size shouldBe 1
   }
 
   // --- the schedule ---

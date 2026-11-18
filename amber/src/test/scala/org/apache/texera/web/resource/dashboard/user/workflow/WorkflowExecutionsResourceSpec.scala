@@ -720,8 +720,7 @@ class WorkflowExecutionsResourceSpec
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
         createdBy = testUser.getUid,
-        computingUnitId = 1,
-        notification = None
+        computingUnitId = 1
       ),
       "{}"
     )

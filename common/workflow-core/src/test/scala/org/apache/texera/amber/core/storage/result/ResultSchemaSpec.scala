@@ -68,10 +68,9 @@ class ResultSchemaSpec extends AnyFlatSpec with Matchers {
       "body",
       "logical",
       "createdBy",
-      "computingUnitId",
-      "notification"
+      "computingUnitId"
     )
-    List("entryId", "body", "logical", "notification").foreach(name =>
+    List("entryId", "body", "logical").foreach(name =>
       schema.getAttribute(name).getType shouldBe AttributeType.STRING
     )
     List("createdBy", "computingUnitId").foreach(name =>

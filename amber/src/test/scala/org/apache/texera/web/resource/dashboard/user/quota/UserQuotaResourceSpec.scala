@@ -403,8 +403,7 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
         createdBy = testUid,
-        computingUnitId = 1,
-        notification = None
+        computingUnitId = 1
       ),
       "{}"
     )

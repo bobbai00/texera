@@ -201,8 +201,7 @@ class OperatorUpdates(
             PhysicalPlanCodec.encodeUpdate(executionId, updateId, bound)
           ),
           createdBy = uid.intValue(),
-          computingUnitId = cuid,
-          notification = None
+          computingUnitId = cuid
         ),
         logical
       )
