@@ -348,6 +348,34 @@ class ExecutionStatsServiceSpec
     }
   }
 
+  it should "sum multi-port output metrics and zero-out empty ports consistently" in {
+    withService { f =>
+      val batches = recordBatches(f.stateStore.statsStore) {
+        f.client.fire(
+          ExecutionStatsUpdate(
+            Map(
+              "multiOut" -> metrics(
+                RUNNING,
+                inputs = Seq.empty,
+                outputs = Seq((0, 2L, 20L), (1, 5L, 55L)),
+                numWorkers = 3
+              )
+            )
+          )
+        )
+      }
+
+      val published = statisticsEvents(batches.flatten)
+      val multiOut = published("multiOut")
+      multiOut.aggregatedInputRowCount shouldBe 0L
+      multiOut.aggregatedInputSize shouldBe 0L
+      multiOut.inputPortMetrics shouldBe Map.empty
+      multiOut.aggregatedOutputRowCount shouldBe 7L
+      multiOut.aggregatedOutputSize shouldBe 75L
+      multiOut.outputPortMetrics shouldBe Map("0" -> 2L, "1" -> 5L)
+    }
+  }
+
   "the worker assignment callback" should
     "publish one event per operator carrying that operator's workers" in {
     withService { f =>

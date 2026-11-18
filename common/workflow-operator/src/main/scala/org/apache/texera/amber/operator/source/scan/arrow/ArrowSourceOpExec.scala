@@ -63,6 +63,8 @@ class ArrowSourceOpExec(
     val rowIterator = new Iterator[TupleLike] {
       private var currentIndex = 0
       private var currentBatchIndex = 0
+      // Every batch loads into the same root, so its schema is converted once.
+      private lazy val schema = ArrowUtils.toTexeraSchema(root.get.getSchema)
 
       override def hasNext: Boolean = {
         if (root.exists(_.getRowCount > currentIndex)) {
@@ -83,7 +85,7 @@ class ArrowSourceOpExec(
 
       override def next(): TupleLike = {
         root.map { vectorSchemaRoot =>
-          val tuple = ArrowUtils.getTexeraTuple(currentIndex, vectorSchemaRoot)
+          val tuple = ArrowUtils.getTexeraTuple(currentIndex, vectorSchemaRoot, schema)
           currentIndex += 1
           tuple
         }.get

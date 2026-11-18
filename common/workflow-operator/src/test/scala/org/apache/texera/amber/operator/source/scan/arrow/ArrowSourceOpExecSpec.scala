@@ -37,7 +37,8 @@ class ArrowSourceOpExecSpec extends AnyFlatSpec with Matchers {
 
   private val schema = Schema(List(new Attribute("s", AttributeType.STRING)))
 
-  private def writeArrowFile(rows: Seq[String]): File = {
+  /** Writes one record batch per argument, so a file can hold several or none. */
+  private def writeArrowFile(batches: Seq[String]*): File = {
     val file = File.createTempFile("arrow-src-", ".arrow")
     file.deleteOnExit()
     val allocator = new RootAllocator()
@@ -46,17 +47,19 @@ class ArrowSourceOpExecSpec extends AnyFlatSpec with Matchers {
     val writer = new ArrowFileWriter(root, null, Channels.newChannel(out))
     try {
       writer.start()
-      root.allocateNew()
-      rows.zipWithIndex.foreach {
-        case (value, i) =>
-          ArrowUtils.setTexeraTuple(
-            Tuple.builder(schema).addSequentially(Array[Any](value)).build(),
-            i,
-            root
-          )
+      batches.foreach { rows =>
+        root.allocateNew()
+        rows.zipWithIndex.foreach {
+          case (value, i) =>
+            ArrowUtils.setTexeraTuple(
+              Tuple.builder(schema).addSequentially(Array[Any](value)).build(),
+              i,
+              root
+            )
+        }
+        root.setRowCount(rows.size)
+        writer.writeBatch()
       }
-      root.setRowCount(rows.size)
-      writer.writeBatch()
       writer.end()
     } finally {
       writer.close()
@@ -93,6 +96,31 @@ class ArrowSourceOpExecSpec extends AnyFlatSpec with Matchers {
     val exec = executorOf(writeArrowFile(Seq("a", "b", "c", "d", "e")), Some(1), Some(2))
     exec.open()
     try assert(values(exec) == List("b", "c"))
+    finally exec.close()
+  }
+
+  it should "read every record batch in order, each row with the file's schema" in {
+    val exec = executorOf(writeArrowFile(Seq("a", "b"), Seq("c"), Seq("d", "e")))
+    exec.open()
+    try {
+      val tuples = exec.produceTuple().toList.map(_.asInstanceOf[Tuple])
+      tuples.map(_.getField[String]("s")) shouldBe List("a", "b", "c", "d", "e")
+      tuples.map(_.getSchema).distinct shouldBe List(schema)
+    } finally exec.close()
+  }
+
+  it should "apply offset and limit across record batches" in {
+    val exec =
+      executorOf(writeArrowFile(Seq("a", "b"), Seq("c"), Seq("d", "e")), Some(1), Some(3))
+    exec.open()
+    try assert(values(exec) == List("b", "c", "d"))
+    finally exec.close()
+  }
+
+  it should "read no rows from a file without record batches" in {
+    val exec = executorOf(writeArrowFile())
+    exec.open()
+    try assert(values(exec).isEmpty)
     finally exec.close()
   }
 

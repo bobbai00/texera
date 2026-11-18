@@ -175,17 +175,19 @@ class ExecutionConsoleService(
       newState.operatorConsole
         .foreach {
           case (opId, info) =>
-            val oldConsole = oldState.operatorConsole.getOrElse(opId, new OperatorConsole())
+            val oldConsole =
+              oldState.operatorConsole.getOrElse(opId, OperatorConsole.defaultInstance)
             val diff = info.consoleMessages.diff(oldConsole.consoleMessages)
             output.append(ConsoleUpdateEvent(opId, diff))
 
-            info.evaluateExprResults.keys
-              .filterNot(oldConsole.evaluateExprResults.contains)
-              .foreach { key =>
-                output.append(
-                  PythonExpressionEvaluateResponse(key, info.evaluateExprResults(key).values)
-                )
-              }
+            info.evaluateExprResults.foreach {
+              case (key, evalResult) =>
+                if (!oldConsole.evaluateExprResults.contains(key)) {
+                  output.append(
+                    PythonExpressionEvaluateResponse(key, evalResult.values)
+                  )
+                }
+            }
         }
       output
     })

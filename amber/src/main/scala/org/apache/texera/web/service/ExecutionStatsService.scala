@@ -34,6 +34,7 @@ import org.apache.texera.amber.engine.architecture.coordinator.{
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.FAILED
 import org.apache.texera.amber.engine.common.Utils
+import org.apache.texera.amber.engine.architecture.worker.statistics.PortTupleMetricsMapping
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.OperatorWorkerMapping
 import org.apache.texera.amber.error.ErrorUtils.{
@@ -82,23 +83,20 @@ class ExecutionStatsService(
       // Update operator stats if any operator updates its stat
       if (newState.operatorInfo.toSet != oldState.operatorInfo.toSet) {
         Iterable(
-          OperatorStatisticsUpdateEvent(newState.operatorInfo.collect {
-            case x =>
-              val metrics = x._2
-              val inMap = metrics.operatorStatistics.inputMetrics
-                .map(pm => pm.portId.id.toString -> pm.tupleMetrics.count)
-                .toMap
-              val outMap = metrics.operatorStatistics.outputMetrics
-                .map(pm => pm.portId.id.toString -> pm.tupleMetrics.count)
-                .toMap
+          OperatorStatisticsUpdateEvent(newState.operatorInfo.map {
+            case (opId, metrics) =>
+              val (inCount, inSize, inMap) =
+                summarizePortMetrics(metrics.operatorStatistics.inputMetrics)
+              val (outCount, outSize, outMap) =
+                summarizePortMetrics(metrics.operatorStatistics.outputMetrics)
 
               val res = OperatorAggregatedMetrics(
                 Utils.aggregatedStateToString(metrics.operatorState),
-                metrics.operatorStatistics.inputMetrics.map(_.tupleMetrics.count).sum,
-                metrics.operatorStatistics.inputMetrics.map(_.tupleMetrics.size).sum,
+                inCount,
+                inSize,
                 inMap,
-                metrics.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum,
-                metrics.operatorStatistics.outputMetrics.map(_.tupleMetrics.size).sum,
+                outCount,
+                outSize,
                 outMap,
                 metrics.operatorStatistics.numWorkers,
                 metrics.operatorStatistics.dataProcessingTime,
@@ -106,7 +104,7 @@ class ExecutionStatsService(
                 metrics.operatorStatistics.idleTime,
                 reusedFromCache = metrics.reusedFromCache
               )
-              (x._1, res)
+              (opId, res)
           })
         )
       } else {
@@ -180,6 +178,22 @@ class ExecutionStatsService(
           stateStore.recorder.statistics(evt.operatorMetrics)
         })
     )
+  }
+
+  /** The tuples and the bytes `portMetrics` count in all, and the tuples of each port by its id. */
+  private def summarizePortMetrics(
+      portMetrics: Seq[PortTupleMetricsMapping]
+  ): (Long, Long, Map[String, Long]) = {
+    val perPortCounts = Map.newBuilder[String, Long]
+    var totalCount = 0L
+    var totalSize = 0L
+    portMetrics.foreach { pm =>
+      val count = pm.tupleMetrics.count
+      totalCount += count
+      totalSize += pm.tupleMetrics.size
+      perPortCounts += (pm.portId.id.toString -> count)
+    }
+    (totalCount, totalSize, perPortCounts.result())
   }
 
   private[this] def registerCallbackOnWorkerAssignedUpdate(): Unit = {

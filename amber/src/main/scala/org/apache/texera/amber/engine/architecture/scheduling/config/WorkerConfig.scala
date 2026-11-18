@@ -39,14 +39,15 @@ case object WorkerConfig {
       1
     }
 
-    (0 until workerCount).toList.map(idx =>
+    lazy val largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id)
+    List.tabulate(workerCount)(idx =>
       WorkerConfig(
         VirtualIdentityUtils.createWorkerIdentity(physicalOp.workflowId, physicalOp.id, idx),
         pythonEnvironment = physicalOp.pythonEnvironment match {
           case PythonEnvironmentRef.Resolved(environment) => Some(environment)
           case _                                          => None
         },
-        largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id)
+        largeBinaryBaseUri = largeBinaryBaseUri
       )
     )
   }

@@ -1013,6 +1013,33 @@ class ExecutionRecorderSpec
     f.writers.asScala should not contain Thread.currentThread()
   }
 
+  it should "be an operator's totals over all of its input ports and all of its output ports" in {
+    val f = new Fixture()
+    def port(id: Int, count: Long, size: Long): PortTupleMetricsMapping =
+      PortTupleMetricsMapping(PortIdentity(id), TupleMetrics(count, size))
+
+    f.recorder.statistics(
+      Map(
+        "join" -> OperatorMetrics(
+          RUNNING,
+          OperatorStatistics(
+            Seq(port(0, 2, 20), port(1, 3, 35)),
+            Seq(port(0, 4, 40), port(1, 5, 55)),
+            numWorkers = 2,
+            dataProcessingTime = 0,
+            controlProcessingTime = 0,
+            idleTime = 0
+          )
+        )
+      )
+    )
+    f.tick()
+
+    f.statistics.map(row =>
+      (row.inputTupleCnt, row.inputTupleSize, row.outputTupleCnt, row.outputTupleSize)
+    ) shouldBe Seq((5L, 55L, 9L, 95L))
+  }
+
   it should "be stored again, with the numbers that are newest then, after an append that failed" in {
     val outage = new Outage()
     val f = new Fixture(

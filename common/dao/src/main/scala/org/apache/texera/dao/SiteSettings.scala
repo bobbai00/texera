@@ -32,12 +32,13 @@ import scala.util.Try
   * config-service startup seeder, so the column set / audit stamping live in
   * one place.
   *
-  * Failures swallowed by the outer Try on the read path include: SqlServer not
-  * initialised, no row for the key, and value that can't be parsed. In all of
-  * these cases the caller's default takes over. [[getIntStrict]] is the read for
-  * a caller that must not take an outage for the default. The write helpers take
-  * an explicit [[DSLContext]] so callers can run them inside their own
-  * transaction and surface failures.
+  * The typed getters fall back to the caller's default when the read fails (e.g.
+  * SqlServer not initialised on workers in distributed mode), when the key has
+  * no row, and when the value can't be parsed. [[lookup]] instead returns a
+  * failed read as a `Failure` and a missing row as `None`, for a caller that
+  * must tell them apart, and [[getIntStrict]] throws a failed read. The write
+  * helpers take an explicit [[DSLContext]] so callers can run them inside their
+  * own transaction and surface failures.
   */
 object SiteSettings {
 
@@ -50,10 +51,28 @@ object SiteSettings {
     * is no number.
     */
   def getIntStrict(key: String, default: => Int): Int =
-    parseOrDefault(read(key), default)(_.toInt)
+    parseOrDefault(lookup(key).get, default)(_.toInt)
 
   def getLong(key: String, default: => Long): Long =
     readAndParse(key, default)(_.toLong)
+
+  /**
+    * The stored value of `key`, unparsed: `Success(None)` when there is no row, and a `Failure`
+    * when the read itself fails. For a caller that must tell those apart, which the getters above
+    * fold into their default.
+    */
+  def lookup(key: String): Try[Option[String]] =
+    Try(
+      Option(
+        SqlServer
+          .getInstance()
+          .createDSLContext()
+          .select(SITE_SETTINGS.VALUE)
+          .from(SITE_SETTINGS)
+          .where(SITE_SETTINGS.KEY.eq(key))
+          .fetchOneInto(classOf[String])
+      )
+    )
 
   /** Insert or overwrite the row for `key`, stamping who/when. */
   def upsert(ctx: DSLContext, key: String, value: String, updatedBy: String): Unit =
@@ -85,17 +104,6 @@ object SiteSettings {
   private[dao] def parseOrDefault[T](raw: Option[String], default: T)(parse: String => T): T =
     raw.flatMap(s => Try(parse(s.trim)).toOption).getOrElse(default)
 
-  private def read(key: String): Option[String] =
-    Option(
-      SqlServer
-        .getInstance()
-        .createDSLContext()
-        .select(SITE_SETTINGS.VALUE)
-        .from(SITE_SETTINGS)
-        .where(SITE_SETTINGS.KEY.eq(key))
-        .fetchOneInto(classOf[String])
-    )
-
   private def readAndParse[T](key: String, default: => T)(parse: String => T): T =
-    Try(parseOrDefault(read(key), default)(parse)).getOrElse(default)
+    parseOrDefault(lookup(key).toOption.flatten, default)(parse)
 }
