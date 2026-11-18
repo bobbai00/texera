@@ -122,14 +122,23 @@ class DataProcessor(Runnable, Stoppable):
     def process_tuple(self) -> None:
         """
         Process an input tuple by invoking the executor's tuple processing method.
+
+        MainLoop hands tuples over one at a time, and this loop takes each as
+        it comes. It comes round with no new tuple only when the executor
+        raised on the one in process and the worker, stopped on that, was let
+        go on: the same tuple is then processed again, by the executor in place
+        by then (the one whose code was changed meanwhile, say).
         """
-        finished_current = self._context.tuple_processing_manager.finished_current
-        while not finished_current.is_set():
+        tpm = self._context.tuple_processing_manager
+        while not tpm.finished_current.is_set():
             with self._executor_session() as (executor, port_id):
-                tuple_ = self._context.tuple_processing_manager.get_input_tuple()
+                handed_over = tpm.get_input_tuple()
+                if handed_over is not None:
+                    tpm.input_tuple_in_process = handed_over
                 self._set_output_tuple(
                     require_yielded(
-                        executor.process_tuple(tuple_, port_id), "process_tuple"
+                        executor.process_tuple(tpm.input_tuple_in_process, port_id),
+                        "process_tuple",
                     )
                 )
 

@@ -15,8 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import itertools
-
 from core.architecture.handlers.control.control_handler_base import ControlHandler
 from core.architecture.managers.pause_manager import PauseType
 from proto.org.apache.texera.amber.engine.architecture.rpc import (
@@ -31,14 +29,10 @@ from proto.org.apache.texera.amber.engine.architecture.worker import (
 class RetryCurrentTupleHandler(ControlHandler):
     async def retry_current_tuple(self, req: EmptyRequest) -> EmptyReturn:
         if not self.context.state_manager.confirm_state(WorkerState.COMPLETED):
-            # chain the current input tuple back on top of the current iterator to
-            # be processed once more
-            self.context.tuple_processing_manager.current_input_tuple_iter = (
-                itertools.chain(
-                    [self.context.tuple_processing_manager.current_input_tuple],
-                    self.context.tuple_processing_manager.current_input_tuple_iter,
-                )
-            )
+            # The tuple the executor raised on is still the DataProcessor's to
+            # finish (DataProcessor.process_tuple): letting the worker go on is
+            # what has it processed once more. Nothing is put back on the input
+            # iterator, which would process the tuple twice.
             self.context.pause_manager.resume(PauseType.USER_PAUSE)
             self.context.pause_manager.resume(PauseType.EXCEPTION_PAUSE)
         return EmptyReturn()

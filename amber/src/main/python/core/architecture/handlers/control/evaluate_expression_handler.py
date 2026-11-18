@@ -27,10 +27,18 @@ class EvaluateExpressionHandler(ControlHandler):
     async def evaluate_python_expression(
         self, req: EvaluatePythonExpressionRequest
     ) -> EvaluatedValue:
+        tpm = self.context.tuple_processing_manager
         runtime_context = {
             r"self": self.context.executor_manager.executor,
-            r"tuple_": self.context.tuple_processing_manager.current_input_tuple,
-            r"input_": self.context.tuple_processing_manager.current_input_port_id,
+            # The tuple waiting to be processed, else the one being processed:
+            # the executor has taken it by the time its worker can be stopped
+            # in it.
+            r"tuple_": (
+                tpm.current_input_tuple
+                if tpm.current_input_tuple is not None
+                else tpm.input_tuple_in_process
+            ),
+            r"input_": tpm.current_input_port_id,
         }
 
         evaluated_value: EvaluatedValue = ExpressionEvaluator.evaluate(

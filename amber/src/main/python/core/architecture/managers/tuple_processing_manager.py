@@ -25,6 +25,11 @@ from proto.org.apache.texera.amber.core import PortIdentity
 class TupleProcessingManager:
     def __init__(self):
         self.current_input_tuple: Optional[Tuple] = None
+        # The tuple the executor is processing, or processed last: taken out
+        # of `current_input_tuple` when its processing starts. It is what is
+        # processed again when the executor raised on it, and what `tuple_`
+        # means to someone looking at a stopped worker.
+        self.input_tuple_in_process: Optional[Tuple] = None
         self.current_input_port_id: Optional[PortIdentity] = None
         self.current_input_tuple_iter: Optional[Iterator[Tuple]] = None
         self.current_output_tuple: Optional[Tuple] = None

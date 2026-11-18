@@ -52,7 +52,7 @@ class TestRetryCurrentTupleHandler:
     def running_handler(self):
         return _build_handler(
             WorkerState.RUNNING,
-            current_tuple={"col": "current"},
+            current_tuple=None,
             remaining_iter=[{"col": "next"}],
         )
 
@@ -60,14 +60,16 @@ class TestRetryCurrentTupleHandler:
         result = asyncio.run(running_handler.retry_current_tuple(EmptyRequest()))
         assert isinstance(result, EmptyReturn)
 
-    def test_chains_current_tuple_back_onto_iterator(self, running_handler):
+    def test_puts_nothing_back_on_the_input_iterator(self, running_handler):
+        # The tuple the executor raised on is still the DataProcessor's to
+        # finish, and by then it has left `current_input_tuple`. Chaining that
+        # slot back, as this handler once did, put a None on the iterator,
+        # which ended the batch the tuple came in.
         asyncio.run(running_handler.retry_current_tuple(EmptyRequest()))
-        # The iterator must now yield the current tuple first, then the
-        # tuples that were already queued.
-        chained = list(
+        remaining = list(
             running_handler.context.tuple_processing_manager.current_input_tuple_iter
         )
-        assert chained == [{"col": "current"}, {"col": "next"}]
+        assert remaining == [{"col": "next"}]
 
     def test_resumes_user_and_exception_pause_in_order(self, running_handler):
         asyncio.run(running_handler.retry_current_tuple(EmptyRequest()))
@@ -91,48 +93,28 @@ class TestRetryCurrentTupleHandler:
     def test_no_op_when_state_is_completed(self):
         completed_handler = _build_handler(
             WorkerState.COMPLETED,
-            current_tuple={"col": "current"},
+            current_tuple=None,
             remaining_iter=[{"col": "next"}],
         )
         result = asyncio.run(completed_handler.retry_current_tuple(EmptyRequest()))
 
-        # Iterator must be untouched (no chaining), and no pause type is
-        # resumed — replaying a tuple after completion is meaningless.
-        remaining = list(
-            completed_handler.context.tuple_processing_manager.current_input_tuple_iter
-        )
-        assert remaining == [{"col": "next"}]
+        # No pause type is resumed: replaying a tuple after completion is
+        # meaningless.
         completed_handler.context.pause_manager.resume.assert_not_called()
         assert isinstance(result, EmptyReturn)
 
-    def test_chains_even_when_remaining_iter_is_exhausted(self):
-        handler = _build_handler(
-            WorkerState.RUNNING,
-            current_tuple={"col": "lone"},
-            remaining_iter=[],
-        )
-        asyncio.run(handler.retry_current_tuple(EmptyRequest()))
-        chained = list(
-            handler.context.tuple_processing_manager.current_input_tuple_iter
-        )
-        assert chained == [{"col": "lone"}]
-
-    def test_paused_state_still_chains_and_resumes(self):
+    def test_paused_state_resumes(self):
         # The completion guard is `if not confirm_state(COMPLETED)`, so every
-        # other state — RUNNING, READY, PAUSED, UNINITIALIZED — must take the
-        # chain+resume path. PAUSED is the most likely real-world entry point
-        # (the user hits "retry" while the worker is paused on an exception).
+        # other state takes the resume path. PAUSED is the most likely
+        # real-world entry point (the user hits "retry" while the worker is
+        # paused on an exception).
         handler = _build_handler(
             WorkerState.PAUSED,
-            current_tuple={"col": "current"},
+            current_tuple=None,
             remaining_iter=[{"col": "next"}],
         )
         asyncio.run(handler.retry_current_tuple(EmptyRequest()))
 
-        chained = list(
-            handler.context.tuple_processing_manager.current_input_tuple_iter
-        )
-        assert chained == [{"col": "current"}, {"col": "next"}]
         resumed = [
             call.args[0] for call in handler.context.pause_manager.resume.call_args_list
         ]

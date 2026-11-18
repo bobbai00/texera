@@ -531,6 +531,69 @@ class TestRunInvariant:
         assert "tuple=True" in str(excinfo.value)
 
 
+class _RaisingExecutor:
+    """Cannot process the tuple it is handed."""
+
+    def __init__(self):
+        self.seen = []
+
+    def process_tuple(self, tuple_, port_id):
+        self.seen.append(tuple_)
+        raise ValueError("cannot be processed")
+        yield  # unreachable: it makes this a generator, as a UDF's is
+
+
+class _PassingExecutor:
+    """Hands every tuple on."""
+
+    def __init__(self):
+        self.seen = []
+
+    def process_tuple(self, tuple_, port_id):
+        self.seen.append(tuple_)
+        yield tuple_
+
+
+class TestRetryAfterAnException:
+    @pytest.mark.timeout(2)
+    def test_the_tuple_the_executor_raised_on_is_processed_again_by_the_one_in_place(
+        self, context, data_processor, monkeypatch
+    ):
+        # A UDF raises on a tuple; its worker stops; its code is changed, which
+        # puts another executor in place; the worker is let go on. The same
+        # tuple must reach the new executor, not a None: the tuple left
+        # `current_input_tuple` when its processing started.
+        schema = Schema(raw_schema={"x": "INTEGER"})
+        monkeypatch.setattr(
+            context.output_manager,
+            "get_port",
+            lambda *args, **kwargs: SimpleNamespace(get_schema=lambda: schema),
+        )
+        tuple_ = Tuple({"x": 7})
+        first, fixed = _RaisingExecutor(), _PassingExecutor()
+        context.executor_manager.executor = first
+        tpm = context.tuple_processing_manager
+        tpm.current_input_tuple = tuple_
+
+        def switch():
+            # MainLoop's turn. After the session that raised, the operator's
+            # code is changed, as it is while a worker is stopped.
+            data_processor.switch_calls += 1
+            if context.exception_manager.has_exception():
+                context.exception_manager.get_exc_info()
+                context.executor_manager.executor = fixed
+
+        data_processor._switch_context = switch
+        data_processor.process_tuple()
+
+        assert first.seen == [tuple_]
+        assert fixed.seen == [tuple_]
+        assert tpm.finished_current.is_set()
+        # Taken once, and still there to look at while a worker is stopped.
+        assert tpm.current_input_tuple is None
+        assert tpm.input_tuple_in_process is tuple_
+
+
 class _ReturningExecutor:
     """process_tuple uses `return` instead of `yield`."""
 

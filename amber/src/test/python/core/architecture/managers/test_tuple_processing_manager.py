@@ -26,6 +26,7 @@ class TestTupleProcessingManager:
     def test_initial_state(self):
         mgr = TupleProcessingManager()
         assert mgr.current_input_tuple is None
+        assert mgr.input_tuple_in_process is None
         assert mgr.current_input_port_id is None
         assert mgr.current_input_tuple_iter is None
         assert mgr.current_output_tuple is None

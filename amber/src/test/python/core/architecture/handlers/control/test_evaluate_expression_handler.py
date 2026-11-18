@@ -45,6 +45,7 @@ class TestEvaluateExpressionHandler:
             executor_manager=SimpleNamespace(executor=executor),
             tuple_processing_manager=SimpleNamespace(
                 current_input_tuple={"col": 42},
+                input_tuple_in_process=None,
                 current_input_port_id="port-0",
             ),
         )
@@ -85,6 +86,27 @@ class TestEvaluateExpressionHandler:
         assert runtime_context["self"] is executor
         assert runtime_context["tuple_"] == {"col": 42}
         assert runtime_context["input_"] == "port-0"
+
+    def test_tuple_is_the_one_being_processed_once_the_executor_took_it(self, handler):
+        # A worker stopped in its executor (on an exception, at a breakpoint)
+        # has taken the tuple out of `current_input_tuple`: `tuple_` is then
+        # the tuple it is processing, not None.
+        tpm = handler.context.tuple_processing_manager
+        tpm.current_input_tuple = None
+        tpm.input_tuple_in_process = {"col": "in process"}
+        with patch(
+            "core.architecture.handlers.control.evaluate_expression_handler"
+            ".ExpressionEvaluator.evaluate",
+            return_value=EvaluatedValue(),
+        ) as evaluate:
+            asyncio.run(
+                handler.evaluate_python_expression(
+                    EvaluatePythonExpressionRequest(expression="tuple_")
+                )
+            )
+
+        _, runtime_context = evaluate.call_args.args
+        assert runtime_context["tuple_"] == {"col": "in process"}
 
     def test_runtime_context_reflects_current_tuple_at_call_time(
         self, handler, executor
