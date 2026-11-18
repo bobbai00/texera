@@ -30,7 +30,8 @@ UNIT = "workflow-runtime-coordinator-service"
 DASHBOARD = "dashboard-service"
 FAST_UNIT = {"STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS": "2000"}
 FAST_DASHBOARD = {"EXECUTION_CLOSING_INTERVAL_SECONDS": "2", "EXECUTION_CLOSING_LOST_AFTER_SECONDS": "12",
-                  "EXECUTION_CLOSING_NEVER_STARTED_AFTER_SECONDS": "15", "RESULT_CLEANUP_TTL_IN_SECONDS": "20",
+                  "EXECUTION_CLOSING_NEVER_STARTED_AFTER_SECONDS": "15",
+                  "EXECUTION_CLOSING_REVISE_VERDICT_FOR_SECONDS": "180", "RESULT_CLEANUP_TTL_IN_SECONDS": "20",
                   "RESULT_CLEANUP_COLLECTION_CHECK_INTERVAL_IN_SECONDS": "5"}
 
 COMPOSE = """
@@ -127,7 +128,8 @@ class FastRecordTest(SingleNodeCase):
         opts = manifest["options"]
         self.assertTrue(opts["fast_record"])
         self.assertEqual({"commit_interval_ms": 2000, "closing_interval_s": 2, "lost_after_s": 12,
-                          "never_started_after_s": 15, "result_ttl_s": 20, "expiry_check_interval_s": 5},
+                          "never_started_after_s": 15, "revise_verdict_for_s": 180, "result_ttl_s": 20,
+                          "expiry_check_interval_s": 5},
                          opts["record_timing"])
         self.assertIn("fast record", ss.describe_options(opts))
 
@@ -261,7 +263,8 @@ class RecordEnvTest(unittest.TestCase):
                                                   RecordTiming().result_ttl_s))
         fast = RecordTiming.from_manifest({"options": {"record_timing": record_env.FAST_RECORD}})
         self.assertEqual(RecordTiming(commit_interval_s=2.0, closing_interval_s=2.0, lost_after_s=12.0,
-                                      never_started_after_s=15.0, result_ttl_s=20.0, expiry_check_interval_s=5.0),
+                                      never_started_after_s=15.0, revise_verdict_for_s=180.0, result_ttl_s=20.0,
+                                      expiry_check_interval_s=5.0),
                          fast)
         self.assertTrue(fast.fast)
         self.assertEqual(0.5, fast.poll_s)
@@ -296,7 +299,7 @@ class KubernetesFastRecordTest(unittest.TestCase):
         not_forwarded = [given[0], deployment("texera-manager", self.MANAGER)]
         self.assertEqual(["STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS (texera-workflow-computing-unit-managing-service)"],
                          ks.missing_record_env(not_forwarded, "sce", "t", opts))
-        self.assertEqual(6, len(ks.missing_record_env([], "sce", "t", opts)))
+        self.assertEqual(7, len(ks.missing_record_env([], "sce", "t", opts)))
         self.assertEqual([], ks.missing_record_env([], "sce", "t", ks.record_options(False)))
 
 

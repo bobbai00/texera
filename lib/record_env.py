@@ -18,6 +18,7 @@ TIMERS = {
     "closing_interval_s": ("dashboard", "EXECUTION_CLOSING_INTERVAL_SECONDS"),
     "lost_after_s": ("dashboard", "EXECUTION_CLOSING_LOST_AFTER_SECONDS"),
     "never_started_after_s": ("dashboard", "EXECUTION_CLOSING_NEVER_STARTED_AFTER_SECONDS"),
+    "revise_verdict_for_s": ("dashboard", "EXECUTION_CLOSING_REVISE_VERDICT_FOR_SECONDS"),
     "result_ttl_s": ("dashboard", "RESULT_CLEANUP_TTL_IN_SECONDS"),
     "expiry_check_interval_s": ("dashboard", "RESULT_CLEANUP_COLLECTION_CHECK_INTERVAL_IN_SECONDS"),
 }
@@ -27,6 +28,9 @@ FAST_RECORD = {
     "closing_interval_s": 2,
     "lost_after_s": 12,
     "never_started_after_s": 15,
+    # Longer than any run a scenario cuts off the lake; an execution closed by a verdict
+    # keeps its results this long, whatever the TTL.
+    "revise_verdict_for_s": 180,
     "result_ttl_s": 20,
     "expiry_check_interval_s": 5,
 }

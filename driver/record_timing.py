@@ -25,6 +25,9 @@ class RecordTiming:
     lost_after_s: float = 180.0
     #: an execution created and not started for this long is closed
     never_started_after_s: float = 600.0
+    #: a verdict gives way to the ending its log shows for this long, and its execution keeps
+    #: its results for as long
+    revise_verdict_for_s: float = 3600.0
     #: results are dropped this long after their run ended
     result_ttl_s: float = 86400.0
     #: how often the closing job looks for results past that age
