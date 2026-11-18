@@ -19,7 +19,6 @@
 
 package org.apache.texera.amber.core.storage.result.iceberg
 
-import org.apache.iceberg.util.ThreadPools
 import org.apache.iceberg.{DataFile, Table}
 
 import scala.util.Using
@@ -54,17 +53,32 @@ private[storage] object IcebergTidy {
     *              and at least [[RetainSnapshots]] stay, so that the files a read has planned
     *              outlive it.
     */
-  def tidy(table: Table, atEnd: Boolean): Unit =
-    // A table nothing was appended to has nothing to tidy.
-    if (table.currentSnapshot() != null) {
-      // Iceberg writes the manifest of a merge on its shared worker pool, whatever executor the
-      // merge names, and that pool takes no work once the JVM is exiting: a tidy made then,
-      // as by a computing unit that is stopped, merges nothing.
-      if (!ThreadPools.getWorkerPool.isShutdown) mergeSmallFiles(table, TargetFileBytes)
+  def tidy(table: Table, atEnd: Boolean, exiting: () => Boolean = jvmExiting): Unit =
+    // A table nothing was appended to has nothing to tidy. Nor is a table tidied while the JVM
+    // exits, as a computing unit that is stopped does: Iceberg merges and deletes files on pools
+    // of its own, which take no work by then, and the snapshots an expiry drops would leave
+    // their files in the table's location for good. The table stays as its writer left it.
+    if (table.currentSnapshot() != null && !exiting()) {
+      mergeSmallFiles(table, TargetFileBytes)
       rewriteManifests(table)
       if (atEnd) expire(table, retainLast = 1, olderThanMs = Long.MaxValue)
       else expire(table, RetainSnapshots, System.currentTimeMillis() - RetainMillis)
     }
+
+  /**
+    * Whether the JVM is shutting down: it then takes no shutdown hook, and refuses one with an
+    * `IllegalStateException`.
+    */
+  private def jvmExiting(): Boolean = {
+    val probe = new Thread(() => ())
+    try {
+      Runtime.getRuntime.addShutdownHook(probe)
+      Runtime.getRuntime.removeShutdownHook(probe)
+      false
+    } catch {
+      case _: IllegalStateException => true
+    }
+  }
 
   /**
     * Merges the newest data files that are each smaller than `targetBytes` into one, when there

@@ -74,6 +74,19 @@ class IcebergTidySpec extends AnyFlatSpec with Matchers with RecordTables {
     exists(table, atEnd.head.location()) shouldBe true
   }
 
+  it should "leave a table as its writer left it while the JVM exits" in {
+    val table = newTable()
+    (1 to 5).foreach(i => append(table, Seq(i.toLong)))
+    val files = dataFileNames(table)
+    val snapshots = snapshotCount(table)
+
+    IcebergTidy.tidy(table, atEnd = true, exiting = () => true)
+
+    dataFileNames(table) shouldBe files
+    snapshotCount(table) shouldBe snapshots
+    readSeqs(table) shouldBe (1L to 5L)
+  }
+
   it should "leave the table's properties as they were" in {
     val table = newTable()
     val label = Map("spec.state" -> "COMPLETED", "spec.reason" -> "")
