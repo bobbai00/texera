@@ -88,6 +88,9 @@ object ExecutionClosingJob {
   * `execution-closing.revise-verdict-for-seconds`, and gives one the ending its log shows by
   * then: a unit that was cut off from the lake for a while is not lost.
   *
+  * The user of an execution that asked for an email is sent one when the execution is closed,
+  * and one more if its verdict is replaced ([[ExecutionCloser]]).
+  *
   * Any number of Dashboard replicas run the job, with no leader: every write is a conditional
   * UPDATE or an Iceberg tag, which one of them wins. What a replica remembers between its ticks
   * (how long each beat has stood still) is its own, so a replica that just started only decides

@@ -288,6 +288,78 @@ class ExecutionRecordsSpec
     open.find(_.eid == second).get shouldBe record(second)
   }
 
+  "ExecutionRecords.openBefore" should "list the open executions of the workflow on the unit made before another, oldest first" in {
+    val first = insertExecution()
+    val closed = insertExecution()
+    ExecutionRecords.close(closed, completed, None, createdAtMs + 1000L, fromLog = true)
+    val second = insertExecution()
+    val otherUnit = insertExecution(cuid = Some(sweptCuid))
+    val unitless = insertExecution(cuid = None)
+    val otherWorkflow = insertExecution(wid = publicWid)
+    val before = insertExecution()
+    val later = insertExecution()
+
+    var found: Seq[ExecutionRecord] = Nil
+    val statements =
+      recorder.record { found = ExecutionRecords.openBefore(testWid, liveCuid, before) }
+
+    statements.map(_.verb) shouldBe Seq("SELECT")
+    val listed = found.map(_.eid)
+    listed shouldBe listed.sorted
+    listed should contain allOf (first, second)
+    listed should contain noneOf (closed, otherUnit, unitless, otherWorkflow, before, later)
+    found.find(_.eid == second).get shouldBe record(second)
+    found.forall(execution => execution.closing.isEmpty && execution.eid < before) shouldBe true
+  }
+
+  /** The executions among `eids` whose rows meet `ExecutionRecords.statusAmong(codes)`. */
+  private def among(eids: Seq[Long], codes: Short*): Seq[Long] =
+    getDSLContext
+      .select(WORKFLOW_EXECUTIONS.EID)
+      .from(WORKFLOW_EXECUTIONS)
+      .where(
+        WORKFLOW_EXECUTIONS.EID
+          .in(eids.map(eid => Integer.valueOf(eid.toInt)).asJava)
+          .and(ExecutionRecords.statusAmong(codes.toSet))
+      )
+      .orderBy(WORKFLOW_EXECUTIONS.EID)
+      .fetch(WORKFLOW_EXECUTIONS.EID)
+      .asScala
+      .map(_.longValue())
+      .toSeq
+
+  "ExecutionRecords.statusAmong" should "take a closed execution by its outcome, and every open one for a status that is no ending" in {
+    val open = insertExecution()
+    val Seq(done, broken, stopped) = Seq(completed, failed, killed).map { outcome =>
+      val eid = insertExecution()
+      ExecutionRecords.close(eid, outcome, None, createdAtMs + 1000L, fromLog = true)
+      eid
+    }
+    val all = Seq(open, done, broken, stopped)
+    // What the status column says is no part of it: the open one is "completed" there.
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.STATUS, Short.box(completed))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(open.toInt)))
+      .execute()
+
+    among(all) shouldBe all
+    among(all, completed) shouldBe Seq(done)
+    among(all, failed, killed) shouldBe Seq(broken, stopped)
+    Seq[Short](
+      WorkflowExecutionStatus.Initializing,
+      WorkflowExecutionStatus.Running,
+      WorkflowExecutionStatus.Paused,
+      WorkflowExecutionStatus.Created,
+      WorkflowExecutionStatus.Unknown
+    ).foreach { code =>
+      withClue(s"status $code: ") {
+        among(all, code) shouldBe Seq(open)
+        among(all, code, failed) shouldBe Seq(open, broken)
+      }
+    }
+  }
+
   // --- closing ---
 
   "ExecutionRecords.close" should "write how, why and when the execution ended, and where the outcome is from" in {

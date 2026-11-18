@@ -451,9 +451,8 @@ class AdminUserResourceSpec
     quota should have length 1
     quota.head.eid shouldBe execution.getEid
     quota.head.workflowId shouldBe Integer.valueOf(testWid)
-    // No operator_port/operator rows seeded → result and log sizes are zero.
-    quota.head.resultBytes shouldBe 0L
-    quota.head.logBytes shouldBe 0L
+    // Nothing measured what the execution holds → zero bytes.
+    quota.head.storedBytes shouldBe 0L
   }
 
   // ─── deleteCollection ─────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Callable, CyclicBarrier, Executors, TimeUnit}
+import scala.jdk.CollectionConverters._
 import scala.util.{Success, Try}
 
 /**
@@ -58,16 +59,12 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
   private val logicalPlan =
     """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
 
-  private def planRow(
-      body: String = """{"formatVersion":1,"operators":[]}""",
-      notification: Option[String] = None
-  ): PlanRecord =
+  private def planRow(body: String = """{"formatVersion":1,"operators":[]}"""): PlanRecord =
     PlanRecord(
       entryId = ExecutionPlanStore.PlanEntryId,
       body = body,
       createdBy = 1,
-      computingUnitId = 3,
-      notification = notification
+      computingUnitId = 3
     )
 
   private def updateRow(updateId: String, code: String = "print(1)"): PlanRecord =
@@ -75,8 +72,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
       entryId = updateId,
       body = s"""{"updateId":"$updateId","code":"$code"}""",
       createdBy = 1,
-      computingUnitId = 3,
-      notification = None
+      computingUnitId = 3
     )
 
   /** A body of `bytes` bytes of UTF-8, with German, Japanese and an emoji (a surrogate pair). */
@@ -94,10 +90,6 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
   private def appendUpdate(uri: URI, record: PlanRecord): Unit =
     ExecutionPlanStore.appendUpdate(uri, record, changedOperator())
 
-  private val notification = Some(
-    """{"email":"texera@example.com","workflowName":"Iris","workflowUrl":"http://localhost:4200/user/workspace/12"}"""
-  )
-
   private def writtenPlan(warehouse: Option[String] = None): URI = {
     val uri = freshPlanUri(warehouse)
     ExecutionPlanStore.writePlan(uri, planRow(), logicalPlan)
@@ -107,7 +99,7 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
   /** Writes one row straight to a new plan table at `uri`, `column` left empty. */
   private def writeRowWithout(uri: URI, column: String): Unit = {
     val schema = ResultSchema.executionPlanSchema
-    val fields: Array[Any] = Array("plan", "{}", logicalPlan, 1, 3, null)
+    val fields: Array[Any] = Array("plan", "{}", logicalPlan, 1, 3)
     fields(schema.getIndex(column)) = null
     val writer = DocumentFactory
       .createDocument(uri, schema)
@@ -128,14 +120,13 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
   // PlanRecord
   // ---------------------------------------------------------------------------
 
-  "PlanRecord" should "need every value but the notification" in {
+  "PlanRecord" should "need every value" in {
     an[IllegalArgumentException] should be thrownBy planRow().copy(entryId = null)
     an[IllegalArgumentException] should be thrownBy planRow(body = null)
-    an[IllegalArgumentException] should be thrownBy planRow().copy(notification = null)
   }
 
   it should "leave its body out of its text" in {
-    val record = planRow(body = """{"password":"5ecr3t"}""", notification = notification)
+    val record = planRow(body = """{"password":"5ecr3t"}""")
     record.toString shouldBe "PlanRecord(plan, createdBy=1, computingUnitId=3)"
   }
 
@@ -169,14 +160,22 @@ class ExecutionPlanStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbc
   // writePlan / readPlan
   // ---------------------------------------------------------------------------
 
-  "writePlan and readPlan" should "keep the plan row, with and without a notification" in {
-    Seq(planRow(), planRow(notification = notification)).foreach { record =>
-      val uri = freshPlanUri()
-      ExecutionPlanStore.writePlan(uri, record, logicalPlan)
-      ExecutionPlanStore.readPlan(uri) shouldBe record
-      ExecutionPlanStore.readPlanWithLogical(uri) shouldBe ((record, logicalPlan))
-      ExecutionPlanStore.isStarted(uri) shouldBe false
-    }
+  "writePlan and readPlan" should "keep the plan row" in {
+    val record = planRow()
+    val uri = freshPlanUri()
+    ExecutionPlanStore.writePlan(uri, record, logicalPlan)
+    ExecutionPlanStore.readPlan(uri) shouldBe record
+    ExecutionPlanStore.readPlanWithLogical(uri) shouldBe ((record, logicalPlan))
+    ExecutionPlanStore.isStarted(uri) shouldBe false
+  }
+
+  // Where to reach the execution's user is kept where only the Dashboard service reads it.
+  it should "make a table with a column for each value of a row, and none for an address" in {
+    val uri = freshPlanUri()
+    ExecutionPlanStore.writePlan(uri, planRow(), logicalPlan)
+
+    DocumentFactory.icebergTableOf(uri).get.schema().columns().asScala.map(_.name()).toList shouldBe
+      List("entryId", "body", "logical", "createdBy", "computingUnitId")
   }
 
   it should "keep a body of the most bytes a row may hold intact, text outside ASCII included" in {

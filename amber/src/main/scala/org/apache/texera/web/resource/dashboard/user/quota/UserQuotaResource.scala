@@ -27,7 +27,6 @@ import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.web.resource.dashboard.user.dataset.utils.DatasetStatisticsUtils.getUserCreatedDatasets
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource._
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
-import org.jooq.impl.DSL
 
 import java.util
 import javax.annotation.security.RolesAllowed
@@ -56,13 +55,17 @@ object UserQuotaResource {
       size: Long
   )
 
+  /**
+    * What an execution holds in the lake.
+    *
+    * @param storedBytes the bytes of its tables, as measured when it was closed; 0 while it is
+    *                    open, since nothing is measured under a run
+    */
   case class QuotaStorage(
       eid: Integer,
       workflowId: Integer,
       workflowName: String,
-      resultBytes: Long,
-      runTimeStatsBytes: Long,
-      logBytes: Long
+      storedBytes: Long
   )
 
   def getUserCreatedWorkflow(uid: Integer): List[Workflow] = {
@@ -105,27 +108,14 @@ object UserQuotaResource {
     context.fetch(WorkflowAccess.accessibleWids(uid)).getValues(0, classOf[Integer])
   }
 
-  def getUserQuotaSize(uid: Integer): Array[QuotaStorage] = {
-    val resultTotal = DSL.field(
-      DSL
-        .select(DSL.sum(OPERATOR_PORT_EXECUTIONS.RESULT_SIZE))
-        .from(OPERATOR_PORT_EXECUTIONS)
-        .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(WORKFLOW_EXECUTIONS.EID))
-    )
-    val logTotal = DSL.field(
-      DSL
-        .select(DSL.sum(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_SIZE))
-        .from(OPERATOR_EXECUTIONS)
-        .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(WORKFLOW_EXECUTIONS.EID))
-    )
+  /** What each execution user `uid` created holds in the lake, newest first, in one query. */
+  def getUserQuotaSize(uid: Integer): Array[QuotaStorage] =
     context
       .select(
         WORKFLOW_EXECUTIONS.EID,
-        WORKFLOW_EXECUTIONS.RUNTIME_STATS_SIZE,
         WORKFLOW.WID,
         WORKFLOW.NAME,
-        resultTotal,
-        logTotal
+        WORKFLOW_EXECUTIONS.STORED_BYTES
       )
       .from(WORKFLOW_EXECUTIONS)
       .leftJoin(WORKFLOW_VERSION)
@@ -141,15 +131,10 @@ object UserQuotaResource {
           record.get(WORKFLOW_EXECUTIONS.EID),
           record.get(WORKFLOW.WID),
           record.get(WORKFLOW.NAME),
-          Option(record.get(resultTotal)).map(_.longValue()).getOrElse(0L),
-          Option(record.get(WORKFLOW_EXECUTIONS.RUNTIME_STATS_SIZE))
-            .map(_.longValue())
-            .getOrElse(0L),
-          Option(record.get(logTotal)).map(_.longValue()).getOrElse(0L)
+          Option(record.get(WORKFLOW_EXECUTIONS.STORED_BYTES)).map(_.longValue()).getOrElse(0L)
         )
       )
       .toArray
-  }
 
   def deleteExecutionCollection(eid: Integer): Unit = {
     WorkflowExecutionsResource.removeAllExecutionFiles(Array(eid))

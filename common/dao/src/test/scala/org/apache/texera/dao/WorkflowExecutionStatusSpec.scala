@@ -43,8 +43,4 @@ class WorkflowExecutionStatusSpec extends AnyFlatSpec with Matchers {
   it should "count completed, failed and killed executions as ended, and no other" in {
     WorkflowExecutionStatus.Ended shouldBe Set[Short](3, 4, 5)
   }
-
-  it should "count an execution as not running once it has ended, or while no unit has started it" in {
-    WorkflowExecutionStatus.NotRunning shouldBe Set[Short](3, 4, 5, 6)
-  }
 }

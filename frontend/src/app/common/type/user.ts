@@ -81,9 +81,8 @@ export interface ExecutionQuota
     eid: number;
     workflowId: number;
     workflowName: string;
-    resultBytes: number;
-    runTimeStatsBytes: number;
-    logBytes: number;
+    /** What the execution's tables held when it was closed; 0 while it is open. */
+    storedBytes: number;
   }> {}
 
 /**

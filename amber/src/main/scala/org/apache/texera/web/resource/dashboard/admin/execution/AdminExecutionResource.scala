@@ -25,6 +25,11 @@ import org.apache.texera.auth.util.WorkflowAccess
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.web.resource.dashboard.admin.execution.AdminExecutionResource._
+import org.apache.texera.web.service.execution.{
+  ExecutionRecords,
+  OpenExecution,
+  OpenExecutionStatuses
+}
 import org.jooq.impl.DSL
 
 import javax.annotation.security.RolesAllowed
@@ -42,6 +47,19 @@ object AdminExecutionResource {
       .getInstance()
       .createDSLContext()
 
+  // Jersey makes a resource for each request; this is the service's, shared by them all.
+  private lazy val openStatuses = new OpenExecutionStatuses()
+
+  /**
+    * The latest execution of a workflow, as the admin page lists it.
+    *
+    * @param executionStatus the name of its status: how it ended once it is closed, and while
+    *                        it is open the newest state in its log, CREATED when no unit has
+    *                        written a state, UNKNOWN when its log cannot be read
+    * @param executionTime   how long it has taken, in seconds: until it ended, or until now
+    *                        while it is open
+    * @param endTime         when it ended, in epoch milliseconds; 0 while it is open
+    */
   case class dashboardExecution(
       workflowName: String,
       workflowId: Integer,
@@ -56,7 +74,7 @@ object AdminExecutionResource {
       access: Boolean
   )
 
-  /** The names the admin page shows and filters by, for each status an execution's row keeps. */
+  /** The names the admin page shows and filters by, for each status an execution can have. */
   private val statusNames: Seq[(Short, String)] = Seq(
     WorkflowExecutionStatus.Created -> "CREATED",
     WorkflowExecutionStatus.Initializing -> "READY",
@@ -77,7 +95,8 @@ object AdminExecutionResource {
     "workflow_name" -> WORKFLOW.NAME,
     "execution_name" -> WORKFLOW_EXECUTIONS.NAME,
     "initiator" -> USER.NAME,
-    "end_time" -> WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME
+    // An open execution has no end: Postgres sorts it as later than any.
+    "end_time" -> WORKFLOW_EXECUTIONS.ENDED_AT
   )
 
 }
@@ -85,7 +104,10 @@ object AdminExecutionResource {
 @Produces(Array(MediaType.APPLICATION_JSON))
 @Path("/admin/execution")
 @RolesAllowed(Array("ADMIN"))
-class AdminExecutionResource {
+class AdminExecutionResource(openStatuses: OpenExecutionStatuses, now: () => Long) {
+
+  // No-arg constructor for Jersey reflection. Tests use the param-ful form.
+  def this() = this(AdminExecutionResource.openStatuses, () => System.currentTimeMillis())
 
   @GET
   @Path("/totalWorkflow")
@@ -104,6 +126,11 @@ class AdminExecutionResource {
   /**
     * This method retrieves latest execution of each workflow for specified page.
     * The returned executions are sorted and filtered according to the parameters.
+    *
+    * A closed execution's status is in its row; an open one's is read from its log. So a
+    * filter that names only endings is applied by the query, as the page is. One that names
+    * a status of an open execution takes every open execution the query finds, reads their
+    * logs, and cuts the page from those found in a status it names.
     */
   @GET
   @Path("/executionList/{pageSize}/{pageIndex}/{sortField}/{sortDirection}")
@@ -116,15 +143,17 @@ class AdminExecutionResource {
       @PathParam("sortDirection") sortDirection: String = "desc",
       @QueryParam("filter") filter: java.util.List[String]
   ): List[dashboardExecution] = {
-    val filter_status = filter.asScala.map(mapToStatus).toSeq.filter(_ != -1).asJava
+    val filter_status = filter.asScala.map(mapToStatus).filter(_ != -1).map(_.toShort).toSet
+    // Whether the filter names a status of an open execution, which only its log tells.
+    val asksOpen = !filter_status.subsetOf(WorkflowExecutionStatus.Ended)
 
     val hasAccessField = DSL
       .field(WORKFLOW_VERSION.WID.in(WorkflowAccess.accessibleWids(current_user.getUid)))
       .as("has_access")
 
-    // Base query that retrieves latest execution info for each workflow without sorting and filtering.
-    // Only retrieving executions in current page according to pageSize and pageIndex parameters.
-    val executions_base_query = context
+    // Base query that retrieves latest execution info for each workflow, filtered, without
+    // sorting or paging.
+    val executions_apply_filter = context
       .select(
         WORKFLOW_EXECUTIONS.UID,
         USER.NAME,
@@ -132,9 +161,10 @@ class AdminExecutionResource {
         WORKFLOW.NAME,
         WORKFLOW_EXECUTIONS.EID,
         WORKFLOW_EXECUTIONS.STARTING_TIME,
-        WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME,
-        WORKFLOW_EXECUTIONS.STATUS,
+        WORKFLOW_EXECUTIONS.ENDED_AT,
+        WORKFLOW_EXECUTIONS.OUTCOME,
         WORKFLOW_EXECUTIONS.NAME,
+        USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME,
         hasAccessField
       )
       .from(WORKFLOW_EXECUTIONS)
@@ -154,53 +184,71 @@ class AdminExecutionResource {
           .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
           .groupBy(WORKFLOW_VERSION.WID)
       )
-
-    // Apply filter if the status are not empty.
-    val executions_apply_filter = if (!filter_status.isEmpty) {
-      executions_base_query.where(WORKFLOW_EXECUTIONS.STATUS.in(filter_status))
-    } else {
-      executions_base_query
-    }
+      .leftJoin(USER_WAREHOUSE)
+      .on(USER_WAREHOUSE.WHID.eq(WORKFLOW_EXECUTIONS.WHID))
+      .where(ExecutionRecords.statusAmong(filter_status))
 
     // Apply sorting if user specified.
     val executions_apply_order =
-      (if (sortField != "NO_SORTING") {
-         executions_apply_filter.orderBy(
-           if (sortDirection == "desc") sortFieldMapping.getOrElse(sortField, WORKFLOW.NAME).desc()
-           else sortFieldMapping.getOrElse(sortField, WORKFLOW.NAME).asc()
-         )
-       } else {
-         executions_apply_filter
-       }).limit(page_size).offset(page_index * page_size)
+      if (sortField != "NO_SORTING") {
+        executions_apply_filter.orderBy(
+          if (sortDirection == "desc") sortFieldMapping.getOrElse(sortField, WORKFLOW.NAME).desc()
+          else sortFieldMapping.getOrElse(sortField, WORKFLOW.NAME).asc()
+        )
+      } else {
+        executions_apply_filter
+      }
 
-    val executions = executions_apply_order.fetch()
+    val pageOffset = page_index * page_size
+    val executions =
+      (if (asksOpen) executions_apply_order.fetch()
+       else executions_apply_order.limit(page_size).offset(pageOffset).fetch()).asScala.toSeq
+
+    val open = openStatuses.of(
+      executions
+        .filter(_.get(WORKFLOW_EXECUTIONS.ENDED_AT) == null)
+        .map(workflowRecord =>
+          OpenExecution(
+            workflowRecord.get(WORKFLOW_EXECUTIONS.EID).longValue(),
+            workflowRecord.get(WORKFLOW_VERSION.WID).longValue(),
+            Option(workflowRecord.get(USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME)),
+            workflowRecord.get(WORKFLOW_EXECUTIONS.STARTING_TIME).getTime
+          )
+        )
+    )
 
     // Calculate the statistics needed for each execution.
-    executions
-      .map(workflowRecord => {
-        val startingTime =
-          workflowRecord.get(WORKFLOW_EXECUTIONS.STARTING_TIME).getTime
+    val listed = executions.map(workflowRecord => {
+      val startingTime =
+        workflowRecord.get(WORKFLOW_EXECUTIONS.STARTING_TIME).getTime
+      val eid = workflowRecord.get(WORKFLOW_EXECUTIONS.EID)
+      val endedAt = Option(workflowRecord.get(WORKFLOW_EXECUTIONS.ENDED_AT)).map(_.getTime)
+      val status = endedAt match {
+        case Some(_) => workflowRecord.get(WORKFLOW_EXECUTIONS.OUTCOME).shortValue()
+        case None    => open(eid.longValue()).status
+      }
 
-        val lastUpdateTime =
-          Option(workflowRecord.get(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME)).fold(0L)(_.getTime)
+      val timeDifferenceSeconds = (endedAt.getOrElse(now()) - startingTime) / 1000.0
+      val hasAccess = java.lang.Boolean.TRUE.equals(workflowRecord.get(hasAccessField))
+      status -> dashboardExecution(
+        workflowRecord.get(WORKFLOW.NAME),
+        workflowRecord.get(WORKFLOW_VERSION.WID),
+        workflowRecord.get(USER.NAME),
+        workflowRecord.get(WORKFLOW_EXECUTIONS.UID),
+        eid,
+        mapToName(status),
+        timeDifferenceSeconds,
+        workflowRecord.get(WORKFLOW_EXECUTIONS.NAME),
+        startingTime,
+        endedAt.getOrElse(0L),
+        hasAccess
+      )
+    })
 
-        val timeDifferenceSeconds = (lastUpdateTime - startingTime) / 1000.0
-        val hasAccess = java.lang.Boolean.TRUE.equals(workflowRecord.get(hasAccessField))
-        dashboardExecution(
-          workflowRecord.get(WORKFLOW.NAME),
-          workflowRecord.get(WORKFLOW_VERSION.WID),
-          workflowRecord.get(USER.NAME),
-          workflowRecord.get(WORKFLOW_EXECUTIONS.UID),
-          workflowRecord.get(WORKFLOW_EXECUTIONS.EID),
-          mapToName(workflowRecord.get(WORKFLOW_EXECUTIONS.STATUS)),
-          timeDifferenceSeconds,
-          workflowRecord.get(WORKFLOW_EXECUTIONS.NAME),
-          startingTime,
-          lastUpdateTime,
-          hasAccess
-        )
-      })
-      .asScala
-      .toList
+    (if (asksOpen)
+       listed
+         .filter { case (status, _) => filter_status.contains(status) }
+         .slice(pageOffset, pageOffset + page_size)
+     else listed).map(_._2).toList
   }
 }

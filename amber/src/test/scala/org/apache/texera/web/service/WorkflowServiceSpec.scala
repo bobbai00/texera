@@ -570,8 +570,7 @@ class WorkflowServiceSpec
           PhysicalPlanCodec.encode(ExecutionPlan(context, PhysicalPlan(Set(lines), Set.empty)))
         ),
         createdBy = testUid,
-        computingUnitId = storedCuid,
-        notification = None
+        computingUnitId = storedCuid
       ),
       "{}"
     )

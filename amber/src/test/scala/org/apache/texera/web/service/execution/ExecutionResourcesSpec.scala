@@ -180,11 +180,16 @@ class ExecutionResourcesSpec
     try madeTables.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
     finally closeConnectionPool()
 
+  /**
+    * Execution `eid` of workflow `wid`, closed as `outcome` unless that is None, which leaves
+    * it open. `status` is the column a unit writes, which nothing here reads.
+    */
   private def insertExecution(
       eid: Int,
       wid: Int,
       whid: Option[Integer],
       cuid: Option[Int] = None,
+      outcome: Option[Short] = None,
       status: Short = 1
   ): Unit = {
     val vid = getDSLContext
@@ -201,6 +206,11 @@ class ExecutionResourcesSpec
       .set(WORKFLOW_EXECUTIONS.CUID, cuid.map(Integer.valueOf).orNull)
       .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, outcome.map(java.lang.Short.valueOf).orNull)
+      .set(
+        WORKFLOW_EXECUTIONS.ENDED_AT,
+        outcome.map(_ => new Timestamp(System.currentTimeMillis())).orNull
+      )
       .execute()
   }
 
@@ -291,8 +301,7 @@ class ExecutionResourcesSpec
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
         createdBy = testUid,
-        computingUnitId = 1,
-        notification = None
+        computingUnitId = 1
       ),
       "{}"
     )
@@ -427,23 +436,25 @@ class ExecutionResourcesSpec
   }
 
   "ExecutionResources.clearReplacedExecutions" should
-    "clear the ended executions of the workflow on the unit that a later one has replaced, and only those" in {
-    // Ended, on the unit, holding results, and older than an execution that holds some.
-    insertExecution(943111, testWid, None, Some(clearedUnit), status = 3) // COMPLETED
-    insertExecution(943112, testWid, None, Some(clearedUnit), status = 4) // FAILED
-    insertExecution(943113, testWid, None, Some(clearedUnit), status = 5) // KILLED
-    // Still running, or about to be.
-    insertExecution(943114, testWid, None, Some(clearedUnit), status = 1) // RUNNING
-    insertExecution(943115, testWid, None, Some(clearedUnit), status = 2) // PAUSED
-    insertExecution(943116, testWid, None, Some(clearedUnit), status = 0) // Initializing
+    "clear the closed executions of the workflow on the unit that a later one has replaced, and only those" in {
+    // Closed, on the unit, holding results, and older than an execution that holds some. The
+    // status column says each of them runs: their unit was lost, and wrote no more.
+    insertExecution(943111, testWid, None, Some(clearedUnit), outcome = Some(3)) // completed
+    insertExecution(943112, testWid, None, Some(clearedUnit), outcome = Some(4)) // failed
+    insertExecution(943113, testWid, None, Some(clearedUnit), outcome = Some(5)) // killed
+    // Open: still running, or about to be, whatever the status column says. One whose unit
+    // wrote that it completed is not closed yet, and keeps its results until it is.
+    insertExecution(943114, testWid, None, Some(clearedUnit), status = 3)
+    insertExecution(943115, testWid, None, Some(clearedUnit), status = 2)
+    insertExecution(943116, testWid, None, Some(clearedUnit), status = 0)
     // Another unit's and another workflow's.
-    insertExecution(943117, testWid, None, Some(otherUnit), status = 3)
-    insertExecution(943118, otherWid, None, Some(clearedUnit), status = 3)
+    insertExecution(943117, testWid, None, Some(otherUnit), outcome = Some(3))
+    insertExecution(943118, otherWid, None, Some(clearedUnit), outcome = Some(3))
     // The latest that holds results: what the unit ran last, and still shows.
-    insertExecution(943119, testWid, None, Some(clearedUnit), status = 3)
+    insertExecution(943119, testWid, None, Some(clearedUnit), outcome = Some(3))
     // Later still, with nothing of their own: created and not started, and failed at its create.
     insertExecution(943121, testWid, None, Some(clearedUnit), status = 6)
-    insertExecution(943122, testWid, None, Some(clearedUnit), status = 4)
+    insertExecution(943122, testWid, None, Some(clearedUnit), outcome = Some(4))
     val consoles = Map(
       943111 -> withConsole(testWid, 943111),
       943113 -> withConsole(testWid, 943113),
@@ -455,9 +466,9 @@ class ExecutionResourcesSpec
       943119 -> withConsole(testWid, 943119)
     )
     val result = withResult(testWid, 943112)
-    // Ended, on the unit, replaced, with nothing left to clear: passed over, and so not among
+    // Closed, on the unit, replaced, with nothing left to clear: passed over, and so not among
     // the executions logged as cleared below.
-    insertExecution(943110, testWid, None, Some(clearedUnit), status = 3)
+    insertExecution(943110, testWid, None, Some(clearedUnit), outcome = Some(3))
 
     val logged = loggedWhile {
       ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), clearedUnit)
@@ -474,9 +485,9 @@ class ExecutionResourcesSpec
         s"Cleared the results of execution $eid, which a later execution of workflow $testWid " +
           s"on computing unit $clearedUnit replaced."
       )
-    // The executions themselves stay, in the states they ended in.
+    // The executions themselves stay, closed as they were.
     getDSLContext
-      .select(WORKFLOW_EXECUTIONS.EID, WORKFLOW_EXECUTIONS.STATUS)
+      .select(WORKFLOW_EXECUTIONS.EID, WORKFLOW_EXECUTIONS.OUTCOME)
       .from(WORKFLOW_EXECUTIONS)
       .where(WORKFLOW_EXECUTIONS.EID.between(Integer.valueOf(943111), Integer.valueOf(943113)))
       .orderBy(WORKFLOW_EXECUTIONS.EID)
@@ -487,11 +498,11 @@ class ExecutionResourcesSpec
   }
 
   it should "keep what the unit ran last until a later execution holds results of its own" in {
-    insertExecution(943151, testWid, None, Some(replacedUnit), status = 3)
+    insertExecution(943151, testWid, None, Some(replacedUnit), outcome = Some(3))
     val shown = withConsole(testWid, 943151)
     // Created and never started, failed at its create, and started but with nothing to show yet.
     insertExecution(943152, testWid, None, Some(replacedUnit), status = 6)
-    insertExecution(943153, testWid, None, Some(replacedUnit), status = 4)
+    insertExecution(943153, testWid, None, Some(replacedUnit), outcome = Some(4))
     insertExecution(943154, testWid, None, Some(replacedUnit), status = 0)
 
     ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), replacedUnit)
@@ -511,9 +522,9 @@ class ExecutionResourcesSpec
   }
 
   it should "log an execution that cannot be cleared, and go on to the next" in {
-    insertExecution(943131, otherWid, None, Some(otherUnit), status = 3)
-    insertExecution(943132, otherWid, None, Some(otherUnit), status = 3)
-    insertExecution(943133, otherWid, None, Some(otherUnit), status = 1)
+    insertExecution(943131, otherWid, None, Some(otherUnit), outcome = Some(3))
+    insertExecution(943132, otherWid, None, Some(otherUnit), outcome = Some(3))
+    insertExecution(943133, otherWid, None, Some(otherUnit))
     // A console location that is not a URI: clearing 943131 fails before it deletes anything.
     getDSLContext
       .insertInto(OPERATOR_EXECUTIONS)
@@ -555,7 +566,7 @@ class ExecutionResourcesSpec
   }
 
   it should "list the executions to clear in one SELECT" in {
-    insertExecution(943141, testWid, None, Some(idleUnit), status = 4)
+    insertExecution(943141, testWid, None, Some(idleUnit), outcome = Some(4))
 
     val statements = recorder.record {
       ExecutionResources.clearReplacedExecutions(WorkflowIdentity(testWid.toLong), idleUnit)

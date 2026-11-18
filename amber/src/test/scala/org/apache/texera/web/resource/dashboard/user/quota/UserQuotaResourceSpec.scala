@@ -260,12 +260,46 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     assert(UserQuotaResource.getUserQuotaSize(testUid).isEmpty)
   }
 
-  it should "assemble per-execution result / runtime-stats / log sizes" in {
+  it should "answer what each execution held when it was closed, newest first" in {
+    resetFixtures()
+    val older = insertExecution()
+    val newer = insertExecution()
+    // Larger than an Int holds.
+    val stored = 3L * Int.MaxValue
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.STORED_BYTES, java.lang.Long.valueOf(stored))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(older.getEid))
+      .execute()
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.STORED_BYTES, java.lang.Long.valueOf(10485760L))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(newer.getEid))
+      .execute()
+
+    val quota = UserQuotaResource.getUserQuotaSize(testUid)
+
+    assert(quota.map(_.eid).toList == List(newer.getEid, older.getEid))
+    assert(quota.forall(_.workflowId == testWid))
+    assert(quota.forall(_.workflowName == testWorkflow.getName))
+    assert(quota.map(_.storedBytes).toList == List(10485760L, stored))
+  }
+
+  it should "answer 0 bytes for an execution that is open, or whose tables were never measured" in {
+    resetFixtures()
+    insertExecution()
+
+    assert(UserQuotaResource.getUserQuotaSize(testUid).map(_.storedBytes).toList == List(0L))
+  }
+
+  // The sizes a unit counted while it ran are no part of what an execution holds.
+  it should "leave out the sizes a computing unit recorded" in {
     resetFixtures()
     val execution = insertExecution()
     getDSLContext
       .update(WORKFLOW_EXECUTIONS)
       .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_SIZE, java.lang.Long.valueOf(200L))
+      .set(WORKFLOW_EXECUTIONS.STORED_BYTES, java.lang.Long.valueOf(7L))
       .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
       .execute()
     getDSLContext
@@ -292,13 +326,8 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     val quota = UserQuotaResource.getUserQuotaSize(testUid)
 
     assert(quota.length == 1)
-    val q = quota.head
-    assert(q.eid == execution.getEid)
-    assert(q.workflowId == testWid)
-    assert(q.workflowName == testWorkflow.getName)
-    assert(q.resultBytes == 100L)
-    assert(q.runTimeStatsBytes == 200L)
-    assert(q.logBytes == 50L)
+    assert(quota.head.eid == execution.getEid)
+    assert(quota.head.storedBytes == 7L)
   }
 
   // ─── class endpoints (delegate to the object using the SessionUser's uid) ──
@@ -374,8 +403,7 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
         createdBy = testUid,
-        computingUnitId = 1,
-        notification = None
+        computingUnitId = 1
       ),
       "{}"
     )

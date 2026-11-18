@@ -1015,15 +1015,16 @@ class ComputingUnitMasterSpec
 
   /**
     * Seeds one workflow_executions row plus the user/workflow/version parents its foreign
-    * keys require, and returns the generated eid. `lastUpdateAgeMillis` stays far below
-    * result-cleanup.ttl-in-seconds (a day), so the cleanup task run() scheduled never
-    * selects these rows and cannot clear one behind a test's back.
+    * keys require, and returns the generated eid. The execution is closed, as `status`,
+    * `endedAgeMillis` ago, which stays far below result-cleanup.ttl-in-seconds (a day), so the
+    * cleanup task run() scheduled never selects these rows and cannot clear one behind a
+    * test's back.
     */
   private def seedExecution(
       result: String,
       logLocation: String,
       status: Short,
-      lastUpdateAgeMillis: Long = 0
+      endedAgeMillis: Long = 0
   ): Integer = {
     val context = getDSLContext
     val now = System.currentTimeMillis()
@@ -1058,8 +1059,9 @@ class ComputingUnitMasterSpec
       .set(WORKFLOW_EXECUTIONS.RESULT, result)
       .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "computing-unit-master-spec")
-      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(now - lastUpdateAgeMillis))
-      .set(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME, new Timestamp(now - lastUpdateAgeMillis))
+      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(now - endedAgeMillis))
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, java.lang.Short.valueOf(status))
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, new Timestamp(now - endedAgeMillis))
       .returning(WORKFLOW_EXECUTIONS.EID)
       .fetchOne()
       .getEid
@@ -1076,7 +1078,7 @@ class ComputingUnitMasterSpec
       result = """{"results":[]}""",
       logLocation = "file:///seeded-recurring-log",
       status = 3,
-      lastUpdateAgeMillis = 10000
+      endedAgeMillis = 10000
     )
 
     // A time to live of zero makes this row expired for the call under test while leaving it
@@ -1097,7 +1099,7 @@ class ComputingUnitMasterSpec
       result = """{"results":[]}""",
       logLocation = "file:///seeded-fresh-log",
       status = 3,
-      lastUpdateAgeMillis = 10000
+      endedAgeMillis = 10000
     )
 
     recurringCheckExpiredResults(timeToLive = 3600)

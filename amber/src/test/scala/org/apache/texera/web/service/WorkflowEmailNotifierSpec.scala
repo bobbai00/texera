@@ -19,63 +19,72 @@
 
 package org.apache.texera.web.service
 
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
+import org.apache.texera.dao.WorkflowExecutionStatus
 import org.apache.texera.web.resource.EmailMessage
-import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
-import org.scalatest.PrivateMethodTester
+import org.apache.texera.web.service.WorkflowEmailNotifier.{Corrected, Notification}
 import org.scalatest.flatspec.AnyFlatSpec
 
 import java.net.URI
 import java.time.Instant
 import java.util.{Locale, TimeZone, UUID}
+import scala.collection.mutable
 
 /**
-  * Covers the parts of [[WorkflowEmailNotifier]] that decide *whether* to notify and *what* the
-  * notification says, and the notification a plan row keeps. Concretely, these tests fail if:
-  *   - the subject or content stop naming the workflow by the name in the notification the
-  *     notifier is given, or stop linking to the page in it (the name carries a random suffix, so
-  *     a hard-coded value cannot satisfy the subject/content assertions);
+  * Covers what [[WorkflowEmailNotifier]] sends about a run that ended, and the notification an
+  * execution's row keeps. Concretely, these tests fail if:
+  *   - the subject or content stop naming the workflow by the name in the notification, or stop
+  *     linking to the page in it (the name carries a random suffix, so a hard-coded value cannot
+  *     satisfy the assertions);
+  *   - the email stops saying how the run ended, why, or when it ended, in UTC whatever the
+  *     JVM's zone is (the default zone is set to a non-UTC one around the assertion, and the
+  *     locale to US so the month's name is stable);
+  *   - an email that corrects an earlier one stops saying what the earlier one said;
   *   - `workflowUrl` starts emitting `:80`/`:443`/no-port links, or drops the workflow id from the
   *     deep link, so the mail points somewhere the user cannot open;
-  *   - `formatTimestamp` stops pinning UTC or changes the human-readable pattern (the JVM default
-  *     zone is deliberately set to non-UTC around the assertion; the locale is pinned to US so the
-  *     expected month/day text is stable across environments);
-  *   - the terminal-state set stops covering a state that ends or suspends an execution, which
-  *     would silently drop the only email a user gets for that run;
+  *   - an email that cannot be sent passes for one that was;
   *   - a notification no longer reads back as it was written, or a malformed one is read.
   *
-  * The notifier reads nothing to build an email, so this suite needs no database. SMTP is never
-  * exercised: only the pure message-building helpers and the state predicate are invoked, so no
-  * test here reaches `GmailResource.sendEmail`.
+  * The notifier reads nothing to build an email, so this suite needs no database, and it hands
+  * each email to a function the suite gives it, so no test reaches a mail server.
   */
-class WorkflowEmailNotifierSpec extends AnyFlatSpec with PrivateMethodTester {
+class WorkflowEmailNotifierSpec extends AnyFlatSpec {
 
   private val testWid: Int = 7000 + scala.util.Random.nextInt(1000)
   // Random suffix: the subject/content assertions can only pass if the notifier really used the
   // name it was given.
   private val testWorkflowName: String = "notifier_wf_" + UUID.randomUUID().toString.substring(0, 8)
   private val userEmail = "recipient@example.com"
+  private val workflowPage = s"http://texera.example.com:8080/user/workspace/$testWid"
+  private val endedAt = Instant.parse("2024-03-05T14:07:09Z").toEpochMilli
 
-  private val createEmailMessage = PrivateMethod[EmailMessage](Symbol("createEmailMessage"))
-  private val createEmailSubject = PrivateMethod[String](Symbol("createEmailSubject"))
-  private val createEmailContent = PrivateMethod[String](Symbol("createEmailContent"))
-  private val formatTimestamp = PrivateMethod[String](Symbol("formatTimestamp"))
-  private val isValidEmail = PrivateMethod[Boolean](Symbol("isValidEmail"))
+  private val completed = WorkflowExecutionStatus.Completed
+  private val failed = WorkflowExecutionStatus.Failed
+  private val killed = WorkflowExecutionStatus.Killed
 
-  /** Builds a notifier for the test workflow, linking to its page on the host of `requestUri`. */
-  private def notifierFor(
-      requestUri: String,
-      email: String = userEmail
-  ): WorkflowEmailNotifier =
-    new WorkflowEmailNotifier(
-      testWid.toLong,
-      Notification(
-        email,
-        testWorkflowName,
-        WorkflowEmailNotifier.workflowUrl(new URI(requestUri), testWid.toLong)
-      )
-    )
+  private def notification(email: String = userEmail): Notification =
+    Notification(email, testWorkflowName, workflowPage)
+
+  /** A notifier, and the emails it handed over to be sent, each with its recipient. */
+  private class Outbox(answer: Either[String, Unit] = Right(())) {
+    val sent = mutable.ListBuffer.empty[(EmailMessage, String)]
+    val notifier = new WorkflowEmailNotifier((message, recipient) => {
+      sent += ((message, recipient))
+      answer
+    })
+  }
+
+  /** `body`, with the JVM's zone away from UTC and its locale US. */
+  private def awayFromUtc[T](body: => T): T = {
+    val previousLocale = Locale.getDefault
+    val previousZone = TimeZone.getDefault
+    Locale.setDefault(Locale.US)
+    TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
+    try body
+    finally {
+      TimeZone.setDefault(previousZone)
+      Locale.setDefault(previousLocale)
+    }
+  }
 
   // ─── workflowUrl ───────────────────────────────────────────────────────────
 
@@ -115,115 +124,146 @@ class WorkflowEmailNotifierSpec extends AnyFlatSpec with PrivateMethodTester {
     assert(url == s"http://texera.example.com:8080/user/workspace/$testWid")
   }
 
-  // ─── createEmailSubject / createEmailContent ───────────────────────────────
+  // ─── send ──────────────────────────────────────────────────────────────────
 
-  "createEmailSubject" should "carry the workflow name it is given" in {
-    val subject = notifierFor("http://texera.example.com") invokePrivate
-      createEmailSubject(COMPLETED)
-    assert(subject == s"[Texera] Workflow $testWorkflowName ($testWid) Status: ${COMPLETED.name}")
-  }
-
-  "createEmailContent" should "list the name it is given, the id, the state and the link" in {
-    val content = notifierFor("http://texera.example.com:8080/dashboard") invokePrivate
-      createEmailContent(FAILED)
-
-    // stripMargin + trim: a broken margin would leave the "|" prefixes and leading blank line.
-    assert(content.startsWith("Hello,"))
-    assert(content.contains(s"- Workflow ID: $testWid"))
-    assert(content.contains(s"- Workflow Name: $testWorkflowName"))
-    assert(content.contains(s"- State: ${FAILED.name}"))
-    assert(
-      content.contains(s"visiting: http://texera.example.com:8080/user/workspace/$testWid"),
-      s"dashboard link missing from content:\n$content"
-    )
-    assert(
-      content.linesIterator.exists(line =>
-        line.startsWith("- Timestamp: ") && line.endsWith("(UTC)")
-      ),
-      s"no UTC timestamp line in content:\n$content"
-    )
-  }
-
-  // ─── formatTimestamp ───────────────────────────────────────────────────────
-
-  "formatTimestamp" should "render a fixed instant in UTC, independent of the JVM defaults" in {
-    val previousLocale = Locale.getDefault
-    val previousZone = TimeZone.getDefault
-    // Non-UTC default zone: had the formatter used ZoneId.systemDefault() the clock time below
-    // would read 06:07 instead of 14:07.
-    Locale.setDefault(Locale.US)
-    TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
-    try {
-      val rendered = notifierFor("http://texera.example.com") invokePrivate
-        formatTimestamp(Instant.parse("2024-03-05T14:07:09Z"))
-      assert(rendered == "March 5, 2024, 2:07:09 PM (UTC)")
-    } finally {
-      TimeZone.setDefault(previousZone)
-      Locale.setDefault(previousLocale)
+  "send" should "email the address in the notification how the run ended, why and when" in {
+    val outbox = new Outbox
+    awayFromUtc {
+      outbox.notifier.send(notification(), testWid, failed, Some("unit lost"), endedAt)
     }
-  }
 
-  // ─── isValidEmail ──────────────────────────────────────────────────────────
-
-  "isValidEmail" should "accept a well-formed address" in {
-    assert(notifierFor("http://texera.example.com") invokePrivate isValidEmail("user@example.com"))
-  }
-
-  it should "reject an address with no '@' and one with an empty domain" in {
-    val notifier = notifierFor("http://texera.example.com")
-    assert(!(notifier invokePrivate isValidEmail("user-at-example.com")))
-    assert(!(notifier invokePrivate isValidEmail("user@")))
-  }
-
-  // ─── shouldSendEmail ───────────────────────────────────────────────────────
-
-  "shouldSendEmail" should "accept the states that end or suspend an execution" in {
-    val notifier = notifierFor("http://texera.example.com")
-    Seq(COMPLETED, PAUSED, FAILED, KILLED).foreach { state =>
-      assert(notifier.shouldSendEmail(state), s"expected $state to trigger a notification")
-    }
-  }
-
-  it should "decline the states an execution merely passes through" in {
-    val notifier = notifierFor("http://texera.example.com")
-    // TERMINATED / UNKNOWN are intentionally left out: whether they should notify is a product
-    // question, and pinning today's answer would block a harmless change.
-    val inFlight: Seq[WorkflowAggregatedState] =
-      Seq(UNINITIALIZED, READY, RUNNING, PAUSING, RESUMING)
-    inFlight.foreach { state =>
-      assert(!notifier.shouldSendEmail(state), s"expected $state not to trigger a notification")
-    }
-  }
-
-  // ─── createEmailMessage ────────────────────────────────────────────────────
-
-  "createEmailMessage" should "address the recipient and carry the subject and content for the state" in {
-    val notifier = notifierFor("http://texera.example.com:8080/dashboard")
-    val message = notifier invokePrivate createEmailMessage(KILLED)
-
+    assert(outbox.sent.size == 1)
+    val (message, recipient) = outbox.sent.head
+    assert(recipient == userEmail)
     assert(message.receiver == userEmail)
-    // the assembled subject must match what the dedicated builder produces for the same state
-    assert(message.subject == (notifier invokePrivate createEmailSubject(KILLED)))
-    assert(message.content.contains(testWorkflowName))
-    assert(message.content.contains(testWid.toString))
-    assert(message.content.contains(KILLED.name))
+    assert(message.subject == s"[Texera] Workflow $testWorkflowName ($testWid): Failed")
+    // Had the time been written in the JVM's zone, it would read 6:07:09 AM.
+    assert(
+      message.content ==
+        s"""Hello,
+           |
+           |The run of the workflow with the following details has ended:
+           |
+           |- Workflow ID: $testWid
+           |- Workflow Name: $testWorkflowName
+           |- State: Failed
+           |- Reason: unit lost
+           |- Timestamp: March 5, 2024, 2:07:09 PM (UTC)
+           |
+           |You can view more details by visiting: $workflowPage
+           |
+           |Regards,
+           |Texera Team""".stripMargin
+    )
   }
 
-  // ─── sendStatusEmail ───────────────────────────────────────────────────────
+  it should "name each ending in the subject and the content" in {
+    Seq(completed -> "Completed", failed -> "Failed", killed -> "Killed").foreach {
+      case (outcome, name) =>
+        val outbox = new Outbox
+        outbox.notifier.send(notification(), testWid, outcome, None, endedAt)
 
-  // Only the invalid-recipient arm is driven here: it returns before reaching
-  // GmailResource.sendEmail, so no SMTP call is made. The valid-address arm would dispatch
-  // for real, so it belongs to the integration tier.
-  "sendStatusEmail" should "return without dispatching when the recipient address is invalid" in {
-    val notifier = notifierFor("http://texera.example.com", email = "not-an-email")
+        val message = outbox.sent.head._1
+        assert(message.subject == s"[Texera] Workflow $testWorkflowName ($testWid): $name")
+        assert(message.content.linesIterator.contains(s"- State: $name"))
+    }
+  }
 
-    notifier.sendStatusEmail(COMPLETED) // must not throw and must not reach Gmail
-    assert(!(notifier invokePrivate isValidEmail("not-an-email")))
+  it should "leave the reason's line out when the run gave none" in {
+    val outbox = new Outbox
+    outbox.notifier.send(notification(), testWid, completed, None, endedAt)
+
+    assert(!outbox.sent.head._1.content.contains("Reason"))
+  }
+
+  // A reason is the run's own words: an error message can hold a line that starts like the
+  // margin of a template.
+  it should "write a reason of several lines as it is" in {
+    val reason = "ValueError: bad row\n  | 1 | x\n  | 2 | y"
+    val outbox = new Outbox
+    outbox.notifier.send(notification(), testWid, failed, Some(reason), endedAt)
+
+    assert(outbox.sent.head._1.content.contains(s"- Reason: $reason\n- Timestamp: "))
+  }
+
+  it should "say what an earlier email said when it corrects one" in {
+    val outbox = new Outbox
+    outbox.notifier.send(
+      notification(),
+      testWid,
+      completed,
+      None,
+      endedAt,
+      corrects = Some(Corrected(failed, Some("unit lost")))
+    )
+
+    val message = outbox.sent.head._1
+    assert(message.subject == s"[Texera] Workflow $testWorkflowName ($testWid): Completed")
+    assert(
+      message.content.startsWith(
+        "Hello,\n\nAn earlier email said that this run of your workflow had failed (unit " +
+          "lost). Its computing unit could not be reached for a while, and the run went on. " +
+          "This is how it ended:\n\n"
+      )
+    )
+    assert(message.content.linesIterator.contains("- State: Completed"))
+    assert(!message.content.contains("has ended:"))
+  }
+
+  it should "say an earlier ending that had no reason without one" in {
+    val outbox = new Outbox
+    outbox.notifier.send(
+      notification(),
+      testWid,
+      killed,
+      Some("killed by the user"),
+      endedAt,
+      corrects = Some(Corrected(failed, None))
+    )
+
+    val content = outbox.sent.head._1.content
+    assert(content.contains("said that this run of your workflow had failed. Its computing"))
+    assert(content.linesIterator.contains("- Reason: killed by the user"))
+  }
+
+  it should "send nothing to an address that is not one" in {
+    Seq("not-an-email", "user@").foreach { address =>
+      val outbox = new Outbox
+      outbox.notifier.send(notification(address), testWid, completed, None, endedAt)
+      assert(outbox.sent.isEmpty, s"for '$address'")
+    }
+  }
+
+  it should "fail when the email cannot be sent, with why" in {
+    val outbox = new Outbox(Left("Failed to send email: connection refused"))
+
+    val failure = intercept[IllegalStateException] {
+      outbox.notifier.send(notification(), testWid, completed, None, endedAt)
+    }
+    assert(failure.getMessage == "Failed to send email: connection refused")
+    assert(outbox.sent.size == 1)
+  }
+
+  it should "refuse a state that is no ending, and send nothing" in {
+    Seq[Short](
+      WorkflowExecutionStatus.Initializing,
+      WorkflowExecutionStatus.Running,
+      WorkflowExecutionStatus.Paused,
+      WorkflowExecutionStatus.Created,
+      WorkflowExecutionStatus.Unknown
+    ).foreach { status =>
+      val outbox = new Outbox
+      val failure = intercept[IllegalArgumentException] {
+        outbox.notifier.send(notification(), testWid, status, None, endedAt)
+      }
+      assert(failure.getMessage == s"A run ends completed, failed or killed, not as $status.")
+      assert(outbox.sent.isEmpty)
+    }
   }
 
   // ─── Notification ──────────────────────────────────────────────────────────
 
-  "Notification" should "write the three fields a plan row keeps, and read them back" in {
+  "Notification" should "write the three fields an execution's row keeps, and read them back" in {
     val url = s"http://texera.example.com:8080/user/workspace/$testWid"
     val notification = Notification(userEmail, "Sales \"Q3\" — ünïcode", url)
 

@@ -304,7 +304,7 @@ export class UserQuotaComponent implements OnInit {
         this.workflows = [];
 
         this.executionCollections.forEach(execution => {
-          this.totalQuotaSize += execution.resultBytes + execution.runTimeStatsBytes + execution.logBytes;
+          this.totalQuotaSize += execution.storedBytes;
           let workflow = this.workflows.find(
             w => w.executions.length > 0 && w.executions[0].workflowId === execution.workflowId
           );
@@ -329,8 +329,7 @@ export class UserQuotaComponent implements OnInit {
         this.workflows.forEach((workflow, index, array) => {
           const executionToDelete = workflow.executions.find(execution => execution.eid === eid);
           if (executionToDelete) {
-            this.totalQuotaSize -=
-              executionToDelete.resultBytes + executionToDelete.logBytes + executionToDelete.runTimeStatsBytes;
+            this.totalQuotaSize -= executionToDelete.storedBytes;
             workflow.executions = workflow.executions.filter(execution => execution.eid !== eid);
           }
         });
@@ -342,5 +341,5 @@ export class UserQuotaComponent implements OnInit {
   formatSize = formatSize;
 
   public sortBySize: NzTableSortFn<ExecutionQuota> = (a: ExecutionQuota, b: ExecutionQuota) =>
-    a.resultBytes + a.logBytes + a.runTimeStatsBytes - (b.resultBytes + b.logBytes + b.runTimeStatsBytes);
+    a.storedBytes - b.storedBytes;
 }

@@ -34,6 +34,7 @@ import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   DocumentFactory,
+  ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
   ExecutionPlanStore,
@@ -41,7 +42,8 @@ import org.apache.texera.amber.core.storage.{
   InputLinker,
   ListedFile,
   NoStoredPlanException,
-  PlanRecord
+  PlanRecord,
+  VFSURIFactory
 }
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -130,9 +132,12 @@ import org.apache.texera.web.model.http.response.execution.{
   ExecutionLogResponse,
   ExecutionStateResponse
 }
+import org.apache.texera.web.resource.EmailMessage
+import org.apache.texera.web.service.WorkflowEmailNotifier
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.{ExecutionConsoleService, PlanToRun, WorkflowService}
 import org.apache.texera.web.service.execution.{
+  ClosingRecord,
   CostHintsLoader,
   ExecutionCloser,
   ExecutionCreator,
@@ -201,6 +206,8 @@ class ExecutionResourceSpec
   private val strangerCuid = 9625
   private val clearingCuid = 9626
   private val sharedCuid = 9627
+  private val closingCuid = 9628
+  private val closingOtherCuid = 9629
   private val unknownCuid = 9699
 
   /**
@@ -292,7 +299,9 @@ class ExecutionResourceSpec
       (otherUnitCuid, creatorUid, false),
       (strangerCuid, strangerUid, false),
       (clearingCuid, creatorUid, false),
-      (sharedCuid, creatorUid, false)
+      (sharedCuid, creatorUid, false),
+      (closingCuid, creatorUid, false),
+      (closingOtherCuid, creatorUid, false)
     ).foreach {
       case (cuid, owner, terminated) =>
         val unit = new WorkflowComputingUnit
@@ -373,14 +382,21 @@ class ExecutionResourceSpec
     row.getWhid
   }
 
+  /**
+    * Execution `eid`, as a unit left it at `status`: one that ended is closed as it ended,
+    * unless it is to be `open`, as it is until the closing job has looked at it.
+    */
   private def insertExecution(
       eid: Int,
       wid: Int,
       cuid: Int,
       status: Short,
       logLocation: Option[String] = None,
-      uid: Int = creatorUid
+      uid: Int = creatorUid,
+      open: Boolean = false,
+      whid: Option[Integer] = None
   ): Unit = {
+    val closed = !open && WorkflowExecutionStatus.Ended.contains(status)
     val vid = getDSLContext
       .select(WORKFLOW_VERSION.VID)
       .from(WORKFLOW_VERSION)
@@ -395,6 +411,12 @@ class ExecutionResourceSpec
       .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation.orNull)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
+      .set(WORKFLOW_EXECUTIONS.WHID, whid.orNull)
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, if (closed) java.lang.Short.valueOf(status) else null)
+      .set(
+        WORKFLOW_EXECUTIONS.ENDED_AT,
+        if (closed) new Timestamp(System.currentTimeMillis()) else null
+      )
       .execute()
   }
 
@@ -450,6 +472,25 @@ class ExecutionResourceSpec
     override def load(wid: Long, uid: Int): Option[CostHints] = throw failure
   }
 
+  /** The emails the closers of this suite would have sent: none leaves it. */
+  private val sentEmails = mutable.ListBuffer.empty[EmailMessage]
+
+  /**
+    * A closer whose emails are noted in `sentEmails`, on the thread that closes, and whose lake
+    * calls are the stores' unless `label` is given.
+    */
+  private def recordingCloser(
+      label: URI => Option[ExecutionLabel] = ExecutionLogStore.label
+  ): ExecutionCloser =
+    new ExecutionCloser(
+      label = label,
+      emails = new WorkflowEmailNotifier((message, _) => {
+        sentEmails.synchronized(sentEmails += message)
+        Right(())
+      }),
+      emailThread = _.run()
+    )
+
   /**
     * The creator under test, bound to the fixture files, links and versions in place of a
     * user's, and set up as the case needs. `resolvedFor` records the user each plan was
@@ -466,6 +507,7 @@ class ExecutionResourceSpec
       failWrite: Option[RuntimeException] = None,
       bindings: CompileFor.Run => CompileFor.Run = _ => TestUtils.fixtureBindings,
       background: Executor = _.run(),
+      closer: ExecutionCloser = recordingCloser(),
       compiles: ExecutorService = compilePool,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
@@ -484,6 +526,7 @@ class ExecutionResourceSpec
             case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
           },
         background = background,
+        closer = closer,
         compiles = compiles,
         compileDeadline = compileDeadline
       )
@@ -758,7 +801,8 @@ class ExecutionResourceSpec
     record.entryId shouldBe ExecutionPlanStore.PlanEntryId
     record.createdBy shouldBe creatorUid
     record.computingUnitId shouldBe unitCuid
-    record.notification shouldBe None
+    // The request asked for no email.
+    stored.getNotification shouldBe null
     // The logical plan as the request sent it, before the compile resolved its scan's file.
     objectMapper.readTree(logicalPlanOf(execution)) shouldBe sentPlan
     logicalPlanOf(execution) should include(TestOperators.CountrySalesSmallCsvPath)
@@ -1346,16 +1390,27 @@ class ExecutionResourceSpec
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(readerUid))
   }
 
-  it should "keep where the run's status emails go when the request asks for them" in {
+  it should "keep where the email about the run goes in the execution's row, when the request asks for one" in {
     val execution = created(post(request(emailNotificationEnabled = true)))
 
-    storedPlan(execution)._1.notification.map(Notification.fromJson) shouldBe Some(
+    Option(row(execution.eid).getNotification).map(Notification.fromJson) shouldBe Some(
       Notification(
         creatorEmail,
         workflowName,
         s"http://texera.example:4200/user/workspace/$testWid"
       )
     )
+  }
+
+  // A computing unit reads the plan table, and has no use for an address.
+  it should "keep the user's address out of the lake" in {
+    val execution = created(post(request(emailNotificationEnabled = true)))
+    val planUri = new URI(execution.planUri)
+
+    val columns = DocumentFactory.openDocument(planUri)._2.get.getAttributeNames
+    columns shouldBe List("entryId", "body", "logical", "createdBy", "computingUnitId")
+    storedPlan(execution)._1.body should not include creatorEmail
+    logicalPlanOf(execution) should not include creatorEmail
   }
 
   it should "keep no notification for a user with no email address, or a blank one" in {
@@ -1368,9 +1423,21 @@ class ExecutionResourceSpec
         .create(request(emailNotificationEnabled = true), noAddress, uriInfo)
 
       withClue(s"email '$email': ") {
-        storedPlan(created(response))._1.notification shouldBe None
+        row(created(response).eid).getNotification shouldBe null
       }
     }
+  }
+
+  // The user is looking at the failure.
+  it should "send no email about an execution whose create fails, though it asked for one" in {
+    val before = sentEmails.size
+
+    val failure =
+      compileFailure(post(request(plan = brokenPlan(), emailNotificationEnabled = true)))
+
+    row(failure.eid).getNotification should not be null
+    row(failure.eid).getEndedAt should not be null
+    sentEmails.size shouldBe before
   }
 
   it should "keep the plan's loop-variable references in its logical plan, as the editor sent them" in {
@@ -1737,6 +1804,109 @@ class ExecutionResourceSpec
     hasTable(creators) shouldBe false
     consolesOf(961932) shouldBe 1
     hasTable(readers) shouldBe true
+  }
+
+  // --- closing earlier runs ---
+
+  /** Makes the log of execution `eid` and records `states` in it, a second apart. */
+  private def logged(eid: Long, states: String*): URI = {
+    val log = logOf(eid)
+    states.zipWithIndex.foreach { case (state, index) => record(log, eid, index + 1, state) }
+    log
+  }
+
+  it should "close an earlier execution whose log shows an ending while its row is still open, then clear what was replaced" in {
+    // The unit ran three executions and has just ended the second; a fourth was created and
+    // never started. The closing job has looked at none of them, so every row is open.
+    val Seq(first, second, third, unstarted) =
+      (1 to 4).map(_ => created(post(request(cuid = closingCuid))))
+    logged(first.eid, "READY", "RUNNING", "COMPLETED")
+    val failing = logged(second.eid, "READY", "RUNNING")
+    record(failing, second.eid, 3, "FAILED", errors = Seq(boom))
+    logged(third.eid, "READY", "RUNNING")
+    val consoles = Seq(first, second, third)
+      .map(execution => execution.eid -> withConsole(testWid, execution.eid.toInt))
+      .toMap
+    // Another unit's, whose log shows an ending too: not this create's to look at.
+    val elsewhere = created(post(request(cuid = closingOtherCuid)))
+    logged(elsewhere.eid, "READY", "RUNNING", "KILLED")
+    Seq(first, second, third, unstarted, elsewhere).foreach { execution =>
+      row(execution.eid).getEndedAt shouldBe null
+    }
+
+    val next = created(post(request(cuid = closingCuid)))
+
+    // Closed with what their logs say, at a time between their creation and now.
+    val closedFirst = ExecutionRecords.find(first.eid).get.closing.get
+    closedFirst.copy(endedAtMs = 0L) shouldBe
+      ClosingRecord(WorkflowExecutionStatus.Completed, None, 0L, fromLog = true)
+    closedFirst.endedAtMs should (be >= createdAt(first.eid) and be <= System.currentTimeMillis())
+    ExecutionRecords.find(second.eid).get.closing.get.copy(endedAtMs = 0L) shouldBe
+      ClosingRecord(WorkflowExecutionStatus.Failed, Some(boom.message), 0L, fromLog = true)
+    // What they hold was measured as they were closed: a plan and a log, at least.
+    row(first.eid).getStoredBytes.longValue() should be > 0L
+    row(second.eid).getStoredBytes.longValue() should be > 0L
+    // The first, which later runs replaced, is cleared.
+    consolesOf(first.eid.toInt) shouldBe 0
+    hasTable(consoles(first.eid)) shouldBe false
+    // The second, closed and replaced as well, is cleared too.
+    consolesOf(second.eid.toInt) shouldBe 0
+    hasTable(consoles(second.eid)) shouldBe false
+    // The one that runs is left open, and untouched; so are the ones no unit started, and
+    // the other unit's.
+    Seq(third, unstarted, next, elsewhere).foreach { execution =>
+      withClue(s"execution ${execution.eid}: ") {
+        val left = row(execution.eid)
+        left.getEndedAt shouldBe null
+        left.getOutcome shouldBe null
+        left.getStoredBytes shouldBe null
+      }
+    }
+    consolesOf(third.eid.toInt) shouldBe 1
+    hasTable(consoles(third.eid)) shouldBe true
+  }
+
+  it should "leave earlier executions to the closing job when their logs cannot be read" in {
+    val ended = created(post(request(cuid = closingOtherCuid)))
+    logged(ended.eid, "READY", "RUNNING", "COMPLETED")
+    val unread = recordingCloser(label = lakeDown)
+
+    created(post(request(cuid = closingOtherCuid), creator = new FixtureCreator(closer = unread)))
+
+    row(ended.eid).getEndedAt shouldBe null
+  }
+
+  it should "not read the log of an earlier execution in a warehouse the deployment cannot reach" in {
+    // Its log's URI would name the shared warehouse, where a log of that name is another's.
+    insertExecution(961951, testWid, closingOtherCuid, status = 1, whid = Some(creatorWhid))
+    val read = mutable.ListBuffer.empty[URI]
+    val noting = recordingCloser(label = uri => {
+      read.synchronized(read += uri)
+      ExecutionLogStore.label(uri)
+    })
+
+    created(post(request(cuid = closingOtherCuid), creator = new FixtureCreator(closer = noting)))
+
+    read.map(VFSURIFactory.decodeURI(_).executionId.id) should not contain 961951L
+    row(961951).getEndedAt shouldBe null
+  }
+
+  it should "email the user of an earlier execution it closes how that one ended" in {
+    val asked =
+      created(post(request(cuid = closingOtherCuid, emailNotificationEnabled = true)))
+    val unasked = created(post(request(cuid = closingOtherCuid)))
+    val failing = logged(asked.eid, "READY", "RUNNING")
+    record(failing, asked.eid, 3, "FAILED", errors = Seq(boom))
+    logged(unasked.eid, "READY", "RUNNING", "COMPLETED")
+    val before = sentEmails.size
+
+    created(post(request(cuid = closingOtherCuid)))
+
+    Seq(asked, unasked).foreach(execution => row(execution.eid).getEndedAt should not be null)
+    val sent = sentEmails.drop(before).toList
+    sent.map(email => (email.receiver, email.subject)) shouldBe
+      List((creatorEmail, s"[Texera] Workflow $workflowName ($testWid): Failed"))
+    sent.head.content should include(s"- Reason: ${boom.message}\n")
   }
 
   // --- refused: rights ---

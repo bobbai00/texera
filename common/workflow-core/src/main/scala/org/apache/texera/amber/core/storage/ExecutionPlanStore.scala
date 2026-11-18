@@ -41,21 +41,18 @@ import scala.util.{Try, Using}
   * written when the execution is created (entry id "plan"), or the row of one change to a paused
   * operator (entry id "update-<id>").
   *
-  * `body` is the engine's input, a stored plan or a stored update. Who created the execution, the
-  * computing unit it was created for and its email notification are columns, not fields of the
-  * plan: they are what the unit's web layer checks and uses, and a plan names neither a user nor
-  * a unit.
-  *
-  * @param notification JSON `{"email", "workflowName", "workflowUrl"}`; None sends no email.
+  * `body` is the engine's input, a stored plan or a stored update. Who created the execution
+  * and the computing unit it was created for are columns, not fields of the plan: they are what
+  * the unit's web layer checks, and a plan names neither a user nor a unit. Nothing here says
+  * where to reach that user: an address is no part of what a unit reads.
   */
 final case class PlanRecord(
     entryId: String,
     body: String,
     createdBy: Int,
-    computingUnitId: Int,
-    notification: Option[String]
+    computingUnitId: Int
 ) {
-  Seq("entryId" -> entryId, "body" -> body, "notification" -> notification).foreach {
+  Seq("entryId" -> entryId, "body" -> body).foreach {
     case (name, value) => require(value != null, s"a plan record needs its $name")
   }
 
@@ -343,14 +340,13 @@ object ExecutionPlanStore {
   private def hasStartedTag(table: Table): Boolean =
     Option(table.refs().get(StartedTag)).exists(_.isTag)
 
-  /** Reads a row of the plan table; only `notification` may be empty. */
+  /** Reads a row of the plan table, none of whose values may be empty. */
   private def recordOf(row: Tuple): PlanRecord =
     PlanRecord(
       entryId = required[String](row, "entryId"),
       body = required[String](row, "body"),
       createdBy = required[Integer](row, "createdBy").intValue(),
-      computingUnitId = required[Integer](row, "computingUnitId").intValue(),
-      notification = Option(row.getField[String]("notification"))
+      computingUnitId = required[Integer](row, "computingUnitId").intValue()
     )
 
   private def required[T <: AnyRef](row: Tuple, column: String): T =
@@ -395,8 +391,7 @@ object ExecutionPlanStore {
           record.body,
           logical,
           record.createdBy,
-          record.computingUnitId,
-          record.notification.orNull
+          record.computingUnitId
         )
       )
     )

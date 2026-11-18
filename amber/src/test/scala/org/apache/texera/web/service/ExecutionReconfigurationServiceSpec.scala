@@ -291,8 +291,7 @@ class ExecutionReconfigurationServiceSpec
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}", // a change is applied without the plan
         createdBy = creatorUid,
-        computingUnitId = 9234,
-        notification = None
+        computingUnitId = 9234
       ),
       "{}"
     )
@@ -327,8 +326,7 @@ class ExecutionReconfigurationServiceSpec
           )
         ),
         createdBy = createdBy,
-        computingUnitId = 9234,
-        notification = None
+        computingUnitId = 9234
       ),
       "{}"
     )

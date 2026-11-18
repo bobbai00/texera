@@ -54,7 +54,7 @@ function makeEntry(overrides: Partial<WorkflowExecutionsEntry>): WorkflowExecuti
     startingTime: 0,
     completionTime: 60000,
     status: 3,
-    result: "",
+    reason: null,
     bookmarked: false,
     logLocation: "",
     ...overrides,

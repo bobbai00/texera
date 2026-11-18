@@ -35,30 +35,24 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultToleranceConfig
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.web.model.websocket.request._
-import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 
 import java.util.UUID
 
 /**
-  * @param notification where the run's status emails go and what they name, as its execution's
-  *                     plan row keeps them; None when the run sends none
+  * Takes what the browser asks of a run, and the engine's word of the run's state. It tells
+  * nobody outside the unit how the run went: the Dashboard service emails the run's user once
+  * it has closed the execution.
   */
 class ExecutionRuntimeService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
     wsInput: WebsocketInput,
     reconfigurationService: ExecutionReconfigurationService,
-    logConf: Option[FaultToleranceConfig],
-    workflowId: Long,
-    private[service] val notification: Option[Notification]
+    logConf: Option[FaultToleranceConfig]
 ) extends SubscriptionManager
     with LazyLogging {
-
-  private val emailNotificationService = notification.map(notification =>
-    new EmailNotificationService(new WorkflowEmailNotifier(workflowId, notification))
-  )
 
   // Receive Skip. The engine cannot skip a tuple; the sender is told so, and the run goes on.
   addSubscription(wsInput.subscribe((req: SkipTupleRequest, uidOpt) => {
@@ -82,8 +76,6 @@ class ExecutionRuntimeService(
   // Receive execution state update from Amber
   addSubscription(client.registerCallback[ExecutionStateUpdate]((evt: ExecutionStateUpdate) => {
     stateStore.transitionTo(evt.state)
-
-    emailNotificationService.foreach(_.processEmailNotificationIfNeeded(evt.state))
 
     if (evt.state == COMPLETED) {
       client.shutdown()
@@ -140,13 +132,8 @@ class ExecutionRuntimeService(
     * A run that ended meanwhile stays as it ended.
     */
   private def leftAs(before: WorkflowAggregatedState, asked: String)(failure: Throwable): Unit = {
-    logger.warn(s"The engine failed to $asked the run of workflow $workflowId.", failure)
+    val executionId = stateStore.metadataStore.getState.executionId.id
+    logger.warn(s"The engine failed to $asked the run of execution $executionId.", failure)
     stateStore.transitionTo(before)
   }
-
-  override def unsubscribeAll(): Unit = {
-    super.unsubscribeAll()
-    emailNotificationService.foreach(_.shutdown())
-  }
-
 }

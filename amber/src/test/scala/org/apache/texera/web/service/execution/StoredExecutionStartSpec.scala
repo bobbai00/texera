@@ -152,8 +152,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       entryId = ExecutionPlanStore.PlanEntryId,
       body = body,
       createdBy = createdBy,
-      computingUnitId = computingUnitId,
-      notification = None
+      computingUnitId = computingUnitId
     )
 
   private val now = Instant.parse("2026-11-16T12:00:00Z").toEpochMilli

@@ -49,7 +49,6 @@ import org.apache.texera.web.model.websocket.request.{
   WorkflowPauseRequest,
   WorkflowResumeRequest
 }
-import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.BeforeAndAfterAll
@@ -117,8 +116,7 @@ class ExecutionRuntimeServiceSpec
   private def fixture(
       logConf: Option[FaultToleranceConfig] = Some(
         FaultToleranceConfig(new URI("file:///runtime-checkpoints/"))
-      ),
-      notification: Option[Notification] = None
+      )
   ): Fixture = {
     val coordinator = mock[CoordinatorServiceFs2Grpc[Future, Unit]]
     val client = new RecordingExecutionClient(system, Some(coordinator))
@@ -132,9 +130,7 @@ class ExecutionRuntimeServiceSpec
       stateStore,
       wsInput,
       reconfigurationService,
-      logConf,
-      workflowId = 7L,
-      notification = notification
+      logConf
     )
     new Fixture(
       client,
@@ -452,12 +448,9 @@ class ExecutionRuntimeServiceSpec
     } finally f.close()
   }
 
-  it should "send a run's status emails as the notification it is given says" in {
-    // An address the notifier refuses, so no email leaves: it logs the address instead, which
-    // shows the notifier was built from this notification. The notifier takes the notification
-    // whole, so the name and page go with the address.
-    val notification =
-      Notification("not-an-email", "workflow-seven", "http://texera.example/user/workspace/7")
+  // The Dashboard service emails a run's user once it has closed the execution. A unit that
+  // did too would send a second email, and would have to be told the address.
+  it should "send no email, whatever state the run takes" in {
     val logger = LoggerFactory
       .getLogger(classOf[WorkflowEmailNotifier])
       .asInstanceOf[LogbackLogger]
@@ -465,18 +458,24 @@ class ExecutionRuntimeServiceSpec
     val appender = new ListAppender[ILoggingEvent]
     appender.start()
     logger.addAppender(appender)
-    logger.setLevel(Level.WARN)
-    val f = fixture(notification = Some(notification))
+    logger.setLevel(Level.ALL)
+    val f = fixture()
     try {
-      f.runtime.notification shouldBe Some(notification)
-      f.client.fire(ExecutionStateUpdate(COMPLETED))
-
-      // The email is sent on the notification service's own thread.
-      eventually(timeout(Span(10, Seconds))) {
-        appender.list.asScala.map(_.getFormattedMessage).toList should contain(
-          "Invalid email address: not-an-email"
-        )
+      Seq(READY, RUNNING, PAUSED, RUNNING, FAILED, KILLED, COMPLETED).foreach { state =>
+        f.client.fire(ExecutionStateUpdate(state))
       }
+
+      // It holds nothing to send one with, nor anyone to send one to.
+      val held = classOf[ExecutionRuntimeService].getDeclaredFields.map(_.getType).toSet
+      held should contain noneOf (
+        classOf[WorkflowEmailNotifier],
+        classOf[WorkflowEmailNotifier.Notification]
+      )
+      classOf[ExecutionRuntimeService].getConstructors
+        .flatMap(_.getParameterTypes)
+        .map(_.getName)
+        .filter(name => name.contains("Notif") || name.contains("Email")) shouldBe empty
+      appender.list.asScala shouldBe empty
     } finally {
       f.close()
       logger.setLevel(previousLevel)

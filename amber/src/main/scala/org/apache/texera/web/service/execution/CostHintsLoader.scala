@@ -25,10 +25,14 @@ import org.apache.texera.amber.core.storage.{
   RuntimeStatisticsStore,
   WarehouseReadGuard
 }
-import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.CostHints
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
-import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
+import org.apache.texera.dao.jooq.generated.Tables.{
+  USER_WAREHOUSE,
+  WORKFLOW_EXECUTIONS,
+  WORKFLOW_VERSION
+}
 
 import java.net.URI
 import java.util.concurrent.{
@@ -62,9 +66,11 @@ object CostHintsLoader {
   * saved with the plan, and the engine takes them from the run's context: it reads no statistics
   * and no database to schedule a run.
   *
-  * The costs come from that run's runtime statistics. An operator's cost is the most data and
-  * control processing time any row of its statistics records, in seconds. Only the user's own
-  * runs are read, so no statistics from another user's warehouse reach this user's plan.
+  * The costs come from that run's runtime statistics, which are where its row says its tables
+  * are: the statistics table of its workflow and execution, in the warehouse it wrote into. An
+  * operator's cost is the most data and control processing time any row of its statistics
+  * records, in seconds. Only the user's own runs are read, so no statistics from another user's
+  * warehouse reach this user's plan.
   *
   * A run's statistics no longer change once it has completed, and reading those of a long run
   * can take seconds, so the costs read from a run are kept, by its execution id, for the
@@ -106,10 +112,10 @@ class CostHintsLoader(
 
   /**
     * The cost hints of a run of workflow `wid` by user `uid`: the costs in the statistics of the
-    * user's newest completed run of the workflow, by starting time, of those that recorded
-    * statistics. None when there is no such run, when its statistics are in a per-user warehouse
-    * while those are disabled, when they name no operator, or when they cannot be read, which is
-    * logged: the run is then scheduled without hints.
+    * user's newest run of the workflow, by starting time, that is closed as completed. None when
+    * there is no such run, when its statistics are in a per-user warehouse while those are
+    * disabled, when they name no operator, or when they cannot be read, which is logged: the run
+    * is then scheduled without hints.
     */
   def load(wid: Long, uid: Int): Option[CostHints] =
     try {
@@ -130,39 +136,45 @@ class CostHintsLoader(
     }
 
   /**
-    * The id and statistics location of the user's newest completed run of the workflow that
-    * recorded statistics, if there is one. A run whose id is below 1, which a plan is not saved
-    * with the costs of, is passed over.
+    * The id and statistics location of the user's newest run of the workflow whose closing
+    * record says it completed, if there is one. A run is completed for this once the Dashboard
+    * service closed it, up to a tick of the closing job after its unit finished it. A run
+    * whose id is below 1, which a plan is not saved with the costs of, is passed over.
     */
-  private def newestCompletedRun(wid: Long, uid: Int): Option[(ExecutionIdentity, String)] =
+  private def newestCompletedRun(wid: Long, uid: Int): Option[(ExecutionIdentity, URI)] =
     Option(
       SqlServer
         .getInstance()
         .createDSLContext()
-        .select(WORKFLOW_EXECUTIONS.EID, WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
+        .select(WORKFLOW_EXECUTIONS.EID, USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME)
         .from(WORKFLOW_EXECUTIONS)
         .join(WORKFLOW_VERSION)
         .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
+        .leftJoin(USER_WAREHOUSE)
+        .on(USER_WAREHOUSE.WHID.eq(WORKFLOW_EXECUTIONS.WHID))
         .where(
           WORKFLOW_VERSION.WID
             .eq(Integer.valueOf(Math.toIntExact(wid)))
             .and(WORKFLOW_EXECUTIONS.UID.eq(Integer.valueOf(uid)))
-            .and(WORKFLOW_EXECUTIONS.STATUS.eq(Short.box(WorkflowExecutionStatus.Completed)))
-            .and(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI.isNotNull)
-            .and(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI.ne(""))
+            .and(WORKFLOW_EXECUTIONS.OUTCOME.eq(Short.box(WorkflowExecutionStatus.Completed)))
             .and(WORKFLOW_EXECUTIONS.EID.ge(Integer.valueOf(1)))
         )
         .orderBy(WORKFLOW_EXECUTIONS.STARTING_TIME.desc(), WORKFLOW_EXECUTIONS.EID.desc())
         .limit(1)
         .fetchOne()
-    ).map(run => (ExecutionIdentity(run.value1().longValue()), run.value2()))
+    ).map { run =>
+      val source = ExecutionIdentity(run.value1().longValue())
+      (
+        source,
+        RuntimeStatisticsStore.statisticsUri(WorkflowIdentity(wid), source, Option(run.value2()))
+      )
+    }
 
   /**
-    * The costs in the statistics of run `source` at `location`, read once and then kept. None if
+    * The costs in the statistics of run `source` at `uri`, read once and then kept. None if
     * they are in a per-user warehouse while those are disabled: they are not read then.
     */
-  private def costsOf(source: ExecutionIdentity, location: String): Option[CostHints] = {
-    val uri = new URI(location)
+  private def costsOf(source: ExecutionIdentity, uri: URI): Option[CostHints] =
     if (WarehouseReadGuard.skipWhileDisabled(uri)) {
       logger.info(
         s"The statistics of execution ${source.id} are not read for cost hints: they are in a " +
@@ -171,7 +183,6 @@ class CostHintsLoader(
       None
     } else
       Option(kept.get(source.id)).orElse(readOnce(source, uri))
-  }
 
   /**
     * The costs the statistics at `uri` of run `source` record, read once by the loads that miss

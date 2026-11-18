@@ -29,16 +29,18 @@ export interface WorkflowExecutionsEntry {
   avatar: string;
   name: string;
   startingTime: number;
+  /** When the execution ended; while it is open, when it took the state it is in. Never null. */
   completionTime: number;
+  /** 0 to 6 as EXECUTION_STATUS_CODE names them; -1 while the execution's log cannot be read. */
   status: number;
   /**
    * Why the execution is in its status, when the Dashboard service gives a reason: "unit lost", an error's
    * message. Null or left out when there is none, and for a caller who may not read the execution's log.
    */
   reason?: string | null;
-  result: string;
   bookmarked: boolean;
-  logLocation: string;
+  /** Where the replay log is, for the user who created the execution; else null. */
+  logLocation: string | null;
 }
 
 /**

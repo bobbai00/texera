@@ -25,6 +25,9 @@ import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionLabel,
+  ExecutionLogEntry,
+  ExecutionLogStore,
   ExecutionPlanStore,
   NoStoredPlanException,
   PlanRecord,
@@ -79,6 +82,7 @@ import org.apache.texera.amber.engine.common.storage.VFSRecordStorage
 import org.apache.texera.web.model.http.request.result.{OperatorExportInfo, ResultExportRequest}
 import org.apache.texera.web.model.http.response.result.ResultExportResponse
 import org.apache.texera.web.service.ExecutionResultService
+import org.apache.texera.web.service.execution.OpenExecutionStatuses
 import org.jose4j.jwt.JwtClaims
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, PrivateMethodTester}
@@ -91,7 +95,7 @@ import java.net.URI
 import java.nio.file.Files
 import java.sql.Timestamp
 import java.util.UUID
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue, TimeUnit}
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -255,26 +259,38 @@ class WorkflowExecutionsResourceSpec
     unit
   }
 
+  /**
+    * An execution of the test workflow, open unless `endedOffsetMillis` says how long ago it
+    * was closed, as `outcome` for `outcomeReason`. `status` is the column a unit writes, which
+    * no list reads.
+    */
   private def insertExecution(
       name: String = s"Execution-${UUID.randomUUID().toString.substring(0, 8)}",
       status: Byte = 0.toByte,
       result: String = "",
       logLocation: String = "",
       startOffsetMillis: Long = 0L,
-      lastUpdateOffsetMillis: Option[Long] = None,
+      endedOffsetMillis: Option[Long] = None,
+      outcome: Short = WorkflowExecutionStatus.Completed,
+      outcomeReason: String = null,
       cuid: Integer = null,
       runtimeStatsUri: String = null,
-      whid: Integer = null
+      whid: Integer = null,
+      uid: Integer = testUser.getUid
   ): WorkflowExecutions = {
     val execution = new WorkflowExecutions
     execution.setVid(testVersion.getVid)
-    execution.setUid(testUser.getUid)
+    execution.setUid(uid)
     execution.setStatus(status)
     execution.setResult(result)
     execution.setLogLocation(logLocation)
     val now = System.currentTimeMillis()
     execution.setStartingTime(new Timestamp(now - startOffsetMillis))
-    lastUpdateOffsetMillis.foreach(off => execution.setLastUpdateTime(new Timestamp(now - off)))
+    endedOffsetMillis.foreach { off =>
+      execution.setOutcome(outcome)
+      execution.setOutcomeReason(outcomeReason)
+      execution.setEndedAt(new Timestamp(now - off))
+    }
     execution.setBookmarked(false)
     execution.setName(name)
     execution.setEnvironmentVersion("test-env-1.0")
@@ -282,7 +298,8 @@ class WorkflowExecutionsResourceSpec
     execution.setWhid(whid)
     execution.setRuntimeStatsUri(runtimeStatsUri)
     workflowExecutionsDao.insert(execution)
-    execution
+    // As stored: a time written through the DAO keeps whole seconds.
+    workflowExecutionsDao.fetchOneByEid(execution.getEid)
   }
 
   // An execution that is real, readable by testUser's session, and belongs to a
@@ -390,7 +407,12 @@ class WorkflowExecutionsResourceSpec
       executionIds.append(execution.getEid)
     }
 
-    val result = WorkflowExecutionsResource.getWorkflowExecutions(testWorkflowWid, getDSLContext)
+    val result = WorkflowExecutionsResource.getWorkflowExecutions(
+      testWorkflowWid,
+      getDSLContext,
+      testUserId,
+      statuses = statuses
+    )
 
     assert(result.nonEmpty, "Result should not be empty")
     assert(
@@ -414,23 +436,6 @@ class WorkflowExecutionsResourceSpec
 
   // (The production callback body that writes operator_port_executions is
   // covered by `ExecutionResultServiceSpec.persistOperatorPortResultUri`.)
-
-  // ─── new: status-filtered execution listing ───────────────────────────────
-
-  "getWorkflowExecutions with statusCodes" should "narrow results to the requested codes" in {
-    insertExecution(status = 1.toByte)
-    insertExecution(status = 2.toByte)
-    insertExecution(status = 1.toByte)
-
-    val onlyStatusOne =
-      WorkflowExecutionsResource.getWorkflowExecutions(
-        testWorkflowWid,
-        getDSLContext,
-        Set(1.toByte)
-      )
-    assert(onlyStatusOne.size == 2)
-    assert(onlyStatusOne.forall(_.status == 1.toByte))
-  }
 
   // ─── new: getLatestExecutionID ────────────────────────────────────────────
 
@@ -469,42 +474,73 @@ class WorkflowExecutionsResourceSpec
 
   // ─── new: getExpiredExecutionsWithResultOrLog ─────────────────────────────
 
-  "getExpiredExecutionsWithResultOrLog" should "match rows that are stale by starting_time and have a result" in {
-    // Stale-by-starting-time + has result → match.
+  "getExpiredExecutionsWithResultOrLog" should "match the executions that ended before the time to live and have a result" in {
     val expired = insertExecution(
       name = "expired-with-result",
       result = "some-result",
-      startOffsetMillis = TimeUnit.SECONDS.toMillis(120)
+      startOffsetMillis = TimeUnit.SECONDS.toMillis(180),
+      endedOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
     )
-    // Fresh starting_time → must not match.
-    insertExecution(name = "fresh", result = "some-result")
-    // Stale but empty result+log → must not match.
-    insertExecution(
+    // Ended within the time to live, although it was created before it → must not match.
+    val fresh = insertExecution(
+      name = "fresh",
+      result = "some-result",
+      startOffsetMillis = TimeUnit.SECONDS.toMillis(180),
+      endedOffsetMillis = Some(0L)
+    )
+    // Ended long ago but empty result+log → must not match.
+    val empty = insertExecution(
       name = "stale-but-empty",
-      startOffsetMillis = TimeUnit.SECONDS.toMillis(120)
+      startOffsetMillis = TimeUnit.SECONDS.toMillis(180),
+      endedOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
     )
 
     val matched = WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60)
 
     val eids = matched.map(_.getEid).toSet
     assert(eids.contains(expired.getEid))
+    assert(!eids.contains(fresh.getEid))
+    assert(!eids.contains(empty.getEid))
     assert(matched.forall(e => e.getResult.nonEmpty || Option(e.getLogLocation).exists(_.nonEmpty)))
   }
 
-  it should "match rows that are stale by last_update_time and have a log_location" in {
+  it should "match an execution that ended before the time to live and has a log_location" in {
     val expired = insertExecution(
       name = "log-stale",
       logLocation = "file:///tmp/log",
-      lastUpdateOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
+      endedOffsetMillis = Some(TimeUnit.SECONDS.toMillis(120))
     )
-    insertExecution(
+    val fresh = insertExecution(
       name = "log-fresh",
       logLocation = "file:///tmp/log-2",
-      lastUpdateOffsetMillis = Some(0L)
+      endedOffsetMillis = Some(0L)
     )
 
-    val matched = WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60)
-    assert(matched.map(_.getEid).toSet.contains(expired.getEid))
+    val eids =
+      WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60).map(_.getEid).toSet
+    assert(eids.contains(expired.getEid))
+    assert(!eids.contains(fresh.getEid))
+  }
+
+  // Its run may be going on, whatever status a unit last wrote into the row.
+  it should "never match an open execution, however long ago it was created" in {
+    val open = insertExecution(
+      name = "open-for-days",
+      result = "some-result",
+      logLocation = "file:///tmp/log-3",
+      status = WorkflowExecutionStatus.Completed.toByte,
+      startOffsetMillis = TimeUnit.DAYS.toMillis(3)
+    )
+
+    val eids =
+      WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(60).map(_.getEid).toSet
+    assert(!eids.contains(open.getEid))
+    assert(
+      !WorkflowExecutionsResource
+        .getExpiredExecutionsWithResultOrLog(-1)
+        .map(_.getEid)
+        .contains(open.getEid)
+    )
   }
 
   // ─── new: insertOperatorExecutions ────────────────────────────────────────
@@ -710,8 +746,7 @@ class WorkflowExecutionsResourceSpec
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
         createdBy = testUser.getUid,
-        computingUnitId = 1,
-        notification = None
+        computingUnitId = 1
       ),
       "{}"
     )
@@ -1167,9 +1202,56 @@ class WorkflowExecutionsResourceSpec
   // The result/log-URI and replay paths (DocumentFactory / ReplayLogRecord) are
   // out of scope; these cover the DB-metadata portion of each endpoint.
 
-  private val resource = new WorkflowExecutionsResource
+  // What the lake holds of the open executions, for the lists: the label of each log, by the
+  // log's URI. A log that is not here does not exist, and one in `unreadable` cannot be read.
+  private val labels = new ConcurrentHashMap[URI, ExecutionLabel]()
+  private val unreadable = ConcurrentHashMap.newKeySet[URI]()
+  private val labelsRead = new ConcurrentLinkedQueue[URI]()
+  private val statuses = new OpenExecutionStatuses(
+    label = uri => {
+      labelsRead.add(uri)
+      if (unreadable.contains(uri)) throw new IllegalStateException("the lake is out of reach")
+      Option(labels.get(uri))
+    },
+    warehousesEnabled = false
+  )
+
+  private val resource = new WorkflowExecutionsResource(statuses)
 
   private def session(user: User): SessionUser = new SessionUser(user)
+
+  private def logUriOf(execution: WorkflowExecutions): URI =
+    ExecutionLogStore.logUri(
+      WorkflowIdentity(testWorkflowWid),
+      ExecutionIdentity(execution.getEid.longValue()),
+      None
+    )
+
+  /** Gives the log of `execution` a label: its newest state, and when it took it. */
+  private def label(
+      execution: WorkflowExecutions,
+      state: Option[String],
+      stateTimeMs: Long = 0L
+  ): Unit =
+    labels.put(
+      logUriOf(execution),
+      ExecutionLabel(
+        state,
+        stateSeq = state.size,
+        stateTimeMs,
+        reason = None,
+        beatMs = stateTimeMs,
+        beatEveryMs = 30000L
+      )
+    )
+
+  private def entries(status: String = null, user: User = testUser) =
+    resource.retrieveExecutionsOfWorkflow(testWorkflowWid, session(user), status)
+
+  private def entryOf(execution: WorkflowExecutions, user: User = testUser) =
+    entries(user = user)
+      .find(_.eId == execution.getEid)
+      .getOrElse(fail(s"execution ${execution.getEid} is not listed"))
 
   private def grantReadAccess(uid: Integer = testUserId): Unit =
     getDSLContext
@@ -1209,40 +1291,339 @@ class WorkflowExecutionsResourceSpec
     assert(result.size == 2)
   }
 
-  // fetchInto maps onto WorkflowExecutionEntry POSITIONALLY (a case class has no no-arg
-  // constructor, and jOOQ's mapConstructorParameterNames defaults to false), so `USER.AVATAR`
-  // at projection position 5 lands on `avatar` despite the names differing — exactly as
-  // `last_update_time` at position 9 lands on `completionTime`. Neither mapping was asserted
-  // anywhere before, which is what makes an accidental column reorder silent. Pin both here.
-  it should "map the owner's avatar and completion time onto the entry despite the name mismatch" in {
+  it should "name the user who created each execution, with their avatar" in {
     grantReadAccess()
-    insertExecution(lastUpdateOffsetMillis = Some(0L))
-    val entry = resource.retrieveExecutionsOfWorkflow(testWorkflowWid, session(testUser), null).head
+    val entry = entryOf(insertExecution(name = "named", cuid = insertComputingUnit().getCuid))
     assert(entry.userName == testUser.getName)
     assert(entry.avatar == "avatar_url")
-    // `last_update_time` is populated, so a null here would mean position 9 never reached
-    // `completionTime` — i.e. the mapping had silently become name-based.
-    assert(entry.completionTime != null)
+    assert(entry.name == "named")
+    assert(entry.vId == testVersion.getVid)
+    assert(entry.cuId != null)
+    assert(!entry.bookmarked)
+  }
+
+  it should "answer a closed execution's status, reason and end from its closing record, without reading the lake" in {
+    grantReadAccess()
+    val before = labelsRead.size
+    // The status column is what a unit last wrote: a run whose unit was lost is still Running
+    // there, and is failed.
+    val closed = Seq[(Short, String)](
+      WorkflowExecutionStatus.Completed -> null,
+      WorkflowExecutionStatus.Failed -> "unit lost",
+      WorkflowExecutionStatus.Killed -> "killed by the user"
+    ).map {
+      case (outcome, reason) =>
+        val execution = insertExecution(
+          status = WorkflowExecutionStatus.Running.toByte,
+          startOffsetMillis = 90000L,
+          endedOffsetMillis = Some(30000L),
+          outcome = outcome,
+          outcomeReason = reason
+        )
+        // Its log, if anything read it, would say otherwise.
+        label(execution, Some("PAUSED"), System.currentTimeMillis())
+        (execution, outcome, reason)
+    }
+
+    closed.foreach {
+      case (execution, outcome, reason) =>
+        val entry = entryOf(execution)
+        assert(entry.status == outcome.toByte)
+        assert(entry.reason == reason)
+        assert(entry.completionTime == execution.getEndedAt)
+        assert(entry.startingTime == execution.getStartingTime)
+    }
+    assert(labelsRead.size == before)
+  }
+
+  it should "answer an open execution's status from the label of its log" in {
+    grantReadAccess()
+    val stateTime = System.currentTimeMillis() + 5000L
+    // The status column says each of them completed, which no unit's word makes true.
+    def open() = insertExecution(status = WorkflowExecutionStatus.Completed.toByte)
+    val expected = Seq(
+      "READY" -> WorkflowExecutionStatus.Initializing,
+      "RUNNING" -> WorkflowExecutionStatus.Running,
+      "PAUSED" -> WorkflowExecutionStatus.Paused,
+      // Over, and not closed yet: the closing job records the ending on its next tick.
+      "COMPLETED" -> WorkflowExecutionStatus.Completed,
+      "FAILED" -> WorkflowExecutionStatus.Failed,
+      "KILLED" -> WorkflowExecutionStatus.Killed
+    ).map {
+      case (state, status) =>
+        val execution = open()
+        label(execution, Some(state), stateTime)
+        execution -> status
+    }
+
+    expected.foreach {
+      case (execution, status) =>
+        val entry = entryOf(execution)
+        assert(entry.status == status.toByte)
+        assert(entry.completionTime == new Timestamp(stateTime))
+        // The reason is the closing record's, which an open execution does not have.
+        assert(entry.reason == null)
+    }
+  }
+
+  it should "answer an open execution that no unit has started as created, as of its creation" in {
+    grantReadAccess()
+    val noLog = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    // A unit made the log and has not written a state to it.
+    val noState = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
+    label(noState, None, System.currentTimeMillis() + 5000L)
+
+    Seq(noLog, noState).foreach { execution =>
+      val entry = entryOf(execution)
+      assert(entry.status == WorkflowExecutionStatus.Created.toByte)
+      assert(entry.completionTime == execution.getStartingTime)
+    }
+  }
+
+  // A state's time is from its unit's clock, and the history subtracts the start from it.
+  it should "never answer a completion time before the execution was created" in {
+    grantReadAccess()
+    val execution = insertExecution()
+    label(execution, Some("RUNNING"), execution.getStartingTime.getTime - 60000L)
+
+    assert(entryOf(execution).completionTime == execution.getStartingTime)
+  }
+
+  it should "answer -1 for an open execution whose log cannot be read, and list the others as they are" in {
+    grantReadAccess()
+    val unread = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    unreadable.add(logUriOf(unread))
+    val running = insertExecution()
+    label(running, Some("RUNNING"), System.currentTimeMillis())
+    val closed = insertExecution(endedOffsetMillis = Some(0L))
+
+    try {
+      val entry = entryOf(unread)
+      assert(entry.status == WorkflowExecutionStatus.Unknown.toByte)
+      assert(entry.completionTime == unread.getStartingTime)
+      assert(entryOf(running).status == WorkflowExecutionStatus.Running.toByte)
+      assert(entryOf(closed).status == WorkflowExecutionStatus.Completed.toByte)
+    } finally unreadable.remove(logUriOf(unread))
+  }
+
+  it should "answer -1, without reading it, for an open execution in a warehouse the deployment cannot reach" in {
+    grantReadAccess()
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(testUser.getUid)
+    warehouse.setName("history-warehouse")
+    warehouse.setLakekeeperWarehouseName(s"user-${testUser.getUid}-history-warehouse")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    val execution = insertExecution(whid = warehouse.getWhid)
+    val before = labelsRead.size
+
+    assert(entryOf(execution).status == WorkflowExecutionStatus.Unknown.toByte)
+    assert(labelsRead.size == before)
+  }
+
+  it should "answer -1 for an open execution whose log takes longer to read than a list waits" in {
+    grantReadAccess()
+    val execution = insertExecution()
+    val slow = new WorkflowExecutionsResource(
+      new OpenExecutionStatuses(
+        label = _ => {
+          Thread.sleep(30000L)
+          None
+        },
+        warehousesEnabled = false,
+        readLimit = 200.millis
+      )
+    )
+
+    val started = System.nanoTime()
+    val entry = slow
+      .retrieveExecutionsOfWorkflow(testWorkflowWid, session(testUser), null)
+      .find(_.eId == execution.getEid)
+      .get
+    assert(entry.status == WorkflowExecutionStatus.Unknown.toByte)
+    assert(entry.completionTime == execution.getStartingTime)
+    assert((System.nanoTime() - started) / 1000000L < 10000L)
+  }
+
+  it should "read the logs of more open executions than it reads at once" in {
+    grantReadAccess()
+    val open = (1 to 2 * OpenExecutionStatuses.Concurrency + 3).map { _ =>
+      val execution = insertExecution()
+      label(execution, Some("RUNNING"), System.currentTimeMillis())
+      execution
+    }
+
+    val listed = entries()
+    assert(listed.map(_.eId) == open.map(_.getEid).reverse)
+    assert(listed.forall(_.status == WorkflowExecutionStatus.Running.toByte))
+  }
+
+  it should "read an open execution's status from its log in the lake" in {
+    grantReadAccess()
+    val execution = insertExecution(status = WorkflowExecutionStatus.Completed.toByte)
+    val uri = logUriOf(execution)
+    val startedAt = execution.getStartingTime.getTime
+    ExecutionLogStore.create(uri, startedAt + 1000L, 30000L)
+    try {
+      ExecutionLogStore.append(
+        uri,
+        Seq(
+          ExecutionLogEntry.state(1L, startedAt + 2000L, "READY"),
+          ExecutionLogEntry.state(2L, startedAt + 3000L, "RUNNING")
+        ),
+        startedAt + 3000L
+      )
+
+      val entry = new WorkflowExecutionsResource()
+        .retrieveExecutionsOfWorkflow(testWorkflowWid, session(testUser), null)
+        .head
+      assert(entry.eId == execution.getEid)
+      assert(entry.status == WorkflowExecutionStatus.Running.toByte)
+      assert(entry.completionTime == new Timestamp(startedAt + 3000L))
+    } finally ExecutionLogStore.drop(uri)
+  }
+
+  // A reason can quote an error, which can quote what the run read.
+  it should "answer the reason only to a user who may read what the execution recorded" in {
+    val other = userWithoutAccess()
+    userDao.insert(other)
+    try {
+      val mine = insertExecution(endedOffsetMillis = Some(0L), outcomeReason = "mine failed")
+      val theirs = insertExecution(
+        endedOffsetMillis = Some(0L),
+        outcomeReason = "theirs failed",
+        uid = other.getUid
+      )
+      // The workflow is public: both users may list its executions, and neither was granted it.
+      getDSLContext
+        .update(WORKFLOW)
+        .set(WORKFLOW.IS_PUBLIC, java.lang.Boolean.TRUE)
+        .where(WORKFLOW.WID.eq(Integer.valueOf(testWorkflowWid)))
+        .execute()
+
+      assert(entryOf(mine).reason == "mine failed")
+      assert(entryOf(theirs).reason == null)
+      assert(entryOf(theirs, other).reason == "theirs failed")
+      assert(entryOf(mine, other).reason == null)
+
+      // Granted the workflow, a user reads the reason of every execution of it.
+      grantReadAccess()
+      assert(entryOf(theirs).reason == "theirs failed")
+      assert(entryOf(mine, other).reason == null)
+    } finally {
+      getDSLContext
+        .deleteFrom(WORKFLOW_EXECUTIONS)
+        .where(WORKFLOW_EXECUTIONS.UID.eq(other.getUid))
+        .execute()
+      userDao.deleteById(other.getUid)
+    }
+  }
+
+  // Time Travel lists the executions that have a replay log location, and a replay log is
+  // replayed only by the user who made it.
+  it should "answer where a replay log is only to the user who created the execution" in {
+    grantReadAccess()
+    val other = userWithoutAccess()
+    userDao.insert(other)
+    try {
+      val mine = insertExecution(logLocation = "file:///tmp/replay/mine")
+      val theirs = insertExecution(logLocation = "file:///tmp/replay/theirs", uid = other.getUid)
+
+      assert(entryOf(mine).logLocation == "file:///tmp/replay/mine")
+      assert(entryOf(theirs).logLocation == null)
+    } finally {
+      getDSLContext
+        .deleteFrom(WORKFLOW_EXECUTIONS)
+        .where(WORKFLOW_EXECUTIONS.UID.eq(other.getUid))
+        .execute()
+      userDao.deleteById(other.getUid)
+    }
+  }
+
+  /**
+    * One execution in each status a list can answer: closed as each ending, open in each state
+    * a log records, open with an ending in its log that is not recorded yet, created, and
+    * unreadable. By the status each is answered with.
+    */
+  private def oneOfEachStatus(): Map[String, WorkflowExecutions] = {
+    val closed = Seq[(String, Short)](
+      "completed" -> WorkflowExecutionStatus.Completed,
+      "failed" -> WorkflowExecutionStatus.Failed,
+      "killed" -> WorkflowExecutionStatus.Killed
+    ).map {
+      case (name, outcome) =>
+        name -> insertExecution(endedOffsetMillis = Some(0L), outcome = outcome)
+    }
+    val open = Seq(
+      "initializing" -> Some("READY"),
+      "running" -> Some("RUNNING"),
+      "paused" -> Some("PAUSED"),
+      "completed, not closed" -> Some("COMPLETED"),
+      "created" -> None
+    ).map {
+      case (name, state) =>
+        // What the status column says is no part of any filter.
+        val execution = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+        state.foreach(_ => label(execution, state, System.currentTimeMillis()))
+        name -> execution
+    }
+    val unread = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
+    unreadable.add(logUriOf(unread))
+    (closed ++ open :+ ("unknown" -> unread)).toMap
+  }
+
+  it should "narrow the list to each status asked for" in {
+    grantReadAccess()
+    val executions = oneOfEachStatus()
+    def listed(status: String) = entries(status).map(_.eId).toSet
+    def eids(names: String*) = names.map(executions(_).getEid).toSet
+
+    try {
+      assert(listed("completed") == eids("completed"))
+      assert(listed("failed") == eids("failed"))
+      assert(listed("killed") == eids("killed"))
+      assert(listed("initializing") == eids("initializing"))
+      assert(listed("ready") == eids("initializing"))
+      assert(listed("running") == eids("running"))
+      assert(listed("paused") == eids("paused"))
+      // The states with no code of their own are asked for as what cannot be read.
+      assert(listed("unknown") == eids("unknown"))
+      assert(listed("failed,killed") == eids("failed", "killed"))
+      // An ending that is in the log and not yet in the row is answered as that ending, so it
+      // is among the ended ones when the logs are read anyway.
+      assert(
+        listed("completed,paused") == eids("completed", "paused", "completed, not closed")
+      )
+      assert(entries().size == executions.size)
+    } finally unreadable.clear()
+  }
+
+  it should "read no log for a filter that asks for endings only" in {
+    grantReadAccess()
+    oneOfEachStatus()
+    val before = labelsRead.size
+
+    try {
+      entries("completed,failed,killed")
+      assert(labelsRead.size == before)
+    } finally unreadable.clear()
   }
 
   // The editor asks for these two states to decide whether to lock a workflow that is opened.
-  it should "leave a created execution out of the running and initializing ones" in {
+  it should "leave a created execution, and one that is over, out of the running and initializing ones" in {
     grantReadAccess()
-    val initializing = insertExecution(status = WorkflowExecutionStatus.Initializing.toByte)
-    val running = insertExecution(status = WorkflowExecutionStatus.Running.toByte)
-    insertExecution(status = WorkflowExecutionStatus.Created.toByte)
+    val executions = oneOfEachStatus()
 
-    val inProgress = resource.retrieveExecutionsOfWorkflow(
-      testWorkflowWid,
-      session(testUser),
-      "running,initializing"
-    )
-
-    assert(inProgress.map(_.eId).toSet == Set(initializing.getEid, running.getEid))
-    // It is still part of the workflow's history.
-    assert(
-      resource.retrieveExecutionsOfWorkflow(testWorkflowWid, session(testUser), null).size == 3
-    )
+    try {
+      val inProgress = entries("running,initializing")
+      assert(
+        inProgress.map(_.eId).toSet ==
+          Set(executions("initializing").getEid, executions("running").getEid)
+      )
+      // They are still part of the workflow's history.
+      assert(entries().size == executions.size)
+    } finally unreadable.clear()
   }
 
   it should "reject an invalid status filter with a BadRequestException" in {
@@ -1271,6 +1652,37 @@ class WorkflowExecutionsResourceSpec
     // same VID, so the highest EID is the latest
     assert(entry.eId == latest.getEid)
     assert(entry.name == "second")
+  }
+
+  it should "answer the latest execution's status as the history does" in {
+    grantReadAccess()
+    def latest() = resource.retrieveLatestExecutionEntry(testWorkflowWid, session(testUser))
+
+    val closed = insertExecution(
+      status = WorkflowExecutionStatus.Running.toByte,
+      startOffsetMillis = 60000L,
+      endedOffsetMillis = Some(30000L),
+      outcome = WorkflowExecutionStatus.Failed,
+      outcomeReason = "unit lost"
+    )
+    assert(latest().eId == closed.getEid)
+    assert(latest().status == WorkflowExecutionStatus.Failed.toByte)
+    assert(latest().reason == "unit lost")
+    assert(latest().completionTime == closed.getEndedAt)
+
+    // Created, which the status column a create writes also says, and then run by a unit.
+    val open = insertExecution(status = WorkflowExecutionStatus.Created.toByte)
+    assert(latest().eId == open.getEid)
+    assert(latest().status == WorkflowExecutionStatus.Created.toByte)
+    assert(latest().completionTime == open.getStartingTime)
+    val pausedAt = open.getStartingTime.getTime + 4000L
+    label(open, Some("PAUSED"), pausedAt)
+    assert(latest().status == WorkflowExecutionStatus.Paused.toByte)
+    assert(latest().completionTime == new Timestamp(pausedAt))
+
+    unreadable.add(logUriOf(open))
+    try assert(latest().status == WorkflowExecutionStatus.Unknown.toByte)
+    finally unreadable.clear()
   }
 
   it should "expose the execution's warehouse (whId) for last-used preselection" in {

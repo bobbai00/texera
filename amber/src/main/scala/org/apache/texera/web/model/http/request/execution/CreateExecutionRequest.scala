@@ -46,7 +46,7 @@ case class ReplayExecutionInfo(
   * @param workflowSettings         the run's batch size and execution mode; None for the
   *                                 defaults. The output ports whose results are stored are the
   *                                 compiler's to find, so any sent here are ignored.
-  * @param emailNotificationEnabled whether the run emails its user when it ends or pauses
+  * @param emailNotificationEnabled whether the user is emailed how the run ended
   * @param warehouseId              the user_warehouse the run writes into: required while per-user
   *                                 warehouses are enabled, refused while they are disabled
   * @param replayFromExecution      the replay log the run replays; None for none

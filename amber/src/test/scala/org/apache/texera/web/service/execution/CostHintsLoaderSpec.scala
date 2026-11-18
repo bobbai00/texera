@@ -41,9 +41,13 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
-import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
+import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
+import org.apache.texera.dao.jooq.generated.Tables.{
+  USER_WAREHOUSE,
+  WORKFLOW_EXECUTIONS,
+  WORKFLOW_VERSION
+}
+import org.apache.texera.dao.jooq.generated.enums.{UserRoleEnum, UserWarehouseFlavorEnum}
 import org.apache.texera.dao.jooq.generated.tables.daos.{UserDao, WorkflowDao, WorkflowVersionDao}
 import org.apache.texera.dao.jooq.generated.tables.pojos.{User, Workflow, WorkflowVersion}
 import org.scalatest.BeforeAndAfterAll
@@ -55,6 +59,7 @@ import org.slf4j.LoggerFactory
 
 import java.net.URI
 import java.sql.Timestamp
+import java.util.UUID
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
 import java.util.concurrent.{CompletableFuture, CountDownLatch, TimeUnit}
 import scala.collection.mutable
@@ -63,12 +68,13 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 /**
-  * The cost hints a run is given: the costs in the statistics of its user's newest completed run
-  * of the workflow, read once per run.
+  * The cost hints a run is given: the costs in the statistics of its user's newest run of the
+  * workflow that is closed as completed, read once per run from where the run's row says its
+  * tables are.
   *
   * Runs are rows of `MockTexeraDB`; their statistics are tables of the Iceberg catalog the tests
   * run with (`STORAGE_ICEBERG_CATALOG_TYPE=postgres`), written as a run's record writes them
-  * (`RuntimeStatisticsStore`). Each case has workflows of its own, with ids from 9521 to 9541
+  * (`RuntimeStatisticsStore`). Each case has workflows of its own, with ids from 9521 to 9542
   * that no other suite uses, and a run's id is its workflow's id times 100 plus a number:
   * creating a statistics table replaces the one of the same workflow and run, and suites share
   * the catalog. The cases of loads at the same time (workflows 9537 to 9539) hold
@@ -135,9 +141,15 @@ class CostHintsLoaderSpec
   }
 
   /**
-    * Adds run `eid` of workflow `wid` by user `uid`, in `state`, started `startedAt` seconds after
-    * the first start, whose statistics are at `statistics` (None: it recorded none). Like a run
-    * the service starts, it is of the workflow's latest version.
+    * Adds run `eid` of workflow `wid` by user `uid`, started `startedAt` seconds after the first
+    * start. A run in a state that is an ending is closed with it; in any other state it is
+    * open. Like a run the service starts, it is of the workflow's latest version.
+    *
+    * @param status      what the row's status column says, which a unit writes and no load
+    *                    reads; by default the code of `state`
+    * @param statsColumn what the row's statistics location says, which a unit writes and no
+    *                    load reads
+    * @param whid        the warehouse the run writes into
     */
   private def run(
       eid: Int,
@@ -145,7 +157,9 @@ class CostHintsLoaderSpec
       uid: Int,
       state: WorkflowAggregatedState,
       startedAt: Int,
-      statistics: Option[String]
+      status: Option[Short] = None,
+      statsColumn: Option[String] = None,
+      whid: Option[Integer] = None
   ): Unit = {
     val vid = getDSLContext
       .select(WORKFLOW_VERSION.VID)
@@ -154,16 +168,22 @@ class CostHintsLoaderSpec
       .orderBy(WORKFLOW_VERSION.VID.desc())
       .limit(1)
       .fetchOneInto(classOf[Integer])
+    val code = maptoStatusCode(state).toShort
+    val ended = WorkflowExecutionStatus.Ended.contains(code)
+    val started = new Timestamp(firstStart + startedAt * 1000L)
     getDSLContext
       .insertInto(WORKFLOW_EXECUTIONS)
       .set(WORKFLOW_EXECUTIONS.EID, Integer.valueOf(eid))
       .set(WORKFLOW_EXECUTIONS.VID, vid)
       .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(uid))
-      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(maptoStatusCode(state).toShort))
-      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, new Timestamp(firstStart + startedAt * 1000L))
+      .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status.getOrElse(code)))
+      .set(WORKFLOW_EXECUTIONS.STARTING_TIME, started)
       .set(WORKFLOW_EXECUTIONS.NAME, s"cost-hints-run-$eid")
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
-      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, statistics.orNull)
+      .set(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI, statsColumn.orNull)
+      .set(WORKFLOW_EXECUTIONS.WHID, whid.orNull)
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, if (ended) java.lang.Short.valueOf(code) else null)
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, if (ended) started else null)
       .execute()
   }
 
@@ -251,7 +271,7 @@ class CostHintsLoaderSpec
     newWorkflow(wid)
     val eid = wid * 100 + 1
     val source = statistics(wid, eid, rows: _*)
-    run(eid, wid, runUser, COMPLETED, 10, Some(source))
+    run(eid, wid, runUser, COMPLETED, 10)
     source
   }
 
@@ -373,37 +393,65 @@ class CostHintsLoaderSpec
       ("scan", 2_000_000_000L, 0L),
       ("filter", 250_000_000L, 0L)
     )
-    run(952101, wid, runUser, COMPLETED, startedAt = 20, Some(source))
+    run(952101, wid, runUser, COMPLETED, startedAt = 20)
     // An older completed run of the user, of a larger id: runs are newer by when they started.
-    run(
-      952102,
-      wid,
-      runUser,
-      COMPLETED,
-      startedAt = 10,
-      Some(statistics(wid, 952102, ("scan", 1L, 0L)))
-    )
+    statistics(wid, 952102, ("scan", 1L, 0L))
+    run(952102, wid, runUser, COMPLETED, startedAt = 10)
     // The user then edits the workflow, so the runs below are of a newer version than the source
     // is: the source may be of any version of the workflow.
     newVersion(wid)
     // Newer runs that are not the source: another user's completed run...
-    run(952103, wid, otherUser, COMPLETED, 30, Some(statistics(wid, 952103, ("scan", 2L, 0L))))
+    statistics(wid, 952103, ("scan", 2L, 0L))
+    run(952103, wid, otherUser, COMPLETED, 30)
     // ...the user's runs that did not complete...
     Seq(READY, RUNNING, PAUSED, FAILED, KILLED).zipWithIndex.foreach {
       case (state, index) =>
         val eid = 952104 + index
-        run(eid, wid, runUser, state, 40 + index, Some(statistics(wid, eid, ("scan", 3L, 0L))))
+        statistics(wid, eid, ("scan", 3L, 0L))
+        run(eid, wid, runUser, state, 40 + index)
     }
-    // ...the user's completed runs that recorded no statistics...
-    run(952110, wid, runUser, COMPLETED, 50, None)
-    run(952111, wid, runUser, COMPLETED, 51, Some(""))
     // ...and the user's completed run of another workflow.
     newWorkflow(9522)
-    run(952201, 9522, runUser, COMPLETED, 60, Some(statistics(9522, 952201, ("scan", 4L, 0L))))
+    statistics(9522, 952201, ("scan", 4L, 0L))
+    run(952201, 9522, runUser, COMPLETED, 60)
     val loader = new CountingLoader
 
     loader.load(wid, runUser) shouldBe hintsOf(952101, "scan" -> 4.0, "filter" -> 0.25)
     loader.opened shouldBe Map(source -> 1)
+  }
+
+  // The status column is what a unit last wrote: it says Running for a completed run whose
+  // unit was cut off, and Completed for a run that is not closed, or was closed as lost.
+  it should "choose the run by its closing record, whatever status its row keeps" in {
+    val wid = 9540
+    newWorkflow(wid)
+    val source = statistics(wid, 954001, ("scan", 2_000_000_000L, 0L))
+    run(954001, wid, runUser, COMPLETED, 10, status = Some(WorkflowExecutionStatus.Running))
+    // Newer, and completed by the column only: one still open, one closed as failed.
+    statistics(wid, 954002, ("scan", 5L, 0L))
+    run(954002, wid, runUser, RUNNING, 20, status = Some(WorkflowExecutionStatus.Completed))
+    statistics(wid, 954003, ("scan", 6L, 0L))
+    run(954003, wid, runUser, FAILED, 30, status = Some(WorkflowExecutionStatus.Completed))
+    val loader = new CountingLoader
+
+    loader.load(wid, runUser) shouldBe hintsOf(954001, "scan" -> 2.0)
+    loader.opened shouldBe Map(source -> 1)
+  }
+
+  it should "find the statistics where the run's row says its tables are, whatever location a unit recorded" in {
+    val wid = 9535
+    newWorkflow(wid)
+    val source = statistics(wid, 953501, ("scan", 1_000_000_000L, 0L))
+    run(953501, wid, runUser, COMPLETED, 10, statsColumn = Some("::not a URI"))
+    val loader = new CountingLoader
+
+    loader.load(wid, runUser) shouldBe hintsOf(953501, "scan" -> 1.0)
+
+    // A newer run, for which a unit recorded no location at all.
+    val newer = statistics(wid, 953502, ("scan", 3_000_000_000L, 0L))
+    run(953502, wid, runUser, COMPLETED, 20)
+    loader.load(wid, runUser) shouldBe hintsOf(953502, "scan" -> 3.0)
+    loader.opened shouldBe Map(source -> 1, newer -> 1)
   }
 
   it should "keep the costs of a run it has read, and not read its statistics again" in {
@@ -420,14 +468,14 @@ class CostHintsLoaderSpec
     val wid = 9524
     newWorkflow(wid)
     val first = statistics(wid, 952401, ("scan", 1_000_000_000L, 0L))
-    run(952401, wid, runUser, COMPLETED, 10, Some(first))
+    run(952401, wid, runUser, COMPLETED, 10)
     val loader = new CountingLoader
     loader.load(wid, runUser) shouldBe hintsOf(952401, "scan" -> 1.0)
 
     // The user edits the workflow and runs it again: the next run is of the newer version.
     newVersion(wid)
     val next = statistics(wid, 952402, ("scan", 2_000_000_000L, 0L))
-    run(952402, wid, runUser, COMPLETED, 20, Some(next))
+    run(952402, wid, runUser, COMPLETED, 20)
 
     loader.load(wid, runUser) shouldBe hintsOf(952402, "scan" -> 2.0)
     loader.load(wid, runUser) shouldBe hintsOf(952402, "scan" -> 2.0)
@@ -457,12 +505,13 @@ class CostHintsLoaderSpec
       "requirement failed: A load waits for another's read for more than no time, not 0 seconds."
   }
 
-  it should "give no hints, and read nothing, when the user has completed no run of the workflow that recorded statistics" in {
+  it should "give no hints, and read nothing, when the user has completed no run of the workflow" in {
     val wid = 9528
     newWorkflow(wid)
-    run(952801, wid, runUser, FAILED, 10, Some(statistics(wid, 952801, ("scan", 1L, 0L))))
-    run(952802, wid, otherUser, COMPLETED, 20, Some(statistics(wid, 952802, ("scan", 1L, 0L))))
-    run(952803, wid, runUser, COMPLETED, 30, None)
+    statistics(wid, 952801, ("scan", 1L, 0L))
+    run(952801, wid, runUser, FAILED, 10)
+    statistics(wid, 952802, ("scan", 1L, 0L))
+    run(952802, wid, otherUser, COMPLETED, 20)
     val loader = new CountingLoader
 
     loader.load(wid, runUser) shouldBe None
@@ -475,8 +524,9 @@ class CostHintsLoaderSpec
     val wid = 9529
     newWorkflow(wid)
     val source = statistics(wid, 952901, ("scan", 1_000_000_000L, 0L))
-    run(952901, wid, runUser, COMPLETED, 10, Some(source))
-    run(0, wid, runUser, COMPLETED, 20, Some(statistics(wid, 0, ("scan", 5L, 0L))))
+    run(952901, wid, runUser, COMPLETED, 10)
+    statistics(wid, 0, ("scan", 5L, 0L))
+    run(0, wid, runUser, COMPLETED, 20)
     val loader = new CountingLoader
 
     loader.load(wid, runUser) shouldBe hintsOf(952901, "scan" -> 1.0)
@@ -486,14 +536,8 @@ class CostHintsLoaderSpec
   it should "leave out a row of no operator, so a plan is saved with the hints" in {
     val wid = 9530
     newWorkflow(wid)
-    run(
-      953001,
-      wid,
-      runUser,
-      COMPLETED,
-      10,
-      Some(statistics(wid, 953001, ("", 5_000_000_000L, 0L), ("scan", 1_000_000_000L, 0L)))
-    )
+    statistics(wid, 953001, ("", 5_000_000_000L, 0L), ("scan", 1_000_000_000L, 0L))
+    run(953001, wid, runUser, COMPLETED, 10)
     val loader = new CountingLoader
 
     val hints = loader.load(wid, runUser)
@@ -522,15 +566,24 @@ class CostHintsLoaderSpec
     assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
     val wid = 9533
     newWorkflow(wid)
-    val inWarehouse = RuntimeStatisticsStore.statisticsUri(
-      WorkflowIdentity(wid.toLong),
-      ExecutionIdentity(953301),
-      Some(s"user-$runUser-1")
-    )
-    run(953301, wid, runUser, COMPLETED, 10, Some(inWarehouse.toString))
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(runUser)
+    warehouse.setName("cost-hints-warehouse")
+    warehouse.setLakekeeperWarehouseName(s"user-$runUser-1")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    run(953301, wid, runUser, COMPLETED, 10, whid = Some(warehouse.getWhid))
+    // The shared warehouse has statistics under the run's name, which are not the run's.
+    statistics(wid, 953301, ("scan", 9_000_000_000L, 0L))
     val loader = new CountingLoader
 
-    loader.load(wid, runUser) shouldBe None
+    val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
+
+    logged.map(_.getFormattedMessage) shouldBe Seq(
+      "The statistics of execution 953301 are not read for cost hints: they are in a per-user " +
+        "warehouse, and per-user warehouses are disabled."
+    )
     loader.opened shouldBe empty
   }
 
@@ -549,18 +602,18 @@ class CostHintsLoaderSpec
 
   it should "give no hints, and no warning, for a run whose statistics table is gone, and read once there is one" in {
     // As the statistics of an execution whose tables were dropped: nothing there is an answer.
-    val wid = 9540
+    val wid = 9542
     newWorkflow(wid)
-    val missing = statisticsUri(wid, 954001)
+    val missing = statisticsUri(wid, 954201)
     dropStatistics(missing)
-    run(954001, wid, runUser, COMPLETED, 10, Some(missing.toString))
+    run(954201, wid, runUser, COMPLETED, 10)
     val loader = new CountingLoader
 
     val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
     logged.filter(_.getLevel.isGreaterOrEqual(Level.WARN)) shouldBe empty
 
-    statistics(wid, 954001, ("scan", 2_000_000_000L, 0L))
-    loader.load(wid, runUser) shouldBe hintsOf(954001, "scan" -> 2.0)
+    statistics(wid, 954201, ("scan", 2_000_000_000L, 0L))
+    loader.load(wid, runUser) shouldBe hintsOf(954201, "scan" -> 2.0)
     loader.opened shouldBe Map(missing.toString -> 2)
   }
 
@@ -570,7 +623,7 @@ class CostHintsLoaderSpec
     val wid = 9541
     newWorkflow(wid)
     val earlier = statisticsOfAnEarlierVersion(wid, 954101)
-    run(954101, wid, runUser, COMPLETED, 10, Some(earlier))
+    run(954101, wid, runUser, COMPLETED, 10)
     val loader = new CountingLoader
 
     val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
@@ -578,14 +631,8 @@ class CostHintsLoaderSpec
     logged.filter(_.getLevel.isGreaterOrEqual(Level.WARN)) shouldBe empty
     loader.opened shouldBe Map(earlier -> 1)
     // The run after the upgrade is the one read from then on.
-    run(
-      954102,
-      wid,
-      runUser,
-      COMPLETED,
-      20,
-      Some(statistics(wid, 954102, ("scan", 1_000_000_000L, 0L)))
-    )
+    statistics(wid, 954102, ("scan", 1_000_000_000L, 0L))
+    run(954102, wid, runUser, COMPLETED, 20)
     loader.load(wid, runUser) shouldBe hintsOf(954102, "scan" -> 1.0)
   }
 
@@ -593,7 +640,10 @@ class CostHintsLoaderSpec
     // A read that fails is not kept, so every start of the workflow by the user reads and warns
     // again: the warnings stay one line each.
     val wid = 9536
-    val missing = new URI(onlyCompletedRun(wid, ("scan", 1L, 0L)))
+    newWorkflow(wid)
+    val missing = statisticsUri(wid, 953601)
+    dropStatistics(missing)
+    run(953601, wid, runUser, COMPLETED, 10)
     val loader = new CountingLoader
     loader.failing.set(true)
 
@@ -609,16 +659,6 @@ class CostHintsLoaderSpec
     // the warning names the failure whose stack trace is at debug level
     warning.getFormattedMessage should include(trace.getThrowableProxy.getClassName)
     loader.opened shouldBe Map(missing.toString -> 1)
-  }
-
-  it should "give no hints, and read nothing, when the statistics' location is not a URI" in {
-    val wid = 9535
-    newWorkflow(wid)
-    run(953501, wid, runUser, COMPLETED, 10, Some("::not a URI"))
-    val loader = new CountingLoader
-
-    loader.load(wid, runUser) shouldBe None
-    loader.opened shouldBe empty
   }
 
   it should "give no hints for a workflow id no workflow can have" in {

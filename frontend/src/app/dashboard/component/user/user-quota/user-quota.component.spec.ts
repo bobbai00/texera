@@ -59,25 +59,22 @@ function isoInMonthsAgo(monthsAgo: number, day: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function execution(eid: number, workflowId: number, result: number, runtime: number, log: number): ExecutionQuota {
+function execution(eid: number, workflowId: number, storedBytes: number): ExecutionQuota {
   return {
     eid,
     workflowId,
     workflowName: `wf-${workflowId}`,
-    resultBytes: result,
-    runTimeStatsBytes: runtime,
-    logBytes: log,
+    storedBytes,
   };
 }
 
 const sumValues = (data: Array<[string, number]>): number => data.reduce((acc, [, v]) => acc + v, 0);
 
-// Fixtures for the Cache Size comparator. The three byte triples are picked so that ordering by
-// any single count — or by the sum with any one of the three terms dropped — yields a different
-// sequence than the full sum does, and so that no two of the six orderings share a tie.
-const SIZE_SORT_BIG = execution(30, 1, 1, 450, 452); // 903
-const SIZE_SORT_MIDDLE = execution(10, 1, 800, 1, 1); // 802
-const SIZE_SORT_SMALL = execution(20, 1, 2, 700, 2); // 704
+// Fixtures for the Cache Size comparator: by size they order as 20, 10, 30, which is neither the
+// order of their ids nor the order they are supplied in.
+const SIZE_SORT_BIG = execution(30, 1, 903);
+const SIZE_SORT_MIDDLE = execution(10, 1, 802);
+const SIZE_SORT_SMALL = execution(20, 1, 704);
 
 describe("UserQuotaComponent", () => {
   let component: UserQuotaComponent;
@@ -208,7 +205,7 @@ describe("UserQuotaComponent", () => {
       mockUserQuotaService.getCreatedDatasets.mockReturnValue(of(datasets));
       mockUserQuotaService.getAccessWorkflows.mockReturnValue(of(accessWorkflows));
       mockUserQuotaService.getExecutionQuota.mockReturnValue(
-        of([execution(10, 1, 100, 5, 10), execution(11, 1, 50, 5, 5), execution(12, 2, 20, 2, 3)])
+        of([execution(10, 1, 115), execution(11, 1, 60), execution(12, 2, 25)])
       );
       // Chart rendering is exercised separately; stub it here to isolate the data wiring.
       vi.spyOn(component, "generatePieChart").mockImplementation(() => {});
@@ -296,9 +293,7 @@ describe("UserQuotaComponent", () => {
     it("clears the running totals so a reload does not double-count them", () => {
       // refreshData is the reload path, so its resets only do work on the second call — without them
       // the quota total and the workflow panels accumulate every time the page refreshes.
-      mockUserQuotaService.getExecutionQuota.mockReturnValue(
-        of([execution(10, 1, 100, 5, 10), execution(12, 2, 20, 2, 3)])
-      );
+      mockUserQuotaService.getExecutionQuota.mockReturnValue(of([execution(10, 1, 115), execution(12, 2, 25)]));
       vi.spyOn(component, "generatePieChart").mockImplementation(() => {});
       vi.spyOn(component, "generateLineChart").mockImplementation(() => {});
 
@@ -319,7 +314,7 @@ describe("UserQuotaComponent", () => {
   describe("deleteCollection", () => {
     it("removes the execution and subtracts its bytes from the total", () => {
       component.workflows = [
-        { workflowId: 1, workflowName: "wf-1", executions: [execution(10, 1, 100, 5, 10), execution(11, 1, 50, 5, 5)] },
+        { workflowId: 1, workflowName: "wf-1", executions: [execution(10, 1, 115), execution(11, 1, 60)] },
       ];
       component.totalQuotaSize = 175; // 115 + 60
       mockUserQuotaService.deleteExecutionCollection.mockReturnValue(of(undefined));
@@ -332,7 +327,7 @@ describe("UserQuotaComponent", () => {
     });
 
     it("drops the workflow when its last execution is removed", () => {
-      component.workflows = [{ workflowId: 1, workflowName: "wf-1", executions: [execution(10, 1, 100, 5, 10)] }];
+      component.workflows = [{ workflowId: 1, workflowName: "wf-1", executions: [execution(10, 1, 115)] }];
       component.totalQuotaSize = 115;
       mockUserQuotaService.deleteExecutionCollection.mockReturnValue(of(undefined));
 
@@ -343,8 +338,8 @@ describe("UserQuotaComponent", () => {
 
     it("skips the workflows that do not own the deleted execution and still prunes the emptied one", () => {
       component.workflows = [
-        { workflowId: 1, workflowName: "wf-1", executions: [execution(10, 1, 100, 5, 10)] },
-        { workflowId: 2, workflowName: "wf-2", executions: [execution(20, 2, 7, 3, 1), execution(21, 2, 4, 2, 1)] },
+        { workflowId: 1, workflowName: "wf-1", executions: [execution(10, 1, 115)] },
+        { workflowId: 2, workflowName: "wf-2", executions: [execution(20, 2, 11), execution(21, 2, 7)] },
       ];
       component.totalQuotaSize = 133; // 115 for wf-1, 11 + 7 for wf-2
       mockUserQuotaService.deleteExecutionCollection.mockReturnValue(of(undefined));
@@ -360,11 +355,7 @@ describe("UserQuotaComponent", () => {
     });
   });
 
-  /**
-   * The Cache Size column sorts on the sum of the three byte counts. The byte triples below are
-   * picked so that ordering by any single count — or by the sum with any one term dropped —
-   * produces a different sequence than the full sum does.
-   */
+  /** The Cache Size column sorts on what each execution stores. */
   describe("sortBySize", () => {
     // Ascending, as NzTableSortFn requires (`a - b`): nz-table takes the comparator's result as-is
     // for 'ascend' and negates it for 'descend', so a `b - a` comparator lights the up caret while
@@ -491,14 +482,14 @@ describe("UserQuotaComponent", () => {
     });
 
     it("groups the executions under one panel per workflow", () => {
-      const host = renderCache([workflow(1, [execution(10, 1, 1, 1, 1)]), workflow(2, [execution(20, 2, 1, 1, 1)])]);
+      const host = renderCache([workflow(1, [execution(10, 1, 3)]), workflow(2, [execution(20, 2, 3)])]);
 
       const headers = Array.from(host.querySelectorAll(".ant-collapse-header")).map(h => h.textContent?.trim());
       expect(headers).toEqual(["wf-1", "wf-2"]);
     });
 
     it("lists every execution of the opened workflow", () => {
-      const host = renderCache([workflow(1, [execution(10, 1, 1, 1, 1), execution(11, 1, 1, 1, 1)])]);
+      const host = renderCache([workflow(1, [execution(10, 1, 3), execution(11, 1, 3)])]);
 
       const eids = Array.from(host.querySelectorAll("tbody tr")).map(r =>
         r.querySelectorAll("td")[1]?.textContent?.trim()
@@ -506,20 +497,17 @@ describe("UserQuotaComponent", () => {
       expect(eids).toEqual(["10", "11"]);
     });
 
-    it("reports the cache size as result plus log plus runtime statistics", () => {
-      // Three separate byte counts are added together. Distinct powers of two, so dropping or
-      // double-counting any one of them lands on a different total rather than coincidentally
-      // matching — which is exactly how a missing term would otherwise go unnoticed.
-      const host = renderCache([workflow(1, [execution(10, 1, 1024, 4096, 2048)])]);
+    it("reports what the execution stores as its cache size", () => {
+      const host = renderCache([workflow(1, [execution(10, 1, 7168)])]);
 
       const sizeCell = host.querySelectorAll("tbody tr td")[2];
-      expect(sizeCell.textContent?.trim()).toBe(component.formatSize(1024 + 4096 + 2048));
+      expect(sizeCell.textContent?.trim()).toBe(component.formatSize(7168));
     });
 
     it("deletes the collection of the row it was pressed on", () => {
       // The row carries the execution id; passing the workflow id would delete the wrong cache.
       const spy = vi.spyOn(component, "deleteCollection").mockImplementation(() => {});
-      const host = renderCache([workflow(1, [execution(10, 1, 1, 1, 1), execution(11, 1, 1, 1, 1)])]);
+      const host = renderCache([workflow(1, [execution(10, 1, 3), execution(11, 1, 3)])]);
 
       const secondRowButton = host.querySelectorAll("tbody tr")[1].querySelector("button")!;
       secondRowButton.click();
@@ -530,7 +518,7 @@ describe("UserQuotaComponent", () => {
     });
 
     it("pages the executions rather than listing all of them", () => {
-      const executions = Array.from({ length: 5 }, (_, i) => execution(100 + i, 1, 1, 1, 1));
+      const executions = Array.from({ length: 5 }, (_, i) => execution(100 + i, 1, 3));
       const host = renderCache([workflow(1, executions)]);
 
       expect(host.querySelectorAll("tbody tr").length).toBe(3);
