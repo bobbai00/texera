@@ -30,6 +30,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   RetryWorkflowRequest,
   TakeGlobalCheckpointRequest
 }
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.FaultToleranceConfig
 import org.apache.texera.amber.engine.common.client.AmberClient
@@ -68,11 +69,13 @@ class ExecutionRuntimeService(
   // change to their operator was made meanwhile, and the run resumes. A run that has ended is
   // not asked.
   addSubscription(wsInput.subscribe((req: RetryRequest, uidOpt) => {
+    val before = stateStore.metadataStore.getState.state
     if (stateStore.transitionTo(RESUMING)) {
       reconfigurationService.performReconfigurationOnResume()
       client.coordinatorInterface
         .retryWorkflow(RetryWorkflowRequest(req.workers.map(ActorVirtualIdentity(_))), ())
         .onSuccess(_ => stateStore.transitionTo(RUNNING))
+        .onFailure(leftAs(before, "retry"))
     }
   }))
 
@@ -89,19 +92,24 @@ class ExecutionRuntimeService(
 
   // Receive Pause. A run that has ended is not asked to pause.
   addSubscription(wsInput.subscribe((req: WorkflowPauseRequest, uidOpt) => {
+    val before = stateStore.metadataStore.getState.state
     if (stateStore.transitionTo(PAUSING)) {
-      client.coordinatorInterface.pauseWorkflow(EmptyRequest(), ())
+      client.coordinatorInterface
+        .pauseWorkflow(EmptyRequest(), ())
+        .onFailure(leftAs(before, "pause"))
     }
   }))
 
   // Receive Resume. A run that has ended is not asked to resume, and takes no change to its
   // operators.
   addSubscription(wsInput.subscribe((req: WorkflowResumeRequest, uidOpt) => {
+    val before = stateStore.metadataStore.getState.state
     if (stateStore.transitionTo(RESUMING)) {
       reconfigurationService.performReconfigurationOnResume()
       client.coordinatorInterface
         .resumeWorkflow(EmptyRequest(), ())
         .onSuccess(_ => stateStore.transitionTo(RUNNING))
+        .onFailure(leftAs(before, "resume"))
     }
   }))
 
@@ -125,6 +133,16 @@ class ExecutionRuntimeService(
       ()
     )
   }))
+
+  /**
+    * What becomes of a run the engine failed to pause, resume or retry: it is as it was
+    * `before`, not left between two states for good, where no further command would be taken.
+    * A run that ended meanwhile stays as it ended.
+    */
+  private def leftAs(before: WorkflowAggregatedState, asked: String)(failure: Throwable): Unit = {
+    logger.warn(s"The engine failed to $asked the run of workflow $workflowId.", failure)
+    stateStore.transitionTo(before)
+  }
 
   override def unsubscribeAll(): Unit = {
     super.unsubscribeAll()

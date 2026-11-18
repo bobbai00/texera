@@ -383,8 +383,23 @@ class ExecutionRuntimeServiceSpec
     } finally f.close()
   }
 
-  it should "not record a run as running when its engine fails to resume it, or to retry" in {
-    val refusal = new IllegalStateException("the engine did not resume")
+  it should "leave a run as it was when its engine fails to pause, resume or retry it" in {
+    val refusal = new IllegalStateException("the engine did not do it")
+    val paused = fixture()
+    try {
+      paused.stateStore.transitionTo(RUNNING)
+      (paused.coordinator.pauseWorkflow _)
+        .expects(EmptyRequest(), ())
+        .returning(Future.exception(refusal))
+
+      paused.wsInput.onNext(WorkflowPauseRequest(executionId), None)
+
+      // Not left PAUSING for good, where no further command would be taken. Its record is told
+      // RUNNING again, which a record keeps once.
+      paused.stateStore.metadataStore.getState.state shouldBe RUNNING
+      paused.recorder.states.distinct shouldBe Seq(("RUNNING", None))
+    } finally paused.close()
+
     val resumed = fixture()
     try {
       resumed.stateStore.transitionTo(PAUSED)
@@ -395,8 +410,8 @@ class ExecutionRuntimeServiceSpec
       resumed.wsInput.onNext(WorkflowResumeRequest(executionId), None)
 
       // The engine is still paused, and the run's record still ends there.
-      resumed.stateStore.metadataStore.getState.state should not be RUNNING
-      resumed.recorder.states shouldBe Seq(("PAUSED", None))
+      resumed.stateStore.metadataStore.getState.state shouldBe PAUSED
+      resumed.recorder.states.distinct shouldBe Seq(("PAUSED", None))
     } finally resumed.close()
 
     val retried = fixture()
@@ -408,8 +423,8 @@ class ExecutionRuntimeServiceSpec
 
       retried.wsInput.onNext(RetryRequest(Seq("worker-a")), None)
 
-      retried.stateStore.metadataStore.getState.state should not be RUNNING
-      retried.recorder.states shouldBe Seq(("PAUSED", None))
+      retried.stateStore.metadataStore.getState.state shouldBe PAUSED
+      retried.recorder.states.distinct shouldBe Seq(("PAUSED", None))
     } finally retried.close()
   }
 
