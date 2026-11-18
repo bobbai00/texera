@@ -28,7 +28,7 @@ import org.apache.texera.dao.jooq.generated.Tables.USER_WAREHOUSE
   * ([[resolveLakekeeperWarehouseName]]). What an execution keeps there is dropped by
   * [[ExecutionExpiry]].
   */
-object ExecutionResources {
+object ExecutionWarehouse {
 
   /**
     * Maps an execution's chosen warehouse (its user_warehouse row id) to its Lakekeeper

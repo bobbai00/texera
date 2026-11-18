@@ -27,11 +27,11 @@ import { env } from "../../config/env";
 import {
   adaptCreateExecutionFailure,
   adaptLegacySyncExecutionResult,
-  parseCreatedExecution,
+  parseCreateExecutionResponse,
   type CreateExecutionRequest,
   type LogicalPlan,
   type LogicalLink,
-  type RunExecutionRequest,
+  type SyncRunRequest,
 } from "../../api/execution-api";
 import {
   OperatorState,
@@ -284,7 +284,7 @@ async function executeWorkflowHttp(
     ? Math.ceil(config.executionTimeoutMs / 1000)
     : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
 
-  const postAsUser = (url: string, body: CreateExecutionRequest | RunExecutionRequest): Promise<Response> =>
+  const postAsUser = (url: string, body: CreateExecutionRequest | SyncRunRequest): Promise<Response> =>
     fetch(url, {
       method: "POST",
       headers: createAuthHeaders(config.userToken),
@@ -324,13 +324,13 @@ async function executeWorkflowHttp(
       return failure;
     }
 
-    const execution = parseCreatedExecution(await createResponse.json());
+    const execution = parseCreateExecutionResponse(await createResponse.json());
 
     // A stop that arrived while the Dashboard created the execution: the unit is not asked to run it.
     options.abortSignal?.throwIfAborted();
 
     const runUrl = `${executionEndpoint}/api/execution/${execution.eid}/run`;
-    const runRequest: RunExecutionRequest = {
+    const runRequest: SyncRunRequest = {
       planUri: execution.planUri,
       computingUnitId,
       targetOperatorIds,

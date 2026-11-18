@@ -24,9 +24,9 @@ import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{ExecutionMode, PortIdentity, WorkflowSettings}
 import org.apache.texera.amber.engine.e2e.TestUtils.{
-  buildFromCompiledAndSavedPlans,
+  buildFromCompiledAndStoredPlans,
   runAfresh,
-  runFromCompiledAndSavedPlans,
+  runFromCompiledAndStoredPlans,
   workflowContext
 }
 import org.apache.texera.amber.operator.aggregate.AggregationFunction
@@ -59,9 +59,9 @@ import scala.io.Source
 import scala.util.{Try, Using}
 
 /**
-  * Every operator gives the same result from a saved plan as from a fresh compile. Each workflow
+  * Every operator gives the same result from a stored plan as from a fresh compile. Each workflow
   * below runs twice: from the plan its compile made, and from that plan saved as text and read
-  * back, as every run runs (`TestUtils.runFromCompiledAndSavedPlans`). The second plan must be the
+  * back, as every run runs (`TestUtils.runFromCompiledAndStoredPlans`). The second plan must be the
   * first read back, field for field, and the two runs must give the same results, as multisets,
   * and the results this spec works out from the fixture file itself.
   *
@@ -72,20 +72,20 @@ import scala.util.{Try, Using}
   * with two input ports each; a union of two links into one port; a limit; a Java UDF, which
   * cannot compile in a JVM sbt runs tests in and so must fail alike from both plans there (see its
   * case); and a join in the materialized execution mode. Python UDFs and a loop are in
-  * [[SavedPlanIntegrationSpec]].
+  * [[StoredPlanIntegrationSpec]].
   *
   * `specId` 7: 1 to 6 are the other e2e and integration specs', and 8 is
-  * SavedPlanIntegrationSpec's.
+  * StoredPlanIntegrationSpec's.
   */
-class SavedPlanSpec extends RetryingE2ESpec("SavedPlanSpec", specId = 7) with Matchers {
+class StoredPlanSpec extends RetryingE2ESpec("StoredPlanSpec", specId = 7) with Matchers {
 
-  /** Runs the workflow from its compiled plan and from its saved plan; see the class comment. */
+  /** Runs the workflow from its compiled plan and from its stored plan; see the class comment. */
   private def runBothWays(
       operators: List[LogicalOp],
       links: List[LogicalLink],
       settings: WorkflowSettings = WorkflowSettings()
   ): Map[OperatorIdentity, List[Tuple]] =
-    runFromCompiledAndSavedPlans(
+    runFromCompiledAndStoredPlans(
       system,
       operators,
       links,
@@ -135,7 +135,7 @@ class SavedPlanSpec extends RetryingE2ESpec("SavedPlanSpec", specId = 7) with Ma
     op
   }
 
-  "A run from a saved plan" should "filter a scan as the compiled plan does" in {
+  "A run from a stored plan" should "filter a scan as the compiled plan does" in {
     val scan = TestOperators.smallCsvScanOpDesc()
     val filter = new SpecializedFilterOpDesc()
     filter.predicates = List(new FilterPredicate("Region", ComparisonType.EQUAL_TO, "Asia"))
@@ -162,7 +162,7 @@ class SavedPlanSpec extends RetryingE2ESpec("SavedPlanSpec", specId = 7) with Ma
 
   it should "join a projection of a join's output again, on the key the projection keeps" in {
     // The first join's output is hash-partitioned on Order ID, and the projection keeps that by
-    // its rule (buildFromCompiledAndSavedPlans checks the saved plan holds the rule). As the
+    // its rule (buildFromCompiledAndStoredPlans checks the stored plan holds the rule). As the
     // projection has an output link, the scheduler applies the rule and hands the kept
     // partitioning to the second join's input, which requires it, on as many workers. The rows
     // show that run gives the compiled plan's rows; they cannot tell a kept partitioning from one
@@ -334,7 +334,7 @@ class SavedPlanSpec extends RetryingE2ESpec("SavedPlanSpec", specId = 7) with Ma
     } else {
       // No result to compare here. What the plan decides is the code the worker compiles: the
       // two plans hand it the same Java code, and the two runs must fail on the same errors in it.
-      val (compiled, saved) = buildFromCompiledAndSavedPlans(
+      val (compiled, saved) = buildFromCompiledAndStoredPlans(
         List(scan, udf),
         List(link(scan, udf)),
         () => workflowContext(specId)

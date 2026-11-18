@@ -18,7 +18,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { adaptCreateExecutionFailure, adaptLegacySyncExecutionResult, parseCreatedExecution } from "./execution-api";
+import {
+  adaptCreateExecutionFailure,
+  adaptLegacySyncExecutionResult,
+  parseCreateExecutionResponse,
+} from "./execution-api";
 import { ConsoleMessageType, OperatorState, WorkflowExecutionState, WorkflowFatalErrorType } from "../types/execution";
 
 // A WorkflowFatalError as the Dashboard service writes one for a workflow that does not compile.
@@ -33,9 +37,9 @@ function compilationError(operatorId: string, message: string) {
   };
 }
 
-describe("parseCreatedExecution", () => {
+describe("parseCreateExecutionResponse", () => {
   test("reads the execution's id and plan table from the Dashboard's answer", () => {
-    const created = parseCreatedExecution({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
+    const created = parseCreateExecutionResponse({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
 
     expect(created).toEqual({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
   });
@@ -49,7 +53,7 @@ describe("parseCreatedExecution", () => {
     ["an execution id below 1", { eid: 0, planUri: "vfs:///wid/12/eid/0/plan" }],
     ["no object at all", null],
   ])("refuses an answer with %s", (_case, answer) => {
-    expect(() => parseCreatedExecution(answer)).toThrow("Invalid create-execution response");
+    expect(() => parseCreateExecutionResponse(answer)).toThrow("Invalid create-execution response");
   });
 });
 

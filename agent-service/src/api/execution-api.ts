@@ -83,19 +83,20 @@ export interface CreateExecutionRequest {
   emailNotificationEnabled: boolean;
 }
 
-/** What a create answers with (201, amber's `CreateExecutionResponse`). */
-export interface CreatedExecution {
+/** The body of a create's 201 answer. Mirrors amber's `CreateExecutionResponse`. */
+export interface CreateExecutionResponse {
   eid: number;
   // The execution's plan table, which the computing unit starts the execution from.
   planUri: string;
 }
 
 /**
- * The body of `POST /api/execution/{eid}/run` on a computing unit (amber's `SyncRunRequest`): run
- * execution `eid`, which the Dashboard created for this unit, from its stored plan. The unit
- * answers with the legacy sync-execution result, which `adaptLegacySyncExecutionResult` reads.
+ * The body of `POST /api/execution/{eid}/run` on a computing unit. Mirrors amber's
+ * `SyncRunRequest`: run execution `eid`, which the Dashboard created for this unit, from its
+ * stored plan. The unit answers with the legacy sync-execution result, which
+ * `adaptLegacySyncExecutionResult` reads.
  */
-export interface RunExecutionRequest {
+export interface SyncRunRequest {
   // The execution's plan table, as the create answered it.
   planUri: string;
   // The computing unit the execution was created for: the one asked.
@@ -112,8 +113,8 @@ const createdExecutionSchema = z.object({
   planUri: z.string().min(1),
 });
 
-/** The execution that a create's 201 names. Throws when the answer names none. */
-export function parseCreatedExecution(input: unknown): CreatedExecution {
+/** Reads a create's 201 answer. Throws when it names no execution. */
+export function parseCreateExecutionResponse(input: unknown): CreateExecutionResponse {
   const parsed = createdExecutionSchema.safeParse(input);
   if (!parsed.success) {
     throw new Error(`Invalid create-execution response: ${parsed.error.message}`);

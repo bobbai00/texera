@@ -253,7 +253,7 @@ class ExecutionCreator(
     requireAllowed(checked, uid)
     val warehouse =
       try {
-        ExecutionResources.resolveLakekeeperWarehouseName(
+        ExecutionWarehouse.resolveLakekeeperWarehouseName(
           checked.warehouseId,
           uid,
           warehousesEnabled
@@ -298,12 +298,12 @@ class ExecutionCreator(
         authorization,
         compileDeadline
       )
-      val savedPlan = planToStore(made.plan, wid, eid, warehouse, hints, replay, replayLog)
+      val storedPlan = planToStore(made.plan, wid, eid, warehouse, hints, replay, replayLog)
       // The plan compiled, as the request sent it, loop-variable references included.
       val logical = made.logicalPlan
       val record = PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        body = savedPlan,
+        body = storedPlan,
         createdBy = uid.intValue(),
         computingUnitId = checked.computingUnitId
       )

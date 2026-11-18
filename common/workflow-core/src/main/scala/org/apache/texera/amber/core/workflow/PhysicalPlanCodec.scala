@@ -61,7 +61,7 @@ import scala.util.control.NonFatal
   * ports, schemas, links and settings, with what each operator reads from outside the run, where
   * each output port is stored, the run's cost hints, where it replays from and where it writes
   * its replay log. Each operator read back iterates its ports, and each port its links, in the
-  * order the saved plan did.
+  * order the stored plan did.
   *
   * A plan is saved as the same text every time. Its operators and its cost hints are saved in
   * the order of their operators' ids, and the files an operator reads in the order of their
@@ -88,7 +88,7 @@ object PhysicalPlanCodec {
   val FormatVersion: Int = 1
 
   /**
-    * The schema propagation function of every operator read back. A saved plan holds each port's
+    * The schema propagation function of every operator read back. A stored plan holds each port's
     * schema but not the function the compile derived it with, so an operator read back cannot
     * derive schemas again: this function fails, and `PhysicalOp.propagateSchema` records the
     * failure on each output port. PhysicalOp's default, the identity, would instead copy each
@@ -98,7 +98,7 @@ object PhysicalPlanCodec {
     */
   val ReadBackSchemaPropagation: SchemaPropagationFunc = SchemaPropagationFunc(_ =>
     throw new UnsupportedOperationException(
-      "This operator was read back from a saved plan, which holds its schemas but not the " +
+      "This operator was read back from a stored plan, which holds its schemas but not the " +
         "function that derived them, so it cannot derive them again."
     )
   )
@@ -160,7 +160,7 @@ object PhysicalPlanCodec {
       companion: GeneratedMessageCompanion[M]
   )
 
-  private val SavedPlan = Saved("plan", "saved physical plan", StoredPhysicalPlan)
+  private val StoredPlan = Saved("plan", "stored physical plan", StoredPhysicalPlan)
   private val SavedUpdate = Saved("operator update", "saved operator update", StoredOperatorUpdate)
 
   /**
@@ -201,7 +201,7 @@ object PhysicalPlanCodec {
   }
 
   /**
-    * Reads a saved plan back, with the context it runs under: the plan's ids, settings,
+    * Reads a stored plan back, with the context it runs under: the plan's ids, settings,
     * warehouse and cost hints.
     *
     * The plan is for running, not for compiling again. Each port has the schema the compile gave
@@ -251,17 +251,17 @@ object PhysicalPlanCodec {
     )
   }
 
-  /** The JSON text of a saved plan. */
-  def toJson(stored: StoredPhysicalPlan): String = write(SavedPlan, stored)
+  /** The JSON text of a stored plan. */
+  def toJson(stored: StoredPhysicalPlan): String = write(StoredPlan, stored)
 
   /**
-    * Parses the JSON text of a saved plan; [[decode]] checks what it holds.
+    * Parses the JSON text of a stored plan; [[decode]] checks what it holds.
     *
     * @throws IllegalArgumentException if the text is not one JSON object, has a field twice or a
     *                                  field the format does not have, or is in another format
     *                                  version
     */
-  def fromJson(json: String): StoredPhysicalPlan = read(SavedPlan, json)
+  def fromJson(json: String): StoredPhysicalPlan = read(StoredPlan, json)
 
   /**
     * Saves a change to operator `op` of the paused execution `executionId`, under `updateId`:

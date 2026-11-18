@@ -23,7 +23,7 @@ import com.twitter.util.Duration
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Tuple}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{ExecutionMode, PortIdentity, WorkflowSettings}
-import org.apache.texera.amber.engine.e2e.TestUtils.{runFromCompiledAndSavedPlans, workflowContext}
+import org.apache.texera.amber.engine.e2e.TestUtils.{runFromCompiledAndStoredPlans, workflowContext}
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.udf.python.{
@@ -42,7 +42,7 @@ import scala.io.Source
 import scala.util.{Try, Using}
 
 /**
-  * [[SavedPlanSpec]] for the operators whose workers are Python processes: Python UDFs with one
+  * [[StoredPlanSpec]] for the operators whose workers are Python processes: Python UDFs with one
   * input, with two (the second waiting for the first), and with none, a loop, and an R UDF where R
   * is installed. Each workflow runs from the plan its compile made and from that plan saved and
   * read back, and the two runs must give the same results, as multisets, and the expected ones.
@@ -50,15 +50,15 @@ import scala.util.{Try, Using}
   * Tagged @IntegrationTest because it spawns Python workers; routed to the `amber-integration` CI
   * job.
   *
-  * `specId` 8: 1 to 6 are the other e2e and integration specs', and 7 is SavedPlanSpec's.
+  * `specId` 8: 1 to 6 are the other e2e and integration specs', and 7 is StoredPlanSpec's.
   */
 @IntegrationTest
-class SavedPlanIntegrationSpec
-    extends RetryingE2ESpec("SavedPlanIntegrationSpec", specId = 8)
+class StoredPlanIntegrationSpec
+    extends RetryingE2ESpec("StoredPlanIntegrationSpec", specId = 8)
     with Matchers {
 
   /**
-    * Runs the workflow from its compiled plan and from its saved plan; see [[SavedPlanSpec]]. A
+    * Runs the workflow from its compiled plan and from its stored plan; see [[StoredPlanSpec]]. A
     * Python worker takes seconds to start, so each run may take two minutes.
     */
   private def runBothWays(
@@ -66,7 +66,7 @@ class SavedPlanIntegrationSpec
       links: List[LogicalLink],
       settings: WorkflowSettings = WorkflowSettings()
   ): Map[OperatorIdentity, List[Tuple]] =
-    runFromCompiledAndSavedPlans(
+    runFromCompiledAndStoredPlans(
       system,
       operators,
       links,
@@ -106,7 +106,7 @@ class SavedPlanIntegrationSpec
     op
   }
 
-  "A run from a saved plan" should "run a Python UDF on two workers as the compiled plan does" in {
+  "A run from a stored plan" should "run a Python UDF on two workers as the compiled plan does" in {
     val scan = TestOperators.smallCsvScanOpDesc()
     val udf = new PythonUDFOpDescV2()
     udf.workers = 2

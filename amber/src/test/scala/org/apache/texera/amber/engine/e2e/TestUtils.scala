@@ -109,7 +109,7 @@ object TestUtils {
     * list the fixture dataset version, whose files are kept there too; a UDF's datasets and
     * models are the fixture versions; the site's settings are the defaults; and a UDF's Python
     * environment is the fixture's, the only one there is. A plan made is linked to the fixture
-    * server ([[savedPlan]]), as the Dashboard service links one to the object store.
+    * server ([[storedPlan]]), as the Dashboard service links one to the object store.
     */
   val fixtureBindings: CompileFor.Run = CompileFor.Run(
     files = TestOperators.fixtureFileResolver,
@@ -151,7 +151,7 @@ object TestUtils {
     * file linked from where the plan says it is kept, by `linker`, and the context's cost hints,
     * the replay and the replay log added.
     */
-  def savedPlan(
+  def storedPlan(
       context: WorkflowContext,
       logicalPlan: LogicalPlanPojo,
       bindings: CompileFor.Run = fixtureBindings,
@@ -172,26 +172,26 @@ object TestUtils {
 
   /**
     * The workflow of `operators` and `links`, made to run under `context` as a run's is: its plan
-    * made, linked and saved as text ([[savedPlan]]), and the engine's plan read back from that
+    * made, linked and saved as text ([[storedPlan]]), and the engine's plan read back from that
     * as the fixture unit runs it (`WorkflowExecutionService.mountedUnder`), so a spec runs what a
     * run would. `context` takes the settings and cost hints saved with the plan, the ports whose
     * results are stored among them. The text stays in memory: the Dashboard writes it to the
     * execution's plan table and a computing unit reads it back from there, which these specs
     * need no catalog for.
     *
-    * @param fromSavedPlan false to keep the plan as the compile made it, never saved. Only for
+    * @param fromStoredPlan false to keep the plan as the compile made it, never saved. Only for
     *                      comparing a run of that plan with a run of the plan read back.
     */
   def buildWorkflow(
       operators: List[LogicalOp],
       links: List[LogicalLink],
       context: WorkflowContext,
-      fromSavedPlan: Boolean = true
+      fromStoredPlan: Boolean = true
   ): Workflow = {
     val logicalPlan = LogicalPlanPojo(operators, links, List(), List())
-    if (fromSavedPlan) {
+    if (fromStoredPlan) {
       val readBack =
-        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan(context, logicalPlan)))
+        PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(storedPlan(context, logicalPlan)))
       context.workflowSettings = readBack.context.workflowSettings
       context.costHints = readBack.context.costHints
       Workflow(
@@ -219,7 +219,7 @@ object TestUtils {
       op.propagateSchema == PhysicalPlanCodec.ReadBackSchemaPropagation
     Assertions.assert(
       !compiled.operators.exists(readBack),
-      "the compiled plan was read back from a saved plan: it was meant to run as compiled"
+      "the compiled plan was read back from a stored plan: it was meant to run as compiled"
     )
     Assertions.assert(
       saved.operators.forall(readBack),
@@ -376,12 +376,12 @@ object TestUtils {
     * saved as text and read back. Fails unless the second plan is the first read back
     * ([[assertReadBackFrom]]), under the same settings.
     */
-  def buildFromCompiledAndSavedPlans(
+  def buildFromCompiledAndStoredPlans(
       operators: List[LogicalOp],
       links: List[LogicalLink],
       newContext: () => WorkflowContext
   ): (Workflow, Workflow) = {
-    val compiled = buildWorkflow(operators, links, newContext(), fromSavedPlan = false)
+    val compiled = buildWorkflow(operators, links, newContext(), fromStoredPlan = false)
     val saved = buildWorkflow(operators, links, newContext())
     assertReadBackFrom(compiled.physicalPlan, saved.physicalPlan)
     val (compiledSettings, savedSettings) =
@@ -425,21 +425,21 @@ object TestUtils {
   }
 
   /**
-    * Runs the workflow of `operators` and `links` twice, as `buildFromCompiledAndSavedPlans`
+    * Runs the workflow of `operators` and `links` twice, as `buildFromCompiledAndStoredPlans`
     * builds it: first from the plan its compile made, then as every run runs, from that plan
     * saved and read back. Fails unless the two runs give each terminal operator the same results,
     * as multisets.
     *
-    * @return the terminal results of the run from the saved plan
+    * @return the terminal results of the run from the stored plan
     */
-  def runFromCompiledAndSavedPlans(
+  def runFromCompiledAndStoredPlans(
       system: ActorSystem,
       operators: List[LogicalOp],
       links: List[LogicalLink],
       newContext: () => WorkflowContext,
       completionTimeout: Duration = Duration.fromMinutes(1)
   ): Map[OperatorIdentity, List[Tuple]] = {
-    val (compiled, saved) = buildFromCompiledAndSavedPlans(operators, links, newContext)
+    val (compiled, saved) = buildFromCompiledAndStoredPlans(operators, links, newContext)
     val fromCompiled = runAfresh(system, compiled, completionTimeout)
     val fromSaved = runAfresh(system, saved, completionTimeout)
 
@@ -448,16 +448,16 @@ object TestUtils {
     Assertions.assert(fromSaved.keySet == fromCompiled.keySet, "the runs read other operators")
     fromCompiled.foreach {
       case (opId, tuples) =>
-        val (fromCompiledPlan, fromSavedPlan) = (counted(tuples), counted(fromSaved(opId)))
-        val differing = (fromCompiledPlan.keySet ++ fromSavedPlan.keySet).toSeq.collect {
-          case tuple if fromCompiledPlan.get(tuple) != fromSavedPlan.get(tuple) =>
+        val (fromCompiledPlan, fromStoredPlan) = (counted(tuples), counted(fromSaved(opId)))
+        val differing = (fromCompiledPlan.keySet ++ fromStoredPlan.keySet).toSeq.collect {
+          case tuple if fromCompiledPlan.get(tuple) != fromStoredPlan.get(tuple) =>
             s"$tuple, ${fromCompiledPlan.getOrElse(tuple, 0)} times from the compiled plan and " +
-              s"${fromSavedPlan.getOrElse(tuple, 0)} from the saved one"
+              s"${fromStoredPlan.getOrElse(tuple, 0)} from the stored one"
         }
         Assertions.assert(
           differing.isEmpty,
-          s"operator ${opId.id} gave other results from the saved plan: ${tuples.size} rows " +
-            s"from the compiled plan, ${fromSaved(opId).size} from the saved one; " +
+          s"operator ${opId.id} gave other results from the stored plan: ${tuples.size} rows " +
+            s"from the compiled plan, ${fromSaved(opId).size} from the stored one; " +
             s"${differing.take(5).mkString("; ")}"
         )
     }

@@ -215,7 +215,7 @@ class PythonEnvironmentIntegrationSpec
     /** The UDF, as the run's errors and consoles name it. */
     val udfId: String = udf.operatorIdentifier.id
 
-    private val savedPlan = TestUtils.savedPlan(
+    private val storedPlan = TestUtils.storedPlan(
       workflowContext(specId),
       LogicalPlanPojo(
         List(text, udf),
@@ -236,7 +236,7 @@ class PythonEnvironmentIntegrationSpec
           else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
       )
     )
-    private val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(savedPlan))
+    private val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(storedPlan))
     private val context = executionPlan.context
     written ++= executionPlan.plan.operators.flatMap(op =>
       op.outputPorts.keys.flatMap { port =>
@@ -287,7 +287,7 @@ class PythonEnvironmentIntegrationSpec
     def end(): ExecutionMetadataStore = {
       val planRow = PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
-        body = savedPlan,
+        body = storedPlan,
         createdBy = specId,
         computingUnitId = specId
       )

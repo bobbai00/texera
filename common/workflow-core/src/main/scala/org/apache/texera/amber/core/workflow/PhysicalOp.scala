@@ -165,15 +165,15 @@ object PhysicalOp {
 @JsonIgnoreProperties(
   Array(
     "opExecInitInfo", // function type, ignore it
-    "outputPartitionRule", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
+    "outputPartitionRule", // no Jackson type info; a stored plan carries it (PhysicalPlanCodec)
     "inputPorts", // may contain very long stacktrace, ignore it
     "outputPorts", // same reason with above
     "propagateSchema", // function type, so ignore it
     "locationPreference", // ignore it for the deserialization
     "partitionRequirement", // ignore it for deserialization
-    "pythonEnvironment", // no Jackson type info; a saved plan carries it (PhysicalPlanCodec)
-    "inputs", // may hold links, which are secrets; a saved plan carries them (PhysicalPlanCodec)
-    "storageLocations", // of a plan made to run only; a saved plan carries them
+    "pythonEnvironment", // no Jackson type info; a stored plan carries it (PhysicalPlanCodec)
+    "inputs", // may hold links, which are secrets; a stored plan carries them (PhysicalPlanCodec)
+    "storageLocations", // of a plan made to run only; a stored plan carries them
     "resourceBinding" // function type, so ignore it; see ResourceBinding
   )
 )
