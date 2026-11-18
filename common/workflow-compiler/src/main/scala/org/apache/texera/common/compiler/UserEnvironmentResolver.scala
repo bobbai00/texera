@@ -17,13 +17,11 @@
  * under the License.
  */
 
-package org.apache.texera.web.service.execution
+package org.apache.texera.common.compiler
 
 import org.apache.texera.amber.core.workflow.{PythonEnvironment, PythonRequirements}
-import org.apache.texera.common.compiler.{PythonEnvironmentNotResolved, PythonEnvironmentResolver}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.VIRTUAL_ENVIRONMENTS
-import org.apache.texera.web.resource.dashboard.user.environment.EnvironmentResource
 
 import scala.util.{Failure, Success}
 
@@ -49,7 +47,9 @@ final class UserEnvironmentResolver(uid: Integer) extends PythonEnvironmentResol
         .where(VIRTUAL_ENVIRONMENTS.UID.eq(uid).and(VIRTUAL_ENVIRONMENTS.NAME.eq(name)))
         .fetchOne()
     ).getOrElse(throw PythonEnvironmentNotResolved.noSuchEnvironment(name))
-    val packages = EnvironmentResource.packagesOf(stored.value1()) match {
+    val packages = PythonRequirements.storedPackages(
+      Option(stored.value1()).map(_.data()).orNull
+    ) match {
       case Success(packages) => packages
       case Failure(_) =>
         throw PythonEnvironmentNotResolved.notInstallable(

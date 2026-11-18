@@ -263,14 +263,13 @@ case class WorkflowCompilationResult(
 )
 
 /**
-  * The single workflow compiler shared in-process by both compilation call sites: the
-  * workflow-compiling-service, which compiles a workflow while it is edited, and amber, which
-  * compiles it to make the plan of a run. What a compile is for ([[CompileFor]]) decides what
-  * becomes of the errors of the workflow's operators and what is looked up for the plan.
+  * The workflow compiler, which the workflow-compiling-service runs for both of its compiles: of
+  * a workflow while it is edited, and of a workflow to make the plan of a run ([[PlanToRun]]).
+  * What a compile is for ([[CompileFor]]) decides what becomes of the errors of the workflow's
+  * operators and what is looked up for the plan.
   *
-  * This module depends only on WorkflowOperator, so neither service leaks its HTTP stack into
-  * the other. `outputPortsNeedingStorage` is always computed — the editing-path caller simply
-  * ignores it — keeping both paths on one code path.
+  * `outputPortsNeedingStorage` is always computed — the editing-path caller simply ignores it —
+  * keeping both paths on one code path.
   *
   * @param context the workflow and execution the compiler makes plans for: their ids stamp
   *                every operator
@@ -537,9 +536,9 @@ class WorkflowCompiler(context: WorkflowContext, purpose: CompileFor) extends La
     val logicalPlan: LogicalPlan = LogicalPlan(logicalPlanPojo)
 
     // 2. find what each operator reads from outside the run: the file of each scan source,
-    // resolved, and the site's settings it is read under; and, for a run, the link to that
-    // file, the listing of each File Lister's dataset version, and the links to the files
-    // listed upstream of each File Scan From Input
+    // resolved, and the site's settings it is read under; and, for a run, where that file is
+    // kept, the listing of each File Lister's dataset version, and where the files listed
+    // upstream of each File Scan From Input are kept
     val inputs = new InputBinder(purpose, errors).inputsOf(logicalPlan)
 
     // 3. expand the logical plan to the physical plan, and get the output ports that need storage

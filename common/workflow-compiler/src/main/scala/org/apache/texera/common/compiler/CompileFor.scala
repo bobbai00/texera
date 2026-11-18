@@ -21,7 +21,7 @@ package org.apache.texera.common.compiler
 
 import org.apache.texera.amber.core.storage.{
   DatasetVersionLister,
-  InputLinker,
+  InputFileLocator,
   RepositoryVersionResolver,
   ScanFileResolver
 }
@@ -58,14 +58,15 @@ object CompileFor {
     * To make the plan of a run. The errors are thrown together, as a
     * [[WorkflowCompilationFailed]] that holds each operator's first error, so a plan made to run
     * has none. The plan carries everything its operators read and name, found here once, so
-    * what runs it looks nothing up: a file that cannot be linked, a dataset version that cannot
-    * be listed or pinned and a Python environment that cannot be resolved are errors of the
-    * operators that name them.
+    * what runs it looks nothing up: a file that is not there, a dataset version that cannot be
+    * listed or pinned and a Python environment that cannot be resolved are errors of the
+    * operators that name them. Nothing here takes a secret: the plan says where each file is
+    * kept, and whatever holds the object store's keys signs the links from that
+    * (`PhysicalPlan.linkedBy`).
     *
-    * @param inputLinker  links the files `files` resolved and the files `lister` listed, for the
-    *                     executors that read them to read them through
+    * @param locator      says where the files `files` resolved are kept
     * @param lister       lists the dataset versions File Listers name, as the plan's user may
-    *                     read them
+    *                     read them, with where each file is kept
     * @param repositories pins the dataset and model versions operators name, for the plan's user
     * @param environments resolves the Python environments operators name to what the plan's user
     *                     keeps under those names
@@ -73,7 +74,7 @@ object CompileFor {
   final case class Run(
       files: ScanFileResolver,
       settings: CompileSettings,
-      inputLinker: InputLinker,
+      locator: InputFileLocator,
       lister: DatasetVersionLister,
       repositories: RepositoryVersionResolver,
       environments: PythonEnvironmentResolver

@@ -221,7 +221,7 @@ class LogicalPlanPojoSpec extends AnyFlatSpec with Matchers {
           CompileFor.Run(
             files = TestOperators.fixtureFileResolver,
             settings = CompileSettings.Default,
-            inputLinker = FixtureInputs.linker,
+            locator = FixtureInputs.locator,
             lister = FixtureInputs.lister,
             repositories = TestOperators.fixtureRepositoryResolver,
             environments = name => throw PythonEnvironmentNotResolved.noSuchEnvironment(name)

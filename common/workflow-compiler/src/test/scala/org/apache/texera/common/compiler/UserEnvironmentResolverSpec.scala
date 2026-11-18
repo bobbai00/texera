@@ -17,10 +17,9 @@
  * under the License.
  */
 
-package org.apache.texera.web.service.execution
+package org.apache.texera.common.compiler
 
 import org.apache.texera.amber.core.workflow.PythonEnvironment
-import org.apache.texera.common.compiler.PythonEnvironmentNotResolved
 import org.apache.texera.dao.jooq.generated.Tables.VIRTUAL_ENVIRONMENTS
 import org.apache.texera.dao.jooq.generated.tables.daos.UserDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.User

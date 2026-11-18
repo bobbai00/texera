@@ -60,3 +60,12 @@ object WorkflowCompilationFailed {
     ((header +: named.toSeq) ++ rest).mkString("\n")
   }
 }
+
+/**
+  * A workflow, or a change to one of its operators, that no plan can be made of, for a reason
+  * that is no operator's error: what is wrong with the request, in words its user can act on.
+  */
+class WorkflowRefused(message: String) extends RuntimeException(message)
+
+/** A change to an operator the workflow of its execution does not have. */
+final class NoSuchOperator(message: String) extends WorkflowRefused(message)
