@@ -41,6 +41,8 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
     lostAfterSeconds = 180,
     neverStartedAfterSeconds = 600,
     reviseVerdictForSeconds = 3600,
+    resultTtlSeconds = 86400,
+    expiryIntervalSeconds = 7200,
     warehousesEnabled = false
   )
 
@@ -398,11 +400,30 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
     an[IllegalArgumentException] should be thrownBy settings.copy(lostAfterSeconds = -1)
     an[IllegalArgumentException] should be thrownBy settings.copy(neverStartedAfterSeconds = -1)
     an[IllegalArgumentException] should be thrownBy settings.copy(reviseVerdictForSeconds = -1)
+    an[IllegalArgumentException] should be thrownBy settings.copy(resultTtlSeconds = -1)
+    an[IllegalArgumentException] should be thrownBy settings.copy(expiryIntervalSeconds = 0)
     noException should be thrownBy settings.copy(
       lostAfterSeconds = 0,
       neverStartedAfterSeconds = 0,
-      reviseVerdictForSeconds = 0
+      reviseVerdictForSeconds = 0,
+      resultTtlSeconds = 0
     )
+  }
+
+  // --- results past their age ---
+
+  "ExecutionClosing.expiredByMs" should "be the time results are kept before now" in {
+    expiredByMs(settings, nowMs) shouldBe nowMs - 86400000L
+    expiredByMs(settings.copy(resultTtlSeconds = 0), nowMs) shouldBe nowMs
+  }
+
+  "ExecutionClosing.expiryDue" should "be due before the job's first pass, and then once every interval" in {
+    expiryDue(settings, lastPassMs = None, nowMs) shouldBe true
+    expiryDue(settings, Some(nowMs), nowMs) shouldBe false
+    expiryDue(settings, Some(nowMs), nowMs + 7199999L) shouldBe false
+    expiryDue(settings, Some(nowMs), nowMs + 7200000L) shouldBe true
+    // A clock that was set back makes no pass due.
+    expiryDue(settings, Some(nowMs), nowMs - 86400000L) shouldBe false
   }
 
   // --- status codes ---

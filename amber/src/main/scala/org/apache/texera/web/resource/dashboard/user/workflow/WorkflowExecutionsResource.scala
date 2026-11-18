@@ -22,7 +22,6 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionResultUris,
   FileResolver,
   RuntimeStatisticsStore,
   WarehouseReadGuard
@@ -45,8 +44,8 @@ import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
 import org.apache.texera.web.service.ResultExportService
 import org.apache.texera.web.service.execution.{
+  ExecutionExpiry,
   ExecutionRecords,
-  ExecutionResources,
   OpenExecution,
   OpenExecutionStatuses
 }
@@ -477,45 +476,36 @@ object WorkflowExecutionsResource {
   }
 
   /**
-    * Removes all resources related to the specified execution IDs,
-    * including runtime statistics, console messages, result documents, plan tables, and database
-    * records.
+    * Deletes the executions `eids`: first everything each keeps in the lake
+    * ([[ExecutionExpiry.dropAll]]), then its row, so that a table that cannot be dropped leaves
+    * a row to find it by. An id with no row is passed over.
     *
-    * @param eids Array of execution IDs to be cleaned up.
+    * @throws WebApplicationException 409 if one of them is still open, and then none is
+    *                                 deleted: without its row, nothing would find the tables
+    *                                 its unit goes on writing
     */
-  def removeAllExecutionFiles(eids: Array[Integer]): Unit = {
-    val eIdsLong = eids.map(_.toLong)
-    val eIdsList = eIdsLong.toSeq.asJava
-
-    // Collect all related document URIs (runtime stats, console logs, results)
-    val uris: Seq[URI] = eIdsLong.toIndexedSeq.flatMap { eid =>
-      val execId = ExecutionIdentity(eid)
-      WorkflowExecutionsResource
-        .getRuntimeStatsUriByExecutionId(execId)
-        .toList ++
-        WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(execId) ++
-        ExecutionResultUris.getResultUrisByExecutionId(execId)
+  def removeAllExecutionFiles(
+      eids: Array[Integer],
+      expiry: ExecutionExpiry = ExecutionExpiry.forDeployment
+  ): Unit = {
+    val executions = eids.toSeq.distinct.flatMap(eid => ExecutionRecords.find(eid.longValue()))
+    executions.find(_.closing.isEmpty).foreach { open =>
+      throw new WebApplicationException(
+        s"execution ${open.eid} is still open; kill it first",
+        Response.Status.CONFLICT
+      )
     }
-    // Each execution's plan table, which only its row locates, so found before the rows go.
-    val planUris = ExecutionResources.planUrisOf(eIdsLong.map(ExecutionIdentity(_))).values
-
-    // Delete execution-related URIs from database tables
-    context
-      .deleteFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.in(eIdsList))
-      .execute()
-
-    // Clear corresponding Iceberg documents. While per-user warehouses are disabled,
-    // cleanup must not reach into them (#6930) — those URIs are skipped.
-    uris.filterNot(WarehouseReadGuard.skipWhileDisabled(_)).foreach { uri =>
-      try {
-        DocumentFactory.openDocument(uri)._1.clear()
-      } catch {
-        case _: Throwable =>
-        // Document already deleted – safe to ignore
-      }
+    executions.foreach { execution =>
+      expiry.dropAll(execution.eid)
+      context
+        .deleteFrom(WORKFLOW_EXECUTIONS)
+        .where(
+          WORKFLOW_EXECUTIONS.EID
+            .eq(Integer.valueOf(execution.eid.toInt))
+            .and(WORKFLOW_EXECUTIONS.ENDED_AT.isNotNull)
+        )
+        .execute()
     }
-    ExecutionResources.dropPlanTables(planUris)
   }
 
   /**

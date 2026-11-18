@@ -629,7 +629,284 @@ class ExecutionRecordsSpec
     withClue(verdicts) { verdicts should include("idx_workflow_executions_verdict") }
     val open = planOf { ExecutionRecords.open() }
     withClue(open) { open should include("idx_workflow_executions_open") }
+    // What the expiry lists by age: the few that ended long ago, among the many that hold results.
+    val unexpired = planOf {
+      ExecutionRecords.unexpiredEndedBy(createdAtMs - 1L, 0L, 200, warehousesEnabled = false)
+    }
+    withClue(unexpired) { unexpired should include("idx_workflow_executions_unexpired") }
     ExecutionRecords.closedByVerdictSince(createdAtMs).map(_.eid) should contain(verdict)
+  }
+
+  // --- results that expire ---
+
+  private val nextCuid = new AtomicInteger(9860)
+
+  /** A computing unit of the creator's that no other case uses. */
+  private def freshUnit(): Int = {
+    val cuid = nextCuid.getAndIncrement()
+    val unit = new WorkflowComputingUnit
+    unit.setCuid(cuid)
+    unit.setUid(creatorUid)
+    unit.setName(s"execution-records-unit-$cuid")
+    unit.setCreationTime(new Timestamp(createdAtMs))
+    unit.setType(WorkflowComputingUnitTypeEnum.local)
+    unit.setUri("local://test")
+    unit.setResource("{}")
+    new WorkflowComputingUnitDao(getDSLContext.configuration()).insert(unit)
+    cuid
+  }
+
+  /** An execution closed as completed, by its log, as of `endedAtMs`. */
+  private def closedAt(
+      endedAtMs: Long,
+      cuid: Int = liveCuid,
+      wid: Int = testWid,
+      warehouse: Option[Integer] = None
+  ): Long = {
+    val eid = insertExecution(wid, Some(cuid), warehouse = warehouse, startedAtMs = endedAtMs)
+    ExecutionRecords.close(eid, completed, None, endedAtMs, fromLog = true) shouldBe true
+    eid
+  }
+
+  /** An execution whose create failed: closed with its results marked expired. */
+  private def neverStartedAt(endedAtMs: Long, cuid: Int = liveCuid): Long = {
+    val eid = insertExecution(cuid = Some(cuid), startedAtMs = endedAtMs)
+    ExecutionRecords.close(
+      eid,
+      failed,
+      Some("never started"),
+      endedAtMs,
+      fromLog = false,
+      neverStarted = true
+    ) shouldBe true
+    eid
+  }
+
+  private def setReplayLog(eid: Long, location: String): Unit =
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, location)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
+      .execute()
+
+  "ExecutionRecords.expire" should "mark the results expired as of a time, to the millisecond, and record what the tables still hold" in {
+    val eid = closedAt(createdAtMs + 5000L)
+    ExecutionRecords.setStoredBytes(eid, 4096L)
+
+    val statements = recorder.record {
+      ExecutionRecords.expire(eid, createdAtMs + 9123L, 512L) shouldBe true
+    }
+
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    row(eid).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 9123L)
+    row(eid).getStoredBytes shouldBe 512L
+    // How it ended stays as it was.
+    record(eid).closing shouldBe Some(ClosingRecord(completed, None, createdAtMs + 5000L, true))
+  }
+
+  it should "mark an execution once: a second call changes nothing" in {
+    val eid = closedAt(createdAtMs + 5000L)
+    ExecutionRecords.expire(eid, createdAtMs + 9000L, 512L) shouldBe true
+
+    ExecutionRecords.expire(eid, createdAtMs + 9999L, 7L) shouldBe false
+
+    row(eid).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 9000L)
+    row(eid).getStoredBytes shouldBe 512L
+  }
+
+  it should "leave an open execution, one that never started, and an id that names none" in {
+    val open = insertExecution()
+    val neverStarted = neverStartedAt(createdAtMs + 5000L)
+
+    ExecutionRecords.expire(open, createdAtMs + 9000L, 1L) shouldBe false
+    ExecutionRecords.expire(neverStarted, createdAtMs + 9000L, 1L) shouldBe
+      false
+    ExecutionRecords.expire(982999L, createdAtMs + 9000L, 1L) shouldBe false
+
+    row(open).getResultsExpiredAt shouldBe null
+    row(open).getStoredBytes shouldBe null
+    row(neverStarted).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 5000L)
+    row(neverStarted).getStoredBytes shouldBe 0L
+  }
+
+  it should "mark by age only an execution that still ended by then, as the row says when it is marked" in {
+    val verdict = closedByVerdict(createdAtMs + 5000L)
+    // Its unit was back, and its log's ending took the verdict's place, after the pass listed it.
+    ExecutionRecords.revise(verdict, completed, None, createdAtMs + 8000L) shouldBe true
+
+    ExecutionRecords.expire(
+      verdict,
+      createdAtMs + 9000L,
+      1L,
+      endedByMs = Some(createdAtMs + 7999L)
+    ) shouldBe false
+    row(verdict).getResultsExpiredAt shouldBe null
+
+    ExecutionRecords.expire(
+      verdict,
+      createdAtMs + 9000L,
+      1L,
+      endedByMs = Some(createdAtMs + 8000L)
+    ) shouldBe true
+    row(verdict).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 9000L)
+  }
+
+  it should "end the time a verdict gives way to its log's ending" in {
+    val verdict = closedByVerdict(createdAtMs + 5000L)
+    ExecutionRecords.expire(verdict, createdAtMs + 9000L, 1L) shouldBe true
+
+    ExecutionRecords.revise(verdict, completed, None, createdAtMs + 8000L) shouldBe false
+
+    record(verdict).closing shouldBe
+      Some(ClosingRecord(failed, Some("unit lost"), createdAtMs + 5000L, false))
+    ExecutionRecords.closedByVerdictSince(createdAtMs).map(_.eid) should not contain verdict
+  }
+
+  it should "keep naming the execution's replay log" in {
+    val eid = closedAt(createdAtMs + 5000L)
+    setReplayLog(eid, "file:///tmp/replay/1/")
+
+    ExecutionRecords.expire(eid, createdAtMs + 9000L, 1L) shouldBe true
+
+    row(eid).getLogLocation shouldBe "file:///tmp/replay/1/"
+  }
+
+  "ExecutionRecords.forgetReplayLog" should "stop naming the replay log of the execution, and of no other" in {
+    val gone = closedAt(createdAtMs + 5000L)
+    val kept = closedAt(createdAtMs + 5000L)
+    Seq(gone, kept).foreach(setReplayLog(_, "file:///tmp/replay/1/"))
+
+    val statements = recorder.record { ExecutionRecords.forgetReplayLog(gone) }
+
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    row(gone).getLogLocation shouldBe null
+    ExecutionRecords.replayLogOf(gone) shouldBe None
+    row(kept).getLogLocation shouldBe "file:///tmp/replay/1/"
+    // The rest of the row is as it was.
+    row(gone).getResultsExpiredAt shouldBe null
+    record(gone).closing shouldBe Some(ClosingRecord(completed, None, createdAtMs + 5000L, true))
+  }
+
+  "ExecutionRecords.replayLogOf" should "be where the row says the replay log is, and none for a row that names none" in {
+    val logged = insertExecution()
+    setReplayLog(logged, "file:///tmp/replay/2/")
+    val empty = insertExecution()
+    setReplayLog(empty, "")
+
+    ExecutionRecords.replayLogOf(logged) shouldBe Some("file:///tmp/replay/2/")
+    ExecutionRecords.replayLogOf(empty) shouldBe None
+    ExecutionRecords.replayLogOf(insertExecution()) shouldBe None
+    ExecutionRecords.replayLogOf(982999L) shouldBe None
+  }
+
+  "ExecutionRecords.unexpired" should "find a closed execution that still holds its results, and no other" in {
+    val closed = closedAt(createdAtMs + 5000L)
+    val expired = closedAt(createdAtMs + 5000L)
+    ExecutionRecords.expire(expired, createdAtMs + 9000L, 1L)
+
+    ExecutionRecords.unexpired(closed) shouldBe Some(record(closed))
+    ExecutionRecords.unexpired(expired) shouldBe None
+    ExecutionRecords.unexpired(insertExecution()) shouldBe None
+    ExecutionRecords.unexpired(neverStartedAt(createdAtMs + 5000L)) shouldBe None
+    Seq(982999L, 0L, -1L, Int.MaxValue.toLong + 1).foreach { none =>
+      withClue(s"$none: ") { ExecutionRecords.unexpired(none) shouldBe None }
+    }
+  }
+
+  it should "find it by age only if it ended by the time given" in {
+    val closed = closedAt(createdAtMs + 5000L)
+
+    ExecutionRecords.unexpired(closed, Some(createdAtMs + 5000L)) shouldBe Some(record(closed))
+    ExecutionRecords.unexpired(closed, Some(createdAtMs + 4999L)) shouldBe None
+  }
+
+  // Long before any other case's executions ended, so that these are the only ones so old.
+  private val longAgoMs = createdAtMs - 30L * 86400000L
+
+  "ExecutionRecords.unexpiredEndedBy" should "list the closed executions that ended by a time and hold their results, oldest first, a batch at a time" in {
+    val first = closedAt(longAgoMs + 2000L)
+    val second = closedAt(longAgoMs + 1000L)
+    val third = closedAt(longAgoMs + 3000L)
+    val younger = closedAt(longAgoMs + 3001L)
+    val expired = closedAt(longAgoMs + 1000L)
+    ExecutionRecords.expire(expired, longAgoMs + 9000L, 1L)
+    val neverStarted = neverStartedAt(longAgoMs + 1000L)
+    val open = insertExecution(startedAtMs = longAgoMs)
+    def listed(afterEid: Long, limit: Int): Seq[Long] =
+      ExecutionRecords
+        .unexpiredEndedBy(longAgoMs + 3000L, afterEid, limit, warehousesEnabled = false)
+        .map(_.eid)
+
+    var all: Seq[ExecutionRecord] = Nil
+    val statements = recorder.record {
+      all = ExecutionRecords.unexpiredEndedBy(longAgoMs + 3000L, 0L, 10, warehousesEnabled = false)
+    }
+
+    statements.map(_.verb) shouldBe Seq("SELECT")
+    all.map(_.eid) shouldBe Seq(first, second, third)
+    all.map(_.eid) should contain noneOf (younger, expired, neverStarted, open)
+    all.head shouldBe record(first)
+    listed(afterEid = 0L, limit = 2) shouldBe Seq(first, second)
+    listed(afterEid = second, limit = 2) shouldBe Seq(third)
+    listed(afterEid = third, limit = 2) shouldBe Nil
+  }
+
+  it should "leave out the executions in a per-user warehouse while those are disabled" in {
+    val inWarehouse = closedAt(longAgoMs - 5000L, warehouse = Some(whid))
+    val inDefault = closedAt(longAgoMs - 5000L)
+    def listed(warehousesEnabled: Boolean): Seq[Long] =
+      ExecutionRecords.unexpiredEndedBy(longAgoMs - 5000L, 0L, 10, warehousesEnabled).map(_.eid)
+
+    listed(warehousesEnabled = false) shouldBe Seq(inDefault)
+    listed(warehousesEnabled = true) shouldBe Seq(inWarehouse, inDefault)
+  }
+
+  "ExecutionRecords.unexpiredBefore" should "list the closed executions of the workflow on the unit that hold their results and were made before another, oldest first" in {
+    val (unit, otherUnit) = (freshUnit(), freshUnit())
+    val first = closedAt(createdAtMs + 5000L, unit)
+    val elsewhere = closedAt(createdAtMs + 5000L, otherUnit)
+    val otherWorkflows = closedAt(createdAtMs + 5000L, unit, wid = publicWid)
+    val expired = closedAt(createdAtMs + 5000L, unit)
+    ExecutionRecords.expire(expired, createdAtMs + 9000L, 1L)
+    val neverStarted = neverStartedAt(createdAtMs + 5000L, unit)
+    val open = insertExecution(cuid = Some(unit))
+    val second = closedAt(createdAtMs + 5000L, unit)
+    val bound = insertExecution(cuid = Some(unit))
+    val later = closedAt(createdAtMs + 5000L, unit)
+
+    var held: Seq[ExecutionRecord] = Nil
+    val statements = recorder.record {
+      held = ExecutionRecords.unexpiredBefore(testWid, unit, bound)
+    }
+
+    statements.map(_.verb) shouldBe Seq("SELECT")
+    held.map(_.eid) shouldBe Seq(first, second)
+    held.map(
+      _.eid
+    ) should contain noneOf (elsewhere, otherWorkflows, expired, neverStarted, open, later)
+    held.head shouldBe record(first)
+  }
+
+  "ExecutionRecords.madeAfter" should "list the executions of the workflow on the unit made after one, up to another, newest first" in {
+    val (unit, otherUnit) = (freshUnit(), freshUnit())
+    val after = closedAt(createdAtMs + 5000L, unit)
+    val closed = closedAt(createdAtMs + 5000L, unit)
+    insertExecution(cuid = Some(otherUnit))
+    insertExecution(wid = publicWid, cuid = Some(unit))
+    val open = insertExecution(cuid = Some(unit))
+    val neverStarted = neverStartedAt(createdAtMs + 5000L, unit)
+    val upTo = insertExecution(cuid = Some(unit))
+    insertExecution(cuid = Some(unit))
+
+    var made: Seq[ExecutionRecord] = Nil
+    val statements = recorder.record {
+      made = ExecutionRecords.madeAfter(testWid, unit, after, upTo)
+    }
+
+    statements.map(_.verb) shouldBe Seq("SELECT")
+    made.map(_.eid) shouldBe Seq(upTo, neverStarted, open, closed)
+    made.last shouldBe record(closed)
+    ExecutionRecords.madeAfter(testWid, unit, upTo, upTo) shouldBe Nil
   }
 
   // --- who may read ---

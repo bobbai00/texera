@@ -27,6 +27,7 @@ import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.web.resource.dashboard.user.dataset.utils.DatasetStatisticsUtils.getUserCreatedDatasets
 import org.apache.texera.web.resource.dashboard.user.quota.UserQuotaResource._
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.service.execution.ExecutionExpiry
 
 import java.util
 import javax.annotation.security.RolesAllowed
@@ -58,8 +59,9 @@ object UserQuotaResource {
   /**
     * What an execution holds in the lake.
     *
-    * @param storedBytes the bytes of its tables, as measured when it was closed; 0 while it is
-    *                    open, since nothing is measured under a run
+    * @param storedBytes the bytes of its tables, as measured when it was closed, and again
+    *                    when its results expired; 0 while it is open, since nothing is measured
+    *                    under a run
     */
   case class QuotaStorage(
       eid: Integer,
@@ -136,14 +138,25 @@ object UserQuotaResource {
       )
       .toArray
 
-  def deleteExecutionCollection(eid: Integer): Unit = {
-    WorkflowExecutionsResource.removeAllExecutionFiles(Array(eid))
+  /**
+    * Deletes execution `eid`, with everything it keeps in the lake.
+    *
+    * @throws WebApplicationException 409 if it is still open
+    */
+  def deleteExecutionCollection(
+      eid: Integer,
+      expiry: ExecutionExpiry = ExecutionExpiry.forDeployment
+  ): Unit = {
+    WorkflowExecutionsResource.removeAllExecutionFiles(Array(eid), expiry)
   }
 }
 
 @Path("/quota")
 @RolesAllowed(Array("REGULAR", "ADMIN"))
-class UserQuotaResource {
+class UserQuotaResource(expiry: ExecutionExpiry) {
+
+  // Jersey makes a resource for each request, with the service's own expiry.
+  def this() = this(ExecutionExpiry.forDeployment)
 
   @GET
   @Path("/created_datasets")
@@ -185,6 +198,6 @@ class UserQuotaResource {
       Seq(eid),
       requireWrite = true
     )
-    deleteExecutionCollection(eid)
+    deleteExecutionCollection(eid, expiry)
   }
 }

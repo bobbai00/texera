@@ -19,8 +19,21 @@
 
 package org.apache.texera.web.resource.dashboard.file
 
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, NoStoredPlanException, PlanRecord}
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionPlanStore,
+  ExecutionTables,
+  PlanRecord,
+  VFSURIFactory
+}
+import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  OperatorIdentity,
+  PhysicalOpIdentity,
+  WorkflowIdentity
+}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -44,6 +57,7 @@ import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource.{
   WorkflowWithPrivilege
 }
 import org.apache.texera.web.resource.dashboard.{DashboardResource, FulltextSearchQueryUtils}
+import org.apache.texera.web.service.execution.ExecutionExpiry
 import org.jooq.Condition
 import org.jooq.impl.DSL.noCondition
 import org.scalamock.scalatest.MockFactory
@@ -56,7 +70,7 @@ import java.text.{ParseException, SimpleDateFormat}
 import java.time.{Duration, OffsetDateTime, ZoneOffset}
 import java.util
 import java.util.Collections
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ConcurrentLinkedQueue, TimeUnit}
 import javax.servlet.http.HttpServletRequest
 import javax.ws.rs.{
   BadRequestException,
@@ -156,8 +170,17 @@ class WorkflowResourceSpec
     new SessionUser(testUser2)
   }
 
+  /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
+  private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
+
+  /** An expiry whose lake calls are the stores', and which deletes no large binary. */
+  private val expiry = new ExecutionExpiry(
+    warehousesEnabled = false,
+    deleteBinaries = eid => binariesDeletedFor.add(eid)
+  )
+
   private val workflowResource: WorkflowResource = {
-    new WorkflowResource()
+    new WorkflowResource(expiry)
   }
 
   private val dashboardResource: DashboardResource = {
@@ -1263,14 +1286,8 @@ class WorkflowResourceSpec
     assert(thrown.getCause.isInstanceOf[NullPointerException])
   }
 
-  // What this pins, and what it does not. It DOES pin that a URI which cannot be decoded is
-  // tolerated rather than aborting the delete: removing the `case NonFatal(exception) =>` arm of
-  // deleteWorkflow's outer catch turns this test red.
-  //
-  // It does NOT pin the post-transaction cleanup tail it happens to execute. `LargeBinaryManager`
-  // is an object talking to S3 with no injectable seam, and the document cleanup needs real
-  // Iceberg-backed documents this spec has no fixture for -- emptying the collected execution ids
-  // leaves the suite green. Those lines are entered, not verified.
+  // No location stored in a row is read by a delete: an execution's tables are found by their
+  // names, so a row that names a location nothing can decode does not stop it.
   it should "still delete the workflow when a stored execution URI cannot be decoded" in {
     val wid = seedWorkflow(sessionUser1, "undecodable-uri-wf").workflow.getWid
     getDSLContext
@@ -1287,24 +1304,28 @@ class WorkflowResourceSpec
   }
 
   /**
-    * An execution of workflow `wid` with a plan table, where its row says the plan is; its id is
-    * given, so the table's name is this suite's own.
+    * An execution of workflow `wid` with a plan table, where its row says the plan is, and the
+    * result table of a port; its id is given, so the tables' names are this suite's own. It is
+    * open, unless it is to be `closed`. Returns its tables.
     */
-  private def executionWithPlan(wid: Integer, eid: Int): URI = {
+  private def executionWithTables(wid: Integer, eid: Int, closed: Boolean = false): Seq[URI] = {
     getDSLContext
       .insertInto(WORKFLOW_EXECUTIONS)
       .set(WORKFLOW_EXECUTIONS.EID, Integer.valueOf(eid))
       .set(WORKFLOW_EXECUTIONS.VID, WorkflowVersionResource.getLatestVersion(wid))
       .set(WORKFLOW_EXECUTIONS.UID, testUser.getUid)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test-env")
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, if (closed) Short.box(3.toShort) else null)
+      .set(
+        WORKFLOW_EXECUTIONS.ENDED_AT,
+        if (closed) new Timestamp(System.currentTimeMillis()) else null
+      )
       .execute()
-    val uri = ExecutionPlanStore.planUri(
-      WorkflowIdentity(wid.longValue()),
-      ExecutionIdentity(eid.toLong),
-      None
-    )
+    val (workflowId, executionId) =
+      (WorkflowIdentity(wid.longValue()), ExecutionIdentity(eid.toLong))
+    val plan = ExecutionPlanStore.planUri(workflowId, executionId, None)
     ExecutionPlanStore.writePlan(
-      uri,
+      plan,
       PlanRecord(
         entryId = ExecutionPlanStore.PlanEntryId,
         body = "{}",
@@ -1313,40 +1334,85 @@ class WorkflowResourceSpec
       ),
       "{}"
     )
-    uri
+    val result = VFSURIFactory.resultURI(
+      VFSURIFactory.createPortBaseURI(
+        workflowId,
+        executionId,
+        GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("scan"), "main"), PortIdentity())
+      )
+    )
+    DocumentFactory.createDocument(result, Schema().add("line", AttributeType.STRING))
+    Seq(plan, result)
   }
 
-  private def hasPlanTable(uri: URI): Boolean =
-    try {
-      ExecutionPlanStore.readPlan(uri)
-      true
-    } catch {
-      case _: NoStoredPlanException => false
-    }
+  private def hasTable(uri: URI): Boolean = ExecutionTables.exists(uri)
 
-  it should "drop the plan tables of the deleted workflow's executions, and no other's" in {
-    val wid = seedWorkflow(sessionUser1, "plan-tables-wf").workflow.getWid
-    val otherWid = seedWorkflow(sessionUser1, "plan-tables-other-wf").workflow.getWid
-    val deleted = Seq(951001, 951002).map(executionWithPlan(wid, _))
-    val kept = executionWithPlan(otherWid, 951003)
+  it should "drop every table of the deleted workflow's executions, open ones included, and no other's" in {
+    val wid = seedWorkflow(sessionUser1, "tables-wf").workflow.getWid
+    val otherWid = seedWorkflow(sessionUser1, "tables-other-wf").workflow.getWid
+    val deleted =
+      executionWithTables(wid, 951001, closed = true) ++ executionWithTables(wid, 951002)
+    val kept = executionWithTables(otherWid, 951003)
+    binariesDeletedFor.clear()
     try {
       workflowResource.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)
 
-      deleted.foreach(uri => assert(!hasPlanTable(uri), s"$uri was not dropped"))
-      assert(hasPlanTable(kept))
-    } finally ExecutionPlanStore.drop(kept)
+      deleted.foreach(uri => assert(!hasTable(uri), s"$uri was not dropped"))
+      kept.foreach(uri => assert(hasTable(uri), s"$uri was dropped"))
+      assert(binariesDeletedFor.asScala.toSet == Set(951001L, 951002L))
+      assert(workflowNamesOf(sessionUser1) == List("tables-other-wf"))
+    } finally expiry.dropAll(951003L)
   }
 
-  it should "keep the plan tables of a workflow it refuses to delete" in {
+  it should "keep the tables of a workflow it refuses to delete" in {
     // testUser2's workflow, which testUser may not delete.
-    val wid = seedWorkflow(sessionUser2, "plan-tables-not-yours-wf").workflow.getWid
-    val plan = executionWithPlan(wid, 951004)
+    val wid = seedWorkflow(sessionUser2, "tables-not-yours-wf").workflow.getWid
+    val tables = executionWithTables(wid, 951004)
+    binariesDeletedFor.clear()
     try {
       workflowResource.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)
 
-      assert(workflowNamesOf(sessionUser2).contains("plan-tables-not-yours-wf"))
-      assert(hasPlanTable(plan))
-    } finally ExecutionPlanStore.drop(plan)
+      assert(workflowNamesOf(sessionUser2).contains("tables-not-yours-wf"))
+      tables.foreach(uri => assert(hasTable(uri), s"$uri was dropped"))
+      assert(binariesDeletedFor.isEmpty)
+    } finally expiry.dropAll(951004L)
+  }
+
+  it should "drop no table of a workflow listed beside one it refuses to delete" in {
+    val own = seedWorkflow(sessionUser1, "tables-own-wf").workflow.getWid
+    val notYours = seedWorkflow(sessionUser2, "tables-refused-wf").workflow.getWid
+    val tables = executionWithTables(own, 951005, closed = true)
+    binariesDeletedFor.clear()
+    try {
+      workflowResource.deleteWorkflow(WorkflowIDs(List(own, notYours)), sessionUser1)
+
+      assert(workflowNamesOf(sessionUser1) == List("tables-own-wf"))
+      tables.foreach(uri => assert(hasTable(uri), s"$uri was dropped"))
+      assert(binariesDeletedFor.isEmpty)
+    } finally expiry.dropAll(951005L)
+  }
+
+  it should "keep the workflow, to find its tables by, when a table cannot be dropped" in {
+    val lakeDown = new IllegalStateException("the lake is out of reach")
+    val failing = new WorkflowResource(
+      new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => throw lakeDown)
+    )
+    val wid = seedWorkflow(sessionUser1, "tables-undroppable-wf").workflow.getWid
+    executionWithTables(wid, 951006, closed = true)
+    try {
+      val thrown = intercept[WebApplicationException](
+        failing.deleteWorkflow(WorkflowIDs(List(wid)), sessionUser1)
+      )
+
+      assert(thrown.getCause eq lakeDown)
+      assert(workflowNamesOf(sessionUser1) == List("tables-undroppable-wf"))
+      assert(
+        getDSLContext.fetchExists(
+          WORKFLOW_EXECUTIONS,
+          WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(951006))
+        )
+      )
+    } finally expiry.dropAll(951006L)
   }
 
   // ---------------------------------------------------------------------------

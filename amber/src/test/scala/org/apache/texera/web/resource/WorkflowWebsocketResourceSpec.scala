@@ -114,6 +114,7 @@ import org.apache.texera.web.model.websocket.request.{
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
   ExecutionCreator,
+  ExecutionExpiry,
   FixtureCompilingService,
   OperatorUpdates
 }
@@ -1106,7 +1107,9 @@ class WorkflowWebsocketResourceSpec
         replayLogRoot = None,
         warehousesEnabled = false,
         costHints = NoHints,
-        background = _.run()
+        background = _.run(),
+        // No large binary is deleted for what a create finds replaced.
+        expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
       )
 
   /** The Dashboard's store of a change to a paused operator, with the fixture resolver. */

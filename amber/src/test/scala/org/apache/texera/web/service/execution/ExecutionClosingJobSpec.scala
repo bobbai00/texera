@@ -89,6 +89,7 @@ import org.scalatest.time.{Millis, Seconds, Span}
 import org.slf4j.LoggerFactory
 
 import java.net.URI
+import java.nio.file.Files
 import java.sql.Timestamp
 import java.util.UUID
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong}
@@ -144,6 +145,8 @@ class ExecutionClosingJobSpec
     lostAfterSeconds = 180,
     neverStartedAfterSeconds = 600,
     reviseVerdictForSeconds = 3600,
+    resultTtlSeconds = 86400,
+    expiryIntervalSeconds = 7200,
     warehousesEnabled = false
   )
 
@@ -314,7 +317,7 @@ class ExecutionClosingJobSpec
       targetOperatorId = None
     )
 
-  /** Creates as the Dashboard does, bound to the fixture files; nothing is cleared afterwards. */
+  /** Creates as the Dashboard does, bound to the fixture files; nothing is expired afterwards. */
   private val creator = new ExecutionCreator(
     compiling = new FixtureCompilingService(),
     linker = FixtureInputs.linker,
@@ -323,7 +326,8 @@ class ExecutionClosingJobSpec
     costHints = new CostHintsLoader(1) {
       override def load(wid: Long, uid: Int) = None
     },
-    background = _ => ()
+    background = _ => (),
+    expiry = new NotingExpiry()
   )
 
   private val requestUri = new URI("http://texera.example:4200/api/executions")
@@ -467,11 +471,41 @@ class ExecutionClosingJobSpec
   private class Outage extends RuntimeException("the lake is out of reach")
 
   /**
+    * An expiry that expires nothing, and notes what it is asked for: the unit and the execution
+    * of each call for what a run replaced, which it answers with `replaced`, and the time of
+    * each pass by age. [[ExecutionExpirySpec]] owns what an expiry does.
+    */
+  private class NotingExpiry(replaced: (Int, Long) => Boolean = (_, _) => true)
+      extends ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ()) {
+    val replacedBy = new ConcurrentLinkedQueue[(Int, Long)]()
+    val passes = new ConcurrentLinkedQueue[Long]()
+
+    override def expireReplaced(wid: Long, cuid: Int, replacedBy: Long): Boolean = {
+      this.replacedBy.add((cuid, replacedBy))
+      replaced(cuid, replacedBy)
+    }
+
+    override def expireEndedBy(endedByMs: Long): Int = {
+      passes.add(endedByMs)
+      0
+    }
+  }
+
+  /** An expiry that expires for real, on the job's clock, and deletes no large binary. */
+  private class RealExpiry(clock: AtomicLong)
+      extends ExecutionExpiry(
+        warehousesEnabled = false,
+        deleteBinaries = _ => (),
+        now = () => clock.get()
+      )
+
+  /**
     * A job under test and what it is made of. Its lake calls are the stores', unless a case
     * replaces one; each label read and each measuring is noted. No email leaves it: each one
     * it would send is noted, and `deliver` answers whether it was sent, on the thread that
-    * closes unless a case gives another. Making one closes what earlier cases left open and
-    * settles their verdicts, unless it is to keep them.
+    * closes unless a case gives another. It expires nothing, and notes what it would have
+    * expired, on the thread that asks, unless a case gives it an expiry or a thread. Making one
+    * closes what earlier cases left open and settles their verdicts, unless it is to keep them.
     */
   private class Fixture(
       jobSettings: Settings = settings,
@@ -484,12 +518,15 @@ class ExecutionClosingJobSpec
       lookLimit: FiniteDuration = ExecutionClosingJob.LookLimit,
       keepVerdicts: Boolean = false,
       deliver: EmailMessage => Either[String, Unit] = _ => Right(()),
-      emailThread: Executor = _.run()
+      emailThread: Executor = _.run(),
+      expiry: AtomicLong => ExecutionExpiry = _ => new NotingExpiry(),
+      expiryThread: Executor = _.run()
   ) {
     if (!keepVerdicts) settle()
 
     /** The Dashboard's clock: five minutes after the fixture, and its rows, were made. */
     val clock = new AtomicLong(System.currentTimeMillis() + 300000L)
+    val expires: ExecutionExpiry = expiry(clock)
     val labelsRead = new ConcurrentLinkedQueue[URI]()
     val measured = new ConcurrentLinkedQueue[Long]()
     val emails = new ConcurrentLinkedQueue[EmailMessage]()
@@ -518,10 +555,15 @@ class ExecutionClosingJobSpec
       closer = closer,
       openExecutions = open,
       lookLimit = lookLimit,
-      now = () => clock.get()
+      now = () => clock.get(),
+      expiry = expires,
+      expiryThread = expiryThread
     )
 
     def tick(times: Int = 1): Unit = (1 to times).foreach(_ => job.tick())
+
+    /** What the job asked to have expired, when its expiry only notes it. */
+    def noted: NotingExpiry = expires.asInstanceOf[NotingExpiry]
 
     def readLabelOf(execution: ExecutionRecord): Boolean =
       labelsRead.asScala.exists(_ == execution.logUri)
@@ -543,6 +585,39 @@ class ExecutionClosingJobSpec
       logger.detachAppender(appender)
       appender.stop()
     }
+  }
+
+  /** Runs `body`, and answers the level and the message of every line the job logged. */
+  private def jobLogged(body: => Unit): Seq[(Level, String)] = {
+    val logger = LoggerFactory.getLogger(classOf[ExecutionClosingJob]).asInstanceOf[LogbackLogger]
+    val appender = new ListAppender[ILoggingEvent]
+    val level = logger.getLevel
+    appender.start()
+    logger.addAppender(appender)
+    logger.setLevel(Level.ALL)
+    try {
+      body
+      appender.list.asScala.toList.map(event => (event.getLevel, event.getFormattedMessage))
+    } finally {
+      logger.setLevel(level)
+      logger.detachAppender(appender)
+      appender.stop()
+    }
+  }
+
+  /**
+    * An execution a unit ran that was closed as completed, by its log, as of `endedAtMs`; with
+    * `replayLog`, its row names where it keeps one.
+    */
+  private def endedAt(endedAtMs: Long, replayLog: Option[String] = None): ExecutionRecord = {
+    val execution = running(freshUnit())
+    ExecutionRecords.close(execution.eid, completed, None, endedAtMs, fromLog = true) shouldBe true
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, replayLog.orNull)
+      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(execution.eid.toInt)))
+      .execute()
+    record(execution.eid)
   }
 
   /** Runs each of `bodies` on a thread of its own, all at once, and waits for them. */
@@ -1120,6 +1195,262 @@ class ExecutionClosingJobSpec
     }
   }
 
+  // --- results a run replaced ---
+
+  "The job" should "have what a run replaced expired once it finds that a unit started the run, and not before" in {
+    val fixture = new Fixture()
+    val unit = freshUnit()
+    val execution = created(unit)
+
+    fixture.tick()
+    fixture.noted.replacedBy.asScala shouldBe empty
+
+    // Started, with a log that names no state yet.
+    ExecutionPlanStore.claimStart(execution.planUri)
+    withLog(execution)
+    fixture.tick()
+    fixture.noted.replacedBy.asScala shouldBe empty
+
+    append(execution, "READY", 2000L)
+    fixture.tick()
+    fixture.noted.replacedBy.asScala.toSeq shouldBe Seq((unit, execution.eid))
+
+    // Once for an execution, however long it runs.
+    append(execution, "RUNNING", 3000L)
+    beat(execution, 33000L)
+    fixture.tick(3)
+    fixture.noted.replacedBy.asScala.toSeq shouldBe Seq((unit, execution.eid))
+  }
+
+  it should "have what was replaced on its unit expired as it closes an execution that a unit may have run" in {
+    val fixture = new Fixture()
+    val (endedUnit, lostUnit) = (freshUnit(), freshUnit())
+    // Started and ended between two ticks, and lost with its unit.
+    val ended = running(endedUnit)
+    append(ended, "COMPLETED", 9000L)
+    val lost = running(lostUnit)
+    terminate(lostUnit, GARBAGE_COLLECTED)
+
+    fixture.tick(2)
+
+    Seq(ended, lost).foreach(execution => closingOf(execution) should not be empty)
+    // Once each, of every execution on the unit: a later one may have replaced the one closed.
+    fixture.noted.replacedBy.asScala.toSet shouldBe
+      Set((endedUnit, ExecutionExpiry.UpToNewest), (lostUnit, ExecutionExpiry.UpToNewest))
+    fixture.noted.replacedBy.asScala should have size 2
+  }
+
+  it should "have nothing expired as it closes an execution that no unit started" in {
+    val fixture = new Fixture()
+    val unstarted = created(freshUnit())
+    val unreachable = inserted(warehouse = Some(whid))
+    fixture.clock.addAndGet(600000L)
+
+    fixture.tick()
+
+    closingOf(unstarted).flatMap(_.reason) shouldBe Some(ExecutionClosing.NeverStarted)
+    closingOf(unreachable).flatMap(_.reason) shouldBe Some(ExecutionClosing.WarehouseUnavailable)
+    fixture.noted.replacedBy.asScala shouldBe empty
+  }
+
+  it should "ask again on the next tick when what a run replaced could not be expired" in {
+    val answers = new ConcurrentLinkedQueue[Boolean](Seq(false, false, true).asJava)
+    val fixture = new Fixture(expiry = _ => new NotingExpiry((_, _) => answers.poll()))
+    val unit = freshUnit()
+    val execution = running(unit)
+
+    (1 to 5).foreach { tick =>
+      beat(execution, 3000L + tick * 30000L)
+      fixture.tick()
+    }
+
+    fixture.noted.replacedBy.asScala.toSeq shouldBe Seq.fill(3)((unit, execution.eid))
+  }
+
+  it should "expire it off the thread that looks, and go on when it cannot be handed over" in {
+    val left = new ConcurrentLinkedQueue[Runnable]()
+    val fixture = new Fixture(expiryThread = task => left.add(task))
+    val unit = freshUnit()
+    val execution = running(unit)
+
+    fixture.tick()
+
+    // The pass by age of the job's first tick, and what the run replaced: neither has run.
+    left should have size 2
+    fixture.noted.replacedBy.asScala shouldBe empty
+    fixture.noted.passes.asScala shouldBe empty
+    left.asScala.foreach(_.run())
+    fixture.noted.replacedBy.asScala.toSeq shouldBe Seq((unit, execution.eid))
+
+    val refusing =
+      new Fixture(expiryThread = _ => throw new IllegalStateException("shut down"))
+    val ended = running(freshUnit())
+    append(ended, "COMPLETED", 9000L)
+    noException should be thrownBy refusing.tick()
+    closingOf(ended).map(_.outcome) shouldBe Some(completed)
+  }
+
+  it should "expire the results of the run before, with the plan, log and statistics kept, once the next run has started" in {
+    val fixture = new Fixture(expiry = new RealExpiry(_))
+    val unit = freshUnit()
+    val first = running(unit)
+    val result = withResult(first, rows = 200)
+    append(first, "COMPLETED", 9000L)
+    fixture.tick()
+    val closedWith = row(first).getStoredBytes.longValue()
+    closedWith shouldBe
+      Seq(first.planUri, first.logUri, result).map(ExecutionTables.storedBytes).sum
+
+    // The next execution is created: the unit still shows the first.
+    val second = created(unit)
+    fixture.tick()
+    ExecutionTables.exists(result) shouldBe true
+    row(first).getResultsExpiredAt shouldBe null
+
+    // The unit starts it.
+    ExecutionPlanStore.claimStart(second.planUri)
+    withLog(second)
+    append(second, "READY", 2000L)
+    fixture.tick()
+
+    ExecutionTables.exists(result) shouldBe false
+    Seq(first.planUri, first.logUri).foreach(ExecutionTables.exists(_) shouldBe true)
+    row(first).getResultsExpiredAt shouldBe new Timestamp(fixture.clock.get())
+    row(first).getStoredBytes.longValue() shouldBe
+      Seq(first.planUri, first.logUri).map(ExecutionTables.storedBytes).sum
+    row(first).getStoredBytes.longValue() should be < closedWith
+    closingOf(first).map(_.outcome) shouldBe Some(completed)
+    row(second).getResultsExpiredAt shouldBe null
+  }
+
+  it should "expire the results of a run that the next run replaced while it ran, on the tick that closes it" in {
+    val fixture = new Fixture(expiry = new RealExpiry(_))
+    val unit = freshUnit()
+    val first = running(unit)
+    val result = withResult(first, rows = 20)
+    // The unit starts the next execution, which ends the run it holds.
+    val second = created(unit)
+    ExecutionPlanStore.claimStart(second.planUri)
+    withLog(second)
+    append(second, "READY", 2000L)
+    append(first, "KILLED", 9000L, reason = Some(s"replaced by execution ${second.eid}"))
+
+    fixture.tick()
+
+    closingOf(first).map(_.outcome) shouldBe Some(killed)
+    ExecutionTables.exists(result) shouldBe false
+    row(first).getResultsExpiredAt shouldBe new Timestamp(fixture.clock.get())
+    closingOf(second) shouldBe None
+  }
+
+  // --- results past their age ---
+
+  it should "have the results past their age expired on its first tick, and then once every interval" in {
+    val fixture = new Fixture()
+    val started = fixture.clock.get()
+
+    fixture.tick(3)
+    fixture.noted.passes.asScala.toSeq shouldBe Seq(started - 86400000L)
+
+    // One tick short of the interval, and the tick that completes it.
+    fixture.clock.set(started + 7199999L)
+    fixture.tick()
+    fixture.noted.passes.asScala should have size 1
+    fixture.clock.set(started + 7200000L)
+    fixture.tick(2)
+    fixture.noted.passes.asScala.toSeq shouldBe
+      Seq(started - 86400000L, started + 7200000L - 86400000L)
+  }
+
+  it should "start no pass while the one before it is under way, and start one as soon as it has ended" in {
+    val left = new ConcurrentLinkedQueue[Runnable]()
+    val fixture = new Fixture(
+      settings.copy(expiryIntervalSeconds = 30),
+      expiryThread = task => left.add(task)
+    )
+
+    fixture.tick()
+    fixture.clock.addAndGet(60000L)
+    fixture.tick(2)
+    left should have size 1
+
+    left.poll().run()
+    fixture.tick()
+    left should have size 1
+    left.poll().run()
+    fixture.noted.passes.asScala should have size 2
+  }
+
+  it should "survive a pass that fails, which is logged, and make the next one when it is due" in {
+    val failing = new NotingExpiry() {
+      override def expireEndedBy(endedByMs: Long): Int = {
+        super.expireEndedBy(endedByMs)
+        throw new IllegalStateException("the database is down")
+      }
+    }
+    val fixture = new Fixture(settings.copy(expiryIntervalSeconds = 30), expiry = _ => failing)
+
+    val lines = jobLogged { fixture.tick() }
+    fixture.clock.addAndGet(30000L)
+    fixture.tick()
+
+    lines shouldBe Seq(
+      (Level.WARN, "The results past their age could not be expired on this pass.")
+    )
+    failing.passes.asScala should have size 2
+  }
+
+  it should "expire what ended longer ago than results are kept, with its replay log, and nothing younger, once" in {
+    val fixture = new Fixture(expiry = new RealExpiry(_))
+    val nowMs = fixture.clock.get()
+    val replayLog = Files.createTempDirectory("execution-closing-job-spec-replay")
+    Files.write(replayLog.resolve("coordinator"), Array[Byte](1))
+    // Ended a day ago to the millisecond, and a millisecond later.
+    val old = endedAt(nowMs - 86400000L, replayLog = Some(replayLog.toUri.toString))
+    val young = endedAt(nowMs - 86400000L + 1L)
+    val oldResult = withResult(old, rows = 20)
+    val youngResult = withResult(young, rows = 20)
+    // Closed as never started, long ago: marked as it was closed, with a table at a name of its.
+    val neverStarted = created()
+    ExecutionRecords.close(
+      neverStarted.eid,
+      failed,
+      Some(ExecutionClosing.NeverStarted),
+      nowMs - 5 * 86400000L,
+      fromLog = false,
+      neverStarted = true
+    ) shouldBe true
+    val untouched = withResult(neverStarted, rows = 1)
+
+    val lines = jobLogged { fixture.tick() }
+
+    ExecutionTables.exists(oldResult) shouldBe false
+    ExecutionTables.exists(old.planUri) shouldBe true
+    row(old).getResultsExpiredAt shouldBe new Timestamp(nowMs)
+    row(old).getStoredBytes.longValue() shouldBe
+      Seq(old.planUri, old.logUri).map(ExecutionTables.storedBytes).sum
+    Files.exists(replayLog) shouldBe false
+    row(old).getLogLocation shouldBe null
+    ExecutionTables.exists(youngResult) shouldBe true
+    row(young).getResultsExpiredAt shouldBe null
+    // Nothing looked for the tables of the one that never started.
+    ExecutionTables.exists(untouched) shouldBe true
+    row(neverStarted).getResultsExpiredAt shouldBe new Timestamp(nowMs - 5 * 86400000L)
+    lines shouldBe Seq(
+      (Level.INFO, "Expired the results of 1 executions that were past their age.")
+    )
+
+    // A millisecond later the younger one is past its age too, and no pass is due.
+    fixture.clock.addAndGet(1L)
+    fixture.tick(3)
+    ExecutionTables.exists(youngResult) shouldBe true
+
+    fixture.clock.addAndGet(7200000L)
+    fixture.tick()
+    ExecutionTables.exists(youngResult) shouldBe false
+    row(young).getResultsExpiredAt shouldBe new Timestamp(fixture.clock.get())
+  }
+
   // --- closing on request ---
 
   "ExecutionCloser.closeIfEnded" should "close an execution whose label shows an ending, and no other" in {
@@ -1624,7 +1955,8 @@ class ExecutionClosingJobSpec
 
   "ExecutionClosingJob, once started," should "tick on its own until it is stopped" in {
     settle()
-    val job = new ExecutionClosingJob(settings.copy(intervalSeconds = 1))
+    val job =
+      new ExecutionClosingJob(settings.copy(intervalSeconds = 1), expiry = new NotingExpiry())
     val first = running()
     append(first, "COMPLETED", 9000L)
 
@@ -1638,6 +1970,7 @@ class ExecutionClosingJobSpec
   }
 
   it should "stop without having been started" in {
-    noException should be thrownBy new ExecutionClosingJob(settings).stop()
+    noException should be thrownBy
+      new ExecutionClosingJob(settings, expiry = new NotingExpiry()).stop()
   }
 }

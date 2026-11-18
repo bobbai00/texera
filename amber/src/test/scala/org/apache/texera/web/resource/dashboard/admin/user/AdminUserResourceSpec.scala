@@ -40,12 +40,14 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowUserAccess,
   WorkflowVersion
 }
+import org.apache.texera.web.service.execution.ExecutionExpiry
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.sql.Timestamp
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import javax.ws.rs.{BadRequestException, WebApplicationException}
 import scala.jdk.CollectionConverters._
 
@@ -68,7 +70,15 @@ class AdminUserResourceSpec
   private var workflowOfUserDao: WorkflowOfUserDao = _
   private var workflowUserAccessDao: WorkflowUserAccessDao = _
 
-  private val resource = new AdminUserResource
+  /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
+  private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
+
+  private val resource = new AdminUserResource(
+    new ExecutionExpiry(
+      warehousesEnabled = false,
+      deleteBinaries = eid => binariesDeletedFor.add(eid)
+    )
+  )
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
@@ -457,13 +467,33 @@ class AdminUserResourceSpec
 
   // ─── deleteCollection ─────────────────────────────────────────────────────
 
-  "deleteCollection" should "delete the target execution row" in {
+  "deleteCollection" should "delete the target execution row, with what the execution keeps" in {
     userDao.insert(makeUser(primaryUid, "collection_user"))
     val execution = seedExecution(primaryUid)
-    workflowExecutionsDao.fetchOneByEid(execution.getEid) should not be null
+    getDSLContext
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, Short.box(3.toShort))
+      .set(WORKFLOW_EXECUTIONS.ENDED_AT, new Timestamp(System.currentTimeMillis()))
+      .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
+      .execute()
+    binariesDeletedFor.clear()
 
     resource.deleteCollection(execution.getEid)
 
     workflowExecutionsDao.fetchOneByEid(execution.getEid) shouldBe null
+    binariesDeletedFor.asScala.toSeq shouldBe Seq(execution.getEid.longValue())
+  }
+
+  it should "refuse an execution that is still open with 409" in {
+    userDao.insert(makeUser(primaryUid, "collection_user"))
+    val execution = seedExecution(primaryUid)
+
+    val refused = intercept[WebApplicationException] {
+      resource.deleteCollection(execution.getEid)
+    }
+
+    refused.getResponse.getStatus shouldBe 409
+    refused.getMessage shouldBe s"execution ${execution.getEid} is still open; kill it first"
+    workflowExecutionsDao.fetchOneByEid(execution.getEid) should not be null
   }
 }

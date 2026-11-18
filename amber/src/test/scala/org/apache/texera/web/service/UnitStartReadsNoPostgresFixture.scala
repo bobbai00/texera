@@ -26,7 +26,6 @@ import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionLogStore,
-  ExecutionPlanStore,
   ExecutionResultUris,
   IcebergCatalogInstance
 }
@@ -80,7 +79,7 @@ import org.apache.texera.web.model.websocket.event.{
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
   ExecutionCreator,
-  ExecutionResources,
+  ExecutionExpiry,
   FixtureCompilingService
 }
 import org.scalatest.BeforeAndAfterAll
@@ -199,11 +198,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
 
   override protected def afterAll(): Unit =
     try {
-      created.foreach { execution =>
-        Try(ExecutionResources.clearExecutionResources(ExecutionIdentity(execution.eid)))
-        Try(ExecutionPlanStore.drop(new URI(execution.planUri)))
-        Try(ExecutionLogStore.drop(logUriOf(execution)))
-      }
+      created.foreach(execution => Try(expiry.dropAll(execution.eid)))
       StorageConfig.lakefsEndpoint = configuredLakefsEndpoint
       TestKit.shutdownActorSystem(system)
     } finally {
@@ -224,6 +219,9 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
+  /** The Dashboard's expiry, which deletes no large binary: the suite's runs write none. */
+  private val expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+
   /** The Dashboard's create, its plans bound as the suite binds them. */
   private object Dashboard
       extends ExecutionCreator(
@@ -232,7 +230,8 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         replayLogRoot = None,
         warehousesEnabled = false,
         costHints = NoHints,
-        background = _.run()
+        background = _.run(),
+        expiry = expiry
       )
 
   /**

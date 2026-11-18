@@ -31,7 +31,7 @@ import org.apache.texera.dao.jooq.generated.Tables.{
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTerminationReasonEnum
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.jooq.impl.{DSL, SQLDataType}
-import org.jooq.{Condition, DSLContext, Field, Record}
+import org.jooq.{Condition, DSLContext, Field, OrderField, Record}
 
 import java.net.URI
 import java.sql.Timestamp
@@ -123,10 +123,73 @@ object ExecutionRecords {
   def openBefore(wid: Long, cuid: Int, before: Long): Seq[ExecutionRecord] =
     select(
       WORKFLOW_EXECUTIONS.ENDED_AT.isNull
-        .and(WORKFLOW_VERSION.WID.eq(Integer.valueOf(Math.toIntExact(wid))))
-        .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
+        .and(onUnit(wid, cuid))
         .and(WORKFLOW_EXECUTIONS.EID.lt(Integer.valueOf(Math.toIntExact(before))))
     )
+
+  /**
+    * Execution `eid`'s row, if it is closed and still holds its results: they are not marked
+    * expired. With `endedByMs`, only if it also ended at or before that time.
+    */
+  def unexpired(eid: Long, endedByMs: Option[Long] = None): Option[ExecutionRecord] =
+    Option
+      .when(eid >= 1 && eid <= Int.MaxValue)(eid)
+      .flatMap(id => select(rowOf(id).and(holdsResults(endedByMs))).headOption)
+
+  /**
+    * The closed executions that still hold their results, ended at or before `endedByMs` and
+    * were made after execution `afterEid`, oldest first, at most `limit` of them. While
+    * per-user warehouses are disabled, those that write into one are left out: nothing reaches
+    * their tables then.
+    */
+  def unexpiredEndedBy(
+      endedByMs: Long,
+      afterEid: Long,
+      limit: Int,
+      warehousesEnabled: Boolean
+  ): Seq[ExecutionRecord] =
+    select(
+      holdsResults(Some(endedByMs))
+        .and(WORKFLOW_EXECUTIONS.EID.gt(Integer.valueOf(Math.toIntExact(afterEid))))
+        .and(
+          if (warehousesEnabled) DSL.noCondition()
+          else USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME.isNull
+        ),
+      limit = Some(limit)
+    )
+
+  /**
+    * The closed executions of workflow `wid` on computing unit `cuid` that still hold their
+    * results and were made before execution `before`, oldest first.
+    */
+  def unexpiredBefore(wid: Long, cuid: Int, before: Long): Seq[ExecutionRecord] =
+    select(
+      holdsResults(None)
+        .and(onUnit(wid, cuid))
+        .and(WORKFLOW_EXECUTIONS.EID.lt(Integer.valueOf(Math.toIntExact(before))))
+    )
+
+  /**
+    * The executions of workflow `wid` on computing unit `cuid` made after execution `after`,
+    * up to execution `upTo` itself, newest first.
+    */
+  def madeAfter(wid: Long, cuid: Int, after: Long, upTo: Long): Seq[ExecutionRecord] =
+    select(
+      onUnit(wid, cuid)
+        .and(WORKFLOW_EXECUTIONS.EID.gt(Integer.valueOf(Math.toIntExact(after))))
+        .and(WORKFLOW_EXECUTIONS.EID.le(Integer.valueOf(Math.toIntExact(upTo)))),
+      order = Seq(WORKFLOW_EXECUTIONS.EID.desc())
+    )
+
+  /** Where execution `eid` keeps its replay log; None when it keeps none, or has no row. */
+  def replayLogOf(eid: Long): Option[String] =
+    Option(
+      context
+        .select(WORKFLOW_EXECUTIONS.LOG_LOCATION)
+        .from(WORKFLOW_EXECUTIONS)
+        .where(rowOf(eid))
+        .fetchOne(WORKFLOW_EXECUTIONS.LOG_LOCATION)
+    ).filter(_.nonEmpty)
 
   /**
     * The condition that a row's status can be one of `codes`, as far as the row tells: it is
@@ -218,6 +281,37 @@ object ExecutionRecords {
       .execute() == 1
   }
 
+  /**
+    * Marks the results of execution `eid` expired as of `atMs`, and records what its tables
+    * still hold, unless it is open or its results are marked expired already. From then on its
+    * verdict is no longer replaced by an ending its log shows later ([[revise]]).
+    *
+    * The row is read again by the UPDATE itself: with `endedByMs`, it is marked only if it
+    * still ended at or before that time, which a verdict replaced in the meantime may not have.
+    *
+    * @return whether this call marked it
+    */
+  def expire(
+      eid: Long,
+      atMs: Long,
+      storedBytes: Long,
+      endedByMs: Option[Long] = None
+  ): Boolean =
+    context
+      .update(WORKFLOW_EXECUTIONS)
+      .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, timeOf(atMs))
+      .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(storedBytes))
+      .where(rowOf(eid).and(holdsResults(endedByMs)))
+      .execute() == 1
+
+  /** Stops naming the replay log of execution `eid`, once that log is gone. */
+  def forgetReplayLog(eid: Long): Unit =
+    context
+      .update(WORKFLOW_EXECUTIONS)
+      .setNull(WORKFLOW_EXECUTIONS.LOG_LOCATION)
+      .where(rowOf(eid))
+      .execute()
+
   /** Records what the tables of execution `eid` hold in the lake. */
   def setStoredBytes(eid: Long, bytes: Long): Unit =
     context
@@ -237,15 +331,37 @@ object ExecutionRecords {
   private def rowOf(eid: Long): Condition =
     WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(Math.toIntExact(eid)))
 
+  private def onUnit(wid: Long, cuid: Int): Condition =
+    WORKFLOW_VERSION.WID
+      .eq(Integer.valueOf(Math.toIntExact(wid)))
+      .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
+
+  /**
+    * The condition that a row is closed and its results are not marked expired; with
+    * `endedByMs`, also that it ended at or before that time.
+    */
+  private def holdsResults(endedByMs: Option[Long]): Condition = {
+    val held = WORKFLOW_EXECUTIONS.ENDED_AT.isNotNull
+      .and(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT.isNull)
+    endedByMs.fold(held)(ms => held.and(WORKFLOW_EXECUTIONS.ENDED_AT.le(timeOf(ms))))
+  }
+
   private def requireOutcome(outcome: Short): Unit =
     require(
       WorkflowExecutionStatus.Ended.contains(outcome),
       s"an execution ends completed, failed or killed, not as $outcome"
     )
 
-  /** The rows that meet `condition`, each with its workflow, its warehouse and its unit. */
-  private def select(condition: Condition): Seq[ExecutionRecord] =
-    context
+  /**
+    * The rows that meet `condition`, each with its workflow, its warehouse and its unit, in
+    * `order` (oldest first unless given), at most `limit` of them when given.
+    */
+  private def select(
+      condition: Condition,
+      order: Seq[OrderField[_]] = Seq(WORKFLOW_EXECUTIONS.EID.asc()),
+      limit: Option[Int] = None
+  ): Seq[ExecutionRecord] = {
+    val ordered = context
       .select(
         WORKFLOW_EXECUTIONS.EID,
         WORKFLOW_VERSION.WID,
@@ -269,11 +385,9 @@ object ExecutionRecords {
       .leftJoin(WORKFLOW_COMPUTING_UNIT)
       .on(WORKFLOW_COMPUTING_UNIT.CUID.eq(WORKFLOW_EXECUTIONS.CUID))
       .where(condition)
-      .orderBy(WORKFLOW_EXECUTIONS.EID)
-      .fetch()
-      .asScala
-      .map(recordOf)
-      .toSeq
+      .orderBy(order: _*)
+    limit.fold(ordered.fetch())(ordered.limit(_).fetch()).asScala.map(recordOf).toSeq
+  }
 
   private def recordOf(row: Record): ExecutionRecord =
     ExecutionRecord(

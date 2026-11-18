@@ -297,7 +297,9 @@ class OperatorUpdatesSpec
         replayLogRoot = None,
         warehousesEnabled = warehouses,
         costHints = NoHints,
-        background = _.run()
+        background = _.run(),
+        // No large binary is deleted for what a create finds replaced.
+        expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
       )
 
   private object NoHints extends CostHintsLoader(1) {
