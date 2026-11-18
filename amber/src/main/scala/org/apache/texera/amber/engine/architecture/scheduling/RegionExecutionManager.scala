@@ -479,7 +479,8 @@ class RegionExecutionManager(
       operatorExecution,
       operatorConfig,
       coordinatorConfig.stateRestoreConfOpt,
-      coordinatorConfig.faultToleranceConfOpt
+      coordinatorConfig.faultToleranceConfOpt,
+      coordinatorConfig.pythonEnvironmentsRoot
     )
   }
 

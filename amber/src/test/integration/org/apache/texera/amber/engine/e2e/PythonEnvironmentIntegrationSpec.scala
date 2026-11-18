@@ -73,7 +73,7 @@ import org.apache.texera.amber.tags.IntegrationTest
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.compiler.PythonEnvironmentNotResolved
-import org.apache.texera.common.config.{PythonUtils, UdfConfig}
+import org.apache.texera.common.config.PythonUtils
 import org.apache.texera.web.service.{
   ExecutionConsoleService,
   ExecutionResultService,
@@ -103,9 +103,9 @@ import scala.util.Using
   * Each run is set up and started as a unit starts one, from its plan saved and read back; only
   * the engine is of this suite's actor system.
   *
-  * The environments are installed under the unit's root (`udf.python.environments.root`). The
-  * suite starts with none of its own there, and leaves none; what its runs wrote to the lake is
-  * cleared after it.
+  * The environments are installed under a root of the suite's own, which is removed after it:
+  * the unit's root, and what a developer keeps installed there, is left alone. What the suite's
+  * runs wrote to the lake is cleared after it.
   *
   * Tagged @IntegrationTest because it spawns Python workers and installs from the package index;
   * routed to the `amber-integration` CI job.
@@ -125,7 +125,8 @@ class PythonEnvironmentIntegrationSpec
   // An install and a Python worker's start take seconds; a slow index, minutes.
   private val patience = timeout(Span(5, Minutes))
 
-  private val installer = PythonEnvironmentInstaller.forThisUnit
+  private val root: Path = Files.createTempDirectory("python-environment-integration-spec")
+  private val installer = PythonEnvironmentInstaller.forThisUnit.under(root)
   private val engine =
     new EngineInterpreter(PythonUtils.getPythonExecutable, ProcessRunner.OperatingSystem)
 
@@ -139,7 +140,6 @@ class PythonEnvironmentIntegrationSpec
         val other = if (line == "six==1.16.0") "1.15.0" else "1.16.0"
         PythonEnvironment("another-six", Seq(s"six==$other"))
     }
-  private def environments: Seq[PythonEnvironment] = Seq(tables, unreleased) ++ anotherSix
 
   /** What the runs below write to the lake: their results, statistics and console. */
   private val written = mutable.Set.empty[URI]
@@ -149,15 +149,16 @@ class PythonEnvironmentIntegrationSpec
     // as in the other e2e specs: load the JDBC driver explicitly, which CI occasionally misses
     Class.forName("org.postgresql.Driver")
     initiateTexeraDBForTestCases()
-    environments.foreach(uninstall)
   }
 
   override def afterAll(): Unit =
     try {
-      environments.foreach(uninstall)
       written
         .filter(DocumentFactory.documentExists)
         .foreach(uri => DocumentFactory.openDocument(uri)._1.clear())
+      Using.resource(Files.walk(root)) { paths =>
+        paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.delete(path))
+      }
     } finally TestKit.shutdownActorSystem(system)
 
   override protected def beforeEach(): Unit = setUpWorkflowExecutionData(specId)
@@ -165,8 +166,8 @@ class PythonEnvironmentIntegrationSpec
   override protected def afterEach(): Unit = cleanupWorkflowExecutionData(specId)
 
   /**
-    * Where the unit installs `environment`: under its root, in a directory named by the
-    * environment's digest and the identity of the engine's interpreter.
+    * Where the suite's installer installs `environment`: under its root, in a directory named
+    * by the environment's digest and the identity of the engine's interpreter.
     */
   private def directoryOf(environment: PythonEnvironment): Path = {
     val key = MessageDigest
@@ -174,23 +175,12 @@ class PythonEnvironmentIntegrationSpec
       .digest(
         s"${environment.digest}\n${engine.description.identity}".getBytes(StandardCharsets.UTF_8)
       )
-    Paths.get(UdfConfig.pythonEnvironmentsRoot).resolve(HexFormat.of().formatHex(key).take(32))
+    root.resolve(HexFormat.of().formatHex(key).take(32))
   }
 
   private def lockOf(environment: PythonEnvironment): Path = {
     val directory = directoryOf(environment)
     directory.resolveSibling(s"${directory.getFileName}.lock")
-  }
-
-  /** Removes what the unit keeps of `environment`, if anything. */
-  private def uninstall(environment: PythonEnvironment): Unit = {
-    val directory = directoryOf(environment)
-    if (Files.exists(directory)) {
-      Using.resource(Files.walk(directory)) { paths =>
-        paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.delete(path))
-      }
-    }
-    Files.deleteIfExists(lockOf(environment))
   }
 
   /** What the marker of `environment`, installed, says of it. */
@@ -306,6 +296,7 @@ class PythonEnvironmentIntegrationSpec
       store,
       failed,
       Some(fixtureUnitMountRoot),
+      installer,
       createAmberRuntime = new AmberClient(system, _, _, _, _)
     )
 

@@ -42,7 +42,8 @@ object ExecutorDeployment {
       operatorExecution: OperatorExecution,
       operatorConfig: OperatorConfig,
       stateRestoreConfig: Option[StateRestoreConfig],
-      replayLoggingConfig: Option[FaultToleranceConfig]
+      replayLoggingConfig: Option[FaultToleranceConfig],
+      pythonEnvironmentsRoot: String
   ): Unit = {
 
     val addressInfo = AddressInfo(
@@ -72,7 +73,7 @@ object ExecutorDeployment {
       }
 
       val workflowWorker = if (op.isPythonBased) {
-        PythonWorkflowWorker.props(workerConfig)
+        PythonWorkflowWorker.props(workerConfig, pythonEnvironmentsRoot)
       } else {
         WorkflowWorker.props(
           workerConfig,

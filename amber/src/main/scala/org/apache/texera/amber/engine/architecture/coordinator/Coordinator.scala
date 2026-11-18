@@ -22,7 +22,7 @@ package org.apache.texera.amber.engine.architecture.coordinator
 import org.apache.pekko.actor.SupervisorStrategy.Stop
 import org.apache.pekko.actor.{AllForOneStrategy, Props, SupervisorStrategy}
 import org.apache.texera.web.model.websocket.response.RegionUpdateEvent
-import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
+import org.apache.texera.common.config.{ApplicationConfig, StorageConfig, UdfConfig}
 import org.apache.texera.amber.core.virtualidentity.ChannelIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.NetworkAck
@@ -69,7 +69,10 @@ final case class CoordinatorConfig(
     faultToleranceConfOpt: Option[FaultToleranceConfig],
     // The object-store endpoints the run's workers read input links from: a plan's link that
     // points anywhere else is refused. This computing unit's, unless a caller gives others.
-    inputLinkEndpoints: Seq[String] = StorageConfig.inputLinksAllowedEndpoints
+    inputLinkEndpoints: Seq[String] = StorageConfig.inputLinksAllowedEndpoints,
+    // The directory the run's Python workers find the environments of their operators
+    // installed under. This computing unit's, unless a caller installed them under another.
+    pythonEnvironmentsRoot: String = UdfConfig.pythonEnvironmentsRoot
 )
 
 object Coordinator {
@@ -280,7 +283,8 @@ class Coordinator(
             OperatorExecution(), //use dummy value here
             regionExecution.region.resourceConfig.get.operatorConfigs(opId),
             coordinatorConfig.stateRestoreConfOpt,
-            coordinatorConfig.faultToleranceConfOpt
+            coordinatorConfig.faultToleranceConfOpt,
+            coordinatorConfig.pythonEnvironmentsRoot
           )
       }
     }

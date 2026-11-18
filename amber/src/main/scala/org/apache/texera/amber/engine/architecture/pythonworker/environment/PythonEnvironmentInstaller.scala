@@ -74,7 +74,7 @@ import scala.util.{Try, Using}
   *                  holds one of its threads until it ends, one waiting for its turn too.
   */
 final class PythonEnvironmentInstaller(
-    root: Path,
+    val root: Path,
     timeout: FiniteDuration,
     engine: EngineInterpreter,
     processes: ProcessRunner,
@@ -129,6 +129,15 @@ final class PythonEnvironmentInstaller(
           )
         )
     }
+
+  /**
+    * This installer, for the environments under `root`: itself, for its own root. A run's
+    * workers are told the root the run's environments were installed under, and find them
+    * with this.
+    */
+  def under(root: Path): PythonEnvironmentInstaller =
+    if (root == this.root) this
+    else new PythonEnvironmentInstaller(root, timeout, engine, processes, executor)
 
   /** Where `environment` is installed on this unit, or is to be. */
   private def directoryOf(environment: PythonEnvironment): Path =
@@ -421,8 +430,8 @@ object PythonEnvironmentInstaller {
   }
 
   /**
-    * This computing unit's installer: environments under `udf.python.environments.root`, built
-    * on the interpreter the unit's Python workers run.
+    * This computing unit's installer: environments under `python.environments.root` of
+    * udf.conf, built on the interpreter the unit's Python workers run.
     */
   lazy val forThisUnit: PythonEnvironmentInstaller = {
     val threads = new AtomicInteger()

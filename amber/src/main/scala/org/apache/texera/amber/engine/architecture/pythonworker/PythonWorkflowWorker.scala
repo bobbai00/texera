@@ -43,13 +43,27 @@ import org.apache.texera.amber.engine.common.{CheckpointState, Utils}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.Path
+import java.nio.file.{Path, Paths}
 import java.util.Base64
 import java.util.concurrent.{ExecutorService, Executors}
 import scala.sys.process.{BasicIO, Process}
 
 object PythonWorkflowWorker {
-  def props(workerConfig: WorkerConfig): Props = Props(new PythonWorkflowWorker(workerConfig))
+
+  /**
+    * @param environmentsRoot the directory the worker finds its operator's Python environment
+    *                         installed under: this unit's, unless its run installed under another
+    */
+  def props(
+      workerConfig: WorkerConfig,
+      environmentsRoot: String = UdfConfig.pythonEnvironmentsRoot
+  ): Props =
+    Props(
+      new PythonWorkflowWorker(
+        workerConfig,
+        PythonEnvironmentInstaller.forThisUnit.under(Paths.get(environmentsRoot))
+      )
+    )
 
   /**
     * Serialize the Python worker startup configuration to a JSON object keyed by

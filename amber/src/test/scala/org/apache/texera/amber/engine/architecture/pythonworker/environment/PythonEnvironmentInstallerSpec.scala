@@ -553,4 +553,18 @@ class PythonEnvironmentInstallerSpec
     missing.getMessage shouldBe "Python environment 'plots' is not installed on this computing unit."
   }
 
+  "PythonEnvironmentInstaller.under" should
+    "be the installer itself for its own root, and find under another what is installed there" in {
+    val python = new FakePython()
+    val (root, other) = (newRoot(), newRoot())
+    val installer = python.installer(root, FakePython.SameThread)
+    val installed = await(python.installer(other, FakePython.SameThread).ensure(ml, _ => ()))
+
+    installer.under(root) should be theSameInstanceAs installer
+    installer.under(other).root shouldBe other
+    installer.under(other).interpreterFor(Some(ml)) shouldBe installed.interpreter.toString
+    // Its own root holds no such environment.
+    an[IllegalStateException] should be thrownBy installer.interpreterFor(Some(ml))
+  }
+
 }

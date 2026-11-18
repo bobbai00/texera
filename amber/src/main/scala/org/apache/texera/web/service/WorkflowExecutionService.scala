@@ -129,7 +129,8 @@ object WorkflowExecutionService extends LazyLogging {
   *                             operator of it, is given to read them from; None on a unit that
   *                             mounts none. Production reads the unit's environment; a parameter
   *                             so a test can name one.
-  * @param environmentInstaller installs the Python environments the plan names on this unit
+  * @param environmentInstaller installs the Python environments the plan names on this unit;
+  *                             the run's workers are told the root it installs them under
   * @param createAmberRuntime   hands a plan to the engine, under its context and the
   *                             coordinator's configuration, and returns the engine's client,
   *                             which reports what fails to the handler it is given
@@ -236,7 +237,10 @@ class WorkflowExecutionService(
       WorkflowExecutionService.mountedUnder(executionPlan.plan, mountRoot)
     )
     val notification = record.notification.map(Notification.fromJson)
-    val coordinatorConfig = WorkflowExecutionService.coordinatorConfigOf(executionPlan)
+    // The run's workers find its Python environments where this service installs them.
+    val coordinatorConfig = WorkflowExecutionService
+      .coordinatorConfigOf(executionPlan)
+      .copy(pythonEnvironmentsRoot = environmentInstaller.root.toString)
     val client =
       createAmberRuntime(workflowContext, workflow.physicalPlan, coordinatorConfig, errorHandler)
     try {

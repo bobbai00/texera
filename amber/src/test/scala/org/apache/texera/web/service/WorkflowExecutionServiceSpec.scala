@@ -1107,12 +1107,15 @@ class WorkflowExecutionServiceSpec
     val python = new FakePython()
     val held = python.holdPipInstalls()
     val executionPlan = readBack(environmentPlan("installs"))
-    val run = new StoredRun(executionPlan, Some(installerOn(python)))
+    val installer = installerOn(python)
+    val run = new StoredRun(executionPlan, Some(installer))
     try {
       // The start returns while pip is still at work, on a thread of the installer's: the run is
       // set up and READY, its engine built and not started.
       run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
         None
+      // The engine's workers are to find the environment where this installer installs it.
+      run.coordinatorConfig.map(_.pythonEnvironmentsRoot) shouldBe Some(installer.root.toString)
       held.awaitBegun() shouldBe true
       run.store.metadataStore.getState.state shouldBe READY
       startWorkflowAsked(run) shouldBe false
