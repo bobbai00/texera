@@ -49,12 +49,13 @@ object CompileSettings {
   /**
     * The site's settings as they stand now, for a service that has Postgres, the Dashboard and
     * the compiling service: what the site's administrators set is read from there, and the rest
-    * is the deployment's configuration. A setting that cannot be read, because the site holds
-    * none, holds one that is no number, or Postgres does not answer, is the default's.
+    * is the deployment's configuration. A setting the site holds none of, or holds as no number,
+    * is the default's. A read Postgres does not answer is thrown as it is: a plan compiled under
+    * the default could run under another limit than the site's.
     */
   def fromSiteSettings(): CompileSettings =
     Default.copy(
       csvParserMaxColumns =
-        SiteSettings.getInt("csv_parser_max_columns", Default.csvParserMaxColumns)
+        SiteSettings.getIntStrict("csv_parser_max_columns", Default.csvParserMaxColumns)
     )
 }

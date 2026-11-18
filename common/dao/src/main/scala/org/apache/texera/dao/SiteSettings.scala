@@ -34,14 +34,23 @@ import scala.util.Try
   *
   * Failures swallowed by the outer Try on the read path include: SqlServer not
   * initialised, no row for the key, and value that can't be parsed. In all of
-  * these cases the caller's default takes over. The write helpers take an
-  * explicit [[DSLContext]] so callers can run them inside their own transaction
-  * and surface failures.
+  * these cases the caller's default takes over. [[getIntStrict]] is the read for
+  * a caller that must not take an outage for the default. The write helpers take
+  * an explicit [[DSLContext]] so callers can run them inside their own
+  * transaction and surface failures.
   */
 object SiteSettings {
 
   def getInt(key: String, default: => Int): Int =
     readAndParse(key, default)(_.toInt)
+
+  /**
+    * As [[getInt]], except that a read the database does not answer is thrown as
+    * it is. The default stands in only for a key that has no row, or whose value
+    * is no number.
+    */
+  def getIntStrict(key: String, default: => Int): Int =
+    parseOrDefault(read(key), default)(_.toInt)
 
   def getLong(key: String, default: => Long): Long =
     readAndParse(key, default)(_.toLong)
@@ -76,15 +85,17 @@ object SiteSettings {
   private[dao] def parseOrDefault[T](raw: Option[String], default: T)(parse: String => T): T =
     raw.flatMap(s => Try(parse(s.trim)).toOption).getOrElse(default)
 
-  private def readAndParse[T](key: String, default: => T)(parse: String => T): T =
-    Try {
-      val raw = SqlServer
+  private def read(key: String): Option[String] =
+    Option(
+      SqlServer
         .getInstance()
         .createDSLContext()
         .select(SITE_SETTINGS.VALUE)
         .from(SITE_SETTINGS)
         .where(SITE_SETTINGS.KEY.eq(key))
         .fetchOneInto(classOf[String])
-      parseOrDefault(Option(raw), default)(parse)
-    }.getOrElse(default)
+    )
+
+  private def readAndParse[T](key: String, default: => T)(parse: String => T): T =
+    Try(parseOrDefault(read(key), default)(parse)).getOrElse(default)
 }

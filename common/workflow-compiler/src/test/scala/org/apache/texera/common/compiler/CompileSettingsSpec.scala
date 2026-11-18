@@ -22,6 +22,7 @@ package org.apache.texera.common.compiler
 import org.apache.texera.common.config.{ApplicationConfig, DefaultsConfig}
 import org.apache.texera.dao.jooq.generated.Tables.SITE_SETTINGS
 import org.apache.texera.dao.{MockTexeraDB, SiteSettings}
+import org.jooq.exception.DataAccessException
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -67,6 +68,16 @@ class CompileSettingsSpec
 
     siteHolds("many")
     CompileSettings.fromSiteSettings() shouldBe CompileSettings.Default
+  }
+
+  it should "throw, as it is, a read the database does not answer, taking no default for it" in {
+    siteHolds("731")
+
+    whileDatabaseDoesNotAnswer {
+      a[DataAccessException] should be thrownBy CompileSettings.fromSiteSettings()
+    }
+    // The site's limit again, once the database answers.
+    CompileSettings.fromSiteSettings().csvParserMaxColumns shouldBe 731
   }
 
   "CompileSettings.Default" should "be what a site is seeded with" in {

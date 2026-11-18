@@ -23,11 +23,11 @@ import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import org.apache.texera.dao.MockTexeraDB.{MaxPoolSize, password, username}
 import org.jooq.impl.{DSL, DataSourceConnectionProvider, DefaultConfiguration}
-import org.jooq.{DSLContext, SQLDialect}
+import org.jooq.{ConnectionProvider, DSLContext, SQLDialect}
 import org.scalatest.{Outcome, TestSuite, TestSuiteMixin}
 
 import java.nio.file.Paths
-import java.sql.DriverManager
+import java.sql.{Connection, DriverManager, SQLException}
 import scala.io.Source
 import scala.util.Using
 
@@ -180,6 +180,22 @@ trait MockTexeraDB extends TestSuiteMixin { this: TestSuite =>
       }
       testScopedContext.get
     }
+
+  /**
+    * Runs `body` while the database [[SqlServer]] hands out does not answer: every statement
+    * fails for want of a connection. The suite's own `getDSLContext` answers as before.
+    */
+  def whileDatabaseDoesNotAnswer[T](body: => T): T = {
+    val unreachable = getDSLContext
+      .configuration()
+      .derive(new ConnectionProvider {
+        override def acquire(): Connection = throw new SQLException("database unavailable")
+        override def release(connection: Connection): Unit = ()
+      })
+    SqlServer.getInstance().replaceDSLContext(DSL.using(unreachable))
+    try body
+    finally SqlServer.getInstance().replaceDSLContext(getDSLContext)
+  }
 
   def getDBInstance: EmbeddedPostgres = MockTexeraDB.getDBInstance
   def newRawConnection(): java.sql.Connection = {

@@ -38,13 +38,21 @@ import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.compiler.{WorkflowCompilationFailed, WorkflowCompiler}
+import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.web.service.execution.UserEnvironmentResolver
+import org.jooq.exception.DataAccessException
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 
-class PlanToRunSpec extends AnyFlatSpec with Matchers {
+class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll with MockTexeraDB {
+
+  // What a plan is bound to holds the site's settings, which are read from the database.
+  override protected def beforeAll(): Unit = initializeDBAndReplaceDSLContext()
+
+  override protected def afterAll(): Unit = closeConnectionPool()
 
   private def newContext(): WorkflowContext =
     new WorkflowContext(
@@ -95,6 +103,13 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers {
   it should "bind a plan to the Python environments its user keeps at the Dashboard" in {
     // That it is the plan's user whose environments are found is `ExecutionResourceSpec`'s.
     PlanToRun.bindingsFor(7).environments shouldBe a[UserEnvironmentResolver]
+  }
+
+  it should "throw, as it is, a read of the site's settings the database does not answer" in {
+    // Bound to the defaults instead, a plan could run under another limit than the site's.
+    whileDatabaseDoesNotAnswer {
+      a[DataAccessException] should be thrownBy PlanToRun.bindingsFor(7)
+    }
   }
 
   "PlanToRun.make" should

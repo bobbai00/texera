@@ -44,6 +44,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 
 import java.sql.{Connection, SQLException}
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
   * Resource-layer tests for `/compile`. Owns only what the REST envelope
@@ -274,23 +275,38 @@ class WorkflowCompilationResourceSpec
     // user to fix. A database that does not answer says nothing about the file: reported on the
     // scan, the outage would read as the user's mistake.
     val scan = wholeFileScanOp(privateDatasetFilePath)
+    // The database answers the compile's first read, of the site's settings, and none after it.
+    val answering = getDSLContext.configuration().connectionProvider()
+    val reads = new AtomicInteger()
     val unreachable = getDSLContext
       .configuration()
       .derive(new ConnectionProvider {
-        override def acquire(): Connection = throw new SQLException("database unavailable")
-        override def release(connection: Connection): Unit = ()
+        override def acquire(): Connection =
+          if (reads.incrementAndGet() == 1) answering.acquire()
+          else throw new SQLException("database unavailable")
+        override def release(connection: Connection): Unit = answering.release(connection)
       })
     SqlServer.getInstance().replaceDSLContext(DSL.using(unreachable))
     val response =
       try postCompile(planOf(scan), as = owner)
       finally SqlServer.getInstance().replaceDSLContext(getDSLContext)
 
+    assert(reads.get() > 1, "the scan's file was not looked up")
     assertThat(response.getStatus).isEqualTo(500)
     val body = response.readEntity(classOf[String])
     assert(!body.contains("operatorErrors"), body)
     assert(!body.contains(scan.operatorIdentifier.id), body)
     // The same request compiles once the database answers again.
     assertThat(postCompile(planOf(scan), as = owner).getStatus).isEqualTo(200)
+  }
+
+  it should "answer 500, not a plan under the default settings, when the site's cannot be read" in {
+    // No operator of the plan reads the database: only the site's settings are read from it.
+    val response = whileDatabaseDoesNotAnswer(postCompile(planOf(textOp("north\nsouth"))))
+
+    assertThat(response.getStatus).isEqualTo(500)
+    assert(!response.readEntity(classOf[String]).contains("physicalPlan"))
+    assertThat(postCompile(planOf(textOp("north\nsouth"))).getStatus).isEqualTo(200)
   }
 
   it should "leave a dataset a UDF names to the run, resolving nothing while editing" in {

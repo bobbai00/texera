@@ -19,6 +19,7 @@
 package org.apache.texera.dao
 
 import org.apache.texera.dao.jooq.generated.Tables.SITE_SETTINGS
+import org.jooq.exception.DataAccessException
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.flatspec.AnyFlatSpec
@@ -86,6 +87,27 @@ class SiteSettingsSpec
   it should "return the default when the stored value is not numeric" in {
     SiteSettings.upsert(getDSLContext, "bad_int", "not-a-number", "admin")
     SiteSettings.getInt("bad_int", 7) shouldBe 7
+  }
+
+  "getIntStrict" should "return the stored value, and the default for a key that is absent or not numeric" in {
+    SiteSettings.upsert(getDSLContext, "max_x", "42", "admin")
+    SiteSettings.upsert(getDSLContext, "bad_int", "not-a-number", "admin")
+
+    SiteSettings.getIntStrict("max_x", 0) shouldBe 42
+    SiteSettings.getIntStrict("missing_key", 7) shouldBe 7
+    SiteSettings.getIntStrict("bad_int", 7) shouldBe 7
+  }
+
+  it should "throw a read the database does not answer, which getInt takes for the default" in {
+    SiteSettings.upsert(getDSLContext, "max_x", "42", "admin")
+
+    whileDatabaseDoesNotAnswer {
+      val failure = intercept[DataAccessException](SiteSettings.getIntStrict("max_x", 7))
+      val causes = Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).toList
+      causes.map(_.getMessage) should contain("database unavailable")
+      SiteSettings.getInt("max_x", 7) shouldBe 7
+    }
+    SiteSettings.getIntStrict("max_x", 7) shouldBe 42
   }
 
   "getLong" should "return the stored long value when the key is present" in {
