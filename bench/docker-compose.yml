@@ -1,0 +1,116 @@
+# The throwaway lake of bench/stack.sh: Lakekeeper v0.11.0, its Postgres 15 and RustFS 1.0.0,
+# the images and the set-up of the step 0 proof's stack.sh (sce-step0-proofs,
+# proofs/step0/iceberg-commits), as one Compose project of its own.
+#
+# Not started by hand: stack.sh exports every ${...} below (the ports and names it fixes, the
+# secrets it makes for each `up`) and creates the warehouse once Lakekeeper answers.
+#
+# All containers share one network namespace, which RustFS owns. RustFS listens on the same
+# port inside as it is published on, so the warehouse's one S3 endpoint
+# (http://127.0.0.1:${S3_PORT}) works both for Lakekeeper, which writes each metadata.json
+# itself, and for the JVM on the host, which writes data files through remote signing.
+# Postgres is reachable inside that namespace only. Nothing is published beyond 127.0.0.1.
+name: sce-bench
+
+x-lakekeeper-environment: &lakekeeper-environment
+  LAKEKEEPER__PG_DATABASE_URL_READ: postgres://postgres:${PG_PASSWORD:-}@127.0.0.1:5432/postgres
+  LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://postgres:${PG_PASSWORD:-}@127.0.0.1:5432/postgres
+  LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_ENCRYPTION_KEY:-}
+  # What Lakekeeper tells clients to call it at, for remote signing: the published port.
+  LAKEKEEPER__BASE_URI: http://127.0.0.1:${LAKEKEEPER_PORT}
+
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    container_name: sce-bench-rustfs
+    ports:
+      - "127.0.0.1:${LAKEKEEPER_PORT}:8181" # Lakekeeper: the REST catalog and its management API
+      - "127.0.0.1:${S3_PORT}:${S3_PORT}" # RustFS: the S3 API
+    environment:
+      RUSTFS_ADDRESS: 0.0.0.0:${S3_PORT}
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-}
+      RUSTFS_REGION: ${S3_REGION}
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+    volumes:
+      - rustfs-data:/data
+    networks:
+      - lake
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${S3_PORT}/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  postgres:
+    image: postgres:15
+    container_name: sce-bench-postgres
+    network_mode: service:rustfs
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  lakekeeper-migrate:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: sce-bench-lakekeeper-migrate
+    network_mode: service:rustfs
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *lakekeeper-environment
+    command: ["migrate"]
+
+  lakekeeper:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: sce-bench-lakekeeper
+    network_mode: service:rustfs
+    depends_on:
+      rustfs:
+        condition: service_healthy
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+    environment: *lakekeeper-environment
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  # Makes the warehouse's bucket, and exits.
+  bucket:
+    image: rustfs/rc:v0.1.35
+    container_name: sce-bench-bucket
+    network_mode: service:rustfs
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        rc alias set local http://127.0.0.1:${S3_PORT} "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY"
+        --region ${S3_REGION} --bucket-lookup path >/dev/null
+        && rc bucket create --ignore-existing local/${S3_BUCKET} >/dev/null
+
+volumes:
+  rustfs-data:
+    name: sce-bench-rustfs-data
+  pg-data:
+    name: sce-bench-pg-data
+
+networks:
+  lake:
+    name: sce-bench-net
