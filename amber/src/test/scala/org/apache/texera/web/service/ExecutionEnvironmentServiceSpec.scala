@@ -66,7 +66,8 @@ import java.util.concurrent.{
   ExecutionException,
   ExecutorService,
   Executors,
-  TimeUnit
+  TimeUnit,
+  TimeoutException
 }
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters.CollectionHasAsScala
@@ -301,6 +302,34 @@ class ExecutionEnvironmentServiceSpec
       }
       // An operator in the engine's own environment is told nothing.
       run.operatorsTold shouldBe Set("udf-a", "udf-b")
+    }
+  }
+
+  it should "be ready only once every environment of its plan is" in {
+    val python = new FakePython()
+    val mlBegun = new CountDownLatch(1)
+    val release = new CountDownLatch(1)
+    val install = python.pipInstall
+    python.pipInstall = requirements => {
+      if (requirements == ml.requirements) {
+        mlBegun.countDown()
+        release.await(30, TimeUnit.SECONDS)
+      }
+      install(requirements)
+    }
+    val plan = chain(operator("plot", in(plots)), operator("train", in(ml)))
+    withRun(plan, python) { run =>
+      val prepared = run.service.prepare()
+      mlBegun.await(30, TimeUnit.SECONDS) shouldBe true
+
+      // One environment is ready while the other is still being installed: the run is not.
+      eventually(run.titlesTo("plot") should have size 2)
+      run.titlesTo("plot").last should startWith("Python environment 'plots' is ready")
+      a[TimeoutException] should be thrownBy prepared.get(300, TimeUnit.MILLISECONDS)
+      release.countDown()
+      await(prepared)
+
+      run.titlesTo("train").last should startWith("Python environment 'ml' is ready")
     }
   }
 
