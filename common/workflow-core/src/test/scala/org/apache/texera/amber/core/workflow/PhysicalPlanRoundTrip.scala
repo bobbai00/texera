@@ -19,6 +19,7 @@
 
 package org.apache.texera.amber.core.workflow
 
+import org.apache.texera.amber.core.storedplan.StoredPhysicalPlan
 import org.scalatest.Assertions
 
 /**
@@ -47,17 +48,31 @@ object PhysicalPlanRoundTrip extends Assertions {
     *
     * @return the JSON text
     */
-  def assertRoundTrips(plan: ExecutionPlan): String = {
-    val stored = PhysicalPlanCodec.encode(plan)
+  def assertRoundTrips(plan: ExecutionPlan): String =
+    assertRoundTrips(plan, PhysicalPlanCodec.encode, PhysicalPlanCodec.decode)
+
+  /**
+    * As [[assertRoundTrips]], for a plan whose files are not linked yet: the plan as a compile
+    * for a run makes it, each file with where it is kept.
+    */
+  def assertRoundTripsUnlinked(plan: ExecutionPlan): String =
+    assertRoundTrips(plan, PhysicalPlanCodec.encodeUnlinked, PhysicalPlanCodec.decodeUnlinked)
+
+  private def assertRoundTrips(
+      plan: ExecutionPlan,
+      encode: ExecutionPlan => StoredPhysicalPlan,
+      decode: StoredPhysicalPlan => ExecutionPlan
+  ): String = {
+    val stored = encode(plan)
     val json = PhysicalPlanCodec.toJson(stored)
     val parsed = PhysicalPlanCodec.fromJson(json)
     assert(parsed == stored, s"the JSON reads back to another message:\n$json")
     Seq("the message" -> stored, "its JSON" -> parsed).foreach {
       case (source, message) =>
         withClue(s"read from $source: ") {
-          val read = PhysicalPlanCodec.decode(message)
+          val read = decode(message)
           assertSameExecutionPlan(plan, read)
-          val savedAgain = PhysicalPlanCodec.encode(read)
+          val savedAgain = encode(read)
           assert(savedAgain == stored, "saving the plan read back gives another message")
         }
     }

@@ -21,6 +21,7 @@ package org.apache.texera.amber.core.workflow
 
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.texera.amber.core.storage.{InputLink, InputLinker}
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
@@ -34,6 +35,7 @@ import org.jgrapht.graph.DirectedAcyclicGraph
 import org.jgrapht.traverse.TopologicalOrderIterator
 import org.jgrapht.util.SupplierUtil
 
+import scala.collection.mutable
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala}
 
 case class PhysicalPlan(
@@ -192,6 +194,26 @@ case class PhysicalPlan(
 
   def setOperator(physicalOp: PhysicalOp): PhysicalPlan = {
     this.copy(operators = (operatorMap + (physicalOp.id -> physicalOp)).values.toSet)
+  }
+
+  /**
+    * This plan with each file its operators read linked by `linker`, at the address the plan
+    * gives the file: the plan a computing unit runs. An address is linked once, however many
+    * operators read the file it holds; a file that has its link keeps it.
+    */
+  def linkedBy(linker: InputLinker): PhysicalPlan = {
+    val links = mutable.Map.empty[String, InputLink]
+    this.copy(operators = operators.map { op =>
+      if (op.inputs.files.forall(_.isLinked)) op
+      else
+        op.withInputs(op.inputs.copy(files = op.inputs.files.map { file =>
+          if (file.isLinked) file
+          else
+            file.linkedThrough(
+              links.getOrElseUpdate(file.physicalAddress, linker.link(file.physicalAddress))
+            )
+        }))
+    })
   }
 
   @JsonIgnore

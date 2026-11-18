@@ -90,7 +90,7 @@ class ScanExecutorInputLinkSpec
       s"dataset:///dataset-12/97fd4c2a755b69b7c66d322eab40b7e5c2ad5d10/${file.getFileName}"
 
     /** A link to the file's bytes, as a plan made to run carries one. */
-    def link: InputLink = FixtureInputs.linker.link(file.toUri)
+    def link: InputLink = FixtureInputs.linkTo(file.toUri)
 
     /** The scan's descriptor, of the dataset's file. */
     def descriptor: ScanSourceOpDesc = {

@@ -19,11 +19,15 @@
 
 package org.apache.texera.amber.core.workflow
 
+import com.fasterxml.jackson.core.`type`.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.hash.Hashing
 
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import scala.jdk.CollectionConverters.MapHasAsScala
 import scala.util.matching.Regex
+import scala.util.{Failure, Success, Try}
 
 /**
   * What a Python environment may hold: its name, and the packages pip installs into it.
@@ -101,6 +105,23 @@ object PythonRequirements {
         .left
         .map(problem => s"${problem.part} is not valid: ${problem.reason}.")
   }
+
+  /**
+    * The packages an environment's row holds in `stored`, the JSON its `packages` column keeps:
+    * each name mapped to its version spec, none for a row with no value. A failure for a value
+    * that is not a JSON object of strings, as a row written by hand, or by an older release,
+    * may hold.
+    */
+  def storedPackages(stored: String): Try[Map[String, String]] =
+    Option(stored).fold[Try[Map[String, String]]](Success(Map.empty)) { json =>
+      Try(storedPackagesReader.readValue[java.util.Map[String, String]](json)).flatMap { packages =>
+        if (packages == null) Failure(new IllegalArgumentException("The packages are null."))
+        else Success(packages.asScala.toMap)
+      }
+    }
+
+  private val storedPackagesReader =
+    new ObjectMapper().readerFor(new TypeReference[java.util.Map[String, String]] {})
 
   /** The lowercase hex SHA-256 of `lines` joined by '\n': the name of a canonical package list. */
   def digest(lines: Seq[String]): String =

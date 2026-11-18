@@ -1,0 +1,464 @@
+{
+  "formatVersion": 1,
+  "workflowId": {
+    "id": "7"
+  },
+  "executionId": {
+    "id": "42"
+  },
+  "settings": {
+    "dataTransferBatchSize": 400,
+    "executionMode": "PIPELINED",
+    "outputPortsNeedingStorage": [
+      {
+        "opId": {
+          "logicalOpId": {
+            "id": "join"
+          },
+          "layerName": "main"
+        }
+      },
+      {
+        "opId": {
+          "logicalOpId": {
+            "id": "udf"
+          },
+          "layerName": "main"
+        },
+        "portId": {
+          "id": 1
+        }
+      }
+    ]
+  },
+  "warehouse": "wh-1",
+  "operators": [
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "join"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithClassName": {
+          "className": "org.example.JoinOpExec",
+          "descString": "{}"
+        }
+      },
+      "parallelizable": true,
+      "locationPreference": "NO_PREFERENCE",
+      "partitionRequirement": [
+        {
+          "partition": {
+            "range": {
+              "attributeNames": [
+                "id"
+              ],
+              "rangeMin": "-10",
+              "rangeMax": "99"
+            }
+          }
+        },
+        {
+          "partition": {
+            "single": {}
+          }
+        },
+        {
+          "partition": {
+            "oneToOne": {}
+          }
+        },
+        {
+          "partition": {
+            "broadcast": {}
+          }
+        }
+      ],
+      "outputPartitionRule": {
+        "keepKeyedInput": {}
+      },
+      "inputPorts": [
+        {
+          "port": {
+            "displayName": "build",
+            "disallowMultiLinks": true
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          }
+        },
+        {
+          "port": {
+            "id": {
+              "id": 1
+            },
+            "displayName": "probe"
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        }
+      ],
+      "outputPorts": [
+        {
+          "port": {
+            "displayName": "result",
+            "blocking": true,
+            "mode": "SINGLE_SNAPSHOT",
+            "reuseStorage": true
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=join,layerName=main,portId=0,isInternal=false,isInput=false)"
+        }
+      ],
+      "isOneToManyOp": true,
+      "requiresMaterializedExecution": true,
+      "isLoopStart": true
+    },
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "scan"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithClassName": {
+          "className": "org.example.ScanOpExec",
+          "descString": "{\"file\":\"a.csv\"}"
+        }
+      },
+      "locationPreference": "PREFER_COORDINATOR",
+      "outputPartitionRule": {
+        "firstInput": {}
+      },
+      "outputPorts": [
+        {
+          "port": {
+            "displayName": "out"
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=scan,layerName=main,portId=0,isInternal=false,isInput=false)"
+        }
+      ],
+      "inputs": {
+        "files": [
+          {
+            "name": "dataset:///ds-1/d4t4/a.csv",
+            "physicalAddress": "s3://texera-dataset/dataset-1/data/gdm5/a"
+          }
+        ],
+        "listing": {
+          "files": [
+            "/dataset/a@x.io/ds/v1/a.csv"
+          ]
+        },
+        "csvParserMaxColumns": 512
+      }
+    },
+    {
+      "id": {
+        "logicalOpId": {
+          "id": "udf"
+        },
+        "layerName": "main"
+      },
+      "opExecInitInfo": {
+        "opExecWithCode": {
+          "code": "yield tuple_",
+          "language": "python"
+        }
+      },
+      "parallelizable": true,
+      "locationPreference": "ROUND_ROBIN",
+      "partitionRequirement": [
+        {
+          "partition": {
+            "hash": {
+              "attributeNames": [
+                "id"
+              ]
+            }
+          }
+        },
+        {
+          "noRequirement": {}
+        }
+      ],
+      "outputPartitionRule": {
+        "fixed": {
+          "unknown": {}
+        }
+      },
+      "inputPorts": [
+        {
+          "port": {
+            "displayName": "in"
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        },
+        {
+          "port": {
+            "id": {
+              "id": 1,
+              "internal": true
+            },
+            "dependencies": [
+              {}
+            ]
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              },
+              {
+                "attributeName": "name",
+                "attributeType": "STRING"
+              },
+              {
+                "attributeName": "count",
+                "attributeType": "LONG"
+              },
+              {
+                "attributeName": "score",
+                "attributeType": "DOUBLE"
+              },
+              {
+                "attributeName": "valid",
+                "attributeType": "BOOLEAN"
+              },
+              {
+                "attributeName": "seen",
+                "attributeType": "TIMESTAMP"
+              },
+              {
+                "attributeName": "bytes",
+                "attributeType": "BINARY"
+              },
+              {
+                "attributeName": "blob",
+                "attributeType": "LARGE_BINARY"
+              },
+              {
+                "attributeName": "extra",
+                "attributeType": "ANY"
+              }
+            ]
+          }
+        }
+      ],
+      "outputPorts": [
+        {
+          "port": {
+            "id": {
+              "id": 1
+            },
+            "mode": "SET_DELTA"
+          },
+          "schema": {
+            "attributes": [
+              {
+                "attributeName": "id",
+                "attributeType": "INTEGER"
+              }
+            ]
+          },
+          "storageLocation": "vfs:///wh/wh-1/wid/7/eid/42/globalportid/(logicalOpId=udf,layerName=main,portId=1,isInternal=false,isInput=false)"
+        }
+      ],
+      "suggestedWorkerNum": 2,
+      "repositoryMounts": [
+        "dataset-1:d4t4",
+        "model-2:m0d3l"
+      ],
+      "pythonEnvironment": {
+        "name": "ml",
+        "requirements": [
+          "numpy>=2.1.0",
+          "tabulate==0.9.0"
+        ]
+      }
+    }
+  ],
+  "links": [
+    {
+      "fromOpId": {
+        "logicalOpId": {
+          "id": "scan"
+        },
+        "layerName": "main"
+      },
+      "toOpId": {
+        "logicalOpId": {
+          "id": "udf"
+        },
+        "layerName": "main"
+      }
+    },
+    {
+      "fromOpId": {
+        "logicalOpId": {
+          "id": "scan"
+        },
+        "layerName": "main"
+      },
+      "toOpId": {
+        "logicalOpId": {
+          "id": "join"
+        },
+        "layerName": "main"
+      },
+      "toPortId": {
+        "id": 1
+      }
+    },
+    {
+      "fromOpId": {
+        "logicalOpId": {
+          "id": "udf"
+        },
+        "layerName": "main"
+      },
+      "fromPortId": {
+        "id": 1
+      },
+      "toOpId": {
+        "logicalOpId": {
+          "id": "join"
+        },
+        "layerName": "main"
+      }
+    }
+  ]
+}
