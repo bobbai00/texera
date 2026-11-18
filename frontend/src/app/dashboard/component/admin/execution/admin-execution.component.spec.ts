@@ -252,6 +252,12 @@ describe("AdminExecutionComponent methods (#6550)", () => {
       expect(component.convertSecondsToTime(3661)).toBe("01:01:01");
     });
 
+    it("convertSecondsToTime shows a time with milliseconds in whole seconds", () => {
+      expect(component.convertSecondsToTime(80.52)).toBe("00:01:20");
+      expect(component.convertSecondsToTime(196.62000000000005)).toBe("00:03:16");
+      expect(component.convertSecondsToTime(0.829)).toBe("00:00:00");
+    });
+
     it("maxStringLength truncates only when longer than the limit", () => {
       expect(component.maxStringLength("hello world", 5)).toBe("hello . . . ");
       expect(component.maxStringLength("hi", 5)).toBe("hi");

@@ -272,9 +272,11 @@ export class AdminExecutionComponent implements OnInit, OnDestroy {
    * Convert a total number of seconds into a formatted time string (HH:MM:SS).
    */
   convertSecondsToTime(seconds: number): string {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const remainingSeconds = seconds % 60;
+    // An execution's end is recorded to the millisecond: the time used is shown in whole seconds.
+    const wholeSeconds = Math.floor(seconds);
+    const hours = Math.floor(wholeSeconds / 3600);
+    const minutes = Math.floor((wholeSeconds % 3600) / 60);
+    const remainingSeconds = wholeSeconds % 60;
 
     return `${this.padZero(hours)}:${this.padZero(minutes)}:${this.padZero(remainingSeconds)}`;
   }
