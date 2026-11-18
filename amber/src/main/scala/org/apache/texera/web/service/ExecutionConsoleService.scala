@@ -23,25 +23,15 @@ import com.google.protobuf.timestamp.Timestamp
 import com.twitter.util.{Await, Duration}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.amber.core.storage.model.BufferedItemWriter
-import org.apache.texera.amber.core.storage.result.ResultSchema
-import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
-import org.apache.texera.amber.core.tuple.Tuple
-import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, OperatorIdentity}
+import org.apache.texera.amber.core.storage.ConsoleMessageStore
+import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.WorkflowContext
-import org.apache.texera.amber.engine.architecture.coordinator.ExecutionStateUpdate
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.COMMAND
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
   ConsoleMessageType,
   EvaluatePythonExpressionRequest,
   DebugCommandRequest => AmberDebugCommandRequest
-}
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
-  FAILED,
-  KILLED
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.{
@@ -63,8 +53,8 @@ import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 
 import java.time.Instant
-import java.util.concurrent.{ExecutorService, Executors}
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 /**
   * Utility object for processing console messages
@@ -126,8 +116,20 @@ object ExecutionConsoleService {
 
   /** Who a message of the computing unit's own is from, as a console shows it. */
   val ComputingUnitSource = "computing unit"
+
+  /**
+    * The operator an execution's one console table is registered under in
+    * `operator_executions`, where a console table per operator used to be: no operator has
+    * this id.
+    */
+  val AllOperators = "*"
 }
 
+/**
+  * The consoles of one run: each message is shown to the sessions on the workflow, cut to the
+  * display length, from memory, and handed whole to the run's record, which stores it in the
+  * lake on its own thread.
+  */
 class ExecutionConsoleService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
@@ -141,34 +143,30 @@ class ExecutionConsoleService(
   val bufferSize: Int = ApplicationConfig.operatorConsoleBufferSize
   val consoleMessageDisplayLength: Int = ApplicationConfig.consoleMessageDisplayLength
 
-  private val consoleMessageOpIdToWriterMap: mutable.Map[String, BufferedItemWriter[Tuple]] =
-    mutable.Map()
-
-  private val consoleWriterThread: ExecutorService = Executors.newSingleThreadExecutor()
-
-  private def getOrCreateWriter(opId: OperatorIdentity): BufferedItemWriter[Tuple] = {
-    consoleMessageOpIdToWriterMap.getOrElseUpdate(
-      opId.id, {
-        val uri = VFSURIFactory
-          .createConsoleMessagesURI(
-            workflowContext.workflowId,
-            workflowContext.executionId,
-            opId,
-            warehouse = workflowContext.warehouse
-          )
-        val writer = DocumentFactory
-          .createDocument(uri, ResultSchema.consoleMessagesSchema)
-          .writer("console_messages")
-          .asInstanceOf[BufferedItemWriter[Tuple]]
-        WorkflowExecutionsResource.insertOperatorExecutions(
-          workflowContext.executionId.id,
-          opId.id,
-          uri
-        )
-        writer.open()
-        writer
-      }
+  // The run's record stores the console in one table of the execution. It is registered where
+  // the clean-up of an execution's results looks for console tables. A run does not fail over
+  // it: the console table of an execution that is not registered is left in the lake.
+  try {
+    WorkflowExecutionsResource.insertOperatorExecutions(
+      workflowContext.executionId.id,
+      ExecutionConsoleService.AllOperators,
+      ConsoleMessageStore.consoleUri(
+        workflowContext.workflowId,
+        workflowContext.executionId,
+        workflowContext.warehouse
+      )
     )
+  } catch {
+    case NonFatal(failure) =>
+      // A warning of one line, the stack trace at debug level.
+      logger.warn(
+        s"The console table of execution ${workflowContext.executionId.id} could not be " +
+          s"registered for the clean-up of the execution's results: $failure"
+      )
+      logger.debug(
+        s"Registering the console table of execution ${workflowContext.executionId.id} failed.",
+        failure
+      )
   }
 
   addSubscription(
@@ -210,25 +208,6 @@ class ExecutionConsoleService(
 
   }
 
-  addSubscription(
-    client.registerCallback[ExecutionStateUpdate] {
-      case ExecutionStateUpdate(state: WorkflowAggregatedState.Recognized)
-          if Set(COMPLETED, FAILED, KILLED).contains(state) =>
-        logger.info("Workflow execution terminated. Commit console messages.")
-        closeWriters()
-      case _ =>
-    }
-  )
-
-  // Closing a writer commits the messages it holds.
-  private def closeWriters(): Unit =
-    consoleMessageOpIdToWriterMap.values.foreach { writer =>
-      try writer.close()
-      catch {
-        case e: Exception => logger.error("Failed to close console message writer", e)
-      }
-    }
-
   /**
     * Adds a message of the computing unit's own to the console of operator `operatorId`: what the
     * unit did for the operator, and not one of its workers. It is shown, and kept, as a worker's
@@ -254,34 +233,6 @@ class ExecutionConsoleService(
         )
       )
     }
-
-  /**
-    * Commits the messages added so far, for a run whose engine will report no end: one that
-    * failed before its engine started. No message is added after this.
-    */
-  def commitMessages(): Unit =
-    consoleWriterThread.execute(() => {
-      closeWriters()
-      consoleMessageOpIdToWriterMap.clear()
-    })
-
-  override def unsubscribeAll(): Unit = {
-    closeWriters()
-    consoleMessageOpIdToWriterMap.clear()
-
-    super.unsubscribeAll()
-
-    consoleWriterThread.shutdown()
-    try {
-      if (!consoleWriterThread.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-        consoleWriterThread.shutdownNow()
-      }
-    } catch {
-      case _: InterruptedException =>
-        consoleWriterThread.shutdownNow()
-        Thread.currentThread().interrupt()
-    }
-  }
 
   /**
     * Processes a console message for display, performing truncation if needed.
@@ -325,20 +276,8 @@ class ExecutionConsoleService(
       opId: String,
       consoleMessage: ConsoleMessage
   ): ExecutionConsoleStore = {
-    // Write the original full message to the database
-    consoleWriterThread.execute(() => {
-      val writer = getOrCreateWriter(OperatorIdentity(opId))
-      try {
-        val tuple = new Tuple(
-          ResultSchema.consoleMessagesSchema,
-          Array(consoleMessage.toProtoString)
-        )
-        writer.putOne(tuple)
-      } catch {
-        case e: Exception =>
-          logger.error(s"Error while writing console message for operator $opId", e)
-      }
-    })
+    // The run's record keeps the message whole, and stores it at its next commit.
+    stateStore.recorder.console(opId, consoleMessage)
 
     // Process the message (truncate if needed) and update store
     val truncatedMessage = processConsoleMessage(consoleMessage)

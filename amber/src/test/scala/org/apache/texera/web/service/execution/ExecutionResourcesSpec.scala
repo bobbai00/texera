@@ -22,8 +22,8 @@ package org.apache.texera.web.service.execution
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.core.read.ListAppender
-import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
   DocumentFactory,
   ExecutionPlanStore,
   NoStoredPlanException,
@@ -64,6 +64,8 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowVersion
 }
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
+import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.service.ExecutionConsoleService
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -202,21 +204,20 @@ class ExecutionResourcesSpec
       .execute()
   }
 
-  /** Gives execution `eid` of `wid` a console table, registered as an operator's console. */
+  /** Gives execution `eid` of `wid` its console table, registered as a run registers it. */
   private def withConsole(wid: Int, eid: Int): URI = {
-    val uri = VFSURIFactory.createConsoleMessagesURI(
+    val uri = ConsoleMessageStore.consoleUri(
       WorkflowIdentity(wid.toLong),
       ExecutionIdentity(eid.toLong),
-      OperatorIdentity("console-op")
+      None
     )
-    DocumentFactory.createDocument(uri, ResultSchema.consoleMessagesSchema)
+    ConsoleMessageStore.create(uri)
     madeTables += uri
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .set(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid))
-      .set(OPERATOR_EXECUTIONS.OPERATOR_ID, "console-op")
-      .set(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI, uri.toString)
-      .execute()
+    WorkflowExecutionsResource.insertOperatorExecutions(
+      eid.toLong,
+      ExecutionConsoleService.AllOperators,
+      uri
+    )
     uri
   }
 

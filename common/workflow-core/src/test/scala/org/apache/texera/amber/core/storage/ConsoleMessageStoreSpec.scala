@@ -23,11 +23,7 @@ import org.apache.iceberg.catalog.TableIdentifier
 import org.apache.iceberg.exceptions.{NotFoundException, ServiceUnavailableException}
 import org.apache.texera.amber.core.storage.ConsoleMessageStore._
 import org.apache.texera.amber.core.tuple.AttributeType
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
@@ -366,7 +362,7 @@ class ConsoleMessageStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdb
     val executionId = ExecutionIdentity(1)
     val otherTables = Seq(
       // The console table of one operator, as Texera made them before this store.
-      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId, OperatorIdentity(udf)),
+      new URI(s"vfs:///wid/${workflowId.id}/eid/1/opid/$udf/consolemessages"),
       ExecutionLogStore.logUri(workflowId, executionId, None),
       VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId),
       new URI("vfs:///wid/12/eid/1/consoleMessages"),

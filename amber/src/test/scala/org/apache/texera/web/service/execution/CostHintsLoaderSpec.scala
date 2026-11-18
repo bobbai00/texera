@@ -23,9 +23,12 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.core.read.ListAppender
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
-import org.apache.texera.amber.core.storage.result.ResultSchema
-import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
-import org.apache.texera.amber.core.tuple.Tuple
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  RuntimeStatisticsRow,
+  RuntimeStatisticsStore
+}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   CostHints,
@@ -52,7 +55,7 @@ import org.slf4j.LoggerFactory
 
 import java.net.URI
 import java.sql.Timestamp
-import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
 import java.util.concurrent.{CompletableFuture, CountDownLatch, TimeUnit}
 import scala.collection.mutable
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -64,10 +67,11 @@ import scala.util.Try
   * of the workflow, read once per run.
   *
   * Runs are rows of `MockTexeraDB`; their statistics are tables of the Iceberg catalog the tests
-  * run with (`STORAGE_ICEBERG_CATALOG_TYPE=postgres`). Each case has workflows of its own, with
-  * ids from 9521 to 9539 that no other suite uses, and a run's id is its workflow's id times 100
-  * plus a number: creating a statistics table replaces the one of the same workflow and run, and
-  * suites share the catalog. The cases of loads at the same time (workflows 9537 to 9539) hold
+  * run with (`STORAGE_ICEBERG_CATALOG_TYPE=postgres`), written as a run's record writes them
+  * (`RuntimeStatisticsStore`). Each case has workflows of its own, with ids from 9521 to 9541
+  * that no other suite uses, and a run's id is its workflow's id times 100 plus a number:
+  * creating a statistics table replaces the one of the same workflow and run, and suites share
+  * the catalog. The cases of loads at the same time (workflows 9537 to 9539) hold
   * a read of statistics at a gate until the other loads wait for it.
   */
 class CostHintsLoaderSpec
@@ -164,9 +168,10 @@ class CostHintsLoaderSpec
   }
 
   private def statisticsUri(wid: Int, eid: Int): URI =
-    VFSURIFactory.createRuntimeStatisticsURI(
+    RuntimeStatisticsStore.statisticsUri(
       WorkflowIdentity(wid.toLong),
-      ExecutionIdentity(eid.toLong)
+      ExecutionIdentity(eid.toLong),
+      None
     )
 
   /**
@@ -177,38 +182,66 @@ class CostHintsLoaderSpec
   private def statistics(wid: Int, eid: Int, rows: (String, Long, Long)*): String = {
     val uri = statisticsUri(wid, eid)
     tables += uri
+    RuntimeStatisticsStore.create(uri)
+    RuntimeStatisticsStore.append(
+      uri,
+      rows.zipWithIndex.map {
+        case ((operatorId, dataNanos, controlNanos), index) =>
+          RuntimeStatisticsRow(
+            operatorId,
+            firstStart + index,
+            10L,
+            100L,
+            10L,
+            100L,
+            dataNanos,
+            controlNanos,
+            7_000_000_000L,
+            1,
+            0
+          )
+      }
+    )
+    uri.toString
+  }
+
+  /**
+    * Creates the statistics of run `eid` of workflow `wid` as Texera stored them before a run's
+    * record did: the time of a row a timestamp, in a column of another name. One row, of
+    * operator `scan`. Returns where they are.
+    */
+  private def statisticsOfAnEarlierVersion(wid: Int, eid: Int): String = {
+    val earlierSchema = new Schema(
+      new Attribute("operatorId", AttributeType.STRING),
+      new Attribute("time", AttributeType.TIMESTAMP),
+      new Attribute("inputTupleCnt", AttributeType.LONG),
+      new Attribute("inputTupleSize", AttributeType.LONG),
+      new Attribute("outputTupleCnt", AttributeType.LONG),
+      new Attribute("outputTupleSize", AttributeType.LONG),
+      new Attribute("dataProcessingTime", AttributeType.LONG),
+      new Attribute("controlProcessingTime", AttributeType.LONG),
+      new Attribute("idleTime", AttributeType.LONG),
+      new Attribute("numWorkers", AttributeType.INTEGER),
+      new Attribute("status", AttributeType.INTEGER)
+    )
+    val uri = statisticsUri(wid, eid)
+    tables += uri
     val writer = DocumentFactory
-      .createDocument(uri, ResultSchema.runtimeStatisticsSchema)
+      .createDocument(uri, earlierSchema)
       .writer("cost-hints-spec")
       .asInstanceOf[BufferedItemWriter[Tuple]]
     writer.open()
-    rows.foreach {
-      case (operatorId, dataNanos, controlNanos) =>
-        writer.putOne(
-          new Tuple(
-            ResultSchema.runtimeStatisticsSchema,
-            Array(
-              operatorId,
-              new Timestamp(firstStart),
-              10L,
-              100L,
-              10L,
-              100L,
-              dataNanos,
-              controlNanos,
-              7_000_000_000L,
-              1,
-              0
-            )
-          )
-        )
-    }
+    writer.putOne(
+      new Tuple(
+        earlierSchema,
+        Array("scan", new Timestamp(firstStart), 10L, 100L, 10L, 100L, 3_000_000_000L, 0L, 0L, 1, 3)
+      )
+    )
     writer.close()
     uri.toString
   }
 
-  private def dropStatistics(uri: URI): Unit =
-    Try(DocumentFactory.openDocument(uri)._1.clear())
+  private def dropStatistics(uri: URI): Unit = Try(RuntimeStatisticsStore.drop(uri))
 
   /**
     * Adds workflow `wid` and its one run, `wid` times 100 plus 1, completed by the run's user,
@@ -226,14 +259,19 @@ class CostHintsLoaderSpec
   private def hintsOf(eid: Int, seconds: (String, Double)*): Option[CostHints] =
     Some(CostHints(ExecutionIdentity(eid.toLong), seconds.toMap))
 
-  /** A loader that counts how often it opens the statistics at each location. */
+  /**
+    * A loader that counts how often it opens the statistics at each location. A read fails
+    * while `failing` is set, as one does that the lake does not answer.
+    */
   private final class CountingLoader(
       cacheCapacity: Int = 256,
-      val opened: mutable.Map[String, Int] = mutable.Map.empty[String, Int].withDefaultValue(0)
+      val opened: mutable.Map[String, Int] = mutable.Map.empty[String, Int].withDefaultValue(0),
+      val failing: AtomicBoolean = new AtomicBoolean(false)
   ) extends CostHintsLoader(
         cacheCapacity,
         openStatistics = uri => {
           opened(uri.toString) += 1
+          if (failing.get()) throw new IllegalStateException("the lake does not answer")
           CostHintsLoader.statisticsAt(uri)
         }
       )
@@ -245,7 +283,7 @@ class CostHintsLoaderSpec
     val gate = new CountDownLatch(1)
     @volatile var failing = false
 
-    def open(uri: URI): Iterator[Tuple] = {
+    def open(uri: URI): Seq[RuntimeStatisticsRow] = {
       opened.incrementAndGet()
       reading.countDown()
       gate.await(30, TimeUnit.SECONDS)
@@ -484,10 +522,10 @@ class CostHintsLoaderSpec
     assume(!StorageConfig.warehouseEnabled, "per-user warehouses are enabled in this deployment")
     val wid = 9533
     newWorkflow(wid)
-    val inWarehouse = VFSURIFactory.createRuntimeStatisticsURI(
+    val inWarehouse = RuntimeStatisticsStore.statisticsUri(
       WorkflowIdentity(wid.toLong),
       ExecutionIdentity(953301),
-      warehouse = Some(s"user-$runUser-1")
+      Some(s"user-$runUser-1")
     )
     run(953301, wid, runUser, COMPLETED, 10, Some(inWarehouse.toString))
     val loader = new CountingLoader
@@ -498,28 +536,66 @@ class CostHintsLoaderSpec
 
   it should "give no hints when the statistics cannot be read, and read them once they can be" in {
     val wid = 9534
-    newWorkflow(wid)
-    val missing = statisticsUri(wid, 953401)
-    dropStatistics(missing)
-    run(953401, wid, runUser, COMPLETED, 10, Some(missing.toString))
+    val source = onlyCompletedRun(wid, ("scan", 2_000_000_000L, 0L))
     val loader = new CountingLoader
+    loader.failing.set(true)
 
     loader.load(wid, runUser) shouldBe None
 
-    statistics(wid, 953401, ("scan", 2_000_000_000L, 0L))
+    loader.failing.set(false)
     loader.load(wid, runUser) shouldBe hintsOf(953401, "scan" -> 2.0)
+    loader.opened shouldBe Map(source -> 2)
+  }
+
+  it should "give no hints, and no warning, for a run whose statistics table is gone, and read once there is one" in {
+    // As the statistics of an execution whose tables were dropped: nothing there is an answer.
+    val wid = 9540
+    newWorkflow(wid)
+    val missing = statisticsUri(wid, 954001)
+    dropStatistics(missing)
+    run(954001, wid, runUser, COMPLETED, 10, Some(missing.toString))
+    val loader = new CountingLoader
+
+    val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
+    logged.filter(_.getLevel.isGreaterOrEqual(Level.WARN)) shouldBe empty
+
+    statistics(wid, 954001, ("scan", 2_000_000_000L, 0L))
+    loader.load(wid, runUser) shouldBe hintsOf(954001, "scan" -> 2.0)
     loader.opened shouldBe Map(missing.toString -> 2)
+  }
+
+  it should "give no hints, and no warning, for a run whose statistics were stored before a run's record stored them" in {
+    // An execution made before the upgrade: its table is where the store reads, with other
+    // columns. It has no cost for the next run, and is no failure to warn of.
+    val wid = 9541
+    newWorkflow(wid)
+    val earlier = statisticsOfAnEarlierVersion(wid, 954101)
+    run(954101, wid, runUser, COMPLETED, 10, Some(earlier))
+    val loader = new CountingLoader
+
+    val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
+
+    logged.filter(_.getLevel.isGreaterOrEqual(Level.WARN)) shouldBe empty
+    loader.opened shouldBe Map(earlier -> 1)
+    // The run after the upgrade is the one read from then on.
+    run(
+      954102,
+      wid,
+      runUser,
+      COMPLETED,
+      20,
+      Some(statistics(wid, 954102, ("scan", 1_000_000_000L, 0L)))
+    )
+    loader.load(wid, runUser) shouldBe hintsOf(954102, "scan" -> 1.0)
   }
 
   it should "warn in one line that the statistics cannot be read, with the stack trace at debug level" in {
     // A read that fails is not kept, so every start of the workflow by the user reads and warns
     // again: the warnings stay one line each.
     val wid = 9536
-    newWorkflow(wid)
-    val missing = statisticsUri(wid, 953601)
-    dropStatistics(missing)
-    run(953601, wid, runUser, COMPLETED, 10, Some(missing.toString))
+    val missing = new URI(onlyCompletedRun(wid, ("scan", 1L, 0L)))
     val loader = new CountingLoader
+    loader.failing.set(true)
 
     val logged = loggedBy(loader) { loader.load(wid, runUser) shouldBe None }
 

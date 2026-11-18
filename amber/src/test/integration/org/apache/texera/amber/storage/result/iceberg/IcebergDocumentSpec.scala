@@ -156,10 +156,10 @@ class IcebergDocumentSpec extends VirtualDocumentSpec[Tuple] with BeforeAndAfter
   }
 
   it should "resolve CONSOLE_MESSAGES URIs through documentExists" in {
+    // An execution no suite runs, so nothing made its console table.
     val consoleUri = VFSURIFactory.createConsoleMessagesURI(
       WorkflowIdentity(0),
-      ExecutionIdentity(0),
-      OperatorIdentity(s"fresh-${UUID.randomUUID().toString.replace("-", "")}")
+      ExecutionIdentity(UUID.randomUUID().getMostSignificantBits & Long.MaxValue)
     )
     assert(!DocumentFactory.documentExists(consoleUri))
   }

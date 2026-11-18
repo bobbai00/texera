@@ -30,14 +30,8 @@ import org.apache.texera.amber.core.executor.{
   OpExecWithCode,
   OperatorInputs
 }
-import org.apache.texera.amber.core.storage.model.VirtualDocument
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionPlanStore,
-  PlanRecord,
-  VFSURIFactory
-}
-import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
+import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -95,7 +89,10 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
 }
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
-import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.StateChange
+import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.{
+  Console,
+  StateChange
+}
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.common.config.StorageConfig
@@ -144,7 +141,7 @@ import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
-import scala.util.{Try, Using}
+import scala.util.Using
 
 /**
   * Regression guard for the consolidated init-error reporting path (#5921):
@@ -177,12 +174,8 @@ import scala.util.{Try, Using}
   *     the build's tests use (the Postgres JDBC catalog in CI). What a real engine does with the
   *     plan is exercised by the integration suites. The runs of plans that name Python
   *     environments install them on a `FakePython`, under a directory of this suite's: no
-  *     interpreter and no pip runs, and the consoles those runs write are cleared after the suite.
-  *
-  * Known, pre-existing: `ExecutionStatsService` never shuts down its private
-  * `metricsPersistThread` (it does not override `unsubscribeAll`), so every test
-  * that builds one leaks a single-thread executor into the shared JVM, as every
-  * construction of that service already does.
+  *     interpreter and no pip runs. A run's record keeps what it is told and writes nothing, so
+  *     the runs leave no statistics and no console in the lake.
   *
   * Two further gaps are deliberately described and NOT pinned, because a test that
   * froze the current behaviour would cement it:
@@ -210,9 +203,7 @@ class WorkflowExecutionServiceSpec
   implicit override val patienceConfig: PatienceConfig =
     PatienceConfig(timeout = Span(10, Seconds), interval = Span(20, Millis))
 
-  // Distinct from every other suite's ids: the statistics URI is derived from wid/eid and
-  // `createDocument` truncates whatever table already sits at it (ExecutionStatsServiceSpec
-  // owns 9107/9108).
+  // Distinct from every other suite's ids (ExecutionStatsServiceSpec owns 9107/9108).
   private val testUid: Integer = 9207
   private val testWid: Integer = 9207
   private val testEid: Integer = 9208
@@ -314,10 +305,8 @@ class WorkflowExecutionServiceSpec
 
   override protected def afterAll(): Unit = {
     try {
-      // The plan table one case below writes, in the catalog the build's tests share, and the
-      // consoles of the operators whose environments were installed.
+      // The plan table one case below writes, in the catalog the build's tests share.
       ExecutionPlanStore.drop(storedPlanTable)
-      writtenConsoles.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
       installerThreads.shutdownNow()
       Using.resource(Files.walk(environmentsScratch)) { paths =>
         paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.deleteIfExists(path))
@@ -1012,21 +1001,11 @@ class WorkflowExecutionServiceSpec
     Files.createTempDirectory("workflow-execution-service-spec")
   private val installerThreads: ExecutorService = Executors.newCachedThreadPool()
 
-  /** The console tables the runs below write for their operators, cleared after the suite. */
-  private val writtenConsoles = ListBuffer.empty[URI]
-
   private val ml = PythonEnvironment("ml", Seq("tabulate==0.9.0"))
 
   /** A unit's installer on `python`, under a root of its own, on threads that are not a test's. */
   private def installerOn(python: FakePython): PythonEnvironmentInstaller =
     python.installer(Files.createTempDirectory(environmentsScratch, "root"), installerThreads)
-
-  private def consoleUriOf(operator: String): URI =
-    VFSURIFactory.createConsoleMessagesURI(
-      WorkflowIdentity(testWid.longValue()),
-      ExecutionIdentity(testEid.longValue()),
-      OperatorIdentity(operator)
-    )
 
   /**
     * A plan of the fixture execution in which `<name>-first` feeds `<name>-second`, both running
@@ -1057,7 +1036,6 @@ class WorkflowExecutionServiceSpec
         pythonEnvironment = environment
       )
       .withStorageLocations(None)
-    writtenConsoles ++= Seq(firstId, secondId).map(id => consoleUriOf(id.logicalOpId.id))
     ExecutionPlan(
       new WorkflowContext(
         workflowId,
@@ -1078,16 +1056,6 @@ class WorkflowExecutionServiceSpec
 
   private def titlesOn(run: StoredRun, operator: String): Seq[String] =
     consoleOf(run, operator).map(_.title)
-
-  /** The titles the lake keeps of `operator`'s console in the fixture execution. */
-  private def titlesInLake(operator: String): Seq[String] =
-    DocumentFactory
-      .openDocument(consoleUriOf(operator))
-      ._1
-      .asInstanceOf[VirtualDocument[Tuple]]
-      .get()
-      .map(row => ConsoleMessage.fromAscii(row.getField[String](0)).title)
-      .toList
 
   private def startWorkflowAsked(run: StoredRun): Boolean =
     run.engine.getOrElse(fail("no engine")).answers.contains("startWorkflow")
@@ -1173,9 +1141,8 @@ class WorkflowExecutionServiceSpec
       val before = System.currentTimeMillis()
       run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
         None
-      // Committing the consoles is the last thing a run that fails here does.
       val installing = Seq("Installing Python environment 'ml' (1 package)")
-      eventually(titlesInLake("fails-second") shouldBe installing)
+      eventually(run.store.metadataStore.getState.state shouldBe FAILED)
       val after = System.currentTimeMillis()
 
       // The run ends FAILED, when the install did, and its row says so. Its one error is pip's,
@@ -1202,14 +1169,19 @@ class WorkflowExecutionServiceSpec
       // Its record is told of this end as of any other, with the error.
       run.recorder.changes shouldBe
         Seq(StateChange("READY", Nil, None), StateChange("FAILED", Seq(error), None))
-      // The failure is reported once, as the run's error: no console repeats it. The lake
-      // keeps what the consoles were told of the install, although no engine reports the run's
-      // end.
+      // The failure is reported once, as the run's error: no console repeats it.
       Seq("fails-first", "fails-second").foreach { operator =>
         consoleOf(run, operator).map(message => (message.msgType, message.title)) shouldBe
           installing.map((ConsoleMessageType.PRINT, _))
-        eventually(titlesInLake(operator) shouldBe installing)
       }
+      // The record was told what the consoles were told of the install before it was told of
+      // the run's end, so it stores them with that end, although no engine reports it.
+      val toldInOrder = run.recorder.told
+      toldInOrder.last shouldBe StateChange("FAILED", Seq(error), None)
+      toldInOrder.init.collect {
+        case Console(operator, message) => (operator, message.title)
+      } should contain theSameElementsAs
+        Seq("fails-first", "fails-second").map((_, installing.head))
     } finally run.close()
   }
 

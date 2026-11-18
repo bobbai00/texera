@@ -141,7 +141,7 @@ class PythonEnvironmentIntegrationSpec
     }
   private def environments: Seq[PythonEnvironment] = Seq(tables, unreleased) ++ anotherSix
 
-  /** What the runs below write to the lake: their results, statistics and console. */
+  /** What the runs below write to the lake: their results. Their record writes nothing. */
   private val written = mutable.Set.empty[URI]
 
   override def beforeAll(): Unit = {
@@ -269,12 +269,6 @@ class PythonEnvironmentIntegrationSpec
         )
         Seq(VFSURIFactory.resultURI(base), VFSURIFactory.stateURI(base))
       }
-    )
-    written += VFSURIFactory.createRuntimeStatisticsURI(context.workflowId, context.executionId)
-    written += VFSURIFactory.createConsoleMessagesURI(
-      context.workflowId,
-      context.executionId,
-      udf.operatorIdentifier
     )
 
     /** What the engine failed with, if it did. */

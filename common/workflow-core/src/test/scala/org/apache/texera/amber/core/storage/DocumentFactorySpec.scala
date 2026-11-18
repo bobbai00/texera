@@ -294,10 +294,10 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   }
 
   it should "resolve the CONSOLE_MESSAGES namespace" in {
+    // An execution no suite runs, so nothing made its console table.
     val consoleUri = VFSURIFactory.createConsoleMessagesURI(
       WorkflowIdentity(0),
-      ExecutionIdentity(0),
-      OperatorIdentity(s"op-${UUID.randomUUID().toString.replace("-", "")}")
+      ExecutionIdentity(UUID.randomUUID().getMostSignificantBits & Long.MaxValue)
     )
     DocumentFactory.documentExists(consoleUri) shouldBe false
   }

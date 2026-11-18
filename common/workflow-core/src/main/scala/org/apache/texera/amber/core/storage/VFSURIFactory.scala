@@ -19,11 +19,7 @@
 
 package org.apache.texera.amber.core.storage
 
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.GlobalPortIdentity
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
@@ -94,8 +90,7 @@ object VFSURIFactory {
     * Anchored to the leading segment on purpose. The warehouse is written as a
     * leading `/wh/<name>` prefix and `DocumentFactory` strips only a leading one,
     * so scanning the whole path would disagree with the stripper: a later segment
-    * that happens to be `wh` -- e.g. inside a user-chosen operator id in a
-    * console-messages URI -- would select a warehouse the URI was never built for.
+    * that happens to be `wh` would select a warehouse the URI was never built for.
     *
     * The segments come from the RAW path (see `decodeURI`), so a percent-encoded
     * slash stays inside the segment that contains it instead of becoming a
@@ -191,7 +186,7 @@ object VFSURIFactory {
       VFSResourceType.RUNTIME_STATISTICS,
       workflowId,
       executionId,
-      warehouse = warehouse
+      warehouse
     )
   }
 
@@ -205,7 +200,7 @@ object VFSURIFactory {
       executionId: ExecutionIdentity,
       warehouse: Option[String] = None
   ): URI =
-    createNonResultVFSURI(VFSResourceType.PLAN, workflowId, executionId, warehouse = warehouse)
+    createNonResultVFSURI(VFSResourceType.PLAN, workflowId, executionId, warehouse)
 
   /**
     * Create a URI pointing to an execution's log table:
@@ -221,26 +216,8 @@ object VFSURIFactory {
       VFSResourceType.EXECUTION_LOG,
       workflowId,
       executionId,
-      warehouse = warehouse
-    )
-
-  /**
-    * Create a URI pointing to console messages
-    */
-  def createConsoleMessagesURI(
-      workflowId: WorkflowIdentity,
-      executionId: ExecutionIdentity,
-      operatorId: OperatorIdentity,
-      warehouse: Option[String] = None
-  ): URI = {
-    createNonResultVFSURI(
-      VFSResourceType.CONSOLE_MESSAGES,
-      workflowId,
-      executionId,
-      Some(operatorId),
       warehouse
     )
-  }
 
   /**
     * Create a URI pointing to the one table that holds the console messages of all operators
@@ -249,33 +226,31 @@ object VFSURIFactory {
   def createConsoleMessagesURI(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity,
-      warehouse: Option[String]
+      warehouse: Option[String] = None
   ): URI =
     createNonResultVFSURI(
       VFSResourceType.CONSOLE_MESSAGES,
       workflowId,
       executionId,
-      warehouse = warehouse
+      warehouse
     )
 
   /**
-    * Internal helper to create URI pointing to a VFS resource for resource types other than `RESULT`.
-    * The URI can be used by the DocumentFactory to create resource or open resource.
+    * Internal helper to create URI pointing to a VFS resource for resource types other than
+    * `RESULT`: one table per execution, so the URI names no operator and no port. The URI can
+    * be used by the DocumentFactory to create resource or open resource.
     *
-    * @param resourceType   The type of the VFS resource.
-    * @param workflowId     Workflow identifier.
-    * @param executionId    Execution identifier.
-    * @param operatorId     Operator identifier.
+    * @param resourceType The type of the VFS resource.
+    * @param workflowId   Workflow identifier.
+    * @param executionId  Execution identifier.
     * @return A VFS URI
-    * @throws java.lang.IllegalArgumentException if `resourceType` is `RESULT`, or if `operatorId` is provided for
-    *                                  `RUNTIME_STATISTICS`.
+    * @throws java.lang.IllegalArgumentException if `resourceType` is `RESULT`.
     */
   private def createNonResultVFSURI(
       resourceType: VFSResourceType.Value,
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity,
-      operatorId: Option[OperatorIdentity] = None,
-      warehouse: Option[String] = None
+      warehouse: Option[String]
   ): URI = {
 
     if (resourceType == VFSResourceType.RESULT) {
@@ -284,30 +259,9 @@ object VFSURIFactory {
       )
     }
 
-    if (resourceType == VFSResourceType.RUNTIME_STATISTICS && operatorId.isDefined) {
-      throw new IllegalArgumentException(
-        "Runtime statistics URI should not contain operatorId."
-      )
-    }
-
-    // The operator id is user-supplied (it comes straight off the workflow JSON) and
-    // is interpolated into the URI path below. A '/' in it would add path segments,
-    // letting it forge structure the URI never meant to have -- e.g. a `wh/<name>`
-    // pair that would then be read back as a warehouse.
-    operatorId.foreach { opId =>
-      require(
-        !opId.id.contains('/'),
-        s"operatorId must not contain '/' (VFS URI parsing relies on this): ${opId.id}"
-      )
-    }
-
-    val whSegment = warehousePathSegment(warehouse)
-    val baseUri = operatorId match {
-      case Some(opId) =>
-        s"$VFS_FILE_URI_SCHEME://$whSegment/wid/${workflowId.id}/eid/${executionId.id}/opid/${opId.id}"
-      case None => s"$VFS_FILE_URI_SCHEME://$whSegment/wid/${workflowId.id}/eid/${executionId.id}"
-    }
-
-    new URI(s"$baseUri/${resourceType.toString.toLowerCase}")
+    new URI(
+      s"$VFS_FILE_URI_SCHEME://${warehousePathSegment(warehouse)}/wid/${workflowId.id}" +
+        s"/eid/${executionId.id}/${resourceType.toString.toLowerCase}"
+    )
   }
 }

@@ -31,16 +31,15 @@ import org.apache.texera.amber.core.executor.{
   OperatorInputs
 }
 import org.apache.texera.amber.core.state.StateReferencing
-import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{
+  ConsoleMessageStore,
   DocumentFactory,
   ExecutionPlanStore,
   InputLink,
   InputLinker,
   ListedFile,
   NoStoredPlanException,
-  PlanRecord,
-  VFSURIFactory
+  PlanRecord
 }
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -122,7 +121,7 @@ import org.apache.texera.web.model.http.response.execution.{
   CreateExecutionResponse
 }
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
-import org.apache.texera.web.service.{PlanToRun, WorkflowService}
+import org.apache.texera.web.service.{ExecutionConsoleService, PlanToRun, WorkflowService}
 import org.apache.texera.web.service.execution.{CostHintsLoader, ExecutionCreator, OperatorUpdates}
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.JSONB
@@ -382,21 +381,20 @@ class ExecutionResourceSpec
       .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
       .execute()
 
-  /** Gives execution `eid` of `wid` a console table, registered as an operator's console. */
+  /** Gives execution `eid` of `wid` its console table, registered as a run registers it. */
   private def withConsole(wid: Int, eid: Int): URI = {
-    val uri = VFSURIFactory.createConsoleMessagesURI(
+    val uri = ConsoleMessageStore.consoleUri(
       WorkflowIdentity(wid.toLong),
       ExecutionIdentity(eid.toLong),
-      OperatorIdentity("console-op")
+      None
     )
-    DocumentFactory.createDocument(uri, ResultSchema.consoleMessagesSchema)
+    ConsoleMessageStore.create(uri)
     madeTables += uri
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .set(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid))
-      .set(OPERATOR_EXECUTIONS.OPERATOR_ID, "console-op")
-      .set(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI, uri.toString)
-      .execute()
+    WorkflowExecutionsResource.insertOperatorExecutions(
+      eid.toLong,
+      ExecutionConsoleService.AllOperators,
+      uri
+    )
     uri
   }
 

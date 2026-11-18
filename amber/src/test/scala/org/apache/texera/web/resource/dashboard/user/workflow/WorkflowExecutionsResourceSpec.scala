@@ -22,13 +22,18 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.serialization.SerializationExtension
 import org.apache.pekko.testkit.TestKit
+import org.apache.texera.amber.core.storage.model.BufferedItemWriter
 import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
   ExecutionPlanStore,
   NoStoredPlanException,
   PlanRecord,
+  RuntimeStatisticsRow,
+  RuntimeStatisticsStore,
   VFSURIFactory,
   WarehouseUnavailableException
 }
+import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -524,6 +529,27 @@ class WorkflowExecutionsResourceSpec
     assert(rows.get(0).getConsoleMessagesUri == uri.toString)
   }
 
+  it should "change nothing when the same operator of the execution is registered again" in {
+    // A run registers its execution's one console table as it is set up, whatever was
+    // registered before.
+    val execution = insertExecution()
+    val uri = URI.create("vfs:///console-msg")
+    WorkflowExecutionsResource.insertOperatorExecutions(execution.getEid.longValue(), "*", uri)
+
+    WorkflowExecutionsResource.insertOperatorExecutions(
+      execution.getEid.longValue(),
+      "*",
+      URI.create("vfs:///another")
+    )
+
+    val rows = getDSLContext
+      .selectFrom(OPERATOR_EXECUTIONS)
+      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
+      .fetch()
+    assert(rows.size() == 1)
+    assert(rows.get(0).getConsoleMessagesUri == uri.toString)
+  }
+
   // ─── new: updateRuntimeStatsUri ───────────────────────────────────────────
 
   "updateRuntimeStatsUri" should "set the runtime_stats_uri on the execution in one UPDATE by eid" in {
@@ -890,6 +916,29 @@ class WorkflowExecutionsResourceSpec
       )
     }
     assert(ex.getMessage.contains("mock"))
+  }
+
+  it should "measure the statistics table a run's record made, and nothing while there is none" in {
+    val (exec, uri) = executionWithStatisticsUri()
+    val eid = ExecutionIdentity(exec.getEid.longValue())
+    def storedSize(): java.lang.Long =
+      workflowExecutionsDao.fetchOneByEid(exec.getEid).getRuntimeStatsSize
+    RuntimeStatisticsStore.drop(uri)
+
+    // The record has not made the table yet: a result that comes first measures nothing, and
+    // does not fail.
+    WorkflowExecutionsResource.updateRuntimeStatsSize(eid)
+    assert(storedSize() == null)
+
+    RuntimeStatisticsStore.create(uri)
+    try {
+      RuntimeStatisticsStore.append(
+        uri,
+        Seq(RuntimeStatisticsRow("scan", 1794873600123L, 0, 0, 10, 100, 5000, 600, 70, 2, 1))
+      )
+      WorkflowExecutionsResource.updateRuntimeStatsSize(eid)
+      assert(storedSize().longValue() > 0)
+    } finally RuntimeStatisticsStore.drop(uri)
   }
 
   "updateConsoleMessageSize" should "store a >2GiB size on the matching (eid, opId) row" in {
@@ -1482,6 +1531,113 @@ class WorkflowExecutionsResourceSpec
     // WarehouseUnavailableException is an IllegalStateException, so intercepting
     // IllegalArgumentException already excludes it.
     assert(ex.getMessage.contains("Invalid URI scheme"))
+  }
+
+  /** An execution of the test workflow whose row names where its statistics are. */
+  private def executionWithStatisticsUri(): (WorkflowExecutions, URI) = {
+    val exec = insertExecution()
+    val uri = RuntimeStatisticsStore.statisticsUri(
+      WorkflowIdentity(testWorkflowWid.longValue()),
+      ExecutionIdentity(exec.getEid.longValue()),
+      None
+    )
+    exec.setRuntimeStatsUri(uri.toString)
+    workflowExecutionsDao.update(exec)
+    (exec, uri)
+  }
+
+  it should "return the rows a run's record stored, oldest first, each with its time to the millisecond" in {
+    grantReadAccess()
+    val (exec, uri) = executionWithStatisticsUri()
+    // Two commits of a run: the scan's numbers moved between them, the filter's state alone.
+    val firstCommitMs = 1794873600123L
+    val stored = Seq(
+      RuntimeStatisticsRow("scan", firstCommitMs, 0, 0, 10, 100, 5000, 600, 70, 2, 1),
+      RuntimeStatisticsRow("filter", firstCommitMs, 10, 100, 4, 40, 3000, 200, 10, 1, 1),
+      RuntimeStatisticsRow("scan", firstCommitMs + 30456, 0, 0, 25, 250, 9000, 800, 90, 2, 3),
+      RuntimeStatisticsRow("filter", firstCommitMs + 30456, 10, 100, 4, 40, 3000, 200, 10, 1, 3)
+    )
+    RuntimeStatisticsStore.create(uri)
+    try {
+      RuntimeStatisticsStore.append(uri, stored.take(2))
+      RuntimeStatisticsStore.append(uri, stored.drop(2))
+
+      val rows =
+        resource.retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
+
+      assert(
+        rows == stored.map(row =>
+          WorkflowExecutionsResource.WorkflowRuntimeStatistics(
+            operatorId = row.operatorId,
+            timestamp = new Timestamp(row.timeMs),
+            inputTupleCount = row.inputTupleCnt,
+            inputTupleSize = row.inputTupleSize,
+            outputTupleCount = row.outputTupleCnt,
+            outputTupleSize = row.outputTupleSize,
+            dataProcessingTime = row.dataProcessingTime,
+            controlProcessingTime = row.controlProcessingTime,
+            idleTime = row.idleTime,
+            numWorkers = row.numWorkers,
+            status = row.status
+          )
+        )
+      )
+      // Epoch milliseconds, as the browser is sent them: not rounded to the second.
+      assert(rows.map(_.timestamp.getTime).distinct == Seq(firstCommitMs, firstCommitMs + 30456))
+    } finally RuntimeStatisticsStore.drop(uri)
+  }
+
+  it should "return no rows for an execution whose statistics were stored before a run's record stored them" in {
+    // An execution made before the upgrade: its table is where the store reads, with its time
+    // a timestamp in a column of another name. It has no chart, and the request does not fail.
+    grantReadAccess()
+    val (exec, uri) = executionWithStatisticsUri()
+    val earlierSchema = new Schema(
+      new Attribute("operatorId", AttributeType.STRING),
+      new Attribute("time", AttributeType.TIMESTAMP),
+      new Attribute("inputTupleCnt", AttributeType.LONG),
+      new Attribute("inputTupleSize", AttributeType.LONG),
+      new Attribute("outputTupleCnt", AttributeType.LONG),
+      new Attribute("outputTupleSize", AttributeType.LONG),
+      new Attribute("dataProcessingTime", AttributeType.LONG),
+      new Attribute("controlProcessingTime", AttributeType.LONG),
+      new Attribute("idleTime", AttributeType.LONG),
+      new Attribute("numWorkers", AttributeType.INTEGER),
+      new Attribute("status", AttributeType.INTEGER)
+    )
+    val writer = DocumentFactory
+      .createDocument(uri, earlierSchema)
+      .writer("an-earlier-version")
+      .asInstanceOf[BufferedItemWriter[Tuple]]
+    try {
+      writer.open()
+      writer.putOne(
+        new Tuple(
+          earlierSchema,
+          Array("scan", new Timestamp(1794873600000L), 0L, 0L, 10L, 100L, 5000L, 600L, 70L, 2, 3)
+        )
+      )
+      writer.close()
+
+      assert(
+        resource
+          .retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
+          .isEmpty
+      )
+    } finally RuntimeStatisticsStore.drop(uri)
+  }
+
+  it should "return no rows for an execution whose statistics table is not there" in {
+    // A run that has not made its tables yet, or whose tables were dropped.
+    grantReadAccess()
+    val (exec, uri) = executionWithStatisticsUri()
+    RuntimeStatisticsStore.drop(uri)
+
+    assert(
+      resource
+        .retrieveWorkflowRuntimeStatistics(testWorkflowWid, exec.getEid, session(testUser))
+        .isEmpty
+    )
   }
 
   // ─── new: getWorkflowResultDownloadability ────────────────────────────────

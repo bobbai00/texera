@@ -374,7 +374,6 @@ class ExecutionResultService(
                 storageUri.foreach { uri =>
                   allTableStats(opId.id) = DocumentFactory.openDocument(uri)._1.getTableStatistics
                   WorkflowExecutionsResource.updateRuntimeStatsSize(executionId)
-                  WorkflowExecutionsResource.updateConsoleMessageSize(executionId, opId)
                 }
               }
           }

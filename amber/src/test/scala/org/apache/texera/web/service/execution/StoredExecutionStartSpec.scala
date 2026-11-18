@@ -213,11 +213,7 @@ class StoredExecutionStartSpec extends AnyFlatSpec with Matchers {
       new URI("vfs:plan"),
       new URI("vfs:///wid/x/eid/975001/plan"),
       VFSURIFactory.createRuntimeStatisticsURI(WorkflowIdentity(wid), ExecutionIdentity(eid)),
-      VFSURIFactory.createConsoleMessagesURI(
-        WorkflowIdentity(wid),
-        ExecutionIdentity(eid),
-        OperatorIdentity("lines")
-      ),
+      VFSURIFactory.createConsoleMessagesURI(WorkflowIdentity(wid), ExecutionIdentity(eid)),
       // another segment, a query, a fragment: each would name another table, or none
       new URI(s"vfs:///wid/$wid/eid/$eid/extra/plan"),
       new URI(s"vfs:///wid/$wid/eid/$eid/plan?x=1"),
