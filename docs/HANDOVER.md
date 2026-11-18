@@ -1,9 +1,8 @@
 # Self-contained Amber engine: handover
 
-State on 2026-11-18. Nothing is merged upstream or opened as a pull request. The work of
-2026-11-17 and before is on branches of the fork `github.com/bobbai00/texera`, which is public.
-The work of 2026-11-18 is local to one Mac and not pushed (section 2). The handover of
-2026-11-17 as a page: https://claude.ai/artifact/1uo7RCdbfrnUpTVFLzvhwG (private to its owner).
+State on 2026-11-18. Nothing is merged upstream or opened as a pull request. All of the work is
+on branches of the fork `github.com/bobbai00/texera`, which is public (section 2). The handover
+of 2026-11-17 as a page: https://claude.ai/artifact/1uo7RCdbfrnUpTVFLzvhwG (private to its owner).
 
 ## 1. The goal and where it stands
 
@@ -46,7 +45,7 @@ What is true after step 3:
 ## 2. How to get it
 
 ```bash
-# in any clone of texera: the state of 2026-11-17
+# in any clone of texera
 git remote add bobbai00 https://github.com/bobbai00/texera.git   # skip if origin is the fork
 git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
   spike/sce-step0-proofs fix/checkpoint-on-source-worker sce-e2e-harness
@@ -54,14 +53,11 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 | Branch | Where | Commit | What it holds |
 |---|---|---|---|
-| `claude/amber-engine-cleanup-review-8bf782` | The Mac's clone `~/Desktop/projects/texera` only | see `git log` | The current main branch: everything below. Not pushed |
-| `sce-e2e-harness` (local) | The same clone | see `git log` | The harness with the additions of 2026-11-18 and this file. Not pushed; the fork has the state of 2026-11-17 |
-| `feat/self-contained-engine` | Fork | `3d84565a5` | The main branch as of 2026-11-17, which the current one builds on |
-| `feat/sce-step2-lane` | Fork | `c5511fab0` | The plan-shape batch, now merged into the current main branch |
+| `feat/self-contained-engine` | Fork | `852329c0f` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782` |
+| `sce-e2e-harness` | Fork | see `git log` | The harness, the designs and reviews under `docs/`, and this file |
+| `feat/sce-step2-lane` | Fork | `c5511fab0` | The plan-shape batch, merged into the main branch |
 | `spike/sce-step0-proofs` | Fork | `ff4729363` | Step 0's proof scripts and results (`proofs/step0/*/RESULTS.md`) |
 | `fix/checkpoint-on-source-worker` | Fork | `57c64e921` | An upstream bug fix found on the way; rebase on upstream main before proposing it |
-
-Pushing the two local branches to the fork is the owner's call.
 
 ## 3. What 2026-11-18 added to the main branch
 
@@ -160,10 +156,9 @@ Also left:
 
 ## 6. Before a pull request
 
-1. Push the two local branches, if the owner agrees.
-2. Run step 3's gates in Kubernetes and local-dev mode on a machine where they can run, and the
+1. Run step 3's gates in Kubernetes and local-dev mode on a machine where they can run, and the
    negative controls once.
-3. Regroup the history into pull requests. Upstream merges by squash, so the pull request's text
+2. Regroup the history into pull requests. Upstream merges by squash, so the pull request's text
    becomes the commit message; the branch's own messages need no rewrite.
 
 A split, for the owner to decide:
@@ -198,8 +193,7 @@ Made by the owner:
   commands between the frontend and the engine keep working; review upstream #9356 against it.
 
 Open for the owner:
-- Whether to push the local branches, and whether to post the review of #9356 (drafted: approve,
-  with five notes that do not block).
+- Whether to post the review of #9356 (drafted: approve, with five notes that do not block).
 - Step 3's six choices, built to the recommendations (`docs/step3-design.md` section 11).
 - Whether a scan's descriptor should also stop holding the resolved file name.
 - Whether to propose steps 1-2 upstream before the rest. Upstream moves about ten commits a day.
