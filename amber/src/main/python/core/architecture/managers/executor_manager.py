@@ -28,6 +28,9 @@ from typing import Tuple, Optional
 
 from core.models import Operator, SourceOperator
 
+# BaseException.add_note is new in Python 3.11.
+HAS_ADD_NOTE = hasattr(BaseException, "add_note")
+
 
 def pytexera_names() -> set:
     """Names that `from pytexera import *` brings into a UDF."""
@@ -340,9 +343,22 @@ class ExecutorManager:
                 "If it is a helper method, remove @overrides instead."
             )
         if fix:
-            error.add_note(f"{location}. {fix}" if location else fix)
+            cls._add_note(error, f"{location}. {fix}" if location else fix)
         elif location:
-            error.add_note(location)
+            cls._add_note(error, location)
+
+    @staticmethod
+    def _add_note(error: Exception, note: str) -> None:
+        """
+        `error.add_note(note)`, also on a Python older than 3.11, which has no
+        such method: the computing unit's image runs 3.10. The note is kept
+        where 3.11 keeps it, in `__notes__`, which is where the error's
+        report reads it from.
+        """
+        if HAS_ADD_NOTE:
+            error.add_note(note)
+        else:
+            error.__notes__ = [*getattr(error, "__notes__", ()), note]
 
     def close(self) -> None:
         """

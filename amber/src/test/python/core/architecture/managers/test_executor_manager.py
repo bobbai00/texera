@@ -655,6 +655,30 @@ class TestActionableLoadErrors:
         # KeyError quotes its message, so the line is attached as a note.
         assert "line 3" in "".join(exc_info.value.__notes__)
 
+    def test_runtime_error_while_loading_reports_user_line_before_python_3_11(
+        self, executor_manager, monkeypatch
+    ):
+        # The computing unit's image runs Python 3.10, where an exception has
+        # no add_note: the hint must not replace the user's error with an
+        # AttributeError of its own.
+        import core.architecture.managers.executor_manager as module
+
+        monkeypatch.setattr(module, "HAS_ADD_NOTE", False)
+        with pytest.raises(KeyError) as exc_info:
+            executor_manager.load_executor_definition(RUNTIME_ERROR_AT_LOAD_CODE)
+        assert "line 3" in "".join(exc_info.value.__notes__)
+
+    def test_a_second_note_is_kept_beside_the_first_before_python_3_11(
+        self, monkeypatch
+    ):
+        import core.architecture.managers.executor_manager as module
+
+        monkeypatch.setattr(module, "HAS_ADD_NOTE", False)
+        error = ValueError("boom")
+        ExecutorManager._add_note(error, "first")
+        ExecutorManager._add_note(error, "second")
+        assert list(error.__notes__) == ["first", "second"]
+
     def test_error_without_user_line_or_hint_gets_no_note(self):
         error = ValueError("boom")
         ExecutorManager._add_user_code_hint(error, "/not/the/udf.py")
