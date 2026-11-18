@@ -91,9 +91,7 @@ describe("UserQuotaService", () => {
   });
 
   it("getExecutionQuota() GETs the quota-size endpoint", () => {
-    const quota: ReadonlyArray<ExecutionQuota> = [
-      { eid: 1, workflowId: 2, workflowName: "wf", resultBytes: 10, runTimeStatsBytes: 20, logBytes: 30 },
-    ];
+    const quota: ReadonlyArray<ExecutionQuota> = [{ eid: 1, workflowId: 2, workflowName: "wf", storedBytes: 60 }];
     let result: ReadonlyArray<ExecutionQuota> | undefined;
 
     service.getExecutionQuota(1).subscribe(r => (result = r));

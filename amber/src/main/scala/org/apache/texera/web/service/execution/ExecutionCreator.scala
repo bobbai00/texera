@@ -174,8 +174,10 @@ final class WorkflowNotCompiled(
   *     from (as JSON that parses back to it, [[LogicalPlanPojo.toJson]]), the user, the unit and
   *     the email notification. A plan larger than the table keeps closes the row as failed,
   *     "its plan could not be stored" (400); so does a write that fails (500).
-  *  1. Off the request's thread, the results of the workflow's ended executions on the unit that
-  *     a later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
+  *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
+  *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
+  *     is replaced like any other. Then the results of its closed executions on the unit that a
+  *     later one has replaced are cleared ([[ExecutionResources.clearReplacedExecutions]]). The
   *     new execution replaces none until a unit runs it.
   *
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
@@ -191,6 +193,7 @@ final class WorkflowNotCompiled(
   * @param writePlan         writes the plan row, and the logical plan it was compiled from, to
   *                          the plan table at a URI
   * @param background        runs what a create leaves to be done after it has answered
+  * @param closer            closes the earlier executions a create finds ended
   * @param compiles          runs the compiles, a bounded number at once
   * @param compileDeadline   how long a compile may take
   */
@@ -205,6 +208,7 @@ class ExecutionCreator(
       threads = 1,
       waiting = new LinkedBlockingQueue[Runnable]()
     ),
+    closer: ExecutionCloser = new ExecutionCloser(),
     compiles: ExecutorService = ExecutionCreator.daemonThreads(
       "execution-compile",
       ExecutionCreator.CompileThreads,
@@ -302,11 +306,47 @@ class ExecutionCreator(
           )
       }
     }
-    background.execute(() =>
+    background.execute(() => {
+      closeEndedBefore(eid, wid, checked.computingUnitId)
       ExecutionResources.clearReplacedExecutions(wid, checked.computingUnitId)
-    )
+    })
     CreateExecutionResponse(eid.id, planUri.toString)
   }
+
+  /**
+    * Closes each execution of workflow `wid` on computing unit `cuid` made before `eid` that is
+    * still open although its log shows an ending, as the closing job would on its next tick.
+    * One whose log shows no ending is left as it is: it may be running, or no unit has started
+    * it yet. So is one whose tables are in a warehouse this deployment cannot reach, which the
+    * closing job closes without reading it.
+    *
+    * Nothing here is thrown: an execution that cannot be looked at stays open for the job.
+    */
+  private def closeEndedBefore(eid: ExecutionIdentity, wid: WorkflowIdentity, cuid: Int): Unit =
+    try {
+      ExecutionRecords
+        .openBefore(wid.id, cuid, eid.id)
+        .filterNot(earlier =>
+          ExecutionClosing.warehouseUnavailable(earlier.warehouse, warehousesEnabled)
+        )
+        .foreach { earlier =>
+          try closer.closeIfEnded(earlier)
+          catch {
+            case NonFatal(failure) =>
+              logger.warn(
+                s"Execution ${earlier.eid}, made before execution ${eid.id}, could not be " +
+                  s"looked at, so it is left to the closing job: $failure"
+              )
+          }
+        }
+    } catch {
+      case NonFatal(failure) =>
+        logger.warn(
+          s"The open executions of workflow ${wid.id} on computing unit $cuid could not be " +
+            "listed, so they are left to the closing job.",
+          failure
+        )
+    }
 
   /**
     * `step`, a step of the create of execution `eid` after its row exists. When it fails, the

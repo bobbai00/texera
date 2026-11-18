@@ -39,7 +39,7 @@ import org.apache.texera.auth.util.{ComputingUnitAccess, WorkflowAccess}
 import org.apache.texera.common.compiler.WorkflowCompiler
 import org.apache.texera.common.compiler.model.{LogicalPlan, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.{
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
@@ -74,12 +74,16 @@ object OperatorUpdates {
       (PhysicalOp, Option[StateTransferFunc])
     ]
 
-  /** What a change to an execution's operator reads of the execution's row. */
+  /**
+    * What a change to an execution's operator reads of the execution's row.
+    *
+    * @param ended whether the row has its closing record
+    */
   private case class ExecutionRow(
       wid: Long,
       uid: Int,
       cuid: Option[Int],
-      status: Short,
+      ended: Boolean,
       warehouse: Option[String]
   )
 }
@@ -161,7 +165,7 @@ class OperatorUpdates(
     val execution =
       executionOf(eid).getOrElse(throw new NotFoundException(s"There is no execution $eid."))
     val cuid = requireAllowed(eid, execution, uid)
-    if (WorkflowExecutionStatus.Ended.contains(execution.status)) {
+    if (execution.ended) {
       throw new WebApplicationException(s"Execution $eid has ended.", Response.Status.CONFLICT)
     }
     // Opened while the switch is off, a per-user warehouse would be the shared one, where the plan
@@ -232,8 +236,9 @@ class OperatorUpdates(
   }
 
   /**
-    * Execution `eid`'s row: its workflow (through its version), creator, computing unit, status
-    * and the name of the warehouse it writes into. None when there is no such execution.
+    * Execution `eid`'s row: its workflow (through its version), creator, computing unit, whether
+    * it has ended and the name of the warehouse it writes into. None when there is no such
+    * execution.
     */
   private def executionOf(eid: Long): Option[ExecutionRow] =
     Option.when(eid >= 1 && eid <= Int.MaxValue)(eid).flatMap { id =>
@@ -245,7 +250,7 @@ class OperatorUpdates(
             WORKFLOW_VERSION.WID,
             WORKFLOW_EXECUTIONS.UID,
             WORKFLOW_EXECUTIONS.CUID,
-            WORKFLOW_EXECUTIONS.STATUS,
+            WORKFLOW_EXECUTIONS.ENDED_AT,
             USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME
           )
           .from(WORKFLOW_EXECUTIONS)
@@ -260,7 +265,7 @@ class OperatorUpdates(
           wid = row.value1().longValue(),
           uid = row.value2().intValue(),
           cuid = Option(row.value3()).map(_.intValue()),
-          status = row.value4().shortValue(),
+          ended = row.value4() != null,
           warehouse = Option(row.value5())
         )
       }

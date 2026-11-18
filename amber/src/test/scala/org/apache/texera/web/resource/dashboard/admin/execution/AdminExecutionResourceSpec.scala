@@ -19,6 +19,8 @@
 
 package org.apache.texera.web.resource.dashboard.admin.execution
 
+import org.apache.texera.amber.core.storage.{ExecutionLabel, ExecutionLogStore}
+import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -37,14 +39,17 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowUserAccess,
   WorkflowVersion
 }
+import org.apache.texera.web.service.execution.OpenExecutionStatuses
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
+import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue, TimeUnit}
+import scala.jdk.CollectionConverters._
 
 class AdminExecutionResourceSpec
     extends AnyFlatSpec
@@ -59,6 +64,8 @@ class AdminExecutionResourceSpec
   private val testWid = 4000 + scala.util.Random.nextInt(1000)
   private val testUid = 4000 + scala.util.Random.nextInt(1000)
   private val secondWid = testWid + 1
+  // Every workflow a case may seed.
+  private val testWids = (testWid to testWid + 5).map(Integer.valueOf).asJava
 
   private var testUser: User = _
   private var testWorkflow: Workflow = _
@@ -70,7 +77,26 @@ class AdminExecutionResourceSpec
   private var workflowExecutionsDao: WorkflowExecutionsDao = _
   private var workflowUserAccessDao: WorkflowUserAccessDao = _
 
-  private val resource = new AdminExecutionResource()
+  // What the lake holds of the open executions: the label of each log, by the log's URI. A log
+  // that is not here does not exist, and one in `unreadable` cannot be read.
+  private val labels = new ConcurrentHashMap[URI, ExecutionLabel]()
+  private val unreadable = ConcurrentHashMap.newKeySet[URI]()
+  private val labelsRead = new ConcurrentLinkedQueue[URI]()
+
+  // The resource's clock, which a case sets.
+  @volatile private var now = System.currentTimeMillis()
+
+  private val resource = new AdminExecutionResource(
+    new OpenExecutionStatuses(
+      label = uri => {
+        labelsRead.add(uri)
+        if (unreadable.contains(uri)) throw new IllegalStateException("the lake is out of reach")
+        Option(labels.get(uri))
+      },
+      warehousesEnabled = false
+    ),
+    () => now
+  )
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
@@ -120,7 +146,7 @@ class AdminExecutionResourceSpec
     val vidSubquery = getDSLContext
       .select(WORKFLOW_VERSION.VID)
       .from(WORKFLOW_VERSION)
-      .where(WORKFLOW_VERSION.WID.in(testWid, secondWid))
+      .where(WORKFLOW_VERSION.WID.in(testWids))
 
     getDSLContext
       .deleteFrom(WORKFLOW_EXECUTIONS)
@@ -128,39 +154,79 @@ class AdminExecutionResourceSpec
       .execute()
     getDSLContext
       .deleteFrom(WORKFLOW_USER_ACCESS)
-      .where(WORKFLOW_USER_ACCESS.WID.in(testWid, secondWid))
+      .where(WORKFLOW_USER_ACCESS.WID.in(testWids))
       .execute()
     getDSLContext
       .deleteFrom(WORKFLOW_VERSION)
-      .where(WORKFLOW_VERSION.WID.in(testWid, secondWid))
+      .where(WORKFLOW_VERSION.WID.in(testWids))
       .execute()
-    getDSLContext.deleteFrom(WORKFLOW).where(WORKFLOW.WID.in(testWid, secondWid)).execute()
+    getDSLContext.deleteFrom(WORKFLOW).where(WORKFLOW.WID.in(testWids)).execute()
     getDSLContext.deleteFrom(USER).where(USER.UID.eq(testUid)).execute()
+    labels.clear()
+    unreadable.clear()
   }
 
   // ─── helpers ────────────────────────────────────────────────────────────────
 
+  /**
+    * An execution of version `vid`, created `startOffsetMillis` ago. It is closed, as
+    * `outcome`, `durationMillis` after that; with no duration it is open. `status` is the
+    * column a unit writes, which the list does not read.
+    */
   private def seedExecution(
       status: Byte = 3.toByte,
       name: String = "run",
       startOffsetMillis: Long = 0L,
-      durationMillis: Long = 1000L
+      durationMillis: Option[Long] = Some(1000L),
+      outcome: Short = 3,
+      vid: Integer = testVersion.getVid
   ): WorkflowExecutions = {
     val execution = new WorkflowExecutions
-    execution.setVid(testVersion.getVid)
+    execution.setVid(vid)
     execution.setUid(testUser.getUid)
     execution.setStatus(status)
     execution.setResult("")
     execution.setLogLocation("")
-    val now = System.currentTimeMillis()
-    execution.setStartingTime(new Timestamp(now - startOffsetMillis))
-    execution.setLastUpdateTime(new Timestamp(now - startOffsetMillis + durationMillis))
+    val created = (System.currentTimeMillis() - startOffsetMillis) / 1000L * 1000L
+    execution.setStartingTime(new Timestamp(created))
+    durationMillis.foreach { duration =>
+      execution.setOutcome(outcome)
+      execution.setEndedAt(new Timestamp(created + duration))
+    }
     execution.setBookmarked(false)
     execution.setName(name)
     execution.setEnvironmentVersion("test-env-1.0")
     workflowExecutionsDao.insert(execution)
-    execution
+    // As stored: a time written through the DAO keeps whole seconds.
+    workflowExecutionsDao.fetchOneByEid(execution.getEid)
   }
+
+  /** An open execution, whose row's status says it completed, which the list does not read. */
+  private def seedOpenExecution(
+      name: String = "open-run",
+      startOffsetMillis: Long = 0L,
+      vid: Integer = testVersion.getVid
+  ): WorkflowExecutions =
+    seedExecution(
+      name = name,
+      startOffsetMillis = startOffsetMillis,
+      durationMillis = None,
+      vid = vid
+    )
+
+  private def logUriOf(execution: WorkflowExecutions, wid: Int = testWid): URI =
+    ExecutionLogStore.logUri(
+      WorkflowIdentity(wid),
+      ExecutionIdentity(execution.getEid.longValue()),
+      None
+    )
+
+  /** Gives the log of `execution` a label whose newest state is `state`. */
+  private def label(execution: WorkflowExecutions, state: String, wid: Int = testWid): Unit =
+    labels.put(
+      logUriOf(execution, wid),
+      ExecutionLabel(Some(state), 1L, now, None, now, 30000L)
+    )
 
   private def grantAccess(uid: Int, privilege: PrivilegeEnum): Unit = {
     val access = new WorkflowUserAccess
@@ -170,39 +236,34 @@ class AdminExecutionResourceSpec
     workflowUserAccessDao.insert(access)
   }
 
-  // Seeds a full second workflow (workflow + version + one execution) owned by
-  // testUser, whose latest execution ends `endOffsetMillis` before "now". Used to
-  // give the ordering test two workflows with distinct end times.
-  private def seedSecondWorkflow(endOffsetMillis: Long): Unit = {
+  /** A workflow `wid` owned by testUser, with one version; returns the version's id. */
+  private def seedWorkflow(wid: Int): Integer = {
     val workflow = new Workflow
-    workflow.setWid(secondWid)
-    workflow.setName("second_workflow_" + UUID.randomUUID().toString.substring(0, 8))
+    workflow.setWid(wid)
+    workflow.setName(s"workflow_${wid - testWid}_" + UUID.randomUUID().toString.substring(0, 8))
     workflow.setContent("{}")
-    workflow.setDescription("second")
+    workflow.setDescription("another")
     workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
     workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
     workflowDao.insert(workflow)
 
     val version = new WorkflowVersion
-    version.setWid(secondWid)
+    version.setWid(wid)
     version.setContent("{}")
     version.setCreationTime(new Timestamp(System.currentTimeMillis()))
     workflowVersionDao.insert(version)
-
-    val execution = new WorkflowExecutions
-    execution.setVid(version.getVid)
-    execution.setUid(testUser.getUid)
-    execution.setStatus(3.toByte)
-    execution.setResult("")
-    execution.setLogLocation("")
-    val now = System.currentTimeMillis()
-    execution.setStartingTime(new Timestamp(now - endOffsetMillis - 1000))
-    execution.setLastUpdateTime(new Timestamp(now - endOffsetMillis))
-    execution.setBookmarked(false)
-    execution.setName("second-run")
-    execution.setEnvironmentVersion("test-env-1.0")
-    workflowExecutionsDao.insert(execution)
+    version.getVid
   }
+
+  // Seeds a full second workflow (workflow + version + one execution) owned by
+  // testUser, whose latest execution ends `endOffsetMillis` before "now". Used to
+  // give the ordering test two workflows with distinct end times.
+  private def seedSecondWorkflow(endOffsetMillis: Long): Unit =
+    seedExecution(
+      name = "second-run",
+      startOffsetMillis = endOffsetMillis + 1000,
+      vid = seedWorkflow(secondWid)
+    )
 
   private def emptyFilter: java.util.List[String] = new java.util.ArrayList[String]()
 
@@ -216,9 +277,19 @@ class AdminExecutionResourceSpec
   // call site under the 100-column limit and centralizes the fixed arguments.
   private def list(
       sortField: String = "NO_SORTING",
-      filter: java.util.List[String] = emptyFilter
+      filter: java.util.List[String] = emptyFilter,
+      sortDirection: String = "desc",
+      pageSize: Int = 20,
+      pageIndex: Int = 0
   ): List[AdminExecutionResource.dashboardExecution] =
-    resource.listWorkflows(new SessionUser(testUser), 20, 0, sortField, "desc", filter)
+    resource.listWorkflows(
+      new SessionUser(testUser),
+      pageSize,
+      pageIndex,
+      sortField,
+      sortDirection,
+      filter
+    )
 
   // ─── pure status lookups (no DB) ─────────────────────────────────────────────
 
@@ -270,11 +341,59 @@ class AdminExecutionResourceSpec
   }
 
   it should "name an execution that was created and not started, and filter by that name" in {
-    seedExecution(status = 6.toByte, name = "created-run")
+    seedOpenExecution(name = "created-run")
 
     list().map(_.executionStatus) shouldBe List("CREATED")
     list(filter = filterOf("CREATED")).map(_.executionName) shouldBe List("created-run")
     list(filter = filterOf("READY", "RUNNING")) shouldBe empty
+  }
+
+  it should "name a closed execution by its outcome, whatever status its unit left" in {
+    Seq[(Short, String)]((3, "COMPLETED"), (4, "FAILED"), (5, "KILLED")).foreach {
+      case (outcome, name) =>
+        // Running, says the column: the unit was lost, or stopped, before it wrote more.
+        val execution = seedExecution(status = 1.toByte, outcome = outcome)
+        // Its log, if anything read it, would say otherwise.
+        label(execution, "PAUSED")
+        val before = labelsRead.size
+
+        list().map(_.executionStatus) shouldBe List(name)
+        labelsRead.size shouldBe before
+    }
+  }
+
+  it should "name an open execution by the newest state in its log" in {
+    Seq("READY" -> "READY", "RUNNING" -> "RUNNING", "PAUSED" -> "PAUSED", "FAILED" -> "FAILED")
+      .foreach {
+        case (state, name) =>
+          label(seedOpenExecution(), state)
+          list().map(_.executionStatus) shouldBe List(name)
+      }
+  }
+
+  it should "name an open execution whose log cannot be read UNKNOWN" in {
+    unreadable.add(logUriOf(seedOpenExecution()))
+
+    list().map(_.executionStatus) shouldBe List("UNKNOWN")
+  }
+
+  it should "report how long a closed execution took, and when it ended" in {
+    val execution = seedExecution(startOffsetMillis = 60000L, durationMillis = Some(42000L))
+
+    val row = list().head
+    row.startTime shouldBe execution.getStartingTime.getTime
+    row.endTime shouldBe execution.getEndedAt.getTime
+    row.endTime shouldBe row.startTime + 42000L
+    row.executionTime shouldBe 42.0
+  }
+
+  it should "report how long an open execution has taken so far, and no end" in {
+    val execution = seedOpenExecution()
+    now = execution.getStartingTime.getTime + 7250L
+
+    val row = list().head
+    row.endTime shouldBe 0L
+    row.executionTime shouldBe 7.25
   }
 
   it should "report access = false when the current user has no WORKFLOW_USER_ACCESS row" in {
@@ -311,10 +430,56 @@ class AdminExecutionResourceSpec
   it should "narrow the result to executions whose status is in the filter" in {
     // The listing returns the latest execution per workflow; a RUNNING latest passes a
     // RUNNING filter, and is excluded by a COMPLETED-only filter.
-    seedExecution(status = 1.toByte, name = "running-run")
+    label(seedOpenExecution(name = "running-run"), "RUNNING")
 
     list(filter = filterOf("RUNNING")) should have size 1
     list(filter = filterOf("COMPLETED")) shouldBe empty
+    list(filter = filterOf("PAUSED", "CREATED")) shouldBe empty
+    list(filter = filterOf("COMPLETED", "RUNNING")) should have size 1
+  }
+
+  it should "filter closed executions by their outcome, without reading the lake" in {
+    // Failed, although the status its unit left says it runs.
+    val failed = seedExecution(status = 1.toByte, name = "failed-run", outcome = 4)
+    label(failed, "RUNNING")
+    val before = labelsRead.size
+
+    list(filter = filterOf("FAILED")).map(_.executionName) shouldBe List("failed-run")
+    list(filter = filterOf("FAILED", "KILLED")).map(_.executionName) shouldBe List("failed-run")
+    list(filter = filterOf("COMPLETED")) shouldBe empty
+    labelsRead.size shouldBe before
+    list(filter = filterOf("RUNNING")) shouldBe empty
+  }
+
+  // The status of an open execution is not in its row, so the page cannot be cut by the query.
+  it should "cut the page after filtering by the status of open executions" in {
+    // Five workflows, by name: paused, running, completed, running, running.
+    val states = Seq("PAUSED", "RUNNING", "COMPLETED", "RUNNING", "RUNNING")
+    val wids = states.zipWithIndex.map {
+      case (state, index) =>
+        val wid = testWid + 1 + index
+        val vid = seedWorkflow(wid)
+        getDSLContext
+          .update(WORKFLOW)
+          .set(WORKFLOW.NAME, s"paged-$index")
+          .where(WORKFLOW.WID.eq(Integer.valueOf(wid)))
+          .execute()
+        if (state == "COMPLETED") seedExecution(vid = vid)
+        else label(seedOpenExecution(vid = vid), state, wid)
+        wid
+    }
+    def page(index: Int) =
+      list("workflow_name", filterOf("RUNNING"), "asc", pageSize = 2, pageIndex = index)
+        .map(_.workflowId)
+
+    page(0) shouldBe List(wids(1), wids(3))
+    page(1) shouldBe List(wids(4))
+    page(2) shouldBe empty
+    list("workflow_name", filterOf("RUNNING", "COMPLETED"), "asc", pageSize = 2, pageIndex = 1)
+      .map(_.workflowId) shouldBe List(wids(3), wids(4))
+    // Without such a filter the query cuts the page.
+    list("workflow_name", emptyFilter, "asc", pageSize = 2, pageIndex = 1)
+      .map(_.workflowId) shouldBe List(wids(2), wids(3))
   }
 
   it should "order the results by the sort field and direction" in {
@@ -326,8 +491,16 @@ class AdminExecutionResourceSpec
     list(sortField = "end_time").map(_.workflowId) shouldBe List(testWid, secondWid)
 
     // asc by end_time -> the older one comes first
-    val ascending =
-      resource.listWorkflows(new SessionUser(testUser), 20, 0, "end_time", "asc", emptyFilter)
-    ascending.map(_.workflowId) shouldBe List(secondWid, testWid)
+    list(sortField = "end_time", sortDirection = "asc").map(_.workflowId) shouldBe
+      List(secondWid, testWid)
+  }
+
+  it should "order an open execution as ending after every closed one" in {
+    seedExecution(name = "closed")
+    seedOpenExecution(vid = seedWorkflow(secondWid), startOffsetMillis = 60000L)
+
+    list(sortField = "end_time").map(_.workflowId) shouldBe List(secondWid, testWid)
+    list(sortField = "end_time", sortDirection = "asc").map(_.workflowId) shouldBe
+      List(testWid, secondWid)
   }
 }

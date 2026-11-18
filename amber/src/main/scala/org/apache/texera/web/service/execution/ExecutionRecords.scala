@@ -116,6 +116,34 @@ object ExecutionRecords {
         .and(WORKFLOW_EXECUTIONS.ENDED_AT.ge(timeOf(sinceMs)))
     )
 
+  /**
+    * The executions of workflow `wid` on computing unit `cuid` with no closing record that were
+    * made before execution `before`, oldest first.
+    */
+  def openBefore(wid: Long, cuid: Int, before: Long): Seq[ExecutionRecord] =
+    select(
+      WORKFLOW_EXECUTIONS.ENDED_AT.isNull
+        .and(WORKFLOW_VERSION.WID.eq(Integer.valueOf(Math.toIntExact(wid))))
+        .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
+        .and(WORKFLOW_EXECUTIONS.EID.lt(Integer.valueOf(Math.toIntExact(before))))
+    )
+
+  /**
+    * The condition that a row's status can be one of `codes`, as far as the row tells: it is
+    * closed with one of them as its outcome, or, when `codes` has a code that is not an
+    * ending, it is open. An open execution's status is in its log, so whoever asks narrows the
+    * open rows found by what their logs say. No codes, no condition.
+    */
+  def statusAmong(codes: Set[Short]): Condition = {
+    val (endings, others) = codes.partition(WorkflowExecutionStatus.Ended.contains)
+    val closed =
+      Option.when(endings.nonEmpty)(
+        WORKFLOW_EXECUTIONS.OUTCOME.in(endings.toSeq.sorted.map(Short.box).asJava)
+      )
+    val open = Option.when(others.nonEmpty)(WORKFLOW_EXECUTIONS.ENDED_AT.isNull)
+    (closed.toSeq ++ open).reduceOption(_.or(_)).getOrElse(DSL.noCondition())
+  }
+
   /** Execution `eid`'s row; None when there is none. */
   def find(eid: Long): Option[ExecutionRecord] =
     Option

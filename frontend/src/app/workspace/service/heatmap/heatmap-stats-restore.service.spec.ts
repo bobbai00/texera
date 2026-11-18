@@ -44,7 +44,7 @@ function makeExecution(overrides: Partial<WorkflowExecutionsEntry>): WorkflowExe
     startingTime: 1_000,
     completionTime: 2_000,
     status: 3, // Completed
-    result: "",
+    reason: null,
     bookmarked: false,
     logLocation: "",
     ...overrides,

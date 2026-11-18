@@ -691,14 +691,17 @@ class OperatorUpdatesSpec
     )
   }
 
-  it should "store changes at any status before the execution ends" in {
+  // Only the closing record says an execution is over: the status column is what a unit last
+  // wrote, and 3 is there for a moment before the run is closed.
+  it should "store changes while the execution is open, whatever status its row keeps" in {
     val execution = created()
 
-    Seq[Short](0, 1, 2).foreach { status =>
-      setStatus(execution.eid, status)
-      withClue(s"status $status: ") {
-        stored(post(execution.eid, udf(code = changedCode(s"s$status"))))
-      }
+    Seq[Short](0, 1, 2, 3, 4, 5, 6, -1).zipWithIndex.foreach {
+      case (status, index) =>
+        setStatus(execution.eid, status)
+        withClue(s"status $status: ") {
+          stored(post(execution.eid, udf(code = changedCode(s"s$index"))))
+        }
     }
   }
 
@@ -1012,17 +1015,25 @@ class OperatorUpdatesSpec
     updateRows(upToUdf.planUri) shouldBe empty
   }
 
-  it should "refuse an execution that has ended with 409" in {
-    val execution = created()
+  it should "refuse an execution that is closed with 409, whatever status its row keeps" in {
+    Seq[Short](3, 4, 5).foreach { outcome =>
+      val execution = created()
+      // Paused, says the column: the unit was lost before it wrote more.
+      setStatus(execution.eid, 2)
+      ExecutionRecords.close(
+        execution.eid,
+        outcome,
+        reason = None,
+        endedAtMs = System.currentTimeMillis(),
+        fromLog = false
+      ) shouldBe true
 
-    Seq[Short](3, 4, 5).foreach { status =>
-      setStatus(execution.eid, status)
-      withClue(s"status $status: ") {
+      withClue(s"outcome $outcome: ") {
         refused(409)(post(execution.eid, limit("limit", 7))) shouldBe
           s"Execution ${execution.eid} has ended."
       }
+      updateRows(execution.planUri) shouldBe empty
     }
-    updateRows(execution.planUri) shouldBe empty
   }
 
   it should "refuse an execution whose plan is in a per-user warehouse while those are disabled" in {

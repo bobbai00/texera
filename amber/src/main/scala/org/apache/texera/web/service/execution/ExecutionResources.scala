@@ -29,7 +29,7 @@ import org.apache.texera.amber.core.storage.{
 }
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
+import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.{
   OPERATOR_EXECUTIONS,
   OPERATOR_PORT_EXECUTIONS,
@@ -222,16 +222,15 @@ object ExecutionResources extends LazyLogging {
 
   /**
     * Clears what the executions of workflow `wid` on computing unit `cuid` produced that a later
-    * execution has replaced: those that have ended (completed, failed or killed), still hold
-    * results or console messages, and are older than an execution of the workflow on the unit
-    * that holds some of its own.
+    * execution has replaced: those that are closed, still hold results or console messages, and
+    * are older than an execution of the workflow on the unit that holds some of its own.
     *
     * A unit writes those as it runs an execution, so nothing is cleared for an execution that
     * was only created: the execution the unit ran last, whose results it still shows, keeps them
-    * until a later one has results in their place. The status does not tell as much, since an
-    * execution that failed at its create is recorded like one that failed on its unit. An
-    * execution that may still run, whatever its state, is left alone, and so are the workflow's
-    * runs on any other unit.
+    * until a later one has results in their place. The closing record does not tell as much,
+    * since an execution that failed at its create is closed like one that failed on its unit.
+    * An open execution may still run, so it is left alone, and so are the workflow's runs on any
+    * other unit.
     *
     * Each is cleared by [[clearExecutionResources]]. Nothing here is thrown: an execution that
     * cannot be cleared, or a database that cannot list them, is logged, and keeps its results.
@@ -264,7 +263,7 @@ object ExecutionResources extends LazyLogging {
 
   /**
     * The executions [[clearReplacedExecutions]] clears, oldest first, in one SELECT: those of
-    * `wid` (through its versions) on `cuid` that have ended, have a row in
+    * `wid` (through its versions) on `cuid` that are closed, have a row in
     * `operator_port_executions` or `operator_executions`, and have a lower id than another
     * execution of `wid` on `cuid` with such a row.
     */
@@ -283,7 +282,7 @@ object ExecutionResources extends LazyLogging {
         WORKFLOW_VERSION.WID
           .eq(workflowId)
           .and(WORKFLOW_EXECUTIONS.CUID.eq(Integer.valueOf(cuid)))
-          .and(WORKFLOW_EXECUTIONS.STATUS.in(WorkflowExecutionStatus.Ended.map(Short.box).asJava))
+          .and(WORKFLOW_EXECUTIONS.ENDED_AT.isNotNull)
           .and(holdsResults(WORKFLOW_EXECUTIONS.EID))
           .and(
             DSL.exists(

@@ -37,7 +37,6 @@ import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.util.WorkflowAccess
 import org.apache.texera.auth.{JwtParser, SessionUser}
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
-import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
@@ -45,8 +44,13 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, Us
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
 import org.apache.texera.web.service.ResultExportService
-import org.apache.texera.web.service.execution.ExecutionResources
-import org.jooq.DSLContext
+import org.apache.texera.web.service.execution.{
+  ExecutionRecords,
+  ExecutionResources,
+  OpenExecution,
+  OpenExecutionStatuses
+}
+import org.jooq.{DSLContext, Record, SelectField}
 import play.api.libs.json.Json
 
 import java.net.URI
@@ -64,6 +68,9 @@ object WorkflowExecutionsResource {
       .getInstance()
       .createDSLContext()
   private def executionsDao = new WorkflowExecutionsDao(context.configuration)
+
+  // Jersey makes a resource for each request; this is the service's, shared by them all.
+  private lazy val openStatuses = new OpenExecutionStatuses()
 
   private def getExecutionById(eId: Integer): WorkflowExecutions = {
     executionsDao.fetchOneByEid(eId)
@@ -95,17 +102,17 @@ object WorkflowExecutionsResource {
     }
   }
 
+  /**
+    * The executions that ended more than `timeToLive` seconds ago and still have a result or a
+    * replay log. An execution that is open is never among them, however long it has run.
+    */
   def getExpiredExecutionsWithResultOrLog(timeToLive: Int): List[WorkflowExecutions] = {
     val deadline = new Timestamp(
       System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(timeToLive)
     )
     context
       .selectFrom(WORKFLOW_EXECUTIONS)
-      .where(
-        WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME.isNull
-          .and(WORKFLOW_EXECUTIONS.STARTING_TIME.lt(deadline))
-          .or(WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME.lt(deadline))
-      )
+      .where(WORKFLOW_EXECUTIONS.ENDED_AT.lt(deadline))
       .and(
         WORKFLOW_EXECUTIONS.RESULT.ne("").or(WORKFLOW_EXECUTIONS.LOG_LOCATION.ne(""))
       )
@@ -314,45 +321,143 @@ object WorkflowExecutionsResource {
     ).filter(_.nonEmpty)
       .map(URI.create)
 
+  /**
+    * The executions of workflow `wid`, newest first, as user `uid` sees them (see
+    * [[WorkflowExecutionEntry]]): those whose status is one of `statusCodes`, when any are
+    * given.
+    *
+    * A closed execution's status is in its row, so the codes of an ending narrow the query.
+    * An open one's is in its log: any other code asks for the open executions too, whose logs
+    * are then read, and those found in a status that was not asked for are left out. A filter
+    * of endings only reads no log, so an execution whose log shows an ending is among them
+    * once the closing job has recorded it.
+    */
   def getWorkflowExecutions(
       wid: Integer,
       context: DSLContext,
-      statusCodes: Set[Byte] = Set.empty
-  ): List[WorkflowExecutionEntry] = {
-    var condition = WORKFLOW_VERSION.WID.eq(wid)
+      uid: Integer,
+      statusCodes: Set[Byte] = Set.empty,
+      statuses: OpenExecutionStatuses = openStatuses
+  ): List[WorkflowExecutionEntry] =
+    entriesOf(
+      wid,
+      uid,
+      statuses,
+      entryRows(context)
+        .where(
+          WORKFLOW_VERSION.WID
+            .eq(wid)
+            .and(ExecutionRecords.statusAmong(statusCodes.map(_.toShort)))
+        )
+        .orderBy(WORKFLOW_EXECUTIONS.EID.desc())
+        .fetch()
+        .asScala
+        .toSeq
+    ).filter(entry => statusCodes.isEmpty || statusCodes.contains(entry.status))
 
-    if (statusCodes.nonEmpty) {
-      condition = condition.and(
-        WORKFLOW_EXECUTIONS.STATUS.in(statusCodes.map(Byte.box).asJava)
-      )
-    }
+  /**
+    * The newest execution of workflow `wid`, as user `uid` sees it: of its newest version that
+    * has any, the one made last. None when the workflow has no execution.
+    */
+  def getLatestWorkflowExecution(
+      wid: Integer,
+      context: DSLContext,
+      uid: Integer,
+      statuses: OpenExecutionStatuses = openStatuses
+  ): Option[WorkflowExecutionEntry] =
+    entriesOf(
+      wid,
+      uid,
+      statuses,
+      entryRows(context)
+        .where(WORKFLOW_VERSION.WID.eq(wid))
+        .orderBy(WORKFLOW_EXECUTIONS.VID.desc(), WORKFLOW_EXECUTIONS.EID.desc())
+        .limit(1)
+        .fetch()
+        .asScala
+        .toSeq
+    ).headOption
 
+  /** The rows of `workflow_executions`, each with what an entry of a history is made of. */
+  private def entryRows(context: DSLContext) =
     context
-      .select(
-        WORKFLOW_EXECUTIONS.EID,
-        WORKFLOW_EXECUTIONS.VID,
-        WORKFLOW_EXECUTIONS.CUID,
-        WORKFLOW_EXECUTIONS.WHID,
-        USER.NAME,
-        USER.AVATAR,
-        WORKFLOW_EXECUTIONS.STATUS,
-        WORKFLOW_EXECUTIONS.RESULT,
-        WORKFLOW_EXECUTIONS.STARTING_TIME,
-        WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME,
-        WORKFLOW_EXECUTIONS.BOOKMARKED,
-        WORKFLOW_EXECUTIONS.NAME,
-        WORKFLOW_EXECUTIONS.LOG_LOCATION
-      )
+      .select(entryColumns.asJava)
       .from(WORKFLOW_EXECUTIONS)
       .join(WORKFLOW_VERSION)
       .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
       .join(USER)
       .on(WORKFLOW_EXECUTIONS.UID.eq(USER.UID))
-      .where(condition)
-      .orderBy(WORKFLOW_EXECUTIONS.EID.desc())
-      .fetchInto(classOf[WorkflowExecutionEntry])
-      .asScala
-      .toList
+      .leftJoin(USER_WAREHOUSE)
+      .on(USER_WAREHOUSE.WHID.eq(WORKFLOW_EXECUTIONS.WHID))
+
+  /** What an entry of a history, and its status, are made of. */
+  private val entryColumns: Seq[SelectField[_]] = Seq(
+    WORKFLOW_EXECUTIONS.EID,
+    WORKFLOW_EXECUTIONS.VID,
+    WORKFLOW_EXECUTIONS.CUID,
+    WORKFLOW_EXECUTIONS.WHID,
+    WORKFLOW_EXECUTIONS.UID,
+    USER.NAME,
+    USER.AVATAR,
+    WORKFLOW_EXECUTIONS.STARTING_TIME,
+    WORKFLOW_EXECUTIONS.BOOKMARKED,
+    WORKFLOW_EXECUTIONS.NAME,
+    WORKFLOW_EXECUTIONS.LOG_LOCATION,
+    USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME,
+    WORKFLOW_EXECUTIONS.OUTCOME,
+    WORKFLOW_EXECUTIONS.OUTCOME_REASON,
+    WORKFLOW_EXECUTIONS.ENDED_AT
+  )
+
+  /**
+    * The entries of `rows`, executions of workflow `wid` selected by [[entryRows]], in their
+    * order, for user `uid`. The logs of the open ones are read for their status.
+    */
+  private def entriesOf(
+      wid: Integer,
+      uid: Integer,
+      statuses: OpenExecutionStatuses,
+      rows: Seq[Record]
+  ): List[WorkflowExecutionEntry] = {
+    val open = statuses.of(
+      rows
+        .filter(_.get(WORKFLOW_EXECUTIONS.ENDED_AT) == null)
+        .map(row =>
+          OpenExecution(
+            row.get(WORKFLOW_EXECUTIONS.EID).longValue(),
+            wid.longValue(),
+            Option(row.get(USER_WAREHOUSE.LAKEKEEPER_WAREHOUSE_NAME)),
+            row.get(WORKFLOW_EXECUTIONS.STARTING_TIME).getTime
+          )
+        )
+    )
+    // As ExecutionRecords.mayRead, asked once for the list.
+    lazy val granted = WorkflowAccess.hasGrantedAccess(wid, uid)
+    rows.map { row =>
+      val eid = row.get(WORKFLOW_EXECUTIONS.EID)
+      val own = row.get(WORKFLOW_EXECUTIONS.UID) == uid
+      val (status, completionTime) = Option(row.get(WORKFLOW_EXECUTIONS.ENDED_AT)) match {
+        case Some(endedAt) => (row.get(WORKFLOW_EXECUTIONS.OUTCOME).shortValue(), endedAt)
+        case None =>
+          val shown = open(eid.longValue())
+          (shown.status, new Timestamp(shown.stateTimeMs))
+      }
+      WorkflowExecutionEntry(
+        eId = eid,
+        vId = row.get(WORKFLOW_EXECUTIONS.VID),
+        cuId = row.get(WORKFLOW_EXECUTIONS.CUID),
+        whId = row.get(WORKFLOW_EXECUTIONS.WHID),
+        userName = row.get(USER.NAME),
+        avatar = row.get(USER.AVATAR),
+        status = status.toByte,
+        reason = if (own || granted) row.get(WORKFLOW_EXECUTIONS.OUTCOME_REASON) else null,
+        startingTime = row.get(WORKFLOW_EXECUTIONS.STARTING_TIME),
+        completionTime = completionTime,
+        bookmarked = row.get(WORKFLOW_EXECUTIONS.BOOKMARKED),
+        name = row.get(WORKFLOW_EXECUTIONS.NAME),
+        logLocation = if (own) row.get(WORKFLOW_EXECUTIONS.LOG_LOCATION) else null
+      )
+    }.toList
   }
 
   def deleteConsoleMessageAndExecutionResultUris(eid: ExecutionIdentity): Unit = {
@@ -506,6 +611,22 @@ object WorkflowExecutionsResource {
       .execute()
   }
 
+  /**
+    * An execution as a workflow's history lists it, for one user.
+    *
+    * @param status         its status code. Closed: how it ended (3 completed, 4 failed,
+    *                       5 killed). Open: the newest state in its log (0 initializing,
+    *                       1 running, 2 paused, or an ending the closing job has yet to
+    *                       record); 6, created, when no unit has written a state; -1 when its
+    *                       log cannot be read.
+    * @param reason         why it ended as it did, when its closing record says, for a user
+    *                       who may read what it recorded (`ExecutionRecords.mayRead`); else null
+    * @param completionTime when it ended, once it is closed. While it is open: when it took
+    *                       the state it is in, and when it was created while its log shows no
+    *                       state or cannot be read. Never null.
+    * @param logLocation    where its replay log is, for the user who created it, the only one
+    *                       who can replay it; else null
+    */
   case class WorkflowExecutionEntry(
       eId: Integer,
       vId: Integer,
@@ -514,7 +635,7 @@ object WorkflowExecutionsResource {
       userName: String,
       avatar: String,
       status: Byte,
-      result: String,
+      reason: String,
       startingTime: Timestamp,
       completionTime: Timestamp,
       bookmarked: Boolean,
@@ -549,7 +670,10 @@ case class ExecutionRenameRequest(wid: Integer, eId: Integer, executionName: Str
 
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
-class WorkflowExecutionsResource {
+class WorkflowExecutionsResource(openStatuses: OpenExecutionStatuses) {
+
+  // No-arg constructor for Jersey reflection. Tests use the param-ful form.
+  def this() = this(WorkflowExecutionsResource.openStatuses)
 
   @GET
   @Produces(Array(MediaType.APPLICATION_JSON))
@@ -562,43 +686,8 @@ class WorkflowExecutionsResource {
 
     validateUserCanAccessWorkflow(sessionUser.getUser.getUid, wid)
 
-    withTransaction(context) { ctx =>
-      val latestEntryOpt =
-        ctx
-          .select(
-            WORKFLOW_EXECUTIONS.EID,
-            WORKFLOW_EXECUTIONS.VID,
-            WORKFLOW_EXECUTIONS.CUID,
-            WORKFLOW_EXECUTIONS.WHID,
-            USER.NAME,
-            USER.AVATAR,
-            WORKFLOW_EXECUTIONS.STATUS,
-            WORKFLOW_EXECUTIONS.RESULT,
-            WORKFLOW_EXECUTIONS.STARTING_TIME,
-            WORKFLOW_EXECUTIONS.LAST_UPDATE_TIME,
-            WORKFLOW_EXECUTIONS.BOOKMARKED,
-            WORKFLOW_EXECUTIONS.NAME,
-            WORKFLOW_EXECUTIONS.LOG_LOCATION
-          )
-          .from(WORKFLOW_EXECUTIONS)
-          .join(WORKFLOW_VERSION)
-          .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
-          .join(USER)
-          .on(WORKFLOW_EXECUTIONS.UID.eq(USER.UID))
-          .where(WORKFLOW_VERSION.WID.eq(wid))
-          // sort by latest VID first, then latest start-time
-          .orderBy(
-            WORKFLOW_EXECUTIONS.VID.desc(),
-            WORKFLOW_EXECUTIONS.EID.desc()
-          )
-          .limit(1)
-          .fetchInto(classOf[WorkflowExecutionEntry])
-          .asScala
-          .headOption
-
-      latestEntryOpt.getOrElse {
-        throw new ForbiddenException("Executions doesn't exist")
-      }
+    getLatestWorkflowExecution(wid, context, sessionUser.getUser.getUid, openStatuses).getOrElse {
+      throw new ForbiddenException("Executions doesn't exist")
     }
   }
 
@@ -670,7 +759,7 @@ class WorkflowExecutionsResource {
             }
           }
           .getOrElse(Set.empty[Byte])
-      getWorkflowExecutions(wid, context, statusCodes)
+      getWorkflowExecutions(wid, context, user.getUid, statusCodes, openStatuses)
     }
   }
 

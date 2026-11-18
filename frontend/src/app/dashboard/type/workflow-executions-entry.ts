@@ -29,11 +29,15 @@ export interface WorkflowExecutionsEntry {
   avatar: string;
   name: string;
   startingTime: number;
+  /** When the execution ended; while it is open, when it took the state it is in. Never null. */
   completionTime: number;
+  /** 0 to 6 as EXECUTION_STATUS_CODE names them; -1 while the execution's log cannot be read. */
   status: number;
-  result: string;
+  /** Why the execution ended as it did, for a user who may read what it recorded; else null. */
+  reason: string | null;
   bookmarked: boolean;
-  logLocation: string;
+  /** Where the replay log is, for the user who created the execution; else null. */
+  logLocation: string | null;
 }
 
 /**

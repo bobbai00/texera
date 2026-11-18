@@ -134,6 +134,7 @@ import org.apache.texera.web.model.http.response.execution.{
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.{PlanToRun, WorkflowService}
 import org.apache.texera.web.service.execution.{
+  ClosingRecord,
   CostHintsLoader,
   ExecutionCloser,
   ExecutionCreator,
@@ -202,6 +203,8 @@ class ExecutionResourceSpec
   private val strangerCuid = 9625
   private val clearingCuid = 9626
   private val sharedCuid = 9627
+  private val closingCuid = 9628
+  private val closingOtherCuid = 9629
   private val unknownCuid = 9699
 
   /**
@@ -293,7 +296,9 @@ class ExecutionResourceSpec
       (otherUnitCuid, creatorUid, false),
       (strangerCuid, strangerUid, false),
       (clearingCuid, creatorUid, false),
-      (sharedCuid, creatorUid, false)
+      (sharedCuid, creatorUid, false),
+      (closingCuid, creatorUid, false),
+      (closingOtherCuid, creatorUid, false)
     ).foreach {
       case (cuid, owner, terminated) =>
         val unit = new WorkflowComputingUnit
@@ -374,14 +379,21 @@ class ExecutionResourceSpec
     row.getWhid
   }
 
+  /**
+    * Execution `eid`, as a unit left it at `status`: one that ended is closed as it ended,
+    * unless it is to be `open`, as it is until the closing job has looked at it.
+    */
   private def insertExecution(
       eid: Int,
       wid: Int,
       cuid: Int,
       status: Short,
       logLocation: Option[String] = None,
-      uid: Int = creatorUid
+      uid: Int = creatorUid,
+      open: Boolean = false,
+      whid: Option[Integer] = None
   ): Unit = {
+    val closed = !open && WorkflowExecutionStatus.Ended.contains(status)
     val vid = getDSLContext
       .select(WORKFLOW_VERSION.VID)
       .from(WORKFLOW_VERSION)
@@ -396,6 +408,12 @@ class ExecutionResourceSpec
       .set(WORKFLOW_EXECUTIONS.STATUS, java.lang.Short.valueOf(status))
       .set(WORKFLOW_EXECUTIONS.LOG_LOCATION, logLocation.orNull)
       .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
+      .set(WORKFLOW_EXECUTIONS.WHID, whid.orNull)
+      .set(WORKFLOW_EXECUTIONS.OUTCOME, if (closed) java.lang.Short.valueOf(status) else null)
+      .set(
+        WORKFLOW_EXECUTIONS.ENDED_AT,
+        if (closed) new Timestamp(System.currentTimeMillis()) else null
+      )
       .execute()
   }
 
@@ -468,6 +486,7 @@ class ExecutionResourceSpec
       failWrite: Option[RuntimeException] = None,
       bindings: CompileFor.Run => CompileFor.Run = _ => TestUtils.fixtureBindings,
       background: Executor = _.run(),
+      closer: ExecutionCloser = new ExecutionCloser(),
       compiles: ExecutorService = compilePool,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty
@@ -486,6 +505,7 @@ class ExecutionResourceSpec
             case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
           },
         background = background,
+        closer = closer,
         compiles = compiles,
         compileDeadline = compileDeadline
       )
@@ -1739,6 +1759,91 @@ class ExecutionResourceSpec
     hasTable(creators) shouldBe false
     consolesOf(961932) shouldBe 1
     hasTable(readers) shouldBe true
+  }
+
+  // --- closing earlier runs ---
+
+  /** Makes the log of execution `eid` and records `states` in it, a second apart. */
+  private def logged(eid: Long, states: String*): URI = {
+    val log = logOf(eid)
+    states.zipWithIndex.foreach { case (state, index) => record(log, eid, index + 1, state) }
+    log
+  }
+
+  it should "close an earlier execution whose log shows an ending while its row is still open, then clear what was replaced" in {
+    // The unit ran three executions and has just ended the second; a fourth was created and
+    // never started. The closing job has looked at none of them, so every row is open.
+    val Seq(first, second, third, unstarted) =
+      (1 to 4).map(_ => created(post(request(cuid = closingCuid))))
+    logged(first.eid, "READY", "RUNNING", "COMPLETED")
+    val failing = logged(second.eid, "READY", "RUNNING")
+    record(failing, second.eid, 3, "FAILED", errors = Seq(boom))
+    logged(third.eid, "READY", "RUNNING")
+    val consoles = Seq(first, second, third)
+      .map(execution => execution.eid -> withConsole(testWid, execution.eid.toInt))
+      .toMap
+    // Another unit's, whose log shows an ending too: not this create's to look at.
+    val elsewhere = created(post(request(cuid = closingOtherCuid)))
+    logged(elsewhere.eid, "READY", "RUNNING", "KILLED")
+    Seq(first, second, third, unstarted, elsewhere).foreach { execution =>
+      row(execution.eid).getEndedAt shouldBe null
+    }
+
+    val next = created(post(request(cuid = closingCuid)))
+
+    // Closed with what their logs say, at a time between their creation and now.
+    val closedFirst = ExecutionRecords.find(first.eid).get.closing.get
+    closedFirst.copy(endedAtMs = 0L) shouldBe
+      ClosingRecord(WorkflowExecutionStatus.Completed, None, 0L, fromLog = true)
+    closedFirst.endedAtMs should (be >= createdAt(first.eid) and be <= System.currentTimeMillis())
+    ExecutionRecords.find(second.eid).get.closing.get.copy(endedAtMs = 0L) shouldBe
+      ClosingRecord(WorkflowExecutionStatus.Failed, Some(boom.message), 0L, fromLog = true)
+    // What they hold was measured as they were closed: a plan and a log, at least.
+    row(first.eid).getStoredBytes.longValue() should be > 0L
+    row(second.eid).getStoredBytes.longValue() should be > 0L
+    // The first, which later runs replaced, is cleared.
+    consolesOf(first.eid.toInt) shouldBe 0
+    hasTable(consoles(first.eid)) shouldBe false
+    // The second, closed and replaced as well, is cleared too.
+    consolesOf(second.eid.toInt) shouldBe 0
+    hasTable(consoles(second.eid)) shouldBe false
+    // The one that runs is left open, and untouched; so are the ones no unit started, and
+    // the other unit's.
+    Seq(third, unstarted, next, elsewhere).foreach { execution =>
+      withClue(s"execution ${execution.eid}: ") {
+        val left = row(execution.eid)
+        left.getEndedAt shouldBe null
+        left.getOutcome shouldBe null
+        left.getStoredBytes shouldBe null
+      }
+    }
+    consolesOf(third.eid.toInt) shouldBe 1
+    hasTable(consoles(third.eid)) shouldBe true
+  }
+
+  it should "leave earlier executions to the closing job when their logs cannot be read" in {
+    val ended = created(post(request(cuid = closingOtherCuid)))
+    logged(ended.eid, "READY", "RUNNING", "COMPLETED")
+    val unread = new ExecutionCloser(label = lakeDown)
+
+    created(post(request(cuid = closingOtherCuid), creator = new FixtureCreator(closer = unread)))
+
+    row(ended.eid).getEndedAt shouldBe null
+  }
+
+  it should "not read the log of an earlier execution in a warehouse the deployment cannot reach" in {
+    // Its log's URI would name the shared warehouse, where a log of that name is another's.
+    insertExecution(961951, testWid, closingOtherCuid, status = 1, whid = Some(creatorWhid))
+    val read = mutable.ListBuffer.empty[URI]
+    val noting = new ExecutionCloser(label = uri => {
+      read.synchronized(read += uri)
+      ExecutionLogStore.label(uri)
+    })
+
+    created(post(request(cuid = closingOtherCuid), creator = new FixtureCreator(closer = noting)))
+
+    read.map(VFSURIFactory.decodeURI(_).executionId.id) should not contain 961951L
+    row(961951).getEndedAt shouldBe null
   }
 
   // --- refused: rights ---

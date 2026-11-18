@@ -93,12 +93,7 @@ class ExecutionRecordReader(
               ExecutionStatus.ofOpen(found),
               open = true,
               found.flatMap(_.reason),
-              // A state's time is from the unit's clock: never before the execution was made.
-              found
-                .filter(_.state.nonEmpty)
-                .fold(execution.startingTimeMs)(shown =>
-                  math.max(shown.stateTimeMs, execution.startingTimeMs)
-                )
+              ExecutionStatus.stateTimeOfOpen(found, execution.startingTimeMs)
             )
           } catch {
             case NonFatal(failure) =>
