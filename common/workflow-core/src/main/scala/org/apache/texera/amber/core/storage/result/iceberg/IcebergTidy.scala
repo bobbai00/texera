@@ -89,6 +89,7 @@ private[storage] object IcebergTidy {
       // Validated from the planned snapshot on only: the history before it may be expired.
       val rewrite = table
         .newRewrite()
+        .scanManifestsWith(OnCallingThread)
         .validateFromSnapshot(planned)
         .dataSequenceNumber(small.last.dataSequenceNumber())
       // A merge that fails leaves no merged file behind, as an append leaves no data file.
@@ -106,7 +107,11 @@ private[storage] object IcebergTidy {
   /** Rewrites the current snapshot's manifests into one, when it has more than one. */
   def rewriteManifests(table: Table): Unit =
     if (Option(table.currentSnapshot()).exists(_.allManifests(table.io()).size() > 1)) {
-      table.rewriteManifests().clusterBy((_: DataFile) => "all").commit()
+      table
+        .rewriteManifests()
+        .scanManifestsWith(OnCallingThread)
+        .clusterBy((_: DataFile) => "all")
+        .commit()
     }
 
   /**
@@ -119,5 +124,7 @@ private[storage] object IcebergTidy {
       .expireOlderThan(olderThanMs)
       .retainLast(retainLast)
       .cleanExpiredFiles(true)
+      .planWith(OnCallingThread)
+      .executeDeleteWith(OnCallingThread)
       .commit()
 }

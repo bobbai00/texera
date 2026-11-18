@@ -28,6 +28,7 @@ import org.apache.parquet.schema.MessageType
 
 import java.net.{ConnectException, NoRouteToHostException, UnknownHostException}
 import java.util.UUID
+import java.util.concurrent.ExecutorService
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -53,17 +54,21 @@ private[storage] object IcebergAppender {
     * An append that fails leaves no data file behind when its commit cannot have landed (see
     * [[committing]]), so a writer that tries again and again does not fill the table's location
     * with files no table reads.
+    *
+    * @param threads what Iceberg writes the commit's manifest on: by default the calling
+    *                thread, not Iceberg's shared pool ([[OnCallingThread]])
     */
   def append(
       table: Table,
       records: Iterable[Record],
       filePrefix: String,
-      properties: Map[String, String] = Map.empty
+      properties: Map[String, String] = Map.empty,
+      threads: ExecutorService = OnCallingThread
   ): Unit = {
     val transaction = table.newTransaction()
     val file = Option.when(records.nonEmpty)(writeDataFile(table, records, filePrefix))
     committing(table, file) { () =>
-      file.foreach(transaction.newFastAppend().appendFile(_).commit())
+      file.foreach(transaction.newFastAppend().scanManifestsWith(threads).appendFile(_).commit())
       if (properties.nonEmpty) set(transaction.updateProperties(), properties).commit()
     } { () =>
       // One commit to the catalog for both, and none when there was neither.

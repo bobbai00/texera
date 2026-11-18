@@ -74,6 +74,37 @@ class IcebergAppenderSpec extends AnyFlatSpec with Matchers with RecordTables {
     readSeqs(table) shouldBe List(1L, 1L)
   }
 
+  it should "write its commit where it is called, not on Iceberg's shared pool" in {
+    // Iceberg's shared worker pool is shut down as the JVM exits. A computing unit that is
+    // stopped writes how its runs ended exactly then, so an append must not need that pool.
+    val table = newTable()
+    val caller = Thread.currentThread()
+    val ranOn = new java.util.concurrent.ConcurrentLinkedQueue[Thread]()
+    val recording = new java.util.concurrent.AbstractExecutorService {
+      override def execute(task: Runnable): Unit = { ranOn.add(Thread.currentThread()); task.run() }
+      override def shutdown(): Unit = ()
+      override def shutdownNow(): java.util.List[Runnable] = java.util.Collections.emptyList()
+      override def isShutdown: Boolean = false
+      override def isTerminated: Boolean = false
+      override def awaitTermination(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean =
+        false
+    }
+
+    IcebergAppender.append(
+      table,
+      Seq(record(table, 1L, textOf(1L))),
+      "rows",
+      threads = recording
+    )
+
+    // The commit's manifest is written by the executor the append hands Iceberg ...
+    ranOn should not be empty
+    readSeqs(table) shouldBe List(1L)
+    // ... which by default is one that runs a task where it is submitted.
+    OnCallingThread.submit(() => Thread.currentThread()).get() should be theSameInstanceAs caller
+    OnCallingThread.isShutdown shouldBe false
+  }
+
   it should "set properties in the commit that appends the rows" in {
     val table = newTable()
     append(table, Seq(1L))

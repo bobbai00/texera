@@ -82,7 +82,9 @@ private[storage] object IcebergReader {
       filter: Expression = Expressions.alwaysTrue()
   ): List[DataFile] =
     Using
-      .resource(table.newScan().filter(filter).planFiles())(_.asScala.map(_.file()).toList)
+      .resource(table.newScan().planWith(OnCallingThread).filter(filter).planFiles())(
+        _.asScala.map(_.file()).toList
+      )
       .sortBy(_.dataSequenceNumber().longValue())
 
   /** The rows of `files`, file after file, with one file open at a time. */
