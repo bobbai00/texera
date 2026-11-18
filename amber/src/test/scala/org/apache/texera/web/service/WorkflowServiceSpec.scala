@@ -991,6 +991,35 @@ class WorkflowServiceSpec
     held.executionStateStore.metadataStore.getState.fatalErrors shouldBe empty
   }
 
+  it should "refuse what was asked of another unit, where it was told which unit it is, before reading the plan" in {
+    val planUri = storePlanOf(refusedEid)
+    // Asked of the unit the execution was created for, but this is not that unit: a request sent
+    // to the wrong unit, whatever unit it names.
+    WorkflowService.checkStoredStart(
+      refusedEid,
+      planUri,
+      executingUser,
+      storedCuid,
+      socketWorkflowId = None,
+      readPlan = _ => fail("the plan was read"),
+      thisUnit = Some(storedCuid + 1)
+    ) shouldBe Left(s"This is computing unit ${storedCuid + 1}, not $storedCuid.")
+    // On the unit it was created for, it is checked as on a unit that was told nothing.
+    Seq(Some(storedCuid), None).foreach { thisUnit =>
+      WorkflowService
+        .checkStoredStart(
+          refusedEid,
+          planUri,
+          executingUser,
+          storedCuid,
+          socketWorkflowId = None,
+          thisUnit = thisUnit
+        )
+        .map(_.executionId) shouldBe Right(refusedEid)
+    }
+    ExecutionPlanStore.isStarted(planUri) shouldBe false
+  }
+
   it should "answer a claim or a read the lake fails as a refusal, leaving the held run alone" in {
     val planUri = storePlanOf(unclaimedEid)
     def refusalOf(service: StoredStartService): Either[String, WorkflowExecutionService] = {

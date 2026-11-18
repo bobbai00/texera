@@ -25,7 +25,7 @@ import io.opentelemetry.api.trace.{Span, StatusCode}
 import io.reactivex.rxjava3.disposables.{CompositeDisposable, Disposable}
 import io.reactivex.rxjava3.subjects.BehaviorSubject
 import org.apache.iceberg.exceptions.CommitFailedException
-import org.apache.texera.common.config.ApplicationConfig
+import org.apache.texera.common.config.{ApplicationConfig, EnvironmentalVariable}
 import org.apache.texera.observability.{SpanAttrs, TexeraTracer}
 import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.storage.{
@@ -80,6 +80,14 @@ object WorkflowService extends LazyLogging {
       executionPlan: ExecutionPlan
   )
 
+  /**
+    * The computing unit this process is, where whatever started it said so (a unit the unit
+    * manager creates is given its id). A unit nothing told, as in a single-node deployment, has
+    * none, and takes the unit a request names.
+    */
+  lazy val configuredUnitId: Option[Int] =
+    sys.env.get(EnvironmentalVariable.ENV_CU_ID).map(_.trim).flatMap(_.toIntOption)
+
   /** What a start is answered when its run could not even be built. */
   def notStarted(executionId: Long): String =
     s"Execution $executionId could not be started, because of an error on this computing unit."
@@ -89,6 +97,7 @@ object WorkflowService extends LazyLogging {
     * created, on computing unit `cuid`, from the plan stored in its plan table at `planUri`, in
     * this order:
     *  1. A user is required.
+    *  1. A unit that knows which unit it is (`thisUnit`) starts only what was asked of that unit.
     *  1. The URI is checked before any catalog is opened ([[StoredExecutionStart.checkUri]]).
     *  1. The plan row is read with `readPlan`, and checked: made for `user` and `cuid`, of the
     *     execution the table is of, with its replay logs where this unit keeps them and no input
@@ -98,6 +107,9 @@ object WorkflowService extends LazyLogging {
     *
     * @param socketWorkflowId the workflow of the socket the request came over; None for a request
     *                         that came another way, which starts the workflow the URI names
+    * @param thisUnit         the computing unit this one is, where it was told
+    *                         ([[configuredUnitId]]); None where it was not, and `cuid` is then
+    *                         all it has to go by
     * @return why the start is refused (Left), or what it starts (Right)
     */
   def checkStoredStart(
@@ -106,13 +118,19 @@ object WorkflowService extends LazyLogging {
       user: User,
       cuid: Int,
       socketWorkflowId: Option[Long],
-      readPlan: URI => PlanRecord = ExecutionPlanStore.readPlan
+      readPlan: URI => PlanRecord = ExecutionPlanStore.readPlan,
+      thisUnit: Option[Int] = configuredUnitId
   ): Either[String, CheckedStart] =
     for {
       uid <- Option(user)
         .flatMap(user => Option(user.getUid))
         .map(_.intValue())
         .toRight("A signed-in user is required to start an execution.")
+      _ <-
+        thisUnit
+          .filter(_ != cuid)
+          .map(own => s"This is computing unit $own, not $cuid.")
+          .toLeft(())
       location <- StoredExecutionStart.checkUri(planUri, executionId, socketWorkflowId, uid)
       record <- storedPlanRow(executionId, planUri, readPlan)
       executionPlan <- StoredExecutionStart.checkRecord(
@@ -309,6 +327,18 @@ class WorkflowService(
     lifeCycleManager.decreaseUserCount(
       Option(executionService.getValue).map(_.executionStateStore.metadataStore.getState.state)
     )
+  }
+
+  /**
+    * Counts its caller among those watching this workflow for as long as `body` runs, as an open
+    * session is counted. A request that waits on a run watches it: the clean-up of a run nobody
+    * watches must leave it alone, also before it is RUNNING (a run installing a Python
+    * environment is READY for as long as the install takes).
+    */
+  def watching[A](body: => A): A = {
+    lifeCycleManager.increaseUserCount()
+    try body
+    finally disconnect()
   }
 
   /**

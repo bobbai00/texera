@@ -165,7 +165,7 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     logger.info(s"Asked to run execution $executionId.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
     try {
-      val started = for {
+      val checked = for {
         planUri <- StoredExecutionStart.planUriOf(request.planUri)
         checked <- WorkflowService.checkStoredStart(
           executionId,
@@ -174,31 +174,40 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
           request.computingUnitId,
           socketWorkflowId = None
         )
-        execution <-
-          workflowServiceOf(checked.workflowId, request.computingUnitId).startChecked(checked)
-      } yield execution
-      started match {
-        case Left(message) =>
-          logger.info(s"Refused to start execution $executionId: $message")
-          errorResult(message)
-        case Right(execution) =>
-          awaitResults(
-            execution,
-            targetOperatorIds,
-            // A run that could not be set up has ended already, and waits for no input.
-            execution.services.fold(Map.empty[String, Int])(services =>
-              expectedExternalInputsOf(services.workflow.physicalPlan, targetOperatorIds)
-            ),
-            request.timeoutSeconds,
-            Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS),
-            Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
-          )
+      } yield checked
+      checked match {
+        case Left(message) => refused(executionId, message)
+        case Right(checked) =>
+          val workflow = workflowServiceOf(checked.workflowId, request.computingUnitId)
+          // No session watches a run started this way; this request does, until it is answered.
+          workflow.watching {
+            workflow.startChecked(checked) match {
+              case Left(message) => refused(executionId, message)
+              case Right(execution) =>
+                awaitResults(
+                  execution,
+                  targetOperatorIds,
+                  // A run that could not be set up has ended already, and waits for no input.
+                  execution.services.fold(Map.empty[String, Int])(services =>
+                    expectedExternalInputsOf(services.workflow.physicalPlan, targetOperatorIds)
+                  ),
+                  request.timeoutSeconds,
+                  Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS),
+                  Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
+                )
+            }
+          }
       }
     } catch {
       case e: Exception =>
         logger.error(s"Sync execution error: ${e.getMessage}", e)
         errorResult(Option(e.getMessage).getOrElse("Unknown error"))
     }
+  }
+
+  private def refused(executionId: Long, message: String): SyncExecutionResult = {
+    logger.info(s"Refused to start execution $executionId: $message")
+    errorResult(message)
   }
 
   /** The answer for a run this unit refused to start, or failed on: an error, saying why. */

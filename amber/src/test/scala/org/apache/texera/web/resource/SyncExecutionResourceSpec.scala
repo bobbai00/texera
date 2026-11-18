@@ -1131,10 +1131,17 @@ class SyncExecutionResourceSpec
         startRecord = context =>
           records.getOrElseUpdate(context.executionId.id, new RecordingExecutionRecorder)
       ) {
+
+    /** How many callers watch the workflow now, as its clean-up counts them. */
+    @volatile var watchers = 0
+
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("SyncExecutionResourceSpec", 3600, () => ()) {
         override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore) =
           io.reactivex.rxjava3.disposables.Disposable.empty()
+        override def increaseUserCount(): Unit = watchers += 1
+        override def decreaseUserCount(state: Option[WorkflowAggregatedState]): Unit =
+          watchers -= 1
       }
   }
 
@@ -1327,6 +1334,32 @@ class SyncExecutionResourceSpec
     result.operators("limit").state shouldBe "Unknown"
     result.operators("limit").error shouldBe None
     statusOf(execution.eid) shouldBe Utils.maptoStatusCode(FAILED).toInt
+  }
+
+  it should "watch the run for as long as it waits on it, as an open session does" in {
+    val execution = createdExecution()
+    var watchersAtStart = -1
+    lazy val service: EnginelessService = new EnginelessService(
+      atStart = store => {
+        watchersAtStart = service.watchers
+        store.transitionTo(COMPLETED)
+      }
+    )
+    val resource = new ResourceOn(service)
+
+    resource
+      .runStoredExecution(execution.eid, runRequest(execution.planUri), syncUser())
+      .success shouldBe true
+    // Counted from before the run is set up (a run installing a Python environment is READY, which
+    // the clean-up of a run nobody watches does not spare) until it is answered.
+    watchersAtStart shouldBe 1
+    service.watchers shouldBe 0
+
+    // A start the workflow's service refuses is not left counted either.
+    refusalOf(
+      resource.runStoredExecution(execution.eid, runRequest(execution.planUri), syncUser())
+    ) shouldBe s"Execution ${execution.eid} was already started."
+    service.watchers shouldBe 0
   }
 
   it should "refuse a run for another user, on another unit, of another plan, or a second time" in {

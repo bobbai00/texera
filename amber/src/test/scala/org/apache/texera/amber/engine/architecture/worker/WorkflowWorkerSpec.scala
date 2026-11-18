@@ -23,11 +23,7 @@ import org.apache.pekko.actor.SupervisorStrategy.Stop
 import org.apache.pekko.actor.{Actor, ActorSystem, AllForOneStrategy, Props, SupervisorStrategy}
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit, TestProbe}
 import org.apache.texera.amber.clustering.SingleNodeListener
-import org.apache.texera.amber.core.executor.{
-  OpExecWithClassName,
-  OperatorExecutor,
-  OperatorInputs
-}
+import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorExecutor, OperatorInputs}
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
