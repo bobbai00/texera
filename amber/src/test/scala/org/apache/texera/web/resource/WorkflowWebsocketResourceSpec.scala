@@ -851,8 +851,9 @@ class WorkflowWebsocketResourceSpec
   }
 
   it should "answer a command the held run fails on to its sender alone, and leave the run as it is" in {
-    // Until now what a run's handler threw was recorded as the run's failure: a skip, which the
-    // engine cannot do, or a wrong debugger command ended the run for every session.
+    // What a run's handler throws on a session's request is not the run's failure: recorded as
+    // one, a skip, which the engine cannot do, or a wrong debugger command would end the run
+    // for every session.
     val service = new StoredStartService
     try {
       val held = runInFlight(service)
