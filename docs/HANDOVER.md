@@ -65,7 +65,7 @@ Pushing the two local branches to the fork is the owner's call.
 
 ## 3. What 2026-11-18 added to the main branch
 
-80 commits over `3d84565a5`, 127 over upstream main `fddc4303e`, which is merged in.
+85 commits over `3d84565a5`, 132 over upstream main `fddc4303e`, which is merged in. The final tree is `852329c0f`.
 
 | Group | What it does |
 |---|---|
@@ -79,6 +79,7 @@ Pushing the two local branches to the fork is the owner's call.
 | Step 3, the frontend | The page follows an execution its unit no longer shows by asking the Dashboard service every 5 s; the history and the admin's list show how a run ended and why |
 | Step 3, the benchmark | `ExecutionRecordBench`, run by `bench/record-bench.sh` of the harness |
 | Upstream | Merge of upstream main `fddc4303e` (12 commits). Its new Parquet source is changed to read the link its plan carries |
+| Names and comments | "Stored plan" everywhere for "saved plan"; `ExecutionWarehouse` for `ExecutionResources`; the agent service's request and response types named as the server's; each design rule said once, in the type that owns it, and member docs kept to what the code does not say (comments only, checked file by file) |
 
 Fixes made on the way, each its own commit:
 
@@ -95,22 +96,26 @@ Fixes made on the way, each its own commit:
   keeps its results for that long, however short results are kept.
 - An append to a record table writes its own manifest, so nothing of it runs on Iceberg's shared
   worker pool, which takes no work while the JVM exits: a unit that is stopped can record
-  "the computing unit was stopped". A tidy merges no files then.
+  "the computing unit was stopped". No table is tidied then, so an expiry cannot leave files
+  behind that it failed to delete.
+- The admin's list shows an execution's time used in whole seconds; with the end recorded to the
+  millisecond it showed fractions with floating-point noise.
 
 ## 4. Verified
 
-On the Mac, at the head of the main branch unless a commit is named.
+On the Mac. The final tree is `852329c0f`; a row that names another commit was run there.
 
 | Check | Result |
 |---|---|
-| Scala suites (`tools/suite.sh`) | No failure. Config 114, DAO 70, core 1,285, operators 3,113, compiler 234, compiling service 137, access control 84, config service 44, unit manager 329, file service 481, engine unit 3,014, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181) |
-| Frontend | 255 files, 7,374 tests; format clean; build OK (at `4a9b71c63`; nothing later touches the frontend) |
-| Agent service | 378 tests; type check clean |
-| Single-node, unit on a network of its own, gate 3C | 33 of 34 scenarios, and no statement from the unit to Postgres in the whole run. Scenario v failed on the harness's own wait for a stopped unit, since fixed (`reports/baseline-20261118T162125Z.json`) |
-| The same with the unit on a network without Postgres | 33 of 34 with the same failure; after the harness fix v passes 29 of 29 and q2 18 of 18 (`reports/baseline-20261118T163117Z.json`, `baseline-20261118T164055Z.json`) |
+| Scala suites (`tools/suite.sh`) | No failure at `852329c0f`: config 114, DAO 70, core 1,286, operators 3,113, compiler 234, access control 84, file service 481, config service 44, unit manager 329, compiling service 120, engine unit 3,014, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181) |
+| Frontend | 255 files, 7,375 tests; format clean; build OK (at `852329c0f`) |
+| Agent service | 378 tests; type check and format clean (at `852329c0f`) |
+| Single-node, unit on a network of its own, gate 3C | At `9d6d05bf4`: 33 of 34 scenarios, and no statement from the unit to Postgres in the whole run; scenario v failed on the harness's own wait for a stopped unit, since fixed (`reports/baseline-20261118T162125Z.json`) |
+| The same with the unit on a network without Postgres | At `852329c0f`, the final tree: 34 of 34 scenarios; no statement from the unit to Postgres in the whole run; every execution closed; no failed deletion in the unit's log when it was stopped (`reports/baseline-20261118T182606Z.json`) |
 | Scenarios x (debugger), z (fix and retry), q2 (cut off and back) | Pass, in both gate runs and the rerun |
-| Browser smoke | 9 of 9 at `87d67297a`. Not run again on the final images |
-| Day-long benchmark | The short run (120 ticks) passes all eight checks on a REST catalog and on the Postgres catalog. The full day (2,880 ticks) has not been run |
+| Browser smoke | 9 of 9 in one run on the final images (`852329c0f`, `reports/browser-smoke-20261118T183434Z`). At `9d6d05bf4` B9 had failed once because headless Chromium dropped a request with `net::ERR_NETWORK_IO_SUSPENDED` before it left the machine, and passed when run again |
+| By hand in a real browser (the desktop app's browser pane, the same stack) | The Python debugger: a breakpoint set by clicking the code editor's gutter during a run, the worker stopping on it with the line highlighted, `p` of two values answered, Step, the breakpoint cleared, Continue, the run completed. A UDF that raises on row 7: the error in the console, Pause, Unlock for Logic Change, the code fixed in the editor, Confirm Change, Retry Tuple, the run completed with rows 1-6 of the old code and rows 7-300 of the new. Pause and Resume. The unit stopped under a run: the page shows the error "the computing unit was stopped" from the Dashboard service, which closed the execution from its log 25 s after the stop; the admin's list shows it FAILED with that reason. A Python environment created and listed on its page |
+| Day-long benchmark | All eight checks pass on the REST lake at `9d6d05bf4` (2,880 ticks of 10 operators, 49 changes of state; `bench/reports/record-bench-20261118T174041Z`): the state reads in 6.1 ms at p95; all 28,800 statistics rows in 38 ms after the end tidy, and in 352 ms at the median (602 ms at worst) right before a tidy; the log in 16 ms and 1,000 console rows in 14 ms after the end tidy; a statistics commit took 51 ms at the median in the first 250 ticks and 70 ms in the last 250 (within the 1.5 times allowed); every read returned every row in order; one data file and one snapshot per table at the end. The short run also passes on the Postgres catalog. During the run the whole log reads more slowly as it grows (up to about 0.3 s at 30 rows, one file per change of state until the end tidy); the frontend reads only the state |
 
 Gate 3C was not run again in full after the harness fix: scenario v was rerun with q2, on the
 stricter stack (the unit without Postgres).
@@ -148,15 +153,13 @@ Also left:
   lookup on the stored plan and the closing record.
 - A table of the lake per execution (plan, log, statistics, console, and two per output port) is
   many small tables for the catalog. Measured: section 4's benchmark.
+- When a unit is gone, the page shows the run's end and its reason from the Dashboard service, but
+  each operator's box keeps the last state its unit reported (Running, say): an operator has no
+  state for "ended without finishing". Upstream shows the same after a kill. Choosing what the box
+  should say is a UI decision for the owner.
 
 ## 6. Before a pull request
 
-0. Finish the last pass over names and comments. It is on the local branch `sce/lane-c`: the
-   renames are committed there (`ab30326e0`: "stored plan" for "saved plan",
-   `ExecutionWarehouse` for `ExecutionResources`, the agent service's types named as the
-   server's), not yet checked by a second pair of eyes; the comment trim is in that worktree,
-   uncommitted and unverified (106 files), because the worker doing it was cut off. Neither is
-   merged into the main branch. Then run the browser smoke and the full benchmark once.
 1. Push the two local branches, if the owner agrees.
 2. Run step 3's gates in Kubernetes and local-dev mode on a machine where they can run, and the
    negative controls once.
