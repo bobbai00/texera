@@ -332,6 +332,17 @@ CREATE TABLE IF NOT EXISTS workflow_executions
     runtime_stats_uri   TEXT,
     runtime_stats_size  BIGINT DEFAULT 0,
     whid                INT,
+    -- The closing record: written by the Dashboard service when the execution is over.
+    outcome             SMALLINT,          -- 3 completed, 4 failed, 5 killed; NULL while open
+    outcome_reason      TEXT,              -- why, in words for the user; NULL when the outcome says it all
+    ended_at            TIMESTAMP,         -- NULL while open
+    -- Whether the outcome is the ending the execution's log holds. FALSE for a verdict the
+    -- Dashboard service made without one (unit lost, never started, compile error), which gives
+    -- way to the log's ending if the log shows one later.
+    outcome_from_log    BOOLEAN NOT NULL DEFAULT FALSE,
+    stored_bytes        BIGINT,            -- what its tables in the lake held when it was closed
+    results_expired_at  TIMESTAMP,         -- when its results were dropped; plan, log and statistics stay
+    notification        TEXT,              -- {"email","workflowName","workflowUrl"}; NULL sends no email
     FOREIGN KEY (vid) REFERENCES workflow_version(vid) ON DELETE CASCADE,
     FOREIGN KEY (uid) REFERENCES "user"(uid) ON DELETE CASCADE,
     FOREIGN KEY (cuid) REFERENCES workflow_computing_unit(cuid) ON DELETE CASCADE,
@@ -341,6 +352,15 @@ CREATE TABLE IF NOT EXISTS workflow_executions
 -- Postgres indexes only the referenced side of a foreign key, so cuid needs its own index for the
 -- idle computing unit sweep and every other per-computing-unit lookup on this table.
 CREATE INDEX idx_workflow_executions_cuid ON workflow_executions (cuid);
+
+-- What the Dashboard service's closing job reads on every tick: the executions still open, and
+-- the ones closed by a verdict of its own whose log may still show how they really ended. What
+-- its expiry reads: the closed executions that still hold results.
+CREATE INDEX idx_workflow_executions_open ON workflow_executions (eid) WHERE ended_at IS NULL;
+CREATE INDEX idx_workflow_executions_verdict ON workflow_executions (ended_at)
+    WHERE ended_at IS NOT NULL AND outcome_from_log = FALSE AND results_expired_at IS NULL;
+CREATE INDEX idx_workflow_executions_unexpired ON workflow_executions (ended_at)
+    WHERE ended_at IS NOT NULL AND results_expired_at IS NULL;
 
 -- dataset
 CREATE TABLE IF NOT EXISTS dataset
