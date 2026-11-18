@@ -143,9 +143,6 @@ class ApplicationConfigSpec extends AnyFlatSpec with Matchers {
     ifUnset("WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS")(
       ApplicationConfig.executionStateCleanUpInSecs shouldBe 30
     )
-    ifUnset("WEB_SERVER_CLEAN_ALL_EXECUTION_RESULTS_ON_SERVER_START")(
-      ApplicationConfig.cleanupAllExecutionResults shouldBe false
-    )
     ifUnset("MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB")(
       ApplicationConfig.maxWorkflowWebsocketRequestPayloadSizeKb shouldBe 1024
     )

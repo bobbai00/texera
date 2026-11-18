@@ -114,8 +114,6 @@ object ApplicationConfig {
     getConfSource.getInt("web-server.workflow-result-pulling-in-seconds")
   val executionStateCleanUpInSecs: Int =
     getConfSource.getInt("web-server.workflow-state-cleanup-in-seconds")
-  val cleanupAllExecutionResults: Boolean =
-    getConfSource.getBoolean("web-server.clean-all-execution-results-on-server-start")
   val maxWorkflowWebsocketRequestPayloadSizeKb: Int =
     getConfSource.getInt("web-server.max-workflow-websocket-request-payload-size-kb")
   val workflowCompilingServiceEndpoint: String =

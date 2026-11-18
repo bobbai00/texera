@@ -54,7 +54,6 @@ import play.api.libs.json.Json
 
 import java.net.URI
 import java.sql.Timestamp
-import java.util.concurrent.TimeUnit
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
@@ -99,25 +98,6 @@ object WorkflowExecutionsResource {
         throw new ForbiddenException("No sufficient access privilege.")
       }
     }
-  }
-
-  /**
-    * The executions that ended more than `timeToLive` seconds ago and still have a result or a
-    * replay log. An execution that is open is never among them, however long it has run.
-    */
-  def getExpiredExecutionsWithResultOrLog(timeToLive: Int): List[WorkflowExecutions] = {
-    val deadline = new Timestamp(
-      System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(timeToLive)
-    )
-    context
-      .selectFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.ENDED_AT.lt(deadline))
-      .and(
-        WORKFLOW_EXECUTIONS.RESULT.ne("").or(WORKFLOW_EXECUTIONS.LOG_LOCATION.ne(""))
-      )
-      .fetchInto(classOf[WorkflowExecutions])
-      .asScala
-      .toList
   }
 
   /**
