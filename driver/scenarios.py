@@ -769,6 +769,188 @@ def scenario_u(ctx: Ctx) -> None:
 # run on `ws`, where j changes the operator through the old ModifyLogicRequest.
 
 
+DEBUG_BREAK_LINE = 9
+DEBUG_SETTLE_S = 3.0
+DEBUG_HOLD_S = 4.0
+UDF_DEBUG = '''from pytexera import *
+import time
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        doubled = tuple_["n"] * 2
+        time.sleep(0.05)
+        yield tuple_
+'''
+
+
+def _debugger_lines(handle: RunHandle, op: str, since: int = 0) -> list[str]:
+    """The titles of the debugger's console messages for `op` (source "(Pdb)", type DEBUGGER),
+    which is how the editor follows a breakpoint; `since` skips that many of them."""
+    lines = [str(m.get("title") or "") for m in handle.console(op)
+             if console_type(m) == "DEBUGGER" and m.get("source") == "(Pdb)"]
+    return lines[since:]
+
+
+def scenario_x(ctx: Ctx) -> None:
+    """The Python debugger on a running UDF, driven as the editor drives it: a breakpoint set
+    on a line, the worker stopping there, the frame's values printed while it is stopped, then
+    the breakpoint cleared and the run continued to its end."""
+    total = len(ctx.data["numbers.csv"])
+    wf = ctx.workflow("x-debug-python-udf")
+    scan = wf.add("numbers", "CSVFileScan", csv_scan(ctx.paths["numbers.csv"]), n_in=0)
+    udf = wf.add("debug-udf", "PythonUDFV2", python_udf(UDF_DEBUG))
+    wf.link(scan, udf)
+
+    handle = ctx.start(wf, view=[udf])
+    handle.wait_for_state("Running", timeout=ctx.timeout)
+    handle.wait_until(lambda: handle.output_rows(udf) >= 3 and bool(handle.worker_ids(udf)),
+                      ctx.timeout, "the UDF to emit 3 rows and its worker to be named")
+    workers = handle.worker_ids(udf)
+    ctx.check("the unit names the UDF's worker", len(workers) == 1, f"workers {workers}")
+    worker = workers[0]
+
+    def debug(cmd: str) -> None:
+        handle.send_raw({"type": "DebugCommandRequest", "operatorId": udf, "workerId": worker,
+                         "cmd": cmd}, label=f"debug: {cmd}")
+
+    debug(f"break {DEBUG_BREAK_LINE}")
+    handle.wait_until(lambda: any(t.startswith("Breakpoint") for t in _debugger_lines(handle, udf)),
+                      60, "the debugger to confirm the breakpoint")
+    set_lines = [t for t in _debugger_lines(handle, udf) if t.startswith("Breakpoint")]
+    ctx.check(f"the breakpoint is set on line {DEBUG_BREAK_LINE}",
+              bool(set_lines) and f":{DEBUG_BREAK_LINE}" in set_lines[0], f"debugger said {set_lines[:2]}")
+    # A command stops the worker in the debugger; the editor sends `continue` once the debugger
+    # has confirmed the breakpoint (udf-debug.service.ts, continueIfNotHittingBreakpoint).
+    debug("continue")
+
+    try:
+        handle.wait_until(lambda: any(t.startswith(">") and f"({DEBUG_BREAK_LINE})" in t
+                                      for t in _debugger_lines(handle, udf)),
+                          30, "the worker to stop at the breakpoint")
+    except RunTimeout as timeout:
+        raise RunTimeout(f"{timeout}; the debugger said {_debugger_lines(handle, udf)}; console "
+                         f"{[(console_type(m), m.get('source'), m.get('title')) for m in handle.console(udf)][-6:]}; "
+                         f"output rows {handle.output_rows(udf)}") from None
+    hits = [t for t in _debugger_lines(handle, udf) if t.startswith(">")]
+    ctx.check("the worker stops at the breakpoint, in process_tuple",
+              bool(hits) and "process_tuple" in hits[0], f"debugger said {hits[:2]}")
+    at_stop = handle.output_rows(udf)
+
+    # Two values of the stopped frame, printed through the debugger as the console's input does.
+    def printed_number(expression: str) -> int | None:
+        seen = len(_debugger_lines(handle, udf))
+        debug(f"p {expression}")
+        handle.wait_until(lambda: any(t.strip().lstrip("-").isdigit()
+                                      for t in _debugger_lines(handle, udf, seen)),
+                          60, f"the debugger to print {expression}")
+        numbers = [t.strip() for t in _debugger_lines(handle, udf, seen) if t.strip().lstrip("-").isdigit()]
+        return int(numbers[0]) if numbers else None
+
+    doubled, n = printed_number("doubled"), printed_number('tuple_["n"]')
+    ctx.check("the debugger prints the frame's values: the local is twice the tuple's",
+              doubled is not None and n is not None and doubled == 2 * n,
+              f"p doubled -> {doubled}; p tuple_[\"n\"] -> {n}")
+
+    # The counts a session is sent trail the worker by an update or two, so the count is taken
+    # once they have caught up with the stop, and must then stand still.
+    time.sleep(DEBUG_SETTLE_S)
+    settled = handle.output_rows(udf)
+    time.sleep(DEBUG_HOLD_S)
+    ctx.check(f"no rows while the worker is stopped ({DEBUG_HOLD_S:.0f} s hold)",
+              handle.output_rows(udf) == settled and settled < total,
+              f"output rows {at_stop} at the stop, {settled} once settled, {handle.output_rows(udf)} "
+              f"after the hold, of {total}; the run reads {handle.last_state}")
+
+    seen = len(_debugger_lines(handle, udf))
+    debug("clear 1")
+    handle.wait_until(lambda: any(t.startswith("Deleted") for t in _debugger_lines(handle, udf, seen)),
+                      60, "the debugger to drop the breakpoint")
+    debug("continue")
+    done = handle.wait_for_state("Completed", timeout=max(ctx.timeout, 120))
+    ctx.check("continue -> the run completes", done == "Completed", f"states {handle.states}")
+    ctx.check("every row came through", handle.output_rows(udf) == total,
+              f"output rows {handle.output_rows(udf)} of {total}")
+    ctx.check("no fatal errors", not handle.fatal_errors,
+              [e.get("message") for e in handle.fatal_errors][:3])
+    ctx.persisted_status(STATUS_COMPLETED)
+
+
+RAISE_AT = 7
+
+
+def udf_raising(fixed: bool) -> str:
+    """A UDF that cannot process the tuple whose n is RAISE_AT, until it is fixed."""
+    return f'''from pytexera import *
+import time
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        time.sleep(0.02)
+        if tuple_["n"] == {RAISE_AT} and not {fixed}:
+            raise ValueError("n {RAISE_AT} cannot be processed")
+        tuple_["tag"] = "{"fixed" if fixed else "first"}"
+        yield tuple_
+'''
+
+
+def scenario_z(ctx: Ctx) -> None:
+    """A UDF that raises on one tuple: its worker stops there and the console shows the error;
+    the code is fixed while it is stopped, the tuple is tried again (the console's Retry), and
+    the run completes with every row, the failed tuple included."""
+    total = len(ctx.data["numbers.csv"])
+    wf = ctx.workflow("z-exception-fix-retry")
+    scan = wf.add("numbers", "CSVFileScan", csv_scan(ctx.paths["numbers.csv"]), n_in=0)
+    udf = wf.add("raiser", "PythonUDFV2", python_udf(udf_raising(False), out_columns=[("tag", "string")]))
+    wf.link(scan, udf)
+
+    handle = ctx.start(wf, view=[udf])
+    handle.wait_for_state("Running", timeout=ctx.timeout)
+
+    def errors() -> list[dict]:
+        return [m for m in handle.console(udf) if console_type(m) == "ERROR"]
+
+    handle.wait_until(lambda: bool(errors()), ctx.timeout, "the UDF's error in the console",
+                      fail_fast=False)
+    shown = f"{errors()[0].get('title')} {errors()[0].get('message')}"
+    ctx.check("the console shows the exception", "cannot be processed" in shown, shown[:300])
+    # The run goes on reading Running while a worker of it is stopped on an exception, as it does
+    # at a breakpoint: the worker's stop is its own, and the console is where it shows.
+    ctx.check("the run did not fail", not handle.fatal_errors and "Failed" not in handle.states,
+              f"states {handle.states}; {[e.get('message') for e in handle.fatal_errors][:2]}")
+    workers = handle.worker_ids(udf)
+    ctx.check("the unit names the UDF's worker", len(workers) == 1, f"workers {workers}")
+    time.sleep(DEBUG_SETTLE_S)
+    stopped_at = handle.output_rows(udf)
+    ctx.check("the worker stopped before the tuple it cannot process", stopped_at < total,
+              f"output rows {stopped_at} of {total}")
+
+    out = handle.modify_operator(wf.operator_json(udf, code=udf_raising(True)))
+    ctx.check("the fixed code is accepted while the worker is stopped",
+              (out.get("response") or {}).get("isValid") is True, json.dumps(out)[:400])
+    handle.send_raw({"type": "RetryRequest", "workers": workers}, label="retry")
+    # Not failing fast: the console still holds the error the worker stopped on.
+    done = handle.wait_for_state("Completed", timeout=max(ctx.timeout, 60), since_last_command=False,
+                                 fail_fast=False)
+    ctx.check("retry -> the run completes", done == "Completed", f"states {handle.states}")
+    ctx.check("no fatal errors", not handle.fatal_errors,
+              [e.get("message") for e in handle.fatal_errors][:3])
+    rows = handle.results(udf)["rows"]
+    tags = {int(r["n"]): r.get("tag") for r in rows}
+    ctx.check(f"all {total} rows, the tuple that failed among them, processed by the fixed code",
+              len(rows) == total and tags.get(RAISE_AT) == "fixed",
+              f"{len(rows)} rows; n {RAISE_AT} tagged {tags.get(RAISE_AT)!r}; tags {dict(Counter(tags.values()))}")
+    first = [n for n, tag in tags.items() if tag == "first"]
+    ctx.check("the rows before it were processed by the first code, the rest by the fixed one",
+              bool(first) and max(first) < RAISE_AT
+              and all(tag == "fixed" for n, tag in tags.items() if n >= RAISE_AT),
+              f"first-code rows n in [{min(first, default=None)}, {max(first, default=None)}]")
+    ctx.persisted_status(STATUS_COMPLETED)
+
+
 def _need_create_ws(ctx: Ctx) -> None:
     if ctx.transport_name != "create-ws":
         raise RuntimeError(f"scenario {ctx.rec.key} needs --transport create-ws (the Dashboard creates "
@@ -2526,6 +2708,10 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
           "Python UDF print() lines arrive as console messages", scenario_e),
     "u": ("java-udf-column",
           "CSV scan -> Java UDF adding a column; every value", scenario_u),
+    "x": ("debug-python-udf", "the Python debugger on a running UDF: break, stop, inspect, clear, continue",
+          scenario_x),
+    "z": ("exception-fix-retry", "a UDF raises on a tuple: fix its code while it is stopped, retry, complete",
+          scenario_z),
     # step 2 (design section 7 H3)
     "g0": ("environment-legacy",
            "environment built through /api/pve/db + /wsapi/pve; the UDF imports tabulate 0.9.0", scenario_g0),

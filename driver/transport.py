@@ -306,6 +306,8 @@ class WebSocketRunHandle(RunHandle):
         self._pages: dict[str, dict] = {}
         self._type_counts: dict[str, int] = {}
         self._other: list[dict] = []
+        self._workers: dict[str, list[str]] = {}
+        self._evaluations: list[dict] = []
         self._modify_responses: list[dict] = []
         self._modify_completed: list[dict] = []
         self._error_events = 0
@@ -414,8 +416,12 @@ class WebSocketRunHandle(RunHandle):
                     self._result_updates[op] = upd
             elif typ == "PaginatedResultEvent":
                 self._pages[msg.get("requestID")] = msg
+            elif typ == "WorkerAssignmentUpdateEvent":
+                self._workers[msg.get("operatorId")] = list(msg.get("workerIds") or [])
+            elif typ == "PythonExpressionEvaluateResponse":
+                self._evaluations.append(msg)
             elif typ not in ("HeartBeatResponse", "ClusterStatusUpdateEvent",
-                             "WorkerAssignmentUpdateEvent", "ExecutionDurationUpdateEvent",
+                             "ExecutionDurationUpdateEvent",
                              "RegionStateEvent", "RegionUpdateEvent"):
                 if len(self._other) < 50:
                     self._other.append(msg)
@@ -706,6 +712,17 @@ class WebSocketRunHandle(RunHandle):
     def console(self, operator_id: str | None = None) -> list[dict]:
         with self._cv:
             return [m for m in self._console if operator_id is None or m.get("operatorId") == operator_id]
+
+    def worker_ids(self, operator_id: str) -> list[str]:
+        """The workers the unit said run `operator_id` (WorkerAssignmentUpdateEvent), as the
+        editor learns them before it sends a worker a debugger command."""
+        with self._cv:
+            return list(self._workers.get(operator_id) or [])
+
+    def evaluations(self) -> list[dict]:
+        """Every PythonExpressionEvaluateResponse received, oldest first."""
+        with self._cv:
+            return list(self._evaluations)
 
     def results(self, operator_id: str, page_size: int = 100, timeout: float = 60) -> dict:
         rows: list[dict] = []

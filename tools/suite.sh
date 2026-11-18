@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # suite.sh <worktree> <tag> [catalog-db]
 # Runs the Scala suites of a worktree one after another and writes one line per suite to
-# <scratch>/suite-<tag>.summary; full logs go next to it. Needs texera-tripwire-pg on :5432.
+# <scratch>/suite-<tag>.summary; full logs go next to it. Needs a Postgres with Texera's schema on SCE_PG_PORT (default 5432) or wherever STORAGE_JDBC_URL points.
 WT="$1"; TAG="$2"; CATALOG_DB="${3:-}"
 S=${SCE_WORK:-$HOME/.sce-work}
 OUT=$S/suite-$TAG.summary; : > "$OUT"
@@ -11,7 +11,7 @@ export STORAGE_ICEBERG_CATALOG_TYPE=postgres
 # Specs that check generated Python against a real interpreter cancel themselves unless
 # `python3` on PATH has pandas and plotly: the engine venv has both.
 export PATH="$(dirname "$PY"):$PATH"
-[ -n "$CATALOG_DB" ] && export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:5432/$CATALOG_DB"
+[ -n "$CATALOG_DB" ] && export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:${SCE_PG_PORT:-5432}/$CATALOG_DB"
 say() { echo "$(date +%H:%M:%S) $*" >> "$OUT"; }
 run() { # run <name> <env assignments...> -- <sbt args...>
   local name="$1"; shift; local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift

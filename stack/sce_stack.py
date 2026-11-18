@@ -596,6 +596,11 @@ def generate(source: Path, registry: str, tag: str, bind: str, with_optional: bo
         "IMAGE_TAG": tag,
         "COMPOSE_PROFILES": "",
     }
+    # A machine that already runs something on the source's host ports (8080, 9000) moves
+    # this stack's: SCE_TEXERA_PORT and SCE_RUSTFS_PORT. The driver follows with SCE_BASE.
+    for key, setting in (("TEXERA_PORT", "SCE_TEXERA_PORT"), ("RUSTFS_PORT", "SCE_RUSTFS_PORT")):
+        if os.environ.get(setting):
+            env_overrides[key] = os.environ[setting]
     if "agent-service" in dropped:
         env_overrides["GUI_WORKFLOW_WORKSPACE_COPILOT_ENABLED"] = "false"
     if "notebook-migration-service" in dropped:
