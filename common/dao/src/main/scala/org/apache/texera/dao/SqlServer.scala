@@ -86,10 +86,13 @@ class SqlServer private (url: String, user: String, password: String, applicatio
 }
 
 object SqlServer {
-  private var instance: Option[SqlServer] = None
+  // The pool, or why this process has none. Set as a service boots, read by its request threads.
+  @volatile private var instance: Either[String, SqlServer] =
+    Left("SqlServer.initConnection was not called")
 
   /**
-    * Replaces the singleton with a pool against `url`, closing the pool it replaces.
+    * Replaces the singleton with a pool against `url`, closing the pool it replaces. A process
+    * that declared it has no database ([[withoutDatabase]]) has one from then on.
     *
     * @param applicationName the name the server records for each connection (`application_name`);
     *                        each service passes its own, and a caller that names none, such as a
@@ -102,12 +105,25 @@ object SqlServer {
       applicationName: String = "texera"
   ): Unit = {
     instance.foreach(_.close())
-    instance = Some(new SqlServer(url, user, password, applicationName))
+    instance = Right(new SqlServer(url, user, password, applicationName))
   }
 
-  def getInstance(): SqlServer = {
-    instance.get
+  /**
+    * Declares that this process has no database: any pool is closed, and [[getInstance]] fails
+    * with `reason` from then on. So code that asks for the database in such a process fails
+    * loudly, where it asks, instead of opening a connection nobody expects.
+    */
+  def withoutDatabase(reason: String): Unit = {
+    instance.foreach(_.close())
+    instance = Left(reason)
   }
+
+  /**
+    * @throws IllegalStateException if no connection was opened, or the process declared that it
+    *                               has no database: then with the reason it gave
+    */
+  def getInstance(): SqlServer =
+    instance.fold(reason => throw new IllegalStateException(reason), identity)
 
   /**
     * A utility function for create a transaction block using given sql context

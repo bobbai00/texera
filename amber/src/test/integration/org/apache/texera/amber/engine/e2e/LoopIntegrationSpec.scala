@@ -84,17 +84,16 @@ import org.apache.texera.common.compiler.model.LogicalLink
   * Tagged @IntegrationTest because it spawns Python workers; routed to the
   * `amber-integration` CI job.
   *
-  * `specId` 6 keeps the seeded user/workflow/version/execution rows (and the
-  * context's workflow/execution ids) apart from the other integration suites
-  * running against the shared test database (#5888); 1-5 are taken by the
-  * other e2e/integration specs (5 by MultiRegionWorkflowIntegrationSpec).
+  * `specId` 6 keeps the context's workflow/execution ids, and so what the suite
+  * stores, apart from the other integration suites' (#5888); 1-5 are taken by
+  * the other e2e/integration specs (5 by MultiRegionWorkflowIntegrationSpec).
   */
 @IntegrationTest
-class LoopIntegrationSpec extends RetryingDatabaseE2ESpec("LoopIntegrationSpec", specId = 6) {
+class LoopIntegrationSpec extends RetryingE2ESpec("LoopIntegrationSpec", specId = 6) {
 
   // Loops require MATERIALIZED execution mode (the cross-region state channel
   // is the loop back-edge). Built on the suite's specId so the context's
-  // workflow/execution ids match the rows seeded by setUpWorkflowExecutionData.
+  // workflow/execution ids are the suite's own.
   private def materializedContext(): WorkflowContext =
     workflowContext(
       specId,

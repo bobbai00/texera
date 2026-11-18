@@ -23,26 +23,13 @@ import org.apache.pekko.actor.Cancellable
 import com.fasterxml.jackson.annotation.{JsonTypeInfo, JsonTypeName}
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionResultUris,
-  WarehouseReadGuard
-}
+import org.apache.texera.amber.core.storage.{DocumentFactory, WarehouseReadGuard}
 import org.apache.texera.amber.core.tuple.TupleUtils.convertTuplesToJson
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.result._
 import org.apache.texera.amber.core.tuple.Tuple
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.enums.OutputModeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.OperatorPortExecutionsDao
-import org.apache.texera.dao.jooq.generated.tables.pojos.OperatorPortExecutions
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{PhysicalOp, PhysicalPlan, PortIdentity}
 import org.apache.texera.amber.engine.architecture.coordinator.{
@@ -67,8 +54,6 @@ import org.apache.texera.web.model.websocket.event.{
   WebResultUpdateEvent
 }
 import org.apache.texera.web.model.websocket.request.ResultPaginationRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
-import org.apache.texera.web.service.WorkflowExecutionService.getLatestExecutionId
 import org.apache.texera.web.storage.{ExecutionStateStore, ResultUris, WorkflowStateStore}
 
 import java.net.URI
@@ -78,44 +63,6 @@ import scala.concurrent.duration.DurationInt
 import scala.language.existentials
 
 object ExecutionResultService {
-
-  /**
-    * Callback body for `OperatorPortResultUriAvailable`: persist the URI to
-    * `operator_port_executions`. Lives on the companion (not the class) so
-    * tests and fixture-row writers can drive the same insert as the
-    * production callback without re-implementing the schema mapping.
-    *
-    * `executionId` comes from the caller rather than the event payload —
-    * the engine→web event is execution-scoped, so re-encoding the eid into
-    * the wire and decoding it on receipt would be redundant.
-    */
-  def persistOperatorPortResultUri(
-      executionId: ExecutionIdentity,
-      evt: OperatorPortResultUriAvailable
-  ): Unit = {
-    val pojo = new OperatorPortExecutions()
-    pojo.setWorkflowExecutionId(executionId.id.toInt)
-    pojo.setGlobalPortId(evt.globalPortId.serializeAsString)
-    pojo.setResultUri(evt.uri.toString)
-    pojo.setOutputMode(toOutputModeEnum(evt.mode))
-    new OperatorPortExecutionsDao(
-      SqlServer.getInstance().createDSLContext().configuration()
-    ).insert(pojo)
-  }
-
-  /**
-    * The stored form of a port's output mode. Recorded with the URI so that a finished
-    * execution's results can be listed without the engine's physical plan (#8994).
-    * output_mode_enum in sql/texera_ddl.sql mirrors OutputMode.
-    */
-  private[service] def toOutputModeEnum(mode: OutputMode): OutputModeEnum =
-    mode match {
-      case OutputMode.SET_SNAPSHOT    => OutputModeEnum.SET_SNAPSHOT
-      case OutputMode.SET_DELTA       => OutputModeEnum.SET_DELTA
-      case OutputMode.SINGLE_SNAPSHOT => OutputModeEnum.SINGLE_SNAPSHOT
-      case OutputMode.Unrecognized(_) =>
-        throw new RuntimeException(s"Unrecognized output mode: $mode")
-    }
 
   private val defaultPageSize: Int = 5
 
@@ -259,7 +206,6 @@ object ExecutionResultService {
   */
 class ExecutionResultService(
     workflowIdentity: WorkflowIdentity,
-    computingUnitId: Int,
     val workflowStateStore: WorkflowStateStore
 ) extends SubscriptionManager
     with LazyLogging {
@@ -272,7 +218,6 @@ class ExecutionResultService(
   @volatile private var attachedResultUris: Option[ResultUris] = None
 
   def attachToExecution(
-      executionId: ExecutionIdentity,
       stateStore: ExecutionStateStore,
       physicalPlan: PhysicalPlan,
       client: AmberClient
@@ -295,7 +240,7 @@ class ExecutionResultService(
                   2.seconds,
                   resultPullingFrequency.seconds
                 ) {
-                  onResultUpdate(executionId, resultUris, physicalPlan)
+                  onResultUpdate(resultUris, physicalPlan)
                 }
             }
           } else {
@@ -313,7 +258,7 @@ class ExecutionResultService(
             logger.info("Workflow execution terminated. Stop update results.")
             if (resultUpdateCancellable.cancel() || resultUpdateCancellable.isCancelled) {
               // immediately perform final update
-              onResultUpdate(executionId, resultUris, physicalPlan)
+              onResultUpdate(resultUris, physicalPlan)
             }
           }
         })
@@ -326,14 +271,13 @@ class ExecutionResultService(
     // Must be registered before the workflow starts. The engine fires
     // OperatorPortResultUriAvailable as soon as each port's storage doc
     // is materialized; if no subscriber is attached at that point the
-    // URI is silently never kept, here or in operator_port_executions,
-    // which means the results are computed just fine but can never be
-    // looked up. Today the WS and sync REST entry points both call
-    // attachToExecution before startWorkflow — keep that ordering.
+    // URI is silently never kept, which means the results are computed
+    // just fine but can never be looked up. Today the WS and sync REST
+    // entry points both call attachToExecution before startWorkflow —
+    // keep that ordering.
     addSubscription(
       client.registerCallback[OperatorPortResultUriAvailable] { evt =>
         resultUris.add(evt.globalPortId, evt.uri)
-        ExecutionResultService.persistOperatorPortResultUri(executionId, evt)
       }
     )
 
@@ -373,7 +317,6 @@ class ExecutionResultService(
               if (!hasSingleSnapshot) {
                 storageUri.foreach { uri =>
                   allTableStats(opId.id) = DocumentFactory.openDocument(uri)._1.getTableStatistics
-                  WorkflowExecutionsResource.updateRuntimeStatsSize(executionId)
                 }
               }
           }
@@ -396,20 +339,15 @@ class ExecutionResultService(
   /**
     * A page of a result of the run this service last attached to, found where the run's engine
     * reported it. Before it attaches to any, as on a unit that restarted since the workflow last
-    * ran, a page of the newest execution of the workflow on this unit, found in the database.
+    * ran, an empty page: a unit serves the results of the run it holds, and what an execution
+    * stored is the Dashboard service's to serve.
     */
   def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
     // calculate from index (pageIndex starts from 1 instead of 0)
     val from = request.pageSize * (request.pageIndex - 1)
     val operatorId = OperatorIdentity(request.operatorID)
     val portId = PortIdentity(request.portIndex)
-    val storageUriOption = attachedResultUris match {
-      case Some(resultUris) => resultUris.of(operatorId, portId)
-      case None =>
-        val executionId = getLatestExecutionId(workflowIdentity, computingUnitId)
-          .getOrElse(throw new IllegalStateException("No execution is recorded"))
-        ExecutionResultUris.getResultUriByLogicalPortId(executionId, operatorId, portId)
-    }
+    val storageUriOption = attachedResultUris.flatMap(_.of(operatorId, portId))
 
     // Refuse to read a per-user-warehouse result while the feature is off (#6930).
     storageUriOption.foreach(WarehouseReadGuard.assertReadable(_))
@@ -457,7 +395,6 @@ class ExecutionResultService(
   }
 
   private def onResultUpdate(
-      executionId: ExecutionIdentity,
       resultUris: ResultUris,
       physicalPlan: PhysicalPlan
   ): Unit = {
@@ -476,17 +413,6 @@ class ExecutionResultService(
               .flatMap(_.outputPorts.get(globalPortId.portId))
               .map(_._1.mode)
               .head
-
-            // Recorded here, on every poll and once more when the run ends, rather than in the
-            // diff handler, which runs once per connected browser and not at all without one.
-            if (mode != OutputMode.SINGLE_SNAPSHOT) {
-              WorkflowExecutionsResource.updateResultSizeAndCount(
-                executionId,
-                globalPortId,
-                document.getTotalFileSize,
-                count
-              )
-            }
 
             val changeDetector =
               if (mode == OutputMode.SET_SNAPSHOT) {

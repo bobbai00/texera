@@ -22,11 +22,7 @@ package org.apache.texera.web.service
 import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.PlanRecord
-import org.apache.texera.amber.core.virtualidentity.{
-  EmbeddedControlMessageIdentity,
-  ExecutionIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.EmbeddedControlMessageIdentity
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
@@ -48,7 +44,6 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.ExecutionEnvironmentService.EnvironmentNotInstalled
 import org.apache.texera.web.service.WorkflowExecutionService.RunServices
 import org.apache.texera.web.storage.ExecutionStateStore
@@ -61,15 +56,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
-object WorkflowExecutionService extends LazyLogging {
-  def getLatestExecutionId(
-      workflowId: WorkflowIdentity,
-      computingUnitId: Int
-  ): Option[ExecutionIdentity] = {
-    WorkflowExecutionsResource
-      .getLatestExecutionID(workflowId.id.toInt, computingUnitId)
-      .map(eid => new ExecutionIdentity(eid.longValue()))
-  }
+object WorkflowExecutionService {
 
   /**
     * The configuration the coordinator of a run of `executionPlan` starts with: this unit's, with
@@ -253,7 +240,7 @@ class WorkflowExecutionService(
         workflow,
         client,
         reconfiguration,
-        new ExecutionStatsService(client, executionStateStore, workflowContext),
+        new ExecutionStatsService(client, executionStateStore),
         new ExecutionRuntimeService(
           client,
           executionStateStore,
@@ -261,7 +248,7 @@ class WorkflowExecutionService(
           reconfiguration,
           coordinatorConfig.faultToleranceConfOpt
         ),
-        new ExecutionConsoleService(client, executionStateStore, wsInput, workflowContext)
+        new ExecutionConsoleService(client, executionStateStore, wsInput)
       )
     } catch {
       case NonFatal(failure) =>
@@ -277,7 +264,6 @@ class WorkflowExecutionService(
   private def start(run: RunServices): Unit = {
     logger.info("Starting the workflow execution.")
     resultService.attachToExecution(
-      workflowContext.executionId,
       executionStateStore,
       run.workflow.physicalPlan,
       run.client

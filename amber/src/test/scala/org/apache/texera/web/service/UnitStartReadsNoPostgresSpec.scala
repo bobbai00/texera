@@ -40,10 +40,10 @@ import scala.jdk.CollectionConverters._
 import scala.util.Using
 
 /**
-  * A computing unit starts a run without reading Postgres, and touches only the tables of the
-  * run's state until the run ends: for a scan of a CSV file, for a scan of a dataset's file, and
-  * for a File Lister with a File Scan From Input. See [[UnitStartReadsNoPostgresFixture]] for how
-  * an execution is created, started and watched.
+  * A computing unit starts a run, and runs it to its end, without a statement to Postgres: for
+  * a scan of a CSV file, for a scan of a dataset's file, and for a File Lister with a File Scan
+  * From Input. See [[UnitStartReadsNoPostgresFixture]] for how an execution is created, started
+  * and watched.
   *
   * Each of these needs something only Postgres or LakeFS could tell a unit, were it not in the
   * plan: the CSV scan the site's column limit, the scan where the dataset keeps its file, the
@@ -123,7 +123,7 @@ class UnitStartReadsNoPostgresSpec
       List(link("scan", "filter"))
     )
 
-    assertStartedWithoutReading(ran)
+    assertRanWithoutPostgres(ran)
     assertLogged(ran)
     ran.resultOf("filter").map(_.getField[Any]("Order ID").toString) should
       contain theSameElementsAs salesRows.filter(_("Region") == "Asia").map(_("Order ID"))
@@ -135,7 +135,7 @@ class UnitStartReadsNoPostgresSpec
 
     val ran = run(List(scan), List.empty)
 
-    assertStartedWithoutReading(ran)
+    assertRanWithoutPostgres(ran)
     assertLogged(ran)
     // The file as LakeFS names it is all the unit knows of it, and no LakeFS holds it: the
     // bytes came through the plan's link.
@@ -151,7 +151,7 @@ class UnitStartReadsNoPostgresSpec
 
     val ran = run(List(lister, scan), List(link("lister", "scan")))
 
-    assertStartedWithoutReading(ran)
+    assertRanWithoutPostgres(ran)
     assertLogged(ran)
     // Each line of each file the version lists, beside the file's name: a name of a dataset's
     // file, which the unit neither resolved nor asked anything about.

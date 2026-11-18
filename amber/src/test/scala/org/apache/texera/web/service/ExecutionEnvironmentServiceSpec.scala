@@ -167,8 +167,7 @@ class ExecutionEnvironmentServiceSpec
     private val console = new ExecutionConsoleService(
       client,
       new ExecutionStateStore(),
-      new WebsocketInput(),
-      new WorkflowContext()
+      new WebsocketInput()
     ) {
       override def addUnitMessage(
           operatorId: String,

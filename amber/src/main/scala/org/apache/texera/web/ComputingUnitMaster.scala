@@ -26,7 +26,7 @@ import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, Substituting
 import io.dropwizard.lifecycle.Managed
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
-import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.FAILED
@@ -67,6 +67,9 @@ object ComputingUnitMaster {
       errorHandler
     )
   }
+
+  /** What a use of the database on a computing unit fails with. */
+  val NoDatabase = "a computing unit keeps nothing in Postgres"
 
   /** How long a unit that is stopped waits for the ends of its runs to be recorded. */
   private val StopPatience = 5.seconds
@@ -147,12 +150,9 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     org.apache.texera.web.observability.WorkflowMetricsRecorder.init()
     ObjectMapperUtils.warmupObjectMapperForOperatorsSerde()
 
-    SqlServer.initConnection(
-      StorageConfig.jdbcUrl,
-      StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword,
-      applicationName = "texera-computing-unit"
-    )
+    // A run's state, statistics, console and results are kept in the lake, and the Dashboard
+    // service keeps the executions' rows: whatever asks this process for the database is a bug.
+    SqlServer.withoutDatabase(ComputingUnitMaster.NoDatabase)
 
     environment.jersey.setUrlPattern("/api/*")
 

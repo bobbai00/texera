@@ -233,6 +233,40 @@ class SqlServerSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
   }
 
   // -------------------------------------------------------------------------
+  // A process with no database
+  //
+  // A computing unit declares that it has none, so that whatever asks it for
+  // the database fails where it asks. Each test leaves the singleton with a
+  // pool again: the next test's fixture reads it.
+  // -------------------------------------------------------------------------
+
+  "SqlServer.withoutDatabase" should "close the pool, and fail every later use with the reason given" in {
+    val jdbcUrl = getDBInstance.getJdbcUrl("postgres", "postgres")
+    SqlServer.initConnection(jdbcUrl, "postgres", "")
+    val pool = datasourceOf(SqlServer.getInstance())
+    try {
+      SqlServer.withoutDatabase("this process keeps nothing in Postgres")
+
+      pool.isClosed shouldBe true
+      val refused = the[IllegalStateException] thrownBy SqlServer.getInstance()
+      refused.getMessage shouldBe "this process keeps nothing in Postgres"
+      // Declared again, with nothing to close: the reason is the newest one.
+      SqlServer.withoutDatabase("still nothing")
+      (the[IllegalStateException] thrownBy SqlServer.getInstance()).getMessage shouldBe
+        "still nothing"
+    } finally SqlServer.initConnection(jdbcUrl, "postgres", "")
+  }
+
+  it should "be lifted by initConnection, whose pool answers" in {
+    val jdbcUrl = getDBInstance.getJdbcUrl("postgres", "postgres")
+    SqlServer.withoutDatabase("no database for now")
+
+    SqlServer.initConnection(jdbcUrl, "postgres", "")
+
+    SqlServer.getInstance().createDSLContext().selectOne().fetchOne().value1() shouldBe 1
+  }
+
+  // -------------------------------------------------------------------------
   // The name a pool's connections carry
   //
   // Postgres records each connection's application_name (pg_stat_activity, the

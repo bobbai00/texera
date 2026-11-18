@@ -153,9 +153,9 @@ object Utils extends LazyLogging {
   }
 
   /**
-    * The code the database keeps for `state`, of those in [[WorkflowExecutionStatus]]: an
-    * execution's row keeps it as its status, and the runtime statistics keep it for each
-    * operator's state. A state that has no code of its own is kept as Unknown.
+    * The code of `state`, of those in [[WorkflowExecutionStatus]]: an execution's status is
+    * answered as it, and the runtime statistics keep it for each operator's state. A state
+    * that has no code of its own is Unknown.
     */
   def maptoStatusCode(state: WorkflowAggregatedState): Byte = {
     val code = state match {

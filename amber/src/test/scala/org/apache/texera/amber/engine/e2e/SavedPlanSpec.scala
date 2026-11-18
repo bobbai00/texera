@@ -77,7 +77,7 @@ import scala.util.{Try, Using}
   * `specId` 7: 1 to 6 are the other e2e and integration specs', and 8 is
   * SavedPlanIntegrationSpec's.
   */
-class SavedPlanSpec extends RetryingDatabaseE2ESpec("SavedPlanSpec", specId = 7) with Matchers {
+class SavedPlanSpec extends RetryingE2ESpec("SavedPlanSpec", specId = 7) with Matchers {
 
   /** Runs the workflow from its compiled plan and from its saved plan; see the class comment. */
   private def runBothWays(

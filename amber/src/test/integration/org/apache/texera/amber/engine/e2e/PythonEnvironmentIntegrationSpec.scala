@@ -59,12 +59,9 @@ import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
 import org.apache.texera.amber.engine.e2e.TestUtils.{
-  cleanupWorkflowExecutionData,
   fixtureBindings,
   fixtureUnitMountRoot,
-  initiateTexeraDBForTestCases,
   readMaterializedResults,
-  setUpWorkflowExecutionData,
   workflowContext
 }
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
@@ -84,7 +81,7 @@ import org.scalatest.concurrent.Eventually
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Minutes, Span}
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
+import org.scalatest.BeforeAndAfterAll
 
 import java.net.URI
 import java.nio.charset.StandardCharsets
@@ -115,8 +112,7 @@ class PythonEnvironmentIntegrationSpec
     with AnyFlatSpecLike
     with Matchers
     with Eventually
-    with BeforeAndAfterAll
-    with BeforeAndAfterEach {
+    with BeforeAndAfterAll {
 
   // 1 to 8 are the other e2e and integration specs'.
   private val specId = 9
@@ -147,7 +143,6 @@ class PythonEnvironmentIntegrationSpec
     system.actorOf(Props[SingleNodeListener](), "cluster-info")
     // as in the other e2e specs: load the JDBC driver explicitly, which CI occasionally misses
     Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
   }
 
   override def afterAll(): Unit =
@@ -159,10 +154,6 @@ class PythonEnvironmentIntegrationSpec
         paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.delete(path))
       }
     } finally TestKit.shutdownActorSystem(system)
-
-  override protected def beforeEach(): Unit = setUpWorkflowExecutionData(specId)
-
-  override protected def afterEach(): Unit = cleanupWorkflowExecutionData(specId)
 
   /**
     * Where the suite's installer installs `environment`: under its root, in a directory named
@@ -274,7 +265,7 @@ class PythonEnvironmentIntegrationSpec
         }
       }
     private val resultService =
-      new ExecutionResultService(context.workflowId, specId, new WorkflowStateStore())
+      new ExecutionResultService(context.workflowId, new WorkflowStateStore())
 
     // What fails in the engine ends the run FAILED, as a unit records it.
     private def failed(error: Throwable): Unit = {

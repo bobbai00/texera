@@ -21,8 +21,6 @@ package org.apache.texera.web.service
 
 import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.RuntimeStatisticsStore
-import org.apache.texera.amber.core.workflow.WorkflowContext
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.architecture.coordinator.{
@@ -47,7 +45,6 @@ import org.apache.texera.web.model.websocket.event.{
   OperatorStatisticsUpdateEvent,
   WorkerAssignmentUpdateEvent
 }
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.storage.ExecutionStateStore
 
 import java.time.Instant
@@ -59,21 +56,9 @@ import java.time.Instant
   */
 class ExecutionStatsService(
     client: AmberClient,
-    stateStore: ExecutionStateStore,
-    workflowContext: WorkflowContext
+    stateStore: ExecutionStateStore
 ) extends SubscriptionManager
     with LazyLogging {
-
-  // Where the run's record stores its statistics, on the execution's row for those who read
-  // them from there.
-  WorkflowExecutionsResource.updateRuntimeStatsUri(
-    workflowContext.executionId.id,
-    RuntimeStatisticsStore.statisticsUri(
-      workflowContext.workflowId,
-      workflowContext.executionId,
-      workflowContext.warehouse
-    )
-  )
 
   registerCallbacks()
 

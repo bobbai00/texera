@@ -54,7 +54,7 @@ import scala.util.{Try, Using}
   */
 @IntegrationTest
 class SavedPlanIntegrationSpec
-    extends RetryingDatabaseE2ESpec("SavedPlanIntegrationSpec", specId = 8)
+    extends RetryingE2ESpec("SavedPlanIntegrationSpec", specId = 8)
     with Matchers {
 
   /**

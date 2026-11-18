@@ -33,7 +33,7 @@ import org.apache.texera.amber.engine.e2e.TestUtils.stateReached
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
 import org.apache.texera.common.compiler.model.LogicalLink
 
-class PauseSpec extends RetryingDatabaseE2ESpec("PauseSpec", specId = 2) {
+class PauseSpec extends RetryingE2ESpec("PauseSpec", specId = 2) {
 
   val logger = Logger("PauseSpecLogger")
 

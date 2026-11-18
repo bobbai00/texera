@@ -65,7 +65,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   RUNNING
 }
 import org.apache.texera.amber.engine.architecture.rpc.coordinatorservice.CoordinatorServiceFs2Grpc
-import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionrecord.ExecutionRecorder
 import org.apache.texera.amber.engine.e2e.TestUtils
@@ -199,12 +198,12 @@ import scala.util.Try
   *   - `myOnOpen`'s missing-`wid`/`cuid` and bogus-privilege paths, which fail with NPE /
   *     IndexOutOfBounds / IllegalArgumentException. A harmless improvement (a default, or a clear
   *     message) would break such a test.
-  *   - `ResultPaginationRequest`'s real payload, which needs a DB; only the request/response
-  *     pass-through is asserted here, against a stubbed result service.
+  *   - `ResultPaginationRequest`'s real payload, which `ExecutionResultServiceSpec` owns; only
+  *     the request/response pass-through is asserted here, against a stubbed result service.
   *   - what the mapper itself accepts and rejects, already owned by `TexeraWebSocketRequestSpec`;
   *     the malformed-frame cases here are about the endpoint's handling, not the binding rules.
   *   - what a command does once the run takes it, owned by `ExecutionRuntimeServiceSpec`. Only a
-  *     kill is followed through here, to what every session is told and the execution's row.
+  *     kill is followed through here, to what every session is told and the execution's log.
   */
 class WorkflowWebsocketResourceSpec
     extends TestKit(ActorSystem("WorkflowWebsocketResourceSpec"))
@@ -343,7 +342,7 @@ class WorkflowWebsocketResourceSpec
     * `AmberRuntime.scheduleCallThroughActorSystem`, whose actor system is null in a unit JVM.
     */
   private class TestWorkflowService(id: Long) extends WorkflowService(WorkflowIdentity(id), 1, 10) {
-    val results = new StubResultService(workflowId, computingUnitId, stateStore)
+    val results = new StubResultService(workflowId, stateStore)
     override val resultService: ExecutionResultService = results
 
     override def connect(onNext: TexeraWebSocketEvent => Unit): Disposable = Disposable.empty()
@@ -353,8 +352,8 @@ class WorkflowWebsocketResourceSpec
   }
 
   /**
-    * The real `handleResultPagination` resolves the latest execution out of the database and opens
-    * an Iceberg document; the endpoint's own contribution is only that the request travels in and
+    * The real `handleResultPagination` opens an Iceberg document of the run the service holds;
+    * the endpoint's own contribution is only that the request travels in and
     * the returned event travels back out. The echoed fields make both directions observable.
     *
     * The table and schema carry values on purpose. Production ships a companion
@@ -365,9 +364,8 @@ class WorkflowWebsocketResourceSpec
     */
   private class StubResultService(
       workflowId: WorkflowIdentity,
-      computingUnitId: Int,
       stateStore: WorkflowStateStore
-  ) extends ExecutionResultService(workflowId, computingUnitId, stateStore) {
+  ) extends ExecutionResultService(workflowId, stateStore) {
     var captured: Option[ResultPaginationRequest] = None
 
     /** When set, every read fails with what it makes, as the real one fails when its storage does. */
@@ -1670,14 +1668,6 @@ class WorkflowWebsocketResourceSpec
 
   // -- a kill, through to the run it is for -------------------------------------
 
-  private def statusOf(executionId: Long): Int =
-    getDSLContext
-      .select(WORKFLOW_EXECUTIONS.STATUS)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(executionId.toInt)))
-      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
-      .intValue()
-
   "WorkflowKillRequest" should "kill the run in flight, for every session on the workflow, and record it killed" in {
     val execution = created()
     val logUri = ExecutionLogStore.logUri(
@@ -1701,7 +1691,6 @@ class WorkflowWebsocketResourceSpec
       resource.myOnMsg(session, frameOf(WorkflowKillRequest(execution.eid)))
 
       run.executionStateStore.metadataStore.getState.state shouldBe KILLED
-      statusOf(execution.eid) shouldBe Utils.maptoStatusCode(KILLED).toInt
       stateEvents(sent) shouldBe Seq(("Killed", Some(execution.eid)))
       stateEvents(otherSent) shouldBe Seq(("Killed", Some(execution.eid)))
       // The execution's log, in the lake, holds the run from its start to its end, and why it
@@ -1729,7 +1718,6 @@ class WorkflowWebsocketResourceSpec
       val run = service.executionService.getValue
       // The run completes, as its engine reports it, while a client still shows it running.
       run.executionStateStore.transitionTo(COMPLETED)
-      statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
       val completed = run.executionStateStore.metadataStore.getState
       sent.clear()
       otherSent.clear()
@@ -1739,11 +1727,9 @@ class WorkflowWebsocketResourceSpec
           resource.myOnMsg(session, frameOf(WorkflowKillRequest(execution.eid)))
       }
 
-      // Nothing is written, and no session is told anything: the run stays completed, in its
-      // store and in its execution's row.
+      // Nothing is written, and no session is told anything: the run stays completed.
       statements shouldBe empty
       run.executionStateStore.metadataStore.getState shouldBe completed
-      statusOf(execution.eid) shouldBe Utils.maptoStatusCode(COMPLETED).toInt
       sent shouldBe empty
       otherSent shouldBe empty
     } finally service.unsubscribeAll()

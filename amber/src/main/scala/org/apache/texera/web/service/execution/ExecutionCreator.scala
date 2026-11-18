@@ -373,8 +373,8 @@ class ExecutionCreator(
 
   /**
     * `step`, a step of the create of execution `eid` after its row exists. When it fails, the
-    * row is closed as failed for `reason` of the failure, and marked FAILED for the lists that
-    * still read its status, and the create fails with [[answerTo]] the failure.
+    * row is closed as failed for `reason` of the failure, and the create fails with
+    * [[answerTo]] the failure.
     *
     * The row is closed as one no unit ever started, which it is: nothing looks for its results.
     * A close that fails is logged, not thrown, since the caller is owed the create's own
@@ -386,7 +386,6 @@ class ExecutionCreator(
     try step
     catch {
       case NonFatal(failure) =>
-        ExecutionsMetadataPersistService.markFailed(eid)
         try {
           ExecutionRecords.close(
             eid.id,

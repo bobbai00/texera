@@ -93,7 +93,7 @@ import org.apache.texera.common.compiler.model.LogicalLink
   */
 @IntegrationTest
 class MultiRegionWorkflowIntegrationSpec
-    extends RetryingDatabaseE2ESpec("MultiRegionWorkflowIntegrationSpec", specId = 5) {
+    extends RetryingE2ESpec("MultiRegionWorkflowIntegrationSpec", specId = 5) {
 
   private val logger = Logger("MultiRegionWorkflowIntegrationSpecLogger")
 

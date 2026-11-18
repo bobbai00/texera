@@ -87,7 +87,6 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   FaultToleranceConfig,
   StateRestoreConfig
 }
-import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder.{
   Console,
@@ -96,23 +95,6 @@ import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionR
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowComputingUnitDao,
-  WorkflowDao,
-  WorkflowExecutionsDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowComputingUnit,
-  WorkflowExecutions,
-  WorkflowVersion
-}
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
   WorkflowErrorEvent,
@@ -132,7 +114,6 @@ import org.scalatest.time.{Millis, Seconds, Span}
 import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
 import java.nio.file.{Files, Path, Paths}
-import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import java.util.concurrent.{CountDownLatch, ExecutorService, Executors, TimeUnit}
 import java.util.{Comparator, UUID}
@@ -156,12 +137,11 @@ import scala.util.Using
   * The suite also owns two paths that need more scaffolding than that:
   *
   *   - `unsubscribeAll`, the session-teardown contract. This is what makes the
-  *     suite carry a TestKit `ActorSystem` and `MockTexeraDB`: the method walks the
-  *     four services of a run that is set up, and `ExecutionStatsService`'s constructor
-  *     creates its iceberg runtime-statistics table and stamps the URI onto a
-  *     `workflow_executions` row. There is no second home for the test -- one spec file
-  *     per source class -- and stubbing the services out would leave the four teardown
-  *     calls unobserved, which is the entire content of the method.
+  *     suite carry a TestKit `ActorSystem`: the method walks the four services of a
+  *     run that is set up, each built on the engine's client. There is no second home
+  *     for the test -- one spec file per source class -- and stubbing the services out
+  *     would leave the four teardown calls unobserved, which is the entire content of
+  *     the method.
   *
   *   - `startStored`, the start of a run from the plan read back from its execution's plan
   *     table. Its runs are built as a computing unit builds one to start it by id (`StoredRun`),
@@ -195,8 +175,7 @@ class WorkflowExecutionServiceSpec
     with AnyFlatSpecLike
     with Matchers
     with BeforeAndAfterAll
-    with Eventually
-    with MockTexeraDB {
+    with Eventually {
 
   // For what the threads that install environments are about to do.
   implicit override val patienceConfig: PatienceConfig =
@@ -207,16 +186,8 @@ class WorkflowExecutionServiceSpec
   private val testWid: Integer = 9207
   private val testEid: Integer = 9208
 
-  /**
-    * The computing unit the fixture execution ran on. A different literal from `testWid` on
-    * purpose: `getLatestExecutionID(wid, cuid)` binds two bare `Integer`s into one predicate, so a
-    * fixture that reused one number for both would make a transposition of the two arguments
-    * produce byte-identical SQL.
-    */
+  /** The computing unit the fixture execution's plan was made for. */
   private val testCuid: Integer = 9209
-
-  /** A computing unit with no executions, so the cuid leg of the predicate is not vacuous. */
-  private val otherCuid: Integer = 9210
 
   /** A dataset version a plan's code reads, as the plan names it to be mounted. */
   private val datasetLocator = "dataset-9221:5ha7ed01"
@@ -243,65 +214,6 @@ class WorkflowExecutionServiceSpec
     OpExecWithCode(PythonUdfUiParameterInjector.inject(code, List(parameter)), "python")
   }
 
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    initializeDBAndReplaceDSLContext()
-
-    // Set explicitly rather than left to the SERIAL default: the computing-unit and execution
-    // rows below bind `testUid` into their `uid` foreign keys, so a generated value would leave
-    // them pointing at a user that does not exist.
-    val user = new User
-    user.setUid(testUid)
-    user.setName("workflow-execution-test-user")
-    user.setEmail(s"u$testUid@example.com")
-    new UserDao(getDSLContext.configuration()).insert(user)
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName(s"workflow-execution-test-$testWid")
-    workflow.setContent("{}")
-    workflow.setDescription("")
-    workflow.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new SqlTimestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
-
-    val computingUnitDao = new WorkflowComputingUnitDao(getDSLContext.configuration())
-    List(testCuid -> "workflow-execution-test-unit", otherCuid -> "workflow-execution-idle-unit")
-      .foreach {
-        case (cuid, name) =>
-          val unit = new WorkflowComputingUnit
-          unit.setCuid(cuid)
-          unit.setUid(testUid)
-          unit.setName(name)
-          unit.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
-          unit.setType(WorkflowComputingUnitTypeEnum.local)
-          unit.setUri("local://test")
-          unit.setResource("{}")
-          computingUnitDao.insert(unit)
-      }
-
-    // `ExecutionStatsService`'s constructor stamps the runtime-statistics URI onto this row,
-    // reaching it from the workflow through workflow_version. `cuid` is set because
-    // `getLatestExecutionID` matches on it and a NULL cuid matches no value at all.
-    val execution = new WorkflowExecutions
-    execution.setEid(testEid)
-    execution.setVid(version.getVid)
-    execution.setUid(testUid)
-    execution.setCuid(testCuid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new SqlTimestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("workflow-execution-test-execution")
-    execution.setEnvironmentVersion("test-env")
-    new WorkflowExecutionsDao(getDSLContext.configuration()).insert(execution)
-  }
-
   override protected def afterAll(): Unit = {
     try {
       // The plan table one case below writes, in the catalog the build's tests share.
@@ -311,10 +223,7 @@ class WorkflowExecutionServiceSpec
         paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.deleteIfExists(path))
       }
       TestKit.shutdownActorSystem(system)
-    } finally {
-      closeConnectionPool()
-      super.afterAll()
-    }
+    } finally super.afterAll()
   }
 
   /** The context of a run of the fixture execution. */
@@ -634,11 +543,7 @@ class WorkflowExecutionServiceSpec
     // the engine the run was given; `client` would name the service's own field below
     var engine: Option[UnansweredClient] = None
     val resultService =
-      new ExecutionResultService(
-        WorkflowIdentity(testWid.longValue()),
-        testCuid,
-        new WorkflowStateStore()
-      )
+      new ExecutionResultService(WorkflowIdentity(testWid.longValue()), new WorkflowStateStore())
     val recorder = new RecordingExecutionRecorder
     val store = new ExecutionStateStore(recorder)
     store.metadataStore.updateState(_.withExecutionId(executionPlan.context.executionId))
@@ -898,7 +803,6 @@ class WorkflowExecutionServiceSpec
       run.engine.get.shutdownCount shouldBe 1
       run.recorder.states shouldBe
         Seq(("READY", None), ("COMPLETED", Some("stopped once its target operators finished")))
-      executionStatus() shouldBe Utils.maptoStatusCode(COMPLETED).toInt
 
       // A run ends once: asked again, it stays as it ended.
       val error =
@@ -908,7 +812,6 @@ class WorkflowExecutionServiceSpec
       run.store.metadataStore.getState.state shouldBe COMPLETED
       run.store.metadataStore.getState.fatalErrors shouldBe empty
       run.recorder.changes should have size 2
-      executionStatus() shouldBe Utils.maptoStatusCode(COMPLETED).toInt
     } finally run.close()
   }
 
@@ -1026,15 +929,6 @@ class WorkflowExecutionServiceSpec
   private def startWorkflowAsked(run: StoredRun): Boolean =
     run.engine.getOrElse(fail("no engine")).answers.contains("startWorkflow")
 
-  /** The status the fixture execution's row holds. */
-  private def executionStatus(): Int =
-    getDSLContext
-      .select(WORKFLOW_EXECUTIONS.STATUS)
-      .from(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(testEid))
-      .fetchOne(WORKFLOW_EXECUTIONS.STATUS)
-      .intValue()
-
   it should "install its plan's Python environment before its engine starts, off the thread that asks" in {
     val python = new FakePython()
     val held = python.holdPipInstalls()
@@ -1114,12 +1008,11 @@ class WorkflowExecutionServiceSpec
       eventually(run.store.metadataStore.getState.state shouldBe FAILED)
       val after = System.currentTimeMillis()
 
-      // The run ends FAILED, when the install did, and its row says so. Its one error is pip's,
-      // of the first operator that runs in the environment.
+      // The run ends FAILED, when the install did. Its one error is pip's, of the first
+      // operator that runs in the environment.
       val state = run.store.metadataStore.getState
       state.state shouldBe FAILED
       run.store.statsStore.getState.endTimeStamp should (be >= before and be <= after)
-      executionStatus() shouldBe Utils.maptoStatusCode(FAILED).toInt
       state.fatalErrors should have size 1
       val error = state.fatalErrors.head
       error.`type` shouldBe EXECUTION_FAILURE
@@ -1346,28 +1239,5 @@ class WorkflowExecutionServiceSpec
 
     failure.getMessage shouldBe s"Operator reads-a-dataset reads datasets or models " +
       s"($datasetLocator), which this computing unit cannot mount."
-  }
-
-  // The companion's one expression, exercised directly rather than only through the two result
-  // services that call it. Transposing its two arguments -- both bare `Integer`s bound into one
-  // predicate -- does reach those siblings, and hard (30 of their tests fail on it), so this is not
-  // a hole in the module's coverage. It is the class that owns the method stating its own contract,
-  // and failing first and by name when that contract breaks.
-  "WorkflowExecutionService.getLatestExecutionId" should
-    "resolve the newest execution of a workflow on a given computing unit" in {
-    WorkflowExecutionService.getLatestExecutionId(
-      WorkflowIdentity(testWid.longValue()),
-      testCuid.intValue()
-    ) shouldBe Some(ExecutionIdentity(testEid.longValue()))
-  }
-
-  it should "find no execution for a computing unit the workflow has not run on" in {
-    // Same workflow row as the case above, so only the cuid leg can produce this None -- which is
-    // what keeps that leg from being vacuous. The transposition of the two arguments dies in the
-    // case above, where the swapped pair selects no row at all.
-    WorkflowExecutionService.getLatestExecutionId(
-      WorkflowIdentity(testWid.longValue()),
-      otherCuid.intValue()
-    ) shouldBe None
   }
 }
