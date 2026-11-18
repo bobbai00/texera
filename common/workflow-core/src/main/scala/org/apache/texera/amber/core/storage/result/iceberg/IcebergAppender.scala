@@ -21,11 +21,15 @@ package org.apache.texera.amber.core.storage.result.iceberg
 
 import org.apache.iceberg.data.Record
 import org.apache.iceberg.data.parquet.GenericParquetWriter
+import org.apache.iceberg.exceptions.CleanableFailure
 import org.apache.iceberg.parquet.Parquet
 import org.apache.iceberg.{DataFile, Schema, Table, UpdateProperties}
 import org.apache.parquet.schema.MessageType
 
+import java.net.{ConnectException, NoRouteToHostException, UnknownHostException}
 import java.util.UUID
+import scala.annotation.tailrec
+import scala.util.control.NonFatal
 
 /**
   * Appends Iceberg records to a table that has one writer, which commits on its own schedule:
@@ -45,6 +49,10 @@ private[storage] object IcebergAppender {
     *
     * The append is a fast append, which adds a manifest instead of merging into the last one:
     * the table's writer tidies it ([[IcebergTidy]]), and a tidy rewrites the manifests anyway.
+    *
+    * An append that fails leaves no data file behind when its commit cannot have landed (see
+    * [[committing]]), so a writer that tries again and again does not fill the table's location
+    * with files no table reads.
     */
   def append(
       table: Table,
@@ -53,13 +61,64 @@ private[storage] object IcebergAppender {
       properties: Map[String, String] = Map.empty
   ): Unit = {
     val transaction = table.newTransaction()
-    if (records.nonEmpty) {
-      transaction.newFastAppend().appendFile(writeDataFile(table, records, filePrefix)).commit()
+    val file = Option.when(records.nonEmpty)(writeDataFile(table, records, filePrefix))
+    committing(table, file) { () =>
+      file.foreach(transaction.newFastAppend().appendFile(_).commit())
+      if (properties.nonEmpty) set(transaction.updateProperties(), properties).commit()
+    } { () =>
+      // One commit to the catalog for both, and none when there was neither.
+      transaction.commitTransaction()
     }
-    if (properties.nonEmpty) set(transaction.updateProperties(), properties).commit()
-    // One commit to the catalog for both, and none when there was neither.
-    transaction.commitTransaction()
   }
+
+  /**
+    * Makes `file`, which is written and not yet part of `table`, part of it: `prepare` gets the
+    * commit ready without asking the catalog, and `commit` asks it. When either fails, the
+    * failure is thrown as it is, and `file` is deleted if the commit cannot have landed: nothing
+    * would ever read it.
+    *
+    * It cannot have landed when the catalog was not asked yet, when the failure is one Iceberg
+    * marks as safe to clean up after ([[CleanableFailure]]: the catalog refused the commit, or
+    * has no such table), and when the catalog could not be connected to. After any other
+    * failure the commit may have landed, as when the catalog's answer was lost
+    * (`CommitStateUnknownException`) or never came: the table then reads `file`, so it stays.
+    */
+  private[iceberg] def committing(table: Table, file: Option[DataFile])(
+      prepare: () => Unit
+  )(commit: () => Unit): Unit = {
+    var asked = false
+    try {
+      prepare()
+      asked = true
+      commit()
+    } catch {
+      case NonFatal(failure) =>
+        if (!asked || cannotHaveLanded(failure)) {
+          file.foreach { orphan =>
+            try table.io().deleteFile(orphan.location())
+            catch { case NonFatal(notDeleted) => failure.addSuppressed(notDeleted) }
+          }
+        }
+        throw failure
+    }
+  }
+
+  @tailrec
+  private def cannotHaveLanded(failure: Throwable): Boolean =
+    if (failure == null) false
+    else if (failure.isInstanceOf[CleanableFailure] || neverSent(failure)) true
+    else cannotHaveLanded(failure.getCause)
+
+  /**
+    * Whether `failure` says that a request was not sent: the catalog's address did not resolve,
+    * or nothing answered there. Apache's client, which Iceberg's REST catalog uses, reports a
+    * connection that timed out as a socket timeout of the name below.
+    */
+  private def neverSent(failure: Throwable): Boolean =
+    failure match {
+      case _: ConnectException | _: UnknownHostException | _: NoRouteToHostException => true
+      case other                                                                     => other.getClass.getSimpleName == "ConnectTimeoutException"
+    }
 
   /** Sets table properties in a commit of their own, which adds no snapshot. */
   def setProperties(table: Table, properties: Map[String, String]): Unit =
@@ -67,7 +126,8 @@ private[storage] object IcebergAppender {
 
   /**
     * Writes `records` to a new Parquet file `<filePrefix>_<32 hex digits>` under the table's
-    * location, the way `IcebergTableWriter` writes one. The file is not part of the table yet.
+    * location, the way `IcebergTableWriter` writes one. The file is not part of the table yet:
+    * [[committing]] makes it part of it.
     */
   private[iceberg] def writeDataFile(
       table: Table,

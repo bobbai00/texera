@@ -91,10 +91,14 @@ private[storage] object IcebergTidy {
         .newRewrite()
         .validateFromSnapshot(planned)
         .dataSequenceNumber(small.last.dataSequenceNumber())
-      small.foreach(rewrite.deleteFile(_: DataFile))
-      rewrite.addFile(merged)
-      beforeCommit()
-      rewrite.commit()
+      // A merge that fails leaves no merged file behind, as an append leaves no data file.
+      IcebergAppender.committing(table, Some(merged)) { () =>
+        small.foreach(rewrite.deleteFile(_: DataFile))
+        rewrite.addFile(merged)
+        beforeCommit()
+      } { () =>
+        rewrite.commit()
+      }
       small.size
     }
   }
