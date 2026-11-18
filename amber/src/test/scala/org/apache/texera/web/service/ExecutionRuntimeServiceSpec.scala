@@ -60,7 +60,6 @@ import org.scalatest.time.{Seconds, Span}
 import org.slf4j.LoggerFactory
 
 import java.net.URI
-import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
 
 class ExecutionRuntimeServiceSpec
@@ -382,6 +381,36 @@ class ExecutionRuntimeServiceSpec
       f.stateStore.metadataStore.getState shouldBe asItEnded
       f.reconfigurationService.resumeCallCount shouldBe 0
     } finally f.close()
+  }
+
+  it should "not record a run as running when its engine fails to resume it, or to retry" in {
+    val refusal = new IllegalStateException("the engine did not resume")
+    val resumed = fixture()
+    try {
+      resumed.stateStore.transitionTo(PAUSED)
+      (resumed.coordinator.resumeWorkflow _)
+        .expects(EmptyRequest(), ())
+        .returning(Future.exception(refusal))
+
+      resumed.wsInput.onNext(WorkflowResumeRequest(executionId), None)
+
+      // The engine is still paused, and the run's record still ends there.
+      resumed.stateStore.metadataStore.getState.state should not be RUNNING
+      resumed.recorder.states shouldBe Seq(("PAUSED", None))
+    } finally resumed.close()
+
+    val retried = fixture()
+    try {
+      retried.stateStore.transitionTo(PAUSED)
+      (retried.coordinator.retryWorkflow _)
+        .expects(RetryWorkflowRequest(Seq(ActorVirtualIdentity("worker-a"))), ())
+        .returning(Future.exception(refusal))
+
+      retried.wsInput.onNext(RetryRequest(Seq("worker-a")), None)
+
+      retried.stateStore.metadataStore.getState.state should not be RUNNING
+      retried.recorder.states shouldBe Seq(("PAUSED", None))
+    } finally retried.close()
   }
 
   it should "tell the sender of a skip that the engine skips no tuple, and leave the run alone" in {
