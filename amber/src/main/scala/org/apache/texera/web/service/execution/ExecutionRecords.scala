@@ -103,6 +103,13 @@ final case class ExecutionRecord(
 }
 
 /**
+  * When an execution's results are past their age: it ended at or before `endedByMs`, and one
+  * that a verdict of the Dashboard service closed also ended before `verdictsBeforeMs`. Until
+  * then its log may yet show how it really ended, and its unit may still be writing its tables.
+  */
+final case class PastAge(endedByMs: Long, verdictsBeforeMs: Long)
+
+/**
   * The rows of `workflow_executions` as the Dashboard service closes them and reads how they
   * ended. Only the Dashboard writes the closing record, and each write is one conditional
   * UPDATE, so of any number of replicas that try the same one, one does it.
@@ -143,27 +150,26 @@ object ExecutionRecords {
 
   /**
     * Execution `eid`'s row, if it is closed and still holds its results: they are not marked
-    * expired. With `endedByMs`, only if it also ended at or before that time.
+    * expired. With `pastAge`, only if they are also past that age.
     */
-  def unexpired(eid: Long, endedByMs: Option[Long] = None): Option[ExecutionRecord] =
+  def unexpired(eid: Long, pastAge: Option[PastAge] = None): Option[ExecutionRecord] =
     Option
       .when(eid >= 1 && eid <= Int.MaxValue)(eid)
-      .flatMap(id => select(rowOf(id).and(holdsResults(endedByMs))).headOption)
+      .flatMap(id => select(rowOf(id).and(holdsResults(pastAge))).headOption)
 
   /**
-    * The closed executions that still hold their results, ended at or before `endedByMs` and
-    * were made after execution `afterEid`, oldest first, at most `limit` of them. While
-    * per-user warehouses are disabled, those that write into one are left out: nothing reaches
-    * their tables then.
+    * The closed executions that still hold results past `pastAge` and were made after
+    * execution `afterEid`, oldest first, at most `limit` of them. While per-user warehouses
+    * are disabled, those that write into one are left out: nothing reaches their tables then.
     */
-  def unexpiredEndedBy(
-      endedByMs: Long,
+  def unexpiredPast(
+      pastAge: PastAge,
       afterEid: Long,
       limit: Int,
       warehousesEnabled: Boolean
   ): Seq[ExecutionRecord] =
     select(
-      holdsResults(Some(endedByMs))
+      holdsResults(Some(pastAge))
         .and(WORKFLOW_EXECUTIONS.EID.gt(Integer.valueOf(Math.toIntExact(afterEid))))
         .and(
           if (warehousesEnabled) DSL.noCondition()
@@ -306,8 +312,8 @@ object ExecutionRecords {
     * still hold, unless it is open or its results are marked expired already. From then on its
     * verdict is no longer replaced by an ending its log shows later ([[revise]]).
     *
-    * The row is read again by the UPDATE itself: with `endedByMs`, it is marked only if it
-    * still ended at or before that time, which a verdict replaced in the meantime may not have.
+    * The row is read again by the UPDATE itself: with `pastAge`, it is marked only if its
+    * results are still past that age, which a verdict replaced in the meantime may not be.
     *
     * @return whether this call marked it
     */
@@ -315,13 +321,13 @@ object ExecutionRecords {
       eid: Long,
       atMs: Long,
       storedBytes: Long,
-      endedByMs: Option[Long] = None
+      pastAge: Option[PastAge] = None
   ): Boolean =
     context
       .update(WORKFLOW_EXECUTIONS)
       .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, timeOf(atMs))
       .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(storedBytes))
-      .where(rowOf(eid).and(holdsResults(endedByMs)))
+      .where(rowOf(eid).and(holdsResults(pastAge)))
       .execute() == 1
 
   /** Stops naming the replay log of execution `eid`, once that log is gone. */
@@ -358,12 +364,19 @@ object ExecutionRecords {
 
   /**
     * The condition that a row is closed and its results are not marked expired; with
-    * `endedByMs`, also that it ended at or before that time.
+    * `pastAge`, also that they are past that age.
     */
-  private def holdsResults(endedByMs: Option[Long]): Condition = {
+  private def holdsResults(pastAge: Option[PastAge]): Condition = {
     val held = WORKFLOW_EXECUTIONS.ENDED_AT.isNotNull
       .and(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT.isNull)
-    endedByMs.fold(held)(ms => held.and(WORKFLOW_EXECUTIONS.ENDED_AT.le(timeOf(ms))))
+    pastAge.fold(held) { age =>
+      held
+        .and(WORKFLOW_EXECUTIONS.ENDED_AT.le(timeOf(age.endedByMs)))
+        .and(
+          WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG.isTrue
+            .or(WORKFLOW_EXECUTIONS.ENDED_AT.lt(timeOf(age.verdictsBeforeMs)))
+        )
+    }
   }
 
   private def requireOutcome(outcome: Short): Unit =

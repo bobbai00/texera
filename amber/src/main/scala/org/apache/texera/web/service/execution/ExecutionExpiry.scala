@@ -63,7 +63,7 @@ object ExecutionExpiry {
   * its log and its statistics stay, so the history still tells how it ran, and its row is marked
   * with when its results went and what it still holds. Results expire when a unit has started a
   * later execution of the workflow ([[expireReplaced]]), which the unit shows from then on, and
-  * when they are older than results are kept ([[expireEndedBy]]), which also deletes the
+  * when they are older than results are kept ([[expirePast]]), which also deletes the
   * execution's replay log. Deleting an execution drops everything it keeps ([[dropAll]]).
   *
   * An execution's port tables are found from its stored plan, which names where each port is
@@ -103,25 +103,25 @@ class ExecutionExpiry(
     * @return whether this call marked the row
     */
   def expire(eid: Long, withReplayLog: Boolean = false): Boolean =
-    expire(eid, withReplayLog, endedByMs = None, why = "")
+    expire(eid, withReplayLog, pastAge = None, why = "")
 
   /**
-    * Expires the results of the executions that ended at or before `endedByMs`, with their
-    * replay logs, in the order the executions were made. The age counts from the ending the
-    * row holds: a verdict that its log's ending replaces in the meantime is younger, and keeps
-    * its results; once its results are expired, a verdict stands.
+    * Expires the results that are past `pastAge`, with their executions' replay logs, in the
+    * order the executions were made. The age counts from the ending the row holds. An
+    * execution closed by a verdict keeps its results for as long as the ending in its log may
+    * replace the verdict, however short results are kept: its unit may only be cut off from the
+    * lake, and still be writing them. Once its results are expired, a verdict stands.
     *
     * An execution that cannot be expired is logged and passed over, to be found again by a
     * later call.
     *
     * @return how many executions this call expired
     */
-  def expireEndedBy(endedByMs: Long): Int = {
+  def expirePast(pastAge: PastAge): Int = {
     @tailrec def from(afterEid: Long, expired: Int): Int = {
-      val batch =
-        ExecutionRecords.unexpiredEndedBy(endedByMs, afterEid, batchSize, warehousesEnabled)
+      val batch = ExecutionRecords.unexpiredPast(pastAge, afterEid, batchSize, warehousesEnabled)
       val expiredSoFar = expired + batch.count { execution =>
-        tryExpire(execution.eid, withReplayLog = true, Some(endedByMs), " by age").contains(true)
+        tryExpire(execution.eid, withReplayLog = true, Some(pastAge), " by age").contains(true)
       }
       if (batch.size < batchSize) expiredSoFar
       else from(batch.last.eid, expiredSoFar)
@@ -160,7 +160,7 @@ class ExecutionExpiry(
             tryExpire(
               execution.eid,
               withReplayLog = false,
-              endedByMs = None,
+              pastAge = None,
               s", which execution ${shown.eid} replaced on computing unit $cuid"
             )
         }
@@ -216,10 +216,10 @@ class ExecutionExpiry(
   private def tryExpire(
       eid: Long,
       withReplayLog: Boolean,
-      endedByMs: Option[Long],
+      pastAge: Option[PastAge],
       why: String
   ): Option[Boolean] =
-    try Some(expire(eid, withReplayLog, endedByMs, why))
+    try Some(expire(eid, withReplayLog, pastAge, why))
     catch {
       case NonFatal(failure) =>
         logger.warn(
@@ -232,17 +232,17 @@ class ExecutionExpiry(
   /**
     * Drops what the run of execution `eid` produced, then marks its row, which is read again
     * for that: an execution is expired only while it is closed, holds results, and, with
-    * `endedByMs`, ended at or before that time.
+    * `pastAge`, they are past that age.
     *
     * @param why why they are expired, as the log line goes on to say
     */
   private def expire(
       eid: Long,
       withReplayLog: Boolean,
-      endedByMs: Option[Long],
+      pastAge: Option[PastAge],
       why: String
   ): Boolean =
-    ExecutionRecords.unexpired(eid, endedByMs).exists { execution =>
+    ExecutionRecords.unexpired(eid, pastAge).exists { execution =>
       if (inDisabledWarehouse(execution)) {
         logger.info(
           s"Leaving the results of execution $eid where they are: per-user warehouses are disabled."
@@ -252,7 +252,7 @@ class ExecutionExpiry(
         dropProduced(execution)
         if (withReplayLog) deleteReplayLogOf(eid)
         val kept = keptBytes(execution)
-        val expired = ExecutionRecords.expire(eid, now(), kept, endedByMs)
+        val expired = ExecutionRecords.expire(eid, now(), kept, pastAge)
         if (expired) {
           logger.info(
             s"The results of execution $eid of workflow ${execution.wid} are expired$why; its " +

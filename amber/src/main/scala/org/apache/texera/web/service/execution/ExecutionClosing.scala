@@ -258,9 +258,12 @@ object ExecutionClosing {
   private def endingOf(label: ExecutionLabel): Ending =
     Ending(ExecutionStatus.of(label.state.get), label.reason, label.stateTimeMs)
 
-  /** The time an execution must have ended by, at `nowMs`, for its results to be past their age. */
-  def expiredByMs(settings: Settings, nowMs: Long): Long =
-    nowMs - settings.resultTtlSeconds * 1000L
+  /**
+    * When results are past their age at `nowMs`: their execution ended `ttl-in-seconds` ago or
+    * earlier, and no ending in its log replaces a verdict any more ([[revisable]]).
+    */
+  def pastAge(settings: Settings, nowMs: Long): PastAge =
+    PastAge(nowMs - settings.resultTtlSeconds * 1000L, reviseSinceMs(settings, nowMs))
 
   /**
     * Whether a pass over the results past their age is due at `nowMs`: the job has made none

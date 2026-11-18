@@ -117,7 +117,8 @@ object ExecutionClosingJob {
   * replaced, once a tick finds that a unit has started a later execution of the workflow on
   * the unit, or closes an execution that one has replaced; and, at most every
   * `result-cleanup.collection-check-interval-in-seconds` and first on its first tick, those of
-  * the executions that ended longer ago than `result-cleanup.ttl-in-seconds`.
+  * the executions that ended longer ago than `result-cleanup.ttl-in-seconds`. A verdict that
+  * the tick may still replace keeps its results until then.
   *
   * Any number of Dashboard replicas run the job, with no leader: every write is a conditional
   * UPDATE or an Iceberg tag, which one of them wins. What a replica remembers between its ticks
@@ -292,7 +293,7 @@ class ExecutionClosingJob(
     ) {
       val pass: Runnable = () =>
         try {
-          val expired = expiry.expireEndedBy(ExecutionClosing.expiredByMs(settings, nowMs))
+          val expired = expiry.expirePast(ExecutionClosing.pastAge(settings, nowMs))
           if (expired > 0) {
             logger.info(s"Expired the results of $expired executions that were past their age.")
           }

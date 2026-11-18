@@ -413,9 +413,11 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
 
   // --- results past their age ---
 
-  "ExecutionClosing.expiredByMs" should "be the time results are kept before now" in {
-    expiredByMs(settings, nowMs) shouldBe nowMs - 86400000L
-    expiredByMs(settings.copy(resultTtlSeconds = 0), nowMs) shouldBe nowMs
+  "ExecutionClosing.pastAge" should "be the time results are kept before now, and for a verdict the time it is replaced for as well" in {
+    pastAge(settings, nowMs) shouldBe
+      PastAge(nowMs - 86400000L, verdictsBeforeMs = nowMs - 3600000L)
+    pastAge(settings.copy(resultTtlSeconds = 0), nowMs) shouldBe
+      PastAge(nowMs, verdictsBeforeMs = nowMs - 3600000L)
   }
 
   "ExecutionClosing.expiryDue" should "be due before the job's first pass, and then once every interval" in {

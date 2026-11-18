@@ -669,7 +669,7 @@ class ExecutionRecordsSpec
     withClue(open) { open should include("idx_workflow_executions_open") }
     // What the expiry lists by age: the few that ended long ago, among the many that hold results.
     val unexpired = planOf {
-      ExecutionRecords.unexpiredEndedBy(createdAtMs - 1L, 0L, 200, warehousesEnabled = false)
+      ExecutionRecords.unexpiredPast(endedBy(createdAtMs - 1L), 0L, 200, warehousesEnabled = false)
     }
     withClue(unexpired) { unexpired should include("idx_workflow_executions_unexpired") }
     ExecutionRecords.closedByVerdictSince(createdAtMs).map(_.eid) should contain(verdict)
@@ -776,7 +776,7 @@ class ExecutionRecordsSpec
       verdict,
       createdAtMs + 9000L,
       1L,
-      endedByMs = Some(createdAtMs + 7999L)
+      pastAge = Some(endedBy(createdAtMs + 7999L))
     ) shouldBe false
     row(verdict).getResultsExpiredAt shouldBe null
 
@@ -784,9 +784,29 @@ class ExecutionRecordsSpec
       verdict,
       createdAtMs + 9000L,
       1L,
-      endedByMs = Some(createdAtMs + 8000L)
+      pastAge = Some(endedBy(createdAtMs + 8000L))
     ) shouldBe true
     row(verdict).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 9000L)
+  }
+
+  it should "not mark by age an execution closed by a verdict that its log's ending may still replace" in {
+    val verdict = closedByVerdict(createdAtMs + 5000L)
+    val fromLog = closedAt(createdAtMs + 5000L)
+    // Both ended long enough ago, and verdicts are replaced for longer than that.
+    val replaceable = PastAge(createdAtMs + 8000L, verdictsBeforeMs = createdAtMs + 5000L)
+
+    ExecutionRecords.expire(verdict, createdAtMs + 9000L, 1L, Some(replaceable)) shouldBe false
+    ExecutionRecords.expire(fromLog, createdAtMs + 9000L, 1L, Some(replaceable)) shouldBe true
+    row(verdict).getResultsExpiredAt shouldBe null
+    ExecutionRecords.closedByVerdictSince(createdAtMs).map(_.eid) should contain(verdict)
+
+    // Once nothing replaces the verdict any more.
+    ExecutionRecords.expire(
+      verdict,
+      createdAtMs + 9000L,
+      1L,
+      Some(replaceable.copy(verdictsBeforeMs = createdAtMs + 5001L))
+    ) shouldBe true
   }
 
   it should "end the time a verdict gives way to its log's ending" in {
@@ -854,14 +874,18 @@ class ExecutionRecordsSpec
   it should "find it by age only if it ended by the time given" in {
     val closed = closedAt(createdAtMs + 5000L)
 
-    ExecutionRecords.unexpired(closed, Some(createdAtMs + 5000L)) shouldBe Some(record(closed))
-    ExecutionRecords.unexpired(closed, Some(createdAtMs + 4999L)) shouldBe None
+    ExecutionRecords.unexpired(closed, Some(endedBy(createdAtMs + 5000L))) shouldBe
+      Some(record(closed))
+    ExecutionRecords.unexpired(closed, Some(endedBy(createdAtMs + 4999L))) shouldBe None
   }
+
+  /** The age of what ended by `ms`, when no verdict that old is replaced any more. */
+  private def endedBy(ms: Long): PastAge = PastAge(ms, verdictsBeforeMs = ms + 1L)
 
   // Long before any other case's executions ended, so that these are the only ones so old.
   private val longAgoMs = createdAtMs - 30L * 86400000L
 
-  "ExecutionRecords.unexpiredEndedBy" should "list the closed executions that ended by a time and hold their results, oldest first, a batch at a time" in {
+  "ExecutionRecords.unexpiredPast" should "list the closed executions that ended by a time and hold their results, oldest first, a batch at a time" in {
     val first = closedAt(longAgoMs + 2000L)
     val second = closedAt(longAgoMs + 1000L)
     val third = closedAt(longAgoMs + 3000L)
@@ -872,12 +896,17 @@ class ExecutionRecordsSpec
     val open = insertExecution(startedAtMs = longAgoMs)
     def listed(afterEid: Long, limit: Int): Seq[Long] =
       ExecutionRecords
-        .unexpiredEndedBy(longAgoMs + 3000L, afterEid, limit, warehousesEnabled = false)
+        .unexpiredPast(endedBy(longAgoMs + 3000L), afterEid, limit, warehousesEnabled = false)
         .map(_.eid)
 
     var all: Seq[ExecutionRecord] = Nil
     val statements = recorder.record {
-      all = ExecutionRecords.unexpiredEndedBy(longAgoMs + 3000L, 0L, 10, warehousesEnabled = false)
+      all = ExecutionRecords.unexpiredPast(
+        endedBy(longAgoMs + 3000L),
+        0L,
+        10,
+        warehousesEnabled = false
+      )
     }
 
     statements.map(_.verb) shouldBe Seq("SELECT")
@@ -893,10 +922,25 @@ class ExecutionRecordsSpec
     val inWarehouse = closedAt(longAgoMs - 5000L, warehouse = Some(whid))
     val inDefault = closedAt(longAgoMs - 5000L)
     def listed(warehousesEnabled: Boolean): Seq[Long] =
-      ExecutionRecords.unexpiredEndedBy(longAgoMs - 5000L, 0L, 10, warehousesEnabled).map(_.eid)
+      ExecutionRecords
+        .unexpiredPast(endedBy(longAgoMs - 5000L), 0L, 10, warehousesEnabled)
+        .map(_.eid)
 
     listed(warehousesEnabled = false) shouldBe Seq(inDefault)
     listed(warehousesEnabled = true) shouldBe Seq(inWarehouse, inDefault)
+  }
+
+  it should "leave out an execution closed by a verdict that its log's ending may still replace" in {
+    val endedAtMs = longAgoMs - 86400000L
+    val verdict = closedByVerdict(endedAtMs)
+    val fromLog = closedAt(endedAtMs)
+    def listed(verdictsBeforeMs: Long): Seq[Long] =
+      ExecutionRecords
+        .unexpiredPast(PastAge(endedAtMs, verdictsBeforeMs), 0L, 10, warehousesEnabled = false)
+        .map(_.eid)
+
+    listed(verdictsBeforeMs = endedAtMs) shouldBe Seq(fromLog)
+    listed(verdictsBeforeMs = endedAtMs + 1L) shouldBe Seq(verdict, fromLog)
   }
 
   "ExecutionRecords.unexpiredBefore" should "list the closed executions of the workflow on the unit that hold their results and were made before another, oldest first" in {

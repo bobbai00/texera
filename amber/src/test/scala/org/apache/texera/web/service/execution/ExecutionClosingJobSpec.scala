@@ -478,15 +478,15 @@ class ExecutionClosingJobSpec
   private class NotingExpiry(replaced: (Int, Long) => Boolean = (_, _) => true)
       extends ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ()) {
     val replacedBy = new ConcurrentLinkedQueue[(Int, Long)]()
-    val passes = new ConcurrentLinkedQueue[Long]()
+    val passes = new ConcurrentLinkedQueue[PastAge]()
 
     override def expireReplaced(wid: Long, cuid: Int, replacedBy: Long): Boolean = {
       this.replacedBy.add((cuid, replacedBy))
       replaced(cuid, replacedBy)
     }
 
-    override def expireEndedBy(endedByMs: Long): Int = {
-      passes.add(endedByMs)
+    override def expirePast(pastAge: PastAge): Int = {
+      passes.add(pastAge)
       0
     }
   }
@@ -1349,8 +1349,11 @@ class ExecutionClosingJobSpec
     val fixture = new Fixture()
     val started = fixture.clock.get()
 
+    // What ended a day ago or earlier; a verdict only once it is an hour old, when no ending
+    // replaces it any more.
     fixture.tick(3)
-    fixture.noted.passes.asScala.toSeq shouldBe Seq(started - 86400000L)
+    fixture.noted.passes.asScala.toSeq shouldBe
+      Seq(PastAge(started - 86400000L, verdictsBeforeMs = started - 3600000L))
 
     // One tick short of the interval, and the tick that completes it.
     fixture.clock.set(started + 7199999L)
@@ -1358,7 +1361,7 @@ class ExecutionClosingJobSpec
     fixture.noted.passes.asScala should have size 1
     fixture.clock.set(started + 7200000L)
     fixture.tick(2)
-    fixture.noted.passes.asScala.toSeq shouldBe
+    fixture.noted.passes.asScala.toSeq.map(_.endedByMs) shouldBe
       Seq(started - 86400000L, started + 7200000L - 86400000L)
   }
 
@@ -1383,8 +1386,8 @@ class ExecutionClosingJobSpec
 
   it should "survive a pass that fails, which is logged, and make the next one when it is due" in {
     val failing = new NotingExpiry() {
-      override def expireEndedBy(endedByMs: Long): Int = {
-        super.expireEndedBy(endedByMs)
+      override def expirePast(pastAge: PastAge): Int = {
+        super.expirePast(pastAge)
         throw new IllegalStateException("the database is down")
       }
     }

@@ -738,7 +738,7 @@ class ExecutionExpirySpec
     asked.asScala shouldBe empty
   }
 
-  // --- expireEndedBy ---
+  // --- expirePast ---
 
   /**
     * A time so many days before the other cases' executions ended. A pass by age looks at every
@@ -746,7 +746,10 @@ class ExecutionExpirySpec
     */
   private def daysBefore(days: Int): Long = endedAtMs - days * 86400000L
 
-  "ExecutionExpiry.expireEndedBy" should "expire what ended by the time given, with its replay log, and nothing younger" in {
+  /** The age of what ended by `ms`, when no verdict that old is replaced any more. */
+  private def endedBy(ms: Long): PastAge = PastAge(ms, verdictsBeforeMs = ms + 1L)
+
+  "ExecutionExpiry.expirePast" should "expire what ended by the time given, with its replay log, and nothing younger" in {
     val fixture = new Fixture()
     val byMs = daysBefore(10)
     val folder = replayLog()
@@ -756,7 +759,7 @@ class ExecutionExpirySpec
     val young = ran(made(endedAt = byMs + 1L, replayLog = Some(youngFolder.toUri.toString)))
     val open = ran(made(outcome = None))
 
-    val lines = logged { fixture.expiry.expireEndedBy(byMs) shouldBe 2 }
+    val lines = logged { fixture.expiry.expirePast(endedBy(byMs)) shouldBe 2 }
 
     Seq(old, onTime).foreach { expired =>
       withClue(s"execution ${expired.eid}: ") {
@@ -781,7 +784,7 @@ class ExecutionExpirySpec
     }
 
     // Once more there is nothing left that old.
-    fixture.expiry.expireEndedBy(byMs) shouldBe 0
+    fixture.expiry.expirePast(endedBy(byMs)) shouldBe 0
   }
 
   it should "go through every execution that old, a batch at a time, past one that cannot be expired" in {
@@ -794,7 +797,7 @@ class ExecutionExpirySpec
       batchSize = 2
     )
 
-    val lines = logged { failing.expiry.expireEndedBy(longAgoMs) shouldBe 4 }
+    val lines = logged { failing.expiry.expirePast(endedBy(longAgoMs)) shouldBe 4 }
 
     executions.filterNot(_ == stuck).foreach { expired =>
       withClue(s"execution ${expired.eid}: ") {
@@ -807,7 +810,7 @@ class ExecutionExpirySpec
     )
 
     // A later pass finds it again.
-    new Fixture(batchSize = 2).expiry.expireEndedBy(longAgoMs) shouldBe 1
+    new Fixture(batchSize = 2).expiry.expirePast(endedBy(longAgoMs)) shouldBe 1
     row(stuck).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
   }
 
@@ -828,7 +831,7 @@ class ExecutionExpirySpec
       ConsoleMessageStore.consoleUri(neverStarted.workflowId, neverStarted.executionId, None)
     ConsoleMessageStore.create(console)
 
-    fixture.expiry.expireEndedBy(longAgoMs) shouldBe 0
+    fixture.expiry.expirePast(endedBy(longAgoMs)) shouldBe 0
 
     has(console) shouldBe true
     row(neverStarted).getResultsExpiredAt shouldBe new Timestamp(longAgoMs)
@@ -840,10 +843,10 @@ class ExecutionExpirySpec
     val longAgoMs = daysBefore(40)
     val execution = made(endedAt = longAgoMs, warehouse = Some(whid))
 
-    logged { fixture.expiry.expireEndedBy(longAgoMs) shouldBe 0 } shouldBe Nil
+    logged { fixture.expiry.expirePast(endedBy(longAgoMs)) shouldBe 0 } shouldBe Nil
 
     row(execution).getResultsExpiredAt shouldBe null
-    new Fixture(warehousesEnabled = true).expiry.expireEndedBy(longAgoMs) shouldBe 1
+    new Fixture(warehousesEnabled = true).expiry.expirePast(endedBy(longAgoMs)) shouldBe 1
   }
 
   it should "not mark an execution by an age it no longer has, when its log's ending took its verdict's place meanwhile" in {
@@ -862,7 +865,7 @@ class ExecutionExpirySpec
       ExecutionRecords.revise(verdict.eid, completed, None, byMs + 5000L) shouldBe true
     })
 
-    fixture.expiry.expireEndedBy(byMs) shouldBe 0
+    fixture.expiry.expirePast(endedBy(byMs)) shouldBe 0
 
     row(verdict).getResultsExpiredAt shouldBe null
     record(verdict.eid).closing shouldBe
@@ -871,7 +874,26 @@ class ExecutionExpirySpec
     row(verdict).getLogLocation shouldBe null
 
     // A pass that finds it that old marks it.
-    fixture.expiry.expireEndedBy(byMs + 5000L) shouldBe 1
+    fixture.expiry.expirePast(endedBy(byMs + 5000L)) shouldBe 1
+    row(verdict).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
+  }
+
+  it should "keep the results of an execution closed by a verdict for as long as its log's ending may replace it" in {
+    val fixture = new Fixture()
+    val byMs = daysBefore(60)
+    val verdict = ran(made(outcome = Some(failed), fromLog = false, endedAt = byMs))
+    val fromLog = ran(made(endedAt = byMs))
+
+    // Both are older than results are kept, and a verdict that old is still replaced.
+    fixture.expiry.expirePast(PastAge(byMs, verdictsBeforeMs = byMs)) shouldBe 1
+
+    producedBy(verdict).foreach(has(_) shouldBe true)
+    row(verdict).getResultsExpiredAt shouldBe null
+    row(fromLog).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
+
+    // Once it is not, its results go as any other's.
+    fixture.expiry.expirePast(PastAge(byMs, verdictsBeforeMs = byMs + 1L)) shouldBe 1
+    producedBy(verdict).foreach(has(_) shouldBe false)
     row(verdict).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
   }
 
