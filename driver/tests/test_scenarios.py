@@ -1,4 +1,4 @@
-"""Offline runs of the step-2 scenarios (j, k, l1-l10, m, o, f, f2, g, h, i, g0)
+"""Offline runs of the step-2 scenarios (j, k, the l group, m, o, f, f2, g, h, i, g0)
 through the real driver code (Ctx, scenarios.py, transport.py, texera_api.py)
 against the fake Texera of tests/fake_texera.py, which follows the design's data
 shapes. `docker exec <unit>` (curl for o, python3/ls/grep for the environment
@@ -101,7 +101,6 @@ class ScenarioCase(unittest.TestCase):
         other_api = api.ensure_user("sce-e2e-other", "sce-e2e-other@example.com", "pw")
         o_cuid = int(other_api.create_local_unit("sce-e2e-other-unit", URI)["cuid"])
         o_whid, _ = other_api.ensure_warehouse("sce-e2e-other-wh")
-        unit2 = int(api.create_local_unit("sce-e2e-unit-2", URI)["cuid"])
         cls = CreateStartTransport if self.transport_name == "create-ws" else WebSocketTransport
         transport = cls(base, lambda: api.token, lambda: api.uid, api=api, log=lambda m: None)
         self.log: list[str] = []
@@ -111,7 +110,7 @@ class ScenarioCase(unittest.TestCase):
                        dataset={"version_path": VERSION_PATH}, warehouse_name=f"user-1-{whid}",
                        with_replay_log=self.replay_log,
                        other=OtherUser(other_api, o_cuid, o_whid, f"user-{other_api.uid}-{o_whid}"),
-                       unit2_cuid=unit2, unit_uri=URI, timing=self.timing,
+                       unit_uri=URI, timing=self.timing,
                        lake=Lake(Catalog(self.fake.lake.fetch)), level=self.level,
                        stack=FakeStack(self.fake, api))
         self.unit = FakeUnitExec(self.fake, base)
@@ -151,30 +150,54 @@ class CreateWsScenarios(ScenarioCase):
         self.assertIn("the 400 says so as every refusal does, in {code, message}", self.names(rec))
 
     def test_l_refusals(self):
+        self.assertEqual(["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l10"], scenarios.GROUPS["l"])
         for key in ("l1", "l2", "l3", "l4", "l7"):
             rec = self.run_key(key)
             self.assertTrue(any("no execution row was written" in n for n in self.names(rec)), key)
-        for key in ("l5", "l6", "l9", "l10"):
+        for key in ("l5", "l6", "l10"):
             rec = self.run_key(key)
             self.assertTrue(any("the row stays 6" in n for n in self.names(rec)), key)  # Created
-            self.assertFalse(self.fake.executions[rec.eid]["started"], key)
+            self.assertNotIn(rec.eid, self.fake.runs, key)  # nothing ran
         rec = self.run_key("l8")
         self.assertEqual(3, self.fake.executions[rec.eid]["status"])
 
     def test_l_refusals_are_the_units_sentences(self):
         said = {}
-        for key in ("l5", "l6", "l9", "l10", "l8"):
+        for key in ("l5", "l6", "l10", "l8"):
             rec = self.run_key(key)
             said[key] = next(n for n in self.names(rec) if "gets a RequestRefusedEvent of its start" in n)
         starts = [w["msg"] for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"]
-        self.assertEqual(6, len(starts))  # l8's first start ran
+        self.assertEqual(5, len(starts))  # l8's first start ran
         first, second = starts[1]["executionId"], starts[1]["executionId"] + 1  # l6's two creates
         self.assertIn(f"\"The plan is execution {second}'s, not {first}'s.\"", said["l6"])
-        self.assertIn(f"\"Execution {starts[2]['executionId']} was created for computing unit "
-                      f"{self.ctx.cuid}, not {self.ctx.unit2_cuid}.\"", said["l9"])
-        self.assertIn("\"The plan is in another user's warehouse.\"", said["l5"])
-        self.assertIn("\"The plan is in another user's warehouse.\"", said["l10"])
+        self.assertIn("\"The plan writes into another user's warehouse.\"", said["l5"])
+        self.assertIn("\"The plan writes into another user's warehouse.\"", said["l10"])
         self.assertIn(f"\"Execution {starts[4]['executionId']} was already started.\"", said["l8"])
+        # l10's plan was the create's, moved into the other user's warehouse with every location in it
+        moved = json.loads(starts[2]["plan"])
+        foreign = self.ctx.other.warehouse_name
+        self.assertEqual(foreign, moved["warehouse"])
+        self.assertTrue(all(p["storageLocation"].startswith(f"vfs:///wh/{foreign}/wid/") for p in moved["storedPorts"]))
+
+    def test_a_plan_is_moved_into_another_warehouse_whole(self):
+        """l10's plan, written as the product writes one: its warehouse and every location in
+        it move together, from a warehouse or from none."""
+        port = "vfs:///wh/user-1-7/wid/5/eid/9/globalportid/(logicalOpId=a,layerName=main,portId=0)"
+        plan = json.dumps({"formatVersion": 1, "workflowId": {"id": 5}, "executionId": {"id": "9"},
+                           "warehouse": "user-1-7", "operators": [{"id": {"logicalOpId": {"id": "a"}},
+                                                                   "outputPorts": [{"storageLocation": port}]}],
+                           "replayLogLocation": "file:///logs/5/9/"})
+        moved = json.loads(scenarios._writing_into(plan, "user-2-8"))
+        self.assertEqual("user-2-8", moved["warehouse"])
+        self.assertEqual(port.replace("/wh/user-1-7/", "/wh/user-2-8/"),
+                         moved["operators"][0]["outputPorts"][0]["storageLocation"])
+        self.assertEqual(({"id": "9"}, "file:///logs/5/9/"), (moved["executionId"], moved["replayLogLocation"]))
+        without = json.loads(plan)
+        del without["warehouse"]
+        without["operators"][0]["outputPorts"][0]["storageLocation"] = port.replace("/wh/user-1-7/", "/")
+        moved = json.loads(scenarios._writing_into(json.dumps(without), "user-2-8"))
+        self.assertEqual(("user-2-8", port.replace("/wh/user-1-7/", "/wh/user-2-8/")),
+                         (moved["warehouse"], moved["operators"][0]["outputPorts"][0]["storageLocation"]))
 
     def test_a_refusal_that_comes_as_a_runs_error_fails_the_refused_starts(self):
         """The unit of before step 2's review answered a refused start with a WorkflowErrorEvent."""
@@ -186,8 +209,22 @@ class CreateWsScenarios(ScenarioCase):
 
     def test_an_unstarted_execution_that_reads_initializing_fails_a_refused_start(self):
         """The Dashboard of before step 2's review created a row as Initializing (0)."""
-        self.assertEqual([f"l9 socket of unit {self.ctx.unit2_cuid}: the row stays 6"],
-                         self.failed_with("l9", "created-reads-initializing"))
+        self.assertEqual(["l5 another user's socket: the row stays 6"],
+                         self.failed_with("l5", "created-reads-initializing"))
+
+    def test_a_unit_that_starts_an_execution_twice_fails_l8(self):
+        self.addCleanup(setattr, scenarios, "REFUSAL_WAIT_S", scenarios.REFUSAL_WAIT_S)
+        scenarios.REFUSAL_WAIT_S = 1.0  # no refusal comes
+        self.assertEqual(["l8 second start: the starting socket gets a RequestRefusedEvent of its start",
+                          "l8 second start: the first session gets no refusal, no error and no new state",
+                          "l8 second start: never Running"],
+                         [name.split(": \"")[0] for name in self.failed_with("l8", "start-taken-twice")])
+
+    def test_l5_needs_per_user_warehouses(self):
+        self.ctx.whid = None
+        rec = run_scenario(self.ctx, "l5")
+        self.assertIn("needs per-user warehouses", rec.error)
+        self.assertFalse([r for r in self.fake.rest_log if r["path"] == "/api/executions"])
 
     def test_m_refusals_without_replay_log(self):
         rec = self.run_key("m")
@@ -210,8 +247,12 @@ class CreateWsScenarios(ScenarioCase):
         self.assertEqual(["CSVFileScan", "Filter"], [o["operatorType"] for o in plan["operators"]])
         self.assertEqual(1, len(plan["links"]))
         self.assertEqual([plan["operators"][1]["operatorID"]], plan["opsToViewResult"])
-        # the run names its target to the unit, which answers that operator's result
+        # the run hands the unit the plan the create answered, and names its target, whose result
+        # the unit answers
         run = next(r for r in self.fake.rest_log if r["path"] == f"/api/execution/{rec.eid}/run")["body"]
+        self.assertEqual({"plan", "computingUnitId", "targetOperatorIds", "timeoutSeconds",
+                          "maxOperatorResultCharLimit", "maxOperatorResultCellCharLimit"}, set(run))
+        self.assertEqual({"id": rec.eid}, json.loads(run["plan"])["executionId"])
         self.assertEqual(plan["opsToViewResult"], run["targetOperatorIds"])
         self.assertEqual(3, self.fake.executions[rec.eid]["status"])
         self.assertIn(f"a repeat of the call is refused: success false, \"Execution {rec.eid} was already "

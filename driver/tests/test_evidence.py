@@ -1,7 +1,7 @@
 """Offline tests of driver/evidence.py: a fake `docker` serves a synthetic Postgres
 log (docker timestamps, the --pg-statement-log prefix, extended-protocol DETAIL
 lines of interleaved pids, continuation lines) and answers psql marks, inspect,
-getent, the unit's log and the Lakekeeper catalog.
+getent and the unit's log.
 
     .venv/bin/python -m unittest discover -s driver/tests -v
 """
@@ -34,7 +34,6 @@ class FakeDocker:
         self.gateway: list[tuple[int, str]] = []
         self.isolated = isolated
         self.cleanup = cleanup
-        self.tables: dict[str, dict] = {}  # "wid_1_eid_2_plan" -> refs
         self.getent = ""
         #: what `getent hosts texera-postgres` answers in the unit, its health, and when it started
         self.getent_postgres = ""
@@ -124,18 +123,6 @@ class FakeDocker:
             out, rc = self.getent_postgres, (0 if self.getent_postgres else 2)
         elif args[0] == "exec" and "getent" in args:
             out, rc = self.getent, (0 if self.getent else 2)
-        elif args[0] == "exec" and "curl" in args:
-            url = args[-1]
-            if "/v1/config" in url:
-                out = json.dumps({"overrides": {"prefix": "wh-uuid"}, "defaults": {}}) + "\n200"
-            else:
-                name = url.rsplit("/", 1)[-1]
-                if name in self.tables:
-                    out = json.dumps({"metadata": {"refs": self.tables[name]}}) + "\n200"
-                elif url.endswith("/namespaces"):
-                    out = json.dumps({"namespaces": [["operator-port-result"]]}) + "\n200"
-                else:
-                    out = json.dumps({"error": {"message": "Table does not exist"}}) + "\n404"
         return subprocess.CompletedProcess(args, rc, out, "")
 
 
@@ -176,10 +163,8 @@ def new_path_run(fake: FakeDocker, e: ev.Evidence, wid: int, eid: int, *, insert
     e.on_phase("create", {"wid": wid, "cuid": 1})
     fake.execute(insert_app, insert_host, "insert into workflow_executions (vid, uid, status) values ($1, $2, $3)",
                  "$1 = '1', $2 = '1', $3 = '0'")
-    e.on_phase("created", {"eid": eid, "plan_uri": f"vfs:///wh/user-1-7/wid/{wid}/eid/{eid}/plan", "wid": wid})
-    e.on_phase("start", {"wid": wid, "cuid": 1, "eid": eid,
-                         "plan_uri": f"vfs:///wh/user-1-7/wid/{wid}/eid/{eid}/plan",
-                         "handle": Handle(["Initializing", "Running", "Completed"])})
+    e.on_phase("created", {"eid": eid, "wid": wid})
+    e.on_phase("start", {"wid": wid, "cuid": 1, "eid": eid, "handle": Handle(["Initializing", "Running", "Completed"])})
     for status in ("0", "1", "3"):
         fake.execute(ev.UNIT_APP, UNIT_IP, "update workflow_executions set status = $1, last_update_time = $2 "
                                            "where workflow_executions.eid = $3", f"$1 = '{status}', $2 = 'now', "
@@ -306,7 +291,6 @@ class ChecksTest(unittest.TestCase):
         self.assertFalse(r["C"].ok, r["C"].detail)
         self.assertFalse(r["D"].ok, r["D"].detail)
         self.assertIn("file-service", r["D"].detail)
-        self.assertFalse(r["E"].ok)
         self.assertFalse(r["F"].ok, r["F"].detail)
         gates, info = ev.evaluate(r, [], negative_control=True)
         self.assertEqual(3, len(gates))
@@ -328,15 +312,14 @@ class ChecksTest(unittest.TestCase):
 
     def test_new_path_passes_everything(self):
         fake = FakeDocker(isolated=True)
-        fake.tables["wid_5_eid_90_plan"] = {"main": {"snapshot-id": 1}, "started": {"snapshot-id": 1, "type": "tag"}}
         e = make(fake)
         e.begin_scenario("a")
         e.on_phase("create", {"wid": 5, "cuid": 1})
         fake.execute(ev.DASHBOARD_APP, DASH_IP, "insert into workflow_executions (vid, uid, status) values ($1, $2, $3)",
                      "$1 = '1', $2 = '1', $3 = '0'")
         fake.execute(ev.DASHBOARD_APP, DASH_IP, "select * from dataset where name = $1", "$1 = 'x'")
-        e.on_phase("created", {"eid": 90, "plan_uri": "vfs:///wh/user-1-7/wid/5/eid/90/plan", "wid": 5})
-        e.on_phase("start", {"wid": 5, "cuid": 1, "eid": 90, "plan_uri": "vfs:///wh/user-1-7/wid/5/eid/90/plan",
+        e.on_phase("created", {"eid": 90, "wid": 5})
+        e.on_phase("start", {"wid": 5, "cuid": 1, "eid": 90,
                              "handle": Handle(["Uninitialized", "Initializing", "Running", "Completed"])})
         fake.execute(ev.UNIT_APP, UNIT_IP, 'update workflow_executions set status = $1, last_update_time = $2 '
                                            'where workflow_executions.eid = $3', "$1 = '0', $2 = 'now', $3 = '90'")
@@ -369,7 +352,7 @@ class ChecksTest(unittest.TestCase):
         e.begin_scenario("l5")
         e.on_phase("create", {"wid": 6, "cuid": 1})
         fake.execute(ev.DASHBOARD_APP, DASH_IP, "insert into workflow_executions (status) values ($1)", "$1 = '0'")
-        e.on_phase("created", {"eid": 91, "plan_uri": "vfs:///wid/6/eid/91/plan", "wid": 6})
+        e.on_phase("created", {"eid": 91, "wid": 6})
         e.on_phase("start", {"wid": 6, "cuid": 1, "eid": 91, "handle": Handle(["Uninitialized"])})
         e.expect_no_unit_statement(91, "refused")
         e.expect_no_unit_statement(92, "another")
@@ -387,7 +370,7 @@ class ChecksTest(unittest.TestCase):
         e = make(fake)
         e.begin_scenario("a")
         e.on_phase("create", {"wid": 5, "cuid": 1})
-        e.on_phase("created", {"eid": 93, "plan_uri": None, "wid": 5})
+        e.on_phase("created", {"eid": 93, "wid": 5})
         e.on_phase("start", {"wid": 5, "cuid": 1, "eid": 93, "handle": Handle(["Running"])})
         e.end_scenario()
         fake.execute(ev.UNIT_APP, UNIT_IP, "delete from operator_executions where workflow_execution_id = $1",

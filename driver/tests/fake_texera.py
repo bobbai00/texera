@@ -7,17 +7,20 @@ WorkflowExecuteRequest / ModifyLogicRequest, /wsapi/pve).
 
 Where the product's code differs from the design it follows the code, as it is after
 the review fixes of step 2 (docs/review-step2 in the main worktree, reports X1, X3 and
-X4). The Dashboard: a created execution has a status of its own, Created (6), until
-its unit's first write; a create answers 201 {eid, planUri}, a workflow that does not
-compile 400 {code, message, eid, operatorErrors}, a stored change 201; a create clears
-an ended execution's results only once a later execution of the workflow on the unit
-has results of its own. The unit: what it does not do of what a session asked, it
-answers to that session alone as a RequestRefusedEvent, in sentences, and a
-WorkflowErrorEvent carries only a run's errors; a pause, a resume and a kill name
-their execution and are refused unless the unit holds its run; a failed environment
-install is the run's error and not a console message. The old WorkflowExecuteRequest
-and ModifyLogicRequest are the published images' unit, which the `ws` transport and
-step 2's negative control are for: a run started that way takes the old frames.
+X4) and with the plan carried by the start. The Dashboard: a created execution has a
+status of its own, Created (6), until its unit's first write; a create answers 201
+{eid, plan}, the plan as text for the unit (`plan_of`), a workflow that does not compile
+400 {code, message, eid, operatorErrors}, and a change to a paused operator, made in the
+workflow the request holds, 201 {operatorId, update}; it keeps nothing of either. A
+create clears an ended execution's results only once a later execution of the workflow
+on the unit has results of its own. The unit: it checks the plan a start carries and
+takes each execution's start once, in its memory; what it does not do of what a session
+asked, it answers to that session alone as a RequestRefusedEvent, in sentences, and a
+WorkflowErrorEvent carries only a run's errors; a pause, a resume and a kill name their
+execution and are refused unless the unit holds its run; a failed environment install
+is the run's error and not a console message. The old WorkflowExecuteRequest and
+ModifyLogicRequest are the published images' unit, which the `ws` transport and step
+2's negative control are for: a run started that way takes the old frames.
 
 It emulates just enough of an engine to give exact rows for the harness's small
 workflows (CSV scan, Text Input, Filter, Projection, the tagging and tabulate
@@ -57,10 +60,11 @@ their recorders stop without a word, and what was buffered is lost. Stopped poli
 (from "3A" on, design 4.1 step 7), it first ends every run it holds as FAILED, "the
 computing unit was stopped", and gives the record 5 s to land. While it is down the
 gateway answers 502 for its sockets and its own routes. A unit that is back holds no
-run. With `kubernetes` set, each unit is a pod of its own: one unit goes down, a unit
-that comes back is a new one, a listing of the units stamps the ones whose pod is gone
-as terminated (which closes their executions at the job's next tick), and until "3C"
-the gateway sends a statistics request to the unit its `cuid` names.
+run, and remembers no start it took. With `kubernetes` set, each unit is a pod of its
+own: one unit goes down, a unit that comes back is a new one, a listing of the units
+stamps the ones whose pod is gone as terminated (which closes their executions at the
+job's next tick), and until "3C" the gateway sends a statistics request to the unit its
+`cuid` names.
 
 At "3C" (sub-parts 16 to 19) the unit is off Postgres: it sends no statement and opens
 no pool, a Kubernetes unit is given no database login, and it no longer answers a
@@ -109,6 +113,7 @@ STEPS = ("2", "3A", "3B", "3C")
 #: Dashboard's in fake_closing.FAULTS)
 FAULTS = {
     "created-reads-initializing": "an execution nobody started reads Initializing (0), as before step 2's review",
+    "start-taken-twice": "the unit starts an execution again that it started before",
     "refusal-as-error-event": "a request the unit refuses is answered with a WorkflowErrorEvent, as before "
                               "step 2's review",
     "stale-control": "a pause, a resume or a kill reaches the run the unit holds whatever execution it names",
@@ -139,6 +144,11 @@ _PRINT = re.compile(r'print\(f"((?:[^"\\]|\\.)*)"\)')
 _SLEEP = re.compile(r"time\.sleep\(([0-9.]+)\)")
 #: a raise at module level: the worker cannot load the UDF
 _RAISE_ON_LOAD = re.compile(r"^raise \w+\((['\"])(.*?)\1\)", re.M)
+
+
+def environment_of(op: dict) -> str | None:
+    """The Python environment an operator asks to run in; None for the engine's own."""
+    return None if op.get("defaultEnv", True) else op.get("envName")
 
 
 def make_token(uid: int, role: str, email: str) -> str:
@@ -237,9 +247,12 @@ def _csv_rows(name: str) -> list[dict]:
 class Run:
     """One execution the fake engine runs."""
 
-    def __init__(self, fake: "FakeTexera", eid: int, plan: dict, sessions: list, named: bool = False):
+    def __init__(self, fake: "FakeTexera", eid: int, plan: dict, sessions: list, *, started_by: int,
+                 named: bool = False):
         self.fake, self.eid, self.plan = fake, eid, plan
         self.sessions = sessions
+        #: the user who started it: only they may change its operators
+        self.started_by = started_by
         #: a run started by its id tells its sessions which execution it is (step 2's
         #: sub-part 14); one the old unit created itself does not
         self.named = named
@@ -538,7 +551,7 @@ class Run:
         self.set_state("Initializing")
 
         def go():
-            if self.fake.executions[self.eid].get("plan_uri") and not self.install_environments():
+            if self.fake.executions[self.eid]["by_dashboard"] and not self.install_environments():
                 return
             if self.load_executors():
                 self.run()
@@ -612,6 +625,9 @@ class FakeTexera:
         self.rest_log: list[dict] = []
         self.ws_log: list[dict] = []
         self.runs: dict[int, Run] = {}
+        #: the executions whose start each unit's process took, in its memory: one process behind
+        #: every unit row (None), or in Kubernetes a pod per unit (its cuid)
+        self.unit_starts: dict[int | None, set[int]] = {}
         #: a WorkflowService per (wid, cuid): its sockets and the run it holds
         self.sessions_by_key: dict[tuple[int, int], list[WsConn]] = {}
         self.held: dict[tuple[int, int], Run] = {}
@@ -639,43 +655,40 @@ class FakeTexera:
         return f"user-{e['uid']}-{e['whid']}" if e.get("whid") is not None else DEFAULT_WAREHOUSE
 
     def execution_table(self, eid: int, kind: str):
-        """One of an execution's own tables (plan, log, statistics, console), or None."""
+        """One of an execution's own tables (log, statistics, console), or None."""
         e = self.executions[eid]
         return self.lake.table(self.warehouse_of(e), NAMESPACES[kind], table_name(e["wid"], eid, kind))
 
-    def write_plan(self, eid: int) -> None:
-        """Create writes the execution's plan table; its one row is the plan."""
-        e = self.executions[eid]
-        self.lake.create(self.warehouse_of(e), NAMESPACES["plan"], table_name(e["wid"], eid, "plan")) \
-            .append([{"plan": json.dumps(e["plan"])}])
-
-    def claim_start(self, eid: int) -> None:
-        """The one start of an execution: the `started` tag on its plan table."""
-        self.executions[eid]["started"] = True
-        self.execution_table(eid, "plan").tag("started")
-
     def start_record(self, run: "Run") -> None:
-        """Step 3: a run started by id gets its recorder right after the claim (design 4.1)."""
+        """Step 3: a run started by id gets its recorder once its start is taken (design 4.1)."""
         e = self.executions[run.eid]
-        if self.at("3A") and e.get("plan_uri"):
+        if self.at("3A") and e["by_dashboard"]:
             run.recorder = Recorder(self.lake, self.warehouse_of(e), e["wid"], run.eid,
                                     interval_s=self.timing.commit_interval_s, faults=self.faults)
 
-    def port_tables(self, run: "Run") -> dict[str, tuple[str, str]]:
-        """kind -> (URI, table name) of the result and the state table of the run's stored
-        port: its sink's first output port."""
-        e = self.executions[run.eid]
-        port = f"(logicalOpId={run.sink()},layerName=main,portId=0,isInternal=false,isInput=false)"
-        base = f"wid/{e['wid']}/eid/{run.eid}/globalportid/{port}"
+    def port_base(self, eid: int, sink: str) -> str:
+        """The stored port of execution `eid`, its sink's first output port, as the lake names
+        it below the warehouse: wid/<wid>/eid/<eid>/globalportid/<port>."""
+        port = f"(logicalOpId={sink},layerName=main,portId=0,isInternal=false,isInput=false)"
+        return f"wid/{self.executions[eid]['wid']}/eid/{eid}/globalportid/{port}"
+
+    def port_location(self, eid: int, sink: str) -> str:
+        """Where that port is stored, in the execution's warehouse: the URI its result and its
+        state hang off."""
+        e = self.executions[eid]
         wh = f"wh/{self.warehouse_of(e)}/" if e.get("whid") is not None else ""
-        return {kind: (f"vfs:///{wh}{base}/{kind}", f"{base}/{kind}".replace("/", "_"))
-                for kind in ("result", "state")}
+        return f"vfs:///{wh}{self.port_base(eid, sink)}"
+
+    def port_tables(self, run: "Run") -> dict[str, tuple[str, str]]:
+        """kind -> (URI, table name) of the result and the state table of the run's stored port."""
+        location, base = self.port_location(run.eid, run.sink()), self.port_base(run.eid, run.sink())
+        return {kind: (f"{location}/{kind}", f"{base}/{kind}".replace("/", "_")) for kind in ("result", "state")}
 
     def store_outputs(self, run: "Run") -> None:
         """The engine makes the result table of the run's stored port, and a state table
         beside it, where the plan says. The log is told nothing of it."""
         e = self.executions[run.eid]
-        if not e.get("plan_uri"):
+        if not e["by_dashboard"]:
             return
         tables = self.port_tables(run)
         for kind, (_uri, name) in tables.items():
@@ -716,7 +729,7 @@ class FakeTexera:
         """The port ended: its rows are committed to its result table."""
         e = self.executions[run.eid]
         table = self.lake.table(self.warehouse_of(e), NAMESPACES["result"], self.port_tables(run)["result"][1]) \
-            if e.get("plan_uri") else None
+            if e["by_dashboard"] else None
         if table is not None and run.rows_out:
             table.append(list(run.rows_out))
 
@@ -859,7 +872,7 @@ class FakeTexera:
         e = self.executions[eid]
         entry = {"eId": eid, "vId": 1, "cuId": e["cuid"], "whId": e.get("whid"), "name": e.get("name", ""),
                  "logLocation": e.get("log")}
-        if self.at("3B") and e.get("plan_uri"):
+        if self.at("3B") and e["by_dashboard"]:
             return {**entry, **self.closing.entry_fields(eid, uid)}
         return {**entry, "status": e["status"], "result": ""}
 
@@ -881,6 +894,8 @@ class FakeTexera:
             sockets = [c for k in keys for c in self.sessions_by_key[k]]
             for key in [k for k in self.held if cuid is None or k[1] == cuid]:
                 del self.held[key]
+            for process in [p for p in self.unit_starts if cuid is None or p == cuid]:
+                del self.unit_starts[process]
         recorded = polite and self.at("3A") and "stop-unrecorded" not in self.faults
         for run in runs:
             if recorded:
@@ -891,9 +906,18 @@ class FakeTexera:
             conn.drop()
 
     def bring_unit_up(self) -> None:
-        """The unit's process answers again. It holds no run."""
+        """The unit's process answers again. It holds no run, and has taken no start."""
         with self.lock:
             self.unit_up = True
+
+    def take_start(self, eid: int, cuid: int | None) -> bool:
+        """A unit takes each execution's start once, in its process's memory
+        (WorkflowService.startedExecutions): whether this start took it."""
+        taken = self.unit_starts.setdefault(cuid if self.kubernetes else None, set())
+        if eid in taken and "start-taken-twice" not in self.faults:
+            return False
+        taken.add(eid)
+        return True
 
     def unit_uses_postgres(self, fault: str) -> bool:
         """Whether the unit still does a thing with Postgres that step 3's sub-part 17 ends:
@@ -922,9 +946,18 @@ class FakeTexera:
     def err(status: int, message: str):
         return status, {"code": status, "message": message}
 
-    def plan_uri(self, uid: int, whid: int | None, wid: int, eid: int) -> str:
-        wh = f"wh/user-{uid}-{whid}/" if whid is not None else ""
-        return f"vfs:///{wh}wid/{wid}/eid/{eid}/plan"
+    def plan_of(self, eid: int, logical: dict) -> str:
+        """The plan a create answers for execution `eid`, text for the unit alone. Its context
+        and its stored port's location are written as the product writes them (formatVersion,
+        workflowId, executionId, the warehouse when there is one, and a location in it); its
+        operators and links are the logical plan `logical`, which the fake engine runs."""
+        e = self.executions[eid]
+        sink = (logical.get("opsToViewResult") or [logical["operators"][-1]["operatorID"]])[0]
+        warehouse = {"warehouse": self.warehouse_of(e)} if e["whid"] is not None else {}
+        return json.dumps({"formatVersion": 1, "workflowId": {"id": e["wid"]}, "executionId": {"id": eid},
+                           **warehouse, "operators": logical["operators"], "links": logical["links"],
+                           "opsToViewResult": logical.get("opsToViewResult") or [],
+                           "storedPorts": [{"operatorID": sink, "storageLocation": self.port_location(eid, sink)}]})
 
     # ------------------------------------------------------------- REST
 
@@ -1087,10 +1120,9 @@ class FakeTexera:
         eid = self.next["eid"]
         self.next["eid"] += 1
         self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": uid, "whid": whid, "status": self.created_status,
-                                "name": body.get("executionName", ""), "plan": body["logicalPlan"],
-                                "started": False, "log": (f"file:///logs/{wid}/{eid}/" if self.replay_log else None),
-                                "updates": {},
-                                "plan_uri": self.plan_uri(uid, whid, wid, eid), **Closing.new_row()}
+                                "name": body.get("executionName", ""), "by_dashboard": True,
+                                "log": (f"file:///logs/{wid}/{eid}/" if self.replay_log else None),
+                                **Closing.new_row()}
         self.sql("dashboard", "insert into workflow_executions (vid, uid, cuid, whid, status) values "
                               "($1, $2, $3, $4, $5) returning eid",
                  f"$1 = '1', $2 = '{uid}', $3 = '{cuid}', $4 = '{whid}', $5 = '{self.created_status}'")
@@ -1102,18 +1134,17 @@ class FakeTexera:
             if self.at("3B"):  # D29: a create that fails closes its own row at once
                 first = next(iter(errors.values()))["message"]
                 self.closing.close(eid, 4, (REASON_COMPILE_ERROR + first)[:REASON_CHARS], int(time.time() * 1000),
-                                   never_started=True)
+                                   unstartable=True)
             count = "1 operator has an error." if len(errors) == 1 else f"{len(errors)} operators have errors."
             listed = "".join(f"\n{op}: {error['message']}" for op, error in errors.items())
             return 400, {"code": 400, "message": f"The workflow does not compile: {count}{listed}", "eid": eid,
                          "operatorErrors": errors}
-        self.write_plan(eid)
         # From "3B" on a create clears nothing: the closing job's expiry replaces results.
         if not self.at("3B"):
             self.clear_at_create(wid, cuid)
         elif "replaced-at-create" in self.faults:
             self.closing.expire_at_create(wid, cuid, eid)
-        return 201, {"eid": eid, "planUri": self.executions[eid]["plan_uri"]}
+        return 201, {"eid": eid, "plan": self.plan_of(eid, body["logicalPlan"])}
 
     def statistics_reach_the_unit(self, query: dict) -> bool:
         """Kubernetes until step 3's sub-part 16: the gateway sends a statistics request to
@@ -1202,8 +1233,20 @@ class FakeTexera:
                     errors[op_id] = fatal(op_id, "File Scan From Input needs a File Lister upstream of it")
         return errors
 
-    def post_update(self, uid: int, eid: int, body: dict):
-        """Design 3.5, in the product's words (OperatorUpdates)."""
+    def post_update(self, uid: int, eid: int, body):
+        """Design 3.5, in the product's words (OperatorUpdates): the change is made to run in the
+        workflow the request holds and answered, for the client to hand to the unit; nothing of
+        it is kept."""
+        if not isinstance(body, dict):
+            return self.err(400, "The request has no body.")
+        op = body.get("operator")
+        if not isinstance(op, dict):
+            return self.err(400, "The request names no operator.")
+        if not isinstance(op.get("operatorID"), str) or not op["operatorID"].strip():
+            return self.err(400, "The operator to change has no id.")
+        workflow = body.get("workflow")
+        if not isinstance(workflow, dict):
+            return self.err(400, "The request holds no workflow to make the change in.")
         e = self.executions.get(eid)
         if e is None:
             return self.err(404, f"There is no execution {eid}.")
@@ -1212,35 +1255,76 @@ class FakeTexera:
         ended = e["ended_at"] is not None if self.at("3B") else e["status"] in (3, 4, 5)
         if ended:  # from 3B on by the closing record, which the job writes a tick after the end
             return self.err(409, f"Execution {eid} has ended.")
-        op = body["operator"]
-        if op["operatorID"] not in {o["operatorID"] for o in e["plan"]["operators"]}:
-            return self.err(404, f"Execution {eid} has no operator {op['operatorID']}.")
-        update_id = f"update-{len(e['updates']) + 1:04d}-4f6c"
-        e["updates"][update_id] = op
-        return 201, {"updateId": update_id, "operatorId": op["operatorID"]}
+        if op["operatorID"] not in {o.get("operatorID") for o in workflow.get("operators") or []}:
+            return self.err(404, f"Operator {op['operatorID']} is not in the workflow sent with the change.")
+        return 201, {"operatorId": op["operatorID"],
+                     "update": json.dumps({"formatVersion": 1, "executionId": {"id": eid}, "operator": op})}
 
-    def start_checks(self, user: dict, eid: int, plan_uri: str, wid: int | None, cuid: int) -> str | None:
-        """Section 4 Start, steps 1-6: why the unit refuses the start, in its words
-        (StoredExecutionStart and WorkflowService in the product), or None."""
-        m = re.fullmatch(r"vfs:///(?:wh/([^/]+)/)?wid/(\d+)/eid/(\d+)/plan", plan_uri or "")
-        if not m:
-            return "The request does not name an execution's plan."
-        if int(m.group(3)) != eid:
-            return f"The plan is execution {m.group(3)}'s, not {eid}'s."
-        if wid is not None and int(m.group(2)) != wid:
-            return f"The plan belongs to workflow {m.group(2)}, not to this one."
-        if m.group(1) and not re.fullmatch(rf"user-{user['uid']}-\d+", m.group(1)):
-            return "The plan is in another user's warehouse."
-        e = self.executions.get(eid)
-        if e is None or e["plan_uri"] != plan_uri:
-            return f"Execution {eid} has no stored plan."
-        if e["uid"] != user["uid"]:
-            return f"Only the user who created execution {eid} may start it."
-        if e["cuid"] != cuid:
-            return f"Execution {eid} was created for computing unit {e['cuid']}, not {cuid}."
-        if e["started"]:
-            return f"Execution {eid} was already started."
-        return None
+    def start_refusal(self, user: dict | None, eid: int, text, socket_wid: int | None,
+                      cuid: int | None) -> tuple[str | None, dict]:
+        """Why the unit refuses to start execution `eid` on unit `cuid` from `text`, the plan
+        the request carries, in its words (WorkflowService.checkStart, ExecutionStart.check and
+        WorkflowService.startChecked in the product); or None, and the plan read, once the
+        execution's one start is taken (`take_start`). Nothing is read or written: the plan
+        carries all the unit checks. `socket_wid`: the workflow of the socket the start came
+        over, None for a start that came another way."""
+        if user is None:
+            return "A signed-in user is required to start an execution.", {}
+        if not isinstance(text, str) or not text.strip():
+            return "The request carries no plan.", {}
+        try:
+            plan = json.loads(text)
+        except ValueError as e:
+            return f"The plan is not JSON: {e}", {}
+        wid, of, warehouse = plan["workflowId"]["id"], plan["executionId"]["id"], plan.get("warehouse")
+        prefix = "" if warehouse is None else f"wh/{warehouse}/"
+        for port in plan["storedPorts"]:  # the plan's reader holds every location to the plan's own
+            if not port["storageLocation"].startswith(f"vfs:///{prefix}wid/{wid}/eid/{of}/"):
+                return (f"The output port of operator {port['operatorID']} is stored at "
+                        f"'{port['storageLocation']}', which is not that port's location in execution {of} of "
+                        f"workflow {wid}" + (f", in warehouse '{warehouse}'." if warehouse else ".")), {}
+        if of != eid:
+            return f"The plan is execution {of}'s, not {eid}'s.", {}
+        if socket_wid is not None and wid != socket_wid:
+            return f"The plan belongs to workflow {wid}, not to this one.", {}
+        if warehouse is not None and not re.fullmatch(rf"user-{user['uid']}-\d+", warehouse):
+            return "The plan writes into another user's warehouse.", {}
+        if warehouse is not None and not self.warehouses_enabled:
+            return (f"Execution {eid} writes into warehouse '{warehouse}', and per-user warehouses are disabled "
+                    f"in this deployment."), {}
+        if not self.take_start(eid, cuid):
+            return f"Execution {eid} was already started.", {}
+        return None, plan
+
+    @staticmethod
+    def update_answer(user: dict | None, run: "Run | None", msg: dict) -> dict:
+        """The unit's answer to an OperatorUpdateRequest (ExecutionReconfigurationService.
+        applyUpdate in the product): the change, queued for the resume, or a change that does
+        not apply, and why."""
+        def answer(op_id: str, why: str = "") -> dict:
+            return {"type": "ModifyLogicResponse", "opId": op_id, "isValid": not why, "errorMessage": why}
+        eid = msg.get("executionId", 0)
+        if run is None:
+            return answer("", f"Execution {eid} is not running here.")
+        if user is None or user["uid"] != run.started_by:
+            return answer("", f"Only the user who started execution {eid} may change its operators.")
+        text = msg.get("update")
+        if not isinstance(text, str) or not text.strip():
+            return answer("", "The request carries no change to apply.")
+        try:
+            change = json.loads(text)
+        except ValueError as e:
+            return answer("", f"The operator update is not JSON: {e}")
+        op, of = change["operator"], change["executionId"]["id"]
+        if of != run.eid:
+            return answer(op["operatorID"], f"The change is execution {of}'s, not {run.eid}'s.")
+        running = run.ops.get(op["operatorID"])
+        if running is None:
+            return answer(op["operatorID"], f"Operator {op['operatorID']}-main is not in the running plan.")
+        if environment_of(op) != environment_of(running):
+            return answer(op["operatorID"], "The operator's Python environment cannot change while the run is paused.")
+        run.pending_updates.append(op)
+        return answer(op["operatorID"])
 
     def refuse(self, conn: WsConn, msg: dict, why: str) -> None:
         """The unit did not do what a session asked: it tells that session, and it alone,
@@ -1263,18 +1347,15 @@ class FakeTexera:
         return held if named or not held.named or "stale-control" in self.faults else None
 
     def sync_run(self, user: dict, eid: int, body: dict):
-        """Design 3.7: the unit's REST path for agents."""
-        refused = self.start_checks(user, eid, body.get("planUri"), None, body.get("computingUnitId"))
+        """Design 3.7: the unit's REST path for agents, from the plan the request carries."""
+        refused, plan = self.start_refusal(user, eid, body.get("plan"), None, body.get("computingUnitId"))
         if refused:
             return 200, {"success": False, "state": "Error", "operators": {}, "errors": [refused]}
-        e = self.executions[eid]
-        self.claim_start(eid)
-        run = Run(self, eid, e["plan"], [], named=True)
-        self.runs[eid] = run
         target = (body.get("targetOperatorIds") or [None])[0]
+        run = Run(self, eid, dict(plan, opsToViewResult=[target]) if target else plan, [], started_by=user["uid"],
+                  named=True)
+        self.runs[eid] = run
         if target:
-            run.plan = dict(e["plan"], opsToViewResult=[target])
-            run.ops = {o["operatorID"]: dict(o) for o in e["plan"]["operators"]}
             run.end_reason = "stopped once its target operators finished"  # design D5
         self.start_record(run)
         run.set_state("Initializing")  # READY, then the run
@@ -1328,13 +1409,11 @@ class FakeTexera:
                     if typ == "HeartBeatRequest":
                         conn.send({"type": "HeartBeatResponse"})
                     elif typ == "WorkflowStartRequest":
-                        refused = self.start_checks(user, msg["executionId"], msg["planUri"], wid, cuid)
+                        refused, plan = self.start_refusal(user, msg.get("executionId"), msg.get("plan"), wid, cuid)
                         if refused:  # D33: that session only, no state, no statement
                             self.refuse(conn, msg, refused)
                             continue
-                        e = self.executions[msg["executionId"]]
-                        self.claim_start(msg["executionId"])
-                        current = Run(self, msg["executionId"], e["plan"], sessions, named=True)
+                        current = Run(self, msg["executionId"], plan, sessions, started_by=user["uid"], named=True)
                         self.runs[current.eid] = current
                         self.held[key] = current
                         current.start()
@@ -1342,8 +1421,7 @@ class FakeTexera:
                         eid = self.next["eid"]
                         self.next["eid"] += 1
                         self.executions[eid] = {"wid": wid, "cuid": cuid, "uid": user["uid"], "status": 0,
-                                                "plan": msg["logicalPlan"], "started": True, "log": None,
-                                                "updates": {}, "plan_uri": None, **Closing.new_row()}
+                                                "by_dashboard": False, "log": None, **Closing.new_row()}
                         # the old unit reads before it inserts the row itself
                         self.sql("unit", "select user_warehouse.whid from user_warehouse where "
                                          "user_warehouse.uid = $1", f"$1 = '{user['uid']}'")
@@ -1351,22 +1429,13 @@ class FakeTexera:
                                          "($1, $2, $3, $4)", f"$1 = '1', $2 = '{user['uid']}', $3 = '{cuid}', "
                                                              f"$4 = '0'")
                         conn.send({"type": "WorkflowStateEvent", "state": "Initializing"})
-                        current = Run(self, eid, msg["logicalPlan"], sessions)
+                        current = Run(self, eid, msg["logicalPlan"], sessions, started_by=user["uid"])
                         self.runs[eid] = current
                         self.held[key] = current
                         current.start()
-                    elif typ == "OperatorUpdateRequest":
-                        run = self.runs.get(msg["executionId"])
-                        upd = (self.executions.get(msg["executionId"]) or {}).get("updates", {}).get(msg["updateId"])
-                        if run is None or upd is None:  # a change that does not apply, not a refusal event
-                            why = (f"Execution {msg['executionId']} is not running here." if run is None
-                                   else f"Execution {msg['executionId']} has no change {msg['updateId']}.")
-                            conn.send({"type": "ModifyLogicResponse", "opId": "", "isValid": False,
-                                       "errorMessage": why})
-                        else:
-                            run.pending_updates.append(upd)
-                            conn.send({"type": "ModifyLogicResponse", "opId": upd["operatorID"], "isValid": True,
-                                       "errorMessage": ""})
+                    elif typ == "OperatorUpdateRequest":  # a ModifyLogicResponse, whether the change applies or not
+                        held = current if current is not None and current.eid == msg.get("executionId") else None
+                        conn.send(self.update_answer(user, held, msg))
                     elif typ == "ModifyLogicRequest" and current:
                         op = msg["operator"]
                         current.pending_updates.append(op)

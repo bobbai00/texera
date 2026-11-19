@@ -89,15 +89,20 @@ class CreateWsTest(FakeCase):
         self.assertEqual(["operators", "links", "opsToViewResult", "opsToReuseResult"], list(body["logicalPlan"]))
         self.assertNotIn("replayFromExecution", body)
         self.assertNotIn("targetOperatorIds", body)
-        # 3.6: the first marked command is the start by id
+        # 3.6: the first marked command is the start, with the plan the create answered as it came
         sent = [w["msg"] for w in self.fake.ws_log if w["msg"]["type"] != "HeartBeatRequest"]
-        self.assertEqual({"type": "WorkflowStartRequest", "executionId": h.eid, "planUri": h.plan_uri}, sent[0])
+        self.assertEqual({"type": "WorkflowStartRequest", "executionId": h.eid, "plan": h.plan}, sent[0])
         self.assertEqual("WorkflowStartRequest", h.command_log[0][1])
-        self.assertEqual(f"vfs:///wh/user-1-{self.whid}/wid/{self.wid}/eid/{h.eid}/plan", h.plan_uri)
+        self.assertEqual({"id": h.eid}, json.loads(h.plan)["executionId"])
+        # a change to an operator is made in the workflow the execution was created from
+        self.assertEqual(body["logicalPlan"], h.workflow)
         res = h.results(udf, page_size=50)
         self.assertEqual(300, len(res["rows"]))
         self.assertEqual(["create", "created", "start"], [p for p, _ in self.phases])
         self.assertEqual(h.eid, self.phases[1][1]["eid"])
+        # the plan holds the links of the run's input files: the report has none of it
+        self.assertNotIn(h.plan, json.dumps(h.summary(), default=str))
+        self.assertNotIn(h.plan, json.dumps(self.phases, default=str))
 
     def test_a_replay_reaches_the_body_and_the_answers_are_the_products(self):
         wf, udf = self.plan()
@@ -110,9 +115,8 @@ class CreateWsTest(FakeCase):
         self.assertEqual((400, {"code": 400, "message": f"Workflow {self.wid} has no execution 5 to replay."}),
                          (resp.status_code, resp.json()))
         created = self.t.create_only(**asked)
-        self.assertEqual((201, {"eid", "planUri"}), (created.status_code, set(created.json())))
-        self.assertEqual(("created", {"eid": created.json()["eid"], "plan_uri": created.json()["planUri"],
-                                      "wid": self.wid}), self.phases[-1])
+        self.assertEqual((201, {"eid", "plan"}), (created.status_code, set(created.json())))
+        self.assertEqual(("created", {"eid": created.json()["eid"], "wid": self.wid}), self.phases[-1])
 
     def test_a_workflow_that_does_not_compile_answers_its_operators_errors_beside_the_refusal(self):
         wf = Workflow("w")
@@ -133,7 +137,7 @@ class CreateWsTest(FakeCase):
         self.assertEqual(403, cm.exception.body["code"])
         self.assertFalse(any(w["msg"]["type"] == "WorkflowStartRequest" for w in self.fake.ws_log))
 
-    def test_modify_operator_posts_then_names_the_update(self):
+    def test_modify_operator_posts_the_change_then_hands_it_to_the_unit(self):
         wf, udf = self.plan()
         h = self.start(wf, udf)
         h.wait_for_state("Running", timeout=30)
@@ -142,13 +146,15 @@ class CreateWsTest(FakeCase):
         h.wait_for_state("Paused", timeout=30)
         out = h.modify_operator(wf.operator_json(udf, code=TAG.format(tag="v2")))
         post = next(r for r in self.fake.rest_log if r["path"] == f"/api/executions/{h.eid}/updates")
+        self.assertEqual({"operator", "workflow"}, set(post["body"]))
         self.assertEqual(udf, post["body"]["operator"]["operatorID"])
         self.assertEqual("PythonUDFV2", post["body"]["operator"]["operatorType"])
-        self.assertTrue(out["updateId"].startswith("update-"))
+        self.assertEqual(wf.logical_plan([udf]), post["body"]["workflow"])  # the workflow of the create
         self.assertEqual(udf, out["operatorId"])
+        self.assertIsInstance(out["update"], str)
         self.assertTrue(out["response"]["isValid"])
         msg = next(w["msg"] for w in self.fake.ws_log if w["msg"]["type"] == "OperatorUpdateRequest")
-        self.assertEqual({"type": "OperatorUpdateRequest", "executionId": h.eid, "updateId": out["updateId"]}, msg)
+        self.assertEqual({"type": "OperatorUpdateRequest", "executionId": h.eid, "update": out["update"]}, msg)
         h.resume()
         h.wait_for_state("Completed", timeout=30)
         # a pause and a resume name their execution
@@ -164,11 +170,24 @@ class CreateWsTest(FakeCase):
             h.modify_operator(wf.operator_json(udf))
         self.assertEqual(409, cm.exception.status)
 
+    def test_a_change_needs_the_workflow_the_execution_was_created_from(self):
+        """A handle that only started an execution created elsewhere has no workflow to make a
+        change in, and asks the Dashboard nothing."""
+        wf, udf = self.plan()
+        created = self.t.create_only(wid=self.wid, cuid=self.cuid, warehouse_id=self.whid,
+                                     logical_plan=wf.logical_plan([udf]), execution_name="x").json()
+        h = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=created["eid"], plan=created["plan"])
+        self.handles.append(h)
+        h.wait_for_state("Running", timeout=30)
+        with self.assertRaisesRegex(RuntimeError, "no workflow to make the change in"):
+            h.modify_operator(wf.operator_json(udf))
+        self.assertFalse(any(r["path"].endswith("/updates") for r in self.fake.rest_log))
+
     def test_start_existing_refused_twice_and_not_killed(self):
         wf, udf = self.plan()
         h = self.start(wf, udf)
         h.wait_for_state("Completed", timeout=30)
-        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
+        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan=h.plan)
         self.handles.append(again)
         again.wait_until(lambda: bool(again.refusals), 10, "refusal", fail_fast=False)
         refusal = {"request": "WorkflowStartRequest", "executionId": h.eid,
@@ -188,7 +207,7 @@ class CreateWsTest(FakeCase):
         wf, udf = self.plan()
         h = self.start(wf, udf)
         h.wait_for_state("Completed", timeout=30)
-        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
+        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan=h.plan)
         self.handles.append(again)
         t0 = time.monotonic()
         with self.assertRaisesRegex(RunFailed, f"the unit refused the WorkflowStartRequest: Execution {h.eid} was "
@@ -278,7 +297,7 @@ class CreateWsTest(FakeCase):
         with self.assertRaises(Exception):
             h.wait_for_state("Completed", timeout=30)
         self.assertTrue(h.fatal_errors)
-        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan_uri=h.plan_uri)
+        again = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=h.eid, plan=h.plan)
         self.handles.append(again)
         self.assertEqual(1, again.replayed["error_events"])
         again.wait_until(lambda: bool(again.refusals), 10, "the refusal")  # fail_fast on
@@ -292,13 +311,13 @@ class CreateWsTest(FakeCase):
         resp = self.t.create_only(wid=self.wid, cuid=self.cuid, warehouse_id=self.whid,
                                   logical_plan=wf.logical_plan([udf]), execution_name="x")
         created = resp.json()
-        h = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=created["eid"],
-                                  plan_uri=created["planUri"], token=other_token)
+        h = self.t.start_existing(wid=self.wid, cuid=self.cuid, eid=created["eid"], plan=created["plan"],
+                                  token=other_token)
         self.handles.append(h)
         h.wait_until(lambda: bool(h.refusals), 10, "refusal", fail_fast=False)
         start = [w for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"][-1]
         self.assertNotEqual(1, start["uid"])  # the socket was the other user's
-        self.assertEqual("The plan is in another user's warehouse.", h.refusals[0]["message"])
+        self.assertEqual("The plan writes into another user's warehouse.", h.refusals[0]["message"])
 
 
 class WsTest(FakeCase):

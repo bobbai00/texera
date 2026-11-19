@@ -73,7 +73,6 @@ SINGLE_NODE_OPTIONS = {
 SINGLE_NODE_SCENARIOS = {
     "g0": "the legacy environment endpoints of the single-node unit",
     "l4": "creates a local unit at --unit-uri",
-    "l9": "a second local unit at --unit-uri",
 }
 #: the refusal probes of the live unit's socket: (name, credential, which cuid)
 REFUSAL_PROBES = (

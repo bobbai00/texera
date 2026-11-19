@@ -127,8 +127,7 @@ class Ctx:
                  log: Callable[[str], None], transport_name: str = "ws", evidence: Any = None,
                  dataset: dict | None = None, warehouse_name: str | None = None,
                  unit_container: str = "sce-workflow-runtime-coordinator-service",
-                 with_replay_log: bool = False, other: OtherUser | None = None,
-                 unit2_cuid: int | None = None, unit_uri: str = "",
+                 with_replay_log: bool = False, other: OtherUser | None = None, unit_uri: str = "",
                  unit_exec_prefix: Callable[[bool], list[str]] | None = None,
                  timing: RecordTiming | None = None, lake: Lake | None = None, level: str | None = None,
                  stack: Any = None, stats_through_unit: bool = False):
@@ -151,7 +150,6 @@ class Ctx:
             lambda interactive: ["docker", "exec", *(["-i"] if interactive else []), self.unit_container])
         self.with_replay_log = with_replay_log
         self.other = other
-        self.unit2_cuid = unit2_cuid
         self.unit_uri = unit_uri
         # Step 3: the timers the stack was started with, the lake's catalog, and how far
         # the product under test is: the letter of the last step-3 gate it has passed
@@ -282,8 +280,8 @@ class Ctx:
         return self.api.execution_statistics(wid, eid, cuid=None if self.at_least("C") else self.cuid)
 
     def lake_table(self, kind: str, wid: int, eid: int) -> TableState:
-        """One of an execution's own tables (`plan`, `log`, `statistics`, `console`) as the
-        catalog shows it, in the warehouse this driver's runs use."""
+        """One of an execution's own tables (`log`, `statistics`, `console`) as the catalog
+        shows it, in the warehouse this driver's runs use."""
         if self.lake is None:
             raise RuntimeError("this scenario reads the lake's catalog, which this driver was not given")
         return self.lake.table(self.warehouse_name, wid, eid, kind)
@@ -734,8 +732,8 @@ public class JavaUDFOpExec extends MapOpExec {
 
 def scenario_u(ctx: Ctx) -> None:
     """CSV scan -> Java UDF adding name_len. The unit compiles the Java code with javac from
-    the plan it reads back, which engine specs under sbt cannot do (javac there sees only the
-    sbt launcher)."""
+    the plan it is started with, which engine specs under sbt cannot do (javac there sees only
+    the sbt launcher)."""
     people = ctx.data["people.csv"]
     expected = [
         {"id": int(p["id"]), "name": p["name"], "dept": p["dept"], "age": int(p["age"]),
@@ -1046,8 +1044,9 @@ class ProcessTupleOperator(UDFOperatorV2):
 
 def scenario_j(ctx: Ctx) -> None:
     """numbers.csv -> a UDF tagging v1 (0.05 s per tuple); pause; change the code to
-    tag v2; resume. On create-ws the change goes through the Dashboard, and another
-    user's change (403) and a change after the end (409) are refused."""
+    tag v2; resume. On create-ws the Dashboard makes the change in the workflow the
+    execution was created from, and another user's change (403) and a change after the
+    end (409) are refused."""
     create_ws = ctx.transport_name == "create-ws"
     total = len(ctx.data["numbers.csv"])
     wf = ctx.workflow("j-modify-while-paused")
@@ -1071,11 +1070,11 @@ def scenario_j(ctx: Ctx) -> None:
     ctx.check(f"change accepted ({how}) and ModifyLogicResponse.isValid", resp.get("isValid") is True,
               json.dumps(out)[:600])
     if create_ws:
-        ctx.check("the Dashboard answered {updateId, operatorId}",
-                  str(out.get("updateId", "")).startswith("update-") and out.get("operatorId") == udf,
+        ctx.check("the Dashboard answered {operatorId, update}, the change for the unit",
+                  out.get("operatorId") == udf and isinstance(out.get("update"), str) and bool(out["update"]),
                   json.dumps({k: v for k, v in out.items() if k != "response"}))
         other = _need_other(ctx)
-        r = other.api.post_operator_update(handle.eid, new_op)
+        r = other.api.post_operator_update(handle.eid, new_op, handle.workflow)
         ctx.check("another user's change is refused (403)", r.status_code == 403,
                   f"HTTP {r.status_code}: {r.text[:300]}")
     else:
@@ -1112,7 +1111,7 @@ def scenario_j(ctx: Ctx) -> None:
             closed, waited = _wait_closed(ctx, handle.eid)
             ctx.note(f"waited {waited:.1f} s for the Dashboard to close the execution "
                      f"({'closed' if not closed.open else 'still open'}) before the late change")
-        r = ctx.api.post_operator_update(handle.eid, new_op)
+        r = ctx.api.post_operator_update(handle.eid, new_op, handle.workflow)
         ctx.check("a change after the run completed is refused (409)", r.status_code == 409,
                   f"HTTP {r.status_code}: {r.text[:300]}")
     ctx.persisted_status(STATUS_COMPLETED, eid=handle.eid)
@@ -1178,13 +1177,11 @@ def _created(ctx: Ctx, wf: Workflow, view: list[str], wid: int, **kw) -> dict:
 REFUSAL_WAIT_S = 30.0
 #: after a refusal arrived: anything else the unit sends or runs for that start happens within this
 REFUSAL_SETTLE_S = 3.0
-# Why the unit refuses a request, in its words (StoredExecutionStart, WorkflowService and
-# WorkflowWebsocketResource in the product, after step 2's review fixes). The scenarios
-# compare with these; a word the product changes is changed here.
-REFUSED_NOT_THE_CREATOR = "Only the user who created execution {eid} may start it."
-REFUSED_OTHER_WAREHOUSE = "The plan is in another user's warehouse."
+# Why the unit refuses a request, in its words (ExecutionStart, WorkflowService and
+# WorkflowWebsocketResource in the product). The scenarios compare with these; a word the
+# product changes is changed here.
+REFUSED_OTHER_WAREHOUSE = "The plan writes into another user's warehouse."
 REFUSED_OTHER_PLAN = "The plan is execution {plan_eid}'s, not {eid}'s."
-REFUSED_OTHER_UNIT = "Execution {eid} was created for computing unit {created_for}, not {asked}."
 REFUSED_ALREADY_STARTED = "Execution {eid} was already started."
 REFUSED_NOT_RUNNING_HERE = "Execution {eid} is not running here."
 
@@ -1199,14 +1196,13 @@ def _await_refusal(handle: RunHandle) -> None:
         pass
 
 
-def _check_start_refused(ctx: Ctx, label: str, handle: RunHandle, eid: int, expect: tuple[str, ...]) -> None:
-    """The unit refused the start of `eid` to the socket that asked, in one of the
-    sentences `expect`: a RequestRefusedEvent that names the start and the execution. A
-    refusal is not a run's error, so no WorkflowErrorEvent comes with it."""
-    said = " or ".join(f'"{x}"' for x in expect)
-    ctx.check(f"{label}: the starting socket gets a RequestRefusedEvent of its start: {said}",
+def _check_start_refused(ctx: Ctx, label: str, handle: RunHandle, eid: int, expect: str) -> None:
+    """The unit refused the start of `eid` to the socket that asked, in the sentence
+    `expect`: a RequestRefusedEvent that names the start and the execution. A refusal is
+    not a run's error, so no WorkflowErrorEvent comes with it."""
+    ctx.check(f"{label}: the starting socket gets a RequestRefusedEvent of its start: \"{expect}\"",
               [(r["request"], r["executionId"]) for r in handle.refusals] == [("WorkflowStartRequest", eid)]
-              and handle.refusals[0]["message"] in expect, f"refusals {handle.refusals}")
+              and handle.refusals[0]["message"] == expect, f"refusals {handle.refusals}")
     ctx.check(f"{label}: ... and no WorkflowErrorEvent (a refusal is not a run's error)",
               handle.error_event_count == 0,
               f"{handle.error_event_count} error event(s): {[e.get('message') for e in handle.fatal_errors][:3]}")
@@ -1232,19 +1228,15 @@ def _check_stale_kill(ctx: Ctx, handle: RunHandle) -> None:
         raise RunFailed(f"the run is {handle.last_state} after a kill that named execution {other}, not its own")
 
 
-def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: int, eid: int,
-                   plan_uri: str, socket_cuid: int | None = None, token: str | None = None,
-                   row_status: int = STATUS_CREATED) -> None:
-    """Start `eid` on a socket that must be refused: the refusal reaches that socket
-    only (a session of the creator on the same workflow sees none), nothing runs,
-    the row stays as it was (`row_status`: Created for an execution nobody started),
-    and the unit runs no statement at all from the start until after the refusal
-    (D33). `expect`: the refusal is one of these sentences."""
-    expect = (expect,) if isinstance(expect, str) else expect
+def _refused_start(ctx: Ctx, label: str, expect: str, *, wid: int, eid: int, plan: str,
+                   token: str | None = None) -> None:
+    """Start `eid`, which nobody started, with `plan` on a socket that must be refused, in
+    the sentence `expect`: the refusal reaches that socket only (a session of the creator on
+    the same workflow sees none), nothing runs, the row stays Created, and the unit runs no
+    statement at all from the start until after the refusal (D33)."""
     watcher = ctx.transport.open_socket(wid, ctx.cuid)
     ctx.handles.append(watcher)
-    handle = ctx.transport.start_existing(wid=wid, cuid=socket_cuid or ctx.cuid, eid=eid,
-                                          plan_uri=plan_uri, token=token)
+    handle = ctx.transport.start_existing(wid=wid, cuid=ctx.cuid, eid=eid, plan=plan, token=token)
     ctx.handles.append(handle)
     _await_refusal(handle)
     time.sleep(REFUSAL_SETTLE_S)  # anything else the unit sends or runs for this start happens by now
@@ -1256,10 +1248,41 @@ def _refused_start(ctx: Ctx, label: str, expect: str | tuple[str, ...], *, wid: 
     ctx.check(f"{label}: never Running", "Running" not in handle.states and "Running" not in watcher.states,
               f"starting socket {handle.states}; watcher {watcher.states}")
     entry = ctx.api.execution_entry(wid, eid)
-    ctx.check(f"{label}: the row stays {row_status}", bool(entry) and entry.get("status") == row_status,
+    ctx.check(f"{label}: the row stays {STATUS_CREATED}", bool(entry) and entry.get("status") == STATUS_CREATED,
               f"{entry}")
     ctx.expect_no_unit_statement(eid, f"{label}: a refused start writes nothing")
     ctx.leave_unstarted(eid, f"{ctx.rec.key}: start refused on purpose")
+
+
+def _refused_second_start(ctx: Ctx, label: str, first: RunHandle, row_status: int) -> None:
+    """Start again, on a socket of its own, the execution `first` started and ran to its end,
+    with the plan it was started with. A unit takes an execution's start once: it refuses
+    this one to that socket alone, in "already started", runs nothing and writes nothing; the
+    session of the first start is told nothing, and the row stays `row_status`."""
+    # The first socket stays open, so the unit does not clean the workflow up meanwhile;
+    # what the finished run still writes (result sizes, statistics) settles first.
+    ctx.settle_unit(label)
+    seen_states = len(first.state_log)
+    seen_errors = first.error_event_count
+    # The new socket gets the held run replayed (its state, its console) while it opens;
+    # that is not this start's answer (transport: the open sequence).
+    again = ctx.transport.start_existing(wid=first.wid, cuid=ctx.cuid, eid=first.eid, plan=first.plan)
+    ctx.handles.append(again)
+    _await_refusal(again)
+    time.sleep(REFUSAL_SETTLE_S)
+    ctx.expect_unit_silent(first.eid, f"{label}: a second start runs nothing on the unit")
+    _check_start_refused(ctx, label, again, first.eid, REFUSED_ALREADY_STARTED.format(eid=first.eid))
+    ctx.check(f"{label}: the first session gets no refusal, no error and no new state",
+              not first.refusals and first.error_event_count == seen_errors
+              and len(first.state_log) == seen_states,
+              f"refusals {first.refusals}; errors {seen_errors} -> {first.error_event_count}; states {first.states}")
+    ctx.check(f"{label}: never Running", "Running" not in again.states,
+              f"after the start {again.states}; replayed while the socket opened "
+              f"{again.replayed.get('states')}")
+    entry = ctx.api.execution_entry(first.wid, first.eid)
+    ctx.check(f"{label}: the row stays {row_status}", bool(entry) and entry.get("status") == row_status,
+              f"{entry}")
+    ctx.expect_no_unit_statement(first.eid, f"{label}: a second start writes nothing", since_last_start=True)
 
 
 def scenario_l1(ctx: Ctx) -> None:
@@ -1304,34 +1327,40 @@ def scenario_l4(ctx: Ctx) -> None:
                     owner_api=ctx.api, cuid=cuid)
 
 
+def _need_warehouses(ctx: Ctx) -> None:
+    if ctx.whid is None:
+        raise RuntimeError(f"scenario {ctx.rec.key} needs per-user warehouses, which this deployment has off: "
+                           f"the unit checks no creator, so only the warehouse a plan writes into keeps "
+                           f"another user from starting it")
+
+
 def scenario_l5(ctx: Ctx) -> None:
-    """Another user starts texera's created execution on a socket: refused."""
+    """Another user starts texera's created execution on a socket, with the plan its create
+    answered: refused, as the plan writes into texera's warehouse."""
     _need_create_ws(ctx)
     other = _need_other(ctx)
+    _need_warehouses(ctx)
     wf, src = _tiny(ctx, "l5-other-user-starts")
     wid = ctx.create_workflow(wf)
     created = _created(ctx, wf, [src], wid)
     ctx.rec.eid = created["eid"]
-    # With warehouses on, the URI check (texera's warehouse in the URI) refuses it
-    # before the record check (not the creator); either is the design's refusal.
-    _refused_start(ctx, "l5 another user's socket",
-                   (REFUSED_NOT_THE_CREATOR.format(eid=created["eid"]), REFUSED_OTHER_WAREHOUSE),
-                   wid=wid, eid=created["eid"], plan_uri=created["planUri"], token=other.api.token)
+    _refused_start(ctx, "l5 another user's socket", REFUSED_OTHER_WAREHOUSE, wid=wid, eid=created["eid"],
+                   plan=created["plan"], token=other.api.token)
 
 
 def scenario_l6(ctx: Ctx) -> None:
-    """A start naming another execution's planUri: refused."""
+    """A start of one execution carrying another execution's plan: refused."""
     _need_create_ws(ctx)
-    wf, src = _tiny(ctx, "l6-other-plan-uri")
+    wf, src = _tiny(ctx, "l6-other-plan")
     wid = ctx.create_workflow(wf)
     first = _created(ctx, wf, [src], wid)
     second = _created(ctx, wf, [src], wid)
     ctx.rec.eid = first["eid"]
     _refused_start(ctx, f"l6 execution {first['eid']} with {second['eid']}'s plan",
                    REFUSED_OTHER_PLAN.format(plan_eid=second["eid"], eid=first["eid"]),
-                   wid=wid, eid=first["eid"], plan_uri=second["planUri"])
+                   wid=wid, eid=first["eid"], plan=second["plan"])
     ctx.expect_no_unit_statement(second["eid"], "l6: the other execution is not started either")
-    ctx.leave_unstarted(second["eid"], "l6: created as the plan another start names")
+    ctx.leave_unstarted(second["eid"], "l6: created for the plan another start carries")
 
 
 def scenario_l7(ctx: Ctx) -> None:
@@ -1348,68 +1377,46 @@ def scenario_l7(ctx: Ctx) -> None:
 
 
 def scenario_l8(ctx: Ctx) -> None:
-    """Start a completed execution again: refused with "already started"; the row stays 3."""
+    """Start a completed execution again, with its plan: refused with "already started";
+    the row stays 3."""
     _need_create_ws(ctx)
     wf, src = _tiny(ctx, "l8-start-twice")
     first = ctx.start(wf, view=[src])
     first.wait_for_state("Completed", timeout=ctx.timeout)
     ctx.persisted_status(STATUS_COMPLETED, eid=first.eid)
-    # The first socket stays open, so the unit does not clean the workflow up meanwhile;
-    # what the finished run still writes (result sizes, statistics) settles first.
-    ctx.settle_unit("the second start")
-    seen_states = len(first.state_log)
-    seen_errors = first.error_event_count
-    # The new socket gets the held run replayed (its state Completed, its console)
-    # while it opens; that is not this start's answer (transport: the open sequence).
-    again = ctx.transport.start_existing(wid=ctx.rec.wid, cuid=ctx.cuid, eid=first.eid,
-                                         plan_uri=first.plan_uri)
-    ctx.handles.append(again)
-    _await_refusal(again)
-    time.sleep(REFUSAL_SETTLE_S)
-    ctx.expect_unit_silent(first.eid, "l8: a second start runs nothing on the unit")
-    _check_start_refused(ctx, "l8 second start", again, first.eid,
-                         (REFUSED_ALREADY_STARTED.format(eid=first.eid),))
-    ctx.check("l8 second start: the first session gets no refusal, no error and no new state",
-              not first.refusals and first.error_event_count == seen_errors
-              and len(first.state_log) == seen_states,
-              f"refusals {first.refusals}; errors {seen_errors} -> {first.error_event_count}; states {first.states}")
-    ctx.check("l8 second start: never Running", "Running" not in again.states,
-              f"after the start {again.states}; replayed while the socket opened "
-              f"{again.replayed.get('states')}")
-    entry = ctx.api.execution_entry(ctx.rec.wid, first.eid)
-    ctx.check("l8: the row stays 3", bool(entry) and entry.get("status") == STATUS_COMPLETED, f"{entry}")
-    ctx.expect_no_unit_statement(first.eid, "l8: a second start writes nothing", since_last_start=True)
+    _refused_second_start(ctx, "l8 second start", first, STATUS_COMPLETED)
 
 
-def scenario_l9(ctx: Ctx) -> None:
-    """Start, on a socket for texera's second unit, a plan created for the first: refused."""
-    _need_create_ws(ctx)
-    if ctx.unit2_cuid is None:
-        raise RuntimeError("l9 needs texera's second local unit (sce-e2e-unit-2), set up by the driver")
-    wf, src = _tiny(ctx, "l9-other-unit-socket")
-    wid = ctx.create_workflow(wf)
-    created = _created(ctx, wf, [src], wid)
-    ctx.rec.eid = created["eid"]
-    _refused_start(ctx, f"l9 socket of unit {ctx.unit2_cuid}",
-                   REFUSED_OTHER_UNIT.format(eid=created["eid"], created_for=ctx.cuid, asked=ctx.unit2_cuid),
-                   wid=wid, eid=created["eid"], plan_uri=created["planUri"], socket_cuid=ctx.unit2_cuid)
+#: a location in the lake, up to its workflow: vfs:///[wh/<warehouse>/]wid/...
+_VFS_ROOT = re.compile(r"^vfs:///(?:wh/[^/]+/)?")
+
+
+def _writing_into(plan: str, warehouse: str) -> str:
+    """`plan`, as a create answered it, made to write into `warehouse`: the warehouse it names
+    and every location in it, moved there together. The unit reads a plan whose locations are
+    not in its own warehouse as no plan it can run, before it asks whose the warehouse is."""
+    def moved(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: moved(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [moved(v) for v in value]
+        if isinstance(value, str):
+            return _VFS_ROOT.sub(lambda _root: f"vfs:///wh/{warehouse}/", value, count=1)
+        return value
+    return json.dumps({**moved(json.loads(plan)), "warehouse": warehouse})
 
 
 def scenario_l10(ctx: Ctx) -> None:
-    """A planUri naming another user's warehouse: refused before any catalog is opened."""
+    """A plan that writes into another user's warehouse: refused."""
     _need_create_ws(ctx)
     other = _need_other(ctx)
-    wf, src = _tiny(ctx, "l10-other-warehouse-uri")
+    wf, src = _tiny(ctx, "l10-foreign-warehouse-plan")
     wid = ctx.create_workflow(wf)
     created = _created(ctx, wf, [src], wid)
     ctx.rec.eid = created["eid"]
     foreign = other.warehouse_name or f"user-{other.api.uid}-1"
-    m = re.match(r"^vfs:///wh/[^/]+/(.*)$", created["planUri"])
-    crafted = (f"vfs:///wh/{foreign}/{m.group(1)}" if m
-               else created["planUri"].replace("vfs:///", f"vfs:///wh/{foreign}/", 1))
-    ctx.log(f"  crafted plan URI {crafted}")
-    _refused_start(ctx, f"l10 plan URI in warehouse {foreign}", REFUSED_OTHER_WAREHOUSE, wid=wid,
-                   eid=created["eid"], plan_uri=crafted)
+    _refused_start(ctx, f"l10 plan writing into warehouse {foreign}", REFUSED_OTHER_WAREHOUSE, wid=wid,
+                   eid=created["eid"], plan=_writing_into(created["plan"], foreign))
 
 
 # ------------------------------------------------------------- m: replay
@@ -1519,7 +1526,7 @@ def scenario_m(ctx: Ctx) -> None:
     ctx.check("m replay create answers 201", resp.status_code == 201, f"HTTP {resp.status_code}: {str(body)[:300]}")
     if resp.status_code != 201:
         return
-    replay = ctx.transport.start_existing(wid=wid3, cuid=ctx.cuid, eid=body["eid"], plan_uri=body["planUri"])
+    replay = ctx.transport.start_existing(wid=wid3, cuid=ctx.cuid, eid=body["eid"], plan=body["plan"])
     ctx.handles.append(replay)
     state = replay.wait_for_state("Running", "Paused", "Completed", timeout=ctx.timeout)
     ctx.check("m the replay reaches a non-failed state", state in ("Running", "Paused", "Completed"),
@@ -1546,7 +1553,8 @@ def _created_as_the_agent(ctx: Ctx, wf: Workflow, wid: int, target: str) -> dict
 
 def scenario_o(ctx: Ctx) -> None:
     """The agent's path: create the part of the workflow up to the Filter, then the
-    unit's POST /api/execution/{eid}/run; a repeat is refused."""
+    unit's POST /api/execution/{eid}/run with the plan the create answered; a repeat is
+    refused."""
     _need_create_ws(ctx)
     people = ctx.data["people.csv"]
     expected = sorted(
@@ -1561,9 +1569,8 @@ def scenario_o(ctx: Ctx) -> None:
     wf.link(flt, prj)
     wid = ctx.create_workflow(wf)
     created = _created_as_the_agent(ctx, wf, wid, flt)
-    eid, plan_uri = created["eid"], created["planUri"]
-    ctx.rec.eid = eid
-    body = {"planUri": plan_uri, "computingUnitId": ctx.cuid, "targetOperatorIds": [flt],
+    eid = ctx.rec.eid = created["eid"]
+    body = {"plan": created["plan"], "computingUnitId": ctx.cuid, "targetOperatorIds": [flt],
             "timeoutSeconds": 60, "maxOperatorResultCharLimit": 20000,
             "maxOperatorResultCellCharLimit": 4000}
 
@@ -1579,8 +1586,7 @@ def scenario_o(ctx: Ctx) -> None:
         except ValueError:
             return (int(code) if code.isdigit() else 0), text
 
-    record = ctx.evidence.on_phase("start", {"wid": wid, "cuid": ctx.cuid, "eid": eid,
-                                             "plan_uri": plan_uri}) if ctx.evidence else None
+    record = ctx.evidence.on_phase("start", {"wid": wid, "cuid": ctx.cuid, "eid": eid}) if ctx.evidence else None
     code, result = call()
     ok = isinstance(result, dict) and result.get("success") is True
     if record is not None:
@@ -1606,8 +1612,7 @@ def scenario_o(ctx: Ctx) -> None:
     # `cleanup_seconds` after it ended; that and the run's trailing writes settle first.
     if ctx.evidence is not None:
         ctx.settle_unit("the repeated call", min_wait_s=ctx.evidence.cleanup_seconds + 1.0)
-    repeat = ctx.evidence.on_phase("start", {"wid": wid, "cuid": ctx.cuid, "eid": eid,
-                                             "plan_uri": plan_uri}) if ctx.evidence else None
+    repeat = ctx.evidence.on_phase("start", {"wid": wid, "cuid": ctx.cuid, "eid": eid}) if ctx.evidence else None
     code2, again = call()
     if repeat is not None:
         repeat.started = False
@@ -2423,9 +2428,10 @@ def scenario_s(ctx: Ctx) -> None:
 
 
 def scenario_r(ctx: Ctx) -> None:
-    """An execution that is created and never started: the Dashboard closes it "failed:
-    never started" once it is older than never-started-after, taking its one start, so a
-    start that comes later is refused."""
+    """An execution that is created and not started: the Dashboard closes it "failed: never
+    started" once it is older than never-started-after. The verdict is the Dashboard's guess:
+    a start that comes later is taken all the same, and the ending its run's log shows takes
+    the verdict's place. The unit takes the start once: a second start is refused."""
     _need_create_ws(ctx)
     _need_fast_record(ctx)
     _need_level(ctx, "B")
@@ -2455,17 +2461,36 @@ def scenario_r(ctx: Ctx) -> None:
     state = ctx.api.execution_state(eid)
     ctx.check(f"/state says closed, status 4, \"{REASON_NEVER_STARTED}\"",
               (state.open, state.status, state.reason) == (False, STATUS_FAILED, REASON_NEVER_STARTED), f"{state}")
-    plan = ctx.lake_table("plan", wid, eid)
-    ctx.check("the plan table has the `started` tag: the Dashboard took the execution's one start",
-              "started" in plan.refs, f"{plan.describe()}; refs {sorted(plan.refs)}")
-    _refused_start(ctx, "a start after that", REFUSED_ALREADY_STARTED.format(eid=eid), wid=wid, eid=eid,
-                   plan_uri=created["planUri"], row_status=STATUS_FAILED)
+
+    late = ctx.transport.start_existing(wid=wid, cuid=ctx.cuid, eid=eid, plan=created["plan"])
+    ctx.handles.append(late)
+    try:
+        done = late.wait_for_state("Completed", timeout=ctx.timeout)
+    except (RunFailed, RunTimeout) as e:
+        ctx.check("a start after the verdict is taken, and its run completes", False, str(e))
+        raise
+    ctx.check("a start after the verdict is taken, and its run completes", done == "Completed",
+              f"states {late.states}")
+    # The run's ending reaches its log's label a moment after its socket; the closing job's
+    # next tick reads it there.
+    within = LABEL_WAIT_S + CLOSE_INTERVALS * timing.closing_interval_s
+    state, waited = poll(lambda: ctx.api.execution_state(eid),
+                         lambda st: not st.open and st.status == STATUS_COMPLETED, within, timing.poll_s)
+    ctx.check(f"the run's own ending takes the verdict's place: the execution reads Completed, with no reason, "
+              f"within {within:g} s of the run's end",
+              not state.open and state.status == STATUS_COMPLETED and state.reason is None,
+              f"{waited:.1f} s after the run ended: open {state.open}, status {state.status}, reason {state.reason!r}")
+    log = ctx.api.execution_log(eid)
+    ctx.check("its log ends COMPLETED, and its closing record is the log's",
+              log.states[-1:] == ["COMPLETED"] and log.closed and log.outcome == STATUS_COMPLETED,
+              f"log states {log.states}; closing outcome {log.outcome}, reason {log.reason!r}")
+    _refused_second_start(ctx, "a second start", late, STATUS_COMPLETED)
 
 
 # ---------------------------------------------------------------- t: expiry
 
 #: an execution's tables that its expiry keeps, and the ones it drops (design D31)
-KEPT_TABLES = ("plan", "log", "statistics")
+KEPT_TABLES = ("log", "statistics")
 DROPPED_TABLES = ("result", "state", "console")
 
 
@@ -2507,23 +2532,23 @@ def _closed_with_results(ctx: Ctx, label: str, wid: int, eid: int) -> int | None
 
 def _check_expired(ctx: Ctx, label: str, wid: int, eid: int, size_before: int | None, sink: str) -> None:
     """An execution whose results expired: the result, state and console tables are gone,
-    the plan, the log and the statistics stay, it still reads Completed, and it holds
-    what those three hold (design 4.4: the sizes the catalog keeps of them, added up).
-    From gate 3C an export of its `sink` says so."""
+    the log and the statistics stay, it still reads Completed, and it holds what those two
+    hold (design 4.4: the sizes the catalog keeps of them, added up). From gate 3C an export
+    of its `sink` says so."""
     tables = _dropped_tables(ctx, wid, eid)
     ctx.check(f"{label}: its result and state tables are gone from the lake, and its console table",
               tables == dict.fromkeys(DROPPED_TABLES, 0), f"{tables}")
     kept = _kept_tables(ctx, wid, eid)
-    ctx.check(f"{label}: its plan, log and statistics are still there", all(t.exists for t in kept.values()),
+    ctx.check(f"{label}: its log and statistics are still there", all(t.exists for t in kept.values()),
               "; ".join(t.describe() for t in kept.values()))
     state = ctx.api.execution_state(eid)
     ctx.check(f"{label}: /state still says Completed", (state.open, state.status) == (False, STATUS_COMPLETED),
               f"{state}")
     size = ctx.api.quota_sizes().get(eid)
     left = sum(t.size_bytes or 0 for t in kept.values())
-    ctx.check(f"{label}: storedBytes fell, to what the plan, the log and the statistics hold",
+    ctx.check(f"{label}: storedBytes fell, to what the log and the statistics hold",
               bool(size_before) and size == left and size < size_before,
-              f"storedBytes {size_before} -> {size}; the three tables hold {left} bytes")
+              f"storedBytes {size_before} -> {size}; the two tables hold {left} bytes")
     if ctx.at_least("C"):
         answer = ctx.api.export_local(wid, eid, [sink])
         ctx.check(f"{label}: an export answers 410, the results of the execution have expired",
@@ -2540,8 +2565,8 @@ def _results_gone(ctx: Ctx, wid: int, eid: int, within_s: float) -> int | None:
 def scenario_t(ctx: Ctx) -> None:
     """Scenario a's workflow as one workflow, three executions. The first one's results go
     once the second has started: a later run replaces them. The second one's results stay
-    while the third is created and never started, and go by age. Either way the plan, the
-    log and the statistics stay. (What replaces results is not the design's revision 2,
+    while the third is created and never started, and go by age. Either way the log and the
+    statistics stay. (What replaces results is not the design's revision 2,
     where the next create did: docs/step3-notes/changes-since-rev2.md, section 4.)"""
     _need_create_ws(ctx)
     _need_fast_record(ctx)
@@ -2556,7 +2581,7 @@ def scenario_t(ctx: Ctx) -> None:
     size = _closed_with_results(ctx, "first execution", wid, first.eid)
     ctx.settle_records()
     created = _created(ctx, wf, [sink], wid)
-    second = ctx.transport.start_existing(wid=wid, cuid=ctx.cuid, eid=created["eid"], plan_uri=created["planUri"])
+    second = ctx.transport.start_existing(wid=wid, cuid=ctx.cuid, eid=created["eid"], plan=created["plan"])
     ctx.handles.append(second)
     started = time.monotonic()
     left = _results_gone(ctx, wid, first.eid, timing.replaced_verdict_s)
@@ -2810,13 +2835,13 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
     "l2": ("refuse-other-user-workflow", "another user creates on texera's workflow: 403", scenario_l2),
     "l3": ("refuse-other-user-unit", "another user creates on texera's unit: 403", scenario_l3),
     "l4": ("refuse-terminated-unit", "create on a terminated unit: 409", scenario_l4),
-    "l5": ("refuse-other-user-start", "another user starts texera's execution: refused", scenario_l5),
-    "l6": ("refuse-other-plan-uri", "a start naming another execution's planUri: refused", scenario_l6),
+    "l5": ("refuse-other-user-start", "another user starts texera's execution with its plan: refused",
+           scenario_l5),
+    "l6": ("refuse-other-plan", "a start carrying another execution's plan: refused", scenario_l6),
     "l7": ("refuse-other-warehouse", "create naming another user's warehouse: 400", scenario_l7),
     "l8": ("refuse-second-start", "start a completed execution again: already started", scenario_l8),
-    "l9": ("refuse-other-unit-socket", "start on texera's second unit a plan made for the first",
-           scenario_l9),
-    "l10": ("refuse-foreign-warehouse-uri", "a planUri in another user's warehouse: refused", scenario_l10),
+    "l10": ("refuse-foreign-warehouse-plan", "a plan that writes into another user's warehouse: refused",
+            scenario_l10),
     "m": ("replay", "replay refusals (400); with --with-replay-log a replay run", scenario_m),
     "o": ("agent-sync-run", "create a workflow up to one operator as the agent does, then the unit's "
                             "POST /api/execution/{eid}/run", scenario_o),
@@ -2833,11 +2858,11 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
           scenario_q),
     "q2": ("unit-cut-off-and-back", "the unit is cut off the lake under a slow run and comes back: \"unit lost\" "
                                     "gives way to the run's own ending", scenario_q2),
-    "r": ("never-started", "an execution nobody starts is closed \"never started\", and cannot be started",
-          scenario_r),
+    "r": ("never-started", "an execution nobody starts is closed \"never started\"; a late start's ending "
+                           "takes the verdict's place, and a second start is refused", scenario_r),
     "s": ("polite-stop", "the unit is stopped under a slow run: it records \"the computing unit was stopped\"",
           scenario_s),
-    "t": ("expiry", "results go once a later run has started, and by age; the plan, the log and the statistics stay",
+    "t": ("expiry", "results go once a later run has started, and by age; the log and the statistics stay",
           scenario_t),
     "w": ("history-outcomes", "the history and the admin's list say how runs ended, and why", scenario_w),
     "v": ("stored-reads-without-unit", "with the unit down the Dashboard serves statistics, console output, "
@@ -2847,15 +2872,14 @@ SCENARIOS: dict[str, tuple[str, str, Callable[[Ctx], Any]]] = {
 #: the scenarios run when none is selected (both transports): today's baseline
 BASELINE = ["a", "b", "c", "d", "e", "u"]
 #: scenarios that run only on create-ws (the Dashboard creates executions)
-CREATE_WS_ONLY = {"k", "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", "l10", "m", "o",
+CREATE_WS_ONLY = {"k", "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l10", "m", "o",
                   "f", "f2", "g", "h", "i", "p", "q", "q2", "r", "s", "t", "w", "v"}
 #: step 3's scenarios: named, or selected by a step-3 gate; `all` stays what it was
 STEP3 = {"p", "q", "q2", "r", "s", "t", "w", "v"}
 #: group keys
-GROUPS = {"l": [f"l{i}" for i in range(1, 11)]}
+GROUPS = {"l": [k for k in SCENARIOS if k.startswith("l")]}
 #: what each scenario needs from the driver's setup
 NEEDS_OTHER_USER = {"j", "l2", "l3", "l5", "l7", "l10"}
-NEEDS_UNIT2 = {"l9"}
 
 
 def applicable(transport: str, legacy_env: bool) -> list[str]:

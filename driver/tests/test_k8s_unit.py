@@ -173,8 +173,8 @@ class ArgsTest(unittest.TestCase):
 
     def test_k8s_mode_refuses_scenarios_that_need_the_single_node_stack(self):
         a = parse("--target", "k8s", "--base", "http://127.0.0.1:30080")
-        for keys, transport in ((["a", "g0"], "ws"), (["l4"], "create-ws"), (["l9"], "create-ws"),
-                                (["j"], "create-ws"), (["l2", "l10"], "create-ws")):
+        for keys, transport in ((["a", "g0"], "ws"), (["l4"], "create-ws"), (["j"], "create-ws"),
+                                (["l2", "l10"], "create-ws")):
             with self.assertRaises(SystemExit) as cm:
                 k8s_unit.check_selection(a, keys, transport)
             for k in keys:
@@ -185,7 +185,7 @@ class ArgsTest(unittest.TestCase):
         k8s_unit.check_selection(a, ["k", "l1", "l6", "l8", "m", "f", "f2", "i"], "create-ws")
         # what runs a command where the unit runs does so in the unit's pod
         k8s_unit.check_selection(a, ["g", "h", "o"], "create-ws")
-        k8s_unit.check_selection(parse(), ["g0", "o", "l9", "j"], "create-ws")  # single-node: anything
+        k8s_unit.check_selection(parse(), ["g0", "o", "l4", "j"], "create-ws")  # single-node: anything
 
     def test_commands_for_the_unit_run_in_the_pod_labelled_with_its_id(self):
         with tempfile.TemporaryDirectory() as d:

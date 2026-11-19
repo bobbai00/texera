@@ -87,15 +87,15 @@ class RecordCheckCase(unittest.TestCase):
         self.ev = ev.Evidence(run_id="t", runner=self.docker, log=lambda m: None, required=["I"],
                               record_settle_s=0.4, cleanup_wait_s=0.3, quiet_s=0.1, **self.evidence_options)
         self.ev.preflight()
+        self.ev.warehouse_name = WAREHOUSE  # the warehouse the driver's runs use, as e2e.py sets it
         self.ev.begin_scenario("a")
         self.eid = 90
 
     def start(self, handle, eid=None, wid=5):
         eid = eid or self.eid
-        uri = f"vfs:///wh/{WAREHOUSE}/wid/{wid}/eid/{eid}/plan"
         self.ev.on_phase("create", {"wid": wid, "cuid": 1})
-        self.ev.on_phase("created", {"eid": eid, "plan_uri": uri, "wid": wid})
-        return self.ev.on_phase("start", {"wid": wid, "cuid": 1, "eid": eid, "plan_uri": uri, "handle": handle})
+        self.ev.on_phase("created", {"eid": eid, "wid": wid})
+        return self.ev.on_phase("start", {"wid": wid, "cuid": 1, "eid": eid, "handle": handle})
 
     def record(self, states=("READY", "RUNNING", "COMPLETED"), *, eid=None, faults=(), prints=0,
                statistics=True, final_tidy=True) -> Recorder:
@@ -291,7 +291,7 @@ class RecordCheckTest(RecordCheckCase):
         self.assertTrue(r.ok, r.detail)
 
     def test_step_3_checks_are_evaluated_only_when_asked_for(self):
-        self.assertEqual(("A", "B", "C", "D", "E", "F"), ev.CHECKS)
+        self.assertEqual(("A", "B", "C", "D", "F"), ev.CHECKS)
         self.assertEqual(list(ev.CHECKS), ev.parse_checks("all"))
         self.assertEqual(["A", "I"], ev.parse_checks("i,a"))
         with self.assertRaises(SystemExit):
@@ -648,13 +648,13 @@ class UnitOffPostgresTest(unittest.TestCase):
 
     def test_checks_a_and_b_are_retired_at_gate_3c(self):
         """Their windows end at the unit's status UPDATE, which no longer exists."""
-        self.assertEqual(set("CDEFGHJ"), set(self.scenario()))
+        self.assertEqual(set("CDFGHJ"), set(self.scenario()))
         earlier = ev.Evidence(run_id="t", runner=self.docker, log=lambda m: None, level="B", cleanup_wait_s=0.3,
                               quiet_s=0.1)
         earlier.preflight()
-        self.assertEqual(set("ABCDEF"), set(self.scenario(evidence=earlier)))
+        self.assertEqual(set("ABCDF"), set(self.scenario(evidence=earlier)))
         asked = self.evidence(required=["A", "G"])  # ... unless a run asks for one by name
-        self.assertEqual(set("ACDEFG"), set(self.scenario(evidence=asked)))
+        self.assertEqual(set("ACDFG"), set(self.scenario(evidence=asked)))
 
     def test_step_3s_controls_must_fail_each_for_its_reason(self):
         self.assertEqual(((), (), ("A", "D", "F"), ("A", "D", "F"), ("G", "H")),
@@ -684,7 +684,7 @@ class UnitOffPostgresTest(unittest.TestCase):
 
 
 class RecordEvidence(EvidenceCase):
-    """Scenarios and evidence together at gate 3A: step 2's six checks and Check I."""
+    """Scenarios and evidence together at gate 3A: step 2's checks and Check I."""
 
     step = "3A"
     level = "A"
@@ -701,7 +701,7 @@ class RecordEvidence(EvidenceCase):
 
     def test_p_passes_step_2s_checks_and_check_i(self):
         rec = self.run_ev("p")
-        self.assertEqual(set("ABCDEFI"), self.gated(rec))
+        self.assertEqual(set("ABCDFI"), self.gated(rec))
         # READY, RUNNING, PAUSED, RUNNING, COMPLETED
         self.assertIn("COMPLETED at seq 5", self.record_check(rec).detail)
 
@@ -734,7 +734,7 @@ class RecordEvidence(EvidenceCase):
 
 
 class ClosingEvidence(EvidenceCase):
-    """Scenarios and evidence together at gate 3B: step 2's six checks, Check I with the
+    """Scenarios and evidence together at gate 3B: step 2's checks, Check I with the
     log the Dashboard serves, and Check K after the last scenario."""
 
     step = "3B"
@@ -756,7 +756,7 @@ class ClosingEvidence(EvidenceCase):
 
     def test_a_run_and_a_refused_start_end_closed(self):
         first = self.run_ev("f")
-        self.assertEqual(set("ABCDEFI"), self.gated(first))
+        self.assertEqual(set("ABCDFI"), self.gated(first))
         refused = self.run_ev("l5")
         # sub-part 14: the unit deletes nothing when it lets go of a run, so none is waited for
         self.assertEqual({}, refused.evidence["cleanup_wait"]["cleanup_deletes"])
@@ -774,7 +774,7 @@ class ClosingEvidence(EvidenceCase):
         """q and s: Check B's window runs to the scenario's end for a run that never ended,
         over the statements of the runs after it; Check I reads the records as they were left."""
         lost = self.run_ev("q")
-        self.assertEqual(set("ABCDEFI"), self.gated(lost))
+        self.assertEqual(set("ABCDFI"), self.gated(lost))
         detail = self.record_check(lost).detail
         self.assertEqual(2, detail.count("RUNNING at seq 2, tables left as they were: its unit was killed under it"))
         self.assertEqual(1, detail.count("COMPLETED at seq"))  # a's run on the unit that is back
@@ -829,7 +829,7 @@ class OffPostgresEvidence(EvidenceCase):
     level = "C"
     timing = FAST
     docker_class = StackLakeDocker
-    evidence_options = {"required": list("CDEFGHIJK"), "record_settle_s": 1.0, "level": "C", "timing": FAST}
+    evidence_options = {"required": list("CDFGHIJK"), "record_settle_s": 1.0, "level": "C", "timing": FAST}
 
     def setUp(self):
         super().setUp()
@@ -844,7 +844,7 @@ class OffPostgresEvidence(EvidenceCase):
 
     def test_v_passes_every_check_of_the_gate(self):
         rec = self.run_ev("v")
-        self.assertEqual(set("CDEFGHIJ"), self.gated(rec))
+        self.assertEqual(set("CDFGHIJ"), self.gated(rec))
         self.assertFalse({"A", "B"} & set(rec.evidence["checks"]))  # retired: not even reported
         finals = self.ev.final_checks(self.ctx.created_wids)
         self.assertEqual([True, True], [f["ok"] for f in finals], finals)
@@ -852,7 +852,7 @@ class OffPostgresEvidence(EvidenceCase):
         self.assertTrue(finals[1]["name"].startswith("Check G, the whole run"))
 
     def test_the_unit_taken_down_and_back_passes_them_too(self):
-        self.assertEqual(set("CDEFGHIJ"), self.gated(self.run_ev("q")))
+        self.assertEqual(set("CDFGHIJ"), self.gated(self.run_ev("q")))
         self.assertTrue(all(f["ok"] for f in self.ev.final_checks(self.ctx.created_wids)))
 
     def test_a_unit_that_still_writes_its_status_fails_check_g(self):

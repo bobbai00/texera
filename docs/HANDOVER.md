@@ -6,9 +6,9 @@ of 2026-11-17 as a page: https://claude.ai/artifact/1uo7RCdbfrnUpTVFLzvhwG (priv
 
 ## 1. The goal and where it stands
 
-Amber's computing unit becomes a self-contained engine: it takes a stored physical plan with every
-location resolved, reads and writes storage, keeps no execution metadata and calls no service during
-a run (apache/texera #5011, #5012, #5013; Linear project P-TEX-22). The work is in steps; the owner
+Amber's computing unit becomes a self-contained engine: it takes a physical plan with every
+location resolved, sent with the request to start, reads and writes storage, keeps no execution
+metadata and calls no service during a run (apache/texera #5011, #5012, #5013; Linear project P-TEX-22). The work is in steps; the owner
 set the scope on 2026-11-17 to end after step 3, and on 2026-11-18 asked for the cleanest design
 of that scope, with every runtime command (pause, resume, kill, the debugger, retry) still working.
 
@@ -24,9 +24,12 @@ of that scope, with every runtime command (pause, resume, kill, the debugger, re
 
 What is true after step 3:
 
-- The Dashboard service creates an execution (`POST /api/executions`): it authorizes, asks the
-  compiling service for the plan, signs the links of the input files, stores the plan in the lake
-  and inserts the row. A unit starts the stored plan by its id and claims the one start.
+- The Dashboard service creates an execution (`POST /api/executions`): it authorizes, inserts the
+  row, asks the compiling service for the plan, signs the links of the input files, and answers
+  the plan without keeping a copy. The client starts the execution on its unit with that plan;
+  the unit checks the plan and starts each execution once. A change to a paused operator is
+  compiled the same way, against the workflow the editor held, and handed to the unit by the
+  client (`docs/step3-notes/changes-since-rev2.md` section 6).
 - A unit writes a run's state, statistics and console to tables of the lake, on one thread, and
   beats every 30 s. It opens no connection to Postgres; a stray use of the database on a unit
   fails where it is made.
@@ -53,7 +56,7 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 | Branch | Where | Commit | What it holds |
 |---|---|---|---|
-| `feat/self-contained-engine` | Fork | `852329c0f` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782` |
+| `feat/self-contained-engine` | Fork | `852329c0f` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782`, which holds `9abfc1e34` (the plan through the client) on top, not yet pushed |
 | `sce-e2e-harness` | Fork | see `git log` | The harness, the designs and reviews under `docs/`, and this file |
 | `feat/sce-step2-lane` | Fork | `c5511fab0` | The plan-shape batch, merged into the main branch |
 | `spike/sce-step0-proofs` | Fork | `ff4729363` | Step 0's proof scripts and results (`proofs/step0/*/RESULTS.md`) |
@@ -61,7 +64,9 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 ## 3. What 2026-11-18 added to the main branch
 
-85 commits over `3d84565a5`, 132 over upstream main `fddc4303e`, which is merged in. The final tree is `852329c0f`.
+85 commits over `3d84565a5`, 132 over upstream main `fddc4303e`, which is merged in, up to
+`852329c0f`; then `9abfc1e34`, the plan through the client (section 1 and
+`docs/step3-notes/changes-since-rev2.md` section 6). The final tree is `9abfc1e34`.
 
 | Group | What it does |
 |---|---|
@@ -75,7 +80,7 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 | Step 3, the frontend | The page follows an execution its unit no longer shows by asking the Dashboard service every 5 s; the history and the admin's list show how a run ended and why |
 | Step 3, the benchmark | `ExecutionRecordBench`, run by `bench/record-bench.sh` of the harness |
 | Upstream | Merge of upstream main `fddc4303e` (12 commits). Its new Parquet source is changed to read the link its plan carries |
-| Names and comments | "Stored plan" everywhere for "saved plan"; `ExecutionWarehouse` for `ExecutionResources`; the agent service's request and response types named as the server's; each design rule said once, in the type that owns it, and member docs kept to what the code does not say (comments only, checked file by file) |
+| Names and comments | `ExecutionWarehouse` for `ExecutionResources`; the agent service's request and response types named as the server's; each design rule said once, in the type that owns it, and member docs kept to what the code does not say (comments only, checked file by file) |
 
 Fixes made on the way, each its own commit:
 
@@ -99,13 +104,17 @@ Fixes made on the way, each its own commit:
 
 ## 4. Verified
 
-On the Mac. The final tree is `852329c0f`; a row that names another commit was run there.
+On the Mac. The final tree is `9abfc1e34` (the plan through the client, over `852329c0f`); a row
+that names another commit was run there.
 
 | Check | Result |
 |---|---|
-| Scala suites (`tools/suite.sh`) | No failure at `852329c0f`: config 114, DAO 70, core 1,286, operators 3,113, compiler 234, access control 84, file service 481, config service 44, unit manager 329, compiling service 120, engine unit 3,014, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181) |
-| Frontend | 255 files, 7,375 tests; format clean; build OK (at `852329c0f`) |
-| Agent service | 378 tests; type check and format clean (at `852329c0f`) |
+| Scala suites (`tools/suite.sh`) | No failure at `9abfc1e34`: config 113, DAO 70, core 1,246, operators 3,113, compiler 232, compiling service 121, access control 84, unit manager 329, config service 44, file service 481, engine unit 2,990, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181). Run with `LITELLM_BASE_URL` at a closed port: another stack's LiteLLM holds the default :4000, which `LiteLLMProxyAuthSpec` expects to refuse |
+| Frontend | 255 files, 7,382 tests; format clean; build OK (at `9abfc1e34`) |
+| Agent service | 381 tests; type check and format clean (at `9abfc1e34`) |
+| Gate 3C at `9abfc1e34`, unit on a network without Postgres (images `sce/sceB`) | 33 of 33 scenarios (l9 is gone with the plan row); no statement from the unit to Postgres in the whole run; all 38 executions closed (`reports/baseline-20261119T062248Z.json`) |
+| Browser smoke at `9abfc1e34` | 9 of 9 (`reports/browser-smoke-20261119T063053Z`), among them a change to a paused operator in the editor (B4), after the page was loaded again (B7) and from a second tab (B8) |
+| By hand at `9abfc1e34` (the desktop app's browser pane, the same stack) | A UDF that raises on rows 7 and 20: Pause, Unlock for Logic Change, the code fixed, Confirm Change, Retry Tuple; then the same again for row 20, after the run had resumed. Both changes answered `{operatorId, update}` (201); the execution closed Completed from its log (`READY, RUNNING, PAUSED, RUNNING, PAUSED, RUNNING, COMPLETED`); the export shows rows 1-6 from the first code, 7-19 from the first change and 20-30 from the second |
 | Single-node, unit on a network of its own, gate 3C | At `9d6d05bf4`: 33 of 34 scenarios, and no statement from the unit to Postgres in the whole run; scenario v failed on the harness's own wait for a stopped unit, since fixed (`reports/baseline-20261118T162125Z.json`) |
 | The same with the unit on a network without Postgres | At `852329c0f`, the final tree: 34 of 34 scenarios; no statement from the unit to Postgres in the whole run; every execution closed; no failed deletion in the unit's log when it was stopped (`reports/baseline-20261118T182606Z.json`) |
 | Scenarios x (debugger), z (fix and retry), q2 (cut off and back) | Pass, in both gate runs and the rerun |
@@ -126,7 +135,10 @@ Not run on the Mac, and so not verified for step 3:
   chart sets the compiling service's endpoint for the Dashboard service.
 - `sql/updates/53.sql` and `54.sql` were applied by their specs on an embedded Postgres, not by
   liquibase against a database of a running deployment.
-- The negative controls of step 3, and scenario y (the day-long run through the product).
+- The negative controls of step 3, and scenario y (the day-long run through the product). Step
+  3's control drives step 2's images, whose create answers where the plan is stored: run it
+  from the harness at `5d9ce19a6`, before the plan went through the client (README, "Negative
+  control").
 
 ## 5. What a unit still reaches, and what is left for later steps
 
@@ -141,14 +153,26 @@ step 5:
 
 Also left:
 
-- Presigned links of input files and the passwords of SQL sources are in the stored plan's row,
-  which every unit with the lake's credentials can read. Per-run credentials are step 5.
+- Presigned links of input files and the passwords of SQL sources are in the plan, which the
+  browser holds and sends to the unit, and a changed copy of a plan is not detected. A ticket the
+  Dashboard signs per execution (execution, unit, the plan's hash, expiry) and per-run
+  credentials are step 5.
 - Result pages of an execution whose unit no longer holds it are not served until the upstream
   result service is in (#9356). Its lookup reads `operator_port_executions` and
   `workflow_executions.status`, which this branch drops: whichever lands second re-bases that
-  lookup on the stored plan and the closing record.
-- A table of the lake per execution (plan, log, statistics, console, and two per output port) is
-  many small tables for the catalog. Measured: section 4's benchmark.
+  lookup on the tables' names (`ExecutionTables.portTables`) and the closing record.
+- A unit checks the plan it is sent, but no longer who created the execution or that it was
+  created for this unit: both were columns of the plan row. A user with WRITE on a unit who holds
+  another user's plan can start it, writing into that execution's tables (never into another
+  user's warehouse, which the unit still refuses), and a plan sent to another unit runs there
+  (harness scenario l9 went with it). The signed ticket of step 5 names both; carrying the
+  creator and the unit in the plan, unsigned, would bring the two checks back now. The owner's
+  call.
+- With no plan kept, the Dashboard service finds an execution's result and state tables by their
+  names, listing the whole result and state namespaces of its warehouse each time it measures,
+  exports or expires the execution. Not measured on a catalog with many tables.
+- A table of the lake per execution (log, statistics, console, and two per output port) is many
+  small tables for the catalog. Measured: section 4's benchmark.
 - When a unit is gone, the page shows the run's end and its reason from the Dashboard service, but
   each operator's box keeps the last state its unit reported (Running, say): an operator has no
   state for "ended without finishing". Upstream shows the same after a kill. Choosing what the box
@@ -165,8 +189,8 @@ A split, for the owner to decide:
 
 | PR | Contents |
 |---|---|
-| 1 | Run every workflow from a stored plan: step 1, the stored plan's format and store |
-| 2 | Create at the Dashboard service, start by id, nothing read on the unit to start: the rest of step 2, with the run compile in the compiling service |
+| 1 | Run every workflow from its plan's text: step 1, the plan's format |
+| 2 | Create at the Dashboard service, start with the plan the create answered, nothing read on the unit to start: the rest of step 2, with the run compile in the compiling service |
 | 3 | Record and close executions from the lake: step 3 up to the frontend |
 | 4 | Take Postgres off the unit: stored output by execution, expiry at the Dashboard service, no pool, the dropped columns |
 
@@ -178,7 +202,7 @@ its run, and `fix/checkpoint-on-source-worker`.
 
 Made by the owner:
 - Postgres is removed from the unit completely, with no backward compatibility.
-- Amber is a pure engine: a stored plan with resolved locations in; storage reads and writes; no
+- Amber is a pure engine: a plan with resolved locations in; storage reads and writes; no
   execution metadata; no service calls during a run.
 - Only the gateway reaches a unit; the Dashboard service does not call units; no relay service for
   live state.
@@ -191,6 +215,10 @@ Made by the owner:
 - 2026-11-17: stop after step 3.
 - 2026-11-18: the cleanest design of that scope; fix what is found on the way; the runtime
   commands between the frontend and the engine keep working; review upstream #9356 against it.
+- 2026-11-18, evening: no plan in the lake. The Dashboard service answers the plan and the client
+  sends it to the engine; the Dashboard keeps no copy; a change to a paused operator is compiled
+  against the workflow the editor held when the operator was unlocked for it. Making the plan
+  proof against a changed copy comes later, "but not now".
 
 Open for the owner:
 - Whether to post the review of #9356 (drafted: approve, with five notes that do not block).
@@ -273,6 +301,9 @@ port overrides; `bench/`.
 
 What 2026-11-18 changed against the step 3 design, in one place:
 
+- No plan in the lake: the plan goes from the Dashboard service through the client to the unit
+  (`docs/step3-notes/changes-since-rev2.md` section 6). The design's plan table, its `started`
+  tag and the unit's reads of it are gone.
 - A verdict is not final: it gives way to the log's ending for
   `execution-closing.revise-verdict-for-seconds`, and the recorder writes an ending until it
   lands. The design had the verdict stand.

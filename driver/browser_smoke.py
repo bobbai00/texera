@@ -151,6 +151,25 @@ def ui_content(wf: Workflow) -> dict:
 
 # ----------------------------------------------------------------------- records
 
+#: the texts a page hands the unit as it got them, reading nothing from them: the plan a
+#: create answers and the change an update answers. A plan holds the links its operators
+#: read files through, so the report gives each text by its length and digest only.
+HANDED_ON = ("plan", "update")
+
+
+def reported(value: Any) -> Any:
+    """`value` as the report keeps it: each text a page hands on (HANDED_ON) by its length
+    and digest."""
+    if isinstance(value, dict):
+        return {k: digest(v) if k in HANDED_ON and isinstance(v, str) else reported(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [reported(v) for v in value]
+    return value
+
+
+def digest(text: str) -> str:
+    return f"<{len(text)} characters, sha256 {hashlib.sha256(text.encode()).hexdigest()[:16]}>"
+
 
 @dataclass
 class CaseRecord:
@@ -167,7 +186,7 @@ class CaseRecord:
     error: str | None = None
 
     def check(self, name: str, ok: bool, detail: Any = "") -> bool:
-        detail = detail if isinstance(detail, str) else json.dumps(detail, default=str)
+        detail = detail if isinstance(detail, str) else json.dumps(reported(detail), default=str)
         self.checks.append({"name": name, "ok": bool(ok), "detail": detail[:3000]})
         log(f"  [{'ok' if ok else 'FAIL'}] {name}{'' if ok else ' -- ' + detail[:500]}")
         return bool(ok)
@@ -295,7 +314,7 @@ class NetLog:
                     entry["request"] = f"<unreadable: {e}>"
             if writes or (req.method == "GET" and path.startswith(ENVIRONMENTS_PATH)):
                 try:
-                    entry["response"] = self._brief_response(resp.json())
+                    entry["response"] = self._brief_response(reported(resp.json()))
                 except Exception as e:  # noqa: BLE001 -- no body, or not JSON
                     try:
                         entry["response"] = self.redact(resp.text()[:600])
@@ -317,23 +336,27 @@ class NetLog:
         return [e for e in self.requests() if e["path"].startswith(ENVIRONMENTS_PATH)]
 
     @staticmethod
+    def _brief_plan(plan: Any) -> Any:
+        """A logical plan by its operators' ids, how many links it has and what it views."""
+        if not isinstance(plan, dict):
+            return plan
+        return {"operators": [o.get("operatorID") for o in plan.get("operators") or []],
+                "links": len(plan.get("links") or []), "opsToViewResult": plan.get("opsToViewResult")}
+
+    @staticmethod
     def _brief_request(body: Any) -> Any:
         if not isinstance(body, dict):
             return body
         if "logicalPlan" in body:
-            plan = body.get("logicalPlan") or {}
             return {**{k: v for k, v in body.items() if k not in ("logicalPlan", "workflowSettings")},
-                    "logicalPlan": {"operators": [o.get("operatorID") for o in plan.get("operators") or []],
-                                    "links": len(plan.get("links") or []),
-                                    "opsToViewResult": plan.get("opsToViewResult")},
-                    "keys": sorted(body)}
+                    "logicalPlan": NetLog._brief_plan(body.get("logicalPlan")), "keys": sorted(body)}
         if "operator" in body:
             op = body["operator"] or {}
             brief = {k: v for k, v in op.items() if k != "code"}
             if "code" in op:
                 brief["code_tail"] = str(op["code"])[-60:]
                 brief["code_sha256"] = hashlib.sha256(str(op["code"]).encode()).hexdigest()[:16]
-            return {"operator": brief}
+            return {"operator": brief, "workflow": NetLog._brief_plan(body.get("workflow"))}
         return body
 
     def _kept(self, msg: dict) -> dict:
@@ -366,8 +389,8 @@ class NetLog:
                 "sent_types": dict(Counter(m.get("type", "?") for _, m in sent)),
             }
             if is_wf:
-                # every frame the page sent, whole; heartbeats as a count
-                entry["sent"] = [{"t": rel(t), **m} for t, m in sent if m.get("type") != "HeartBeatRequest"]
+                # every frame the page sent, whole but for what it hands on; heartbeats as a count
+                entry["sent"] = [{"t": rel(t), **reported(m)} for t, m in sent if m.get("type") != "HeartBeatRequest"]
                 entry["received_types"] = dict(Counter(m.get("type", "?") for _, m in received))
                 entry["states"] = [{"t": rel(t), "state": m.get("state"), "executionId": m.get("executionId")}
                                    for t, m in received if m.get("type") == "WorkflowStateEvent"]
@@ -925,15 +948,15 @@ class Smoke:
             body = resp.json()
         except Exception:  # noqa: BLE001
             body = resp.text()
-        log(f"    {what}: POST /api/executions -> {resp.status} {json.dumps(body, default=str)[:300]}")
+        log(f"    {what}: POST /api/executions -> {resp.status} {json.dumps(reported(body), default=str)[:300]}")
         if isinstance(body, dict) and isinstance(body.get("eid"), int):
             rec.eids.append(body["eid"])
         return resp, body, t_click
 
     def check_start(self, ed: Editor, rec: CaseRecord, body: dict, since: float, what: str = "",
                     resp: Any = None) -> bool:
-        """After a 201: the page sent WorkflowStartRequest with the create's eid and planUri."""
-        want = {"type": "WorkflowStartRequest", "executionId": body.get("eid"), "planUri": body.get("planUri")}
+        """After a 201: the page sent WorkflowStartRequest with the create's eid and plan."""
+        want = {"type": "WorkflowStartRequest", "executionId": body.get("eid"), "plan": body.get("plan")}
         try:
             ed.wait_until(lambda: any(m.get("type") == "WorkflowStartRequest" for _, m in ed.net.sent(since)),
                           20, "the page to send WorkflowStartRequest")
@@ -942,7 +965,7 @@ class Smoke:
         starts = [(t, m) for t, m in ed.net.sent(since) if m.get("type") == "WorkflowStartRequest"]
         answered = ed.net.answered_at(resp) if resp is not None else None
         after = bool(starts) and answered is not None and starts[0][0] > answered
-        return rec.check(f"{what}the page sent WorkflowStartRequest{{executionId, planUri}} of the create's answer, "
+        return rec.check(f"{what}the page sent WorkflowStartRequest{{executionId, plan}} of the create's answer, "
                          f"after that answer", [m for _, m in starts] == [want] and after,
                          {"sent": [m for _, m in starts], "want": want,
                           "create_answered_at": answered and round(answered - ed.t0, 3),
@@ -1016,9 +1039,10 @@ class Smoke:
         rec.check("the editor opened the workflow and Run is enabled", True, ed.run_button())
 
         resp, body, t_click = self.press_run(ed, rec)
-        if not rec.check("Run: POST /api/executions answers 201 with {eid, planUri}",
+        if not rec.check("Run: POST /api/executions answers 201 with {eid, plan}",
                          resp.status == 201 and isinstance(body, dict) and isinstance(body.get("eid"), int)
-                         and bool(body.get("planUri")), {"status": resp.status, "body": body}):
+                         and isinstance(body.get("plan"), str) and bool(body["plan"]),
+                         {"status": resp.status, "body": body}):
             ed.screenshot("create-failed")
             return
         sent_body = json.loads(resp.request.post_data or "{}")
@@ -1471,20 +1495,28 @@ class Smoke:
             update_body = update_resp.json()
         except Exception:  # noqa: BLE001
             update_body = update_resp.text()
-        sent_op = (json.loads(update_resp.request.post_data or "{}") or {}).get("operator") or {}
+        sent = json.loads(update_resp.request.post_data or "{}") or {}
+        sent_op = sent.get("operator") or {}
         update_path = urllib.parse.urlsplit(update_resp.url).path
         rec.check("Confirm Change: POST /api/executions/{eid}/updates, of the run's execution, answers 201 "
-                  "with {updateId, operatorId}",
+                  "with {operatorId, update}",
                   update_path == f"/api/executions/{eid}/updates" and update_resp.status == 201
-                  and isinstance(update_body, dict)
-                  and bool(update_body.get("updateId")) and update_body.get("operatorId") == udf,
+                  and isinstance(update_body, dict) and update_body.get("operatorId") == udf
+                  and isinstance(update_body.get("update"), str) and bool(update_body["update"]),
                   {"path": update_path, "eid": eid, "status": update_resp.status, "body": update_body})
         rec.check("the update carries the operator as the editor holds it: the UDF with VERSION = 2",
                   sent_op.get("operatorID") == udf and str(sent_op.get("code", "")).rstrip().endswith("VERSION = 2"),
                   {"operatorID": sent_op.get("operatorID"), "operatorType": sent_op.get("operatorType"),
                    "code_tail": str(sent_op.get("code", ""))[-40:]})
+        # The page takes the workflow as an operator is unlocked for the change, before the edit.
+        ran = {o.get("operatorID"): o for o in (sent.get("workflow") or {}).get("operators") or []}
+        ran_code = str((ran.get(udf) or {}).get("code", ""))
+        rec.check("the update carries the workflow the run ran, as it was before the change: both operators, "
+                  "the UDF with VERSION = 1",
+                  sorted(ran) == sorted([scan, udf]) and ran_code.rstrip().endswith("VERSION = 1"),
+                  {"operators": sorted(ran), "udf_code_tail": ran_code[-40:]})
         want = {"type": "OperatorUpdateRequest", "executionId": eid,
-                "updateId": update_body.get("updateId") if isinstance(update_body, dict) else None}
+                "update": update_body.get("update") if isinstance(update_body, dict) else None}
         try:
             ed.wait_until(lambda: any(m.get("type") == "OperatorUpdateRequest" for _, m in ed.net.sent(t_edit)),
                           20, "the page to send OperatorUpdateRequest")
@@ -1493,7 +1525,7 @@ class Smoke:
         except UiTimeout:
             pass
         updates = [m for _, m in ed.net.sent(t_edit) if m.get("type") == "OperatorUpdateRequest"]
-        rec.check("the page sent OperatorUpdateRequest{executionId, updateId} of the update's answer",
+        rec.check("the page sent OperatorUpdateRequest{executionId, update} of the update's answer",
                   updates == [want], {"sent": updates, "want": want})
         answers = ed.net.events("ModifyLogicResponse", t_edit)
         rec.check("the unit answered ModifyLogicResponse with isValid true",
@@ -1618,7 +1650,7 @@ class Smoke:
             ed.screenshot(f"run{n}-completed")
             self.persisted(rec, wid, body.get("eid"), STATUS_COMPLETED, what=what)
         rec.check("the second run is another execution with another plan",
-                  bodies[0].get("eid") != bodies[1].get("eid") and bodies[0].get("planUri") != bodies[1].get("planUri"),
+                  bodies[0].get("eid") != bodies[1].get("eid") and bodies[0].get("plan") != bodies[1].get("plan"),
                   {"first": bodies[0], "second": bodies[1]})
         rec.check("the second run's rows replaced the first's in the result window, left open over the second "
                   "run (a later stamp)",

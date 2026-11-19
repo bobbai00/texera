@@ -92,3 +92,43 @@ happened" no longer holds: such an execution locks nothing.
 - The stored plan is format version 1; the plan table's columns are `entryId, body, logical,
   createdBy, computingUnitId, notification` (`docs/review-step2/x1-report.md`). Sub-part 13 moves
   `notification` to Postgres as designed.
+
+## 6. The plan goes through the client (2026-11-18)
+
+The owner's decision on the evening of 2026-11-18: the Dashboard service answers the plan to the
+client, the client sends it to the engine, and the Dashboard keeps no copy. Making the plan proof
+against a changed copy is left for later. This replaces the plan table of step 2's design and
+every part of step 3 that read it.
+
+1. Create: `POST /api/executions` answers `{eid, plan}`; the plan is text the client passes on
+   unread. A plan over 16 MiB (`PhysicalPlanCodec.MaxPlanBytes`) is refused (400), and the
+   execution is closed as "its plan is too large".
+2. Start: `WorkflowStartRequest{executionId, plan}` over the socket, and `plan` in the body of the
+   unit's `POST /api/execution/{eid}/run` for the agent. The unit checks the plan before it starts
+   it (`ExecutionStart.check`): its execution, its workflow, its warehouse and whose it is, its
+   replay logs, its input links. The codec already ties each storage location to the plan's own
+   execution and warehouse.
+3. One start: a unit starts each execution once, held in its memory
+   (`WorkflowService.startedExecutions`). The `started` tag the unit and the closing job both
+   took is gone, and so is the unit's check of the creator and unit a plan row named.
+4. A change to a paused operator: `POST /api/executions/{eid}/updates {operator, workflow}`
+   answers `{operatorId, update}`, and the client sends `OperatorUpdateRequest{executionId,
+   update}`. The workflow is what the editor held when the operator was unlocked for the change
+   (`snapshotWorkflowForLogicChange` in the frontend). The compiler refuses a workflow it cannot
+   read (400). The unit checks the update against the plan it runs: the execution, the operator,
+   and the Python environment, a check that moved from the Dashboard. Update ids are gone; an
+   update is capped as a plan is.
+5. Tables by name: the Dashboard finds an execution's result and state tables by their names
+   (`wid_<w>_eid_<e>_...`, `ExecutionTables.portTables`), for exports, stored bytes and expiry.
+6. Closing: the job takes no claim. An execution with no log after `never-started-after-seconds`
+   is closed "never started", with no e-mail and no measure, and a late start's log ending
+   replaces that verdict as it replaces any other. Only a create that failed closes with its
+   results marked expired (`ExecutionRecords.close(unstartable = true)`).
+7. Gone: `ExecutionPlanStore`, the plan namespace (`STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE`),
+   `VFSResourceType.PLAN` in Scala and Python, and `ResultSchema.executionPlanSchema`.
+
+Safety now: the browser holds the plan, signed input links included, as it already holds signed
+links to dataset files; users already run their own code on the unit, which holds the lake's
+keys. The lock-down later: a ticket the Dashboard signs per execution (execution, unit, the plan's
+hash, expiry), files only through signed links, and tables through the catalog with a pass per
+execution.

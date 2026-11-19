@@ -49,7 +49,7 @@ class GateTest(unittest.TestCase):
     def test_gate_3a_is_step_2s_last_gate_plus_p_with_check_i(self):
         gate = e2e.GATES["3A"]
         self.assertEqual(self.keys(e2e.GATES["D"]["scenarios"]) + ["p"], self.keys(gate["scenarios"]))
-        self.assertEqual(list("ABCDEF") + ["I"], parse_checks(gate["evidence"]))
+        self.assertEqual(list("ABCDF") + ["I"], parse_checks(gate["evidence"]))
         self.assertEqual("create-ws", gate["transport"])
         self.assertEqual(list("abcdeu") + ["p"], self.keys(gate["other_modes"]))  # Kubernetes, local-dev
         self.assertEqual("A", gate["level"])
@@ -58,7 +58,7 @@ class GateTest(unittest.TestCase):
     def test_gate_3b_adds_the_closing_scenarios_and_check_k(self):
         gate = e2e.GATES["3B"]
         self.assertEqual(self.keys(e2e.GATES["3A"]["scenarios"]) + list("qrstw"), self.keys(gate["scenarios"]))
-        self.assertEqual(list("ABCDEF") + ["I", "K"], parse_checks(gate["evidence"]))
+        self.assertEqual(list("ABCDF") + ["I", "K"], parse_checks(gate["evidence"]))
         # the other modes run what the design's H6 names: the unit taken down both ways, and the history
         self.assertEqual(list("abcdeu") + list("pqsw"), self.keys(gate["other_modes"]))
         self.assertEqual("B", gate["level"])
@@ -67,7 +67,7 @@ class GateTest(unittest.TestCase):
         gate = e2e.GATES["3C"]
         self.assertEqual(self.keys(e2e.GATES["3B"]["scenarios"]) + ["v"], self.keys(gate["scenarios"]))
         # A and B are retired; J is among them, and gates on a stack started with --unit-no-postgres
-        self.assertEqual(list("CDEFGHIJK"), parse_checks(gate["evidence"]))
+        self.assertEqual(list("CDFGHIJK"), parse_checks(gate["evidence"]))
         self.assertEqual(list("abcdeu") + list("pqsvw"), self.keys(gate["other_modes"]))
         self.assertEqual((e2e.FINISHED_LEVEL, "C"), (gate["level"], gate["level"]))
         self.assertEqual(frozenset({"3A", "3B", "3C"}), e2e.PORTABLE_GATES)
@@ -83,7 +83,7 @@ class GateTest(unittest.TestCase):
 
     def test_step_2s_gates_and_selections_are_what_they_were(self):
         self.assertEqual("all", e2e.GATES["D"]["evidence"])
-        self.assertEqual(list("ABCDEF"), parse_checks("all"))
+        self.assertEqual(list("ABCDF"), parse_checks("all"))
         self.assertFalse(set("pqrstwv") & set(self.keys("all")))
         self.assertEqual(["p"], self.keys("p"))
         self.assertEqual(["p"], self.keys("record-in-lake"))
@@ -327,13 +327,19 @@ class NeverStarted(Step3BCase):
         verdict = rec.facts["never_started_verdict"]
         self.assertEqual({6}, {r["status"] for r in verdict["readings"][:-1]})  # Created until it is closed
         self.assertGreaterEqual(verdict["readings"][-1]["t"], self.timing.never_started_after_s)
-        self.assertTrue(self.fake.executions[rec.eid]["started"])  # the Dashboard took the start
-        self.assertFalse(self.fake.runs)  # and nothing ever ran
+        # the late start's run replaced the verdict, from its log; the verdict had kept its results
+        row = self.fake.executions[rec.eid]
+        self.assertEqual((3, None, True, None), (row["outcome"], row["outcome_reason"], row["from_log"],
+                                                 row["results_expired_at"]))
+        # two starts, one run: the unit took the execution's start once
+        starts = [w["msg"] for w in self.fake.ws_log if w["msg"]["type"] == "WorkflowStartRequest"]
+        self.assertEqual([rec.eid, rec.eid], [s["executionId"] for s in starts])
+        self.assertEqual([rec.eid], list(self.fake.runs))
 
     def test_r_fails_when_an_unstarted_execution_is_never_closed(self):
-        rec = self.fails_on("r", "the history turns status 4", "/state says closed", "the plan table has",
-                            "a start after that: the starting socket", "a start after that: never Running",
-                            "a start after that: the row stays 4", fault="never-started-never-closed")
+        """The late start's run then ends it, as any run's log does."""
+        rec = self.fails_on("r", "the history turns status 4", "/state says closed",
+                            fault="never-started-never-closed")
         self.assertIn("'status': 6", self.detail(rec, "the history turns status 4"))
 
     def test_r_fails_when_an_unstarted_execution_reads_as_one_that_is_starting(self):
@@ -345,9 +351,18 @@ class NeverStarted(Step3BCase):
         self.fails_on("r", "... and not before it is older than never-started-after",
                       fault="never-started-too-early")
 
-    def test_r_fails_when_the_closed_execution_can_still_be_started(self):
-        self.fails_on("r", "the plan table has the `started` tag", "a start after that: the starting socket",
-                      "a start after that: never Running", fault="start-after-never-started")
+    def test_r_fails_when_the_verdict_stays_after_the_late_run_ended(self):
+        self.addCleanup(setattr, scenarios, "LABEL_WAIT_S", scenarios.LABEL_WAIT_S)
+        scenarios.LABEL_WAIT_S = 1.0  # the wait for the verdict to give way ends in nothing
+        rec = self.fails_on("r", "the run's own ending takes the verdict's place",
+                            "its log ends COMPLETED, and its closing record is the log's",
+                            "a second start: the row stays 3", fault="verdict-not-revised")
+        self.assertIn("status 4, reason 'never started'", self.detail(rec, "the run's own ending"))
+
+    def test_r_fails_when_the_unit_starts_an_execution_twice(self):
+        self.fails_on("r", "a second start: the starting socket gets a RequestRefusedEvent of its start",
+                      "a second start: the first session gets no refusal, no error and no new state",
+                      "a second start: never Running", fault="start-taken-twice")
 
 
 class PoliteStop(Step3BCase):
@@ -404,7 +419,7 @@ class Expiry(Step3BCase):
         self.assertRegex(self.detail(rec, self.AGED), r"result tables 0 at [01]\.\d s after the run ended")
 
     def test_t_fails_when_the_expiry_takes_the_record_too(self):
-        self.fails_on("t", *[f"{after}: its plan, log and statistics are still there" for after in self.AFTER],
+        self.fails_on("t", *[f"{after}: its log and statistics are still there" for after in self.AFTER],
                       fault="expiry-drops-record")
 
     def test_t_fails_when_the_stored_bytes_do_not_fall(self):

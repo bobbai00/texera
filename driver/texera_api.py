@@ -26,8 +26,11 @@ Endpoint shapes were read from upstream main (2026-10/11):
   WS   /wsapi/pve?cuid&pveName&action=create|install[&packages=[..]]  the unit; lines until __DONE__
 
 Step 2 (design section 3), not on the published images:
-  POST /api/executions                       dashboard-service  3.4 -> 201 {eid,wid,computingUnitId,planUri}
-  POST /api/executions/{eid}/updates         dashboard-service  3.5 {operator} -> 200 {updateId,operatorId}
+  POST /api/executions                       dashboard-service  3.4 -> 201 {eid, plan}; the plan is text for
+                                             the unit, which the client hands on unread
+  POST /api/executions/{eid}/updates         dashboard-service  3.5 {operator, workflow} -> 201 {operatorId,
+                                             update}; `workflow` is the logical plan the execution was
+                                             created from, `update` text for the unit as the plan is
   GET/POST /api/environments, PUT/DELETE /api/environments/{veid}   dashboard-service 3.8
 
 Step 3 (its design, section 3.5). The product is being built against that design, so
@@ -557,9 +560,12 @@ class TexeraApi:
         return self.request("POST", "/api/executions", json=body, expect=None,
                             timeout=max(self.timeout, 130))
 
-    def post_operator_update(self, eid: int, operator: dict) -> requests.Response:
-        """POST /api/executions/{eid}/updates (design 3.5); the raw response."""
-        return self.request("POST", f"/api/executions/{eid}/updates", json={"operator": operator},
+    def post_operator_update(self, eid: int, operator: dict, workflow: dict) -> requests.Response:
+        """POST /api/executions/{eid}/updates (design 3.5): `operator` as changed, made in
+        `workflow`, the logical plan execution `eid` was created from; the raw response. The
+        Dashboard compiles here, as at a create."""
+        return self.request("POST", f"/api/executions/{eid}/updates",
+                            json={"operator": operator, "workflow": workflow},
                             expect=None, timeout=max(self.timeout, 130))
 
     # ------------------------------------------------- step 3: the stored record

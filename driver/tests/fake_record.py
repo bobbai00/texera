@@ -32,11 +32,10 @@ from typing import Callable
 from fake_lake import FakeLake, FakeTable, now_ms
 
 #: design 3.1: namespace and table suffix of an execution's tables
-NAMESPACES = {"plan": "execution-plan", "log": "execution-log", "statistics": "workflow-runtime-statistics",
+NAMESPACES = {"log": "execution-log", "statistics": "workflow-runtime-statistics",
               "console": "operator-console-messages", "result": "operator-port-result",
               "state": "operator-port-state"}
-SUFFIXES = {"plan": "plan", "log": "executionlog", "statistics": "runtimestatistics",
-            "console": "consolemessages"}
+SUFFIXES = {"log": "executionlog", "statistics": "runtimestatistics", "console": "consolemessages"}
 RECORD_TABLES = ("log", "statistics", "console")
 END_STATES = ("COMPLETED", "FAILED", "KILLED")
 #: workflow_executions.status of a logged state

@@ -27,9 +27,10 @@ or when it comes from one of the unit container's addresses. The checks:
   D  (needs --isolate-unit) the unit resolves neither file-service nor
      texera-lakefs, its log since the start names none of them, and the gateway
      (nginx, whose access log --isolate-unit turns on) served it no request
-  E  the execution's plan table (Lakekeeper, namespace execution-plan) has a
-     ref named `started`
   F  every statement from the unit's addresses carries app=texera-computing-unit
+
+(E is gone with the plan table it read: a unit takes an execution's start once, in its
+memory, which scenarios l8, o and r check.)
 
 A run counts as started when a state arrived on its socket after its start was
 sent (the transport keeps what the unit replays at connection apart). A refused
@@ -55,9 +56,9 @@ reports exactly what it did:
   I  for every run that was started and has ended: the execution log's label names
      the ending; the log holds one row per seq up to the label's; and the log, the
      statistics and the console table hold one data file and one snapshot each (the
-     end tidy). Read from the catalog (lake.py), as Check E reads the plan table.
-     From gate 3B on the Dashboard serves the log, and its rows are read too: their
-     seq are 1, 2, 3, ... and their states are the ones the run's socket was told.
+     end tidy). Read from the catalog (lake.py). From gate 3B on the Dashboard serves
+     the log, and its rows are read too: their seq are 1, 2, 3, ... and their states
+     are the ones the run's socket was told.
      A run whose unit was taken down under it (scenarios q and s) is judged by the
      last state its unit recorded, and its files are not counted
   K  after the last scenario: every execution of the run's workflows gets its closing
@@ -108,7 +109,7 @@ STATUS_INITIALIZING, STATUS_CREATED = 0, 6
 D_HOSTS = ("file-service", "texera-lakefs")
 D_PATTERNS = ("file-service", "texera-lakefs", ":9092", ":8000/api/v1")
 #: step 2's checks: what `--evidence` means without a list
-CHECKS = ("A", "B", "C", "D", "E", "F")
+CHECKS = ("A", "B", "C", "D", "F")
 #: step 3's checks: evaluated only when a gate or `--evidence` names them
 STEP3_CHECKS = ("G", "H", "I", "J", "K")
 ALL_CHECKS = CHECKS + STEP3_CHECKS
@@ -127,7 +128,6 @@ CHECK_TITLES = {
     "B": "from start to its terminal status the unit touches only the run-state tables",
     "C": "the execution row is inserted by app=texera-dashboard",
     "D": "the unit reaches neither file-service nor LakeFS",
-    "E": "the execution's plan table carries the `started` tag",
     "F": "every statement from the unit's addresses carries app=texera-computing-unit",
     "G": "no statement at all comes from the unit",
     "H": "Postgres holds no connection of the unit",
@@ -155,8 +155,6 @@ JDBC_URL_ENV = "STORAGE_JDBC_URL"
 DEFAULT_POSTGRES_HOST = "texera-postgres"
 CLEANUP_ENV = "WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS"
 DEFAULT_CLEANUP_S = 30  # the unit's default without the env (application.conf)
-PLAN_NAMESPACE_ENV = "STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE"
-DEFAULT_PLAN_NAMESPACE = "execution-plan"
 CLEANUP_WAIT_S = 15.0
 #: the unit counts as settled after this long without a statement of its own
 QUIET_S = 1.0
@@ -569,7 +567,6 @@ class RunRecord:
     wid: int | None = None
     cuid: int | None = None
     eid: int | None = None
-    plan_uri: str | None = None
     create_mark: str | None = None
     start_mark: str | None = None
     unit_log_cursor: int | None = None
@@ -618,7 +615,7 @@ class RunRecord:
             return False
 
     def to_json(self) -> dict:
-        return {"wid": self.wid, "cuid": self.cuid, "eid": self.eid, "plan_uri": self.plan_uri,
+        return {"wid": self.wid, "cuid": self.cuid, "eid": self.eid,
                 "create_mark": self.create_mark, "start_mark": self.start_mark,
                 "state_index": self.state_index, "started": self.has_started()}
 
@@ -680,7 +677,6 @@ class Evidence:
         self.unit_hosts: set[str] = set()
         self.isolated = False
         self.unit_env: dict[str, str] = {}
-        self.plan_namespace = DEFAULT_PLAN_NAMESPACE
         self._seq = 0
         self.scenario: str | None = None
         self.runs: list[RunRecord] = []
@@ -760,7 +756,6 @@ class Evidence:
         nets, self.unit_env = self._inspect_unit()
         self.unit_hosts = self._addresses(nets)
         self.isolated = set(nets) == {"sce-unit-net"}
-        self.plan_namespace = self.unit_env.get(PLAN_NAMESPACE_ENV) or DEFAULT_PLAN_NAMESPACE
         self.lake = Lake(self.catalog, self.default_warehouse, {**self.env, **self.unit_env})
         cleanup = self.unit_env.get(CLEANUP_ENV)
         self.info = {
@@ -771,7 +766,6 @@ class Evidence:
             "unit_hosts": sorted(self.unit_hosts),
             "unit_isolated": self.isolated,
             "unit_cleanup_seconds": cleanup,
-            "plan_namespace": self.plan_namespace,
             "catalog_uri": self.catalog_uri,
             "probe_mark": {"app": st.app, "db": st.db, "host": st.host},
             "required_checks": self.required,
@@ -971,7 +965,6 @@ class Evidence:
             run.wid = info.get("wid", run.wid)
             run.cuid = info.get("cuid", run.cuid)
             run.eid = info.get("eid", run.eid)
-            run.plan_uri = info.get("plan_uri", run.plan_uri)
             run.handle = info.get("handle", run.handle)
             if run.handle is not None:
                 try:
@@ -994,7 +987,6 @@ class Evidence:
             for run in reversed(self.runs):
                 if run.create_mark and run.eid is None:
                     run.eid = info.get("eid")
-                    run.plan_uri = info.get("plan_uri")
                     run.wid = info.get("wid", run.wid)
                     return run
         return None
@@ -1080,8 +1072,9 @@ class Evidence:
             time.sleep(min(RECORD_POLL_S, self.record_settle_s / 10))
 
     def _record_problems(self, run: RunRecord) -> tuple[list[str], dict]:
-        """What is wrong with the record of a run that ended, and what was read."""
-        warehouse = self.warehouse_of(run)
+        """What is wrong with the record of a run that ended, and what was read. Every run the
+        driver starts writes into the warehouse its runs use."""
+        warehouse = self.warehouse_name or self.default_warehouse
         tables = {kind: self.lake.table(warehouse, run.wid, run.eid, kind)
                   for kind in ("log", "statistics", "console")}
         facts: dict[str, Any] = {"tables": {kind: t.describe() for kind, t in tables.items()}}
@@ -1294,7 +1287,6 @@ class Evidence:
                                        {"inserts": [s.to_json(300) for s in inserts]})
 
         results["D"] = self._check_d(started)
-        results["E"] = self._check_e(started)
         if self._watches("G"):
             results["G"] = self._check_g(begin, end)
         if self._watches("H"):
@@ -1448,41 +1440,6 @@ class Evidence:
             detail += "; via the gateway: " + " | ".join(via_gateway[:5])
         return CheckResult("D", ok, detail, {"resolved": resolved, "log_lines": [ln[:500] for ln in named[:20]],
                                              "via_gateway": via_gateway[:20], "gateway_lines": len(access)})
-
-    def warehouse_of(self, run: RunRecord) -> str:
-        if run.plan_uri:
-            m = re.search(r"/wh/([^/]+)/", run.plan_uri)
-            return m.group(1) if m else self.default_warehouse
-        return self.warehouse_name or self.default_warehouse
-
-    def plan_table_refs(self, warehouse: str, wid: int, eid: int) -> tuple[dict | None, str]:
-        base, why = self.catalog.base(warehouse)
-        if base is None:
-            return None, why
-        table = f"wid_{wid}_eid_{eid}_plan"
-        code, body = self.catalog.get(f"{base}/namespaces/{self.plan_namespace}/tables/{table}")
-        if code == 200 and isinstance(body, dict):
-            return (body.get("metadata") or {}).get("refs") or {}, f"{warehouse}.{self.plan_namespace}.{table}"
-        code_ns, ns = self.catalog.get(f"{base}/namespaces")
-        names = [".".join(n) for n in (ns or {}).get("namespaces", [])] if isinstance(ns, dict) else ns
-        return None, (f"{warehouse}.{self.plan_namespace}.{table}: HTTP {code} "
-                      f"{(body or {}).get('error', {}).get('message', '') if isinstance(body, dict) else body}; "
-                      f"namespaces in {warehouse}: {names}")
-
-    def _check_e(self, started: list[RunRecord]) -> CheckResult:
-        if not started:
-            return CheckResult("E", True, "no run of this scenario was started on the unit", {"vacuous": True})
-        found, missing = [], []
-        for run in started:
-            refs, where = self.plan_table_refs(self.warehouse_of(run), run.wid, run.eid)
-            if refs is not None and "started" in refs:
-                found.append(f"{where} started@{refs['started'].get('snapshot-id')}")
-            elif refs is not None:
-                missing.append(f"{where} has refs {sorted(refs)} but no `started`")
-            else:
-                missing.append(where)
-        return CheckResult("E", not missing, "; ".join(found + missing)[:1500],
-                           {"found": found, "missing": missing})
 
     # ---------------------------------------------------------------- the end
 
@@ -1649,7 +1606,7 @@ def evaluate(results: dict[str, CheckResult], required: Sequence[str],
 
 
 def parse_checks(spec: str | None) -> list[str]:
-    """The checks a spec names; `all` (or nothing) is step 2's six."""
+    """The checks a spec names; `all` (or nothing) is step 2's (CHECKS)."""
     if spec is None:
         return []
     items = [s.strip().upper() for s in spec.replace(" ", ",").split(",") if s.strip()]

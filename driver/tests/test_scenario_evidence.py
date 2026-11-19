@@ -2,14 +2,14 @@
 (begin_scenario, run_scenario, _apply_evidence). The fake Texera reports the
 Postgres statements the design's services would run and the requests a gateway
 would log; a fake `docker` serves them as the Postgres, unit and nginx logs, and
-answers the catalog (Check E) and the final check (the rows left at status 0 or 6,
-or from gate 3B on the closing records of Check K) from the fake's executions.
+answers the final check (the rows left at status 0 or 6, or from gate 3B on the
+closing records of Check K) from the fake's executions.
 
 The review's case: l8 opens a second socket on a completed run, and the unit
 replays that run (state Completed, its console) to it about 0.1 s after the
 handshake, before the refused start. With the old open_socket (it returned at the
 first state) and the old has_started (any state but Uninitialized), Check A failed
-on every correct unit ("no unit status UPDATE to 1/4/5"). Here l8 passes all six
+on every correct unit ("no unit status UPDATE to 1/4/5"). Here l8 passes all five
 checks and the silence check of its refused start.
 
     .venv/bin/python -m unittest discover -s driver/tests -v
@@ -17,7 +17,6 @@ checks and the silence check of its refused start.
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
@@ -35,7 +34,7 @@ from test_scenarios import ScenarioCase  # noqa: E402
 
 
 class StackDocker(FakeDocker):
-    """FakeDocker fed by the fake Texera: its statements, its requests, its plans."""
+    """FakeDocker fed by the fake Texera: its statements, its requests and its rows."""
 
     def __init__(self, fake):
         super().__init__(isolated=True, cleanup="1")
@@ -51,14 +50,6 @@ class StackDocker(FakeDocker):
         self.gateway_line(HOST_GATEWAY, method, path, status)
 
     def _call(self, args):
-        if args[0] == "exec" and "curl" in args and "/tables/" in args[-1]:
-            m = re.search(r"/tables/wid_(\d+)_eid_(\d+)_plan$", args[-1])
-            e = self.fake.executions.get(int(m.group(2))) if m else None
-            if e and e.get("plan_uri"):
-                refs = {"main": {"snapshot-id": 1, "type": "branch"}}
-                if e.get("started"):
-                    refs["started"] = {"snapshot-id": 1, "type": "tag"}
-                return subprocess.CompletedProcess(args, 0, json.dumps({"metadata": {"refs": refs}}) + "\n200", "")
         if args[0] == "exec" and "psql" in args and "e.status IN (0, 6)" in args[-1]:
             wids = {int(w) for w in re.search(r"v\.wid IN \(([^)]*)\)", args[-1]).group(1).split(",")}
             rows = [f"{eid}|{x['wid']}|{x['status']}" for eid, x in sorted(self.fake.executions.items())
@@ -95,6 +86,7 @@ class EvidenceCase(ScenarioCase):
         self.ev = ev.Evidence(run_id="t", runner=self.docker, log=self.messages.append,
                               cleanup_wait_s=8.0, quiet_s=0.4, **self.evidence_kwargs())
         self.ev.preflight()
+        self.ev.warehouse_name = self.ctx.warehouse_name  # as e2e.py sets it
         self.ctx.evidence = self.ev
         self.ctx.transport.phase_hook = self.ev.on_phase
 
@@ -116,7 +108,7 @@ class EvidenceCase(ScenarioCase):
 class ScenarioEvidence(EvidenceCase):
     def test_l8_second_start_on_a_replayed_run(self):
         rec = self.run_ev("l8")
-        self.assertEqual(set("ABCDEF"), self.gated(rec))
+        self.assertEqual(set("ABCDF"), self.gated(rec))
         self.assertTrue(any(c.name.startswith("the unit ran no statement from the refused start") and c.ok
                             for c in rec.checks))
         runs = rec.evidence["runs"]
@@ -142,14 +134,14 @@ class ScenarioEvidence(EvidenceCase):
                    and (s.verb == "delete" or "runtime_stats_uri" in s.norm)]
         self.assertEqual(3, len(cleanup))
         self.assertTrue(all(s.seq < begin.seq for s in cleanup))
-        for key in ("l6", "l9", "l10"):
+        for key in ("l6", "l10"):
             rec = self.run_ev(key)
             self.assertTrue(any(c.name.startswith("the unit ran no statement from the refused start")
                                 for c in rec.checks), key)
         final = self.ev.final_check(self.ctx.created_wids)
         self.assertTrue(final["ok"], final)
         # the refused starts' rows, and the one l6 created for its plan: Created, and allowed
-        self.assertEqual([6] * 5, [row["status"] for row in final["left"]])
+        self.assertEqual([6] * 4, [row["status"] for row in final["left"]])
         self.assertTrue(all(row["allowed"] for row in final["left"]))
 
     def test_a_refused_starts_row_that_reads_initializing_fails_the_scenario_and_the_final_check(self):
@@ -168,14 +160,14 @@ class ScenarioEvidence(EvidenceCase):
         self.assertTrue(rec.evidence["unit_silent_after_refused_start"][0]["ok"])
 
     def test_a_unit_that_reads_while_refusing_fails_the_silence_check(self):
-        real = self.fake.start_checks
+        real = self.fake.start_refusal
 
-        def reading(user, eid, plan_uri, wid, cuid):
+        def reading(user, eid, text, socket_wid, cuid):
             # a refusal path that reads Postgres without naming the eid (the review's gap)
             self.fake.sql("unit", "select user_warehouse.whid from user_warehouse where user_warehouse.uid = $1",
                           f"$1 = '{user['uid']}'")
-            return real(user, eid, plan_uri, wid, cuid)
-        self.fake.start_checks = reading
+            return real(user, eid, text, socket_wid, cuid)
+        self.fake.start_refusal = reading
         rec = self.run_ev("l5", expect="FAIL")
         failed = [c for c in rec.checks if not c.ok]
         self.assertEqual(1, len(failed), [c.name for c in failed])

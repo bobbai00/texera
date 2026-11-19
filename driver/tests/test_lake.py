@@ -100,7 +100,6 @@ class CatalogTest(unittest.TestCase):
         c = self.catalog({"/v1/abc/namespaces/my-logs/tables/wid_1_eid_2_executionlog": (200, LOADED)})
         own = lake.Lake(c, env={"STORAGE_ICEBERG_TABLE_EXECUTION_LOG_NAMESPACE": "my-logs"})
         self.assertTrue(own.table("user-1-7", 1, 2, "log").exists)
-        self.assertEqual("execution-plan", own.namespaces["plan"])
         self.assertEqual("operator-port-result", own.namespaces["result"])
 
 

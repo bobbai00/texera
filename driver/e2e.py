@@ -5,12 +5,12 @@ Setup (REST, through the gateway): log in, upload the CSV dataset (create,
 multipart upload, version), get a per-user warehouse when the deployment
 requires one, and get a local computing unit pointing at the unit's in-network
 URI. Scenarios that need them also get a second user (sce-e2e-other, with its own
-local unit and warehouse) and a second local unit of the main user. Then each
-selected scenario creates its own workflow, runs it through the transport
-(transport.py), waits for the outcome, reads results and asserts.
+local unit and warehouse). Then each selected scenario creates its own workflow,
+runs it through the transport (transport.py), waits for the outcome, reads results
+and asserts.
 
 With --evidence the driver also reads the stack's Postgres statement log and the
-unit's network around every scenario and evaluates the step-2 Checks A-F
+unit's network around every scenario and evaluates step 2's Checks A, B, C, D and F
 (evidence.py); --negative-control expects A, D and F to fail (the old unit). A
 step-3 gate (--gate 3A, 3B, 3C) adds the scenarios and the checks of the record a
 run leaves in the lake, of how the Dashboard service closes executions, and of a
@@ -45,8 +45,8 @@ from evidence import (ALL_CHECKS, Evidence, EvidenceUnavailable, docker_runner, 
                       parse_checks, read_env_file)
 from lake import DEFAULT_CATALOG_URI, DEFAULT_WAREHOUSE, Catalog, Lake, docker_fetch  # noqa: E402
 from record_timing import RecordTiming  # noqa: E402
-from scenarios import (GROUPS, NEEDS_OTHER_USER, NEEDS_UNIT2, SCENARIOS, STEP3, Check, Ctx,  # noqa: E402
-                       OtherUser, resolve, run_scenario, stayed_running)
+from scenarios import (GROUPS, NEEDS_OTHER_USER, SCENARIOS, STEP3, Check, Ctx, OtherUser,  # noqa: E402
+                       resolve, run_scenario, stayed_running)
 from stack_control import SingleNodeControl, StackControl, pg_activity  # noqa: E402
 from texera_api import TexeraApi  # noqa: E402
 from transport import TRANSPORTS, make_transport  # noqa: E402
@@ -67,8 +67,7 @@ OTHER_PASSWORD = "sce-e2e-other-password"
 # evidence checks that gate. The stack options each gate expects are in the README.
 STEP2_LAST = "a,b,c,d,e,u,x,z,j,k,l,m,o,f,f2,g,h,i"
 GATES = {
-    "A": {"transport": "ws", "scenarios": "a,b,c,d,e,u,g0", "evidence": "E", "legacy_env": True},
-    "B": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,g0", "evidence": "C,E,F",
+    "B": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,g0", "evidence": "C,F",
           "legacy_env": True},
     "C": {"transport": "create-ws", "scenarios": "a,b,c,d,e,u,j,k,l,m,o,f,f2,g0", "evidence": "all",
           "legacy_env": True},
@@ -77,15 +76,15 @@ GATES = {
     # stack's; `other_modes` is what Kubernetes and local-dev run (H6), where the evidence
     # of the statement log does not exist.
     "3A": {"transport": "create-ws", "scenarios": STEP2_LAST + ",p", "other_modes": "a,b,c,d,e,u,p",
-           "evidence": "A,B,C,D,E,F,I", "legacy_env": False, "level": "A"},
+           "evidence": "A,B,C,D,F,I", "legacy_env": False, "level": "A"},
     "3B": {"transport": "create-ws", "scenarios": STEP2_LAST + ",p,q,r,s,t,w",
-           "other_modes": "a,b,c,d,e,u,p,q,s,w", "evidence": "A,B,C,D,E,F,I,K", "legacy_env": False,
+           "other_modes": "a,b,c,d,e,u,p,q,s,w", "evidence": "A,B,C,D,F,I,K", "legacy_env": False,
            "level": "B"},
     # A and B are retired here (the unit writes no status any more; G is stronger). J gates
     # only on a stack started with --unit-no-postgres, where G and H hold trivially: the
     # gate is run on a stack with the option and on one without.
     "3C": {"transport": "create-ws", "scenarios": STEP2_LAST + ",p,q,r,s,t,w,v",
-           "other_modes": "a,b,c,d,e,u,p,q,s,v,w", "evidence": "C,D,E,F,G,H,I,J,K", "legacy_env": False,
+           "other_modes": "a,b,c,d,e,u,p,q,s,v,w", "evidence": "C,D,F,G,H,I,J,K", "legacy_env": False,
            "level": "C"},
 }
 #: the gates that also run in Kubernetes and local-dev mode
@@ -115,13 +114,13 @@ def main() -> int:
                     help="how runs are started/watched (default $SCE_TRANSPORT or ws; "
                          "create-ws from step 2's PR B on)")
     ap.add_argument("--gate", choices=list(GATES),
-                    help="a harness gate of step 2 (A-D) or step 3 (3A-3C): sets the transport, scenarios "
+                    help="a harness gate of step 2 (B-D) or step 3 (3A-3C): sets the transport, scenarios "
                          "and gating evidence checks (explicit flags win): " + "; ".join(
                              f"{g}: {v['transport']} {v['scenarios']} checks {v['evidence']}"
                              for g, v in GATES.items()))
     ap.add_argument("--evidence", nargs="?", const="all", default=None, metavar="CHECKS",
-                    help="evaluate Checks A-F from the stack's Postgres statement log and the "
-                         "unit's network; the listed checks gate (default all six), the others are "
+                    help="evaluate Checks A, B, C, D and F from the stack's Postgres statement log and "
+                         "the unit's network; the listed checks gate (default all five), the others are "
                          "reported. A step-3 check (G-K) is evaluated only when listed. Needs a stack "
                          "started with --pg-statement-log")
     ap.add_argument("--negative-control", nargs="?", const="2", default=None, choices=["2", "3"],
@@ -268,11 +267,6 @@ def main() -> int:
                                              "cuid": other.cuid, "whid": o_whid,
                                              "warehouse": other.warehouse_name}
             log(f"second user {OTHER_USER} (uid {other_api.uid}): unit {other.cuid}, warehouse {o_whid}")
-        unit2 = None
-        if set(keys) & NEEDS_UNIT2:
-            unit2 = int(api.ensure_local_unit(f"{a.unit_name}-2", a.unit_uri)["cuid"])
-            report["setup"]["computing_unit_2"] = unit2
-            log(f"second computing unit {unit2} -> {a.unit_uri}")
 
         transport = make_transport(a.transport, base=a.base, token_provider=lambda: api.token,
                                    uid_provider=lambda: api.uid, log=lambda m: log(f"    {m}"),
@@ -300,7 +294,7 @@ def main() -> int:
                   evidence=evidence, dataset=ds, warehouse_name=wh_name,
                   unit_container=containers.get("workflow-runtime-coordinator-service",
                                                 "sce-workflow-runtime-coordinator-service"),
-                  with_replay_log=with_replay_log, other=other, unit2_cuid=unit2, unit_uri=a.unit_uri,
+                  with_replay_log=with_replay_log, other=other, unit_uri=a.unit_uri,
                   unit_exec_prefix=(k8s_unit.exec_prefix(cuid) if k8s_unit.wanted(a)
                                     else localdev_unit.exec_prefix() if localdev_unit.wanted(a) else None),
                   timing=timing, lake=_lake(a, containers, stack_env), level=level, stack=stack,

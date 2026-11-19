@@ -86,7 +86,7 @@ class DriverMainTest(unittest.TestCase):
         rc, report = self.run_main("--gate", "3C", "--scenario", "a,v", step="3C",
                                    stack_options={"unit_no_postgres": True})
         self.assertEqual((0, {"a": "PASS", "v": "PASS"}), (rc, self.outcomes(report)), report["summary"])
-        self.assertEqual(list("CDEFGHIJK"), report["evidence"]["required"])
+        self.assertEqual(list("CDFGHIJK"), report["evidence"]["required"])
         self.assertEqual(("3C", "create-ws"), (report["gate"], report["transport"]["name"]))
         self.assertTrue(report["setup"]["record_timing"]["fast"])
         finals = report["final_checks"]
@@ -94,17 +94,17 @@ class DriverMainTest(unittest.TestCase):
         self.assertTrue(finals[0]["name"].startswith("Check K") and finals[1]["name"].startswith("Check G"))
         self.assertEqual(finals[0], report["final_check"])
         gated = {c["name"].split(":")[0] for s in report["scenarios"] for c in s["checks"] if "evidence " in c["name"]}
-        self.assertEqual({f"evidence {c}" for c in "CDEFGHIJ"}, gated)
+        self.assertEqual({f"evidence {c}" for c in "CDFGHIJ"}, gated)
 
     def test_gate_3c_on_a_stack_with_postgres_beside_the_unit_leaves_check_j_out(self):
         rc, report = self.run_main("--gate", "3C", "--scenario", "a", step="3C")
-        self.assertEqual((0, list("CDEFGHIK")), (rc, report["evidence"]["required"]))
+        self.assertEqual((0, list("CDFGHIK")), (rc, report["evidence"]["required"]))
         self.assertNotIn("J", report["scenarios"][0]["evidence"]["checks"])
 
     def test_gate_3b_ends_with_check_k_and_closes_what_a_refused_start_left(self):
         rc, report = self.run_main("--gate", "3B", "--scenario", "a,l5", step="3B")
         self.assertEqual((0, {"a": "PASS", "l5": "PASS"}), (rc, self.outcomes(report)), report["summary"])
-        self.assertEqual(list("ABCDEF") + ["I", "K"], report["evidence"]["required"])
+        self.assertEqual(list("ABCDF") + ["I", "K"], report["evidence"]["required"])
         final = report["final_check"]
         self.assertTrue(final["name"].startswith("Check K"))
         self.assertNotIn("final_checks", report)  # one final check, where it always was
@@ -140,7 +140,7 @@ class DriverMainTest(unittest.TestCase):
         rc, report = self.run_main("--gate", "D", "--scenario", "a,k,l5,l8", step="2")
         self.assertEqual((0, dict.fromkeys(("a", "k", "l5", "l8"), "PASS")), (rc, self.outcomes(report)),
                          report["summary"])
-        self.assertEqual(list("ABCDEF"), report["evidence"]["required"])
+        self.assertEqual(list("ABCDF"), report["evidence"]["required"])
         final = report["final_check"]
         self.assertTrue(final["ok"] and final["name"].startswith("no row of this run's workflows is left at status 0"),
                         final)
@@ -150,12 +150,12 @@ class DriverMainTest(unittest.TestCase):
     def test_a_run_without_a_step_3_gate_asks_step_2s_product_for_nothing_of_step_3(self):
         """j on step 2's product, as before step 3: it waits for no closing record, and the
         final check is step 2's, on the rows that never came to run."""
-        rc, report = self.run_main("--transport", "create-ws", "--scenario", "j", "--evidence", "C,E,F", step="2")
+        rc, report = self.run_main("--transport", "create-ws", "--scenario", "j", "--evidence", "C,F", step="2")
         self.assertEqual((0, {"j": "PASS"}), (rc, self.outcomes(report)), report["summary"])
         self.assertFalse([r for r in self.fake.rest_log if r["path"].endswith(("/state", "/log"))])
         self.assertTrue(report["final_check"]["name"].startswith("no row of this run's workflows"))
         checks = report["scenarios"][0]["evidence"]["checks"]
-        self.assertEqual(set("ABCDEF"), set(checks))  # A and B still looked at, and reported
+        self.assertEqual(set("ABCDF"), set(checks))  # A and B still looked at, and reported
 
 
 if __name__ == "__main__":

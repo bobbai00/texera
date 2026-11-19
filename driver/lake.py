@@ -1,16 +1,16 @@
 """An execution's tables in the lake, as the catalog shows them.
 
 Step 3 (design sections 3.1 and 3.2) keeps an execution's record in Iceberg tables:
-its plan (step 2), its log, its statistics, its console output, and a result and a
-state table per stored output port. This module reads what Lakekeeper's REST API (the
-Iceberg REST catalog) says about them: whether a table exists, its properties (the
-log's label), its refs (the plan's `started` tag), how many snapshots it holds, and
-the totals Iceberg keeps in the current snapshot's summary (data files, rows, bytes).
-It never opens a data file, so it needs no access to the object store.
+its log, its statistics, its console output, and a result and a state table per
+stored output port. This module reads what Lakekeeper's REST API (the Iceberg REST
+catalog) says about them: whether a table exists, its properties (the log's label),
+how many snapshots it holds, and the totals Iceberg keeps in the current snapshot's
+summary (data files, rows, bytes). It never opens a data file, so it needs no access
+to the object store.
 
 Lakekeeper is asked from wherever the stack can reach it (a `Fetch`): the dashboard
-container on the single-node stack, as Check E always did; the webserver's pod in
-Kubernetes; this host in local-dev.
+container on the single-node stack; the webserver's pod in Kubernetes; this host in
+local-dev.
 
 The names below are the design's. The product may still move one; each is a constant
 here, read nowhere else.
@@ -32,7 +32,6 @@ DEFAULT_WAREHOUSE = "texera"
 
 #: design 3.1: an execution's own tables, kind -> (namespace setting, its default, table suffix)
 EXECUTION_TABLES = {
-    "plan": ("STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE", "execution-plan", "plan"),
     "log": ("STORAGE_ICEBERG_TABLE_EXECUTION_LOG_NAMESPACE", "execution-log", "executionlog"),
     "statistics": ("STORAGE_ICEBERG_TABLE_RUNTIME_STATISTICS_NAMESPACE", "workflow-runtime-statistics",
                    "runtimestatistics"),
@@ -146,7 +145,6 @@ class TableState:
     exists: bool
     error: str = ""
     properties: dict[str, str] = field(default_factory=dict)
-    refs: dict[str, dict] = field(default_factory=dict)
     snapshots: int = 0
     #: totals of the current snapshot; None when its summary does not carry one
     data_files: int | None = 0
@@ -176,7 +174,7 @@ def _table_state(where: str, code: int, body: Any) -> TableState:
         return TableState(where, exists=False, error=f"HTTP {code} {str(message)[:200]}")
     meta = body.get("metadata") or {}
     state = TableState(where, exists=True, properties=dict(meta.get("properties") or {}),
-                       refs=dict(meta.get("refs") or {}), snapshots=len(meta.get("snapshots") or []))
+                       snapshots=len(meta.get("snapshots") or []))
     current = meta.get("current-snapshot-id")
     if current in (None, -1):  # nothing was ever committed: no file, no row
         return state
@@ -228,7 +226,7 @@ class Lake:
         return f"wid_{wid}_eid_{eid}_{EXECUTION_TABLES[kind][2]}"
 
     def table(self, warehouse: str | None, wid: int, eid: int, kind: str) -> TableState:
-        """One of an execution's own tables: `plan`, `log`, `statistics` or `console`."""
+        """One of an execution's own tables: `log`, `statistics` or `console`."""
         return self.catalog.load_table(warehouse or self.default_warehouse, self.namespaces[kind],
                                        self.table_name(wid, eid, kind))
 

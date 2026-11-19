@@ -6,20 +6,26 @@ from the record and from the lake.
 It follows the design's steps, with their limits:
 
   * a tick looks at every open execution: an ending in the log's label closes it; a
-    terminated unit loses it at once; one that was never started is closed once it is
-    older than never-started-after, and the job takes its start first; otherwise the job
-    counts its own ticks during which the beat did not move, and loses the execution
-    when the count reaches max(lost-after, 4 beats) / interval, rounded up (D26);
+    terminated unit loses it at once; one that has no log is closed "never started" once
+    it is older than never-started-after, measuring nothing and keeping its results;
+    otherwise the job counts its own ticks during which the beat did not move, and loses
+    the execution when the count reaches max(lost-after, 4 beats) / interval, rounded up
+    (D26);
+  * a verdict (a close that is not the log's) is a guess: for revise-verdict-for after it,
+    the same tick gives the execution the ending its log's label shows by then, unless its
+    results have expired. A unit that was cut off, or that starts an execution after it
+    was closed "never started", is not wrong for being late;
   * so a lost unit's execution reads Running until then (4.6), and one whose run just
     ended reads its ending from the label while its row is still open;
   * an execution that is lost ended at its unit's last beat, not when the job noticed;
   * an open execution whose label names no state reads Created: no unit has started it;
   * the job's expiry, at most once per check interval: a closed execution's results go
-    when they are older than the TTL, or when a later execution of its workflow on its
-    unit has started (its label names a state). A create alone expires nothing;
+    when they are older than the TTL (a verdict's not before revise-verdict-for is over),
+    or when a later execution of its workflow on its unit has started (its label names a
+    state). A create alone expires nothing;
   * an expiry drops the execution's result and state tables, found by their names, and
-    the console table, keeps the plan, the log and the statistics (D31), and counts
-    what is left into `stored_bytes`.
+    the console table, keeps the log and the statistics (D31), and counts what is left
+    into `stored_bytes`.
 
 The last three follow docs/step3-notes/changes-since-rev2.md (sections 2 to 4), where it
 differs from the design's revision 2: the log names no stored port, a created execution
@@ -47,7 +53,7 @@ REASON_COMPILE_ERROR = "compile error: "
 REASON_CHARS = 500
 STATUS_NAMES = {0: "READY", 1: "RUNNING", 2: "PAUSED", 3: "COMPLETED", 4: "FAILED", 5: "KILLED", 6: "CREATED"}
 #: an expiry keeps these tables of an execution and drops the rest (D31)
-KEPT = ("plan", "log", "statistics")
+KEPT = ("log", "statistics")
 
 FAULTS = {
     "lost-never-closed": "the job never calls a unit lost: its execution stays Running for ever (as before step 3)",
@@ -55,12 +61,12 @@ FAULTS = {
     "ended-at-now": "a lost execution is closed as of now, not as of its unit's last beat",
     "never-started-never-closed": "an execution nobody starts stays open for ever",
     "never-started-too-early": "an execution nobody starts is closed at the next tick, whatever its age",
-    "start-after-never-started": "the job closes an unstarted execution without taking its start",
+    "verdict-not-revised": "a verdict stays, whatever ending the execution's log shows later",
     "row-left-open": "nothing closes an execution whose log shows an ending: its row stays open",
     "no-reason": "a closing record says how an execution ended, never why",
     "completion-null-while-open": "the history has no completionTime for an open execution",
     "expiry-keeps-results": "an expiry marks the execution expired and drops nothing",
-    "expiry-drops-record": "an expiry drops the plan, the log and the statistics too",
+    "expiry-drops-record": "an expiry drops the log and the statistics too",
     "stored-bytes-unchanged": "an expiry leaves stored_bytes as it was",
     "no-expiry-by-age": "results never expire by age, only when a later run replaces them",
     "expiry-too-early": "the expiry takes every closed execution's results, whatever their age",
@@ -89,7 +95,7 @@ class Closing:
     def new_row() -> dict:
         """The closing record of a row that was just inserted (design 3.4)."""
         return {"starting_ms": now_ms(), "outcome": None, "outcome_reason": None, "ended_at": None,
-                "stored_bytes": None, "results_expired_at": None}
+                "from_log": False, "stored_bytes": None, "results_expired_at": None}
 
     def label(self, eid: int) -> dict | None:
         """The label of the execution's log; None when it has no log table."""
@@ -126,7 +132,7 @@ class Closing:
         return [(NAMESPACES[kind], name) for kind in ("result", "state")
                 for name in self.fake.lake.names(warehouse, NAMESPACES[kind]) if name.startswith(prefix)]
 
-    def _size(self, eid: int, kinds=("plan", "log", "statistics", "console"), ports: bool = True) -> int:
+    def _size(self, eid: int, kinds=("log", "statistics", "console"), ports: bool = True) -> int:
         """The bytes of the execution's tables, as the catalog's summaries count them; a
         table that is missing counts 0."""
         e = self.fake.executions[eid]
@@ -137,19 +143,23 @@ class Closing:
         with self.fake.lake.lock:
             return sum(t.size_bytes for t in tables if t is not None)
 
-    def close(self, eid: int, outcome: int, reason: str | None, ended_at_ms: int,
-              never_started: bool = False) -> bool:
+    def close(self, eid: int, outcome: int, reason: str | None, ended_at_ms: int, *, from_log: bool = False,
+              measured: bool = True, unstartable: bool = False) -> bool:
         """The conditional UPDATE: true when it closed the row. `ended_at` is kept between
-        the row's creation and now."""
+        the row's creation and now. `measured`: what the execution holds in the lake is
+        counted. `unstartable`: its create failed and no client got its plan, so it holds
+        nothing and its results are expired at once."""
         e = self.fake.executions[eid]
         if e["ended_at"] is not None:
             return False
         e["outcome"] = outcome
         e["outcome_reason"] = None if "no-reason" in self.faults else (reason or None)
         e["ended_at"] = min(max(ended_at_ms, e["starting_ms"]), now_ms())
-        e["stored_bytes"] = self._size(eid)
-        if never_started:  # no unit ever started it: it has nothing to expire
-            e["results_expired_at"] = now_ms()
+        e["from_log"] = from_log
+        if unstartable:
+            e["results_expired_at"], e["stored_bytes"] = e["ended_at"], 0
+        elif measured:
+            e["stored_bytes"] = self._size(eid)
         self._watch.pop(eid, None)
         why = "NULL" if e["outcome_reason"] is None else "'" + e["outcome_reason"].replace("'", "''") + "'"
         self.fake.sql("dashboard", "update workflow_executions set outcome = $1, outcome_reason = $2, "
@@ -162,7 +172,31 @@ class Closing:
         label = self.label(eid)
         if label is None or label["state"] not in END_STATES or "row-left-open" in self.faults:
             return False
-        return self.close(eid, STATE_CODES[label["state"]], label["reason"], label["state_time_ms"])
+        return self.close(eid, STATE_CODES[label["state"]], label["reason"], label["state_time_ms"], from_log=True)
+
+    def revisable(self, e: dict) -> bool:
+        """Whether the ending the log of a closed execution shows replaces the verdict that
+        closed it: a verdict closed it no longer ago than revise-verdict-for, and its results
+        have not expired."""
+        revise_since = now_ms() - self.fake.timing.revise_verdict_for_s * 1000
+        return (not e["from_log"] and e["ended_at"] >= revise_since and e["results_expired_at"] is None
+                and "verdict-not-revised" not in self.faults)
+
+    def revise_if_ended(self, eid: int) -> None:
+        """The ending the log's label shows, in the verdict's place; measured again, as the run
+        went on writing."""
+        label = self.label(eid)
+        if label is None or label["state"] not in END_STATES:
+            return
+        e = self.fake.executions[eid]
+        e["outcome"] = STATE_CODES[label["state"]]
+        e["outcome_reason"] = None if "no-reason" in self.faults else (label["reason"] or None)
+        e["ended_at"] = min(max(label["state_time_ms"], e["starting_ms"]), now_ms())
+        e["from_log"] = True
+        e["stored_bytes"] = self._size(eid)
+        self.fake.sql("dashboard", "update workflow_executions set outcome = $1, outcome_from_log = true where "
+                                   "(workflow_executions.eid = $2 and workflow_executions.outcome_from_log = false)",
+                      f"$1 = '{e['outcome']}', $2 = '{eid}'")
 
     # ---------------------------------------------------------------- the job
 
@@ -188,13 +222,17 @@ class Closing:
                     next_expiry = time.monotonic() + timing.expiry_check_interval_s
 
     def tick(self) -> None:
-        """One tick: look at every open execution. A lake that cannot be read decides
-        nothing."""
+        """One tick: look at every open execution, and at every verdict its log may still
+        replace. A lake that cannot be read decides nothing."""
         if self.fake.lake.unreadable:
             return
         for eid, e in sorted(self.fake.executions.items()):
-            if e.get("plan_uri") and e["ended_at"] is None:
+            if not e["by_dashboard"]:
+                continue
+            if e["ended_at"] is None:
                 self._look_at(eid, e)
+            elif self.revisable(e):
+                self.revise_if_ended(eid)
 
     def _look_at(self, eid: int, e: dict) -> None:
         timing = self.fake.timing
@@ -206,7 +244,7 @@ class Closing:
             self._lose(eid, REASON_UNIT_TERMINATED if unit.get("terminationReason") == "USER_REQUESTED"
                        else REASON_UNIT_LOST, label)
             return
-        if label is None and not e["started"]:
+        if label is None:  # no log: no unit has started it
             self._never_started(eid, e)
             return
         beat = label["beat_ms"] if label else None
@@ -223,14 +261,12 @@ class Closing:
         old_enough = age_s >= self.fake.timing.never_started_after_s or "never-started-too-early" in self.faults
         if not old_enough or "never-started-never-closed" in self.faults:
             return
-        if "start-after-never-started" not in self.faults:
-            self.fake.claim_start(eid)
-        self.close(eid, STATE_CODES["FAILED"], REASON_NEVER_STARTED, now_ms(), never_started=True)
+        # Nothing ran, so nothing is measured; its results stay, as a unit may start it yet.
+        self.close(eid, STATE_CODES["FAILED"], REASON_NEVER_STARTED, now_ms(), measured=False)
 
     def _lose(self, eid: int, reason: str, label: dict | None) -> None:
         """Before an execution is declared lost its rows are read: an ending there wins.
-        Otherwise its start is taken, so nothing starts it later, and it ended when its
-        unit last showed that it was alive."""
+        Otherwise it ended when its unit last showed that it was alive."""
         ending = next((r for r in reversed(self.rows(eid)) if r["kind"] == "state" and r["state"] in END_STATES),
                       None)
         if ending is not None:
@@ -238,10 +274,8 @@ class Closing:
                 return
             detail = json.loads(ending["detail"] or "{}")
             why = detail.get("reason") or ((detail.get("errors") or [{}])[0].get("message"))
-            self.close(eid, STATE_CODES[ending["state"]], why, ending["timeMs"])
+            self.close(eid, STATE_CODES[ending["state"]], why, ending["timeMs"], from_log=True)
             return
-        if not self.fake.executions[eid]["started"]:
-            self.fake.claim_start(eid)
         ended = now_ms() if label is None or "ended-at-now" in self.faults else label["beat_ms"]
         self.close(eid, STATE_CODES["FAILED"], reason, ended)
 
@@ -267,15 +301,18 @@ class Closing:
 
     def expire_pass(self) -> None:
         """The expiry's look at every closed execution that still has its results: they go
-        when they are older than the TTL (and its replay log with them), or when a later
-        run has replaced them. A lake that cannot be read decides nothing."""
+        when they are older than the TTL (and its replay log with them), a verdict's once its
+        log can no longer replace it, or when a later run has replaced them. A lake that
+        cannot be read decides nothing."""
         if self.fake.lake.unreadable:
             return
         ttl_ms = 0 if "expiry-too-early" in self.faults else self.fake.timing.result_ttl_s * 1000
+        revise_since = now_ms() - self.fake.timing.revise_verdict_for_s * 1000
         for eid, e in sorted(self.fake.executions.items()):
-            if not e.get("plan_uri") or e["ended_at"] is None or e["results_expired_at"] is not None:
+            if not e["by_dashboard"] or e["ended_at"] is None or e["results_expired_at"] is not None:
                 continue
-            aged = e["ended_at"] < now_ms() - ttl_ms and "no-expiry-by-age" not in self.faults
+            aged = (e["ended_at"] < now_ms() - ttl_ms and (e["from_log"] or e["ended_at"] < revise_since)
+                    and "no-expiry-by-age" not in self.faults)
             if aged or self.replaced(eid):
                 self.expire(eid, with_replay_log=aged)
 
@@ -383,7 +420,7 @@ class Closing:
         return 200, [{"eid": eid, "workflowId": e["wid"],
                       "workflowName": self.fake.workflows.get(e["wid"], {}).get("name"),
                       "storedBytes": e["stored_bytes"]}
-                     for eid, e in sorted(self.fake.executions.items()) if e["uid"] == uid and e.get("plan_uri")]
+                     for eid, e in sorted(self.fake.executions.items()) if e["uid"] == uid and e["by_dashboard"]]
 
     def admin_list(self, user: dict, page_size: int, page_index: int):
         """The newest execution of each workflow, by end time, newest first (open ones, which

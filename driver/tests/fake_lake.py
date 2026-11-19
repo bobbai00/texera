@@ -68,9 +68,6 @@ class FakeTable:
     def set_properties(self, properties: dict[str, str]) -> None:
         self.properties.update(properties)
 
-    def tag(self, name: str) -> None:
-        self.refs[name] = {"snapshot-id": self.refs["main"]["snapshot-id"], "type": "tag"}
-
     def tidy(self, at_end: bool, merge: bool = True) -> None:
         """Design 4.2. A table nothing was written to has nothing to tidy."""
         if not self.snapshots:
