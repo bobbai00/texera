@@ -1,0 +1,5148 @@
+{
+  "operators": [
+    {
+      "operatorType": "CSVFileScan",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "fileName": {
+            "propertyOrder": 4,
+            "type": "string",
+            "title": "File"
+          },
+          "fileEncoding": {
+            "propertyOrder": 5,
+            "type": "string",
+            "default": "UTF_8",
+            "enum": ["UTF_8", "UTF_16", "US_ASCII"],
+            "description": "decoding charset to use on input",
+            "title": "File Encoding"
+          },
+          "limit": {
+            "propertyOrder": 6,
+            "nullable": true,
+            "type": "integer",
+            "description": "max output count",
+            "title": "Limit"
+          },
+          "offset": {
+            "propertyOrder": 7,
+            "nullable": true,
+            "type": "integer",
+            "description": "starting point of output",
+            "title": "Offset"
+          },
+          "customDelimiter": {
+            "propertyOrder": 8,
+            "nullable": true,
+            "type": "string",
+            "default": ",",
+            "description": "single character separating the fields on each line",
+            "title": "Delimiter",
+            "maxLength": 1
+          },
+          "hasHeader": {
+            "propertyOrder": 9,
+            "type": "boolean",
+            "default": true,
+            "description": "whether the CSV file contains a header line",
+            "title": "Header"
+          }
+        },
+        "required": ["fileName", "fileEncoding", "hasHeader"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "CSVFileScan"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "CSV File Scan",
+        "operatorDescription": "Scan data from a CSV file",
+        "operatorGroupName": "Data Input",
+        "inputPorts": [],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Filter",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "predicates": {
+            "propertyOrder": 6,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/FilterPredicate"
+            },
+            "description": "multiple predicates in OR",
+            "title": "Predicates"
+          }
+        },
+        "required": ["predicates"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Filter"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "FilterPredicate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "attribute": {
+                "propertyOrder": 1,
+                "type": "string",
+                "title": "Attribute",
+                "autofill": "attributeName",
+                "autofillAttributeOnPort": 0
+              },
+              "condition": {
+                "propertyOrder": 2,
+                "type": "string",
+                "enum": ["=", ">", ">=", "<", "<=", "!=", "is null", "is not null"],
+                "title": "Condition"
+              },
+              "value": {
+                "propertyOrder": 3,
+                "nullable": true,
+                "type": "string",
+                "title": "Value",
+                "hideTarget": "condition",
+                "hideType": "regex",
+                "hideExpectedValue": "is null|is not null"
+              }
+            },
+            "required": ["attribute", "condition"]
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Filter",
+        "operatorDescription": "Performs a filter operation using OR between multiple predicates",
+        "operatorGroupName": "Data Cleaning",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": true,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Limit",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "limit": {
+            "propertyOrder": 4,
+            "type": "integer",
+            "description": "the max number of output rows",
+            "title": "Limit"
+          }
+        },
+        "required": ["limit"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Limit"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Limit",
+        "operatorDescription": "Limit the number of output rows",
+        "operatorGroupName": "Data Cleaning",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": true,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Projection",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "isDrop": {
+            "propertyOrder": 4,
+            "type": "boolean",
+            "default": false,
+            "description": "check to drop the selected attributes",
+            "title": "Drop Option"
+          },
+          "attributes": {
+            "propertyOrder": 5,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/AttributeUnit"
+            },
+            "title": "Attributes"
+          }
+        },
+        "required": ["isDrop"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Projection"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "AttributeUnit": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "originalAttribute": {
+                "propertyOrder": 1,
+                "type": "string",
+                "description": "Attribute name in the schema",
+                "title": "Attribute",
+                "autofill": "attributeName",
+                "autofillAttributeOnPort": 0
+              },
+              "alias": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "description": "Renamed attribute name",
+                "title": "Alias"
+              }
+            },
+            "required": ["originalAttribute"]
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Projection",
+        "operatorDescription": "Keeps or drops the column",
+        "operatorGroupName": "Data Cleaning",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Aggregate",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "aggregations": {
+            "propertyOrder": 6,
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2147483647,
+            "items": {
+              "$ref": "#/definitions/AggregationOperation"
+            },
+            "description": "multiple aggregation functions",
+            "title": "Aggregations"
+          },
+          "groupByKeys": {
+            "propertyOrder": 7,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "group by columns",
+            "title": "Group By Keys",
+            "autofill": "attributeNameList",
+            "autofillAttributeOnPort": 0
+          }
+        },
+        "required": ["aggregations"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Aggregate"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "AggregationOperation": {
+            "type": "object",
+            "additionalProperties": false,
+            "attributeTypeRules": {
+              "attribute": {
+                "allOf": [
+                  {
+                    "if": {
+                      "aggFunction": {
+                        "valEnum": ["sum", "average", "min", "max"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["integer", "long", "double", "timestamp"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "aggFunction": {
+                        "valEnum": ["concat"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["string"]
+                    }
+                  }
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "aggFunction": {
+                      "const": "count"
+                    }
+                  }
+                },
+                "then": {},
+                "else": {
+                  "required": ["attribute"],
+                  "properties": {
+                    "attribute": {
+                      "pattern": "\\S"
+                    }
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "aggFunction": {
+                "propertyOrder": 1,
+                "type": "string",
+                "enum": ["sum", "count", "average", "min", "max", "concat"],
+                "description": "sum, count, average, min, max, or concat",
+                "title": "Aggregate Func"
+              },
+              "attribute": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "description": "column to aggregate on",
+                "title": "Attribute",
+                "autofill": "attributeName",
+                "autofillAttributeOnPort": 0
+              },
+              "result attribute": {
+                "propertyOrder": 3,
+                "type": "string",
+                "minLength": 1,
+                "description": "column name of average result",
+                "title": "Result  attribute"
+              }
+            },
+            "required": ["aggFunction", "result attribute"]
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Aggregate",
+        "operatorDescription": "Calculate different types of aggregation values",
+        "operatorGroupName": "Aggregate",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "HashJoin",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "attributeTypeRules": {
+          "buildAttributeName": {
+            "const": {
+              "$data": "probeAttributeName"
+            }
+          }
+        },
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "buildAttributeName": {
+            "propertyOrder": 4,
+            "type": "string",
+            "description": "attribute to be joined on the Left Input",
+            "title": "Left Input Attribute",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 0
+          },
+          "probeAttributeName": {
+            "propertyOrder": 5,
+            "type": "string",
+            "description": "attribute to be joined on the Right Input",
+            "title": "Right Input Attribute",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 1
+          },
+          "joinType": {
+            "propertyOrder": 6,
+            "type": "string",
+            "default": "inner",
+            "enum": ["inner", "left outer", "right outer", "full outer"],
+            "description": "select the join type to execute",
+            "title": "Join Type"
+          }
+        },
+        "required": ["buildAttributeName", "probeAttributeName", "joinType"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "HashJoin"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Hash Join",
+        "operatorDescription": "join two inputs",
+        "operatorGroupName": "Join",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "left",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          },
+          {
+            "id": {
+              "id": 1,
+              "internal": false
+            },
+            "displayName": "right",
+            "disallowMultiLinks": false,
+            "dependencies": [
+              {
+                "id": 0,
+                "internal": false
+              }
+            ]
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Sort",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "attributes": {
+            "propertyOrder": 4,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/SortCriteriaUnit"
+            },
+            "description": "column to perform sorting on",
+            "title": "Attributes"
+          }
+        },
+        "required": ["attributes"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Sort"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "SortCriteriaUnit": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "attribute": {
+                "propertyOrder": 1,
+                "type": "string",
+                "description": "Attribute name to sort by",
+                "title": "Attribute",
+                "autofill": "attributeName",
+                "autofillAttributeOnPort": 0
+              },
+              "sortPreference": {
+                "propertyOrder": 2,
+                "type": "string",
+                "enum": ["ASC", "DESC"],
+                "description": "Sort preference (ASC or DESC)",
+                "title": "Sort Preference"
+              }
+            },
+            "required": ["attribute", "sortPreference"]
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Sort",
+        "operatorDescription": "Sort based on the columns and sorting methods",
+        "operatorGroupName": "Sort",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": true,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "TypeCasting",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "typeCastingUnits": {
+            "propertyOrder": 4,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/TypeCastingUnit"
+            },
+            "description": "Multiple type castings",
+            "title": "TypeCasting Units"
+          }
+        },
+        "required": ["typeCastingUnits"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "TypeCasting"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "TypeCastingUnit": {
+            "type": "object",
+            "additionalProperties": false,
+            "attributeTypeRules": {
+              "attribute": {
+                "allOf": [
+                  {
+                    "if": {
+                      "resultType": {
+                        "valEnum": ["integer"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["string", "long", "double", "boolean"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "resultType": {
+                        "valEnum": ["double"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["string", "integer", "long", "boolean"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "resultType": {
+                        "valEnum": ["boolean"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["string", "integer", "long", "double"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "resultType": {
+                        "valEnum": ["long"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["string", "integer", "double", "boolean", "timestamp"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "resultType": {
+                        "valEnum": ["timestamp"]
+                      }
+                    },
+                    "then": {
+                      "enum": ["string", "long"]
+                    }
+                  }
+                ]
+              }
+            },
+            "properties": {
+              "attribute": {
+                "propertyOrder": 1,
+                "type": "string",
+                "description": "Attribute for type casting",
+                "title": "Attribute",
+                "autofill": "attributeName",
+                "autofillAttributeOnPort": 0
+              },
+              "resultType": {
+                "propertyOrder": 2,
+                "type": "string",
+                "enum": [
+                  "string",
+                  "integer",
+                  "long",
+                  "double",
+                  "boolean",
+                  "timestamp",
+                  "binary",
+                  "large_binary",
+                  "list",
+                  "struct"
+                ],
+                "description": "Result type after type casting",
+                "title": "Cast type"
+              }
+            },
+            "required": ["attribute", "resultType"]
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Type Casting",
+        "operatorDescription": "Cast between types",
+        "operatorGroupName": "Data Cleaning",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "KeywordSearch",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "attribute": {
+            "propertyOrder": 4,
+            "type": "string",
+            "description": "column to search keyword on",
+            "title": "attribute",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 0
+          },
+          "keyword": {
+            "propertyOrder": 5,
+            "type": "string",
+            "description": "keywords",
+            "title": "keywords",
+            "minLength": 1
+          },
+          "isCaseSensitive": {
+            "propertyOrder": 6,
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the keyword is case sensitive or not",
+            "title": "Case Sensitive"
+          }
+        },
+        "required": ["attribute", "keyword", "isCaseSensitive"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "KeywordSearch"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Keyword Search",
+        "operatorDescription": "Search for keyword(s) in a string column",
+        "operatorGroupName": "Search",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": true,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "PythonUDFV2",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "code": {
+            "propertyOrder": 4,
+            "type": "string",
+            "default": "# Choose from the following templates:\n# \n# Define UiParameter inside open() of ProcessTupleOperator, ProcessBatchOperator, or ProcessTableOperator.\n# Example: self.count = self.UiParameter(\"count\", AttributeType.INT).value\n# Add value=Resource.MODEL or Resource.DATASET to pick a version; the value is its mount directory.\n# See the Python UDF operator documentation for supported types and behavior.\n# \n# from pytexera import *\n# \n# class ProcessTupleOperator(UDFOperatorV2):\n#     \n#     @overrides\n#     def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:\n#         yield tuple_\n# \n# class ProcessBatchOperator(UDFBatchOperator):\n#     BATCH_SIZE = 10 # must be a positive integer\n# \n#     @overrides\n#     def process_batch(self, batch: Batch, port: int) -> Iterator[Optional[BatchLike]]:\n#         yield batch\n# \n# class ProcessTableOperator(UDFTableOperator):\n# \n#     @overrides\n#     def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:\n#         yield table\n",
+            "description": "Input your code here",
+            "title": "Python script"
+          },
+          "workers": {
+            "propertyOrder": 5,
+            "type": "integer",
+            "default": 1,
+            "description": "Specify how many parallel workers to launch",
+            "title": "Worker count"
+          },
+          "retainInputColumns": {
+            "propertyOrder": 6,
+            "type": "boolean",
+            "default": true,
+            "description": "Keep the original input columns?",
+            "title": "Retain input columns"
+          },
+          "defaultEnv": {
+            "propertyOrder": 7,
+            "type": "boolean",
+            "default": true,
+            "description": "Use Default Python Environment",
+            "title": "Default Python Environment"
+          },
+          "envName": {
+            "propertyOrder": 8,
+            "nullable": true,
+            "type": "string",
+            "description": "Python Environment you would like this UDF to be executed within",
+            "title": "Virtual Environment"
+          },
+          "outputColumns": {
+            "propertyOrder": 9,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/Attribute"
+            },
+            "description": "Name of the newly added output columns that the UDF will produce, if any",
+            "title": "Extra output column(s)"
+          },
+          "uiParameters": {
+            "propertyOrder": 10,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/UiUDFParameter"
+            },
+            "description": "Parameters inferred from active self.UiParameter(...) calls in the Python script",
+            "title": "Parameters"
+          }
+        },
+        "required": ["code", "workers", "retainInputColumns", "defaultEnv"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "PythonUDFV2"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "Attribute": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "attributeName": {
+                "propertyOrder": 1,
+                "type": "string",
+                "pattern": "^.*\\S+.*$",
+                "minLength": 1,
+                "title": "Attribute Name"
+              },
+              "attributeType": {
+                "propertyOrder": 2,
+                "type": "string",
+                "minLength": 1,
+                "enum": ["string", "integer", "long", "double", "boolean", "timestamp", "binary", "large_binary"],
+                "title": "Attribute Type"
+              }
+            },
+            "required": ["attributeName", "attributeType"]
+          },
+          "UiUDFParameter": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "attribute": {
+                "propertyOrder": 1,
+                "$ref": "#/definitions/Attribute",
+                "title": "Attribute"
+              },
+              "value": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Value"
+              },
+              "inputType": {
+                "propertyOrder": 3,
+                "nullable": true,
+                "type": "string",
+                "title": "Input type"
+              }
+            },
+            "required": ["attribute"]
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Python UDF",
+        "operatorDescription": "User-defined function operator in Python script",
+        "operatorGroupName": "Python",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": true,
+        "dynamicOutputPorts": true,
+        "supportReconfiguration": true,
+        "allowPortCustomization": true
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "BarChart",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "attributeTypeRules": {
+          "value": {
+            "enum": ["integer", "long", "double"]
+          }
+        },
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "fields": {
+            "propertyOrder": 4,
+            "type": "string",
+            "minLength": 1,
+            "description": "Visualize categorical data in a Bar Chart",
+            "title": "Fields",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 0
+          },
+          "categoryColumn": {
+            "propertyOrder": 5,
+            "nullable": true,
+            "type": "string",
+            "default": "No Selection",
+            "description": "Optional - Select a column to Color Code the Categories",
+            "title": "Category Column",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 0
+          },
+          "horizontalOrientation": {
+            "propertyOrder": 6,
+            "type": "boolean",
+            "default": false,
+            "description": "Orientation Style",
+            "title": "Horizontal Orientation"
+          },
+          "pattern": {
+            "propertyOrder": 7,
+            "nullable": true,
+            "type": "string",
+            "description": "Add texture to the chart based on an attribute",
+            "title": "Pattern",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 0
+          },
+          "value": {
+            "propertyOrder": 10,
+            "type": "string",
+            "minLength": 1,
+            "description": "The value associated with each category",
+            "title": "Value Column",
+            "autofill": "attributeName",
+            "autofillAttributeOnPort": 0
+          }
+        },
+        "required": ["fields", "horizontalOrientation", "value"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "BarChart"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Bar Chart",
+        "operatorDescription": "Visualize data in a Bar Chart",
+        "operatorGroupName": "Basic",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": true,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 2,
+              "index": 2,
+              "name": "SINGLE_SNAPSHOT",
+              "singleSnapshot": true,
+              "setSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Split",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          },
+          "k": {
+            "propertyOrder": 4,
+            "type": "integer",
+            "default": 80,
+            "description": "percentage of data going to the upper port",
+            "title": "Split Percentage"
+          },
+          "random": {
+            "propertyOrder": 5,
+            "type": "boolean",
+            "default": true,
+            "description": "Shuffle the data based on a random seed",
+            "title": "Auto-Generate Seed"
+          },
+          "seed": {
+            "propertyOrder": 6,
+            "type": "integer",
+            "default": 1,
+            "description": "An int for reproducible output across multiple runs",
+            "title": "Seed",
+            "hideTarget": "random",
+            "hideType": "equals",
+            "hideExpectedValue": "true"
+          }
+        },
+        "required": ["k", "random", "seed"],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Split"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Split",
+        "operatorDescription": "Split data to two different ports",
+        "operatorGroupName": "Utilities",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          },
+          {
+            "id": {
+              "id": 1,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": true,
+        "dynamicOutputPorts": true,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Distinct",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          }
+        },
+        "required": [],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Distinct"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Distinct",
+        "operatorDescription": "Remove duplicate tuples",
+        "operatorGroupName": "Data Cleaning",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": true,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    },
+    {
+      "operatorType": "Union",
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dummyPropertyList": {
+            "propertyOrder": 1,
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DummyProperties"
+            },
+            "description": "Add dummy property if needed",
+            "title": "Dummy Property List"
+          }
+        },
+        "required": [],
+        "options": {
+          "multiple_editor_select_via_property": {
+            "property": "operatorType",
+            "value": "Union"
+          }
+        },
+        "definitions": {
+          "DummyProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dummyProperty": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Property"
+              },
+              "dummyValue": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Dummy Value"
+              }
+            }
+          },
+          "PortDescription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "portID": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "string",
+                "title": "Port ID"
+              },
+              "displayName": {
+                "propertyOrder": 2,
+                "nullable": true,
+                "type": "string",
+                "title": "Display Name"
+              },
+              "disallowMultiInputs": {
+                "propertyOrder": 3,
+                "type": "boolean",
+                "title": "Disallow Multi Inputs"
+              },
+              "isDynamicPort": {
+                "propertyOrder": 4,
+                "type": "boolean",
+                "title": "Is Dynamic Port"
+              },
+              "partitionRequirement": {
+                "propertyOrder": 5,
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/HashPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/RangePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/SinglePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/OneToOnePartition"
+                  },
+                  {
+                    "$ref": "#/definitions/BroadcastPartition"
+                  },
+                  {
+                    "$ref": "#/definitions/UnknownPartition"
+                  }
+                ],
+                "title": "Partition Requirement"
+              },
+              "dependencies": {
+                "propertyOrder": 6,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/Object"
+                },
+                "title": "Dependencies"
+              }
+            },
+            "required": ["disallowMultiInputs", "isDynamicPort"]
+          },
+          "HashPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hash"],
+                "default": "hash",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "hashAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Hash Attribute Names"
+              }
+            },
+            "title": "hash",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "hash"
+              }
+            }
+          },
+          "RangePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["range"],
+                "default": "range",
+                "options": {
+                  "hidden": true
+                }
+              },
+              "rangeAttributeNames": {
+                "propertyOrder": 1,
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Range Attribute Names"
+              },
+              "rangeMin": {
+                "propertyOrder": 2,
+                "type": "integer",
+                "title": "Range Min"
+              },
+              "rangeMax": {
+                "propertyOrder": 3,
+                "type": "integer",
+                "title": "Range Max"
+              }
+            },
+            "title": "range",
+            "required": ["type", "rangeMin", "rangeMax"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "range"
+              }
+            }
+          },
+          "SinglePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["single"],
+                "default": "single",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "single",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "single"
+              }
+            }
+          },
+          "OneToOnePartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["oneToOne"],
+                "default": "oneToOne",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "oneToOne",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "oneToOne"
+              }
+            }
+          },
+          "BroadcastPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["broadcast"],
+                "default": "broadcast",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "broadcast",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "broadcast"
+              }
+            }
+          },
+          "UnknownPartition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["none"],
+                "default": "none",
+                "options": {
+                  "hidden": true
+                }
+              }
+            },
+            "title": "none",
+            "required": ["type"],
+            "options": {
+              "multiple_editor_select_via_property": {
+                "property": "type",
+                "value": "none"
+              }
+            }
+          },
+          "Object": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          }
+        }
+      },
+      "additionalMetadata": {
+        "userFriendlyName": "Union",
+        "operatorDescription": "Unions the output rows from multiple input operators",
+        "operatorGroupName": "Set",
+        "inputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "disallowMultiLinks": false,
+            "dependencies": []
+          }
+        ],
+        "outputPorts": [
+          {
+            "id": {
+              "id": 0,
+              "internal": false
+            },
+            "displayName": "",
+            "blocking": false,
+            "mode": {
+              "value": 0,
+              "index": 0,
+              "name": "SET_SNAPSHOT",
+              "setSnapshot": true,
+              "singleSnapshot": false,
+              "unrecognized": false,
+              "setDelta": false
+            },
+            "reuseStorage": false
+          }
+        ],
+        "dynamicInputPorts": false,
+        "dynamicOutputPorts": false,
+        "supportReconfiguration": false,
+        "allowPortCustomization": false
+      },
+      "operatorVersion": "N/A"
+    }
+  ],
+  "groups": [
+    {
+      "groupName": "Data Input",
+      "children": null
+    },
+    {
+      "groupName": "Database Connector",
+      "children": null
+    },
+    {
+      "groupName": "Search",
+      "children": null
+    },
+    {
+      "groupName": "Data Cleaning",
+      "children": [
+        {
+          "groupName": "Join",
+          "children": null
+        },
+        {
+          "groupName": "Set",
+          "children": null
+        },
+        {
+          "groupName": "Aggregate",
+          "children": null
+        },
+        {
+          "groupName": "Sort",
+          "children": null
+        }
+      ]
+    },
+    {
+      "groupName": "Machine Learning",
+      "children": [
+        {
+          "groupName": "Sklearn",
+          "children": [
+            {
+              "groupName": "Sklearn Training",
+              "children": null
+            }
+          ]
+        },
+        {
+          "groupName": "Advanced Sklearn",
+          "children": null
+        },
+        {
+          "groupName": "Hugging Face",
+          "children": null
+        },
+        {
+          "groupName": "Machine Learning General",
+          "children": null
+        }
+      ]
+    },
+    {
+      "groupName": "Utilities",
+      "children": null
+    },
+    {
+      "groupName": "External API",
+      "children": null
+    },
+    {
+      "groupName": "User-defined Functions",
+      "children": [
+        {
+          "groupName": "Python",
+          "children": null
+        },
+        {
+          "groupName": "Java",
+          "children": null
+        },
+        {
+          "groupName": "R",
+          "children": null
+        }
+      ]
+    },
+    {
+      "groupName": "Visualization",
+      "children": [
+        {
+          "groupName": "Basic",
+          "children": null
+        },
+        {
+          "groupName": "Statistical",
+          "children": null
+        },
+        {
+          "groupName": "Scientific",
+          "children": null
+        },
+        {
+          "groupName": "Financial",
+          "children": null
+        },
+        {
+          "groupName": "Media",
+          "children": null
+        },
+        {
+          "groupName": "Advanced",
+          "children": null
+        }
+      ]
+    },
+    {
+      "groupName": "Control Block",
+      "children": null
+    }
+  ]
+}

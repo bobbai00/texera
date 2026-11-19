@@ -1,0 +1,27 @@
+# build output
+/dist
+/dist-shared-editing
+/storybook-static
+
+# test output
+/coverage
+/test-results
+/playwright-report
+/blob-report
+**/__screenshots__/
+
+# dependencies
+/node_modules
+
+# the router plugin's temporary files
+/.tanstack
+
+# yarn v4: no binary is committed, corepack provides Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+
+# local settings
+*.local
