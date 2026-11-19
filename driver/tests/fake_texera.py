@@ -92,6 +92,7 @@ from pathlib import Path
 from fake_closing import REASON_CHARS, REASON_COMPILE_ERROR, Closing
 from fake_lake import FakeLake
 from fake_record import NAMESPACES, Recorder, table_name
+from lake import RESULT_OUTPUT_MODE
 from record_timing import RecordTiming
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -692,7 +693,9 @@ class FakeTexera:
             return
         tables = self.port_tables(run)
         for kind, (_uri, name) in tables.items():
-            self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
+            table = self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
+            if kind == "result" and "result-mode-unrecorded" not in self.faults:
+                table.set_properties({RESULT_OUTPUT_MODE: "SET_SNAPSHOT"})
         if run.recorder is not None and "output-rows" in self.faults:
             port = tables["result"][0].split("/globalportid/")[1].rsplit("/", 1)[0]
             run.recorder.output(port, tables["result"][0], "SET_SNAPSHOT")

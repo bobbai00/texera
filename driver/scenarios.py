@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 import requests
 
-from lake import Label, Lake, TableState
+from lake import OUTPUT_MODES, RESULT_OUTPUT_MODE, Label, Lake, TableState
 from record_timing import RecordTiming
 from texera_api import (REASON_COMPILE_ERROR, REASON_KILLED_BY_USER, REASON_NEVER_STARTED, REASON_UNIT_LOST,
                         REASON_UNIT_STOPPED, ExecutionState, StatisticsRow, TexeraApi, TexeraApiError,
@@ -2065,7 +2065,21 @@ def scenario_p(ctx: Ctx) -> None:
                   f"last {last}; seq {log.seqs}")
     if ctx.at_least("C"):
         _check_console_whole(ctx, eid, lines=len(ctx.data["numbers.csv"]))
+    _check_result_modes(ctx, wid, eid, udf)
     ctx.persisted_status(STATUS_COMPLETED, eid=eid)
+
+
+def _check_result_modes(ctx: Ctx, wid: int, eid: int, udf: str) -> None:
+    """Each result table of the run records the output mode of its port, as the engine made
+    it: what a reader with no plan, such as the result service, tells a visualization by."""
+    names, why = ctx.lake.port_tables(ctx.warehouse_name, wid, eid, "result")
+    warehouse = ctx.warehouse_name or ctx.lake.default_warehouse
+    modes = {name: ctx.lake.catalog.load_table(warehouse, ctx.lake.namespaces["result"], name)
+             .properties.get(RESULT_OUTPUT_MODE) for name in names or []}
+    ctx.check(f"each result table records its port's output mode, the UDF's {OUTPUT_MODES[0]}",
+              bool(modes) and all(mode in OUTPUT_MODES for mode in modes.values())
+              and [mode for name, mode in modes.items() if udf in name] == [OUTPUT_MODES[0]],
+              json.dumps(modes) if names is not None else why)
 
 
 # ------------------------------------------------------ q, s: the unit goes down

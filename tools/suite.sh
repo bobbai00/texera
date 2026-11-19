@@ -23,7 +23,7 @@ run() { # run <name> <env assignments...> -- <sbt args...>
 }
 say "worktree $WT at $(git rev-parse --short HEAD) $(git status --porcelain --untracked-files=no | wc -l | tr -d ' ') modified"
 run common -- "Config/test" "DAO/test" "WorkflowCore/test" "WorkflowOperator/test" "WorkflowCompiler/test"
-run services WCS_TEST_FILTER=skip-integration -- "WorkflowCompilingService/test" "AccessControlService/test" "ComputingUnitManagingService/test" "ConfigService/test" "FileService/test"
+run services WCS_TEST_FILTER=skip-integration -- "WorkflowCompilingService/test" "AccessControlService/test" "ComputingUnitManagingService/test" "ConfigService/test" "FileService/test" "ResultService/test"
 run amber-unit AMBER_TEST_FILTER=skip-integration -- "WorkflowExecutionService/test"
 run amber-integration AMBER_TEST_FILTER=integration-only "UDF_PYTHON_PATH=$PY" -- "WorkflowExecutionService/test"
 say "DONE"

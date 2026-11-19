@@ -132,3 +132,26 @@ links to dataset files; users already run their own code on the unit, which hold
 keys. The lock-down later: a ticket the Dashboard signs per execution (execution, unit, the plan's
 hash, expiry), files only through signed links, and tables through the catalog with a pass per
 execution.
+
+## 7. Upstream's result service, merged in (2026-11-19)
+
+Upstream merged its result service (#9356): a module that serves an execution's result pages with
+no computing unit. It read `operator_port_executions` and `workflow_executions.status`, which
+step 3 drops. Merged into the branch, it is re-based on what the branch keeps:
+
+1. Finished: the caller's latest finished execution is the newest with a closing record
+   (`ended_at` set). Upstream's `TerminalWorkflowExecutionStatus` is not kept: the DAO's
+   `WorkflowExecutionStatus.Ended` already says which outcomes end an execution.
+2. Results: an execution's results are the result tables of its external output ports, found by
+   the tables' names (`ExecutionTables.portTables`), in the warehouse its row names. A per-user
+   warehouse that is off answers 503, as the export does.
+3. Output mode: the engine records each port's output mode as a property of the result table it
+   makes (`texera.result.output-mode`, `ExecutionTables.resultTableProperties` and
+   `outputModeOf`), so a reader tells a visualization by the table. A table made before records
+   none, and is not taken for a visualization.
+4. Row count: counted from the table, as the page's own count is.
+5. Tables can be made with properties (`DocumentFactory.createDocument(uri, schema,
+   properties)`); the execution log is made with its first beat in that one commit.
+
+Nothing calls the service yet: its deployment is upstream's next pull request, and #8996 moves the
+frontend to it. The API is upstream's, but for `rowCount`, which is always a number here.

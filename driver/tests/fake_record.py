@@ -54,6 +54,7 @@ FAULTS = {
     "no-end-tidy": "the end tidy merges nothing (several data files and snapshots stay)",
     "statistics-at-end-only": "statistics are stored when the run ends, not on the timer",
     "console-at-end-only": "console output is stored when the run ends, not on the timer",
+    "result-mode-unrecorded": "the engine makes a result table that records no output mode",
 }
 
 

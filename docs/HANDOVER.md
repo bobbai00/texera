@@ -1,6 +1,6 @@
 # Self-contained Amber engine: handover
 
-State on 2026-11-18. Nothing is merged upstream or opened as a pull request. All of the work is
+State on 2026-11-19. Nothing is merged upstream or opened as a pull request. All of the work is
 on branches of the fork `github.com/bobbai00/texera`, which is public (section 2). The handover
 of 2026-11-17 as a page: https://claude.ai/artifact/1uo7RCdbfrnUpTVFLzvhwG (private to its owner).
 
@@ -38,9 +38,11 @@ What is true after step 3:
   an hour, so a unit that was only cut off from the lake is not lost. The same job sends the
   e-mail and expires results.
 - State, log, statistics, console output and exports of an execution are served by the Dashboard
-  service from what the execution stored, with the unit up or down. Result pages come from the
-  unit's websocket for the run it holds, until the upstream result service takes them (#8995,
-  #8996; pull request #9356).
+  service from what the execution stored, with the unit up or down. Upstream's result service
+  (#9356, merged 2026-11-19) serves result pages with the unit up or down too, re-based on this
+  branch: it finds an execution's results by the tables' names, and each result table records
+  its port's output mode. The frontend still pages through the unit for the run it holds until
+  #8996 moves it over.
 - `workflow_executions` keeps the closing record only; `status`, `result`, `last_update_time`,
   `runtime_stats_uri`, `runtime_stats_size` and the tables `operator_executions` and
   `operator_port_executions` are dropped (`sql/updates/53.sql`, `54.sql`).
@@ -56,7 +58,7 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 | Branch | Where | Commit | What it holds |
 |---|---|---|---|
-| `feat/self-contained-engine` | Fork | `852329c0f` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782`, which holds `9abfc1e34` (the plan through the client) on top, not yet pushed |
+| `feat/self-contained-engine` | Fork | `852329c0f` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782`, which holds `9abfc1e34` (the plan through the client) and `3334c89eb` (upstream main merged, with its result service) on top, not yet pushed |
 | `sce-e2e-harness` | Fork | see `git log` | The harness, the designs and reviews under `docs/`, and this file |
 | `feat/sce-step2-lane` | Fork | `c5511fab0` | The plan-shape batch, merged into the main branch |
 | `spike/sce-step0-proofs` | Fork | `ff4729363` | Step 0's proof scripts and results (`proofs/step0/*/RESULTS.md`) |
@@ -66,7 +68,9 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 85 commits over `3d84565a5`, 132 over upstream main `fddc4303e`, which is merged in, up to
 `852329c0f`; then `9abfc1e34`, the plan through the client (section 1 and
-`docs/step3-notes/changes-since-rev2.md` section 6). The final tree is `9abfc1e34`.
+`docs/step3-notes/changes-since-rev2.md` section 6); then `3334c89eb`, which merges upstream
+main up to `f020980c3` (8 commits) and re-bases its new result service on the lake
+(`docs/step3-notes/changes-since-rev2.md` section 7). The final tree is `3334c89eb`.
 
 | Group | What it does |
 |---|---|
@@ -104,14 +108,17 @@ Fixes made on the way, each its own commit:
 
 ## 4. Verified
 
-On the Mac. The final tree is `9abfc1e34` (the plan through the client, over `852329c0f`); a row
-that names another commit was run there.
+On the Mac. The final tree is `3334c89eb` (upstream main merged, over `9abfc1e34`, the plan through
+the client); a row that names another commit was run there.
 
 | Check | Result |
 |---|---|
-| Scala suites (`tools/suite.sh`) | No failure at `9abfc1e34`: config 113, DAO 70, core 1,246, operators 3,113, compiler 232, compiling service 121, access control 84, unit manager 329, config service 44, file service 481, engine unit 2,990, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181). Run with `LITELLM_BASE_URL` at a closed port: another stack's LiteLLM holds the default :4000, which `LiteLLMProxyAuthSpec` expects to refuse |
-| Frontend | 255 files, 7,382 tests; format clean; build OK (at `9abfc1e34`) |
-| Agent service | 381 tests; type check and format clean (at `9abfc1e34`) |
+| Scala suites (`tools/suite.sh`, which now runs `ResultService/test` too) | No failure at `3334c89eb`: config 113, DAO 70, core 1,250, operators 3,113, compiler 232, compiling service 121, access control 84, unit manager 329, config service 44, file service 481, result service 36, engine unit 2,990, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181). Run with `LITELLM_BASE_URL` at a closed port: another stack's LiteLLM holds the default :4000, which `LiteLLMProxyAuthSpec` expects to refuse |
+| Frontend | 256 files, 7,462 tests; format clean; build OK (at `3334c89eb`) |
+| Agent service | 386 tests; type check and format clean (at `3334c89eb`). Install from the lockfile first (`bun install --frozen-lockfile`): an older install of `ai` fails an upstream test |
+| Gate 3C at `3334c89eb`, unit on a network without Postgres (images `sce/sceC`) | 33 of 33, among them p's new check that every result table records its port's output mode; no statement from the unit to Postgres; all 38 executions closed (`reports/baseline-20261119T084725Z.json`) |
+| The result service at `3334c89eb`, live | Its dist, run in a container on the stack's network with the Dashboard's settings, served a run of Text Input -> HTML Visualizer: the latest finished execution, both results with the output modes the engine recorded (SINGLE_SNAPSHOT, SET_SNAPSHOT) and their rows, the visualization's 161-character cell whole and the text's cut to 100, and per-column statistics |
+| Browser smoke at `3334c89eb` | 8 of 9 in one run: B1, the first case on a stack just kept from the gate, timed out after 20 s waiting for the Aggregate's box to say Completed while the run and its record were Completed; B1 then passed 3 of 3 (`reports/browser-smoke-20261119T085717Z`) |
 | Gate 3C at `9abfc1e34`, unit on a network without Postgres (images `sce/sceB`) | 33 of 33 scenarios (l9 is gone with the plan row); no statement from the unit to Postgres in the whole run; all 38 executions closed (`reports/baseline-20261119T062248Z.json`) |
 | Browser smoke at `9abfc1e34` | 9 of 9 (`reports/browser-smoke-20261119T063053Z`), among them a change to a paused operator in the editor (B4), after the page was loaded again (B7) and from a second tab (B8) |
 | By hand at `9abfc1e34` (the desktop app's browser pane, the same stack) | A UDF that raises on rows 7 and 20: Pause, Unlock for Logic Change, the code fixed, Confirm Change, Retry Tuple; then the same again for row 20, after the run had resumed. Both changes answered `{operatorId, update}` (201); the execution closed Completed from its log (`READY, RUNNING, PAUSED, RUNNING, PAUSED, RUNNING, COMPLETED`); the export shows rows 1-6 from the first code, 7-19 from the first change and 20-30 from the second |
@@ -157,10 +164,9 @@ Also left:
   browser holds and sends to the unit, and a changed copy of a plan is not detected. A ticket the
   Dashboard signs per execution (execution, unit, the plan's hash, expiry) and per-run
   credentials are step 5.
-- Result pages of an execution whose unit no longer holds it are not served until the upstream
-  result service is in (#9356). Its lookup reads `operator_port_executions` and
-  `workflow_executions.status`, which this branch drops: whichever lands second re-bases that
-  lookup on the tables' names (`ExecutionTables.portTables`) and the closing record.
+- The result service is a module with no deployment yet: its image, chart, gateway route and
+  local-dev entry are upstream's next pull request, and #8996 moves the frontend to it. Until
+  then nothing calls it.
 - A unit checks the plan it is sent, but no longer who created the execution or that it was
   created for this unit: both were columns of the plan row. A user with WRITE on a unit who holds
   another user's plan can start it, writing into that execution's tables (never into another
@@ -221,7 +227,6 @@ Made by the owner:
   proof against a changed copy comes later, "but not now".
 
 Open for the owner:
-- Whether to post the review of #9356 (drafted: approve, with five notes that do not block).
 - Step 3's six choices, built to the recommendations (`docs/step3-design.md` section 11).
 - Whether a scan's descriptor should also stop holding the resolved file name.
 - Whether to propose steps 1-2 upstream before the rest. Upstream moves about ten commits a day.
@@ -280,6 +285,9 @@ Things that cost time on 2026-11-18:
   module before testing.
 - The unit image is Python 3.10; the local test interpreter should be 3.12 with
   `amber/requirements.txt`, `operator-requirements.txt` and `dev-requirements.txt`.
+- The harness's offline test of scenario v (`test_v_passes_every_check_of_the_gate`) fails about
+  2 runs in 19, with or without the 2026-11-19 changes: its reads race the fake's 2 s retention
+  of results.
 
 The harness's `README.md` describes every mode, scenario, check and gate. New on 2026-11-18:
 scenarios x (the Python debugger), z (a UDF raises, its code is fixed, the tuple is retried) and

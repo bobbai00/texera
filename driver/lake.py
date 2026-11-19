@@ -50,6 +50,9 @@ LABEL_STATE_TIME_MS = "texera.execution.state-time-ms"
 LABEL_REASON = "texera.execution.reason"
 LABEL_BEAT_MS = "texera.execution.beat-ms"
 LABEL_BEAT_EVERY_MS = "texera.execution.beat-every-ms"
+#: the output mode of its port, a property of each result table the engine makes
+RESULT_OUTPUT_MODE = "texera.result.output-mode"
+OUTPUT_MODES = ("SET_SNAPSHOT", "SET_DELTA", "SINGLE_SNAPSHOT")
 #: a namespace listing is followed for at most this many pages
 MAX_LIST_PAGES = 200
 
