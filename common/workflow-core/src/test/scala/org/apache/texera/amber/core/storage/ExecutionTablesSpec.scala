@@ -28,6 +28,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
+import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.common.config.StorageConfig
@@ -284,6 +285,37 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
 
     whileCatalogUnavailable {
       a[ServiceUnavailableException] should be thrownBy ExecutionTables.storedBytes(log)
+    }
+  }
+
+  "ExecutionTables.outputModeOf" should "read the output mode each result table was made with" in {
+    val eid = freshExecution()
+    OutputMode.values.foreach { mode =>
+      val result = VFSURIFactory.resultURI(locationOf(eid, port(s"op${mode.value}", 0)))
+      DocumentFactory.createDocument(
+        result,
+        Schema().add("line", AttributeType.STRING),
+        ExecutionTables.resultTableProperties(mode)
+      )
+
+      withClue(s"$mode: ") { ExecutionTables.outputModeOf(result) shouldBe Some(mode) }
+    }
+  }
+
+  it should "read none of a table made without one, one that names no mode, and no table" in {
+    val eid = freshExecution()
+    val Seq(plain, odd, absent) = Seq("plain", "odd", "absent").map(name =>
+      VFSURIFactory.resultURI(locationOf(eid, port(name, 0)))
+    )
+    made(plain)
+    DocumentFactory.createDocument(
+      odd,
+      Schema().add("line", AttributeType.STRING),
+      Map(ExecutionTables.OutputModeProperty -> "NOT_A_MODE")
+    )
+
+    Seq(plain, odd, absent).foreach { uri =>
+      withClue(s"$uri: ") { ExecutionTables.outputModeOf(uri) shouldBe None }
     }
   }
 

@@ -178,12 +178,15 @@ object ExecutionLogStore {
   def logUri(wid: WorkflowIdentity, eid: ExecutionIdentity, warehouse: Option[String]): URI =
     VFSURIFactory.createExecutionLogURI(wid, eid, warehouse)
 
-  /** Makes the log table, empty, with a first beat at `nowMs` and `beatEveryMs` in its label. */
+  /**
+    * Makes the log table, empty, with a first beat at `nowMs` and `beatEveryMs` in its label, in
+    * one commit: no reader sees the table without its beat.
+    */
   def create(uri: URI, nowMs: Long, beatEveryMs: Long): Unit = {
     requireLogUri(uri)
-    DocumentFactory.createDocument(uri, executionLogSchema)
-    IcebergAppender.setProperties(
-      existingTable(uri),
+    DocumentFactory.createDocument(
+      uri,
+      executionLogSchema,
       Map(BeatProperty -> nowMs.toString, BeatEveryProperty -> beatEveryMs.toString)
     )
   }

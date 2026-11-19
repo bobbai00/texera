@@ -24,6 +24,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   OperatorIdentity,
   WorkflowIdentity
 }
+import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 
 import java.net.URI
@@ -83,6 +84,27 @@ object ExecutionTables {
     Seq(VFSResourceType.RESULT, VFSResourceType.STATE).flatMap(
       DocumentFactory.tablesOf(wid, eid, warehouse, _)
     )
+
+  /**
+    * The table property a result table keeps its port's output mode in, as the name of an
+    * [[OutputMode]]: what a reader of the table tells a visualization by, with no plan to ask.
+    */
+  val OutputModeProperty = "texera.result.output-mode"
+
+  /** The table properties the result table of an output port of `mode` is made with. */
+  def resultTableProperties(mode: OutputMode): Map[String, String] =
+    Map(OutputModeProperty -> mode.name)
+
+  /**
+    * The output mode of the port whose result table is at `uri`, as the engine that made the
+    * table recorded it. None when there is no such table, or it records none: an engine made it
+    * before result tables recorded their output modes.
+    */
+  def outputModeOf(uri: URI): Option[OutputMode] =
+    DocumentFactory
+      .icebergTableOf(uri)
+      .flatMap(table => Option(table.properties().get(OutputModeProperty)))
+      .flatMap(OutputMode.fromName)
 
   def exists(uri: URI): Boolean = DocumentFactory.icebergTableOf(uri).isDefined
 

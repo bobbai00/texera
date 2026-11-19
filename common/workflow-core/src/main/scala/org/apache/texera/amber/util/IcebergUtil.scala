@@ -201,6 +201,7 @@ object IcebergUtil {
     * @param tableName the name of the table.
     * @param tableSchema the schema of the table.
     * @param overrideIfExists whether to drop and recreate the table if it exists.
+    * @param properties table properties the table is made with, beside those above.
     * @return the created Iceberg table.
     */
   def createTable(
@@ -208,7 +209,8 @@ object IcebergUtil {
       tableNamespace: String,
       tableName: String,
       tableSchema: IcebergSchema,
-      overrideIfExists: Boolean
+      overrideIfExists: Boolean,
+      properties: Map[String, String] = Map.empty
   ): Table = {
 
     val tableProperties = Map(
@@ -239,7 +241,7 @@ object IcebergUtil {
       identifier,
       tableSchema,
       PartitionSpec.unpartitioned,
-      tableProperties.asJava
+      (tableProperties ++ properties).asJava
     )
 
   }

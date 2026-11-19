@@ -92,9 +92,9 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       uri,
       schema,
       reuseExisting,
-      _ => exists,
-      _ => { path = "open"; opened },
-      (_, _) => { path = "create"; created }
+      exists = _ => exists,
+      open = _ => { path = "open"; opened },
+      create = (_, _, _) => { path = "create"; created }
     )
     (doc, path)
   }
@@ -124,11 +124,32 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       uri,
       schema,
       reuseExisting = false,
-      _ => { probed = true; true },
-      _ => opened,
-      (_, _) => created
+      exists = _ => { probed = true; true },
+      open = _ => opened,
+      create = (_, _, _) => created
     )
     probed shouldBe false
+  }
+
+  it should "make a document with the properties it is given, and reuse one with its own" in {
+    val properties = Map("texera.result.output-mode" -> "SINGLE_SNAPSHOT")
+    var madeWith: Option[Map[String, String]] = None
+    def createOrReuse(exists: Boolean): VirtualDocument[_] =
+      DocumentFactory.createOrReuseDocument(
+        uri,
+        schema,
+        reuseExisting = true,
+        properties,
+        exists = _ => exists,
+        open = _ => opened,
+        create = (_, _, given) => { madeWith = Some(given); created }
+      )
+
+    createOrReuse(exists = false) should be theSameInstanceAs created
+    madeWith shouldBe Some(properties)
+    madeWith = None
+    createOrReuse(exists = true) should be theSameInstanceAs opened
+    madeWith shouldBe None
   }
 
   // ---------------------------------------------------------------------------
@@ -245,6 +266,13 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     val doc = DocumentFactory.createDocument(vfsUri, vfsSchema)
     doc shouldBe an[IcebergDocument[_]]
     DocumentFactory.documentExists(vfsUri) shouldBe true
+  }
+
+  it should "make the table with the properties it is given" in {
+    val vfsUri = freshResultURI()
+    DocumentFactory.createDocument(vfsUri, vfsSchema, Map("texera.spec.made-with" -> "it"))
+    DocumentFactory.icebergTableOf(vfsUri).map(_.properties().get("texera.spec.made-with")) shouldBe
+      Some("it")
   }
 
   it should "create a state document for a vfs state URI (STATE namespace arm)" in {

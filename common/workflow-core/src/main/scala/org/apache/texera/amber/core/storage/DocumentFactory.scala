@@ -103,9 +103,14 @@ object DocumentFactory {
     * This document is suitable for storing structural data, i.e. the schema is required to create such document.
     * @param uri the location of the document
     * @param schema the schema of the data stored in the document
+    * @param properties table properties the document is made with
     * @return the created document
     */
-  def createDocument(uri: URI, schema: Schema): VirtualDocument[_] = {
+  def createDocument(
+      uri: URI,
+      schema: Schema,
+      properties: Map[String, String] = Map.empty
+  ): VirtualDocument[_] = {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
         val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
@@ -116,7 +121,8 @@ object DocumentFactory {
           namespace,
           storageKey,
           icebergSchema,
-          overrideIfExists = true
+          overrideIfExists = true,
+          properties
         )
         new IcebergDocument[Tuple](
           namespace,
@@ -269,7 +275,8 @@ object DocumentFactory {
     * output accumulates across re-runs (e.g. a LoopEnd port whose region
     * re-executes once per loop iteration) keeps the already-populated document
     * instead of clobbering it, since `createDocument` overrides any existing
-    * document. Otherwise create it.
+    * document. Otherwise create it, with `properties`: a reused document keeps
+    * the properties it was made with.
     *
     * `exists` / `open` / `create` default to this object's own `documentExists`
     * / `openDocument` / `createDocument`; they are parameterized only so the
@@ -279,11 +286,12 @@ object DocumentFactory {
       uri: URI,
       schema: Schema,
       reuseExisting: Boolean,
+      properties: Map[String, String] = Map.empty,
       exists: URI => Boolean = documentExists,
       open: URI => VirtualDocument[_] = (u: URI) => openDocument(u)._1,
-      create: (URI, Schema) => VirtualDocument[_] = createDocument
+      create: (URI, Schema, Map[String, String]) => VirtualDocument[_] = createDocument
   ): VirtualDocument[_] =
-    if (reuseExisting && exists(uri)) open(uri) else create(uri, schema)
+    if (reuseExisting && exists(uri)) open(uri) else create(uri, schema, properties)
 
   /**
     * Open a document specified by the uri.

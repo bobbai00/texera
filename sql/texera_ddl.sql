@@ -333,7 +333,7 @@ CREATE TABLE IF NOT EXISTS workflow_executions
     -- way to the log's ending if the log shows one later.
     outcome_from_log    BOOLEAN NOT NULL DEFAULT FALSE,
     stored_bytes        BIGINT,            -- what its tables in the lake hold: measured at its close, and when its results expire
-    results_expired_at  TIMESTAMP,         -- when its results were dropped; plan, log and statistics stay
+    results_expired_at  TIMESTAMP,         -- when its results were dropped; its log and statistics stay
     notification        TEXT,              -- {"email","workflowName","workflowUrl"}; NULL sends no email
     FOREIGN KEY (vid) REFERENCES workflow_version(vid) ON DELETE CASCADE,
     FOREIGN KEY (uid) REFERENCES "user"(uid) ON DELETE CASCADE,
