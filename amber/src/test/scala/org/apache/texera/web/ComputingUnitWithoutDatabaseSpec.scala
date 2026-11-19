@@ -28,9 +28,7 @@ import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ExecutionLogStore,
-  ExecutionPlanStore,
   ExecutionTables,
-  PlanRecord,
   RuntimeStatisticsStore
 }
 import org.apache.texera.amber.core.virtualidentity.{
@@ -76,7 +74,6 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.slf4j.LoggerFactory
 
-import java.net.URI
 import java.util.concurrent.CopyOnWriteArrayList
 import scala.annotation.tailrec
 import scala.concurrent.duration.DurationInt
@@ -88,11 +85,11 @@ import scala.util.Try
   * none: it declares so (`SqlServer.withoutDatabase`), and whatever asks it for the database
   * from then on fails with the unit's reason.
   *
-  * An execution is here what the Dashboard service leaves a unit to start: a plan row in the
-  * execution's plan table in the lake, written straight with `ExecutionPlanStore.writePlan`, of
-  * a small workflow made to run as every plan is. Nothing of it is in Postgres. It is started as
-  * a unit starts one by its id (`WorkflowService.checkStoredStart`, then `startChecked`), on an
-  * engine of this suite's actor system, and asked what a session's socket asks of a run: to
+  * An execution is here what the Dashboard service answers a client to hand a unit: the plan of
+  * a small workflow, made to run as every plan is. Nothing of it is in Postgres. It is started as
+  * a unit starts one from the plan its start carries (`WorkflowService.checkStart`, then
+  * `startChecked`), on an engine of this suite's actor system, and asked what a session's
+  * socket asks of a run: to
   * pause, to resume, to be killed, and for a page of a result. The run's record is the unit's
   * own, kept in the lake, in the catalog the build's tests use.
   *
@@ -188,26 +185,14 @@ class ComputingUnitWithoutDatabaseSpec
   }
 
   /**
-    * Writes the plan row of execution `eid`, of the workflow of `operators` and `links`, to the
-    * execution's plan table, as the Dashboard service leaves it for the unit asked to run it.
-    *
-    * @return the plan table
+    * The plan of execution `eid`, of the workflow of `operators` and `links`, as the Dashboard
+    * service answers it for the client to hand the unit asked to run it.
     */
-  private def storePlan(eid: Long, operators: List[LogicalOp], links: List[LogicalLink]): URI = {
-    val context = new WorkflowContext(workflowId, ExecutionIdentity(eid))
-    val planUri = ExecutionPlanStore.planUri(workflowId, ExecutionIdentity(eid), None)
-    ExecutionPlanStore.writePlan(
-      planUri,
-      PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        body = TestUtils.storedPlan(context, LogicalPlanPojo(operators, links, List(), List())),
-        createdBy = creator.getUid,
-        computingUnitId = unitCuid
-      ),
-      "{}"
+  private def planOf(eid: Long, operators: List[LogicalOp], links: List[LogicalLink]): String =
+    TestUtils.planText(
+      new WorkflowContext(workflowId, ExecutionIdentity(eid)),
+      LogicalPlanPojo(operators, links, List(), List())
     )
-    planUri
-  }
 
   /**
     * The service of the workflow on the unit, as the unit makes one for the first session on the
@@ -236,10 +221,10 @@ class ComputingUnitWithoutDatabaseSpec
     def statesTold: Seq[String] =
       sent.asScala.collect { case WorkflowStateEvent(state, _) => state }.toSeq
 
-    /** Starts execution `eid` from its plan at `planUri`, as a start by id over a socket does. */
-    def start(eid: Long, planUri: URI): WorkflowExecutionService =
+    /** Starts execution `eid` from `plan`, as a start over a socket does. */
+    def start(eid: Long, plan: String): WorkflowExecutionService =
       WorkflowService
-        .checkStoredStart(eid, planUri, creator, unitCuid, socketWorkflowId = Some(workflowId.id))
+        .checkStart(eid, plan, creator, unitCuid, socketWorkflowId = Some(workflowId.id))
         .flatMap(service.startChecked)
         .fold(why => fail(s"the start of execution $eid was refused: $why"), identity)
 
@@ -322,9 +307,9 @@ class ComputingUnitWithoutDatabaseSpec
   "A computing unit with no database" should
     "run an execution to its end, record it in the lake, and serve pages of its result" in withSession {
     session =>
-      val planUri = storePlan(completedEid, List(linesSource("lines", 7)), List())
+      val plan = planOf(completedEid, List(linesSource("lines", 7)), List())
 
-      val run = session.start(completedEid, planUri)
+      val run = session.start(completedEid, plan)
       eventually(stateOf(run) shouldBe COMPLETED)
 
       logOf(run, completedEid) shouldBe
@@ -362,13 +347,13 @@ class ComputingUnitWithoutDatabaseSpec
   it should "pause, resume and kill a run as its sessions ask, recording each state it was in" in withSession {
     session =>
       // Two minutes of work, unless it is killed.
-      val planUri = storePlan(
+      val plan = planOf(
         pausedEid,
         List(linesSource("lines", 120), sleeping("slow", seconds = 1)),
         List(link("lines", "slow"))
       )
 
-      val run = session.start(pausedEid, planUri)
+      val run = session.start(pausedEid, plan)
       eventually(stateOf(run) shouldBe RUNNING)
       ask(run, WorkflowPauseRequest(pausedEid))
       eventually(stateOf(run) shouldBe PAUSED)
@@ -397,13 +382,13 @@ class ComputingUnitWithoutDatabaseSpec
       // Code that no Java compiler takes: the operator's worker fails as it makes its executor.
       val broken = named(new JavaUDFOpDesc(), "broken")
       broken.code = "public class JavaUDFOpExec { this is not Java }"
-      val planUri = storePlan(
+      val plan = planOf(
         failedEid,
         List(linesSource("lines", 3), broken),
         List(link("lines", "broken"))
       )
 
-      val run = session.start(failedEid, planUri)
+      val run = session.start(failedEid, plan)
       eventually(stateOf(run) shouldBe FAILED)
 
       // The run's one error is the compiler's, of the operator's code.
@@ -424,13 +409,13 @@ class ComputingUnitWithoutDatabaseSpec
 
   it should "keep what an operator throws on a row on its console, in the lake, and kill the run when asked" in withSession {
     session =>
-      val planUri = storePlan(
+      val plan = planOf(
         thrownEid,
         List(linesSource("lines", 3), sleeping("throws", seconds = -1)),
         List(link("lines", "throws"))
       )
 
-      val run = session.start(thrownEid, planUri)
+      val run = session.start(thrownEid, plan)
       // The operator's worker reports what its executor threw, and waits: the run goes on.
       def thrown =
         run.executionStateStore.consoleStore.getState.operatorConsole

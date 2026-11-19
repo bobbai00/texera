@@ -21,7 +21,6 @@ package org.apache.texera.web.service
 
 import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.PlanRecord
 import org.apache.texera.amber.core.virtualidentity.EmbeddedControlMessageIdentity
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
@@ -49,7 +48,6 @@ import org.apache.texera.web.service.WorkflowExecutionService.RunServices
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
 
-import java.net.URI
 import java.nio.file.Path
 import java.time.Instant
 import scala.collection.mutable
@@ -102,9 +100,9 @@ object WorkflowExecutionService {
 
 /**
   * One run of a workflow on this computing unit: of an execution the Dashboard service created,
-  * started from the plan read back from the execution's plan table in the lake
-  * ([[startStored]]). Its operators change, while it is paused, only by the changes the Dashboard
-  * stored in its plan table.
+  * started from the plan its start carried ([[startPlan]]). Its operators change, while it is
+  * paused, only by the changes the Dashboard made to run
+  * ([[ExecutionReconfigurationService.applyUpdate]]).
   *
   * @param mountRoot            the directory this computing unit mounts datasets and models
   *                             under; None on a unit that mounts none. A parameter so that a test
@@ -132,7 +130,7 @@ class WorkflowExecutionService(
   // Wire error/state reporting first, before any other construction work, so a
   // fatalErrors update (recorded by errorHandler) always has an emitter.
   // Construction itself does no external work and cannot throw; the throwing
-  // work lives in startStored(), whose failures reach the UI through this same
+  // work lives in startPlan(), whose failures reach the UI through this same
   // handler.
   addSubscription(
     executionStateStore.metadataStore.registerDiffHandler((oldState, newState) => {
@@ -165,15 +163,14 @@ class WorkflowExecutionService(
   @volatile private var built: Option[RunServices] = None
 
   /**
-    * What the run is made of, once [[startStored]] has set it up; None before that, and for a
-    * run that could not be set up.
+    * What the run is made of, once [[startPlan]] has set it up; None before that, and for a run
+    * that could not be set up.
     */
   def services: Option[RunServices] = built
 
   /**
-    * Starts the run from `executionPlan`, the plan that the plan row `record` of the plan table
-    * at `planUri` holds, read back. The execution was claimed for this start. A plan that reads
-    * datasets or models fails here on a unit that mounts none
+    * Starts the run from `executionPlan`, the plan its start carried, whose start was taken. A
+    * plan that reads datasets or models fails here on a unit that mounts none
     * ([[WorkflowExecutionService.mountedUnder]]). The engine and every service around the run are
     * built on the plan, and the run is READY.
     *
@@ -183,16 +180,13 @@ class WorkflowExecutionService(
     * superseded meanwhile is left as it ended, while its installs go on for the runs after it; a
     * run whose environment cannot be installed ends FAILED, with pip's words as its error.
     *
+    * @param startedBy the user who asked to start it: only they may change its operators
     * @return Some(failure) when the run could not be set up, once reported through the error
     *         handler: nothing is kept of it, and its engine, if one was built, is shut down.
     *         None once the run is set up
     */
-  def startStored(
-      executionPlan: ExecutionPlan,
-      record: PlanRecord,
-      planUri: URI
-  ): Option[Throwable] =
-    Try(setUp(executionPlan, record, planUri)) match {
+  def startPlan(executionPlan: ExecutionPlan, startedBy: Int): Option[Throwable] =
+    Try(setUp(executionPlan, startedBy)) match {
       case Failure(failure) =>
         errorHandler(failure)
         Some(failure)
@@ -207,7 +201,7 @@ class WorkflowExecutionService(
     * it. All of them or none: when a service cannot be built, the engine built before it is shut
     * down.
     */
-  private def setUp(executionPlan: ExecutionPlan, record: PlanRecord, planUri: URI): RunServices = {
+  private def setUp(executionPlan: ExecutionPlan, startedBy: Int): RunServices = {
     val workflow = Workflow(
       workflowContext,
       WorkflowExecutionService.mountedUnder(executionPlan.plan, mountRoot)
@@ -223,8 +217,7 @@ class WorkflowExecutionService(
         client,
         executionStateStore,
         workflow,
-        planUri,
-        record.createdBy,
+        startedBy,
         mountRoot
       )
       RunServices(

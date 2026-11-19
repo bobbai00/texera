@@ -30,12 +30,7 @@ import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.ClusterListener
 import org.apache.texera.amber.core.executor.{InputFile, OpExecWithClassName, OperatorInputs}
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionLogStore,
-  ExecutionPlanStore,
-  VFSURIFactory
-}
+import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionLogStore, VFSURIFactory}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -45,6 +40,7 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{
   CostHints,
+  ExecutionPlan,
   PhysicalPlan,
   PhysicalPlanCodec,
   PortIdentity,
@@ -631,7 +627,7 @@ class WorkflowWebsocketResourceSpec
       ("no JSON at all", "pause the workflow", None),
       ("an empty frame", "", None)
     )
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val inFlight = runInFlight(service)
       val inFlightState = inFlight.executionStateStore.metadataStore.getState
@@ -678,7 +674,7 @@ class WorkflowWebsocketResourceSpec
     // registry, so a request type added later is either refused here or declared a read.
     val changing: Seq[(String, String)] = commandFrames(974999L) ++ Seq(
       "WorkflowStartRequest" -> frameOf(WorkflowStartRequest(974999L, "vfs:///x")),
-      "OperatorUpdateRequest" -> frameOf(OperatorUpdateRequest(974999L, "update-1"))
+      "OperatorUpdateRequest" -> frameOf(OperatorUpdateRequest(974999L, "{}"))
     )
     // The requests that name an execution, which the refusal names in turn.
     val naming = namedCommandFrames(974999L).map(_._1).toSet + "WorkflowStartRequest"
@@ -693,7 +689,7 @@ class WorkflowWebsocketResourceSpec
     )
 
     val noWriteAccess = "You do not have write access to the computing unit."
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val inFlight = runInFlight(service)
       val inFlightState = inFlight.executionStateStore.metadataStore.getState
@@ -818,7 +814,7 @@ class WorkflowWebsocketResourceSpec
   it should "refuse a pause, a resume and a kill of another execution than the run held, to their sender alone" in {
     // A page that still shows a run another has replaced, as after a run started in another tab:
     // what it asks of the run it shows does not reach the run that took its place.
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val held = runInFlight(service)
       val heldState = held.executionStateStore.metadataStore.getState
@@ -858,7 +854,7 @@ class WorkflowWebsocketResourceSpec
     // What a run's handler throws on a session's request is not the run's failure: recorded as
     // one, a skip, which the engine cannot do, or a wrong debugger command would end the run
     // for every session.
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val held = runInFlight(service)
       val heldState = held.executionStateStore.metadataStore.getState
@@ -1021,8 +1017,7 @@ class WorkflowWebsocketResourceSpec
   // A format this unit does not read yet: the one after its own.
   private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
 
-  /** Every plan, runtime-statistics and log table the start cases make, dropped after the suite. */
-  private val madePlans = ArrayBuffer.empty[URI]
+  /** Every runtime-statistics and log table the start cases make, dropped after the suite. */
   private val madeStatistics = ArrayBuffer.empty[URI]
   private val madeLogs = ArrayBuffer.empty[URI]
 
@@ -1084,7 +1079,6 @@ class WorkflowWebsocketResourceSpec
 
   override protected def afterAll(): Unit =
     try {
-      madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
       madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
       madeStatistics.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
       TestKit.shutdownActorSystem(system)
@@ -1110,12 +1104,8 @@ class WorkflowWebsocketResourceSpec
         expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
       )
 
-  /** The Dashboard's store of a change to a paused operator, with the fixture resolver. */
-  private object FixtureUpdates
-      extends OperatorUpdates(
-        compiling = new FixtureCompilingService(),
-        warehousesEnabled = false
-      )
+  /** The Dashboard's making of a change to a paused operator, with the fixture resolver. */
+  private object FixtureUpdates extends OperatorUpdates(compiling = new FixtureCompilingService())
 
   private def userOf(uid: Int): User = {
     val user = new User
@@ -1147,12 +1137,12 @@ class WorkflowWebsocketResourceSpec
     )
   }
 
-  /** An execution of `storedWid` the creator created at the Dashboard for `storedCuid`. */
-  private def created(): CreateExecutionResponse = {
+  /** An execution of `wid` the creator created at the Dashboard for `storedCuid`. */
+  private def created(wid: Long = storedWid): CreateExecutionResponse = {
     val response = FixtureCreator
       .create(
         CreateExecutionRequest(
-          wid = storedWid,
+          wid = wid,
           engineVersion = "1.4.0-spec",
           logicalPlan = TestUtils.sentPlan(linesToLimit()),
           workflowSettings = None,
@@ -1164,18 +1154,11 @@ class WorkflowWebsocketResourceSpec
         new URI("http://texera.example/api/executions"),
         FixtureCompilingService.authorizationOf(creatorUid)
       )
-    madePlans += new URI(response.planUri)
     madeStatistics += VFSURIFactory.createRuntimeStatisticsURI(
-      WorkflowIdentity(storedWid),
+      WorkflowIdentity(wid),
       ExecutionIdentity(response.eid)
     )
     response
-  }
-
-  /** Writes the plan row at `planUri` again, with the body `change` makes of its own. */
-  private def rewritePlan(planUri: URI, change: String => String): Unit = {
-    val (record, logical) = ExecutionPlanStore.readPlanWithLogical(planUri)
-    ExecutionPlanStore.writePlan(planUri, record.copy(body = change(record.body)), logical)
   }
 
   /**
@@ -1217,7 +1200,7 @@ class WorkflowWebsocketResourceSpec
     * which it never arms. Sessions subscribe to it for real. `engines` is the workflow each run's
     * engine was handed. Its runs keep no record in the lake unless `startRecord` starts one.
     */
-  private class StoredStartService(
+  private class StartService(
       serviceCuid: Int = storedCuid,
       startRecord: WorkflowContext => ExecutionRecorder = _ => ExecutionRecorder.none,
       val engines: ArrayBuffer[EngineWorkflow] = ArrayBuffer.empty
@@ -1246,17 +1229,17 @@ class WorkflowWebsocketResourceSpec
           Disposable.empty()
       }
 
-    /** The unit each start by id was asked with. */
+    /** The unit each start was asked with. */
     val asked: ArrayBuffer[Int] = ArrayBuffer.empty
 
-    override def startStoredExecution(
+    override def startExecution(
         executionId: Long,
-        planUri: URI,
+        plan: String,
         user: User,
         cuid: Int
     ): Either[String, WorkflowExecutionService] = {
       asked += cuid
-      super.startStoredExecution(executionId, planUri, user, cuid)
+      super.startExecution(executionId, plan, user, cuid)
     }
   }
 
@@ -1274,8 +1257,14 @@ class WorkflowWebsocketResourceSpec
     (session, sent)
   }
 
-  private def startFrame(executionId: Long, planUri: String): String =
-    frameOf(WorkflowStartRequest(executionId, planUri))
+  private def startFrame(executionId: Long, plan: String): String =
+    frameOf(WorkflowStartRequest(executionId, plan))
+
+  /** `plan` with the context and operators `edit` makes of them, saved as text again. */
+  private def edited(plan: String)(edit: ExecutionPlan => ExecutionPlan): String =
+    PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec.encode(edit(PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(plan))))
+    )
 
   /** Each state the session was told, with the execution it was told the state is of. */
   private def stateEvents(sent: ArrayBuffer[String]): Seq[(String, Option[Long])] =
@@ -1345,12 +1334,12 @@ class WorkflowWebsocketResourceSpec
   }
 
   "WorkflowStartRequest" should
-    "start the execution from its stored plan, for every session on the workflow, on the socket's unit" in {
+    "start the execution from the plan it carries, for every session on the workflow, on the socket's unit" in {
     val execution = created()
     // A service made for another unit, as the workflow's first session on that unit leaves one
     // (#7676): the run is on the unit of the socket the start came over, which the execution was
     // created for.
-    val service = new StoredStartService(serviceCuid = secondCuid)
+    val service = new StartService(serviceCuid = secondCuid)
     try {
       val socketUri = new URI(
         s"ws://localhost:8085/wsapi/workflow-websocket?wid=$storedWid&uid=$creatorUid" +
@@ -1362,14 +1351,12 @@ class WorkflowWebsocketResourceSpec
       otherSent.clear()
 
       val logLines = texeraLogLinesOf {
-        resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+        resource.myOnMsg(session, startFrame(execution.eid, execution.plan))
         awaitEngineUp(sent)
         awaitEngineUp(otherSent)
       }
 
-      val planUri = new URI(execution.planUri)
-      ExecutionPlanStore.isStarted(planUri) shouldBe true
-      // The run is set up in full on the plan read back, and READY: every session is told so.
+      // The run is set up in full on the plan read, and READY: every session is told so.
       val run = service.executionService.getValue
       run.workflowContext.executionId shouldBe ExecutionIdentity(execution.eid)
       run.executionStateStore.metadataStore.getState.state shouldBe READY
@@ -1386,57 +1373,39 @@ class WorkflowWebsocketResourceSpec
       logLines.count(_.contains(startLine)) shouldBe 1
       logLines.filter(_.contains(accessToken)) shouldBe empty
       logLines.filter(_.contains("access-token")) shouldBe empty
-      // The engine is handed the plan the Dashboard stored, under the context it was read back
-      // with.
+      // The engine is handed the plan the Dashboard answered, under the context it was read with.
       service.engines should have size 1
       val engine = service.engines.head
       service.computingUnitId shouldBe secondCuid
       engine.context.executionId shouldBe ExecutionIdentity(execution.eid)
-      val stored = PhysicalPlanCodec
-        .decode(PhysicalPlanCodec.fromJson(ExecutionPlanStore.readPlan(planUri).body))
-        .plan
+      val answered = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(execution.plan)).plan
       engine.physicalPlan.operators.map(op => (op.id, op.opExecInitInfo)) shouldBe
-        stored.operators.map(op => (op.id, op.opExecInitInfo))
-      engine.physicalPlan.links shouldBe stored.links
+        answered.operators.map(op => (op.id, op.opExecInitInfo))
+      engine.physicalPlan.links shouldBe answered.links
       engine.physicalPlan.operators.map(_.id.logicalOpId.id) shouldBe Set("lines", "limit")
     } finally service.unsubscribeAll()
   }
 
   it should "refuse a start to its sender alone, writing nothing and leaving the run in flight as it was" in {
     val execution = created()
-    val unknownFormat = created()
-    val unknownFormatUri = new URI(unknownFormat.planUri)
-    rewritePlan(
-      unknownFormatUri,
-      _.replaceFirst(
-        s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
-        s""""formatVersion": $nextFormat,"""
-      )
+    val other = created()
+    val ofOtherWorkflow = created(wid = otherWid)
+    val unknownFormat = execution.plan.replaceFirst(
+      s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
+      s""""formatVersion": $nextFormat,"""
     )
-    val noPlanUri = ExecutionPlanStore
-      .planUri(WorkflowIdentity(storedWid), ExecutionIdentity(firstCreatedEid - 1L), None)
-    // An execution whose plan table holds the plan of another execution.
-    val mislabeled = created()
-    val mislabeledUri = new URI(mislabeled.planUri)
-    rewritePlan(mislabeledUri, _ => ExecutionPlanStore.readPlan(new URI(execution.planUri)).body)
-    // An execution whose plan reads a file through a link that expired long ago, encoded by hand:
-    // the Dashboard makes no link that has expired.
-    val expired = created()
-    val expiredUri = new URI(expired.planUri)
+    // A plan that reads a file through a link that expired long ago, encoded by hand: the
+    // Dashboard makes no link that has expired.
     val expiry = 1000L
     val expiredFile =
       InputFile("lines.txt", "http://texera-rustfs:9000/texera-dataset/lines.txt", expiry)
-    rewritePlan(
-      expiredUri,
-      body => {
-        val saved = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(body))
-        val reading =
+    val expired = edited(execution.plan) { saved =>
+      saved.copy(plan =
+        saved.plan.copy(operators =
           saved.plan.operators.map(_.withInputs(OperatorInputs(files = Seq(expiredFile))))
-        PhysicalPlanCodec.toJson(
-          PhysicalPlanCodec.encode(saved.copy(plan = saved.plan.copy(operators = reading)))
         )
-      }
-    )
+      )
+    }
 
     /**
       * A start that is refused, saying `why`: the frame, and who sends it over which socket.
@@ -1455,123 +1424,62 @@ class WorkflowWebsocketResourceSpec
     val refusals = Seq(
       Refused(
         "no write access",
-        startFrame(execution.eid, execution.planUri),
+        startFrame(execution.eid, execution.plan),
         "You do not have write access to the computing unit.",
         access = PrivilegeEnum.READ
       ),
       Refused(
         "no user",
-        startFrame(execution.eid, execution.planUri),
+        startFrame(execution.eid, execution.plan),
         "A signed-in user is required to start an execution.",
         uid = None
       ),
+      Refused("no plan", startFrame(execution.eid, ""), "The request carries no plan."),
       Refused(
         "not a plan",
-        startFrame(execution.eid, s"vfs:///wid/$storedWid/eid/${execution.eid}/result"),
-        "The request does not name an execution's plan."
-      ),
-      Refused(
-        "no URI",
-        s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":"::"}""",
-        "The request does not name an execution's plan."
+        startFrame(execution.eid, "{}"),
+        "The plan names no format version; this reader reads version " +
+          s"${PhysicalPlanCodec.FormatVersion}."
       ),
       // Frames that do not bind.
       Refused(
         "no execution id",
-        s"""{"type":"WorkflowStartRequest","executionId":"abc","planUri":"${execution.planUri}"}""",
+        frameOf(WorkflowStartRequest(execution.eid, execution.plan))
+          .replaceFirst(s""""executionId":${execution.eid}""", """"executionId":"abc""""),
         "The request could not be read as a WorkflowStartRequest.",
         names = None
       ),
       Refused(
-        "a plan table that is not a string",
-        s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"planUri":{"x":1}}""",
+        "a plan that is not a string",
+        s"""{"type":"WorkflowStartRequest","executionId":${execution.eid},"plan":{"x":1}}""",
         "The request could not be read as a WorkflowStartRequest.",
         names = None
       ),
       Refused(
         "another execution's plan",
-        startFrame(execution.eid, unknownFormat.planUri),
-        s"The plan is execution ${unknownFormat.eid}'s, not ${execution.eid}'s."
+        startFrame(execution.eid, other.plan),
+        s"The plan is execution ${other.eid}'s, not ${execution.eid}'s."
       ),
       Refused(
         "another workflow's plan",
-        startFrame(
-          execution.eid,
-          ExecutionPlanStore
-            .planUri(WorkflowIdentity(otherWid), ExecutionIdentity(execution.eid), None)
-            .toString
-        ),
-        s"The plan belongs to workflow $otherWid, not to this one."
-      ),
-      Refused(
-        "another user's warehouse",
-        startFrame(
-          execution.eid,
-          ExecutionPlanStore
-            .planUri(
-              WorkflowIdentity(storedWid),
-              ExecutionIdentity(execution.eid),
-              Some(s"user-$otherUid-1")
-            )
-            .toString
-        ),
-        "The plan is in another user's warehouse."
-      ),
-      Refused(
-        "the user's own warehouse, which this deployment does not serve",
-        startFrame(
-          execution.eid,
-          ExecutionPlanStore
-            .planUri(
-              WorkflowIdentity(storedWid),
-              ExecutionIdentity(execution.eid),
-              Some(s"user-$creatorUid-1")
-            )
-            .toString
-        ),
-        s"Execution ${execution.eid} keeps its plan in warehouse 'user-$creatorUid-1', and " +
-          "per-user warehouses are disabled in this deployment."
-      ),
-      Refused(
-        "no stored plan",
-        startFrame(firstCreatedEid - 1L, noPlanUri.toString),
-        s"Execution ${firstCreatedEid - 1} has no stored plan.",
-        names = Some(firstCreatedEid - 1L)
+        startFrame(ofOtherWorkflow.eid, ofOtherWorkflow.plan),
+        s"The plan belongs to workflow $otherWid, not to this one.",
+        names = Some(ofOtherWorkflow.eid)
       ),
       Refused(
         "another format",
-        startFrame(unknownFormat.eid, unknownFormat.planUri),
+        startFrame(execution.eid, unknownFormat),
         s"The plan is in format version $nextFormat, but this reader reads version " +
-          s"${PhysicalPlanCodec.FormatVersion}.",
-        names = Some(unknownFormat.eid)
-      ),
-      Refused(
-        "another user",
-        startFrame(execution.eid, execution.planUri),
-        s"Only the user who created execution ${execution.eid} may start it.",
-        uid = Some(otherUid)
-      ),
-      Refused(
-        "another unit",
-        startFrame(execution.eid, execution.planUri),
-        s"Execution ${execution.eid} was created for computing unit $storedCuid, not $secondCuid.",
-        cuid = secondCuid
-      ),
-      Refused(
-        "another execution's plan in its plan table",
-        startFrame(mislabeled.eid, mislabeled.planUri),
-        "The plan's ids do not match its location.",
-        names = Some(mislabeled.eid)
+          s"${PhysicalPlanCodec.FormatVersion}."
       ),
       Refused(
         "an expired input link",
-        startFrame(expired.eid, expired.planUri),
+        startFrame(execution.eid, expired),
         s"The plan's input links expired at ${Instant.ofEpochMilli(expiry)}. Run the workflow " +
-          "again.",
-        names = Some(expired.eid)
+          "again."
       )
     )
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val inFlight = runInFlight(service)
       val inFlightState = inFlight.executionStateStore.metadataStore.getState
@@ -1593,10 +1501,6 @@ class WorkflowWebsocketResourceSpec
           inFlight.executionStateStore.metadataStore.getState shouldBe inFlightState
         }
       }
-      ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
-      Seq(unknownFormatUri, mislabeledUri, expiredUri).foreach { uri =>
-        ExecutionPlanStore.isStarted(uri) shouldBe false
-      }
       service.engines shouldBe empty
     } finally service.unsubscribeAll()
   }
@@ -1605,7 +1509,7 @@ class WorkflowWebsocketResourceSpec
     val (session, sent) = mockSession(uid = Some(creatorUid), wid = storedWid, cuid = storedCuid)
     registerState(session, PrivilegeEnum.WRITE)
 
-    noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "vfs:///x"))
+    noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "{}"))
 
     assertRefused(
       sent,
@@ -1619,7 +1523,7 @@ class WorkflowWebsocketResourceSpec
     val (session, sent) = mockSession(uid = Some(creatorUid), wid = storedWid, cuid = storedCuid)
     registerState(session, PrivilegeEnum.WRITE).subscribe(new TestWorkflowService(9109L))
 
-    noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "vfs:///x"))
+    noException should be thrownBy resource.myOnMsg(session, startFrame(974998L, "{}"))
 
     assertRefused(
       sent,
@@ -1631,11 +1535,11 @@ class WorkflowWebsocketResourceSpec
 
   it should "refuse a second start of an execution to its sender alone, leaving the run started as it was" in {
     val execution = created()
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val (session, sent) = sessionOn(service)
       val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
-      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.plan))
       awaitEngineUp(sent)
       awaitEngineUp(otherSent)
       val run = service.executionService.getValue
@@ -1648,7 +1552,7 @@ class WorkflowWebsocketResourceSpec
           againSent.clear()
 
           recorder.record {
-            resource.myOnMsg(repeating, startFrame(execution.eid, execution.planUri))
+            resource.myOnMsg(repeating, startFrame(execution.eid, execution.plan))
           } shouldBe empty
 
           assertRefused(
@@ -1677,11 +1581,11 @@ class WorkflowWebsocketResourceSpec
     )
     madeLogs += logUri
     // Its runs keep their record in the lake, as a unit's do.
-    val service = new StoredStartService(startRecord = ExecutionRecorder.start)
+    val service = new StartService(startRecord = ExecutionRecorder.start)
     try {
       val (session, sent) = sessionOn(service)
       val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
-      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.plan))
       awaitEngineUp(sent)
       awaitEngineUp(otherSent)
       val run = service.executionService.getValue
@@ -1708,11 +1612,11 @@ class WorkflowWebsocketResourceSpec
 
   it should "leave a run that already ended as it is recorded, when it arrives late" in {
     val execution = created()
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val (session, sent) = sessionOn(service)
       val (_, otherSent) = sessionOn(service, uid = Some(otherUid))
-      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.plan))
       awaitEngineUp(sent)
       awaitEngineUp(otherSent)
       val run = service.executionService.getValue
@@ -1735,35 +1639,38 @@ class WorkflowWebsocketResourceSpec
     } finally service.unsubscribeAll()
   }
 
-  // -- applying a change the Dashboard stored -----------------------------------
+  // -- applying a change the Dashboard made ---------------------------------------
 
-  "OperatorUpdateRequest" should "apply a change the Dashboard stored to the run started from its plan" in {
+  "OperatorUpdateRequest" should "apply a change the Dashboard made to the run started from its plan" in {
     val execution = created()
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val (session, sent) = sessionOn(service)
-      resource.myOnMsg(session, startFrame(execution.eid, execution.planUri))
+      resource.myOnMsg(session, startFrame(execution.eid, execution.plan))
       awaitEngineUp(sent)
       val run = service.executionService.getValue
       val changed = new LimitOpDesc
       changed.setOperatorId("limit")
       changed.limit = 7
-      val update = FixtureUpdates.store(
+      val update = FixtureUpdates.make(
         execution.eid,
-        OperatorUpdateRequestBody(TestUtils.sentOperator(changed)),
+        OperatorUpdateRequestBody(
+          TestUtils.sentOperator(changed),
+          TestUtils.sentPlan(linesToLimit())
+        ),
         userOf(creatorUid),
         FixtureCompilingService.authorizationOf(creatorUid)
       )
-      val updateFrame = frameOf(OperatorUpdateRequest(execution.eid, update.updateId))
-      // Only the creator, with WRITE on the unit, applies it: a session without WRITE, another
-      // user's and one of no user on the same run are refused, and queue nothing.
+      val updateFrame = frameOf(OperatorUpdateRequest(execution.eid, update.update))
+      // Only the user who started it, with WRITE on the unit, applies it: a session without
+      // WRITE, another user's and one of no user on the same run are refused, and queue nothing.
       Seq(
         sessionOn(service, access = PrivilegeEnum.READ) ->
           "You do not have write access to the computing unit.",
         sessionOn(service, uid = Some(otherUid)) ->
-          s"Only the user who created execution ${execution.eid} may change its operators.",
+          s"Only the user who started execution ${execution.eid} may change its operators.",
         sessionOn(service, uid = None) ->
-          s"Only the user who created execution ${execution.eid} may change its operators."
+          s"Only the user who started execution ${execution.eid} may change its operators."
       ).foreach {
         case ((refusedSession, refusedSent), why) =>
           withClue(s"$why: ") {
@@ -1776,12 +1683,23 @@ class WorkflowWebsocketResourceSpec
       }
       sent.clear()
 
+      // A change that asks for a Python environment the running Limit does not run in.
+      val inAnotherEnvironment = PhysicalPlanCodec.updateToJson(
+        PhysicalPlanCodec.updateFromJson(update.update).withPythonEnvironment("ml")
+      )
       resource.myOnMsg(session, updateFrame)
-      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(execution.eid, "update-unknown")))
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(execution.eid, "{}")))
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(execution.eid, inAnotherEnvironment)))
 
       modifyLogicResponses(sent) shouldBe Seq(
         ("limit", true, ""),
-        ("", false, s"Execution ${execution.eid} has no change update-unknown.")
+        (
+          "",
+          false,
+          "The operator update names no format version; this reader reads version " +
+            s"${PhysicalPlanCodec.FormatVersion}."
+        ),
+        ("limit", false, "The operator's Python environment cannot change while the run is paused.")
       )
       // Queued for the resume: the running Limit, with the executor the change made.
       val queued =
@@ -1795,15 +1713,15 @@ class WorkflowWebsocketResourceSpec
   }
 
   it should "answer a change for an execution that is not running here as not applied" in {
-    val service = new StoredStartService
+    val service = new StartService
     try {
       val (session, sent) = sessionOn(service)
       // No run at all, then a run of another execution, then one of this execution that never
       // built its engine.
-      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974997L, "update-1")))
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974997L, "{}")))
       runInFlight(service)
-      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974997L, "update-1")))
-      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974999L, "update-1")))
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974997L, "{}")))
+      resource.myOnMsg(session, frameOf(OperatorUpdateRequest(974999L, "{}")))
 
       modifyLogicResponses(sent) shouldBe Seq(
         ("", false, "Execution 974997 is not running here."),

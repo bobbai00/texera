@@ -115,33 +115,30 @@ object RunCompilationResource {
   )
 
   /**
-    * What `POST /compile/run` answers (200), as a [[PlanToRun.Made]] holds it: the plan before
-    * its files are linked, and the workflow it was compiled from.
+    * What `POST /compile/run` answers (200): the plan [[PlanToRun.make]] made, before its files
+    * are linked.
     */
-  case class RunCompileResponse(plan: String, logicalPlan: String)
+  case class RunCompileResponse(plan: String)
 
   /**
     * The body of `POST /compile/update`: the change that [[UpdateToRun.make]] makes into an
     * operator to run, with what it is made from.
     *
-    * @param logicalPlan the workflow the execution's plan was compiled from
+    * @param logicalPlan the workflow the execution ran, as the editor held it before the change
     * @param operator    the operator as the editor holds it once changed
-    * @param running     the physical operators the execution's plan runs for that operator
     */
   case class UpdateCompileRequest(
       workflowId: Long,
       executionId: Long,
-      updateId: String,
       logicalPlan: LogicalPlanPojo,
-      operator: LogicalOp,
-      running: List[UpdateToRun.RunningOperator]
+      operator: LogicalOp
   )
 
   /**
-    * What `POST /compile/update` answers (200), as an [[UpdateToRun.Made]] holds it: the
-    * operator made to run, as the text of a stored update, and the change as it was sent.
+    * What `POST /compile/update` answers (200): the operator made to run, as the text
+    * [[UpdateToRun.make]] writes an update in.
     */
-  case class UpdateCompileResponse(update: String, operator: String)
+  case class UpdateCompileResponse(update: String)
 
   /**
     * The body of the 400 a workflow that does not compile is answered with: the `code` and
@@ -214,7 +211,7 @@ class RunCompilationResource(
     )
     val uid = user.getUid
     try {
-      val made = withinDeadline {
+      val plan = withinDeadline {
         PlanToRun.make(
           run,
           bindingsFor(uid),
@@ -222,7 +219,7 @@ class RunCompilationResource(
           Option(request.targetOperatorId).flatten
         )
       }
-      Response.ok(RunCompileResponse(made.plan, made.logicalPlan)).build()
+      Response.ok(RunCompileResponse(plan)).build()
     } catch {
       case failed: WorkflowCompilationFailed =>
         logger.info(
@@ -256,18 +253,16 @@ class RunCompilationResource(
     if (request == null) throw new BadRequestException("The request has no body.")
     val uid = user.getUid
     try {
-      val made = withinDeadline {
+      val update = withinDeadline {
         UpdateToRun.make(
           WorkflowIdentity(request.workflowId),
           ExecutionIdentity(request.executionId),
-          request.updateId,
           request.logicalPlan,
           request.operator,
-          Option(request.running).getOrElse(Nil),
           repositoriesFor(uid)
         )
       }
-      Response.ok(UpdateCompileResponse(made.update, made.operator)).build()
+      Response.ok(UpdateCompileResponse(update)).build()
     } catch {
       case missing: NoSuchOperator  => throw new NotFoundException(missing.getMessage)
       case refused: WorkflowRefused => throw new BadRequestException(refused.getMessage)

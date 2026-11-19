@@ -75,11 +75,14 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
   private def frame(typeId: String, fields: String): String =
     if (fields.isEmpty) s"""{"type":"$typeId"}""" else s"""{"type":"$typeId",$fields}"""
 
-  // A start and a change, as the browser sends them once the Dashboard created the execution
-  // and stored the change.
+  // A start and a change, as the browser sends them: the plan and the change the Dashboard
+  // answered, each passed on as one JSON string.
+  private val planText = """{"formatVersion": 1, "operators": []}"""
+  private val updateText = """{"formatVersion": 1, "opId": "udf"}"""
   private val startFields =
-    """"executionId":345,"planUri":"vfs:///wh/user-1-7/wid/12/eid/345/plan""""
-  private val updateFields = """"executionId":345,"updateId":"update-4f6c""""
+    s""""executionId":345,"plan":${objectMapper.writeValueAsString(planText)}"""
+  private val updateFields =
+    s""""executionId":345,"update":${objectMapper.writeValueAsString(updateText)}"""
   // A pause, a resume and a kill, as the browser sends them of the run it shows.
   private val commandFields = """"executionId":345"""
 
@@ -247,36 +250,36 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     req.columnSearch shouldBe Some("city")
   }
 
-  "WorkflowStartRequest" should "bind the execution and its plan table, and write them back the same" in {
+  "WorkflowStartRequest" should "bind the execution and its plan's text, and write them back the same" in {
     val req = read(frame("WorkflowStartRequest", startFields)).asInstanceOf[WorkflowStartRequest]
-    req shouldBe WorkflowStartRequest(345L, "vfs:///wh/user-1-7/wid/12/eid/345/plan")
+    req shouldBe WorkflowStartRequest(345L, planText)
     // What the server writes is what it reads: the type id, then both fields.
     val written = objectMapper.readTree(objectMapper.writeValueAsString(req))
     written.get("type").asText() shouldBe "WorkflowStartRequest"
     written.get("executionId").asLong() shouldBe 345L
-    written.get("planUri").asText() shouldBe "vfs:///wh/user-1-7/wid/12/eid/345/plan"
+    written.get("plan").asText() shouldBe planText
     read(objectMapper.writeValueAsString(req)) shouldBe req
   }
 
   it should "bind an execution id past the Int range" in {
-    read(frame("WorkflowStartRequest", s""""executionId":${Int.MaxValue + 1L},"planUri":"p""""))
+    read(frame("WorkflowStartRequest", s""""executionId":${Int.MaxValue + 1L},"plan":"p""""))
       .asInstanceOf[WorkflowStartRequest]
       .executionId shouldBe Int.MaxValue + 1L
   }
 
-  it should "leave a missing plan table to the start's own check" in {
-    // The endpoint refuses it as "not an execution plan"; the mapper only binds.
+  it should "leave a missing plan to the start's own check" in {
+    // The start refuses it as "The request carries no plan."; the mapper only binds.
     read(frame("WorkflowStartRequest", """"executionId":345""")) shouldBe
       WorkflowStartRequest(345L, null)
   }
 
-  "OperatorUpdateRequest" should "bind the execution and the change's id, and write them back the same" in {
+  "OperatorUpdateRequest" should "bind the execution and the change's text, and write them back the same" in {
     val req = read(frame("OperatorUpdateRequest", updateFields)).asInstanceOf[OperatorUpdateRequest]
-    req shouldBe OperatorUpdateRequest(345L, "update-4f6c")
+    req shouldBe OperatorUpdateRequest(345L, updateText)
     val written = objectMapper.readTree(objectMapper.writeValueAsString(req))
     written.get("type").asText() shouldBe "OperatorUpdateRequest"
     written.get("executionId").asLong() shouldBe 345L
-    written.get("updateId").asText() shouldBe "update-4f6c"
+    written.get("update").asText() shouldBe updateText
     read(objectMapper.writeValueAsString(req)) shouldBe req
   }
 

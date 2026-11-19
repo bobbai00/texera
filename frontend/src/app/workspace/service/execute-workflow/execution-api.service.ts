@@ -55,17 +55,18 @@ export type CreateExecutionRequest = Readonly<{
   replayFromExecution?: ReplayExecutionInfo;
 }>;
 
-/** An execution `POST /api/executions` created (201): the unit is to start it from its plan table, `planUri`. */
+/** An execution `POST /api/executions` created (201), with the plan the computing unit is to start it with. */
 export type CreateExecutionResponse = Readonly<{
   eid: number;
-  planUri: string;
+  /** The execution's compiled plan: text for the unit alone, which the page hands on as it is and never reads. */
+  plan: string;
 }>;
 
-/** A change to a paused operator that `POST /api/executions/{eid}/updates` stored (201). */
+/** A change to an operator of a paused execution, as `POST /api/executions/{eid}/updates` compiled it (201). */
 export type OperatorUpdateResponse = Readonly<{
-  /** The id the computing unit is asked to apply the change by. */
-  updateId: string;
   operatorId: string;
+  /** The change compiled: text for the unit alone, which the page hands on as it is and never reads. */
+  update: string;
 }>;
 
 /**
@@ -179,9 +180,10 @@ export function failureMessage(error: unknown): string {
 }
 
 /**
- * The Dashboard service's executions. An execution is created here, with its plan, and then started on its
- * computing unit by id; a change to one of its operators, while it is paused, is stored here, and then named
- * to the unit by id. Its state is kept here too, for a page whose computing unit does not show its run.
+ * The Dashboard service's executions. An execution is created here, and the plan the answer holds is what the
+ * page hands the computing unit to start it with; a change to one of its operators, while it is paused, is
+ * compiled here, and handed to the unit the same way. Its state is kept here too, for a page whose computing
+ * unit does not show its run.
  *
  * Each call fails with the HTTP error: see {@link failureMessage} and, for a create, {@link operatorErrorsOf}.
  */
@@ -195,9 +197,16 @@ export class ExecutionApiService {
     return this.http.post<CreateExecutionResponse>(WORKFLOW_EXECUTIONS_API_BASE_URL, request);
   }
 
-  /** Stores `operator`, as the editor holds it once changed, as a change to paused execution `eid`. */
-  public postUpdate(eid: number, operator: LogicalOperator): Observable<OperatorUpdateResponse> {
-    return this.http.post<OperatorUpdateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/updates`, { operator });
+  /**
+   * Has `operator`, as the editor holds it once changed, compiled into a change to paused execution `eid`.
+   * `workflow` is the workflow the execution ran, as the editor held it before the change: the Dashboard
+   * finds the operator as it runs there.
+   */
+  public postUpdate(eid: number, operator: LogicalOperator, workflow: LogicalPlan): Observable<OperatorUpdateResponse> {
+    return this.http.post<OperatorUpdateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/updates`, {
+      operator,
+      workflow,
+    });
   }
 
   public getState(eid: number): Observable<ExecutionStateResponse> {

@@ -144,7 +144,7 @@ spec:
           port: 3000
     # Creating an execution asks the compiling service for the workflow's plan, which compiles
     # it and reads the files it scans (the Dashboard waits up to 60s), then links the plan's
-    # files and writes it to the lake, which can take longer than Envoy's 15s default. The
+    # files, which can take longer than Envoy's 15s default. The
     # Dashboard reaches the compiling service at its own Service, not through this gateway, so
     # no route's timeout applies between them. An exact match outranks the /api catch-all below,
     # and the method keeps the other /api/executions routes on it. The gateway sets no limit on

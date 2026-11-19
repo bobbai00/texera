@@ -25,23 +25,6 @@ import org.scalatest.matchers.should.Matchers
 
 class ResultSchemaSpec extends AnyFlatSpec with Matchers {
 
-  "ResultSchema.executionPlanSchema" should "declare the plan table's columns in order" in {
-    val schema = ResultSchema.executionPlanSchema
-    schema.getAttributeNames shouldBe List(
-      "entryId",
-      "body",
-      "logical",
-      "createdBy",
-      "computingUnitId"
-    )
-    List("entryId", "body", "logical").foreach(name =>
-      schema.getAttribute(name).getType shouldBe AttributeType.STRING
-    )
-    List("createdBy", "computingUnitId").foreach(name =>
-      schema.getAttribute(name).getType shouldBe AttributeType.INTEGER
-    )
-  }
-
   "ResultSchema.executionLogSchema" should "declare the log table's columns in order" in {
     val schema = ResultSchema.executionLogSchema
     schema.getAttributeNames shouldBe List("seq", "timeMs", "kind", "state", "detail")

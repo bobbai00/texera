@@ -36,7 +36,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   OperatorIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{CostHints, PortIdentity}
+import org.apache.texera.amber.core.workflow.{CostHints, PhysicalPlanCodec, PortIdentity}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.ERROR
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
@@ -100,9 +100,9 @@ import scala.util.Try
   * run without a statement to Postgres, and keeps the run's record in the lake.
   *
   * An execution is created as the Dashboard service creates one (`ExecutionCreator`): its row is
-  * inserted, and its plan is compiled for its creator and written to the lake, in the catalog
-  * the build's tests use. It is then started by its id as a computing unit starts one
-  * (`WorkflowService.startStoredExecution`), on a workflow service that a session is connected
+  * inserted, and its plan is compiled for its creator and answered. It is then started with that
+  * plan as a computing unit starts one (`WorkflowService.startExecution`), on a workflow service
+  * that a session is connected
   * to, and runs to its end on an engine of this suite's actor system. Every statement the unit
   * sends through jOOQ, from any thread, is recorded from the start until the session has been
   * sent the results of the completed run, which is the last thing a unit does for a run. The
@@ -321,17 +321,17 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   ) {
 
     /**
-      * The rows the run stored as the result of operator `operatorId`, found where the
-      * execution's stored plan says the operator's first output port is stored.
+      * The rows the run stored as the result of operator `operatorId`, found by the names of the
+      * execution's tables, as the Dashboard finds them.
       */
     def resultOf(operatorId: String): List[Tuple] = {
+      val plan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(execution.plan)).context
       val uri = ExecutionTables
         .resultTableAmong(
-          ExecutionTables.portTables(new URI(execution.planUri)),
+          ExecutionTables.portTables(plan.workflowId, plan.executionId, plan.warehouse),
           OperatorIdentity(operatorId),
           PortIdentity()
         )
-        .filter(ExecutionTables.exists)
         .getOrElse(fail(s"the run stored no result of operator $operatorId"))
       DocumentFactory
         .openDocument(uri)
@@ -380,7 +380,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     try {
       val statements = recorder.record {
         service
-          .startStoredExecution(execution.eid, new URI(execution.planUri), creator, unitCuid)
+          .startExecution(execution.eid, execution.plan, creator, unitCuid)
           .left
           .foreach(why => fail(s"the start was refused: $why"))
         Await.result(session.ended, 3.minutes)

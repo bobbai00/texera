@@ -120,17 +120,19 @@ describe("ExecutionApiService", () => {
   });
 
   describe("create", () => {
-    it("posts the request to /api/executions and hands back the execution created", () => {
+    it("posts the request to /api/executions and hands back the execution created, its plan as the text it is", () => {
       let created: CreateExecutionResponse | undefined;
       service.create(request).subscribe(response => (created = response));
 
       const req = httpMock.expectOne(EXECUTIONS_URL);
       expect(req.request.method).toBe("POST");
       expect(req.request.body).toEqual(request);
-      const answer: CreateExecutionResponse = { eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" };
-      req.flush(answer, { status: 201, statusText: "Created" });
+      // Text that is itself JSON, with escapes and characters beyond ASCII in it.
+      const plan = '{"executionId":345,"operators":[{"id":"udf-1","code":"print(\\"café\\")\\n"}]}';
+      req.flush({ eid: 345, plan }, { status: 201, statusText: "Created" });
 
-      expect(created).toEqual(answer);
+      expect(created).toEqual({ eid: 345, plan });
+      expect(created?.plan).toBe(plan);
     });
 
     it("writes neither a warehouse nor a replay that the request does not name", () => {
@@ -147,7 +149,7 @@ describe("ExecutionApiService", () => {
         "wid",
         "workflowSettings",
       ]);
-      req.flush({ eid: 1, planUri: "vfs:///wid/12/eid/1/plan" }, { status: 201, statusText: "Created" });
+      req.flush({ eid: 1, plan: '{"executionId":1}' }, { status: 201, statusText: "Created" });
     });
 
     it("fails with the operators' errors of a workflow that does not compile", () => {
@@ -173,7 +175,7 @@ describe("ExecutionApiService", () => {
       [400, "Bad Request", "The request names no workflow."],
       [403, "Forbidden", "You may not run workflows on computing unit 3."],
       [409, "Conflict", "Computing unit 3 is terminated."],
-      [500, "Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+      [500, "Server Error", "Execution 345 could not be created: its plan could not be made."],
       [
         504,
         "Gateway Timeout",
@@ -192,25 +194,43 @@ describe("ExecutionApiService", () => {
 
   describe("postUpdate", () => {
     const operator = { operatorID: "PythonUDFV2-operator-1", operatorType: "PythonUDFV2", code: "x = 1" };
+    // The workflow the execution ran: the operator as it was before the change, and what feeds it.
+    const workflow: LogicalPlan = {
+      operators: [
+        { operatorID: "PythonUDFV2-operator-1", operatorType: "PythonUDFV2", code: "x = 0" },
+        { operatorID: "scan-b", operatorType: "CSVFileScan" },
+      ],
+      links: [
+        {
+          fromOpId: "scan-b",
+          fromPortId: { id: 0, internal: false },
+          toOpId: "PythonUDFV2-operator-1",
+          toPortId: { id: 0, internal: false },
+        },
+      ],
+      opsToViewResult: ["PythonUDFV2-operator-1"],
+      opsToReuseResult: [],
+    };
 
-    it("posts the operator, as {operator}, to the execution's updates and hands back the change stored", () => {
-      let stored: OperatorUpdateResponse | undefined;
-      service.postUpdate(345, operator).subscribe(response => (stored = response));
+    it("posts the operator and the workflow the execution ran, and hands back the change compiled", () => {
+      let compiled: OperatorUpdateResponse | undefined;
+      service.postUpdate(345, operator, workflow).subscribe(response => (compiled = response));
 
       const req = httpMock.expectOne(`${EXECUTIONS_URL}/345/updates`);
       expect(req.request.method).toBe("POST");
-      expect(req.request.body).toEqual({ operator });
-      req.flush(
-        { updateId: "update-4f6c", operatorId: "PythonUDFV2-operator-1" },
-        { status: 201, statusText: "Created" }
-      );
+      expect(req.request.body).toEqual({ operator, workflow });
+      // What goes on the wire: the two, and nothing else.
+      expect(Object.keys(JSON.parse(req.request.serializeBody() as string)).sort()).toEqual(["operator", "workflow"]);
+      const update = '{"executionId":345,"operator":{"id":"PythonUDFV2-operator-1","code":"x = 1\\n"}}';
+      req.flush({ operatorId: "PythonUDFV2-operator-1", update }, { status: 201, statusText: "Created" });
 
-      expect(stored).toEqual({ updateId: "update-4f6c", operatorId: "PythonUDFV2-operator-1" });
+      expect(compiled).toEqual({ operatorId: "PythonUDFV2-operator-1", update });
+      expect(compiled?.update).toBe(update);
     });
 
     it("fails with the Dashboard's reason for a change it refuses", () => {
       let failure: unknown;
-      service.postUpdate(345, operator).subscribe({ error: (error: unknown) => (failure = error) });
+      service.postUpdate(345, operator, workflow).subscribe({ error: (error: unknown) => (failure = error) });
 
       httpMock
         .expectOne(`${EXECUTIONS_URL}/345/updates`)

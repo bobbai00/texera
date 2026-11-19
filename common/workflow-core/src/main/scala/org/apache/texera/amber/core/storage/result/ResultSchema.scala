@@ -23,15 +23,6 @@ import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 
 object ResultSchema {
 
-  /** The columns of an execution's plan table (see `ExecutionPlanStore`). */
-  val executionPlanSchema: Schema = new Schema(
-    new Attribute("entryId", AttributeType.STRING),
-    new Attribute("body", AttributeType.STRING),
-    new Attribute("logical", AttributeType.STRING),
-    new Attribute("createdBy", AttributeType.INTEGER),
-    new Attribute("computingUnitId", AttributeType.INTEGER)
-  )
-
   /** The columns of an execution's log table (see `ExecutionLogStore`). */
   val executionLogSchema: Schema = new Schema(
     new Attribute("seq", AttributeType.LONG),

@@ -3,7 +3,6 @@
   "executionId": {
     "id": "42"
   },
-  "updateId": "update-1",
   "opId": {
     "logicalOpId": {
       "id": "udf"
@@ -19,5 +18,6 @@
   "repositoryMounts": [
     "dataset-1:d4t4",
     "model-2:m0d3l"
-  ]
+  ],
+  "pythonEnvironment": "ml"
 }

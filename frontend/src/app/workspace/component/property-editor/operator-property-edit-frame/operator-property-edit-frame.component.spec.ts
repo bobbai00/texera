@@ -2960,12 +2960,21 @@ describe("OperatorPropertyEditFrameComponent", () => {
   });
 
   describe("modify-operator-logic gating", () => {
-    it("allowModifyOperatorLogic re-enables editing", () => {
+    it("allowModifyOperatorLogic snapshots the workflow while the form is still locked, then re-enables editing", () => {
       fixture.detectChanges();
       component.setInteractivity(false);
+      // Whether the form could be edited when the snapshot was taken.
+      const editableAtSnapshot: boolean[] = [];
+      const snapshotSpy = vi
+        .spyOn(component.executeWorkflowService, "snapshotWorkflowForLogicChange")
+        .mockImplementation(() => {
+          editableAtSnapshot.push(component.interactive);
+        });
 
       component.allowModifyOperatorLogic();
 
+      expect(snapshotSpy).toHaveBeenCalledTimes(1);
+      expect(editableAtSnapshot).toEqual([false]);
       expect(component.interactive).toBe(true);
     });
 

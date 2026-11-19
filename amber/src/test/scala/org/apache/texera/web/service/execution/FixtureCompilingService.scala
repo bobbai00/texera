@@ -83,10 +83,10 @@ class FixtureCompilingService(
       request: PlanRequest,
       authorization: String,
       deadline: FiniteDuration
-  ): MadePlan =
+  ): String =
     answering {
       plansAsked += ((request, authorization))
-      val made = PlanToRun.make(
+      PlanToRun.make(
         new WorkflowContext(
           WorkflowIdentity(request.workflowId),
           ExecutionIdentity(request.executionId),
@@ -97,32 +97,26 @@ class FixtureCompilingService(
         objectMapper.treeToValue(request.logicalPlan, classOf[LogicalPlanPojo]),
         request.targetOperatorId
       )
-      MadePlan(made.plan, made.logicalPlan)
     }
 
   override def updateToRun(
       request: UpdateRequest,
       authorization: String,
       deadline: FiniteDuration
-  ): MadeUpdate =
+  ): String =
     answering {
       updatesAsked += ((request, authorization))
-      val running =
-        request.running.map(op => UpdateToRun.RunningOperator(op.layerName, op.pythonEnvironment))
       val workflow = objectMapper.treeToValue(request.logicalPlan, classOf[LogicalPlanPojo])
       val changed = objectMapper.treeToValue(request.operator, classOf[LogicalOp])
       val repositories = repositoriesFor(FixtureCompilingService.userOf(authorization))
-      val made = UpdateToRun.make(
+      UpdateToRun.make(
         WorkflowIdentity(request.workflowId),
         ExecutionIdentity(request.executionId),
-        request.updateId,
         workflow,
         changed,
-        running,
         repositories,
         reconfigure
       )
-      MadeUpdate(made.update, made.operator)
     }
 
   /** What `compile` answers, or the refusal the service answers its failure with. */

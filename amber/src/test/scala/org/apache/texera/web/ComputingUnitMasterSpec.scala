@@ -521,11 +521,11 @@ class ComputingUnitMasterSpec
     // Jersey parses SyncExecutionResource's request body, its list of targets included, with
     // this mapper...
     mapper.readValue(
-      """{"planUri":"vfs:///wid/12/eid/345/plan","computingUnitId":3,
+      """{"plan":"{\"formatVersion\": 1}","computingUnitId":3,
         |"targetOperatorIds":["op-a"],"timeoutSeconds":60,"maxOperatorResultCharLimit":20000,
         |"maxOperatorResultCellCharLimit":4000}""".stripMargin,
       classOf[SyncRunRequest]
-    ) shouldBe SyncRunRequest("vfs:///wid/12/eid/345/plan", 3, List("op-a"), 60, 20000, 4000)
+    ) shouldBe SyncRunRequest("""{"formatVersion": 1}""", 3, List("op-a"), 60, 20000, 4000)
     // ...and writes its answer with it, as the agent service reads it: a refused run.
     mapper.readTree(
       mapper.writeValueAsString(

@@ -183,7 +183,6 @@ When Texera creates an execution, the compiling service makes its plan and finds
 | `CONSTANTS_MAX_LISTED_FILES` | The most files of dataset versions that one operator of a run may list. A workflow that lists more does not compile. A run that lists more than about 18,000 is refused however high this is set: its plan would be larger than the 16 MiB a plan may be. | `10000` |
 | `UDF_PYTHON_ENVIRONMENTS_ROOT` | The directory a computing unit installs Python environments under. | `/tmp/texera-python-environments` |
 | `UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES` | How long one install may take, in minutes. | `30` |
-| `STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE` | The Iceberg namespace of the tables that hold each execution's plan. | `execution-plan` |
 
 ### Change the locations of Texera data
 By default, Docker manages Texera's data locations. To change them to your own locations:

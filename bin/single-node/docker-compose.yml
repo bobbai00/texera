@@ -435,8 +435,9 @@ services:
         condition: service_healthy
       file-service:
         condition: service_healthy
-      # Creating an execution asks the compiling service for its plan (above), and writes the
-      # plan to the lake, in a warehouse of Lakekeeper's.
+      # Creating an execution asks the compiling service for its plan (above). Each execution's
+      # log, records and results are read from the lake, in a warehouse of Lakekeeper's, and
+      # dropped there when they expire.
       lakekeeper:
         condition: service_healthy
       lakekeeper-init:

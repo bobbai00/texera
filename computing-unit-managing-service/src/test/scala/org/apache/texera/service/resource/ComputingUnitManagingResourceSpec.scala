@@ -564,13 +564,12 @@ class ComputingUnitManagingResourceSpec
 
   private val payloadSize = EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
 
-  // Mirrors the private production list too: the payload size, what a unit reads to run a
-  // stored plan, how long its calls to the Iceberg REST catalog wait, and how often it commits
-  // an execution's record.
+  // Mirrors the private production list too: the payload size, where a unit may read input
+  // files from, its Python environments, how long its calls to the Iceberg REST catalog wait,
+  // and how often it commits an execution's record.
   private val optionalEnvNames = Seq(
     payloadSize,
     EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS,
-    EnvironmentalVariable.ENV_ICEBERG_TABLE_PLAN_NAMESPACE,
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT,
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES,
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS,

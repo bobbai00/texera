@@ -28,5 +28,8 @@ import com.fasterxml.jackson.databind.JsonNode
   * @param operator the operator as the editor holds it once changed, under the id it has in the
   *                 workflow the execution runs. The Dashboard reads its id, and hands the rest
   *                 to the compiling service as it is.
+  * @param workflow the workflow the execution runs, as a logical plan, as the editor held it when
+  *                 the run was unlocked for the change. It may hold more than the part the
+  *                 execution runs.
   */
-case class OperatorUpdateRequestBody(operator: JsonNode)
+case class OperatorUpdateRequestBody(operator: JsonNode, workflow: JsonNode)

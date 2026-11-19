@@ -225,6 +225,12 @@ export class ExecuteWorkflowService {
    */
   private followedExecutionId?: number;
   /**
+   * The workflow the followed execution ran, as the editor held it when an operator of the paused run was first
+   * unlocked for a logic change, before any edit: the Dashboard service compiles each change to the run's operators
+   * against it. Forgotten once the run leaves Paused, and when another execution is followed or started.
+   */
+  private workflowSnapshot?: LogicalPlan;
+  /**
    * The questions to the Dashboard service about the followed execution: asked while the run on screen is in
    * flight and its unit does not show it, because the socket is down or because the unit, on a socket that is
    * up, says that it holds no run. Closed while the unit shows the run, and once the execution is closed.
@@ -548,8 +554,8 @@ export class ExecuteWorkflowService {
 
   /**
    * Has the Dashboard service create the execution `request` asks for, then asks the computing unit, over
-   * the websocket, to start it from the plan the Dashboard wrote. An execution the Dashboard does not create
-   * fails the run with the errors it reports, and nothing is sent to the unit: the run it holds, and that
+   * the websocket, to start it with the plan the Dashboard answered with. An execution the Dashboard does not
+   * create fails the run with the errors it reports, and nothing is sent to the unit: the run it holds, and that
    * run's results, stay as they are.
    */
   private createThenStart(request: CreateExecutionRequest): void {
@@ -566,7 +572,7 @@ export class ExecuteWorkflowService {
         switchMap(() => this.executionApiService.create(request))
       )
       .subscribe({
-        next: ({ eid, planUri }) => {
+        next: ({ eid, plan }) => {
           this.currentExecutionId = eid;
           this.awaitedStart = eid;
           // The unit is taken to show the run it is asked to start, until it says that it holds none. A unit
@@ -575,7 +581,7 @@ export class ExecuteWorkflowService {
           if (!this.socketConnected) {
             this.followAtDashboard();
           }
-          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, planUri });
+          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, plan });
         },
         error: (error: unknown) =>
           this.updateExecutionState({
@@ -694,9 +700,23 @@ export class ExecuteWorkflowService {
   }
 
   /**
-   * Changes operator `operatorID` of the paused run to what the editor holds: the change is stored at the
-   * Dashboard service, for the execution the computing unit names as the paused one, then named to the unit,
-   * which answers with a ModifyLogicResponse. A change the Dashboard does not store is reported in a toast,
+   * Snapshots the workflow that changes to the paused run's operators are compiled against: called as an operator
+   * is unlocked for a logic change, before anything is edited. The editor is locked while a run is in flight, so
+   * what it holds then is what the run ran, the whole of it, which may be more than a run up to an operator ran.
+   * A snapshot already taken is kept, as the editor holds the changes made since.
+   */
+  public snapshotWorkflowForLogicChange(): void {
+    if (this.currentState.state !== ExecutionState.Paused || this.workflowSnapshot !== undefined) {
+      return;
+    }
+    this.workflowSnapshot = ExecuteWorkflowService.getLogicalPlanRequest(this.workflowActionService.getTexeraGraph());
+  }
+
+  /**
+   * Changes operator `operatorID` of the paused run to what the editor holds: the Dashboard service compiles the
+   * change against the workflow snapshot ({@link snapshotWorkflowForLogicChange}), for the execution the computing
+   * unit names as the paused one, and the change it answers with is handed to the unit, which answers with a
+   * ModifyLogicResponse. A change with no snapshot, or one the Dashboard does not compile, is reported in a toast,
    * and nothing is sent to the unit.
    */
   public modifyOperatorLogic(operatorID: string): void {
@@ -704,14 +724,21 @@ export class ExecuteWorkflowService {
       throw new Error("cannot modify logic, the current execution state is " + this.currentState.state);
     }
     const executionId = this.executionOnScreen("modify logic");
+    const workflow = this.workflowSnapshot;
+    if (workflow === undefined) {
+      this.notificationService.error(
+        "The change was not sent: unlock the operator for a logic change before changing it."
+      );
+      return;
+    }
     const op = this.workflowActionService.getTexeraGraph().getOperator(operatorID);
     const operator: LogicalOperator = {
       ...op.operatorProperties,
       operatorID: op.operatorID,
       operatorType: op.operatorType,
     };
-    this.executionApiService.postUpdate(executionId, operator).subscribe({
-      next: ({ updateId }) => this.workflowWebsocketService.send("OperatorUpdateRequest", { executionId, updateId }),
+    this.executionApiService.postUpdate(executionId, operator, workflow).subscribe({
+      next: ({ update }) => this.workflowWebsocketService.send("OperatorUpdateRequest", { executionId, update }),
       error: (error: unknown) => this.notificationService.error(failureMessage(error)),
     });
   }
@@ -761,12 +788,16 @@ export class ExecuteWorkflowService {
 
   /** Follows execution `eid`, which its unit shows, in place of the one followed before. */
   private follow(eid: number): void {
+    if (eid !== this.followedExecutionId) {
+      this.workflowSnapshot = undefined;
+    }
     this.followedExecutionId = eid;
     this.stopFollowingAtDashboard();
   }
 
   private unfollow(): void {
     this.followedExecutionId = undefined;
+    this.workflowSnapshot = undefined;
     this.stopFollowingAtDashboard();
   }
 
@@ -844,6 +875,9 @@ export class ExecuteWorkflowService {
   private updateExecutionState(stateInfo: ExecutionStateInfo): void {
     if (isEqual(this.currentState, stateInfo)) {
       return;
+    }
+    if (stateInfo.state !== ExecutionState.Paused) {
+      this.workflowSnapshot = undefined;
     }
     this.updateWorkflowActionLock(stateInfo);
     const previousState = this.currentState;

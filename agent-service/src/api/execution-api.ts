@@ -82,19 +82,20 @@ export interface CreateExecutionRequest {
 /** The body of a create's 201 answer. Mirrors amber's `CreateExecutionResponse`. */
 export interface CreateExecutionResponse {
   eid: number;
-  // The execution's plan table, which the computing unit starts the execution from.
-  planUri: string;
+  // The execution's compiled plan, which the computing unit runs the execution with: text for
+  // the unit alone, passed on as it is and never read here.
+  plan: string;
 }
 
 /**
  * The body of `POST /api/execution/{eid}/run` on a computing unit. Mirrors amber's
- * `SyncRunRequest`: run execution `eid`, which the Dashboard created for this unit, from its
- * stored plan. The unit answers with the legacy sync-execution result, which
+ * `SyncRunRequest`: run execution `eid`, which the Dashboard created for this unit, with the
+ * plan the create answered. The unit answers with the legacy sync-execution result, which
  * `adaptLegacySyncExecutionResult` reads.
  */
 export interface SyncRunRequest {
-  // The execution's plan table, as the create answered it.
-  planUri: string;
+  // The execution's plan, as the create answered it.
+  plan: string;
   // The computing unit the execution was created for: the one asked.
   computingUnitId: number;
   // The operators whose results are answered.
@@ -106,10 +107,10 @@ export interface SyncRunRequest {
 
 const createdExecutionSchema = z.object({
   eid: z.number().int().positive(),
-  planUri: z.string().min(1),
+  plan: z.string().min(1),
 });
 
-/** Reads a create's 201 answer. Throws when it names no execution. */
+/** Reads a create's 201 answer. Throws when it names no execution, or holds no plan. */
 export function parseCreateExecutionResponse(input: unknown): CreateExecutionResponse {
   const parsed = createdExecutionSchema.safeParse(input);
   if (!parsed.success) {

@@ -21,13 +21,10 @@ package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.{
-  ExecutionAlreadyStartedException,
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
-  ExecutionPlanStore,
-  ExecutionTables,
-  NoStoredPlanException
+  ExecutionTables
 }
 import org.apache.texera.dao.WorkflowExecutionStatus
 import org.apache.texera.web.service.WorkflowEmailNotifier
@@ -54,12 +51,14 @@ object ExecutionCloser {
 
   /**
     * The bytes of the tables `execution` keeps in the lake ([[ExecutionTables]]). A table that is
-    * not there, such as that of a port the run did not store, counts nothing.
+    * not there counts nothing.
     */
   def storedBytesOf(execution: ExecutionRecord): Long = {
-    val own =
-      ExecutionTables.ownTables(execution.workflowId, execution.executionId, execution.warehouse)
-    (own ++ ExecutionTables.portTables(execution.planUri)).map(ExecutionTables.storedBytes).sum
+    val (wid, eid, warehouse) = (execution.workflowId, execution.executionId, execution.warehouse)
+    (ExecutionTables
+      .ownTables(wid, eid, warehouse) ++ ExecutionTables.portTables(wid, eid, warehouse))
+      .map(ExecutionTables.storedBytes)
+      .sum
   }
 }
 
@@ -74,12 +73,12 @@ object ExecutionCloser {
   *
   * An execution is emailed about once, after the UPDATE that closed it and by the replica
   * that made it: a service that stops in between sends none, where the other order could send
-  * two. No email is sent about an execution that no unit ever started, since nothing ran. An
+  * two. No email is sent about an execution that no unit started in time, since nothing ran. An
   * execution whose verdict is replaced by the ending in its log ([[reviseIfEnded]]) is emailed
-  * about once more, since the first email said it had failed. An email that cannot be sent is
-  * logged, and changes nothing of the close.
+  * about once more, since the first email, if any, said it had failed. An email that cannot be
+  * sent is logged, and changes nothing of the close.
   *
-  * A lake call that throws is thrown on, never taken for "no log", "no plan" or "no ending":
+  * A lake call that throws is thrown on, never taken for "no log" or "no ending":
   * the job logs it and looks at the execution again on its next tick. The one exception is the
   * measuring of a closed execution's tables, whose failure is logged here, since the execution
   * is closed by then.
@@ -90,8 +89,6 @@ object ExecutionCloser {
 class ExecutionCloser(
     label: URI => Option[ExecutionLabel] = ExecutionLogStore.label,
     rows: URI => Seq[ExecutionLogEntry] = ExecutionLogStore.read,
-    isStarted: URI => Boolean = ExecutionPlanStore.isStarted,
-    claimStart: URI => Unit = ExecutionPlanStore.claimStart,
     storedBytes: ExecutionRecord => Long = ExecutionCloser.storedBytesOf,
     now: () => Long = () => System.currentTimeMillis(),
     emails: WorkflowEmailNotifier = new WorkflowEmailNotifier(),
@@ -100,28 +97,16 @@ class ExecutionCloser(
 
   /** What the lake holds of `execution`, for [[ExecutionClosing.decide]]. */
   def read(execution: ExecutionRecord): Read =
-    label(execution.logUri) match {
-      case Some(found) => Read.Log(found)
-      case None =>
-        val planStarted =
-          try isStarted(execution.planUri)
-          catch { case _: NoStoredPlanException => false }
-        Read.NoLog(planStarted)
-    }
+    label(execution.logUri).fold[Read](Read.NoLog)(Read.Log)
 
   /**
     * Closes `execution` with `ending`, unless it is closed already.
     *
-    * @param fromLog      whether `ending` is one its log holds
-    * @param neverStarted no unit ever started it (see [[ExecutionRecords.close]])
+    * @param fromLog whether `ending` is one its log holds
     * @return whether this call closed it
     */
-  def close(
-      execution: ExecutionRecord,
-      ending: Ending,
-      fromLog: Boolean,
-      neverStarted: Boolean = false
-  ): Boolean = closeRow(execution, ending, fromLog, neverStarted, measured = true)
+  def close(execution: ExecutionRecord, ending: Ending, fromLog: Boolean): Boolean =
+    closeRow(execution, ending, fromLog, emailed = true, measured = true)
 
   /** Closes `execution` with the ending its log's label shows, if it shows one. */
   def closeIfEnded(execution: ExecutionRecord): Boolean =
@@ -130,32 +115,24 @@ class ExecutionCloser(
       .exists(close(execution, _, fromLog = true))
 
   /**
-    * Takes the one start of `execution`, which no unit started in time, and closes it as never
-    * started: nothing can start it afterwards. An execution with no plan table cannot be
-    * started either. One whose start a unit claimed first is left open.
+    * Closes `execution`, which no unit started in time, as failed: "never started". Nothing is
+    * measured, as a run that never started made no table, and no email is sent. A unit that
+    * starts it later all the same writes a log, whose ending takes the verdict's place
+    * ([[reviseIfEnded]]).
     */
-  def claimThenClose(execution: ExecutionRecord): Boolean = {
-    val unstartable =
-      try {
-        claimStart(execution.planUri)
-        true
-      } catch {
-        case _: NoStoredPlanException            => true
-        case _: ExecutionAlreadyStartedException => false
-      }
-    unstartable && close(
+  def closeNeverStarted(execution: ExecutionRecord): Boolean =
+    closeRow(
       execution,
       Ending(WorkflowExecutionStatus.Failed, Some(ExecutionClosing.NeverStarted), now()),
       fromLog = false,
-      neverStarted = true
+      emailed = false,
+      measured = false
     )
-  }
 
   /**
     * Closes `execution`, whose unit is gone, as failed for `reason`, as of the unit's last
     * sign of life, unless the rows of its log hold an ending: a unit can write its last row and
-    * be gone before the label is read. Its start is taken first if no unit took it, so nothing
-    * starts an execution that is recorded as over.
+    * be gone before the label is read.
     *
     * @param label the label this tick read; None when the execution has no log
     */
@@ -172,11 +149,6 @@ class ExecutionCloser(
           fromLog = true
         )
       case None =>
-        // A log is made by the unit that claimed the start.
-        if (label.isEmpty) {
-          try claimStart(execution.planUri)
-          catch { case _: ExecutionAlreadyStartedException | _: NoStoredPlanException => () }
-        }
         close(
           execution,
           Ending(
@@ -197,7 +169,7 @@ class ExecutionCloser(
       execution,
       Ending(WorkflowExecutionStatus.Failed, Some(ExecutionClosing.WarehouseUnavailable), now()),
       fromLog = false,
-      neverStarted = false,
+      emailed = true,
       measured = false
     )
 
@@ -235,7 +207,7 @@ class ExecutionCloser(
       execution: ExecutionRecord,
       ending: Ending,
       fromLog: Boolean,
-      neverStarted: Boolean,
+      emailed: Boolean,
       measured: Boolean
   ): Boolean = {
     val endedAtMs =
@@ -245,15 +217,14 @@ class ExecutionCloser(
       ending.outcome,
       ending.reason,
       endedAtMs,
-      fromLog,
-      neverStarted
+      fromLog
     )
     if (closed) {
       logger.info(
         s"Execution ${execution.eid} of workflow ${execution.wid} is closed as " +
           describe(ending.outcome, ending.reason) + (if (fromLog) ", as its log says." else ".")
       )
-      if (!neverStarted) email(execution, ending.copy(endedAtMs = endedAtMs), corrects = None)
+      if (emailed) email(execution, ending.copy(endedAtMs = endedAtMs), corrects = None)
       if (measured) measure(execution)
     }
     closed

@@ -103,36 +103,6 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     assert(VFSURIFactory.decodeURI(inWarehouse).warehouse.contains("user-1-7"))
   }
 
-  "VFSURIFactory.createPlanURI" should "name the execution's plan table without an operator or a port" in {
-    val uri = VFSURIFactory.createPlanURI(WorkflowIdentity(12L), ExecutionIdentity(345L))
-    assert(uri.toString == "vfs:///wid/12/eid/345/plan")
-
-    val components = VFSURIFactory.decodeURI(uri)
-    assert(components.resourceType == VFSResourceType.PLAN)
-    assert(components.workflowId == WorkflowIdentity(12L))
-    assert(components.executionId == ExecutionIdentity(345L))
-    assert(components.globalPortId.isEmpty)
-    assert(components.warehouse.isEmpty)
-  }
-
-  it should "put the warehouse in a leading segment and decode it back" in {
-    val uri =
-      VFSURIFactory.createPlanURI(WorkflowIdentity(12L), ExecutionIdentity(345L), Some("user-1-7"))
-    assert(uri.toString == "vfs:///wh/user-1-7/wid/12/eid/345/plan")
-
-    val components = VFSURIFactory.decodeURI(uri)
-    assert(components.resourceType == VFSResourceType.PLAN)
-    assert(components.workflowId == WorkflowIdentity(12L))
-    assert(components.executionId == ExecutionIdentity(345L))
-    assert(components.warehouse.contains("user-1-7"))
-  }
-
-  it should "reject a warehouse name that is not safe as a URI path segment" in {
-    assertThrows[IllegalArgumentException] {
-      VFSURIFactory.createPlanURI(workflowId, executionId, Some("a/b"))
-    }
-  }
-
   "VFSURIFactory.createExecutionLogURI" should "name the execution's log table without an operator or a port" in {
     val uri = VFSURIFactory.createExecutionLogURI(WorkflowIdentity(12L), ExecutionIdentity(345L))
     assert(uri.toString == "vfs:///wid/12/eid/345/executionlog")
@@ -171,7 +141,6 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     assert(VFSURIFactory.decodeURI(logUri).resourceType == VFSResourceType.EXECUTION_LOG)
 
     val otherTypes = Seq(
-      VFSURIFactory.createPlanURI(workflowId, executionId) -> VFSResourceType.PLAN,
       VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId) ->
         VFSResourceType.RUNTIME_STATISTICS,
       VFSURIFactory.createConsoleMessagesURI(workflowId, executionId) ->
@@ -188,27 +157,22 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     }
   }
 
-  "A plan URI" should "not be taken for another resource type, nor another type's URI for a plan" in {
-    val planUri = VFSURIFactory.createPlanURI(workflowId, executionId)
-    assert(VFSURIFactory.decodeURI(planUri).resourceType == VFSResourceType.PLAN)
+  "VFSURIFactory.uriOfPath" should "give back the URI a path came from, with or without a warehouse" in {
+    val port = VFSURIFactory.createPortBaseURI(workflowId, executionId, portId)
+    Seq(
+      VFSURIFactory.resultURI(port),
+      VFSURIFactory.stateURI(port),
+      VFSURIFactory.createExecutionLogURI(workflowId, executionId, Some("user-1-7"))
+    ).foreach { uri =>
+      val warehouse = VFSURIFactory.decodeURI(uri).warehouse
+      val path = uri.getPath.stripPrefix("/").replaceFirst("^wh/[^/]+/", "")
+      assert(VFSURIFactory.uriOfPath(path, warehouse) == uri)
+    }
+  }
 
-    val baseURI = VFSURIFactory.createPortBaseURI(workflowId, executionId, portId)
-    val otherTypes = Seq(
-      VFSURIFactory.resultURI(baseURI) -> VFSResourceType.RESULT,
-      VFSURIFactory.stateURI(baseURI) -> VFSResourceType.STATE,
-      VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId) ->
-        VFSResourceType.RUNTIME_STATISTICS,
-      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId) ->
-        VFSResourceType.CONSOLE_MESSAGES,
-      // A segment named "plan" that is not the last names no plan.
-      new URI("vfs:///wid/1/eid/2/opid/plan/consolemessages") ->
-        VFSResourceType.CONSOLE_MESSAGES
-    )
-    otherTypes.foreach {
-      case (uri, resourceType) =>
-        withClue(s"$uri: ") {
-          assert(VFSURIFactory.decodeURI(uri).resourceType == resourceType)
-        }
+  it should "read a URI whose last segment was a resource type no longer kept as an unknown type" in {
+    assertThrows[IllegalArgumentException] {
+      VFSURIFactory.decodeURI(new URI("vfs:///wid/1/eid/2/plan"))
     }
   }
 

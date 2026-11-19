@@ -55,7 +55,12 @@ import { StubUserService } from "src/app/common/service/user/stub-user.service";
 import { MockComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/mock-computing-unit-status.service";
 import { commonTestProviders } from "../../../common/testing/test-utils";
 import { RegionStateEvent, RegionUpdateEvent, TexeraWebsocketEvent } from "../../types/workflow-websocket.interface";
-import { mockScanPredicate } from "../workflow-graph/model/mock-workflow-data";
+import {
+  mockPoint,
+  mockResultPredicate,
+  mockScanPredicate,
+  mockScanResultLink,
+} from "../workflow-graph/model/mock-workflow-data";
 import { Version } from "src/environments/version";
 import { CreateExecutionResponse, ExecutionStateResponse, ReplayExecutionInfo } from "./execution-api.service";
 
@@ -98,11 +103,11 @@ describe("ExecuteWorkflowService", () => {
     httpMock.expectNone(EXECUTIONS_URL);
   };
 
+  /** The plan the Dashboard compiles for execution `eid`: text that only the computing unit reads. */
+  const planOf = (eid: number): string => `{"executionId":${eid},"operators":[{"id":"ScanSource-1","layer":"main"}]}`;
+
   /** The Dashboard's answer for execution `eid`, once it is created. */
-  const created = (eid: number): CreateExecutionResponse => ({
-    eid,
-    planUri: `vfs:///wid/${WID}/eid/${eid}/plan`,
-  });
+  const created = (eid: number): CreateExecutionResponse => ({ eid, plan: planOf(eid) });
 
   /** Runs the workflow until the computing unit is asked to start execution `eid`. */
   const startExecution = (eid: number): void => {
@@ -495,9 +500,7 @@ describe("ExecuteWorkflowService", () => {
       connected$.next(false);
       create.flush(created(345), { status: 201, statusText: "Created" });
 
-      expect(wsSendSpy.mock.calls).toEqual([
-        ["WorkflowStartRequest", { executionId: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
-      ]);
+      expect(wsSendSpy.mock.calls).toEqual([["WorkflowStartRequest", { executionId: 345, plan: planOf(345) }]]);
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
       // The unit reports the run it was handed before the Dashboard would be asked about it.
       connected$.next(true);
@@ -530,7 +533,7 @@ describe("ExecuteWorkflowService", () => {
   // ---- a run: its execution is created at the Dashboard service, then started on the unit -----
 
   describe("running the workflow", () => {
-    it("creates the execution at the Dashboard, then asks the unit to start it from its plan", fakeAsync(() => {
+    it("creates the execution at the Dashboard, then hands the unit its plan to start it with", fakeAsync(() => {
       const wsSendSpy = spyOnSocket();
       const states: ExecutionState[] = [];
       service.getExecutionStateStream().subscribe(event => states.push(event.current.state));
@@ -551,11 +554,9 @@ describe("ExecuteWorkflowService", () => {
 
       create.flush(created(345), { status: 201, statusText: "Created" });
 
+      // The plan as the Dashboard answered it, text the page does not read.
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
-      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
-        executionId: 345,
-        planUri: "vfs:///wid/12/eid/345/plan",
-      });
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 345, plan: planOf(345) });
       // The unit's own "Initializing", once it has built the run, is the state the run already shows.
       emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Initializing, executionId: 345 });
       expect(states).toEqual([ExecutionState.Initializing]);
@@ -608,10 +609,7 @@ describe("ExecuteWorkflowService", () => {
       third.flush(created(7), { status: 201, statusText: "Created" });
 
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
-      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
-        executionId: 7,
-        planUri: "vfs:///wid/12/eid/7/plan",
-      });
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 7, plan: planOf(7) });
     }));
 
     it("fails the run when the unit refuses the start this page waits for, and leaves Run usable", fakeAsync(() => {
@@ -850,7 +848,7 @@ describe("ExecuteWorkflowService", () => {
       {
         status: 500,
         statusText: "Server Error",
-        message: "Execution 345 could not be created: its plan could not be written to the lake.",
+        message: "Execution 345 could not be created: its plan could not be made.",
       },
     ];
     for (const { status, statusText, message } of refusals) {
@@ -900,10 +898,7 @@ describe("ExecuteWorkflowService", () => {
 
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
-      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
-        executionId: 346,
-        planUri: "vfs:///wid/12/eid/346/plan",
-      });
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 346, plan: planOf(346) });
     }));
   });
 
@@ -1158,10 +1153,7 @@ describe("ExecuteWorkflowService", () => {
 
     create.flush(created(43), { status: 201, statusText: "Created" });
 
-    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", {
-      executionId: 43,
-      planUri: "vfs:///wid/12/eid/43/plan",
-    });
+    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 43, plan: planOf(43) });
   }));
 
   // ---- refusing a run before it is asked for -------------------------------------------------
@@ -1444,7 +1436,7 @@ describe("ExecuteWorkflowService", () => {
 
     // The unit has not reported on the run yet: the kill names the execution it was asked to start.
     expect(wsSendSpy.mock.calls).toEqual([
-      ["WorkflowStartRequest", { executionId: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
+      ["WorkflowStartRequest", { executionId: 345, plan: planOf(345) }],
       ["WorkflowKillRequest", { executionId: 345 }],
     ]);
     // Killed is the unit's to report.
@@ -1508,22 +1500,61 @@ describe("ExecuteWorkflowService", () => {
 
   describe("modifyOperatorLogic", () => {
     const UPDATES_URL = `${EXECUTIONS_URL}/345/updates`;
+    const NOT_SENT = "The change was not sent: unlock the operator for a logic change before changing it.";
 
     /** The unit reports the run of execution `executionId` in `state`, as it tells every session. */
     const unitReports = (state: ExecutionState, executionId?: number): void =>
       emitWsEvent({ type: "WorkflowStateEvent", state, executionId });
 
-    /** The editor holds operator "1" as the scan it is changed to. */
-    const editOperator = (): void => {
-      vi.spyOn(service["workflowActionService"].getTexeraGraph(), "getOperator").mockReturnValue(mockScanPredicate);
+    /** The user unlocks an operator of the paused run for a logic change, before changing anything. */
+    const unlock = (): void => service.snapshotWorkflowForLogicChange();
+
+    /** The user sets the scan's table to `tableName`, which the editor holds from then on. */
+    const editScan = (tableName: string): void =>
+      TestBed.inject(WorkflowActionService).setOperatorProperty(mockScanPredicate.operatorID, { tableName });
+
+    /** The scan once its table is `tableName`, as a change sends it: without the ports a plan's operators carry. */
+    const scanChangedTo = (tableName: string) => ({ tableName, operatorID: "1", operatorType: "ScanSource" });
+
+    /** The workflow every execution here runs, once the scan's table is `tableName`. */
+    const workflowWithScanOf = (tableName: string): LogicalPlan => ({
+      ...mockLogicalPlan_scan_result,
+      operators: mockLogicalPlan_scan_result.operators.map(operator =>
+        operator.operatorID === mockScanPredicate.operatorID ? { tableName, ...operator } : operator
+      ),
+    });
+
+    /** How the Dashboard answers a change to the scan: the change compiled, text that only the unit reads. */
+    const COMPILED = { operatorId: "1", update: '{"operatorId":"1","layer":"main"}' };
+
+    /**
+     * Checks that the change to the scan, its table set to `tableName`, is posted for execution `eid` with
+     * `workflow`, and has the Dashboard answer it compiled.
+     */
+    const expectSentWith = (workflow: LogicalPlan, tableName: string, eid: number = 345): void => {
+      const update = httpMock.expectOne(`${EXECUTIONS_URL}/${eid}/updates`);
+      expect(update.request.body).toEqual({ operator: scanChangedTo(tableName), workflow });
+      update.flush(COMPILED, { status: 201, statusText: "Created" });
     };
 
-    /** Starts execution 345, which the unit then reports as paused. */
-    const pauseExecution = (): void => {
+    beforeEach(() => {
+      // The workflow every execution here runs: a scan, and the result view it feeds.
+      TestBed.inject(WorkflowActionService).addOperatorsAndLinks(
+        [
+          { op: mockScanPredicate, pos: mockPoint },
+          { op: mockResultPredicate, pos: mockPoint },
+        ],
+        [mockScanResultLink]
+      );
+    });
+
+    /** Starts execution 345, which the unit then reports as paused; the user unlocks the scan and changes its table. */
+    const pauseThenChangeScan = (): void => {
       startExecution(345);
       unitReports(ExecutionState.Running, 345);
       unitReports(ExecutionState.Paused, 345);
-      editOperator();
+      unlock();
+      editScan("orders");
     };
 
     it("requires a paused state", fakeAsync(() => {
@@ -1536,22 +1567,24 @@ describe("ExecuteWorkflowService", () => {
       httpMock.expectNone(UPDATES_URL);
     }));
 
-    it("stores the change at the Dashboard, then names it to the unit", fakeAsync(() => {
-      pauseExecution();
+    it("has the Dashboard compile the change against the workflow as it was unlocked, then hands it to the unit", fakeAsync(() => {
+      pauseThenChangeScan();
       const wsSendSpy = spyOnSocket();
 
       service.modifyOperatorLogic("1");
 
       const update = httpMock.expectOne(UPDATES_URL);
       expect(update.request.method).toBe("POST");
-      // The operator as the editor holds it, without the ports a plan's operators carry.
-      expect(update.request.body).toEqual({ operator: { operatorID: "1", operatorType: "ScanSource" } });
-      // The unit hears of the change only once it is stored.
+      // The scan as the editor holds it once changed, and the whole workflow as the execution ran it, the scan as
+      // it was before the change.
+      expect(update.request.body).toEqual({ operator: scanChangedTo("orders"), workflow: mockLogicalPlan_scan_result });
+      // The unit hears of the change only once the Dashboard has compiled it.
       expect(wsSendSpy).not.toHaveBeenCalled();
 
-      update.flush({ updateId: "update-4f6c", operatorId: "1" }, { status: 201, statusText: "Created" });
+      update.flush(COMPILED, { status: 201, statusText: "Created" });
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, updateId: "update-4f6c" }]]);
+      // The change as the Dashboard answered it, text the page does not read.
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, update: COMPILED.update }]]);
     }));
 
     // One `it` per answer: it.each does not run its body in the zone fakeAsync needs.
@@ -1575,7 +1608,7 @@ describe("ExecuteWorkflowService", () => {
     ];
     for (const { status, statusText, message } of refusals) {
       it(`reports a change the Dashboard answers ${status}, and sends the unit nothing`, fakeAsync(() => {
-        pauseExecution();
+        pauseThenChangeScan();
         const wsSendSpy = spyOnSocket();
         const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
 
@@ -1590,52 +1623,159 @@ describe("ExecuteWorkflowService", () => {
       }));
     }
 
-    it("stores each change for the execution the unit last named", fakeAsync(() => {
+    it("sends every change of one pause with the workflow as it was first unlocked", fakeAsync(() => {
+      pauseThenChangeScan();
+      service.modifyOperatorLogic("1");
+      expectSentWith(mockLogicalPlan_scan_result, "orders");
+      // The scan is unlocked again and changed again: the editor holds the first change by now.
+      unlock();
+      editScan("returns");
+      const wsSendSpy = spyOnSocket();
+
+      service.modifyOperatorLogic("1");
+
+      expectSentWith(mockLogicalPlan_scan_result, "returns");
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, update: COMPILED.update }]]);
+    }));
+
+    it("sends nothing for a change made without unlocking, and says why", fakeAsync(() => {
+      startExecution(345);
+      unitReports(ExecutionState.Running, 345);
+      unitReports(ExecutionState.Paused, 345);
+      editScan("orders");
+      const wsSendSpy = spyOnSocket();
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.modifyOperatorLogic("1");
+
+      httpMock.expectNone(UPDATES_URL);
+      expect(errorSpy.mock.calls).toEqual([[NOT_SENT]]);
+      expect(wsSendSpy).not.toHaveBeenCalled();
+      // The run stays paused, for a change once unlocked, or a resume.
+      expect(service.getExecutionState().state).toBe(ExecutionState.Paused);
+    }));
+
+    it("takes no workflow while the run is not paused", fakeAsync(() => {
+      startExecution(345);
+      unitReports(ExecutionState.Running, 345);
+      unlock();
+      unitReports(ExecutionState.Paused, 345);
+      editScan("orders");
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.modifyOperatorLogic("1");
+
+      httpMock.expectNone(UPDATES_URL);
+      expect(errorSpy.mock.calls).toEqual([[NOT_SENT]]);
+    }));
+
+    it("forgets the workflow once the run leaves Paused, and takes it anew at the next unlock", fakeAsync(() => {
+      pauseThenChangeScan();
+      service.modifyOperatorLogic("1");
+      expectSentWith(mockLogicalPlan_scan_result, "orders");
+      // The run resumes, with the change, and is paused again.
+      unitReports(ExecutionState.Running, 345);
+      unitReports(ExecutionState.Paused, 345);
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.modifyOperatorLogic("1");
+
+      httpMock.expectNone(UPDATES_URL);
+      expect(errorSpy.mock.calls).toEqual([[NOT_SENT]]);
+
+      // Unlocked in this pause: the workflow as the run has it now, the first change in it.
+      unlock();
+      editScan("returns");
+      service.modifyOperatorLogic("1");
+
+      expectSentWith(workflowWithScanOf("orders"), "returns");
+    }));
+
+    it("keeps the workflow while the unit names the same paused execution again", fakeAsync(() => {
+      pauseThenChangeScan();
+      // What a socket that comes back is told: the state of no run, then the run the unit holds.
+      unitReports(ExecutionState.Uninitialized);
+      unitReports(ExecutionState.Paused, 345);
+
+      service.modifyOperatorLogic("1");
+
+      expectSentWith(mockLogicalPlan_scan_result, "orders");
+    }));
+
+    it("forgets the workflow when the unit names another paused execution", fakeAsync(() => {
+      pauseThenChangeScan();
+      // Another tab's execution took the unit's place, and is paused too: the run on screen stays paused.
+      unitReports(ExecutionState.Paused, 400);
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.modifyOperatorLogic("1");
+
+      expect(service.getExecutionState().state).toBe(ExecutionState.Paused);
+      httpMock.expectNone(`${EXECUTIONS_URL}/400/updates`);
+      expect(errorSpy.mock.calls).toEqual([[NOT_SENT]]);
+    }));
+
+    it("forgets the workflow when another run is asked for", fakeAsync(() => {
+      pauseThenChangeScan();
+      // A run up to an operator, or a replay, asked for while the run is paused.
+      startExecution(346);
+      unitReports(ExecutionState.Paused, 346);
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.modifyOperatorLogic("1");
+
+      httpMock.expectNone(`${EXECUTIONS_URL}/346/updates`);
+      expect(errorSpy.mock.calls).toEqual([[NOT_SENT]]);
+    }));
+
+    it("sends each change for the execution the unit last named", fakeAsync(() => {
       startExecution(345);
       unitReports(ExecutionState.Running, 345);
       service.killWorkflow();
       unitReports(ExecutionState.Killed, 345);
       startExecution(346);
       unitReports(ExecutionState.Paused, 346);
-      editOperator();
+      unlock();
+      editScan("orders");
       const wsSendSpy = spyOnSocket();
 
       service.modifyOperatorLogic("1");
-      httpMock.expectOne(`${EXECUTIONS_URL}/346/updates`).flush({ updateId: "update-1", operatorId: "1" });
+      expectSentWith(mockLogicalPlan_scan_result, "orders", 346);
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 346, updateId: "update-1" }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 346, update: COMPILED.update }]]);
     }));
 
     // The unit names the execution it holds to every session, so a page that did not start the paused run
-    // (it was reloaded since, or the run was started in another tab) changes its operators all the same.
+    // (it was reloaded since, or the run was started in another tab) changes its operators all the same: what its
+    // editor holds when an operator is unlocked is the workflow the run ran.
     it("changes a paused run that this page did not start, by the execution the unit names", () => {
       // What a session is told when it opens: the state of no run, then the state of the run the unit holds.
       unitReports(ExecutionState.Uninitialized);
       unitReports(ExecutionState.Paused, 777);
-      editOperator();
+      unlock();
+      editScan("orders");
       const wsSendSpy = spyOnSocket();
 
       service.modifyOperatorLogic("1");
-      const update = httpMock.expectOne(`${EXECUTIONS_URL}/777/updates`);
-      expect(update.request.body).toEqual({ operator: { operatorID: "1", operatorType: "ScanSource" } });
-      update.flush({ updateId: "update-9", operatorId: "1" });
+      expectSentWith(mockLogicalPlan_scan_result, "orders", 777);
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 777, updateId: "update-9" }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 777, update: COMPILED.update }]]);
     });
 
-    it("stores a change for the execution the unit holds, not for the one this page created last", fakeAsync(() => {
+    it("sends a change for the execution the unit holds, not for the one this page created last", fakeAsync(() => {
       // Another tab's run took the place of this page's on the unit, and paused.
       startExecution(345);
       unitReports(ExecutionState.Running, 345);
       unitReports(ExecutionState.Initializing, 400);
       unitReports(ExecutionState.Paused, 400);
-      editOperator();
+      unlock();
+      editScan("orders");
       const wsSendSpy = spyOnSocket();
 
       service.modifyOperatorLogic("1");
-      httpMock.expectOne(`${EXECUTIONS_URL}/400/updates`).flush({ updateId: "update-2", operatorId: "1" });
+      expectSentWith(mockLogicalPlan_scan_result, "orders", 400);
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 400, updateId: "update-2" }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 400, update: COMPILED.update }]]);
     }));
 
     it("refuses to change a paused run whose execution the unit has not named", () => {
@@ -2001,9 +2141,7 @@ describe("ExecuteWorkflowService", () => {
       expect(service.executeWorkflow("again")).toBe(true);
       expectCreate().flush(created(346), { status: 201, statusText: "Created" });
 
-      expect(wsSendSpy.mock.calls).toEqual([
-        ["WorkflowStartRequest", { executionId: 346, planUri: "vfs:///wid/12/eid/346/plan" }],
-      ]);
+      expect(wsSendSpy.mock.calls).toEqual([["WorkflowStartRequest", { executionId: 346, plan: planOf(346) }]]);
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
     }));
 

@@ -22,7 +22,6 @@ package org.apache.texera.web.service.execution
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ExecutionLogStore,
-  ExecutionPlanStore,
   RuntimeStatisticsStore
 }
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
@@ -87,7 +86,6 @@ final case class ExecutionRecord(
   def executionId: ExecutionIdentity = ExecutionIdentity(eid)
 
   // Its tables, in the warehouse its row names.
-  def planUri: URI = ExecutionPlanStore.planUri(workflowId, executionId, warehouse)
   def logUri: URI = ExecutionLogStore.logUri(workflowId, executionId, warehouse)
   def statisticsUri: URI = RuntimeStatisticsStore.statisticsUri(workflowId, executionId, warehouse)
   def consoleUri: URI = ConsoleMessageStore.consoleUri(workflowId, executionId, warehouse)
@@ -235,9 +233,9 @@ object ExecutionRecords {
   /**
     * Closes execution `eid`, unless it is closed already.
     *
-    * @param neverStarted no unit ever started it: its results are marked expired in the same
-    *                     UPDATE, so nothing looks for tables it never made, and it holds no
-    *                     bytes until its plan table, if it has one, is measured
+    * @param unstartable no unit can ever start it, as its create failed and no client got its
+    *                    plan: its results are marked expired in the same UPDATE, so nothing looks
+    *                    for tables it never made, and it holds no bytes
     * @return whether this call closed it
     */
   def close(
@@ -246,10 +244,10 @@ object ExecutionRecords {
       reason: Option[String],
       endedAtMs: Long,
       fromLog: Boolean,
-      neverStarted: Boolean = false
+      unstartable: Boolean = false
   ): Boolean = {
     requireOutcome(outcome)
-    require(!(neverStarted && fromLog), "an execution that never started has no log to end in")
+    require(!(unstartable && fromLog), "an execution that never started has no log to end in")
     val endedAt = timeOf(endedAtMs)
     val closing = context
       .update(WORKFLOW_EXECUTIONS)
@@ -258,7 +256,7 @@ object ExecutionRecords {
       .set(WORKFLOW_EXECUTIONS.ENDED_AT, endedAt)
       .set(WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG, Boolean.box(fromLog))
     val unstarted =
-      if (neverStarted)
+      if (unstartable)
         closing
           .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, endedAt)
           .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(0L))

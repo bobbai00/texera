@@ -29,7 +29,6 @@ import org.apache.texera.amber.core.executor.{
   OpExecWithClassName,
   OperatorInputs
 }
-import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ConsoleRow,
@@ -37,13 +36,10 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
-  ExecutionPlanStore,
   InputFileLocator,
   InputLink,
   InputLinker,
   ListedFile,
-  NoStoredPlanException,
-  PlanRecord,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.virtualidentity.{
@@ -71,8 +67,6 @@ import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
 }
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.e2e.TestUtils
-import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
-import org.apache.texera.amber.operator.projection.{AttributeUnit, ProjectionOpDesc}
 import org.apache.texera.amber.operator.source.dataset.FileListerSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileScanSourceOpDesc}
@@ -180,10 +174,10 @@ import scala.util.{Try, Using}
 /**
   * Creating an execution at the Dashboard service, through [[ExecutionResource]].
   *
-  * The rows are in `MockTexeraDB`; plans, results and consoles are tables of the catalog the
-  * build's tests use (the Postgres JDBC catalog in CI), named after this suite's own workflow and
+  * The rows are in `MockTexeraDB`; results and consoles are tables of the catalog the build's
+  * tests use (the Postgres JDBC catalog in CI), named after this suite's own workflow and
   * execution ids. The executions it creates take ids after 962000, set in `beforeAll`, so their
-  * plan tables and their large binaries' prefixes are this suite's own too. The compiling
+  * tables and their large binaries' prefixes are this suite's own too. The compiling
   * service is a fixture that compiles in this JVM ([[FixtureCompilingService]]), with the
   * fixture resolvers of `TestOperators` (scan files on the local disk) unless a case binds
   * them otherwise, or a server a case asks over HTTP ([[StubCompilingServer]]); files are
@@ -369,7 +363,6 @@ class ExecutionResourceSpec
 
   override protected def afterAll(): Unit =
     try {
-      madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
       madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
       madeTables.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
     } finally {
@@ -487,8 +480,8 @@ class ExecutionResourceSpec
   /**
     * The creator under test, set up as the case needs. Its compiling service compiles in this
     * JVM, bound to the fixture files and versions in place of a user's, and its files are
-    * linked to the fixture server. `resolvedFor` records the user each plan was bound for, and
-    * `written` each plan table written. The site's settings stay the ones the database holds,
+    * linked to the fixture server. `resolvedFor` records the user each plan was bound for. The
+    * site's settings stay the ones the database holds,
     * and what a create leaves for after its answer is done before it returns, unless a case
     * says otherwise.
     *
@@ -501,7 +494,6 @@ class ExecutionResourceSpec
       logRoot: Option[URI] = None,
       warehouses: Boolean = false,
       val hints: RecordingHints = new RecordingHints(None),
-      failWrite: Option[RuntimeException] = None,
       bindings: CompileFor.Run => CompileFor.Run = _ => TestUtils.fixtureBindings,
       linker: InputLinker = FixtureInputs.linker,
       background: Executor = _.run(),
@@ -509,7 +501,6 @@ class ExecutionResourceSpec
       expiry: ExecutionExpiry = expiryWithoutBinaries,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty,
-      val written: mutable.ListBuffer[URI] = mutable.ListBuffer.empty,
       compiling: Option[WorkflowCompilingService] = None
   ) extends ExecutionCreator(
         compiling = compiling.getOrElse(
@@ -523,13 +514,6 @@ class ExecutionResourceSpec
         replayLogRoot = logRoot,
         warehousesEnabled = warehouses,
         costHints = hints,
-        writePlan = (planUri, record, logical) => {
-          written += planUri
-          failWrite match {
-            case Some(failure) => throw failure
-            case None          => ExecutionPlanStore.writePlan(planUri, record, logical)
-          }
-        },
         background = background,
         closer = closer,
         compileDeadline = compileDeadline,
@@ -623,12 +607,10 @@ class ExecutionResourceSpec
       targetOperatorId = target
     )
 
-  /** The execution a 201 created; its plan table is dropped after the suite. */
+  /** The execution a 201 created. */
   private def created(response: Response): CreateExecutionResponse = {
     withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 201 }
-    val execution = response.getEntity.asInstanceOf[CreateExecutionResponse]
-    madePlans += new URI(execution.planUri)
-    execution
+    response.getEntity.asInstanceOf[CreateExecutionResponse]
   }
 
   private def compileFailure(response: Response): CreateExecutionFailure = {
@@ -636,15 +618,9 @@ class ExecutionResourceSpec
     response.getEntity.asInstanceOf[CreateExecutionFailure]
   }
 
-  /** The plan row of `execution`, and its body decoded. */
-  private def storedPlan(execution: CreateExecutionResponse): (PlanRecord, ExecutionPlan) = {
-    val record = ExecutionPlanStore.readPlan(new URI(execution.planUri))
-    (record, PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(record.body)))
-  }
-
-  /** The logical plan kept beside the plan row of `execution`: what its plan was compiled from. */
-  private def logicalPlanOf(execution: CreateExecutionResponse): String =
-    ExecutionPlanStore.readPlanWithLogical(new URI(execution.planUri))._2
+  /** The plan the create of `execution` answered, read as a computing unit reads it. */
+  private def planOf(execution: CreateExecutionResponse): ExecutionPlan =
+    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(execution.plan))
 
   /** The id of the execution created last. */
   private def newestEid: Int =
@@ -656,14 +632,14 @@ class ExecutionResourceSpec
       .fetchOneInto(classOf[Integer])
       .intValue()
 
-  /** The descriptor the stored `plan` gives the executor of operator `id`, as JSON. */
+  /** The descriptor `plan` gives the executor of operator `id`, as JSON. */
   private def descriptorOf(plan: ExecutionPlan, id: String): JsonNode =
     plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity(id)).head.opExecInitInfo match {
       case OpExecWithClassName(_, descString) => objectMapper.readTree(descString)
       case other                              => fail(s"the executor of $id is $other")
     }
 
-  /** What the stored `plan` says operator `id` reads from outside the run. */
+  /** What `plan` says operator `id` reads from outside the run. */
   private def inputsOf(plan: ExecutionPlan, id: String): OperatorInputs =
     plan.plan.getPhysicalOpsOfLogicalOp(OperatorIdentity(id)).head.inputs
 
@@ -718,10 +694,6 @@ class ExecutionResourceSpec
     )
   }
 
-  /** The operators of the logical plan kept for `execution`, as JSON objects. */
-  private def logicalOperators(execution: CreateExecutionResponse): List[JsonNode] =
-    objectMapper.readTree(logicalPlanOf(execution)).get("operators").elements().asScala.toList
-
   /**
     * The message of the refusal `body` throws, which answers `status`; the refusal must leave no
     * execution behind.
@@ -747,9 +719,6 @@ class ExecutionResourceSpec
     executionCount shouldBe before + 1
     val eid = newestEid.toLong
     closedAtCreate(eid, s"compile error: ${refusal.getMessage}", since)
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
-    )
     refusal.getMessage
   }
 
@@ -779,17 +748,14 @@ class ExecutionResourceSpec
   // --- created ---
 
   "ExecutionResource.create" should
-    "record the execution as Created, write its plan for the creator and answer 201" in {
+    "record the execution as Created, and answer 201 with its plan made for the creator" in {
     val creator = new FixtureCreator()
     val sent = request()
-    val sentPlan = sent.logicalPlan
     val before = System.currentTimeMillis()
 
     val execution = created(post(sent, creator = creator))
 
     execution.eid should be > firstCreatedEid.toLong
-    execution.planUri shouldBe
-      s"vfs:///wid/$testWid/eid/${execution.eid}/plan"
 
     val stored = row(execution.eid)
     // Open: nothing of its closing record is written until it is over.
@@ -807,15 +773,9 @@ class ExecutionResourceSpec
     stored.getEnvironmentVersion shouldBe """{"engine_version":"1.4.0-spec"}"""
     stored.getLogLocation shouldBe null
 
-    val (record, plan) = storedPlan(execution)
-    record.entryId shouldBe ExecutionPlanStore.PlanEntryId
-    record.createdBy shouldBe creatorUid
-    record.computingUnitId shouldBe unitCuid
+    val plan = planOf(execution)
     // The request asked for no email.
     stored.getNotification shouldBe null
-    // The logical plan as the request sent it, before the compile resolved its scan's file.
-    objectMapper.readTree(logicalPlanOf(execution)) shouldBe sentPlan
-    logicalPlanOf(execution) should include(TestOperators.CountrySalesSmallCsvPath)
 
     plan.context.workflowId shouldBe WorkflowIdentity(testWid)
     plan.context.executionId shouldBe ExecutionIdentity(execution.eid)
@@ -839,18 +799,17 @@ class ExecutionResourceSpec
 
     // The link took the place of where the plan said the file is kept.
     files.head.physicalAddress shouldBe empty
-    record.body should not include "physicalAddress"
+    execution.plan should not include "physicalAddress"
 
-    // Compiled as the creator may read files, datasets and models, and stored once.
+    // Compiled as the creator may read files, datasets and models.
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(creatorUid))
-    creator.written.toList shouldBe List(new URI(execution.planUri))
   }
 
   it should "save the cost hints of the creator's runs of the workflow with the plan" in {
     val hints = CostHints(ExecutionIdentity(replaySourceEid), Map("scan" -> 2.5, "gone" -> 0.0))
     val creator = new FixtureCreator(hints = new RecordingHints(Some(hints)))
 
-    val (_, plan) = storedPlan(created(post(request(), creator = creator)))
+    val plan = planOf(created(post(request(), creator = creator)))
 
     plan.context.costHints shouldBe Some(hints)
     creator.hints.asked.toList shouldBe List((testWid.toLong, creatorUid))
@@ -863,7 +822,7 @@ class ExecutionResourceSpec
     // <root>/<wid>/<eid>/, as the root resolves it (java.net.URI drops the empty authority).
     val location = s"file:/tmp/texera-spec-replay-logs/$testWid/${execution.eid}/"
     row(execution.eid).getLogLocation shouldBe location
-    storedPlan(execution)._2.replayLog shouldBe Some(new URI(location))
+    planOf(execution).replayLog shouldBe Some(new URI(location))
   }
 
   it should "save the replay log the run replays with the plan" in {
@@ -871,7 +830,7 @@ class ExecutionResourceSpec
       post(request(replay = Some(ReplayExecutionInfo(replaySourceEid, "interaction-1"))))
     )
 
-    storedPlan(execution)._2.replay shouldBe Some(
+    planOf(execution).replay shouldBe Some(
       ReplaySource(ExecutionIdentity(replaySourceEid), new URI(replayLog), "interaction-1")
     )
   }
@@ -884,14 +843,12 @@ class ExecutionResourceSpec
       )
     )
 
-    execution.planUri shouldBe
-      s"vfs:///wh/$creatorWarehouse/wid/$testWid/eid/${execution.eid}/plan"
     row(execution.eid).getWhid shouldBe creatorWhid
-    storedPlan(execution)._2.context.warehouse shouldBe Some(creatorWarehouse)
+    planOf(execution).context.warehouse shouldBe Some(creatorWarehouse)
   }
 
   it should "give the run the default settings when the request sends none" in {
-    val (_, plan) = storedPlan(created(post(request(settings = None))))
+    val plan = planOf(created(post(request(settings = None))))
 
     plan.context.workflowSettings.dataTransferBatchSize shouldBe
       ApplicationConfig.defaultDataTransferBatchSize
@@ -904,7 +861,7 @@ class ExecutionResourceSpec
       GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("ghost"), "main"), PortIdentity())
     val sent = Some(sentSettings.copy(outputPortsNeedingStorage = Set(ghost)))
 
-    val (_, plan) = storedPlan(created(post(request(settings = sent))))
+    val plan = planOf(created(post(request(settings = sent))))
 
     plan.context.workflowSettings.outputPortsNeedingStorage.map(_.opId.logicalOpId) shouldBe
       Set(OperatorIdentity("search"))
@@ -918,7 +875,7 @@ class ExecutionResourceSpec
     try {
       val sent = LogicalPlanPojo(List(scan), List.empty, List.empty, List.empty)
 
-      val (_, plan) = storedPlan(created(post(request(plan = sent))))
+      val plan = planOf(created(post(request(plan = sent))))
 
       inputsOf(plan, "scan").csvParserMaxColumns shouldBe Some(731)
     } finally {
@@ -929,7 +886,7 @@ class ExecutionResourceSpec
     }
   }
 
-  it should "link each file the creator may read, in the plan it stores and nowhere else" in {
+  it should "link each file the creator may read, in the plan it answers and nowhere else" in {
     val located = mutable.ListBuffer.empty[URI]
     val linked = mutable.ListBuffer.empty[String]
     val creator = creatorLinkingWith(
@@ -944,7 +901,7 @@ class ExecutionResourceSpec
     )
 
     val execution = created(post(request(plan = notesPlan()), creator = creator))
-    val (record, plan) = storedPlan(execution)
+    val plan = planOf(execution)
 
     // Resolved for the creator, by the name as typed; that file located, and a link signed for
     // where it is kept.
@@ -953,13 +910,10 @@ class ExecutionResourceSpec
     inputsOf(plan, "notes") shouldBe readThroughSignedLink
     descriptorOf(plan, "notes").get("fileName").asText() shouldBe notesUri.toASCIIString
     // The link is a secret of the plan to run, which holds it once: in what the scan reads, and
-    // not in the scan's descriptor. The logical plan beside it is the workflow as its user
-    // wrote it: the file by its name, and no link.
-    record.body.split("X-Amz-Signature=5ecr3t", -1) should have length 2
-    record.body should not include notesAddress
+    // not in the scan's descriptor.
+    execution.plan.split("X-Amz-Signature=5ecr3t", -1) should have length 2
+    execution.plan should not include notesAddress
     descriptorOf(plan, "notes").toString should not include "X-Amz-Signature"
-    logicalPlanOf(execution) should not include "X-Amz-Signature"
-    logicalOperators(execution).head.get("fileName").asText() shouldBe notesPath
   }
 
   it should "refuse a file its creator may not read as the scan's error, and make no link to it" in {
@@ -982,9 +936,6 @@ class ExecutionResourceSpec
     error.message should include(notesPath)
     linked shouldBe empty
     row(failure.eid).getOutcome shouldBe 4
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
-    )
 
     // Once the dataset is shared with the reader, the same request makes a plan with its link.
     getDSLContext
@@ -994,7 +945,7 @@ class ExecutionResourceSpec
       .set(DATASET_USER_ACCESS.PRIVILEGE, PrivilegeEnum.READ)
       .execute()
     try {
-      val (_, plan) = storedPlan(created(createdByReader()))
+      val plan = planOf(created(createdByReader()))
 
       linked.toList shouldBe List(notesAddress)
       inputsOf(plan, "notes") shouldBe readThroughSignedLink
@@ -1036,9 +987,9 @@ class ExecutionResourceSpec
       bindings = forUser => TestUtils.fixtureBindings.copy(environments = forUser.environments)
     )
 
-  /** The environment the stored plan of `execution` gives its operator `udf`. */
+  /** The environment the plan of `execution` gives its operator `udf`. */
   private def environmentOf(execution: CreateExecutionResponse): PythonEnvironmentRef =
-    storedPlan(execution)._2.plan
+    planOf(execution).plan
       .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
       .pythonEnvironment
 
@@ -1057,15 +1008,11 @@ class ExecutionResourceSpec
     // The creator's, as canonical lines: what the unit that runs the plan installs.
     val creators = PythonEnvironment("shared-name", Seq("tabulate==0.9.0", "typing-extensions"))
     environmentOf(execution) shouldBe PythonEnvironmentRef.Resolved(creators)
-    val (_, plan) = storedPlan(execution)
+    val plan = planOf(execution)
     // Its workers run where the unit installs environments.
     plan.plan
       .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
       .locationPreference shouldBe Some(PreferCoordinator)
-    // The logical plan beside it is the workflow as its user wrote it: the name alone.
-    val logical = logicalOperators(execution).find(_.get("operatorID").asText() == "udf").get
-    logical.get("envName").asText() shouldBe "shared-name"
-    logicalPlanOf(execution) should not include "tabulate"
     // The reader, who may run the workflow on a unit of their own, gets their own environment
     // of that name.
     val readers = created(
@@ -1097,13 +1044,6 @@ class ExecutionResourceSpec
           "environments, so to run this workflow, create one with this name."
         // No plan is made to run in another environment, or in none.
         row(failure.eid).getOutcome shouldBe 4
-        a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-          ExecutionPlanStore.planUri(
-            WorkflowIdentity(testWid),
-            ExecutionIdentity(failure.eid),
-            None
-          )
-        )
       }
     }
   }
@@ -1158,7 +1098,7 @@ class ExecutionResourceSpec
 
     val execution =
       created(post(request(plan = listedPlan(FixtureInputs.datasetVersionPath))))
-    val (_, plan) = storedPlan(execution)
+    val plan = planOf(execution)
 
     // The File Lister is given the version's listing to output, and the File Scan From Input a
     // link to each file listed, to the fixture's server.
@@ -1167,13 +1107,12 @@ class ExecutionResourceSpec
     read.files.map(_.name) shouldBe files
     read.files.foreach(_.url should startWith("http://127.0.0.1:"))
     read.listing shouldBe None
-    // Neither is in a descriptor. The logical plan kept beside the plan is the workflow as its
-    // user wrote it: the dataset version by its path, and neither what it lists nor a link.
-    Seq(descriptorOf(plan, "lister").toString, logicalPlanOf(execution)).foreach { written =>
-      written should include(FixtureInputs.datasetVersionPath)
-      written should not include "http://127.0.0.1:"
-      files.foreach(file => written should not include file)
-    }
+    // Neither is in a descriptor: the File Lister's names the dataset version by its path, and
+    // neither what it lists nor a link.
+    val listerDescriptor = descriptorOf(plan, "lister").toString
+    listerDescriptor should include(FixtureInputs.datasetVersionPath)
+    listerDescriptor should not include "http://127.0.0.1:"
+    files.foreach(file => listerDescriptor should not include file)
     descriptorOf(plan, "scan").toString should not include "http://127.0.0.1:"
   }
 
@@ -1196,9 +1135,6 @@ class ExecutionResourceSpec
     error.message shouldBe s"java.lang.IllegalArgumentException: Dataset version " +
       s"$notesVersionPath was not found: it does not exist, or you do not have access to it."
     row(failure.eid).getOutcome shouldBe 4
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
-    )
 
     // Once the dataset is shared with the reader, the version is the reader's to list, and the
     // storage is asked for its files. No LakeFS holds this dataset, so that request fails:
@@ -1272,7 +1208,7 @@ class ExecutionResourceSpec
     )
   }
 
-  it should "store a plan of as many files as an operator may list, linked as the object store signs links, which a computing unit reads back and starts from" in {
+  it should "answer a plan of as many files as an operator may list, linked as the object store signs links, which a computing unit reads and starts from" in {
     val files = ApplicationConfig.maxListedFiles
     val execution = created(
       post(
@@ -1280,17 +1216,15 @@ class ExecutionResourceSpec
         creator = creatorListing(files, linkLength = 600)
       )
     )
-    val planUri = new URI(execution.planUri)
 
     // About 9 MiB for the 10,000 files an operator may list by default.
-    val stored = ExecutionPlanStore.readPlan(planUri)
-    stored.body.getBytes(StandardCharsets.UTF_8).length should be <=
-      ExecutionPlanStore.MaxBodyBytes
-    // What a unit checks before it starts the execution passes, on the plan read back whole.
+    execution.plan.getBytes(StandardCharsets.UTF_8).length should be <=
+      PhysicalPlanCodec.MaxPlanBytes
+    // What a unit checks before it starts the execution passes, on the plan whole.
     val plan = WorkflowService
-      .checkStoredStart(
+      .checkStart(
         execution.eid,
-        planUri,
+        execution.plan,
         sessionUser(creatorUid).getUser,
         unitCuid,
         Some(testWid.toLong)
@@ -1322,18 +1256,12 @@ class ExecutionResourceSpec
     )
 
     val execution = created(post(request(plan = whole, target = Some("search"))))
-    val (_, plan) = storedPlan(execution)
+    val plan = planOf(execution)
 
     plan.plan.operators.map(_.id.logicalOpId) shouldBe
       Set(OperatorIdentity("scan"), OperatorIdentity("search"))
     plan.context.workflowSettings.outputPortsNeedingStorage.map(_.opId.logicalOpId) shouldBe
       Set(OperatorIdentity("search"))
-    // The logical plan kept is the one compiled.
-    val logical = objectMapper.readTree(logicalPlanOf(execution))
-    logical.get("operators").elements().asScala.map(_.get("operatorID").asText()).toList shouldBe
-      List("scan", "search")
-    logical.get("opsToViewResult").elements().asScala.map(_.asText()).toList shouldBe
-      List("search")
   }
 
   it should "refuse a target the workflow does not have, in the compiling service's words" in {
@@ -1360,8 +1288,8 @@ class ExecutionResourceSpec
         List.empty
       )
 
-    val (_, plan) =
-      storedPlan(created(post(request(plan = withCycleElsewhere(), target = Some("search")))))
+    val plan =
+      planOf(created(post(request(plan = withCycleElsewhere(), target = Some("search")))))
 
     plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan", "search")
     // Up to an operator on the cycle, the cycle is compiled; with no target, the whole workflow
@@ -1377,7 +1305,7 @@ class ExecutionResourceSpec
   it should "compile a workflow whose request leaves out the results to view and reuse" in {
     val sent = searchPlan().copy(opsToViewResult = null, opsToReuseResult = null)
 
-    val (_, plan) = storedPlan(created(post(request(plan = sent))))
+    val plan = planOf(created(post(request(plan = sent))))
 
     plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan", "search")
   }
@@ -1395,7 +1323,6 @@ class ExecutionResourceSpec
       val execution = created(post(request(cuid = strangerCuid), uid = strangerUid))
 
       row(execution.eid).getUid shouldBe strangerUid
-      storedPlan(execution)._1.createdBy shouldBe strangerUid
     } finally {
       getDSLContext
         .update(WORKFLOW)
@@ -1411,8 +1338,7 @@ class ExecutionResourceSpec
     val execution = created(post(request(cuid = readerCuid), uid = readerUid, creator = creator))
 
     row(execution.eid).getUid shouldBe readerUid
-    storedPlan(execution)._1.createdBy shouldBe readerUid
-    storedPlan(execution)._1.computingUnitId shouldBe readerCuid
+    row(execution.eid).getCuid shouldBe readerCuid
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(readerUid))
   }
 
@@ -1428,15 +1354,11 @@ class ExecutionResourceSpec
     )
   }
 
-  // A computing unit reads the plan table, and has no use for an address.
-  it should "keep the user's address out of the lake" in {
+  // A computing unit runs the plan, and has no use for an address.
+  it should "keep the user's address out of the plan" in {
     val execution = created(post(request(emailNotificationEnabled = true)))
-    val planUri = new URI(execution.planUri)
 
-    val columns = DocumentFactory.openDocument(planUri)._2.get.getAttributeNames
-    columns shouldBe List("entryId", "body", "logical", "createdBy", "computingUnitId")
-    storedPlan(execution)._1.body should not include creatorEmail
-    logicalPlanOf(execution) should not include creatorEmail
+    execution.plan should not include creatorEmail
   }
 
   it should "keep no notification for a user with no email address, or a blank one" in {
@@ -1471,47 +1393,6 @@ class ExecutionResourceSpec
     sentEmails.size shouldBe before
   }
 
-  it should "keep the plan's loop-variable references in its logical plan, as the editor sent them" in {
-    // TextInput -> LoopStart -> Projection -> Limit("$n") -> LoopEnd, the Limit parsed as the
-    // editor sends it: the parse puts 0 in its Int property and records "$n" in its sidecar.
-    val lines = new TextInputSourceOpDesc()
-    lines.textInput = "0\n1"
-    val start = new LoopStartOpDesc()
-    start.initialization = "i = 0"
-    start.output = "table.iloc[i]"
-    val project = new ProjectionOpDesc()
-    project.attributes = List(new AttributeUnit("line", ""))
-    project.isDrop = false
-    val limit =
-      objectMapper.readValue("""{"limit":"$n","operatorType":"Limit"}""", classOf[LogicalOp])
-    val end = new LoopEndOpDesc()
-    end.update = "i += 1"
-    end.condition = "i < len(table)"
-    val ids = List("lines", "start", "project", "limit", "end")
-    val sent = LogicalPlanPojo(
-      ids.zip(List(lines, start, project, limit, end)).map { case (id, op) => named(op, id) },
-      ids.zip(ids.tail).map { case (from, to) => link(from, to) },
-      List.empty,
-      List.empty
-    )
-    limit.stateReferences shouldBe Map("/limit" -> "n")
-
-    val execution = created(post(request(plan = sent)))
-
-    val written = logicalOperators(execution)
-    written.map(_.get("operatorID").asText()) shouldBe ids
-    written.find(_.get("operatorID").asText() == "limit").map(_.get("limit").asText()) shouldBe
-      Some("$n")
-    written.filter(_.has(StateReferencing.SIDECAR_PROPERTY)) shouldBe empty
-    // Parsed again, as a change to a paused operator is compiled against it, the plan has the
-    // reference: written as it is, it would have read back "limit": 0 and no reference.
-    val parsedBack =
-      objectMapper.readValue(logicalPlanOf(execution), classOf[LogicalPlanPojo]).operators
-    parsedBack.map(_.operatorIdentifier.id) shouldBe ids
-    parsedBack.map(_.stateReferences) shouldBe
-      List(Map.empty, Map.empty, Map.empty, Map("/limit" -> "n"), Map.empty)
-  }
-
   // --- the workflow does not compile ---
 
   it should "answer 400 with each operator's error, and record the execution FAILED" in {
@@ -1535,10 +1416,6 @@ class ExecutionResourceSpec
       since = before
     )
     // No plan was made, so none was written.
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore
-        .planUri(WorkflowIdentity(testWid), ExecutionIdentity(failure.eid), None)
-    )
   }
 
   it should "write a workflow that does not compile as the refusal it is, with the execution and the operators' errors" in {
@@ -1563,37 +1440,20 @@ class ExecutionResourceSpec
     scanError.has("workerId") shouldBe true
   }
 
-  it should "write the execution it created as {eid, planUri}" in {
+  it should "write the execution it created as {eid, plan}, the plan as its text" in {
     val execution = created(post(request()))
 
     val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(execution))
 
-    written.fieldNames().asScala.toSet shouldBe Set("eid", "planUri")
+    written.fieldNames().asScala.toSet shouldBe Set("eid", "plan")
     written.get("eid").asLong() shouldBe execution.eid
-    written.get("planUri").asText() shouldBe execution.planUri
+    written.get("plan").isTextual shouldBe true
+    written.get("plan").asText() shouldBe execution.plan
   }
 
-  // --- the plan cannot be made or written ---
+  // --- the plan cannot be made ---
 
-  it should "answer 500 and record the execution FAILED when its plan cannot be written" in {
-    val lakeDown = new RuntimeException("the catalog does not answer")
-    val before = executionCount
-    val since = System.currentTimeMillis()
-
-    val failure = intercept[InternalServerErrorException] {
-      post(request(), creator = new FixtureCreator(failWrite = Some(lakeDown)))
-    }
-
-    failure.getResponse.getStatus shouldBe 500
-    failure.getCause shouldBe lakeDown
-    executionCount shouldBe before + 1
-    val eid = newestEid
-    failure.getMessage shouldBe
-      s"Execution $eid could not be created: its plan could not be written to the lake."
-    closedAtCreate(eid.toLong, "its plan could not be stored", since)
-  }
-
-  it should "answer 400 with how large the plan is and may be, and record the execution FAILED, when its plan is larger than its table keeps" in {
+  it should "answer 400 with how large the plan is and may be, and record the execution FAILED, when its plan is larger than a computing unit takes" in {
     // A thousand files, whose links alone fill what a plan may hold.
     val before = executionCount
     val since = System.currentTimeMillis()
@@ -1601,7 +1461,7 @@ class ExecutionResourceSpec
     val failure = intercept[BadRequestException] {
       post(
         request(plan = listedPlan(archiveVersionPath)),
-        creator = creatorListing(1000, linkLength = ExecutionPlanStore.MaxBodyBytes / 1000)
+        creator = creatorListing(1000, linkLength = PhysicalPlanCodec.MaxPlanBytes / 1000)
       )
     }
 
@@ -1609,13 +1469,10 @@ class ExecutionResourceSpec
     executionCount shouldBe before + 1
     val eid = newestEid
     failure.getMessage should fullyMatch regex
-      s"Execution $eid could not be created\\. The plan is 1[67]\\.[0-9] MiB, and a stored plan " +
-        "may be at most 16 MiB\\. A plan holds a link to each file its operators read, so a " +
-        "workflow that lists fewer files makes a smaller plan\\."
-    closedAtCreate(eid.toLong, "its plan could not be stored", since)
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
-    )
+      s"Execution $eid could not be created\\. Its plan is 1[67]\\.[0-9] MiB, and a plan may be " +
+        "at most 16 MiB\\. A plan holds a link to each file its operators read, so a workflow " +
+        "that lists fewer files makes a smaller plan\\."
+    closedAtCreate(eid.toLong, "its plan is too large", since)
   }
 
   it should "answer 500 and record the execution FAILED when its plan cannot be made for a reason not the workflow's" in {
@@ -1640,9 +1497,6 @@ class ExecutionResourceSpec
     failure.getMessage shouldBe
       s"Execution $eid could not be created: its plan could not be made."
     closedAtCreate(eid.toLong, "its plan could not be made", since)
-    a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-      ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
-    )
     // A create that fails expires nothing.
     hasTable(console) shouldBe true
     row(961921).getResultsExpiredAt shouldBe null
@@ -1682,13 +1536,10 @@ class ExecutionResourceSpec
       executionCount shouldBe before + 1
       val eid = newestEid.toLong
       closedAtCreate(eid, reason, since)
-      a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-        ExecutionPlanStore.planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), None)
-      )
       failure.getMessage
     }
 
-  it should "ask the compiling service for the plan with the caller's own token, sign a link to each file it names and store the plan once" in {
+  it should "ask the compiling service for the plan with the caller's own token, and sign a link to each file it names" in {
     val signed = mutable.ListBuffer.empty[String]
     val expiresAtMs = System.currentTimeMillis() + 2 * 3600L * 1000
     val linker: InputLinker = address => {
@@ -1720,10 +1571,10 @@ class ExecutionResourceSpec
       body.get("logicalPlan") shouldBe sent.logicalPlan
 
       // The link is signed for where the plan says the scan's file is kept, and takes the
-      // address's place in the plan stored, with the expiry the linker gave it.
+      // address's place in the plan answered, with the expiry the linker gave it.
       val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
       signed.toList shouldBe List(scanned.toString)
-      val (record, plan) = storedPlan(execution)
+      val plan = planOf(execution)
       inputsOf(plan, "scan").files shouldBe Seq(
         InputFile(
           scanned.toASCIIString,
@@ -1731,16 +1582,13 @@ class ExecutionResourceSpec
           expiresAtMs
         )
       )
-      record.body.split("X-Amz-Signature=5ecr3t", -1) should have length 2
-      record.body should not include "physicalAddress"
-      creator.written.toList shouldBe List(new URI(execution.planUri))
-      // The logical plan kept is the one the service answered.
-      objectMapper.readTree(logicalPlanOf(execution)) shouldBe sent.logicalPlan
+      execution.plan.split("X-Amz-Signature=5ecr3t", -1) should have length 2
+      execution.plan should not include "physicalAddress"
       // What a unit checks before it starts the execution passes.
       WorkflowService
-        .checkStoredStart(
+        .checkStart(
           execution.eid,
-          new URI(execution.planUri),
+          execution.plan,
           sessionUser(creatorUid).getUser,
           unitCuid,
           Some(testWid.toLong)
@@ -1766,7 +1614,7 @@ class ExecutionResourceSpec
       val body = server.requests.toList.head.body
       body.get("warehouse").asText() shouldBe creatorWarehouse
       body.get("targetOperatorId").asText() shouldBe "scan"
-      val (_, plan) = storedPlan(execution)
+      val plan = planOf(execution)
       plan.context.warehouse shouldBe Some(creatorWarehouse)
       plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("scan")
     }
@@ -1867,9 +1715,9 @@ class ExecutionResourceSpec
       ),
       "a refusal of the caller's token" -> StubCompilingServer.Answer(401, ""),
       "no JSON" -> StubCompilingServer.Answer(200, "<html>a proxy's page</html>"),
-      "no plan" -> StubCompilingServer.Answer(200, """{"logicalPlan": "{}"}"""),
+      "no plan" -> StubCompilingServer.Answer(200, """{}"""),
       "text that is no plan" ->
-        StubCompilingServer.Answer(200, """{"plan": "{}", "logicalPlan": "{}"}""")
+        StubCompilingServer.Answer(200, """{"plan": "{}"}""")
     ).foreach {
       case (what, answer) =>
         withClue(s"$what: ") {
@@ -1901,8 +1749,7 @@ class ExecutionResourceSpec
         objectMapper.writeValueAsString(
           objectMapper
             .createObjectNode()
-            .put("plan", others.plan)
-            .put("logicalPlan", others.logicalPlan)
+            .put("plan", others)
         )
       )
     } shouldBe s"Execution $newestEid could not be created: its plan could not be made."
@@ -1944,11 +1791,6 @@ class ExecutionResourceSpec
         failure.getMessage shouldBe
           s"Execution $eid could not be created: its plan could not be made."
         row(eid.toLong).getOutcome shouldBe 4
-        creator.written shouldBe empty
-        a[NoStoredPlanException] should be thrownBy ExecutionPlanStore.readPlan(
-          ExecutionPlanStore
-            .planUri(WorkflowIdentity(testWid), ExecutionIdentity(eid.toLong), None)
-        )
     }
   }
 
@@ -2067,10 +1909,9 @@ class ExecutionResourceSpec
     // What they hold was measured as they were closed: a plan and a log, at least.
     row(first.eid).getStoredBytes.longValue() should be > 0L
     row(second.eid).getStoredBytes.longValue() should be > 0L
-    // The first, which later runs replaced, is expired: its plan and its log stay.
+    // The first, which later runs replaced, is expired: its log stays.
     hasTable(consoles(first.eid)) shouldBe false
     row(first.eid).getResultsExpiredAt should not be null
-    hasTable(new URI(first.planUri)) shouldBe true
     hasTable(logOfUri(first.eid)) shouldBe true
     // The second, closed and replaced by the third's run as well, is expired too.
     hasTable(consoles(second.eid)) shouldBe false

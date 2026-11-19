@@ -162,7 +162,7 @@ object PhysicalOp {
 
 // In Scala case classes, @JsonIgnore on constructor parameters is not recognized by Jackson.
 // Use @JsonIgnoreProperties at the class level instead.
-// A plan is stored by PhysicalPlanCodec, not by Jackson.
+// A plan is written as text by PhysicalPlanCodec, not by Jackson.
 @JsonIgnoreProperties(
   Array(
     "opExecInitInfo", // function type, ignore it

@@ -35,18 +35,18 @@ import { SchemaAttribute } from "./workflow-compiling.interface";
  * 2. value is the payload this request/event needs
  */
 
-/** Starts an execution the Dashboard service created, from its stored plan. */
+/** Starts an execution the Dashboard service created, with the plan it compiled for it. */
 export type WorkflowStartRequest = Readonly<{
   executionId: number;
-  /** The execution's plan table, as `POST /api/executions` answered it. */
-  planUri: string;
+  /** The plan as `POST /api/executions` answered it, text passed on unchanged. */
+  plan: string;
 }>;
 
-/** Applies, when the paused run of an execution resumes, a change to an operator that the Dashboard service stored. */
+/** Applies, when the paused run of an execution resumes, a change to an operator that the Dashboard service compiled. */
 export type OperatorUpdateRequest = Readonly<{
   executionId: number;
-  /** The id `POST /api/executions/{eid}/updates` answered with. */
-  updateId: string;
+  /** The change as `POST /api/executions/{eid}/updates` answered it, text passed on unchanged. */
+  update: string;
 }>;
 
 /** Pauses, resumes or kills the run of an execution: the computing unit refuses it for any other run. */

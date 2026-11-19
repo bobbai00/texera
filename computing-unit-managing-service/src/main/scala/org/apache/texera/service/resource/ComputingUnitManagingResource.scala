@@ -317,16 +317,15 @@ object ComputingUnitManagingResource {
   )
 
   // Overrides, forwarded only when set: each has a default in the unit's own configuration
-  // (application.conf, storage.conf, udf.conf), so its absence is not an error. Two must agree
+  // (application.conf, storage.conf, udf.conf), so its absence is not an error. One must agree
   // with the Dashboard: the endpoints a unit reads input links from must include the one the
-  // Dashboard signs them for, and the namespace of the plan tables must be the Dashboard's.
+  // Dashboard signs them for.
   // USER_SYS_ENABLED and SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR are absent
   // from both lists -- their conf keys went away with #3831 and #3542, so nothing reads them.
   // TODO: use AmberConfig here; it is only accessible in workflow-executing-service
   private val optionalComputingUnitEnvNames: Seq[String] = Seq(
     EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB,
     EnvironmentalVariable.ENV_INPUT_LINKS_ALLOWED_ENDPOINTS,
-    EnvironmentalVariable.ENV_ICEBERG_TABLE_PLAN_NAMESPACE,
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_ROOT,
     EnvironmentalVariable.ENV_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES,
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS,

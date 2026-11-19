@@ -26,18 +26,20 @@ import com.google.protobuf.timestamp.{Timestamp => ProtoTimestamp}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionAlreadyStartedException,
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
-  ExecutionPlanStore,
   ExecutionTables,
-  VFSResourceType,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
-import org.apache.texera.amber.core.workflow.{ExecutionMode, PortIdentity, WorkflowSettings}
+import org.apache.texera.amber.core.workflow.{
+  ExecutionMode,
+  PhysicalPlanCodec,
+  PortIdentity,
+  WorkflowSettings
+}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.engine.e2e.TestUtils
@@ -105,12 +107,12 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 /**
-  * The closing job, on real rows and real tables: the rows are in `MockTexeraDB`, and the plans,
-  * logs and results are tables of the catalog the build's tests use (the Postgres JDBC catalog
-  * in CI), named after this suite's own workflow and executions and dropped after it.
-  * Executions are made by [[ExecutionCreator]] unless a case needs a row no create leaves, and
-  * what a computing unit would do to one (claim its start, write its log, beat) is done with
-  * the stores a unit uses.
+  * The closing job, on real rows and real tables: the rows are in `MockTexeraDB`, and the logs
+  * and results are tables of the catalog the build's tests use (the Postgres JDBC catalog in
+  * CI), named after this suite's own workflow and executions and dropped after it. Executions
+  * are made by [[ExecutionCreator]] unless a case needs a row no create leaves, and what a
+  * computing unit would do to one (write its log, beat, write its results) is done with the
+  * stores a unit uses.
   *
   * A case ticks the job itself, on a clock it sets: the clock starts five minutes after the
   * case's rows are made, so a time a "unit" writes into a log lies in the job's past. Every
@@ -153,7 +155,8 @@ class ExecutionClosingJobSpec
   /** The ticks a beat stands still for before its run is lost, under `settings`. */
   private val lostAfterTicks = 6
 
-  private val madePlans = new ConcurrentLinkedQueue[URI]()
+  /** The plan each create answered, by execution: what its unit would be handed. */
+  private val plans = new java.util.concurrent.ConcurrentHashMap[Long, String]()
   private val madeLogs = new ConcurrentLinkedQueue[URI]()
   private val madeTables = new ConcurrentLinkedQueue[URI]()
   private val nextSeq = new ConcurrentHashMap[URI, java.lang.Long]()
@@ -214,7 +217,6 @@ class ExecutionClosingJobSpec
 
   override protected def afterAll(): Unit =
     try {
-      madePlans.asScala.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
       madeLogs.asScala.foreach(uri => Try(ExecutionLogStore.drop(uri)))
       madeTables.asScala.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
     } finally {
@@ -333,8 +335,8 @@ class ExecutionClosingJobSpec
   private val requestUri = new URI("http://texera.example:4200/api/executions")
 
   /**
-    * An execution as its create leaves it: an open row, and a stored plan no unit has started.
-    * With `notify`, its user asked to be emailed how it ends.
+    * An execution as its create leaves it: an open row, whose plan no unit has started. With
+    * `notify`, its user asked to be emailed how it ends.
     */
   private def created(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord = {
     val response =
@@ -344,7 +346,7 @@ class ExecutionClosingJobSpec
         requestUri,
         FixtureCompilingService.authorizationOf(owner.getUid)
       )
-    madePlans.add(new URI(response.planUri))
+    plans.put(response.eid, response.plan)
     record(response.eid)
   }
 
@@ -403,12 +405,9 @@ class ExecutionClosingJobSpec
     execution
   }
 
-  /** A created execution that a unit started: its start is claimed and its log made. */
-  private def started(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord = {
-    val execution = created(cuid, notify)
-    ExecutionPlanStore.claimStart(execution.planUri)
-    withLog(execution)
-  }
+  /** A created execution that a unit started: its log is made. */
+  private def started(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord =
+    withLog(created(cuid, notify))
 
   /** Appends a row to the log of `execution`, `afterMs` after it was created; the beat is then. */
   private def append(
@@ -450,9 +449,11 @@ class ExecutionClosingJobSpec
 
   /** Gives `execution` a result table with `rows` rows, where its plan stores a port. */
   private def withResult(execution: ExecutionRecord, rows: Int): URI = {
-    val uri = ExecutionTables
-      .portTables(execution.planUri)
-      .find(VFSURIFactory.decodeURI(_).resourceType == VFSResourceType.RESULT)
+    val plan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(plans.get(execution.eid)))
+    val uri = plan.plan.operators
+      .flatMap(_.storageLocations.values)
+      .headOption
+      .map(VFSURIFactory.resultURI)
       .getOrElse(fail(s"the plan of execution ${execution.eid} names no port"))
     val schema = Schema().add("line", AttributeType.STRING)
     val document =
@@ -510,8 +511,6 @@ class ExecutionClosingJobSpec
       jobSettings: Settings = settings,
       label: URI => Option[ExecutionLabel] = ExecutionLogStore.label,
       rows: URI => Seq[ExecutionLogEntry] = ExecutionLogStore.read,
-      isStarted: URI => Boolean = ExecutionPlanStore.isStarted,
-      claimStart: URI => Unit = ExecutionPlanStore.claimStart,
       storedBytes: ExecutionRecord => Long = ExecutionCloser.storedBytesOf,
       open: () => Seq[ExecutionRecord] = () => ExecutionRecords.open(),
       lookLimit: FiniteDuration = ExecutionClosingJob.LookLimit,
@@ -536,8 +535,6 @@ class ExecutionClosingJobSpec
         label(uri)
       },
       rows = rows,
-      isStarted = isStarted,
-      claimStart = claimStart,
       storedBytes = execution => {
         measured.add(execution.eid)
         storedBytes(execution)
@@ -738,7 +735,7 @@ class ExecutionClosingJobSpec
     row(swept).getResultsExpiredAt shouldBe null
   }
 
-  it should "close an execution its terminated unit never started, and take its start" in {
+  it should "close an execution its terminated unit never started" in {
     val fixture = new Fixture()
     val unit = freshUnit()
     val execution = created(unit)
@@ -748,10 +745,6 @@ class ExecutionClosingJobSpec
 
     closingOf(execution) shouldBe
       Some(ClosingRecord(failed, Some("unit terminated"), fixture.clock.get(), fromLog = false))
-    // Nothing starts an execution that is recorded as over.
-    ExecutionPlanStore.isStarted(execution.planUri) shouldBe true
-    an[ExecutionAlreadyStartedException] should be thrownBy
-      ExecutionPlanStore.claimStart(execution.planUri)
   }
 
   it should "close a run whose beat stood still as 'unit lost' after the threshold, and not one tick sooner" in {
@@ -781,19 +774,6 @@ class ExecutionClosingJobSpec
 
     fixture.tick()
     closingOf(execution).map(_.reason) shouldBe Some(Some("unit lost"))
-  }
-
-  it should "lose a started execution whose unit never made its log, as of now" in {
-    val fixture = new Fixture()
-    val execution = created()
-    ExecutionPlanStore.claimStart(execution.planUri)
-
-    fixture.tick(lostAfterTicks)
-    closingOf(execution) shouldBe None
-
-    fixture.tick()
-    closingOf(execution) shouldBe
-      Some(ClosingRecord(failed, Some("unit lost"), fixture.clock.get(), fromLog = false))
   }
 
   it should "forget what it saw of an execution that is no longer open" in {
@@ -900,41 +880,6 @@ class ExecutionClosingJobSpec
     closingOf(execution).map(_.reason) shouldBe Some(Some("unit lost"))
   }
 
-  it should "not close an execution as never started while its plan's start claim cannot be read" in {
-    val outage = new AtomicBoolean(true)
-    val fixture = new Fixture(isStarted = uri => {
-      if (outage.get()) throw new Outage
-      ExecutionPlanStore.isStarted(uri)
-    })
-    val execution = created()
-    fixture.clock.addAndGet(24L * 3600 * 1000)
-
-    fixture.tick(10)
-    closingOf(execution) shouldBe None
-
-    outage.set(false)
-    fixture.tick()
-    closingOf(execution).map(_.reason) shouldBe Some(Some("never started"))
-  }
-
-  it should "not close an execution as never started while its start cannot be claimed" in {
-    val outage = new AtomicBoolean(true)
-    val fixture = new Fixture(claimStart = uri => {
-      if (outage.get()) throw new Outage
-      ExecutionPlanStore.claimStart(uri)
-    })
-    val execution = created()
-    fixture.clock.addAndGet(24L * 3600 * 1000)
-
-    fixture.tick(10)
-    closingOf(execution) shouldBe None
-    ExecutionPlanStore.isStarted(execution.planUri) shouldBe false
-
-    outage.set(false)
-    fixture.tick()
-    closingOf(execution).map(_.reason) shouldBe Some(Some("never started"))
-  }
-
   it should "not lose a run while the rows of its log cannot be read" in {
     val outage = new AtomicBoolean(true)
     val fixture = new Fixture(rows = uri => {
@@ -1003,14 +948,13 @@ class ExecutionClosingJobSpec
 
   // --- never started ---
 
-  it should "claim and close an execution no unit started within the limit, and not before" in {
+  it should "close an execution no unit started within the limit as never started, and not before" in {
     val fixture = new Fixture()
     val execution = created()
 
     fixture.clock.set(execution.startingTimeMs + 599999L)
     fixture.tick(3)
     closingOf(execution) shouldBe None
-    ExecutionPlanStore.isStarted(execution.planUri) shouldBe false
 
     fixture.clock.set(execution.startingTimeMs + 600000L)
     fixture.tick()
@@ -1023,56 +967,29 @@ class ExecutionClosingJobSpec
           fromLog = false
         )
       )
-    // No unit made a table for it: there is nothing to expire, and only its plan to measure.
+    // No unit made a table for it, so there is nothing to measure; its results are not marked
+    // expired, as a unit may still start it.
     val closed = row(execution)
-    closed.getResultsExpiredAt shouldBe new Timestamp(execution.startingTimeMs + 600000L)
-    closed.getStoredBytes shouldBe ExecutionTables.storedBytes(execution.planUri)
-    closed.getStoredBytes.longValue() should be > 0L
-    // Nobody can start an execution the record says was never started.
-    an[ExecutionAlreadyStartedException] should be thrownBy
-      ExecutionPlanStore.claimStart(execution.planUri)
+    closed.getResultsExpiredAt shouldBe null
+    closed.getStoredBytes shouldBe null
+    fixture.measured.asScala shouldBe empty
   }
 
-  it should "leave an execution whose start a unit claimed first" in {
-    // The tick read the plan before the unit claimed its start, and claims after.
-    val readEarly = new AtomicBoolean(true)
-    val fixture =
-      new Fixture(isStarted = uri => !readEarly.get() && ExecutionPlanStore.isStarted(uri))
-    val execution = created()
-    ExecutionPlanStore.claimStart(execution.planUri)
-    fixture.clock.set(execution.startingTimeMs + 900000L)
-
-    fixture.tick()
-    closingOf(execution) shouldBe None
-
-    // From then on it is a started execution like any other.
-    readEarly.set(false)
-    withLog(execution)
-    append(execution, "COMPLETED", 9000L)
-    fixture.tick()
-    closingOf(execution).map(_.outcome) shouldBe Some(completed)
-  }
-
-  it should "close an old execution with no plan table at all as never started" in {
+  it should "let the ending of a unit that starts it late take the place of its never-started verdict" in {
     val fixture = new Fixture()
-    val execution = inserted()
-
-    fixture.tick()
-    closingOf(execution) shouldBe None
-
+    val execution = created()
     fixture.clock.set(execution.startingTimeMs + 600000L)
     fixture.tick()
+    closingOf(execution).map(_.reason) shouldBe Some(Some("never started"))
+
+    // A unit starts it all the same, from the plan its client still held, and it ends.
+    withLog(execution)
+    append(execution, "COMPLETED", 700000L)
+    fixture.clock.set(execution.startingTimeMs + 800000L)
+    fixture.tick()
+
     closingOf(execution) shouldBe
-      Some(
-        ClosingRecord(
-          failed,
-          Some("never started"),
-          execution.startingTimeMs + 600000L,
-          fromLog = false
-        )
-      )
-    row(execution).getStoredBytes shouldBe 0L
-    row(execution).getResultsExpiredAt should not be null
+      Some(ClosingRecord(completed, None, execution.startingTimeMs + 700000L, fromLog = true))
   }
 
   // --- a warehouse that cannot be reached ---
@@ -1146,7 +1063,7 @@ class ExecutionClosingJobSpec
 
   // --- what a closed execution holds ---
 
-  it should "record what the execution's tables hold: its plan, its log and each stored port" in {
+  it should "record what the execution's tables hold: its log and each stored port" in {
     val fixture = new Fixture()
     val execution = running()
     val result = withResult(execution, rows = 200)
@@ -1154,7 +1071,7 @@ class ExecutionClosingJobSpec
 
     fixture.tick()
 
-    val parts = Seq(execution.planUri, execution.logUri, result).map(ExecutionTables.storedBytes)
+    val parts = Seq(execution.logUri, result).map(ExecutionTables.storedBytes)
     parts.foreach(_ should be > 0L)
     row(execution).getStoredBytes shouldBe parts.sum
     fixture.measured.asScala.toList shouldBe List(execution.eid)
@@ -1203,7 +1120,6 @@ class ExecutionClosingJobSpec
     fixture.noted.replacedBy.asScala shouldBe empty
 
     // Started, with a log that names no state yet.
-    ExecutionPlanStore.claimStart(execution.planUri)
     withLog(execution)
     fixture.tick()
     fixture.noted.replacedBy.asScala shouldBe empty
@@ -1287,7 +1203,7 @@ class ExecutionClosingJobSpec
     closingOf(ended).map(_.outcome) shouldBe Some(completed)
   }
 
-  it should "expire the results of the run before, with the plan, log and statistics kept, once the next run has started" in {
+  it should "expire the results of the run before, with the log and statistics kept, once the next run has started" in {
     val fixture = new Fixture(expiry = new RealExpiry(_))
     val unit = freshUnit()
     val first = running(unit)
@@ -1295,8 +1211,7 @@ class ExecutionClosingJobSpec
     append(first, "COMPLETED", 9000L)
     fixture.tick()
     val closedWith = row(first).getStoredBytes.longValue()
-    closedWith shouldBe
-      Seq(first.planUri, first.logUri, result).map(ExecutionTables.storedBytes).sum
+    closedWith shouldBe Seq(first.logUri, result).map(ExecutionTables.storedBytes).sum
 
     // The next execution is created: the unit still shows the first.
     val second = created(unit)
@@ -1305,16 +1220,14 @@ class ExecutionClosingJobSpec
     row(first).getResultsExpiredAt shouldBe null
 
     // The unit starts it.
-    ExecutionPlanStore.claimStart(second.planUri)
     withLog(second)
     append(second, "READY", 2000L)
     fixture.tick()
 
     ExecutionTables.exists(result) shouldBe false
-    Seq(first.planUri, first.logUri).foreach(ExecutionTables.exists(_) shouldBe true)
+    ExecutionTables.exists(first.logUri) shouldBe true
     row(first).getResultsExpiredAt shouldBe new Timestamp(fixture.clock.get())
-    row(first).getStoredBytes.longValue() shouldBe
-      Seq(first.planUri, first.logUri).map(ExecutionTables.storedBytes).sum
+    row(first).getStoredBytes.longValue() shouldBe ExecutionTables.storedBytes(first.logUri)
     row(first).getStoredBytes.longValue() should be < closedWith
     closingOf(first).map(_.outcome) shouldBe Some(completed)
     row(second).getResultsExpiredAt shouldBe null
@@ -1327,7 +1240,6 @@ class ExecutionClosingJobSpec
     val result = withResult(first, rows = 20)
     // The unit starts the next execution, which ends the run it holds.
     val second = created(unit)
-    ExecutionPlanStore.claimStart(second.planUri)
     withLog(second)
     append(second, "READY", 2000L)
     append(first, "KILLED", 9000L, reason = Some(s"replaced by execution ${second.eid}"))
@@ -1410,25 +1322,25 @@ class ExecutionClosingJobSpec
     val young = endedAt(nowMs - 86400000L + 1L)
     val oldResult = withResult(old, rows = 20)
     val youngResult = withResult(young, rows = 20)
-    // Closed as never started, long ago: marked as it was closed, with a table at a name of its.
+    // Closed long ago by a create that failed, so no unit can start it: marked as it was
+    // closed, with a table at a name of its.
     val neverStarted = created()
     ExecutionRecords.close(
       neverStarted.eid,
       failed,
-      Some(ExecutionClosing.NeverStarted),
+      Some(ExecutionClosing.PlanNotMade),
       nowMs - 5 * 86400000L,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     ) shouldBe true
     val untouched = withResult(neverStarted, rows = 1)
 
     val lines = jobLogged { fixture.tick() }
 
     ExecutionTables.exists(oldResult) shouldBe false
-    ExecutionTables.exists(old.planUri) shouldBe true
+    ExecutionTables.exists(old.logUri) shouldBe true
     row(old).getResultsExpiredAt shouldBe new Timestamp(nowMs)
-    row(old).getStoredBytes.longValue() shouldBe
-      Seq(old.planUri, old.logUri).map(ExecutionTables.storedBytes).sum
+    row(old).getStoredBytes.longValue() shouldBe ExecutionTables.storedBytes(old.logUri)
     Files.exists(replayLog) shouldBe false
     row(old).getLogLocation shouldBe null
     ExecutionTables.exists(youngResult) shouldBe true
@@ -1622,31 +1534,24 @@ class ExecutionClosingJobSpec
     }
   }
 
-  it should "never be revised when no unit started the execution: never started, or not compiled" in {
+  it should "never be revised when no unit can start the execution, as its create failed" in {
     val fixture = new Fixture()
-    val neverStarted = created()
-    fixture.clock.set(neverStarted.startingTimeMs + 600000L)
-    fixture.tick()
     val notCompiledAtCreate = notCompiled()
-    val verdicts = Seq(neverStarted, notCompiledAtCreate).map(closingOf)
-    verdicts.map(_.map(_.reason.get.take(13))) shouldBe
-      Seq(Some("never started"), Some("compile error"))
-    verdicts.foreach(_.map(_.fromLog) shouldBe Some(false))
+    val verdict = closingOf(notCompiledAtCreate)
+    verdict.map(_.reason.get.take(13)) shouldBe Some("compile error")
+    verdict.map(_.fromLog) shouldBe Some(false)
 
-    // Whatever a log at their locations says.
-    Seq(neverStarted, notCompiledAtCreate).foreach { execution =>
-      withLog(execution)
-      append(execution, "COMPLETED", 9000L)
-    }
+    // Whatever a log at its locations says.
+    withLog(notCompiledAtCreate)
+    append(notCompiledAtCreate, "COMPLETED", 9000L)
     fixture.labelsRead.clear()
     fixture.tick(3)
 
-    Seq(neverStarted, notCompiledAtCreate).map(closingOf) shouldBe verdicts
+    closingOf(notCompiledAtCreate) shouldBe verdict
     fixture.labelsRead.asScala shouldBe empty
     // Nor on request.
-    fixture.closer.reviseIfEnded(record(neverStarted.eid)) shouldBe false
     fixture.closer.reviseIfEnded(record(notCompiledAtCreate.eid)) shouldBe false
-    Seq(neverStarted, notCompiledAtCreate).map(closingOf) shouldBe verdicts
+    closingOf(notCompiledAtCreate) shouldBe verdict
   }
 
   it should "stand while its warehouse cannot be reached, unread, and give way when it can be" in {

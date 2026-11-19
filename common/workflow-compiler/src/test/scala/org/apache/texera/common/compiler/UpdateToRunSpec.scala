@@ -21,7 +21,6 @@ package org.apache.texera.common.compiler
 
 import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
-import org.apache.texera.amber.core.state.StateReferencing
 import org.apache.texera.amber.core.storage.RepositoryVersionResolver
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -54,7 +53,6 @@ import org.apache.texera.amber.operator.udf.python.{
 }
 import org.apache.texera.amber.operator.{LogicalOp, StateTransferFunc, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.common.compiler.UpdateToRun.RunningOperator
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -70,7 +68,6 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
 
   private val workflowId = WorkflowIdentity(7)
   private val executionId = ExecutionIdentity(42)
-  private val updateId = "update-1"
 
   private def named[T <: LogicalOp](op: T, id: String): T = {
     op.setOperatorId(id)
@@ -152,9 +149,9 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
     )
 
   /**
-    * lines -> pre -> start -> typed -> limit2 -> filter -> bound -> end, as the plan row of an
-    * execution keeps the workflow it was compiled from: `typed`, `limit2`, `filter` and `bound`
-    * are inside the loop block; `typed` refers to the loop variable `n` with a typed reference,
+    * lines -> pre -> start -> typed -> limit2 -> filter -> bound -> end, as the editor sends the
+    * workflow an execution runs with a change: `typed`, `limit2`, `filter` and `bound` are
+    * inside the loop block; `typed` refers to the loop variable `n` with a typed reference,
     * and `bound` to `x` with the whole string "$x"; `pre`, outside every block, holds the
     * literal "$x".
     */
@@ -198,9 +195,6 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
     parameter
   }
 
-  /** What the plan runs for an operator of one layer, in the engine's own environment. */
-  private val main = Seq(RunningOperator("main", None))
-
   /** What an operator answers when it is asked to build the operator a change makes of it. */
   private type Reconfiguration = Try[(PhysicalOp, Option[StateTransferFunc])]
 
@@ -208,17 +202,14 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
   private def make(
       changed: LogicalOp,
       workflow: LogicalPlanPojo = udfPlan(),
-      running: Seq[RunningOperator] = main,
       repositories: RepositoryVersionResolver = TestOperators.fixtureRepositoryResolver,
       reconfiguration: Option[() => Reconfiguration] = None
-  ): UpdateToRun.Made =
+  ): String =
     UpdateToRun.make(
       workflowId,
       executionId,
-      updateId,
       workflow,
       changed,
-      running,
       repositories,
       (current, changed, workflowId, executionId) =>
         reconfiguration.fold(
@@ -226,8 +217,8 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
         )(_())
     )
 
-  private def decoded(made: UpdateToRun.Made): OperatorUpdate =
-    PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(made.update))
+  private def decoded(made: String): OperatorUpdate =
+    PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(made))
 
   /** The message `body` is refused with, as a change no update can be made of. */
   private def refused(body: => Any): String = {
@@ -238,23 +229,15 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
 
   private val udfOpId = PhysicalOpIdentity(OperatorIdentity("udf"), "main")
 
-  "UpdateToRun.make" should "make a change into the operator to run, saved under the update's id" in {
-    val made = make(udf(code = changedCode("v2")))
-
+  "UpdateToRun.make" should "make a change into the operator to run, as the text a unit reads" in {
     // What a unit applies: the new code for the running operator, of this execution.
-    decoded(made) shouldBe OperatorUpdate(
+    decoded(make(udf(code = changedCode("v2")))) shouldBe OperatorUpdate(
       executionId,
-      updateId,
       udfOpId,
       OpExecWithCode(changedCode("v2"), "python"),
+      None,
       None
     )
-    // The change as the editor sent it.
-    val sent = objectMapper.readValue(made.operator, classOf[LogicalOp])
-    sent shouldBe a[PythonUDFOpDescV2]
-    sent.operatorIdentifier shouldBe OperatorIdentity("udf")
-    sent.asInstanceOf[PythonUDFOpDescV2].code shouldBe changedCode("v2")
-    objectMapper.readTree(made.operator).has(StateReferencing.SIDECAR_PROPERTY) shouldBe false
   }
 
   it should "make a change to an operator that is built from its descriptor" in {
@@ -291,10 +274,10 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
   it should "change an operator inside a loop block that refers to no loop variable, and a '$x' literal outside every block" in {
     make(filter("filter", "Europe"), workflow = loopPlan())
     // Outside every block "$y" is the literal it is everywhere else.
-    val literal = make(filter("pre", "$y"), workflow = loopPlan())
+    val literal = decoded(make(filter("pre", "$y"), workflow = loopPlan()))
 
     objectMapper
-      .readTree(literal.operator)
+      .readTree(literal.opExecInitInfo.asInstanceOf[OpExecWithClassName].descString)
       .get("predicates")
       .get(0)
       .get("value")
@@ -372,13 +355,7 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
     val blank = udf(code = changedCode("v2"), environment = Some("ml"))
     blank.envName = "  "
 
-    refused(
-      make(
-        blank,
-        workflow = udfPlan(environment = Some("ml")),
-        running = Seq(RunningOperator("main", Some("ml")))
-      )
-    ) shouldBe
+    refused(make(blank, workflow = udfPlan(environment = Some("ml")))) shouldBe
       "Virtual Environment name is required when not using the default Python environment."
   }
 
@@ -387,30 +364,16 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
       "Operator udf is a Python UDF; a change cannot make it a Limit."
   }
 
-  it should "refuse a change that makes an operator the running plan does not have" in {
-    // A plan whose Limit runs as the layer "other": a change builds it as "main", which the unit
-    // would refuse to apply. So with a plan that runs nothing for the operator.
-    Seq(Seq(RunningOperator("other", None)), Seq.empty, null).foreach { running =>
-      refused(make(limit("limit", 7), running = running)) shouldBe
-        "The change makes Limit the operator limit-main, which the running workflow does not have."
+  it should "carry the Python environment the changed operator asks for, by name, for the unit to check" in {
+    decoded(make(udf(code = changedCode("v2")))).pythonEnvironment shouldBe None
+    Seq(Some("ml"), Some("  ml  ")).foreach { asked =>
+      withClue(s"$asked: ") {
+        decoded(
+          make(udf(environment = asked), workflow = udfPlan(environment = Some("ml")))
+        ).pythonEnvironment shouldBe Some("ml")
+      }
     }
-  }
-
-  it should "refuse a change of the Python environment the operator runs in" in {
-    val refusal = "The operator's Python environment cannot change while the run is paused."
-    val inMl = Seq(RunningOperator("main", Some("ml")))
-    def mlPlan = udfPlan(environment = Some("ml"))
-
-    refused(make(udf(environment = Some("ml")))) shouldBe refusal
-    refused(make(udf(), workflow = mlPlan, running = inMl)) shouldBe refusal
-    refused(make(udf(environment = Some("other")), workflow = mlPlan, running = inMl)) shouldBe
-      refusal
-    // The same environment, written as the editor may, is no change of it.
-    make(
-      udf(code = changedCode("v2"), environment = Some("  ml  ")),
-      workflow = mlPlan,
-      running = inMl
-    )
+    decoded(make(udf(environment = Some("other")))).pythonEnvironment shouldBe Some("other")
   }
 
   it should "refuse a dataset version the execution's creator cannot read" in {
@@ -452,14 +415,13 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
     make(limit("limit", 7), repositories = path => fail(s"asked to pin $path"))
   }
 
-  it should "refuse an operator the execution's workflow does not have, as one that is not there" in {
+  it should "refuse an operator the workflow sent does not have, as one that is not there" in {
     the[NoSuchOperator] thrownBy make(limit("ghost", 7)) should have message
-      "Operator ghost is not in the workflow execution 42 runs."
-    // A workflow compiled up to the UDF: the Limit after it is not in what the execution runs.
+      "Operator ghost is not in the workflow sent with the change."
     the[NoSuchOperator] thrownBy make(
       limit("limit", 7),
       workflow = udfPlan().upstreamOf("udf")
-    ) should have message "Operator limit is not in the workflow execution 42 runs."
+    ) should have message "Operator limit is not in the workflow sent with the change."
   }
 
   it should "refuse a change that names no operator, before it reads the workflow" in {
@@ -473,13 +435,14 @@ class UpdateToRunSpec extends AnyFlatSpec with Matchers {
     refused(make(nullId, workflow = null)) shouldBe "The operator to change has no id."
   }
 
-  it should "fail, not refuse the change, on a workflow that is none a plan was compiled from" in {
-    // What is kept beside a plan is a workflow the compiler read: one that is not is no mistake
-    // of the change's.
+  it should "refuse a workflow sent with the change that the compiler does not read" in {
+    // The client sends the workflow, as it sends the change: one the compiler does not read is
+    // the request's mistake.
     val cyclic = udfPlan().copy(links = List(link("udf", "limit"), link("limit", "udf")))
 
-    the[IllegalStateException] thrownBy make(limit("limit", 7), workflow = cyclic) should
-      have message "The workflow's links form a cycle: udf -> limit -> udf."
-    an[IllegalStateException] should be thrownBy make(limit("limit", 7), workflow = null)
+    refused(make(limit("limit", 7), workflow = cyclic)) shouldBe
+      "The workflow's links form a cycle: udf -> limit -> udf."
+    refused(make(limit("limit", 7), workflow = null)) shouldBe
+      "The request holds no workflow to make the change in."
   }
 }

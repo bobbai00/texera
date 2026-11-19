@@ -133,7 +133,7 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
     ).foreach {
       case (state, reason, outcome) =>
         val ended = label(Some(state), reason, stateTimeMs = createdAtMs + 42000L)
-        decided(Read.Log(ended), watch = Some(Watch(Some(ended.beatMs), 3))) shouldBe
+        decided(Read.Log(ended), watch = Some(Watch(ended.beatMs, 3))) shouldBe
           ((CloseEnded(Ending(outcome, reason, createdAtMs + 42000L)), None))
     }
   }
@@ -150,7 +150,7 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
 
   it should "decide nothing on a read that failed, and count nothing" in {
     decided(Read.Failed) shouldBe ((Wait, None))
-    val watch = Some(Watch(Some(createdAtMs), 5))
+    val watch = Some(Watch(createdAtMs, 5))
     decided(Read.Failed, watch) shouldBe ((Wait, watch))
   }
 
@@ -160,7 +160,7 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
     decided(Read.Failed, of = execution(terminated = Some(USER_REQUESTED)), nowMs = old) shouldBe
       ((Wait, None))
     // A watch that reached the threshold stays there, and still nothing is decided.
-    val watch = Some(Watch(Some(createdAtMs), 100))
+    val watch = Some(Watch(createdAtMs, 100))
     decided(Read.Failed, watch, nowMs = old) shouldBe ((Wait, watch))
   }
 
@@ -170,11 +170,8 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
     val terminated = execution(terminated = Some(USER_REQUESTED))
     decided(Read.Log(label()), of = terminated) shouldBe
       ((CheckRowsThenLose("unit terminated"), None))
-    decided(Read.NoLog(planStarted = true), of = terminated)._1 shouldBe
-      CheckRowsThenLose("unit terminated")
-    // Young, and not started: not left to wait to be started on a unit that is gone.
-    decided(Read.NoLog(planStarted = false), of = terminated)._1 shouldBe
-      CheckRowsThenLose("unit terminated")
+    // Young, with no log: not left to wait to be started on a unit that is gone.
+    decided(Read.NoLog, of = terminated)._1 shouldBe CheckRowsThenLose("unit terminated")
   }
 
   it should "lose the run of a unit terminated otherwise as 'unit lost', at once" in {
@@ -191,28 +188,22 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
 
   // --- never started ---
 
-  it should "wait for a unit to start an execution with no log and no start claim" in {
-    decided(Read.NoLog(planStarted = false)) shouldBe ((Wait, None))
-    decided(
-      Read.NoLog(planStarted = false),
-      nowMs = createdAtMs + 600000L - 1
-    ) shouldBe ((Wait, None))
+  it should "wait for a unit to start an execution with no log" in {
+    decided(Read.NoLog) shouldBe ((Wait, None))
+    decided(Read.NoLog, nowMs = createdAtMs + 600000L - 1) shouldBe ((Wait, None))
   }
 
-  it should "claim and close an execution no unit started within the limit, and not before" in {
-    decided(Read.NoLog(planStarted = false), nowMs = createdAtMs + 600000L) shouldBe
-      ((ClaimThenClose, None))
-    decided(Read.NoLog(planStarted = false), nowMs = createdAtMs + 900000L)._1 shouldBe
-      ClaimThenClose
+  it should "close an execution no unit started within the limit as never started, and not before" in {
+    decided(Read.NoLog, nowMs = createdAtMs + 600000L) shouldBe ((CloseNeverStarted, None))
+    decided(Read.NoLog, nowMs = createdAtMs + 900000L)._1 shouldBe CloseNeverStarted
     decided(
-      Read.NoLog(planStarted = false),
+      Read.NoLog,
       settings = settings.copy(neverStartedAfterSeconds = 60),
       nowMs = createdAtMs + 60000L
-    )._1 shouldBe ClaimThenClose
+    )._1 shouldBe CloseNeverStarted
   }
 
-  it should "never close a started execution as never started, however old" in {
-    decided(Read.NoLog(planStarted = true), nowMs = createdAtMs + 900000L)._1 shouldBe Wait
+  it should "never close an execution with a log as never started, however old" in {
     decided(Read.Log(label(state = None)), nowMs = createdAtMs + 900000L)._1 shouldBe Wait
   }
 
@@ -220,20 +211,20 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
 
   it should "start watching a beat it has not seen, and count each tick the beat stays" in {
     val seen = label(beatMs = createdAtMs + 30000L)
-    decided(Read.Log(seen)) shouldBe ((Wait, Some(Watch(Some(seen.beatMs), 0))))
-    decided(Read.Log(seen), Some(Watch(Some(seen.beatMs), 0))) shouldBe
-      ((Wait, Some(Watch(Some(seen.beatMs), 1))))
-    decided(Read.Log(seen), Some(Watch(Some(seen.beatMs), 4))) shouldBe
-      ((Wait, Some(Watch(Some(seen.beatMs), 5))))
+    decided(Read.Log(seen)) shouldBe ((Wait, Some(Watch(seen.beatMs, 0))))
+    decided(Read.Log(seen), Some(Watch(seen.beatMs, 0))) shouldBe
+      ((Wait, Some(Watch(seen.beatMs, 1))))
+    decided(Read.Log(seen), Some(Watch(seen.beatMs, 4))) shouldBe
+      ((Wait, Some(Watch(seen.beatMs, 5))))
   }
 
   it should "start over on a beat that moved, forward or back" in {
-    val watch = Some(Watch(Some(createdAtMs + 30000L), 5))
+    val watch = Some(Watch(createdAtMs + 30000L, 5))
     decided(Read.Log(label(beatMs = createdAtMs + 60000L)), watch) shouldBe
-      ((Wait, Some(Watch(Some(createdAtMs + 60000L), 0))))
+      ((Wait, Some(Watch(createdAtMs + 60000L, 0))))
     // The unit's clock is its own: a beat that went back is still a sign of life.
     decided(Read.Log(label(beatMs = createdAtMs)), watch) shouldBe
-      ((Wait, Some(Watch(Some(createdAtMs), 0))))
+      ((Wait, Some(Watch(createdAtMs, 0))))
   }
 
   it should "lose a run whose beat stood still for the ticks of lost-after-seconds, and not one tick sooner" in {
@@ -251,28 +242,18 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
       decision shouldBe Wait
       next
     }
-    watched shouldBe Some(Watch(Some(createdAtMs + 50 * 30000L), 0))
-  }
-
-  it should "watch a started execution with no log as one with no beat" in {
-    decided(Read.NoLog(planStarted = true)) shouldBe ((Wait, Some(Watch(None, 0))))
-    val decisions = decisionsOver(7, Read.NoLog(planStarted = true))
-    decisions.take(6) shouldBe Seq.fill(6)(Wait)
-    decisions(6) shouldBe CheckRowsThenLose("unit lost")
-    // The log appearing is a sign of life.
-    decided(Read.Log(label()), Some(Watch(None, 5))) shouldBe
-      ((Wait, Some(Watch(Some(createdAtMs + 30000L), 0))))
+    watched shouldBe Some(Watch(createdAtMs + 50 * 30000L, 0))
   }
 
   it should "watch a log with no state yet like any other" in {
     val unstated = label(state = None)
-    decided(Read.Log(unstated)) shouldBe ((Wait, Some(Watch(Some(unstated.beatMs), 0))))
+    decided(Read.Log(unstated)) shouldBe ((Wait, Some(Watch(unstated.beatMs, 0))))
     decisionsOver(7, Read.Log(unstated)).last shouldBe CheckRowsThenLose("unit lost")
   }
 
   it should "forget the watch of an execution it stops watching" in {
-    val watch = Some(Watch(Some(createdAtMs), 2))
-    decided(Read.NoLog(planStarted = false), watch)._2 shouldBe None
+    val watch = Some(Watch(createdAtMs, 2))
+    decided(Read.NoLog, watch)._2 shouldBe None
     decided(Read.Log(label(Some("COMPLETED"))), watch)._2 shouldBe None
     decided(Read.Log(label()), watch, of = execution(terminated = Some(USER_REQUESTED)))._2 shouldBe
       None

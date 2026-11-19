@@ -90,14 +90,15 @@ class ExecutionResource(
   /**
     * Creates an execution of a workflow, to run on a computing unit (see [[ExecutionCreator]]).
     *
-    * @return 201 with `{eid, planUri}`. Otherwise 400 when the request is malformed or names a
+    * @return 201 with `{eid, plan}`. Otherwise 400 when the request is malformed or names a
     *         warehouse or a replay it may not; 400 when the workflow is not one the compiler can
     *         read, and 400 with `eid` and `operatorErrors` beside the code and the message when
     *         it does not compile ([[CreateExecutionFailure]]), the execution recorded as failed
     *         in both; 403 without the right to read the workflow or to run workflows on the
     *         unit; 409 when the unit is terminated; 504 when the compile takes longer than its
     *         deadline and 503 when too many compiles wait or the compiling service cannot be
-    *         reached; 500 when the plan cannot be made or written for any other reason.
+    *         reached; 400 when the plan is larger than a computing unit takes; 500 when the plan
+    *         cannot be made for any other reason.
     */
   @POST
   @RolesAllowed(Array("REGULAR", "ADMIN"))
@@ -122,17 +123,18 @@ class ExecutionResource(
     }
 
   /**
-    * Stores a change to an operator of paused execution `eid`, for its computing unit to apply
-    * when the run resumes (see [[OperatorUpdates]]).
+    * Makes a change to an operator of paused execution `eid` to run, for the client to hand to
+    * the execution's computing unit, which applies it when the run resumes (see
+    * [[OperatorUpdates]]).
     *
-    * @return 201 with `{updateId, operatorId}`. Otherwise 400 when the request names no operator
-    *         or the running operator cannot take the change; 403 unless the caller created the
-    *         execution and may still read its workflow and run workflows on its unit; 404 for an
-    *         execution, a stored plan or an operator there is not; 409 when the execution has
-    *         ended or its plan is in a per-user warehouse while those are disabled; 504 when
-    *         the compiling service does not answer by its deadline and 503 when it cannot be
-    *         reached; 500 when the plan cannot be read, was made for another user or unit, or
-    *         the change cannot be made or stored.
+    * @return 201 with `{operatorId, update}`. Otherwise 400 when the request names no operator,
+    *         holds no workflow the compiler reads, or asks for a change the operator cannot take
+    *         while it runs or that is larger than a computing unit takes; 403 unless
+    *         the caller created the execution and may still read its workflow and run workflows
+    *         on its unit; 404 for an execution, or an operator in the workflow sent, there is
+    *         not; 409 when the execution has ended; 504 when the compiling service does not
+    *         answer by its deadline and 503 when it cannot be reached; 500 when the change cannot
+    *         be made.
     */
   @POST
   @Path("/{eid}/updates")
@@ -145,7 +147,7 @@ class ExecutionResource(
   ): Response =
     Response
       .status(Response.Status.CREATED)
-      .entity(updates.store(eid, request, user.getUser, authorization))
+      .entity(updates.make(eid, request, user.getUser, authorization))
       .build()
 
   /**

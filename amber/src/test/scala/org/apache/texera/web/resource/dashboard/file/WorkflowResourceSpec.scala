@@ -21,9 +21,8 @@ package org.apache.texera.web.resource.dashboard.file
 
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionPlanStore,
+  ExecutionLogStore,
   ExecutionTables,
-  PlanRecord,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
@@ -1304,9 +1303,9 @@ class WorkflowResourceSpec
   }
 
   /**
-    * An execution of workflow `wid` with a plan table, where its row says the plan is, and the
-    * result table of a port; its id is given, so the tables' names are this suite's own. It is
-    * open, unless it is to be `closed`. Returns its tables.
+    * An execution of workflow `wid` with a log table and the result table of a port; its id is
+    * given, so the tables' names are this suite's own. It is open, unless it is to be `closed`.
+    * Returns its tables.
     */
   private def executionWithTables(wid: Integer, eid: Int, closed: Boolean = false): Seq[URI] = {
     getDSLContext
@@ -1323,17 +1322,8 @@ class WorkflowResourceSpec
       .execute()
     val (workflowId, executionId) =
       (WorkflowIdentity(wid.longValue()), ExecutionIdentity(eid.toLong))
-    val plan = ExecutionPlanStore.planUri(workflowId, executionId, None)
-    ExecutionPlanStore.writePlan(
-      plan,
-      PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        body = "{}",
-        createdBy = testUser.getUid,
-        computingUnitId = 1
-      ),
-      "{}"
-    )
+    val log = ExecutionLogStore.logUri(workflowId, executionId, None)
+    ExecutionLogStore.create(log, System.currentTimeMillis(), 30000L)
     val result = VFSURIFactory.resultURI(
       VFSURIFactory.createPortBaseURI(
         workflowId,
@@ -1342,7 +1332,7 @@ class WorkflowResourceSpec
       )
     )
     DocumentFactory.createDocument(result, Schema().add("line", AttributeType.STRING))
-    Seq(plan, result)
+    Seq(log, result)
   }
 
   private def hasTable(uri: URI): Boolean = ExecutionTables.exists(uri)

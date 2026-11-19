@@ -26,17 +26,11 @@ import org.apache.arrow.vector.ipc.ArrowFileReader
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionPlanStore,
-  PlanRecord,
+  ExecutionTables,
   VFSURIFactory,
   WarehouseUnavailableException
 }
 import org.apache.texera.amber.core.storage.model.{BufferedItemWriter, VirtualDocument}
-import org.apache.texera.amber.core.storedplan.{
-  StoredOutputPort,
-  StoredPhysicalOp,
-  StoredPhysicalPlan
-}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -44,7 +38,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
@@ -93,7 +87,6 @@ import java.util.UUID
 import java.util.zip.{ZipException, ZipInputStream}
 import javax.ws.rs.{NotFoundException, WebApplicationException}
 import javax.ws.rs.core.{Response, StreamingOutput}
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 /**
@@ -108,7 +101,7 @@ import scala.collection.mutable.ArrayBuffer
   *    exportOperatorResultAsStream / exportOperatorsAsZip) and the upload
   *    plumbing, which read the execution's row and the version table. Those run
   *    against MockTexeraDB's embedded Postgres — plus, where an operator needs
-  *    actual rows, a real plan table and a real Iceberg result table in the
+  *    actual rows, a real Iceberg result table in the
   *    configured catalog — and, for the upload, against a local stand-in for
   *    the file service.
   *
@@ -405,9 +398,9 @@ class ResultExportServiceSpec
   // ===========================================================================
   // Request-level entry points. These read the execution's row and the workflow's
   // version, so they need the embedded Postgres, and they find an operator's
-  // result where the execution's stored plan says its port is stored, so every
-  // execution that has results here has a real plan table in the configured
-  // catalog. Tests that only need the guards and the error mapping stop short
+  // result by the names of the execution's tables, so every execution that has
+  // results here has a real result table in the configured catalog. Tests that
+  // only need the guards and the error mapping stop short
   // of opening a result document; tests of the writer dispatch and the ZIP
   // framing store real rows first, as real Iceberg result tables in the same
   // catalog (the arrangement ExecutionResultServiceSpec uses). A result table's
@@ -488,7 +481,6 @@ class ResultExportServiceSpec
       .deleteFrom(WORKFLOW_EXECUTIONS)
       .where(WORKFLOW_EXECUTIONS.VID.in(testVersion.getVid, otherVersion.getVid))
       .execute()
-    planned.clear()
   }
 
   override protected def afterAll(): Unit = closeConnectionPool()
@@ -513,14 +505,7 @@ class ResultExportServiceSpec
       filename = filename
     )
 
-  private def planUriOf(eid: Integer, wid: Int = testWorkflowWid): URI =
-    ExecutionPlanStore.planUri(
-      WorkflowIdentity(wid.longValue()),
-      ExecutionIdentity(eid.longValue()),
-      None
-    )
-
-  /** An execution of the seeded workflow, or of `version`'s, with no stored plan. */
+  /** An execution of the seeded workflow, or of `version`'s, that stored no result. */
   private def insertExecution(
       version: WorkflowVersion = testVersion,
       whid: Integer = null
@@ -537,8 +522,13 @@ class ResultExportServiceSpec
     execution.setWhid(whid)
     workflowExecutionsDao.insert(execution)
     // The lake outlives this suite's database, and each run of the suite makes the same
-    // execution ids: a plan an earlier run stored under this id is not this execution's.
-    ExecutionPlanStore.drop(planUriOf(execution.getEid, version.getWid))
+    // execution ids: a result an earlier run stored under this id is not this execution's.
+    ExecutionTables.dropNamed(
+      WorkflowIdentity(version.getWid.longValue()),
+      ExecutionIdentity(execution.getEid.longValue()),
+      None,
+      ExecutionTables.ProducedKinds
+    )
     execution
   }
 
@@ -552,9 +542,6 @@ class ResultExportServiceSpec
       .where(WORKFLOW_EXECUTIONS.EID.eq(execution.getEid))
       .execute()
 
-  // The output ports the stored plan of each execution names, in the order they were added.
-  private val planned = mutable.Map.empty[Integer, Vector[GlobalPortIdentity]]
-
   /** Port 0 of logical operator `operatorId` as its users see it, on physical operator `layer`. */
   private def outputPortOf(
       operatorId: String,
@@ -567,7 +554,7 @@ class ResultExportServiceSpec
       input = false
     )
 
-  /** Where `port` of execution `eid` of the seeded workflow is stored, as a plan names it. */
+  /** Where `port` of execution `eid` of the seeded workflow is stored, as a run stores it. */
   private def locationOf(eid: Integer, port: GlobalPortIdentity): URI =
     VFSURIFactory.createPortBaseURI(
       WorkflowIdentity(testWorkflowWid.longValue()),
@@ -575,42 +562,14 @@ class ResultExportServiceSpec
       port
     )
 
-  /** Stores `body` as the plan of execution `eid` of the seeded workflow. */
-  private def storePlanBody(eid: Integer, body: String): Unit =
-    ExecutionPlanStore.writePlan(
-      planUriOf(eid),
-      PlanRecord(ExecutionPlanStore.PlanEntryId, body, testUserId, testComputingUnit.getCuid),
-      """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
-    )
-
-  /**
-    * Stores the plan of execution `eid` again, naming `port` beside the ports it named: an
-    * export finds an operator's result where the plan says its port is stored. Answers the
-    * port's result table, which the plan names whether or not the run stores it.
-    */
-  private def planPort(eid: Integer, port: GlobalPortIdentity): URI = {
-    val ports = planned.getOrElse(eid, Vector.empty) :+ port
-    planned(eid) = ports
-    storePlanBody(
-      eid,
-      PhysicalPlanCodec.toJson(
-        StoredPhysicalPlan(
-          formatVersion = PhysicalPlanCodec.FormatVersion,
-          operators = ports.map(planned =>
-            StoredPhysicalOp(outputPorts =
-              Seq(StoredOutputPort(storageLocation = locationOf(eid, planned).toString))
-            )
-          )
-        )
-      )
-    )
+  /** The result table of `port` of execution `eid` of the seeded workflow. */
+  private def resultTableOf(eid: Integer, port: GlobalPortIdentity): URI =
     VFSURIFactory.resultURI(locationOf(eid, port))
-  }
 
-  /** Creates a real Iceberg result table holding `rows`, where the plan of `eid` names `port`. */
+  /** Creates a real Iceberg result table holding `rows`, as execution `eid` stores `port`. */
   private def storeResultAt(eid: Integer, port: GlobalPortIdentity, rows: Seq[Tuple]): Unit = {
     val writer = DocumentFactory
-      .createDocument(planPort(eid, port), schema)
+      .createDocument(resultTableOf(eid, port), schema)
       .writer("rexs")
       .asInstanceOf[BufferedItemWriter[Tuple]]
     writer.open()
@@ -618,7 +577,7 @@ class ResultExportServiceSpec
     writer.close()
   }
 
-  /** Stores `rows` as the result of `operatorId` in execution `eid`, and plans its port. */
+  /** Stores `rows` as the result of `operatorId` in execution `eid`. */
   private def storeResult(eid: Integer, operatorId: String, rows: Seq[Tuple]): Unit =
     storeResultAt(eid, outputPortOf(operatorId), rows)
 
@@ -703,7 +662,7 @@ class ResultExportServiceSpec
 
   // -- exportOperatorResultAsStream -------------------------------------------
 
-  "exportOperatorResultAsStream" should "yield no stream for an execution with no stored plan" in {
+  "exportOperatorResultAsStream" should "yield no stream for an execution that stored no result" in {
     val execution = insertExecution()
     val op = OperatorExportInfo("op-1", "csv")
 
@@ -711,7 +670,7 @@ class ResultExportServiceSpec
       None
   }
 
-  it should "yield no stream when no port the plan names belongs to the operator" in {
+  it should "yield no stream when no port the execution stored belongs to the operator" in {
     val execution = insertExecution()
     // A result is stored for the execution, but for a *different* logical operator: the
     // lookup must decode where it is, reject it, and fall through to the null-document
@@ -1065,12 +1024,18 @@ class ResultExportServiceSpec
   }
 
   it should "turn a thrown per-operator failure into an error entry and keep going" in {
-    val execution = insertExecution()
-    // A stored plan this version does not read, so the lookup throws instead of
-    // finding nothing — the path the per-operator catch exists for.
-    storePlanBody(execution.getEid, """{"formatVersion":2}""")
+    // An execution in a per-user warehouse while those are disabled, so the lookup throws
+    // instead of finding nothing — the path the per-operator catch exists for.
+    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
+    warehouse.setUid(testUser.getUid)
+    warehouse.setName("export-warehouse-thrown")
+    warehouse.setLakekeeperWarehouseName("rexs-byo-thrown")
+    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
+    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
+    warehouse.store()
+    val execution = insertExecution(whid = warehouse.getWhid)
 
-    // TWO operators. The plan is the execution's rather than a single operator's, so both
+    // TWO operators. The warehouse is the execution's rather than a single operator's, so both
     // lookups throw — which is exactly the point: the try/catch lives INSIDE the foreach,
     // so op-2 must still be attempted after op-1 blows up. Hoist the catch outside the loop
     // and only op-1's line survives, failing the second assertion.
@@ -1203,25 +1168,14 @@ class ResultExportServiceSpec
   private val getOperatorDocument =
     PrivateMethod[VirtualDocument[Tuple]](Symbol("getOperatorDocument"))
 
-  "getOperatorDocument" should "return null for an operator the stored plan names no port of" in {
+  "getOperatorDocument" should "return null for an operator the execution stored no result of" in {
     val execution = insertExecution()
-    val unplanned = exportServiceOf(execution) invokePrivate getOperatorDocument("op-1")
-    unplanned shouldBe null
+    val unstored = exportServiceOf(execution) invokePrivate getOperatorDocument("op-1")
+    unstored shouldBe null
 
     storeResult(execution.getEid, "rexs-doc-other", Seq(tupleOf("a", 1)))
     val unnamed = exportServiceOf(execution) invokePrivate getOperatorDocument("op-1")
     unnamed shouldBe null
-  }
-
-  it should "return null for a port the plan names and the run did not store" in {
-    val execution = insertExecution()
-    // A plan names where every output port is stored; a run stores only some of them.
-    val unstored = planPort(execution.getEid, outputPortOf("rexs-doc-unstored"))
-    if (DocumentFactory.documentExists(unstored)) DocumentFactory.openDocument(unstored)._1.clear()
-
-    val doc = exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-doc-unstored")
-
-    doc shouldBe null
   }
 
   it should "open the stored result document for the operator" in {

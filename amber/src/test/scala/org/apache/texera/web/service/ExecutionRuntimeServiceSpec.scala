@@ -83,8 +83,7 @@ class ExecutionRuntimeServiceSpec
         client = null,
         stateStore = null,
         workflow = null,
-        planUri = new URI("vfs:///wid/1/eid/1/plan"),
-        creator = 1,
+        startedBy = 1,
         mountRoot = None
       ) {
     var resumeCallCount = 0

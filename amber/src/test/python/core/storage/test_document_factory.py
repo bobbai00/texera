@@ -121,21 +121,9 @@ class TestCreateDocumentNamespaceRouting:
             DocumentFactory.create_document(VFS_URI, schema)
 
 
-def test_plan_uri_has_no_namespace_on_the_python_side(schema):
-    # An execution's plan table is the Scala side's alone; the URI decodes here
-    # but no Python entry point reaches a catalog with it.
-    plan_uri = "vfs:///wid/12/eid/345/plan"
-    for operation in (
-        lambda: DocumentFactory.create_document(plan_uri, schema),
-        lambda: DocumentFactory.open_document(plan_uri),
-        lambda: DocumentFactory.document_exists(plan_uri),
-    ):
-        with pytest.raises(ValueError, match="not supported"):
-            operation()
-
-
 def test_execution_log_uri_has_no_namespace_on_the_python_side(schema):
-    # As the plan table: an execution's log is the Scala side's alone.
+    # An execution's log is the Scala side's alone; the URI decodes here but no
+    # Python entry point reaches a catalog with it.
     log_uri = "vfs:///wid/12/eid/345/executionlog"
     for operation in (
         lambda: DocumentFactory.create_document(log_uri, schema),

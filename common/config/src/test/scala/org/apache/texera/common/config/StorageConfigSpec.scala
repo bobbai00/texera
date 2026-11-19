@@ -70,14 +70,7 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     StorageConfig.ENV_WAREHOUSE_ENABLED shouldBe "STORAGE_WAREHOUSE_ENABLED"
   }
 
-  "StorageConfig iceberg table settings" should "keep execution plans in the execution-plan namespace by default" in {
-    // Only assert when the env override is unset, since it would win otherwise.
-    if (sys.env.get("STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE").isEmpty) {
-      StorageConfig.icebergTablePlanNamespace shouldBe "execution-plan"
-    }
-  }
-
-  it should "keep execution logs in the execution-log namespace by default" in {
+  "StorageConfig iceberg table settings" should "keep execution logs in the execution-log namespace by default" in {
     if (sys.env.get("STORAGE_ICEBERG_TABLE_EXECUTION_LOG_NAMESPACE").isEmpty) {
       StorageConfig.icebergTableExecutionLogNamespace shouldBe "execution-log"
     }

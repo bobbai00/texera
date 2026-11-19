@@ -39,15 +39,12 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
-import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.MockTexeraDB
 import org.jooq.exception.DataAccessException
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-
-import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll with MockTexeraDB {
 
@@ -100,9 +97,9 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
     TestOperators.smallCsvScanOpDesc() ::
       List.fill(count)(TestOperators.keywordSearchOpDesc("Region", "Asia"))
 
-  /** The plan `made` holds, read as the service that links its files reads it. */
-  private def planOf(made: PlanToRun.Made): ExecutionPlan =
-    PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.fromJson(made.plan))
+  /** The plan `made`, read as the service that links its files reads it. */
+  private def planOf(made: String): ExecutionPlan =
+    PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.fromJson(made))
 
   /** scan -> search -> search-2, and beside them x -> y -> x, a cycle the first three never reach. */
   private def withCycleElsewhere(): LogicalPlanPojo = {
@@ -159,7 +156,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
       newContext().workflowSettings.copy(outputPortsNeedingStorage = storedPorts)
     planContext.warehouse shouldBe context.warehouse
     PhysicalPlanRoundTrip.assertSamePlan(compiled.physicalPlan.get, executionPlan.plan)
-    // What only the service that stores the plan has is left for it to add: the run's cost
+    // What only the service that creates the execution has is left for it to add: the run's cost
     // hints, the replay log it replays and the one it writes.
     planContext.costHints shouldBe None
     executionPlan.replay shouldBe None
@@ -181,7 +178,7 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
 
     // A computing unit reads only a plan whose files have their links.
     val refusal = intercept[IllegalArgumentException] {
-      PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(made.plan))
+      PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(made))
     }
     refusal.getMessage should include("has no link to its file")
     // Linked, it is one.
@@ -243,30 +240,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
     made.distinct should have size 1
   }
 
-  it should "answer the workflow it compiled as JSON that parses back to it, written before the compile resolves its operators" in {
-    // A scan of a dataset's file, by the name its user gave it, which resolves to a fixture.
-    val typed = "/dataset/owner@x.com/sales/v1/country_sales_small.csv"
-    val resolved = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
-    val scan = TestOperators.smallCsvScanOpDesc()
-    scan.fileName = Some(typed)
-    val search = TestOperators.keywordSearchOpDesc("Region", "Asia")
-    val workflow = pojo(List(scan, search), chain(scan, search))
-    val sent = workflow.toJson
-    val bindings = fixtureBindings.copy(files = name => {
-      name shouldBe typed
-      resolved
-    })
-
-    val made = PlanToRun.make(newContext(), bindings, workflow)
-
-    made.logicalPlan shouldBe sent
-    // The compile resolved the scan's file name in place; the workflow answered still names
-    // the file as the request did.
-    scan.fileName shouldBe Some(resolved.toASCIIString)
-    made.logicalPlan should include(typed)
-    made.logicalPlan should not include resolved.toASCIIString
-  }
-
   it should "compile a workflow whose request leaves out the results to view and reuse" in {
     val operators = searches(1)
     val sent = pojo(operators, chain(operators: _*))
@@ -276,9 +249,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
 
     planOf(made).plan.operators.map(_.id.logicalOpId) shouldBe
       operators.map(_.operatorIdentifier).toSet
-    val answered = objectMapper.readTree(made.logicalPlan)
-    answered.get("opsToViewResult").size() shouldBe 0
-    answered.get("opsToReuseResult").size() shouldBe 0
   }
 
   it should "compile only the target and what is upstream of it, given a target" in {
@@ -290,15 +260,6 @@ class PlanToRunSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll wit
     // The run views the target's result.
     plan.context.workflowSettings.outputPortsNeedingStorage.map(_.opId.logicalOpId) shouldBe
       Set(OperatorIdentity("search"))
-    // The workflow answered is the part compiled: it reuses only results of operators it keeps.
-    val answered = objectMapper.readTree(made.logicalPlan)
-    answered.get("operators").elements().asScala.map(_.get("operatorID").asText()).toList shouldBe
-      List("scan", "search")
-    answered.get("links").size() shouldBe 1
-    answered.get("opsToViewResult").elements().asScala.map(_.asText()).toList shouldBe
-      List("search")
-    answered.get("opsToReuseResult").elements().asScala.map(_.asText()).toList shouldBe
-      List("scan")
   }
 
   it should "check only the part of the workflow it compiles, given a target" in {

@@ -24,7 +24,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import io.dropwizard.testing.junit5.ResourceExtension
 import jakarta.ws.rs.client.Entity
 import jakarta.ws.rs.core.{MediaType, Response}
-import org.apache.texera.amber.core.executor.{InputFile, OpExecWithClassName, OperatorInputs}
+import org.apache.texera.amber.core.executor.{
+  InputFile,
+  OpExecWithClassName,
+  OpExecWithCode,
+  OperatorInputs
+}
 import org.apache.texera.amber.core.storage.{FileResolver, InputFileLocator}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -254,7 +259,7 @@ class RunCompilationResourceSpec
   private def planOf(response: Response): (ExecutionPlan, JsonNode) = {
     val body = jsonOf(response)
     withClue(s"$body: ") { response.getStatus shouldBe 200 }
-    body.fieldNames().asScala.toSet shouldBe Set("plan", "logicalPlan")
+    body.fieldNames().asScala.toSet shouldBe Set("plan")
     (PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.fromJson(body.get("plan").asText())), body)
   }
 
@@ -269,10 +274,10 @@ class RunCompilationResourceSpec
 
   // --- POST /compile/run ---
 
-  "POST /compile/run" should "answer the plan of the run as its text, with the workflow it was compiled from" in {
+  "POST /compile/run" should "answer the plan of the run as its text" in {
     val sent = runBody(textPlan(), warehouse = Some("wh-1"))
 
-    val (plan, body) = planOf(post("/compile/run", sent))
+    val (plan, _) = planOf(post("/compile/run", sent))
 
     plan.context.workflowId shouldBe WorkflowIdentity(workflowId)
     plan.context.executionId shouldBe ExecutionIdentity(executionId)
@@ -287,12 +292,10 @@ class RunCompilationResourceSpec
     plan.plan.operators.flatMap(_.storageLocations.values).foreach { location =>
       location.toString should startWith(s"vfs:///wh/wh-1/wid/$workflowId/eid/$executionId/")
     }
-    // What only the service that stores the plan has is not in it.
+    // What only the service that creates the execution has is not in it.
     plan.context.costHints shouldBe None
     plan.replay shouldBe None
     plan.replayLog shouldBe None
-    // The workflow compiled, as JSON text that parses back to it.
-    objectMapper.readTree(body.get("logicalPlan").asText()) shouldBe sent.get("logicalPlan")
   }
 
   it should "take the workflow as the editor writes it, a link's operators by their ids" in {
@@ -324,10 +327,7 @@ class RunCompilationResourceSpec
         Seq(InputFile(privateFileUri.toASCIIString, physicalAddress = privateFileAddress))
       )
     )
-    // The address is the plan's alone: the workflow beside it names the file as its user did.
     body.get("plan").asText() should include(privateFileAddress)
-    body.get("logicalPlan").asText() should include(privateDatasetFilePath)
-    body.get("logicalPlan").asText() should not include privateDatasetRepositoryName
     // A plan a computing unit runs has links, which this service has no keys to sign.
     body.get("plan").asText() should not include "\"url\""
     an[IllegalArgumentException] should be thrownBy
@@ -383,14 +383,13 @@ class RunCompilationResourceSpec
   }
 
   it should "resolve the Python environment a UDF names to the caller's own, and refuse one the caller lacks as the UDF's error" in {
-    val (plan, body) = planOf(post("/compile/run", runBody(udfPlanIn(Some("ml")))))
+    val (plan, _) = planOf(post("/compile/run", runBody(udfPlanIn(Some("ml")))))
 
     val udfOp = plan.plan.getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
     // The owner's, as canonical lines: what the unit that runs the plan installs.
     udfOp.pythonEnvironment shouldBe
       PythonEnvironmentRef.Resolved(PythonEnvironment("ml", Seq("tabulate==0.9.0")))
     udfOp.locationPreference shouldBe Some(PreferCoordinator)
-    body.get("logicalPlan").asText() should not include "tabulate"
 
     // The other user keeps no environment of that name: each user's are their own.
     val refusal = refusalOf(
@@ -459,18 +458,12 @@ class RunCompilationResourceSpec
   }
 
   it should "compile only the target and what is upstream of it, given a target" in {
-    val (plan, body) = planOf(post("/compile/run", runBody(textPlan(), target = Some("limit"))))
+    val (plan, _) = planOf(post("/compile/run", runBody(textPlan(), target = Some("limit"))))
 
     plan.plan.operators.map(_.id.logicalOpId.id) shouldBe Set("text", "limit")
     // The run views the target's result.
     plan.context.workflowSettings.outputPortsNeedingStorage.map(_.opId.logicalOpId.id) shouldBe
       Set("limit")
-    // The workflow answered is the part compiled.
-    val compiled = objectMapper.readTree(body.get("logicalPlan").asText())
-    compiled.get("operators").elements().asScala.map(_.get("operatorID").asText()).toList shouldBe
-      List("text", "limit")
-    compiled.get("opsToViewResult").elements().asScala.map(_.asText()).toList shouldBe
-      List("limit")
   }
 
   it should "refuse a workflow the compiler cannot read, or a target it does not have, as no operator's error" in {
@@ -628,23 +621,18 @@ class RunCompilationResourceSpec
 
   // --- POST /compile/update ---
 
-  private val updateId = "update-5f0c7a1b"
-
   private def updateBody(
       operator: LogicalOp,
-      workflow: LogicalPlanPojo = udfPlanIn(None),
-      running: String = """[{"layerName": "main"}]"""
+      workflow: LogicalPlanPojo = udfPlanIn(None)
   ): ObjectNode = {
     val body = objectMapper.createObjectNode()
     body.put("workflowId", workflowId)
     body.put("executionId", executionId)
-    body.put("updateId", updateId)
     body.set[JsonNode]("logicalPlan", objectMapper.readTree(workflow.toJson))
     // The change as the editor sends it: the operator's JSON, with no loop-variable sidecar.
     val sent = objectMapper.valueToTree[ObjectNode](operator)
     sent.remove("stateReferences")
     body.set[JsonNode]("operator", sent)
-    body.set[JsonNode]("running", objectMapper.readTree(running))
     body
   }
 
@@ -656,21 +644,20 @@ class RunCompilationResourceSpec
 
   private val changedCode = TestOperators.pythonOpDesc().code.replace("yield tuple_", "yield None")
 
-  "POST /compile/update" should "answer the change made to run, saved under the update's id, with the change as it was sent" in {
+  "POST /compile/update" should "answer the change made to run, as the text a unit reads" in {
     val response = post("/compile/update", updateBody(changed(changedCode)))
 
     val body = jsonOf(response)
     withClue(s"$body: ") { response.getStatus shouldBe 200 }
-    body.fieldNames().asScala.toSet shouldBe Set("update", "operator")
+    body.fieldNames().asScala.toSet shouldBe Set("update")
     val update =
       PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(body.get("update").asText()))
     update.executionId shouldBe ExecutionIdentity(executionId)
-    update.updateId shouldBe updateId
     update.opId shouldBe PhysicalOpIdentity(OperatorIdentity("udf"), "main")
     update shouldBe a[OperatorUpdate]
     update.repositoryMounts shouldBe None
-    val sent = objectMapper.readValue(body.get("operator").asText(), classOf[LogicalOp])
-    sent.asInstanceOf[PythonUDFOpDescV2].code shouldBe changedCode
+    update.pythonEnvironment shouldBe None
+    update.opExecInitInfo.asInstanceOf[OpExecWithCode].code should include("yield None")
   }
 
   it should "make a change to an operator built from its descriptor" in {
@@ -704,39 +691,39 @@ class RunCompilationResourceSpec
     refusal.toString should not include privateDatasetRepositoryName
   }
 
-  it should "refuse a change the running operator cannot take with 400, in the change's words" in {
+  it should "refuse a change the operator cannot take while it runs, or a workflow the compiler does not read, with 400, in their words" in {
+    val cyclic = udfPlanIn(None).copy(links = List(link("text", "udf"), link("udf", "text")))
     Seq(
       updateBody(limit("udf", 3)) ->
         "Operator udf is a Python UDF; a change cannot make it a Limit.",
-      updateBody(udf(environment = Some("ml"))) ->
-        "The operator's Python environment cannot change while the run is paused.",
-      updateBody(udf(), running = """[{"layerName": "main", "pythonEnvironment": "ml"}]""") ->
-        "The operator's Python environment cannot change while the run is paused.",
-      updateBody(udf(), running = """[{"layerName": "other"}]""") ->
-        ("The change makes Python UDF the operator udf-main, which the running workflow does " +
-          "not have."),
-      updateBody(text()) -> "operator TextInputSourceOpDesc does not support reconfiguration"
+      updateBody(text()) -> "operator TextInputSourceOpDesc does not support reconfiguration",
+      updateBody(udf(), workflow = cyclic) ->
+        "The workflow's links form a cycle: text -> udf -> text."
     ).foreach {
       case (sent, problem) =>
         withClue(s"$problem: ") {
           refusalOf(post("/compile/update", sent), 400).get("message").asText() shouldBe problem
         }
     }
-    // The same environment the running operator runs in is no change of it.
-    post(
-      "/compile/update",
-      updateBody(
-        udf(environment = Some("ml")),
-        workflow = udfPlanIn(Some("ml")),
-        running = """[{"layerName": "main", "pythonEnvironment": "ml"}]"""
+  }
+
+  it should "carry the Python environment the change asks for, for the unit to check against the one it runs" in {
+    val body = jsonOf(
+      post(
+        "/compile/update",
+        updateBody(udf(environment = Some("ml")), workflow = udfPlanIn(Some("ml")))
       )
-    ).getStatus shouldBe 200
+    )
+
+    PhysicalPlanCodec
+      .decodeUpdate(PhysicalPlanCodec.updateFromJson(body.get("update").asText()))
+      .pythonEnvironment shouldBe Some("ml")
   }
 
   it should "answer 404 for a change to an operator the execution's workflow does not have" in {
     refusalOf(post("/compile/update", updateBody(limit("ghost", 7))), 404)
       .get("message")
-      .asText() shouldBe s"Operator ghost is not in the workflow execution $executionId runs."
+      .asText() shouldBe "Operator ghost is not in the workflow sent with the change."
   }
 
   it should "answer 401 to a request that carries no logged-in user" in {

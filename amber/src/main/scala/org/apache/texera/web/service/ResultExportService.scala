@@ -80,8 +80,8 @@ object ResultExportService {
 
 /**
   * Exports the results execution `executionId` of workflow `workflowIdentity` stored, read from
-  * the lake where the execution's stored plan says each output port is stored. No computing
-  * unit is asked, so a run whose unit is gone is exported as any other.
+  * the tables of its output ports in the lake, found by their names. No computing unit is asked,
+  * so a run whose unit is gone is exported as any other.
   *
   * Every export checks the execution before it reads anything of it ([[execution]]): one that
   * is not the workflow's is refused with 404, and one whose results have expired with 410.
@@ -115,11 +115,14 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, executionId: Long)
     val _ = execution
   }
 
-  /** The result and state tables of the execution's ports ([[ExecutionTables.portTables]]). */
+  /**
+    * The result and state tables of the execution's ports, found by their names
+    * ([[ExecutionTables.portTables]]).
+    */
   private lazy val portTables: Seq[URI] = {
-    // Refuse to read a plan in a per-user warehouse while the feature is off (#6930).
-    WarehouseReadGuard.assertReadable(execution.planUri)
-    ExecutionTables.portTables(execution.planUri)
+    // Refuse to read a per-user warehouse while the feature is off (#6930).
+    WarehouseReadGuard.assertReadable(execution.logUri)
+    ExecutionTables.portTables(execution.workflowId, execution.executionId, execution.warehouse)
   }
 
   /**

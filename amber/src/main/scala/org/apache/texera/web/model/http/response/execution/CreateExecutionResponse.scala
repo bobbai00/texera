@@ -20,7 +20,9 @@
 package org.apache.texera.web.model.http.response.execution
 
 /**
-  * An execution created by `POST /api/executions` (201). A client hands `planUri`, the plan table
-  * its computing unit starts it from, to the unit as it got it, and reads nothing from it.
+  * An execution created by `POST /api/executions` (201): its id, and the plan its computing unit
+  * runs, which a client hands to the unit as it got it and reads nothing from. The plan holds the
+  * links its operators read files through and the credentials they are set up with: keep it out
+  * of logs.
   */
-case class CreateExecutionResponse(eid: Long, planUri: String)
+case class CreateExecutionResponse(eid: Long, plan: String)

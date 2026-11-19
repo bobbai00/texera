@@ -40,7 +40,7 @@ object ExecutionClosing {
   // Why the Dashboard service closed an execution whose log holds no ending: at its create,
   // which failed, or at the closing job.
   val PlanNotMade = "its plan could not be made"
-  val PlanNotStored = "its plan could not be stored"
+  val PlanTooLarge = "its plan is too large"
   val UnitLost = "unit lost"
   val UnitTerminated = "unit terminated"
   val NeverStarted = "never started"
@@ -130,21 +130,16 @@ object ExecutionClosing {
 
     final case class Log(label: ExecutionLabel) extends Read
 
-    /**
-      * The execution has no log table.
-      *
-      * @param planStarted whether a unit claimed the execution's one start; false when it has
-      *                    no plan table either
-      */
-    final case class NoLog(planStarted: Boolean) extends Read
+    /** The execution has no log table: no unit has started it, or its unit could not make one. */
+    case object NoLog extends Read
   }
 
   /**
-    * What the job remembers of an open execution between its ticks: the beat it last saw, None
-    * for a started execution with no log, and for how many of the job's own ticks in a row the
-    * beat has been that. The job never compares a unit's clock with its own.
+    * What the job remembers of an open execution between its ticks: the beat it last saw, and for
+    * how many of the job's own ticks in a row the beat has been that. The job never compares a
+    * unit's clock with its own.
     */
-  final case class Watch(beatMs: Option[Long], unchangedTicks: Int)
+  final case class Watch(beatMs: Long, unchangedTicks: Int)
 
   /**
     * How an execution's log says it ended.
@@ -161,8 +156,11 @@ object ExecutionClosing {
   /** The log's label shows an ending: close with it. */
   final case class CloseEnded(ending: Ending) extends Decision
 
-  /** No unit started it in time: take its one start, and close it as never started if taken. */
-  case object ClaimThenClose extends Decision
+  /**
+    * No unit started it in time: close it as never started. It is a verdict like the others: the
+    * ending of a log that shows up later takes its place.
+    */
+  case object CloseNeverStarted extends Decision
 
   /** Its unit is gone: close it as failed for `reason`, unless the log's rows hold an ending. */
   final case class CheckRowsThenLose(reason: String) extends Decision
@@ -217,15 +215,14 @@ object ExecutionClosing {
           WorkflowComputingUnitTerminationReasonEnum.USER_REQUESTED
         )
         (CheckRowsThenLose(if (byUser) UnitTerminated else UnitLost), None)
-      case Read.NoLog(false) =>
+      case Read.NoLog =>
         val waited = nowMs - execution.startingTimeMs
-        (if (waited >= settings.neverStartedAfterSeconds * 1000L) ClaimThenClose else Wait, None)
-      case Read.NoLog(true) => watching(None, 0L, watch, settings)
-      case Read.Log(label)  => watching(Some(label.beatMs), label.beatEveryMs, watch, settings)
+        (if (waited >= settings.neverStartedAfterSeconds * 1000L) CloseNeverStarted else Wait, None)
+      case Read.Log(label) => watching(label.beatMs, label.beatEveryMs, watch, settings)
     }
 
   private def watching(
-      beatMs: Option[Long],
+      beatMs: Long,
       beatEveryMs: Long,
       watch: Option[Watch],
       settings: Settings

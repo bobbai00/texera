@@ -39,25 +39,11 @@ import org.apache.texera.common.compiler.model.LogicalPlanPojo
   * The workflow compiling service makes the plan of each execution the Dashboard service
   * creates, with the access of the user who creates it. The plan made here takes no secret: it
   * says where each file its operators read is kept, and the Dashboard service, which holds the
-  * object store's keys, signs a link to each, adds what else the run needs and writes the plan
-  * to the execution's plan table. The computing unit that starts the execution runs the plan it
-  * reads from there: the engine never sees the plan the compile made.
+  * object store's keys, signs a link to each, adds what else the run needs and answers the plan
+  * to the client, which hands it to the computing unit that runs the execution: the engine never
+  * sees the plan the compile made.
   */
 object PlanToRun {
-
-  /**
-    * A plan made to run.
-    *
-    * @param plan        the physical plan to run and its settings, as JSON text, before its
-    *                    files are linked ([[PhysicalPlanCodec.decodeUnlinked]] reads it). It
-    *                    holds what each operator's executor is given, so it holds the
-    *                    credentials an operator is set up with (a SQL source's password, say):
-    *                    keep it where they may be kept, and out of logs.
-    * @param logicalPlan the workflow the plan was compiled from, as JSON that parses back to it
-    *                    ([[LogicalPlanPojo.toJson]]): with a target, the part of the workflow
-    *                    sent that was compiled
-    */
-  final case class Made(plan: String, logicalPlan: String)
 
   /**
     * What a plan made to run for user `uid` is bound to: the files, datasets and models that
@@ -87,6 +73,10 @@ object PlanToRun {
     *
     * @param bindings what the plan is bound to, for the run's user ([[bindingsFor]])
     * @param target   the operator the run executes up to; None for the whole workflow
+    * @return the physical plan to run and its settings, as JSON text, before its files are
+    *         linked ([[PhysicalPlanCodec.decodeUnlinked]] reads it). It holds what each
+    *         operator's executor is given, so it holds the credentials an operator is set up
+    *         with (a SQL source's password, say): keep it out of logs.
     * @throws WorkflowRefused           if the run's settings, `target` or the workflow's graph
     *                                   allow no plan, with why
     * @throws WorkflowCompilationFailed if an operator has an error
@@ -96,7 +86,7 @@ object PlanToRun {
       bindings: CompileFor.Run,
       workflow: LogicalPlanPojo,
       target: Option[String] = None
-  ): Made = {
+  ): String = {
     def refuse(problem: String): Nothing = throw new WorkflowRefused(problem)
     // Checked first, in the words of the editor's settings; the codec refuses such a plan too.
     WorkflowSettings.problemOf(run.workflowSettings).foreach(refuse)
@@ -116,9 +106,6 @@ object PlanToRun {
       case None => whole
     }
     toCompile.graphProblem().foreach(refuse)
-    // The plan compiled, as it was sent, loop-variable references included: written before the
-    // compile resolves its operators in place.
-    val logicalPlan = toCompile.toJson
     val result = new WorkflowCompiler(run, bindings).compile(toCompile)
     // The context the plan is saved under: a copy of the run's, with the ports whose results
     // are stored, which the compile found, in its settings.
@@ -130,11 +117,8 @@ object PlanToRun {
         run.warehouse
       )
     // A compile for a run throws an operator's error, so its result holds a plan.
-    Made(
-      PhysicalPlanCodec.toJson(
-        PhysicalPlanCodec.encodeUnlinked(ExecutionPlan(savedUnder, result.physicalPlan.get))
-      ),
-      logicalPlan
+    PhysicalPlanCodec.toJson(
+      PhysicalPlanCodec.encodeUnlinked(ExecutionPlan(savedUnder, result.physicalPlan.get))
     )
   }
 }

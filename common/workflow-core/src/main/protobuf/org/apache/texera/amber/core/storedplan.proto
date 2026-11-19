@@ -227,17 +227,19 @@ message StoredOperatorCost {
   double seconds = 2;
 }
 
-// A change to one operator of a paused run (OperatorUpdate): the operator's new executor, and
-// what its new code reads. Stored and read in the plan's format version, as its own text.
+// A change to one operator of a paused run (OperatorUpdate): the operator's new executor, what
+// its new code reads, and the Python environment it asks for. Written and read in the plan's
+// format version, as its own text.
 message StoredOperatorUpdate {
   // The version of this format the change is written in; a reader refuses another.
   int32 formatVersion = 1;
   ExecutionIdentity executionId = 2;
-  // Names the change among the execution's changes; not blank.
-  string updateId = 3;
   // The operator that changes: one of the execution's plan.
-  PhysicalOpIdentity opId = 4;
-  OpExecInitInfo opExecInitInfo = 5;
+  PhysicalOpIdentity opId = 3;
+  OpExecInitInfo opExecInitInfo = 4;
   // The datasets and models the new code reads, as StoredPhysicalOp.repositoryMounts has them.
-  repeated string repositoryMounts = 6;
+  repeated string repositoryMounts = 5;
+  // The name of the Python environment the changed operator asks to run in; empty for the
+  // engine's own.
+  string pythonEnvironment = 6;
 }

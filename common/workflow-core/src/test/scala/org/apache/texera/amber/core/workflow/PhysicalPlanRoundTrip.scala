@@ -80,7 +80,7 @@ object PhysicalPlanRoundTrip extends Assertions {
   }
 
   /**
-    * Fails unless `read` is `original` as a stored plan reads back: the same context (see
+    * Fails unless `read` is `original` as a plan's text reads back: the same context (see
     * [[assertSameContext]]) and physical plan (see [[assertSamePlan]]), replay and replay log.
     */
   def assertSameExecutionPlan(original: ExecutionPlan, read: ExecutionPlan): Unit = {

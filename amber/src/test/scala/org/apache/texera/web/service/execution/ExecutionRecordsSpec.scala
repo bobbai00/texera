@@ -250,15 +250,15 @@ class ExecutionRecordsSpec
       .execute()
     record(eid).resultsExpiredAtMs shouldBe Some(createdAtMs + 86401234L)
 
-    // An execution no unit started is closed with nothing to expire.
+    // An execution whose create failed is closed with nothing to expire.
     val unstarted = insertExecution()
     ExecutionRecords.close(
       unstarted,
       failed,
-      Some("never started"),
+      Some("its plan could not be made"),
       createdAtMs + 600000L,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     )
     record(unstarted).resultsExpiredAtMs shouldBe Some(createdAtMs + 600000L)
   }
@@ -266,7 +266,6 @@ class ExecutionRecordsSpec
   it should "name the warehouse the execution writes into, and none once that warehouse is deleted" in {
     val eid = insertExecution(warehouse = Some(whid))
     record(eid).warehouse shouldBe Some(warehouseName)
-    record(eid).planUri.toString shouldBe s"vfs:///wh/$warehouseName/wid/$testWid/eid/$eid/plan"
     record(eid).logUri.toString shouldBe
       s"vfs:///wh/$warehouseName/wid/$testWid/eid/$eid/executionlog"
     record(eid).statisticsUri.toString shouldBe
@@ -277,7 +276,7 @@ class ExecutionRecordsSpec
     // What deleting the warehouse leaves: the foreign key sets the row's whid to null.
     val deleted = insertExecution(warehouse = None)
     record(deleted).warehouse shouldBe None
-    record(deleted).planUri.toString shouldBe s"vfs:///wid/$testWid/eid/$deleted/plan"
+    record(deleted).logUri.toString shouldBe s"vfs:///wid/$testWid/eid/$deleted/executionlog"
     record(deleted).statisticsUri.toString shouldBe
       s"vfs:///wid/$testWid/eid/$deleted/runtimestatistics"
     record(deleted).consoleUri.toString shouldBe
@@ -426,10 +425,10 @@ class ExecutionRecordsSpec
     ExecutionRecords.close(
       unstarted,
       failed,
-      Some("never started"),
+      Some("its plan could not be made"),
       createdAtMs + 600501L,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     )
     ExecutionRecords.close(revised, failed, Some("unit lost"), createdAtMs + 1L, fromLog = false)
     ExecutionRecords.revise(revised, completed, None, createdAtMs + 90999L)
@@ -469,10 +468,10 @@ class ExecutionRecordsSpec
     ExecutionRecords.close(
       eid,
       failed,
-      Some("never started"),
+      Some("its plan could not be made"),
       createdAtMs + 9000L,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     ) shouldBe false
 
     record(eid).closing shouldBe
@@ -480,17 +479,17 @@ class ExecutionRecordsSpec
     row(eid).getResultsExpiredAt shouldBe null
   }
 
-  it should "mark the results of an execution that never started expired, with no bytes, in the same statement" in {
+  it should "mark the results of an execution no unit can start expired, with no bytes, in the same statement" in {
     val eid = insertExecution()
 
     val statements = recorder.record {
       ExecutionRecords.close(
         eid,
         failed,
-        Some("never started"),
+        Some("its plan could not be made"),
         createdAtMs + 600000L,
         fromLog = false,
-        neverStarted = true
+        unstartable = true
       ) shouldBe true
     }
 
@@ -523,7 +522,7 @@ class ExecutionRecordsSpec
       None,
       createdAtMs,
       fromLog = true,
-      neverStarted = true
+      unstartable = true
     )
     record(eid).closing shouldBe None
   }
@@ -573,21 +572,21 @@ class ExecutionRecordsSpec
     record(open).closing shouldBe None
   }
 
-  it should "leave an execution whose results are marked expired: one that never started" in {
+  it should "leave an execution whose results are marked expired: one whose create failed" in {
     val eid = insertExecution()
     ExecutionRecords.close(
       eid,
       failed,
-      Some("never started"),
+      Some("its plan could not be made"),
       createdAtMs + 5000L,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     )
 
     ExecutionRecords.revise(eid, completed, None, createdAtMs + 9000L) shouldBe false
 
     record(eid).closing shouldBe
-      Some(ClosingRecord(failed, Some("never started"), createdAtMs + 5000L, false))
+      Some(ClosingRecord(failed, Some("its plan could not be made"), createdAtMs + 5000L, false))
   }
 
   "ExecutionRecords.closedByVerdictSince" should "list the verdicts at or after a time that still hold their results" in {
@@ -596,14 +595,14 @@ class ExecutionRecordsSpec
     val after = closedByVerdict(createdAtMs + 5000L)
     val fromLog = insertExecution()
     ExecutionRecords.close(fromLog, failed, Some("boom"), createdAtMs + 5000L, fromLog = true)
-    val neverStarted = insertExecution()
+    val unstartable = insertExecution()
     ExecutionRecords.close(
-      neverStarted,
+      unstartable,
       failed,
-      Some("never started"),
+      Some("its plan could not be made"),
       createdAtMs + 5000L,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     )
     val open = insertExecution()
     val revised = closedByVerdict(createdAtMs + 5000L)
@@ -617,7 +616,7 @@ class ExecutionRecordsSpec
     statements.map(_.verb) shouldBe Seq("SELECT")
     val listed = verdicts.map(_.eid)
     listed should contain inOrder (at, after)
-    listed should contain noneOf (before, fromLog, neverStarted, open, revised)
+    listed should contain noneOf (before, fromLog, unstartable, open, revised)
     verdicts.find(_.eid == at).get shouldBe record(at)
     verdicts.find(_.eid == at).get.closing shouldBe
       Some(ClosingRecord(failed, Some("unit terminated"), createdAtMs + 1000L, false))
@@ -698,15 +697,15 @@ class ExecutionRecordsSpec
   }
 
   /** An execution whose create failed: closed with its results marked expired. */
-  private def neverStartedAt(endedAtMs: Long, cuid: Int = liveCuid): Long = {
+  private def unstartableAt(endedAtMs: Long, cuid: Int = liveCuid): Long = {
     val eid = insertExecution(cuid = Some(cuid), startedAtMs = endedAtMs)
     ExecutionRecords.close(
       eid,
       failed,
-      Some("never started"),
+      Some("its plan could not be made"),
       endedAtMs,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     ) shouldBe true
     eid
   }
@@ -743,19 +742,19 @@ class ExecutionRecordsSpec
     row(eid).getStoredBytes shouldBe 512L
   }
 
-  it should "leave an open execution, one that never started, and an id that names none" in {
+  it should "leave an open execution, one whose create failed, and an id that names none" in {
     val open = insertExecution()
-    val neverStarted = neverStartedAt(createdAtMs + 5000L)
+    val unstartable = unstartableAt(createdAtMs + 5000L)
 
     ExecutionRecords.expire(open, createdAtMs + 9000L, 1L) shouldBe false
-    ExecutionRecords.expire(neverStarted, createdAtMs + 9000L, 1L) shouldBe
+    ExecutionRecords.expire(unstartable, createdAtMs + 9000L, 1L) shouldBe
       false
     ExecutionRecords.expire(982999L, createdAtMs + 9000L, 1L) shouldBe false
 
     row(open).getResultsExpiredAt shouldBe null
     row(open).getStoredBytes shouldBe null
-    row(neverStarted).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 5000L)
-    row(neverStarted).getStoredBytes shouldBe 0L
+    row(unstartable).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 5000L)
+    row(unstartable).getStoredBytes shouldBe 0L
   }
 
   it should "mark by age only an execution that still ended by then, as the row says when it is marked" in {
@@ -856,7 +855,7 @@ class ExecutionRecordsSpec
     ExecutionRecords.unexpired(closed) shouldBe Some(record(closed))
     ExecutionRecords.unexpired(expired) shouldBe None
     ExecutionRecords.unexpired(insertExecution()) shouldBe None
-    ExecutionRecords.unexpired(neverStartedAt(createdAtMs + 5000L)) shouldBe None
+    ExecutionRecords.unexpired(unstartableAt(createdAtMs + 5000L)) shouldBe None
     Seq(982999L, 0L, -1L, Int.MaxValue.toLong + 1).foreach { none =>
       withClue(s"$none: ") { ExecutionRecords.unexpired(none) shouldBe None }
     }
@@ -883,7 +882,7 @@ class ExecutionRecordsSpec
     val younger = closedAt(longAgoMs + 3001L)
     val expired = closedAt(longAgoMs + 1000L)
     ExecutionRecords.expire(expired, longAgoMs + 9000L, 1L)
-    val neverStarted = neverStartedAt(longAgoMs + 1000L)
+    val unstartable = unstartableAt(longAgoMs + 1000L)
     val open = insertExecution(startedAtMs = longAgoMs)
     def listed(afterEid: Long, limit: Int): Seq[Long] =
       ExecutionRecords
@@ -902,7 +901,7 @@ class ExecutionRecordsSpec
 
     statements.map(_.verb) shouldBe Seq("SELECT")
     all.map(_.eid) shouldBe Seq(first, second, third)
-    all.map(_.eid) should contain noneOf (younger, expired, neverStarted, open)
+    all.map(_.eid) should contain noneOf (younger, expired, unstartable, open)
     all.head shouldBe record(first)
     listed(afterEid = 0L, limit = 2) shouldBe Seq(first, second)
     listed(afterEid = second, limit = 2) shouldBe Seq(third)
@@ -941,7 +940,7 @@ class ExecutionRecordsSpec
     val otherWorkflows = closedAt(createdAtMs + 5000L, unit, wid = publicWid)
     val expired = closedAt(createdAtMs + 5000L, unit)
     ExecutionRecords.expire(expired, createdAtMs + 9000L, 1L)
-    val neverStarted = neverStartedAt(createdAtMs + 5000L, unit)
+    val unstartable = unstartableAt(createdAtMs + 5000L, unit)
     val open = insertExecution(cuid = Some(unit))
     val second = closedAt(createdAtMs + 5000L, unit)
     val bound = insertExecution(cuid = Some(unit))
@@ -956,7 +955,7 @@ class ExecutionRecordsSpec
     held.map(_.eid) shouldBe Seq(first, second)
     held.map(
       _.eid
-    ) should contain noneOf (elsewhere, otherWorkflows, expired, neverStarted, open, later)
+    ) should contain noneOf (elsewhere, otherWorkflows, expired, unstartable, open, later)
     held.head shouldBe record(first)
   }
 
@@ -967,7 +966,7 @@ class ExecutionRecordsSpec
     insertExecution(cuid = Some(otherUnit))
     insertExecution(wid = publicWid, cuid = Some(unit))
     val open = insertExecution(cuid = Some(unit))
-    val neverStarted = neverStartedAt(createdAtMs + 5000L, unit)
+    val unstartable = unstartableAt(createdAtMs + 5000L, unit)
     val upTo = insertExecution(cuid = Some(unit))
     insertExecution(cuid = Some(unit))
 
@@ -977,7 +976,7 @@ class ExecutionRecordsSpec
     }
 
     statements.map(_.verb) shouldBe Seq("SELECT")
-    made.map(_.eid) shouldBe Seq(upTo, neverStarted, open, closed)
+    made.map(_.eid) shouldBe Seq(upTo, unstartable, open, closed)
     made.last shouldBe record(closed)
     ExecutionRecords.madeAfter(testWid, unit, upTo, upTo) shouldBe Nil
   }

@@ -24,8 +24,8 @@ import io.dropwizard.lifecycle.Managed
 import org.apache.texera.amber.core.storage.ExecutionLabel
 import org.apache.texera.web.service.execution.ExecutionClosing.{
   CheckRowsThenLose,
-  ClaimThenClose,
   CloseEnded,
+  CloseNeverStarted,
   CloseUnavailable,
   Decision,
   Read,
@@ -309,7 +309,7 @@ class ExecutionClosingJob(
     decision match {
       case Wait                      => false
       case CloseEnded(ending)        => closer.close(execution, ending, fromLog = true)
-      case ClaimThenClose            => closer.claimThenClose(execution)
+      case CloseNeverStarted         => closer.closeNeverStarted(execution)
       case CheckRowsThenLose(reason) => closer.loseUnlessEnded(execution, reason, label)
       case CloseUnavailable          => closer.closeUnavailable(execution)
     }

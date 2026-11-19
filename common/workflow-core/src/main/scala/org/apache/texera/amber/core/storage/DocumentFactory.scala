@@ -38,6 +38,7 @@ import org.apache.iceberg.{Table, Schema => IcebergSchema}
 
 import java.net.URI
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 object DocumentFactory {
 
@@ -52,7 +53,6 @@ object DocumentFactory {
       case CONSOLE_MESSAGES   => StorageConfig.icebergTableConsoleMessagesNamespace
       case RUNTIME_STATISTICS => StorageConfig.icebergTableRuntimeStatisticsNamespace
       case STATE              => StorageConfig.icebergTableStateNamespace
-      case PLAN               => StorageConfig.icebergTablePlanNamespace
       case EXECUTION_LOG      => StorageConfig.icebergTableExecutionLogNamespace
       case _ =>
         throw new IllegalArgumentException(s"Resource type $resourceType is not supported")
@@ -163,7 +163,7 @@ object DocumentFactory {
     * namespace. Any other failure to load it is thrown, so a catalog that cannot answer is never
     * taken for a missing table (`IcebergUtil.loadTableMetadata` reads every failure as None).
     * For the storage layer's use of Iceberg features that a document does not expose, such as
-    * the tag that marks an execution's plan started.
+    * the size of a table's data.
     */
   private[storage] def icebergTableOf(uri: URI): Option[Table] =
     uri.getScheme match {
@@ -202,9 +202,29 @@ object DocumentFactory {
     }
 
   /**
+    * The URIs of the tables execution `eid` of workflow `wid` has in the namespace of
+    * `resourceType`, found by their names (see [[ExecutionTables.portTables]]): a table is named
+    * after the path of its URI, so the name gives the URI back. A table whose name starts like the
+    * execution's but gives no URI of that kind back is no table this layer made, and is left out.
+    *
+    * @return none when there is no such namespace
+    */
+  private[storage] def tablesOf(
+      wid: WorkflowIdentity,
+      eid: ExecutionIdentity,
+      warehouse: Option[String],
+      resourceType: VFSResourceType.Value
+  ): Seq[URI] =
+    namesOf(wid, eid, warehouse, resourceType).flatMap { name =>
+      Try(VFSURIFactory.uriOfPath(name.replace('_', '/'), warehouse)).toOption.filter { uri =>
+        sanitizeURIPath(uri) == name &&
+        Try(decodeURI(uri).resourceType).toOption.contains(resourceType)
+      }
+    }
+
+  /**
     * Drops every table the execution has in the namespace of `resourceType`, going by the
-    * tables' names (see [[ExecutionTables.dropNamed]]): a table is named after the path of its
-    * URI, which starts with its workflow and its execution.
+    * tables' names (see [[ExecutionTables.dropNamed]]).
     *
     * @return the names of the tables dropped; none when there is no such namespace
     */
@@ -215,17 +235,32 @@ object DocumentFactory {
       resourceType: VFSResourceType.Value
   ): Seq[String] = {
     val catalog = IcebergCatalogInstance.getInstance(warehouse)
-    // What the name of each of the execution's tables starts with, as its plan table's does.
-    // The separator after the execution's id keeps execution 3 apart from 34.
-    val prefix = sanitizeURIPath(VFSURIFactory.createPlanURI(wid, eid))
-      .stripSuffix(PLAN.toString.toLowerCase)
-    val named =
-      try catalog.listTables(Namespace.of(resolveNamespace(resourceType))).asScala.toSeq
-      catch { case _: NoSuchNamespaceException => Seq.empty }
-    named
-      .filter(_.name().startsWith(prefix))
-      .filter(table => catalog.dropTable(table))
-      .map(_.name())
+    val namespace = Namespace.of(resolveNamespace(resourceType))
+    namesOf(wid, eid, warehouse, resourceType)
+      .filter(name => catalog.dropTable(TableIdentifier.of(namespace, name)))
+  }
+
+  /**
+    * The names of the tables in the namespace of `resourceType` that start as the execution's
+    * do: with its workflow and its execution, and the separator after the execution's id, which
+    * keeps execution 3 apart from 34.
+    */
+  private def namesOf(
+      wid: WorkflowIdentity,
+      eid: ExecutionIdentity,
+      warehouse: Option[String],
+      resourceType: VFSResourceType.Value
+  ): Seq[String] = {
+    val prefix = s"wid_${wid.id}_eid_${eid.id}_"
+    val listed =
+      try {
+        IcebergCatalogInstance
+          .getInstance(warehouse)
+          .listTables(Namespace.of(resolveNamespace(resourceType)))
+          .asScala
+          .toSeq
+      } catch { case _: NoSuchNamespaceException => Seq.empty }
+    listed.map(_.name()).filter(_.startsWith(prefix))
   }
 
   /**

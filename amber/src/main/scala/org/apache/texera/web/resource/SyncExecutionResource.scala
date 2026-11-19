@@ -43,7 +43,6 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
 import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
-import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.ResultUris
 
 import java.net.URI
@@ -60,13 +59,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
   * The body of `POST /api/execution/{eid}/run`: run an execution the Dashboard service created,
   * on this computing unit, and answer with what it produced.
   *
-  * @param planUri           the execution's plan table, as `POST /api/executions` answered it
+  * @param plan              the execution's plan, as `POST /api/executions` answered it
   * @param computingUnitId   the computing unit the execution was created for: this one
   * @param targetOperatorIds the operators whose results are answered; with exactly one, the
   *                          execution was created to run up to it
   */
 case class SyncRunRequest(
-    planUri: String,
+    plan: String,
     computingUnitId: Int,
     targetOperatorIds: List[String],
     timeoutSeconds: Int,
@@ -141,10 +140,10 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
 
   /**
     * Runs execution `executionId`, which the Dashboard service created for the caller, on this
-    * computing unit, from the plan stored in its plan table, and answers once it ends, once its
+    * computing unit, from the plan the request carries, and answers once it ends, once its
     * targets complete, or once an operator logs an error.
     *
-    * The start is checked ([[WorkflowService.checkStoredStart]]) before the workflow's service is
+    * The start is checked ([[WorkflowService.checkStart]]) before the workflow's service is
     * asked for, so a start its checks refuse leaves no service behind; then it is started on that
     * service ([[WorkflowService.startChecked]]). A start that is refused is answered at once, as
     * an error that names why, and writes nothing.
@@ -152,7 +151,7 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
   @POST
   @Path("/{eid}/run")
   @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def runStoredExecution(
+  def runExecution(
       @PathParam("eid") executionId: Long,
       request: SyncRunRequest,
       @Auth user: SessionUser
@@ -161,17 +160,13 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     logger.info(s"Asked to run execution $executionId.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
     try {
-      val checked = for {
-        planUri <- StoredExecutionStart.planUriOf(request.planUri)
-        checked <- WorkflowService.checkStoredStart(
-          executionId,
-          planUri,
-          user.getUser,
-          request.computingUnitId,
-          socketWorkflowId = None
-        )
-      } yield checked
-      checked match {
+      WorkflowService.checkStart(
+        executionId,
+        request.plan,
+        user.getUser,
+        request.computingUnitId,
+        socketWorkflowId = None
+      ) match {
         case Left(message) => refused(executionId, message)
         case Right(checked) =>
           val workflow = workflowServiceOf(checked.workflowId, request.computingUnitId)

@@ -947,8 +947,8 @@ describe("delegate mode", () => {
     },
   });
 
-  /** The execution the Dashboard creates for each run; the unit is then asked to run it by its id. */
-  const created = { eid: 21, planUri: "vfs:///wid/7/eid/21/plan" };
+  /** The execution the Dashboard creates for each run; the unit is then asked to run it by its id, with its plan. */
+  const created = { eid: 21, plan: '{"executionId":21}' };
 
   /** The paths of the execution calls made so far: a create, then a run, per execution. */
   const executionPaths = () => urls.filter(u => u.includes("/api/execution")).map(u => new URL(u).pathname);

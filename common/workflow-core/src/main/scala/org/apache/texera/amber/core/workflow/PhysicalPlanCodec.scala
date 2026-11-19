@@ -48,6 +48,7 @@ import scalapb.json4s.{Parser, Printer}
 import scalapb.{GeneratedEnum, GeneratedMessage, GeneratedMessageCompanion}
 
 import java.net.{URI, URISyntaxException}
+import java.nio.charset.StandardCharsets
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -60,7 +61,7 @@ import scala.util.control.NonFatal
   * A plan is saved as the same text every time: its operators and its cost hints in the order
   * of their operators' ids, the files an operator reads in the order of their names, and its
   * links once, in an order every port finds its own links in. Each operator read back iterates
-  * its ports, and each port its links, in the order the stored plan did.
+  * its ports, and each port its links, in the order the saved plan did.
   *
   * Only a plan made to run can be saved: no operator still holds a resource binding or names a
   * Python environment that was never resolved, every port has its schema, every output port its
@@ -79,7 +80,29 @@ object PhysicalPlanCodec {
   val FormatVersion: Int = 1
 
   /**
-    * The schema propagation function of every operator read back. A stored plan holds each port's
+    * The most bytes of UTF-8 a plan's text may be, and an update's: 16 MiB. A plan holds a link
+    * to each file its operators read, so it grows with the files it lists: at the default of
+    * `constants.max-listed-files`, with links of 600 characters, it is about 9 MiB. The limit
+    * keeps a plan within what its way to the computing unit takes: the websocket message a start
+    * carries it in (`web-server.max-workflow-websocket-request-payload-size-kb`), the longest
+    * string a JSON reader takes (20 million characters), and the largest message between the
+    * nodes of a computing unit (30 MiB), which hands each operator its part. An update takes the
+    * same way.
+    */
+  val MaxPlanBytes: Int = 16 * 1024 * 1024
+
+  /**
+    * How large `text`, a plan's or an update's, is in MiB when it is larger than
+    * [[MaxPlanBytes]]: rounded up to a tenth, so that it reads as more than the limit. None
+    * when it fits.
+    */
+  def oversizeMiB(text: String): Option[Double] = {
+    val bytes = text.getBytes(StandardCharsets.UTF_8).length
+    Option.when(bytes > MaxPlanBytes)(math.ceil(bytes * 10.0 / (1024 * 1024)) / 10)
+  }
+
+  /**
+    * The schema propagation function of every operator read back. A saved plan holds each port's
     * schema but not the function the compile derived it with, so an operator read back cannot
     * derive schemas again: this function fails, and `PhysicalOp.propagateSchema` records the
     * failure on each output port. PhysicalOp's default, the identity, would instead copy each
@@ -89,7 +112,7 @@ object PhysicalPlanCodec {
     */
   val ReadBackSchemaPropagation: SchemaPropagationFunc = SchemaPropagationFunc(_ =>
     throw new UnsupportedOperationException(
-      "This operator was read back from a stored plan, which holds its schemas but not the " +
+      "This operator was read back from a saved plan, which holds its schemas but not the " +
         "function that derived them, so it cannot derive them again."
     )
   )
@@ -190,7 +213,7 @@ object PhysicalPlanCodec {
   }
 
   /**
-    * Reads a stored plan back, with the context it runs under.
+    * Reads a saved plan back, with the context it runs under.
     *
     * The plan is for running, not for compiling again: each operator's `propagateSchema` is
     * [[ReadBackSchemaPropagation]]. Operators and links are built as saved, with no schema
@@ -238,7 +261,7 @@ object PhysicalPlanCodec {
   def toJson(stored: StoredPhysicalPlan): String = write(StoredPlan, stored)
 
   /**
-    * Parses the JSON text of a stored plan; [[decode]] checks what it holds.
+    * Parses the JSON text of a saved plan; [[decode]] checks what it holds.
     *
     * @throws IllegalArgumentException if the text is not one JSON object in this format version,
     *                                  or has a field twice or a field the format does not have
@@ -246,19 +269,13 @@ object PhysicalPlanCodec {
   def fromJson(json: String): StoredPhysicalPlan = read(StoredPlan, json)
 
   /**
-    * Saves a change to operator `op` of the paused execution `executionId`, under `updateId`:
-    * only what an [[OperatorUpdate]] carries.
+    * Writes a change to operator `op` of the paused execution `executionId`: only what an
+    * [[OperatorUpdate]] carries.
     *
-    * @throws IllegalArgumentException if `updateId` is blank, or `op` is not one made to run in
-    *                                  that execution
+    * @throws IllegalArgumentException if `op` is not one made to run in that execution
     */
-  def encodeUpdate(
-      executionId: ExecutionIdentity,
-      updateId: String,
-      op: PhysicalOp
-  ): StoredOperatorUpdate = {
+  def encodeUpdate(executionId: ExecutionIdentity, op: PhysicalOp): StoredOperatorUpdate = {
     val name = show(op.id)
-    requireUpdateId(updateId)
     if (op.resourceBinding.isDefined) {
       refuse(
         s"Operator $name names datasets or models that were never resolved: only an operator " +
@@ -275,10 +292,10 @@ object PhysicalPlanCodec {
     StoredOperatorUpdate(
       formatVersion = FormatVersion,
       executionId = Some(executionId),
-      updateId = updateId,
       opId = Some(op.id),
       opExecInitInfo = op.opExecInitInfo,
-      repositoryMounts = encodeMounts(op.repositoryMounts)
+      repositoryMounts = encodeMounts(op.repositoryMounts),
+      pythonEnvironment = op.pythonEnvironment.environmentName.getOrElse("")
     )
   }
 
@@ -290,16 +307,15 @@ object PhysicalPlanCodec {
   def decodeUpdate(stored: StoredOperatorUpdate): OperatorUpdate = {
     val executionId =
       stored.executionId.getOrElse(refuse("The operator update names no execution."))
-    requireUpdateId(stored.updateId)
     val opId = stored.opId.getOrElse(refuse("The operator update names no operator."))
     val name = show(opId)
     if (stored.opExecInitInfo.isEmpty) refuse(s"The update of operator $name gives it no executor.")
     OperatorUpdate(
       executionId = executionId,
-      updateId = stored.updateId,
       opId = opId,
       opExecInitInfo = stored.opExecInitInfo,
-      repositoryMounts = decodeMounts(name, stored.repositoryMounts)
+      repositoryMounts = decodeMounts(name, stored.repositoryMounts),
+      pythonEnvironment = Option(stored.pythonEnvironment).filter(_.nonEmpty)
     )
   }
 
@@ -1003,9 +1019,6 @@ object PhysicalPlanCodec {
       )
     }
   }
-
-  private def requireUpdateId(updateId: String): Unit =
-    if (isBlank(updateId)) refuse("The operator update has no update id.")
 
   // ----- JSON -----
 

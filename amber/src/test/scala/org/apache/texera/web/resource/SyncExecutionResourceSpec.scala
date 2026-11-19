@@ -26,8 +26,6 @@ import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ConsoleRow,
   DocumentFactory,
-  ExecutionPlanStore,
-  PlanRecord,
   VFSURIFactory,
   WarehouseUnavailableException
 }
@@ -46,6 +44,7 @@ import org.apache.texera.amber.core.workflow.{
   InputPort,
   PhysicalOp,
   PhysicalPlan,
+  PhysicalPlanCodec,
   PortIdentity,
   WorkflowContext
 }
@@ -117,8 +116,8 @@ import scala.util.Try
   * Unit tests for the synchronous "run this workflow and hand me the results" endpoint used by
   * agent-service.
   *
-  * Two of the resource's methods are public (`runStoredExecution`, `healthCheck`); the others
-  * are `private def`. `runStoredExecution` is driven for real here, on executions the Dashboard's
+  * Two of the resource's methods are public (`runExecution`, `healthCheck`); the others
+  * are `private def`. `runExecution` is driven for real here, on executions the Dashboard's
   * `ExecutionCreator` made, on a resource given a workflow service whose runs end as
   * soon as they start (what a run does with its plan is `WorkflowExecutionServiceSpec`'s). The
   * result-shaping helpers it calls cannot be reached that way: every one of them only produces an
@@ -140,7 +139,7 @@ import scala.util.Try
   *   - the engine shutdown of the run a sync run stops or supersedes. The runs here have no
   *     engine; that ending a run shuts its engine down is `WorkflowExecutionServiceSpec`'s. What
   *     stopping and superseding record is pinned below.
-  *   - a run that ends while `runStoredExecution` waits for it. The runs here are in the state
+  *   - a run that ends while `runExecution` waits for it. The runs here are in the state
   *     the wait ends on by the time it looks, or stay as they are until its timeout.
   */
 class SyncExecutionResourceSpec
@@ -249,15 +248,11 @@ class SyncExecutionResourceSpec
       .execute()
   }
 
-  /** The plan tables of the executions the start-by-id cases create, dropped after the suite. */
-  private val madePlans = scala.collection.mutable.ArrayBuffer.empty[URI]
-
   /** The console tables the `collectOperatorInfos` cases make, dropped after the suite. */
   private val madeConsoles = scala.collection.mutable.ArrayBuffer.empty[URI]
 
   override protected def afterAll(): Unit =
     try {
-      madePlans.foreach(uri => Try(ExecutionPlanStore.drop(uri)))
       madeConsoles.foreach(uri => Try(ConsoleMessageStore.drop(uri)))
     } finally closeConnectionPool()
 
@@ -518,7 +513,7 @@ class SyncExecutionResourceSpec
 
   "isTerminalState" should "treat exactly the four finished states as terminal" in {
     // Partitioning every declared state, so neither adding nor dropping a case survives: a state
-    // wrongly called terminal makes runStoredExecution skip waiting for the run to finish.
+    // wrongly called terminal makes runExecution skip waiting for the run to finish.
     val terminal = List(
       UNINITIALIZED,
       READY,
@@ -1160,7 +1155,6 @@ class SyncExecutionResourceSpec
         new URI("http://texera.example/api/executions"),
         FixtureCompilingService.authorizationOf(testUid)
       )
-    madePlans += new URI(response.planUri)
     response
   }
 
@@ -1169,13 +1163,14 @@ class SyncExecutionResourceSpec
     * As soon as one is started it is what `atStart` makes of its states, by default completed;
     * or it fails with `failure` when given, as a run that cannot be set up does.
     * `WorkflowExecutionServiceSpec` owns what a run does with its plan. `started` is the plan
-    * each run is started from, and `records` what each run's record is told, by execution.
+    * each run is started from, with who started it, and `records` what each run's record is
+    * told, by execution.
     */
   private class EnginelessService(
       serviceCuid: Int = testCuid,
       failure: Option[RuntimeException] = None,
       atStart: ExecutionStateStore => Unit = _.transitionTo(COMPLETED),
-      val started: scala.collection.mutable.ArrayBuffer[(ExecutionPlan, URI)] =
+      val started: scala.collection.mutable.ArrayBuffer[(ExecutionPlan, Int)] =
         scala.collection.mutable.ArrayBuffer.empty,
       val records: TrieMap[Long, RecordingExecutionRecorder] = TrieMap.empty
   ) extends WorkflowService(
@@ -1184,12 +1179,11 @@ class SyncExecutionResourceSpec
         3600,
         newRun = (context, _, executionStateStore, errorHandler) =>
           new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
-            override def startStored(
+            override def startPlan(
                 executionPlan: ExecutionPlan,
-                record: PlanRecord,
-                planUri: URI
+                startedBy: Int
             ): Option[Throwable] = {
-              started += ((executionPlan, planUri))
+              started += ((executionPlan, startedBy))
               failure match {
                 case Some(failure) => errorHandler(failure)
                 case None          => atStart(this.executionStateStore)
@@ -1225,12 +1219,12 @@ class SyncExecutionResourceSpec
       })
 
   private def runRequest(
-      planUri: String,
+      plan: String,
       computingUnitId: Int = testCuid,
       targets: List[String] = List("limit"),
       timeoutSeconds: Int = 5
   ): SyncRunRequest =
-    SyncRunRequest(planUri, computingUnitId, targets, timeoutSeconds, 100000, 20000)
+    SyncRunRequest(plan, computingUnitId, targets, timeoutSeconds, 100000, 20000)
 
   /** Why a run was refused, once the answer is found to be a refusal and nothing more. */
   private def refusalOf(result: SyncExecutionResult): String = {
@@ -1243,8 +1237,8 @@ class SyncExecutionResourceSpec
     }
   }
 
-  "runStoredExecution" should
-    "run an execution the Dashboard created, by its id, from its stored plan, and answer once it ends" in {
+  "runExecution" should
+    "run an execution the Dashboard created, from the plan the request carries, and answer once it ends" in {
     val execution = createdExecution()
     // The workflow's service, made for another unit by an earlier caller (#7676): the run is on
     // the unit the request names, which the execution was created for.
@@ -1256,20 +1250,18 @@ class SyncExecutionResourceSpec
     previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
     service.executionService.onNext(previous)
 
-    val result = resource.runStoredExecution(
+    val result = resource.runExecution(
       execution.eid,
-      runRequest(execution.planUri),
+      runRequest(execution.plan),
       syncUser()
     )
 
-    // The workflow is the one the plan table belongs to, on the unit the request names.
+    // The workflow is the one the plan is of, on the unit the request names.
     resource.asked shouldBe Seq((WorkflowIdentity(testWid.toLong), testCuid))
-    // Started from its plan in the lake, claimed for that start.
-    val planUri = new URI(execution.planUri)
-    ExecutionPlanStore.isStarted(planUri) shouldBe true
+    // Started from the plan the request carried, for the caller.
     service.started should have size 1
-    val (executionPlan, startedFrom) = service.started.head
-    startedFrom shouldBe planUri
+    val (executionPlan, startedBy) = service.started.head
+    startedBy shouldBe testUid
     executionPlan.context.executionId shouldBe ExecutionIdentity(execution.eid)
     service.computingUnitId shouldBe fixtureCuid
     // Answered as the run ended, for the target asked about.
@@ -1289,9 +1281,9 @@ class SyncExecutionResourceSpec
     val service = new EnginelessService(atStart = _.transitionTo(RUNNING))
 
     val before = System.currentTimeMillis()
-    val result = new ResourceOn(service).runStoredExecution(
+    val result = new ResourceOn(service).runExecution(
       execution.eid,
-      runRequest(execution.planUri, timeoutSeconds = 1),
+      runRequest(execution.plan, timeoutSeconds = 1),
       syncUser()
     )
     val after = System.currentTimeMillis()
@@ -1315,9 +1307,9 @@ class SyncExecutionResourceSpec
       )
     })
 
-    val result = new ResourceOn(service).runStoredExecution(
+    val result = new ResourceOn(service).runExecution(
       execution.eid,
-      runRequest(execution.planUri),
+      runRequest(execution.plan),
       syncUser()
     )
 
@@ -1346,9 +1338,9 @@ class SyncExecutionResourceSpec
     }
 
     val result =
-      try new ResourceOn(service).runStoredExecution(
+      try new ResourceOn(service).runExecution(
         execution.eid,
-        runRequest(execution.planUri),
+        runRequest(execution.plan),
         syncUser()
       )
       finally session.dispose()
@@ -1371,9 +1363,9 @@ class SyncExecutionResourceSpec
     val service =
       new EnginelessService(failure = Some(new IllegalStateException("the engine is gone")))
 
-    val result = new ResourceOn(service).runStoredExecution(
+    val result = new ResourceOn(service).runExecution(
       execution.eid,
-      runRequest(execution.planUri),
+      runRequest(execution.plan),
       syncUser()
     )
 
@@ -1403,7 +1395,7 @@ class SyncExecutionResourceSpec
     val resource = new ResourceOn(service)
 
     resource
-      .runStoredExecution(execution.eid, runRequest(execution.planUri), syncUser())
+      .runExecution(execution.eid, runRequest(execution.plan), syncUser())
       .success shouldBe true
     // Counted from before the run is set up (a run installing a Python environment is READY, which
     // the clean-up of a run nobody watches does not spare) until it is answered.
@@ -1412,46 +1404,36 @@ class SyncExecutionResourceSpec
 
     // A start the workflow's service refuses is not left counted either.
     refusalOf(
-      resource.runStoredExecution(execution.eid, runRequest(execution.planUri), syncUser())
+      resource.runExecution(execution.eid, runRequest(execution.plan), syncUser())
     ) shouldBe s"Execution ${execution.eid} was already started."
     service.watchers shouldBe 0
   }
 
-  it should "refuse a run for another user, on another unit, of another plan, or a second time" in {
+  it should "refuse a run of another plan, of no plan, or a second time" in {
     val execution = createdExecution()
     val other = createdExecution()
     val service = new EnginelessService
     val resource = new ResourceOn(service)
     val eid = execution.eid
 
-    refusalOf(
-      resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser(testUid + 1000))
-    ) shouldBe s"Only the user who created execution $eid may start it."
-    refusalOf(
-      resource.runStoredExecution(
-        eid,
-        runRequest(execution.planUri, computingUnitId = fixtureCuid),
-        syncUser()
-      )
-    ) shouldBe s"Execution $eid was created for computing unit $testCuid, not $fixtureCuid."
-    refusalOf(resource.runStoredExecution(eid, runRequest(other.planUri), syncUser())) shouldBe
+    refusalOf(resource.runExecution(eid, runRequest(other.plan), syncUser())) shouldBe
       s"The plan is execution ${other.eid}'s, not $eid's."
-    refusalOf(resource.runStoredExecution(eid, runRequest("vfs:///no/plan"), syncUser())) shouldBe
-      "The request does not name an execution's plan."
-    refusalOf(resource.runStoredExecution(eid, runRequest(null), syncUser())) shouldBe
-      "The request does not name an execution's plan."
-    refusalOf(resource.runStoredExecution(eid, null, syncUser())) shouldBe
+    refusalOf(resource.runExecution(eid, runRequest("{}"), syncUser())) shouldBe
+      "The plan names no format version; this reader reads version " +
+        s"${PhysicalPlanCodec.FormatVersion}."
+    refusalOf(resource.runExecution(eid, runRequest(null), syncUser())) shouldBe
+      "The request carries no plan."
+    refusalOf(resource.runExecution(eid, null, syncUser())) shouldBe
       "The request has no body."
     // None of them started anything, or asked for a workflow's service: each was refused by the
     // checks made before, so none leaves a service behind, made for the unit it named.
     resource.asked shouldBe empty
     service.started shouldBe empty
-    ExecutionPlanStore.isStarted(new URI(execution.planUri)) shouldBe false
 
-    resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser()).success shouldBe
+    resource.runExecution(eid, runRequest(execution.plan), syncUser()).success shouldBe
       true
-    // The second call passes the checks, and its claim is refused on the workflow's service.
-    refusalOf(resource.runStoredExecution(eid, runRequest(execution.planUri), syncUser())) shouldBe
+    // The second call passes the checks, and its start is refused on the workflow's service.
+    refusalOf(resource.runExecution(eid, runRequest(execution.plan), syncUser())) shouldBe
       s"Execution $eid was already started."
     resource.asked shouldBe Seq.fill(2)((WorkflowIdentity(testWid.toLong), testCuid))
     service.started should have size 1

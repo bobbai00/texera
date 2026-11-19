@@ -451,12 +451,14 @@ texeraEnvVars:
     value: "true"
   - name: SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR
     value: "true"
+  # A start carries the execution's plan, and a change to a paused operator its update, each
+  # of at most 16 MiB, to the unit over its websocket.
   - name: MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
-    value: "1024"
-  # Stored plans: what the Dashboard service writes when it creates an execution, from the plan
-  # the compiling service makes for it, and a computing unit reads to run it. Each of these has
-  # a default, so add an entry only to override one; the entries here reach every service, and
-  # the computing unit manager hands the units it creates the ones a unit reads.
+    value: "24576"
+  # Plans: what the Dashboard service answers when it creates an execution, from the plan the
+  # compiling service makes for it, and a computing unit runs. Each of these has a default, so
+  # add an entry only to override one; the entries here reach every service, and the computing
+  # unit manager hands the units it creates the ones a unit reads.
   #   STORAGE_INPUT_LINKS_S3_ENDPOINT  the object-store address the Dashboard signs the links to
   #     a run's input files for, when computing units reach the store at another address than the
   #     services do. The units must be allowed to read from it:
@@ -468,8 +470,6 @@ texeraEnvVars:
   #   UDF_PYTHON_ENVIRONMENTS_ROOT  the directory a unit installs a run's Python environments
   #     under (default /tmp/texera-python-environments).
   #   UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES  how long one install may take (default 30).
-  #   STORAGE_ICEBERG_TABLE_PLAN_NAMESPACE  the Iceberg namespace of the executions' plan tables
-  #     (default execution-plan).
   #   STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS  how often a unit commits the statistics and the
   #     console output of an execution it runs, and shows in the execution's log that it is
   #     alive, in milliseconds (default 30000).

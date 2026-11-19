@@ -327,28 +327,10 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   }
 
   // ---------------------------------------------------------------------------
-  // plan tables
+  // an execution's own tables
   // ---------------------------------------------------------------------------
 
-  "createDocument" should "keep an execution's plan in the plan namespace, in a table named after its workflow and execution, with or without a warehouse" in {
-    val planTable =
-      TableIdentifier.of(StorageConfig.icebergTablePlanNamespace, "wid_12_eid_345_plan")
-    Seq(None, Some("wh-test")).foreach { warehouse =>
-      val planUri =
-        VFSURIFactory.createPlanURI(WorkflowIdentity(12), ExecutionIdentity(345), warehouse)
-      val catalog = IcebergCatalogInstance.getInstance(warehouse)
-      if (catalog.tableExists(planTable)) catalog.dropTable(planTable)
-
-      DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)
-
-      withClue(s"$planUri: ") {
-        catalog.tableExists(planTable) shouldBe true
-        DocumentFactory.documentExists(planUri) shouldBe true
-      }
-    }
-  }
-
-  it should "keep an execution's log in the log namespace, in a table named after its workflow and execution, with or without a warehouse" in {
+  "createDocument" should "keep an execution's log in the log namespace, in a table named after its workflow and execution, with or without a warehouse" in {
     val logTable = TableIdentifier.of(
       StorageConfig.icebergTableExecutionLogNamespace,
       "wid_12_eid_345_executionlog"
@@ -369,21 +351,21 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   }
 
   "icebergTableOf" should "load the table a vfs URI names" in {
-    val planUri = VFSURIFactory.createPlanURI(WorkflowIdentity(13), ExecutionIdentity(346))
-    DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)
+    val logUri = VFSURIFactory.createExecutionLogURI(WorkflowIdentity(13), ExecutionIdentity(346))
+    DocumentFactory.createDocument(logUri, ResultSchema.executionLogSchema)
 
-    val table = DocumentFactory.icebergTableOf(planUri)
+    val table = DocumentFactory.icebergTableOf(logUri)
     table shouldBe defined
     table.get.name() should endWith(
-      s"${StorageConfig.icebergTablePlanNamespace}.wid_13_eid_346_plan"
+      s"${StorageConfig.icebergTableExecutionLogNamespace}.wid_13_eid_346_executionlog"
     )
-    IcebergUtil.fromIcebergSchema(table.get.schema()) shouldBe ResultSchema.executionPlanSchema
+    IcebergUtil.fromIcebergSchema(table.get.schema()) shouldBe ResultSchema.executionLogSchema
   }
 
   it should "find nothing where there is no table" in {
     DocumentFactory.icebergTableOf(freshResultURI()) shouldBe None
     DocumentFactory.icebergTableOf(
-      VFSURIFactory.createPlanURI(WorkflowIdentity(14), ExecutionIdentity(347))
+      VFSURIFactory.createExecutionLogURI(WorkflowIdentity(14), ExecutionIdentity(347))
     ) shouldBe None
   }
 
@@ -395,13 +377,13 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   }
 
   "dropTable" should "drop the table a vfs URI names, and say whether there was one" in {
-    val planUri = VFSURIFactory.createPlanURI(WorkflowIdentity(15), ExecutionIdentity(348))
-    DocumentFactory.createDocument(planUri, ResultSchema.executionPlanSchema)
+    val logUri = VFSURIFactory.createExecutionLogURI(WorkflowIdentity(15), ExecutionIdentity(348))
+    DocumentFactory.createDocument(logUri, ResultSchema.executionLogSchema)
 
-    DocumentFactory.dropTable(planUri) shouldBe true
-    DocumentFactory.documentExists(planUri) shouldBe false
-    DocumentFactory.icebergTableOf(planUri) shouldBe None
-    DocumentFactory.dropTable(planUri) shouldBe false
+    DocumentFactory.dropTable(logUri) shouldBe true
+    DocumentFactory.documentExists(logUri) shouldBe false
+    DocumentFactory.icebergTableOf(logUri) shouldBe None
+    DocumentFactory.dropTable(logUri) shouldBe false
   }
 
   it should "reject an unsupported scheme" in {

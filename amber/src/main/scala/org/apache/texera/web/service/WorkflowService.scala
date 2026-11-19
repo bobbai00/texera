@@ -24,17 +24,10 @@ import com.typesafe.scalalogging.LazyLogging
 import io.opentelemetry.api.trace.{Span, StatusCode}
 import io.reactivex.rxjava3.disposables.{CompositeDisposable, Disposable}
 import io.reactivex.rxjava3.subjects.BehaviorSubject
-import org.apache.iceberg.exceptions.CommitFailedException
 import org.apache.texera.common.config.{ApplicationConfig, EnvironmentalVariable}
 import org.apache.texera.observability.{SpanAttrs, TexeraTracer}
 import org.apache.texera.amber.core.WorkflowRuntimeException
-import org.apache.texera.amber.core.storage.{
-  ExecutionAlreadyStartedException,
-  ExecutionPlanStore,
-  NoStoredPlanException,
-  PlanRecord,
-  RepositoryMountManager
-}
+import org.apache.texera.amber.core.storage.RepositoryMountManager
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{ExecutionPlan, WorkflowContext}
 import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
@@ -52,11 +45,10 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.observability.WorkflowMetricsRecorder
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
-import org.apache.texera.web.service.execution.StoredExecutionStart
+import org.apache.texera.web.service.execution.ExecutionStart
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 import org.apache.texera.web.{SubscriptionManager, WorkflowLifecycleManager}
 
-import java.net.URI
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
@@ -67,15 +59,24 @@ object WorkflowService extends LazyLogging {
   private val workflowServiceMapping = new ConcurrentHashMap[String, WorkflowService]()
 
   /**
-    * A start of an execution that passed every check made before the execution is claimed
-    * ([[checkStoredStart]]), with its plan row and the plan the row holds, read back.
+    * The executions whose start this computing unit took since it came up: each starts once,
+    * however often it is asked to ([[WorkflowService.startChecked]]).
+    */
+  val startedExecutions: java.util.Set[java.lang.Long] = ConcurrentHashMap.newKeySet()
+
+  /**
+    * A start of an execution that passed every check made before it is taken ([[checkStart]]),
+    * with the plan it carried, read.
+    *
+    * @param computingUnitId the computing unit the start was asked of
+    * @param startedBy       the user who asked to start it: only they may change its operators
     */
   final case class CheckedStart(
       executionId: Long,
-      planUri: URI,
       workflowId: WorkflowIdentity,
-      record: PlanRecord,
-      executionPlan: ExecutionPlan
+      executionPlan: ExecutionPlan,
+      computingUnitId: Int,
+      startedBy: Int
   )
 
   /**
@@ -92,26 +93,23 @@ object WorkflowService extends LazyLogging {
 
   /**
     * Checks a request of `user` to start execution `executionId` on computing unit `cuid`, from
-    * the plan stored at `planUri`. A user is required, and a unit that knows which unit it is
-    * starts only what was asked of that unit. The URI is checked before any catalog is opened,
-    * and then the plan row is read and checked (both by [[StoredExecutionStart]]).
-    *
-    * It reads the plan row and writes nothing.
+    * `plan`, the plan the request carries. A user is required, and a unit that knows which unit
+    * it is starts only what was asked of that unit. The plan is read and checked by
+    * [[ExecutionStart.check]]. Nothing is read or written.
     *
     * @param socketWorkflowId the workflow of the socket the request came over; None for a request
-    *                         that came another way, which starts the workflow the URI names
+    *                         that came another way, which starts the workflow the plan names
     * @param thisUnit         the computing unit this one is, where it was told
     *                         ([[configuredUnitId]]); None where it was not, and `cuid` is then
     *                         all it has to go by
     * @return why the start is refused (Left), or what it starts (Right)
     */
-  def checkStoredStart(
+  def checkStart(
       executionId: Long,
-      planUri: URI,
+      plan: String,
       user: User,
       cuid: Int,
       socketWorkflowId: Option[Long],
-      readPlan: URI => PlanRecord = ExecutionPlanStore.readPlan,
       thisUnit: Option[Int] = configuredUnitId
   ): Either[String, CheckedStart] =
     for {
@@ -124,42 +122,19 @@ object WorkflowService extends LazyLogging {
           .filter(_ != cuid)
           .map(own => s"This is computing unit $own, not $cuid.")
           .toLeft(())
-      location <- StoredExecutionStart.checkUri(planUri, executionId, socketWorkflowId, uid)
-      record <- storedPlanRow(executionId, planUri, readPlan)
-      executionPlan <- StoredExecutionStart.checkRecord(
-        record,
-        location,
+      executionPlan <- ExecutionStart.check(
+        plan,
+        executionId,
+        socketWorkflowId,
         uid,
-        cuid,
         System.currentTimeMillis()
       )
-    } yield CheckedStart(executionId, planUri, location.workflowId, record, executionPlan)
-
-  /** The plan row of execution `executionId` at `planUri`, or why it cannot be had. */
-  private def storedPlanRow(
-      executionId: Long,
-      planUri: URI,
-      readPlan: URI => PlanRecord
-  ): Either[String, PlanRecord] =
-    try Right(readPlan(planUri))
-    catch {
-      case _: NoStoredPlanException => Left(StoredExecutionStart.noStoredPlan(executionId))
-      // The row is there and is not one a plan table holds, such as a row with no body.
-      case malformed @ (_: IllegalStateException | _: IllegalArgumentException) =>
-        logger.warn(
-          s"The plan row of execution $executionId at $planUri cannot be read.",
-          malformed
-        )
-        Left(StoredExecutionStart.unreadablePlan(executionId, malformed))
-      case NonFatal(failure) =>
-        logger.warn(s"The plan of execution $executionId could not be read from $planUri.", failure)
-        Left(s"The plan of execution $executionId could not be read. Run the workflow again.")
-    }
+    } yield CheckedStart(executionId, executionPlan.context.workflowId, executionPlan, cuid, uid)
 
   /**
-    * Builds the run of a plan read back from the lake, before it is started: given the context
-    * the plan was read back with, the result service of the run's workflow, the store of the
-    * run's states and the handler of its errors.
+    * Builds the run of a plan, before it is started: given the context the plan was read with,
+    * the result service of the run's workflow, the store of the run's states and the handler of
+    * its errors.
     */
   type NewRun =
     (
@@ -199,15 +174,15 @@ object WorkflowService extends LazyLogging {
   * The runs of one workflow on this computing unit, one at a time, and what outlives a run: the
   * workflow's sessions and its results.
   *
-  * @param claimStart  claims an execution for its one start, in its plan table
+  * @param started     the executions whose start this unit took
+  *                    ([[WorkflowService.startedExecutions]])
   * @param startRecord starts the record of a run that is about to be built, under its context
   */
 class WorkflowService(
     val workflowId: WorkflowIdentity,
     val computingUnitId: Int,
     cleanUpTimeout: Int,
-    readPlan: URI => PlanRecord = ExecutionPlanStore.readPlan,
-    claimStart: URI => Unit = ExecutionPlanStore.claimStart,
+    started: java.util.Set[java.lang.Long] = WorkflowService.startedExecutions,
     newRun: WorkflowService.NewRun =
       new WorkflowExecutionService(_, _, _, _, RepositoryMountManager.mountRoot),
     startRecord: WorkflowContext => ExecutionRecorder = ExecutionRecorder.start
@@ -218,10 +193,10 @@ class WorkflowService(
   val stateStore = new WorkflowStateStore()
   var executionService: BehaviorSubject[WorkflowExecutionService] = BehaviorSubject.create()
 
-  // Held while a start sets up a new run, from before it claims the execution until the new run
-  // is set up or has failed, and while a run is superseded. So two starts never set up runs at
-  // once, and a run is never superseded halfway through its setup, which would leave an engine
-  // that no service holds. It is not held while a run that is set up waits for its Python
+  // Held while a start sets up a new run, from before it takes the execution's start until the
+  // new run is set up or has failed, and while a run is superseded. So two starts never set up
+  // runs at once, and a run is never superseded halfway through its setup, which would leave an
+  // engine that no service holds. It is not held while a run that is set up waits for its Python
   // environments: such a run can be superseded, and then never starts its engine.
   private val runLock = new ReentrantLock()
 
@@ -330,42 +305,42 @@ class WorkflowService(
   }
 
   /**
-    * Checks a start of execution `executionId` of this workflow
-    * ([[WorkflowService.checkStoredStart]]), then starts it ([[startChecked]]). `cuid` is the
-    * unit the request to start it came to.
+    * Checks a start of execution `executionId` of this workflow from `plan`
+    * ([[WorkflowService.checkStart]]), then starts it ([[startChecked]]). `cuid` is the unit the
+    * request to start it came to.
     *
     * @return why the start was refused (Left), or the run started (Right), which may have failed
     *         before its engine started
     */
-  def startStoredExecution(
+  def startExecution(
       executionId: Long,
-      planUri: URI,
+      plan: String,
       user: User,
       cuid: Int
   ): Either[String, WorkflowExecutionService] =
     WorkflowService
-      .checkStoredStart(executionId, planUri, user, cuid, Some(workflowId.id), readPlan)
+      .checkStart(executionId, plan, user, cuid, Some(workflowId.id))
       .flatMap(startChecked)
 
   /**
     * Starts the execution `start` names, a start of this workflow that passed its checks
-    * ([[WorkflowService.checkStoredStart]]). Under `runLock`, the execution is claimed for its one
-    * start (a second start is refused, however it comes), and its run takes the place of the run
-    * this service holds ([[startClaimedRun]]).
+    * ([[WorkflowService.checkStart]]). Under `runLock`, the execution's one start is taken (a
+    * second start is refused, however it comes), and its run takes the place of the run this
+    * service holds ([[startRun]]).
     *
-    * A start refused before its claim writes nothing, leaves the run this service holds as it is,
-    * and is answered only to the caller. Once the execution is claimed, what fails is the run's
-    * failure: reported through its error handler to every session on the workflow, and recorded.
+    * A start refused before it is taken writes nothing, leaves the run this service holds as it
+    * is, and is answered only to the caller. Once it is taken, what fails is the run's failure:
+    * reported through its error handler to every session on the workflow, and recorded.
     *
     * @return why the start was refused, or why its run could not even be built (Left); or the run
     *         started (Right), which may have failed before its engine started
     */
   def startChecked(start: WorkflowService.CheckedStart): Either[String, WorkflowExecutionService] =
     if (start.workflowId != workflowId) {
-      Left(StoredExecutionStart.ofAnotherWorkflow(start.workflowId.id))
+      Left(ExecutionStart.ofAnotherWorkflow(start.workflowId.id))
     } else {
       val span = TexeraTracer.tracer
-        .spanBuilder("WorkflowService.startStoredExecution")
+        .spanBuilder("WorkflowService.startExecution")
         .setAttribute(SpanAttrs.WorkflowId, Long.box(workflowId.id))
         .setAttribute(SpanAttrs.ExecutionId, Long.box(start.executionId))
         .startSpan()
@@ -373,7 +348,8 @@ class WorkflowService(
       // Until the new run is set up or has failed: no other request supersedes it meanwhile.
       runLock.lock()
       try {
-        claimForStart(start.executionId, start.planUri).flatMap(_ => startClaimedRun(start, span))
+        if (started.add(start.executionId)) startRun(start, span)
+        else Left(s"Execution ${start.executionId} was already started.")
       } finally {
         runLock.unlock()
         scope.close()
@@ -381,39 +357,20 @@ class WorkflowService(
       }
     }
 
-  /** Claims execution `executionId` for its one start, or says why it cannot be. */
-  private def claimForStart(executionId: Long, planUri: URI): Either[String, Unit] =
-    try Right(claimStart(planUri))
-    catch {
-      case _: ExecutionAlreadyStartedException =>
-        Left(s"Execution $executionId was already started.")
-      case _: NoStoredPlanException => Left(StoredExecutionStart.noStoredPlan(executionId))
-      // Every retry of the claim lost its commit to another commit on the plan table, such as a
-      // change to a paused operator.
-      case _: CommitFailedException =>
-        Left(
-          s"Execution $executionId could not be claimed for its start, as its plan was being " +
-            "changed. Run the workflow again."
-        )
-      case NonFatal(failure) =>
-        logger.warn(s"Execution $executionId could not be claimed at $planUri.", failure)
-        Left(s"Execution $executionId could not be claimed for its start. Run the workflow again.")
-    }
-
   /**
-    * Builds the run of the execution `start` names, which was just claimed for its start,
-    * supersedes the run this service holds, publishes the new run in its place, and starts it.
+    * Builds the run of the execution `start` names, whose start was just taken, supersedes the
+    * run this service holds, publishes the new run in its place, and starts it.
     * A run that fails is still published, so its sessions see why. Only a run that could not even
     * be built is not: the run this service holds stays, and the start is answered why (Left), as
     * the execution reads FAILED.
     */
-  private def startClaimedRun(
+  private def startRun(
       start: WorkflowService.CheckedStart,
       span: Span
   ): Either[String, WorkflowExecutionService] = {
     val context = start.executionPlan.context
     val executionId = context.executionId
-    // Recorded from here on: whatever fails once the execution is claimed is in its log.
+    // Recorded from here on: whatever fails once the start is taken is in its log.
     val executionStateStore = new ExecutionStateStore(startRecord(context))
     executionStateStore.metadataStore.updateState(_.withExecutionId(executionId))
     val errorHandler = runErrorHandler(executionStateStore)
@@ -425,14 +382,14 @@ class WorkflowService(
       built = Some(execution)
       logger.info(
         s"Execution ${executionId.id} of workflow ${workflowId.id} starts on computing unit " +
-          s"${start.record.computingUnitId} from its plan at ${start.planUri}."
+          s"${start.computingUnitId}."
       )
       supersedeCurrentRun(executionId)
       // Kept with the run, so the clean-up stops following it once the run is let go of.
       execution.addSubscription(lifeCycleManager.registerCleanUpOnStateChange(executionStateStore))
       executionService.onNext(execution)
       published = true
-      execution.startStored(start.executionPlan, start.record, start.planUri).foreach { setupErr =>
+      execution.startPlan(start.executionPlan, start.startedBy).foreach { setupErr =>
         span.recordException(setupErr)
         span.setStatus(StatusCode.ERROR)
       }
@@ -444,7 +401,7 @@ class WorkflowService(
         errorHandler(failure)
         built match {
           case Some(execution) =>
-            // The execution is claimed and will not start: its sessions are shown why.
+            // The execution's start is taken and it will not start: its sessions are shown why.
             if (!published) executionService.onNext(execution)
             Right(execution)
           case None => Left(WorkflowService.notStarted(start.executionId))

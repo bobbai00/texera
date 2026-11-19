@@ -21,11 +21,9 @@ package org.apache.texera.web.service.execution
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.{
-  ConsoleMessageStore,
   ExecutionLabel,
   ExecutionLogStore,
   ExecutionTables,
-  RuntimeStatisticsStore,
   WarehouseReadGuard
 }
 import org.apache.texera.amber.engine.architecture.logreplay.ReplayLogRecord
@@ -57,16 +55,15 @@ object ExecutionExpiry {
   * service. A computing unit drops nothing.
   *
   * Expiring an execution's results ([[expire]]) drops what its run produced: the result table
-  * and the state table of each output port, its console table and its large binaries. Its plan,
-  * its log and its statistics stay, so the history still tells how it ran, and its row is marked
+  * and the state table of each output port, its console table and its large binaries. Its log
+  * and its statistics stay, so the history still tells how it ran, and its row is marked
   * with when its results went and what it still holds. Results expire when a unit has started a
   * later execution of the workflow ([[expireReplaced]]), which the unit shows from then on, and
   * when they are older than results are kept ([[expirePast]]), which also deletes the
   * execution's replay log. Deleting an execution drops everything it keeps ([[dropAll]]).
   *
-  * An execution's port tables are found from its stored plan. One with no plan to go by has
-  * them found by their names, which lists whole namespaces ([[ExecutionTables]]); so has every
-  * execution that is deleted, the last time anything can find a table of its.
+  * An execution's tables are found by their names, which lists whole namespaces
+  * ([[ExecutionTables]]).
   *
   * Any number of Dashboard replicas may expire the same execution: dropping a table that is
   * gone does nothing, and of several that mark its row, one does. Tables in a per-user
@@ -245,7 +242,7 @@ class ExecutionExpiry(
         if (expired) {
           logger.info(
             s"The results of execution $eid of workflow ${execution.wid} are expired$why; its " +
-              s"plan, log and statistics hold $kept bytes."
+              s"log and statistics hold $kept bytes."
           )
         }
         expired
@@ -253,53 +250,22 @@ class ExecutionExpiry(
     }
 
   private def inDisabledWarehouse(execution: ExecutionRecord): Boolean =
-    WarehouseReadGuard.skipWhileDisabled(execution.planUri, warehousesEnabled)
+    WarehouseReadGuard.skipWhileDisabled(execution.logUri, warehousesEnabled)
 
+  /** Drops the tables of what the run of `execution` produced, found by their names. */
   private def dropProduced(execution: ExecutionRecord): Unit = {
-    plannedPortTables(execution) match {
-      case Some(ports) =>
-        val console = ConsoleMessageStore.consoleUri(
-          execution.workflowId,
-          execution.executionId,
-          execution.warehouse
-        )
-        (ports :+ console).foreach(ExecutionTables.drop)
-      case None =>
-        ExecutionTables.dropNamed(
-          execution.workflowId,
-          execution.executionId,
-          execution.warehouse,
-          ExecutionTables.ProducedKinds
-        )
-    }
+    ExecutionTables.dropNamed(
+      execution.workflowId,
+      execution.executionId,
+      execution.warehouse,
+      ExecutionTables.ProducedKinds
+    )
     deleteBinaries(execution.eid)
   }
 
-  /**
-    * The result and the state table of each port the stored plan of `execution` names; None
-    * when it has no plan to go by: no plan table, or a plan this version does not read.
-    */
-  private def plannedPortTables(execution: ExecutionRecord): Option[Seq[URI]] =
-    if (!ExecutionTables.exists(execution.planUri)) None
-    else
-      try Some(ExecutionTables.portTables(execution.planUri))
-      catch {
-        case unreadable: IllegalArgumentException =>
-          logger.warn(
-            s"The stored plan of execution ${execution.eid} does not tell where its ports are " +
-              s"stored, so its tables are found by their names: ${unreadable.getMessage}"
-          )
-          None
-      }
-
-  /** The bytes of what an expired `execution` keeps: its plan, its log and its statistics. */
+  /** The bytes of what an expired `execution` keeps: its log and its statistics. */
   private def keptBytes(execution: ExecutionRecord): Long =
-    Seq(
-      execution.planUri,
-      execution.logUri,
-      RuntimeStatisticsStore
-        .statisticsUri(execution.workflowId, execution.executionId, execution.warehouse)
-    ).map(ExecutionTables.storedBytes).sum
+    Seq(execution.logUri, execution.statisticsUri).map(ExecutionTables.storedBytes).sum
 
   /**
     * Deletes the replay log of execution `eid`, if its row names one, which it then no longer

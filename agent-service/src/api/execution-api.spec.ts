@@ -38,22 +38,41 @@ function compilationError(operatorId: string, message: string) {
 }
 
 describe("parseCreateExecutionResponse", () => {
-  test("reads the execution's id and plan table from the Dashboard's answer", () => {
-    const created = parseCreateExecutionResponse({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
+  // The plan the Dashboard compiles: text that is itself JSON, with escapes and characters beyond ASCII in it.
+  const plan = '{"executionId":345,"operators":[{"id":"udf-1","code":"print(\\"café\\")\\n"}]}';
 
-    expect(created).toEqual({ eid: 345, planUri: "vfs:///wh/user-1-7/wid/12/eid/345/plan" });
+  test("reads the execution's id and its plan from the Dashboard's answer, the plan as the text it is", () => {
+    const created = parseCreateExecutionResponse({ eid: 345, plan });
+
+    expect(created).toEqual({ eid: 345, plan });
+    expect(created.plan).toBe(plan);
   });
 
   test.each([
-    ["no plan table", { eid: 345 }],
-    ["an empty plan table", { eid: 345, planUri: "" }],
-    ["no execution id", { planUri: "vfs:///wid/12/eid/345/plan" }],
-    ["an execution id that is text", { eid: "345", planUri: "vfs:///wid/12/eid/345/plan" }],
-    ["an execution id that is not a whole number", { eid: 3.5, planUri: "vfs:///wid/12/eid/3/plan" }],
-    ["an execution id below 1", { eid: 0, planUri: "vfs:///wid/12/eid/0/plan" }],
+    ["no plan", { eid: 345 }],
+    ["an empty plan", { eid: 345, plan: "" }],
+    ["a plan that is not text", { eid: 345, plan: { operators: [] } }],
+    ["a plan's address in place of the plan", { eid: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
+    ["no execution id", { plan }],
+    ["an execution id that is text", { eid: "345", plan }],
+    ["an execution id that is not a whole number", { eid: 3.5, plan }],
+    ["an execution id below 1", { eid: 0, plan }],
     ["no object at all", null],
   ])("refuses an answer with %s", (_case, answer) => {
     expect(() => parseCreateExecutionResponse(answer)).toThrow("Invalid create-execution response");
+  });
+
+  test("leaves the plan out of why it refuses an answer", () => {
+    let refusal: unknown;
+    try {
+      parseCreateExecutionResponse({ eid: "345", plan });
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toContain("Invalid create-execution response");
+    expect((refusal as Error).message).not.toContain("udf-1");
   });
 });
 
@@ -160,7 +179,7 @@ describe("adaptCreateExecutionFailure", () => {
     [400, "Bad Request", "The request names no computing unit to run the workflow on."],
     [403, "Forbidden", "You may not run workflows on computing unit 3."],
     [409, "Conflict", "Computing unit 3 is terminated."],
-    [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+    [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be made."],
     [504, "Gateway Timeout", "Execution 345 could not be created: compiling the workflow took longer than 60 seconds."],
   ])("turns a %d refusal into an error with its status and message", (status, statusText, message) => {
     const summary = adaptCreateExecutionFailure(

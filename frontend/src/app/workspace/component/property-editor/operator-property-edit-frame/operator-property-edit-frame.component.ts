@@ -1373,6 +1373,8 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
   }
 
   allowModifyOperatorLogic(): void {
+    // Before the form opens to an edit, while the editor still holds the workflow the paused run ran.
+    this.executeWorkflowService.snapshotWorkflowForLogicChange();
     this.setInteractivity(true);
   }
 

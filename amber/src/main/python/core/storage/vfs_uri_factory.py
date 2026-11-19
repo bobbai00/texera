@@ -36,10 +36,8 @@ class VFSResourceType(str, Enum):
     RUNTIME_STATISTICS = "runtimestatistics"
     CONSOLE_MESSAGES = "consolemessages"
     STATE = "state"
-    # An execution's plan table. Written and read on the Scala side only; listed so
+    # An execution's log table. Written and read on the Scala side only; listed so
     # both languages decode the same URIs.
-    PLAN = "plan"
-    # An execution's log table. As PLAN: the Scala side's alone, listed to decode.
     EXECUTION_LOG = "executionlog"
 
 

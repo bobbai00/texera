@@ -27,7 +27,6 @@ import org.apache.texera.web.service.execution.StubCompilingServer.{Answer, Requ
 import org.apache.texera.web.service.execution.WorkflowCompilingService.{
   CompileRefused,
   PlanRequest,
-  RunningOperator,
   UpdateRequest
 }
 
@@ -62,7 +61,7 @@ object StubCompilingServer {
         request.path match {
           case "/api/compile/run" =>
             val settings = body.get("settings")
-            val made = service.planToRun(
+            val plan = service.planToRun(
               PlanRequest(
                 body.get("workflowId").asLong(),
                 body.get("executionId").asLong(),
@@ -77,31 +76,19 @@ object StubCompilingServer {
               request.authorization,
               1.minute
             )
-            answer.put("plan", made.plan).put("logicalPlan", made.logicalPlan)
+            answer.put("plan", plan)
           case "/api/compile/update" =>
-            val made = service.updateToRun(
+            val update = service.updateToRun(
               UpdateRequest(
                 body.get("workflowId").asLong(),
                 body.get("executionId").asLong(),
-                body.get("updateId").asText(),
                 body.get("logicalPlan"),
-                body.get("operator"),
-                body
-                  .get("running")
-                  .elements()
-                  .asScala
-                  .map { op =>
-                    RunningOperator(
-                      op.get("layerName").asText(),
-                      Option(op.get("pythonEnvironment")).map(_.asText())
-                    )
-                  }
-                  .toSeq
+                body.get("operator")
               ),
               request.authorization,
               1.minute
             )
-            answer.put("update", made.update).put("operator", made.operator)
+            answer.put("update", update)
           case other => throw new CompileRefused(404, s"HTTP 404 Not Found: $other")
         }
         Answer(200, objectMapper.writeValueAsString(answer))

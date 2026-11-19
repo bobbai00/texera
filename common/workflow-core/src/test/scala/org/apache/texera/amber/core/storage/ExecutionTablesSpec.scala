@@ -19,12 +19,8 @@
 
 package org.apache.texera.amber.core.storage
 
+import org.apache.iceberg.catalog.TableIdentifier
 import org.apache.iceberg.exceptions.ServiceUnavailableException
-import org.apache.texera.amber.core.storedplan.{
-  StoredOutputPort,
-  StoredPhysicalOp,
-  StoredPhysicalPlan
-}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -32,7 +28,9 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.util.IcebergUtil
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -42,7 +40,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
   * Specs for [[ExecutionTables]] on Iceberg's JDBC catalog (see [[EmbeddedJdbcCatalog]]): the
-  * plans it reads and the tables it measures are real ones.
+  * tables it finds, measures and drops are real ones.
   */
 @NonParallelTest
 class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCatalog {
@@ -64,121 +62,103 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
       wid: WorkflowIdentity = workflowId
   ): URI = VFSURIFactory.createPortBaseURI(wid, eid, port, warehouse)
 
-  /** Writes a plan whose operators store their output ports at `locations`, one list each. */
-  private def writtenPlan(
-      eid: ExecutionIdentity,
-      locations: Seq[Seq[String]],
-      warehouse: Option[String] = None
-  ): URI = {
-    val uri = ExecutionPlanStore.planUri(workflowId, eid, warehouse)
-    val body = PhysicalPlanCodec.toJson(
-      StoredPhysicalPlan(
-        formatVersion = PhysicalPlanCodec.FormatVersion,
-        operators = locations.map(ports =>
-          StoredPhysicalOp(outputPorts =
-            ports.map(location => StoredOutputPort(storageLocation = location))
-          )
-        )
-      )
-    )
-    ExecutionPlanStore.writePlan(
-      uri,
-      PlanRecord(ExecutionPlanStore.PlanEntryId, body, 1, 3),
-      """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
-    )
-    uri
-  }
-
   private def statisticsRow(operator: String): RuntimeStatisticsRow =
     RuntimeStatisticsRow(operator, 1794873600000L, 1, 2, 3, 4, 5, 6, 7, 1, 1)
 
-  "ExecutionTables.ownTables" should "name the plan, the log, the statistics and the console of an execution" in {
+  "ExecutionTables.ownTables" should "name the log, the statistics and the console of an execution" in {
     val eid = ExecutionIdentity(34)
 
     ExecutionTables.ownTables(workflowId, eid, None).map(_.toString) shouldBe Seq(
-      "vfs:///wid/12/eid/34/plan",
       "vfs:///wid/12/eid/34/executionlog",
       "vfs:///wid/12/eid/34/runtimestatistics",
       "vfs:///wid/12/eid/34/consolemessages"
     )
     ExecutionTables.ownTables(workflowId, eid, Some(warehouse)).map(_.toString) shouldBe Seq(
-      s"vfs:///wh/$warehouse/wid/12/eid/34/plan",
       s"vfs:///wh/$warehouse/wid/12/eid/34/executionlog",
       s"vfs:///wh/$warehouse/wid/12/eid/34/runtimestatistics",
       s"vfs:///wh/$warehouse/wid/12/eid/34/consolemessages"
     )
   }
 
-  "ExecutionTables.portTables" should "list the result and the state of every output port the plan names" in {
-    val eid = freshExecution()
-    val scan = locationOf(eid, port("scan", 0))
-    val join0 = locationOf(eid, port("join", 0))
-    val join1 = locationOf(eid, port("join", 1))
-    val uri = writtenPlan(eid, Seq(Seq(scan.toString), Seq(join0.toString, join1.toString)))
-
-    ExecutionTables.portTables(uri) shouldBe Seq(scan, join0, join1).flatMap(base =>
-      Seq(VFSURIFactory.resultURI(base), VFSURIFactory.stateURI(base))
+  /** The result and the state table of each of `ports`, made as a run's writers make them. */
+  private def portTablesMade(ports: URI*): Seq[URI] =
+    made(
+      ports.flatMap(base => Seq(VFSURIFactory.resultURI(base), VFSURIFactory.stateURI(base))): _*
     )
+
+  "ExecutionTables.portTables" should "find the result and the state table of every output port the execution stored, by their names" in {
+    val eid = freshExecution()
+    val stored = portTablesMade(
+      locationOf(eid, port("scan", 0)),
+      locationOf(eid, port("join", 0)),
+      locationOf(eid, port("join", 1))
+    )
+    // Another execution's, another workflow's, and this execution's own tables of other kinds.
+    portTablesMade(
+      locationOf(ExecutionIdentity(eid.id + 1000), port("scan", 0)),
+      locationOf(eid, port("scan", 0), wid = WorkflowIdentity(13))
+    )
+    made(ConsoleMessageStore.consoleUri(workflowId, eid, None))
+
+    val found = ExecutionTables.portTables(workflowId, eid, None)
+    found should contain theSameElementsAs stored
     // Each is a table's URI: of the result namespace, or of the state namespace.
-    ExecutionTables.portTables(uri).map(VFSURIFactory.decodeURI(_).resourceType).distinct shouldBe
+    found.map(VFSURIFactory.decodeURI(_).resourceType).distinct should contain theSameElementsAs
       Seq(VFSResourceType.RESULT, VFSResourceType.STATE)
   }
 
-  it should "list the ports of a plan in a warehouse in that warehouse" in {
+  it should "find the tables of an execution in a warehouse in that warehouse" in {
     val eid = freshExecution()
-    val scan = locationOf(eid, port("scan", 0), Some(warehouse))
-    val uri = writtenPlan(eid, Seq(Seq(scan.toString)), Some(warehouse))
+    val stored = portTablesMade(locationOf(eid, port("scan", 0), Some(warehouse)))
 
-    ExecutionTables.portTables(uri) shouldBe
-      Seq(VFSURIFactory.resultURI(scan), VFSURIFactory.stateURI(scan))
+    ExecutionTables.portTables(workflowId, eid, Some(warehouse)) should contain theSameElementsAs
+      stored
   }
 
-  it should "list nothing for a plan whose operators have no output port, or an execution with no stored plan" in {
-    val eid = freshExecution()
+  it should "keep execution 3 apart from execution 34" in {
+    val wid = WorkflowIdentity(99)
+    val three = portTablesMade(locationOf(ExecutionIdentity(3), port("scan", 0), wid = wid))
+    val thirtyFour = portTablesMade(locationOf(ExecutionIdentity(34), port("scan", 0), wid = wid))
 
-    ExecutionTables.portTables(ExecutionPlanStore.planUri(workflowId, eid, None)) shouldBe Nil
-    ExecutionTables.portTables(writtenPlan(eid, Seq(Seq.empty))) shouldBe Nil
+    ExecutionTables.portTables(wid, ExecutionIdentity(3), None) should contain theSameElementsAs
+      three
+    ExecutionTables.portTables(wid, ExecutionIdentity(34), None) should contain theSameElementsAs
+      thirtyFour
   }
 
-  it should "refuse a location that is not a port's of the plan's own execution, in its warehouse" in {
+  it should "find nothing for an execution that stored no port" in {
+    ExecutionTables.portTables(workflowId, freshExecution(), None) shouldBe Nil
+  }
+
+  it should "leave out a table whose name starts as the execution's but gives no port's URI back" in {
     val eid = freshExecution()
-    val elsewhere = Seq(
-      locationOf(ExecutionIdentity(eid.id + 1000), port("scan", 0)).toString,
-      locationOf(eid, port("scan", 0), wid = WorkflowIdentity(13)).toString,
-      locationOf(eid, port("scan", 0), Some(warehouse)).toString,
-      ExecutionLogStore.logUri(workflowId, eid, None).toString.stripSuffix("/executionlog"),
-      "file:///tmp/elsewhere",
-      ""
+    val stored = portTablesMade(locationOf(eid, port("scan", 0)))
+    IcebergUtil.createTable(
+      IcebergCatalogInstance.getInstance(None),
+      StorageConfig.icebergTableResultNamespace,
+      s"wid_${workflowId.id}_eid_${eid.id}_not_a_port",
+      IcebergUtil.toIcebergSchema(Schema().add("line", AttributeType.STRING)),
+      overrideIfExists = true
     )
 
-    elsewhere.foreach { location =>
-      val uri = writtenPlan(eid, Seq(Seq(locationOf(eid, port("join", 0)).toString, location)))
-      withClue(s"'$location': ") {
-        an[IllegalArgumentException] should be thrownBy ExecutionTables.portTables(uri)
-      }
-    }
+    ExecutionTables.portTables(workflowId, eid, None) should contain theSameElementsAs stored
+    IcebergCatalogInstance
+      .getInstance(None)
+      .tableExists(
+        TableIdentifier.of(
+          StorageConfig.icebergTableResultNamespace,
+          s"wid_${workflowId.id}_eid_${eid.id}_not_a_port"
+        )
+      ) shouldBe true
   }
 
-  it should "refuse a URI that is not a plan's, and a plan in another format version" in {
+  it should "throw, not find nothing, when the catalog cannot answer" in {
     val eid = freshExecution()
-    an[IllegalArgumentException] should be thrownBy
-      ExecutionTables.portTables(ExecutionLogStore.logUri(workflowId, eid, None))
-
-    val uri = ExecutionPlanStore.planUri(workflowId, eid, None)
-    ExecutionPlanStore.writePlan(
-      uri,
-      PlanRecord(ExecutionPlanStore.PlanEntryId, """{"formatVersion":2}""", 1, 3),
-      "{}"
-    )
-    an[IllegalArgumentException] should be thrownBy ExecutionTables.portTables(uri)
-  }
-
-  it should "throw, not list nothing, when the catalog cannot answer" in {
-    val eid = freshExecution()
-    val uri = writtenPlan(eid, Seq(Seq(locationOf(eid, port("scan", 0)).toString)))
+    portTablesMade(locationOf(eid, port("scan", 0)))
 
     whileCatalogUnavailable {
-      a[ServiceUnavailableException] should be thrownBy ExecutionTables.portTables(uri)
+      a[ServiceUnavailableException] should be thrownBy
+        ExecutionTables.portTables(workflowId, eid, None)
     }
   }
 
@@ -230,9 +210,10 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     val internal = locationOf(eid, portOf("aggregate", "localAgg", 0, internal = true))
     val external = locationOf(eid, portOf("aggregate", "globalAgg", 0))
     val scan = locationOf(eid, port("scan", 0))
-    val tables = ExecutionTables.portTables(
-      writtenPlan(eid, Seq(Seq(scan.toString), Seq(internal.toString), Seq(external.toString)))
-    )
+    val tables = {
+      portTablesMade(scan, internal, external)
+      ExecutionTables.portTables(workflowId, eid, None)
+    }
 
     ExecutionTables.resultTableAmong(tables, OperatorIdentity("aggregate"), PortIdentity()) shouldBe
       Some(VFSURIFactory.resultURI(external))
@@ -288,11 +269,13 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     ExecutionTables.storedBytes(statistics) should be > afterOne
   }
 
-  it should "count a written plan, in the warehouse its URI names" in {
-    val eid = freshExecution()
-    val uri = writtenPlan(eid, Seq(Seq.empty), Some(warehouse))
+  it should "count a written table in the warehouse its URI names" in {
+    val statistics =
+      RuntimeStatisticsStore.statisticsUri(workflowId, freshExecution(), Some(warehouse))
+    RuntimeStatisticsStore.create(statistics)
+    RuntimeStatisticsStore.append(statistics, Seq(statisticsRow("scan")))
 
-    ExecutionTables.storedBytes(uri) should be > 0L
+    ExecutionTables.storedBytes(statistics) should be > 0L
   }
 
   it should "throw, not count nothing, when the catalog cannot answer" in {
@@ -349,8 +332,8 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     // One console table per operator, as executions once kept them.
     val operatorConsole = odd(eid, "opid/scan/consolemessages")
     val statistics = RuntimeStatisticsStore.statisticsUri(workflowId, eid, None)
-    val plan = writtenPlan(eid, Seq(Seq(base.toString)))
-    made(result, state, console, operatorConsole, statistics)
+    val log = ExecutionLogStore.logUri(workflowId, eid, None)
+    made(result, state, console, operatorConsole, statistics, log)
     // Execution 34's, whose names start as execution 3's do up to the id; and execution 3 of
     // workflow 120, whose names end as those of execution 3 of workflow 12 do.
     val others = made(
@@ -372,7 +355,7 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
       withClue(s"$uri: ") { ExecutionTables.exists(uri) shouldBe false }
     }
     // Not of the kinds asked for.
-    Seq(statistics, plan).foreach(uri =>
+    Seq(statistics, log).foreach(uri =>
       withClue(s"$uri: ") {
         ExecutionTables.exists(uri) shouldBe true
       }
@@ -382,8 +365,8 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.ProducedKinds) shouldBe Nil
 
     ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.AllKinds) should
-      contain theSameElementsAs Seq("wid_12_eid_3_runtimestatistics", "wid_12_eid_3_plan")
-    Seq(statistics, plan).foreach(uri =>
+      contain theSameElementsAs Seq("wid_12_eid_3_runtimestatistics", "wid_12_eid_3_executionlog")
+    Seq(statistics, log).foreach(uri =>
       withClue(s"$uri: ") {
         ExecutionTables.exists(uri) shouldBe false
       }

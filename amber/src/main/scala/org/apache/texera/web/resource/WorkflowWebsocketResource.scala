@@ -30,7 +30,6 @@ import org.apache.texera.web.model.websocket.event.{RequestRefusedEvent, Workflo
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
-import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
 import javax.websocket._
@@ -164,9 +163,9 @@ class WorkflowWebsocketResource extends LazyLogging {
       case _ if sender.getUserComputingUnitAccess != PrivilegeEnum.WRITE =>
         Some("You do not have write access to the computing unit.")
       case start: WorkflowStartRequest =>
-        startStoredExecution(sender, workflow, user, start)
+        startExecution(sender, workflow, user, start)
       case update: OperatorUpdateRequest =>
-        applyStoredUpdate(sender, run, user, update)
+        applyUpdate(sender, run, user, update)
       case command =>
         val asked = command match {
           case named: ExecutionRequest => runOf(named, run).toRight(notRunningHere(named))
@@ -187,13 +186,14 @@ class WorkflowWebsocketResource extends LazyLogging {
     s"Execution ${request.executionId} is not running here."
 
   /**
-    * Starts the execution `start` names, which the Dashboard service created, on this socket's
-    * workflow and computing unit, for the socket's user ([[WorkflowService.startStoredExecution]]).
-    * Once started, the run reaches every session on the workflow, as a run does.
+    * Starts the execution `start` names, which the Dashboard service created, from the plan it
+    * carries, on this socket's workflow and computing unit, for the socket's user
+    * ([[WorkflowService.startExecution]]). Once started, the run reaches every session on the
+    * workflow, as a run does.
     *
     * @return why the start is refused, if it is
     */
-  private def startStoredExecution(
+  private def startExecution(
       sender: SessionState,
       workflow: Option[WorkflowService],
       user: Option[User],
@@ -207,8 +207,7 @@ class WorkflowWebsocketResource extends LazyLogging {
         cuid <- sender.getComputingUnitId.toRight(
           "This connection is not open on a computing unit."
         )
-        planUri <- StoredExecutionStart.planUriOf(start.planUri)
-        execution <- workflow.startStoredExecution(start.executionId, planUri, user, cuid)
+        execution <- workflow.startExecution(start.executionId, start.plan, user, cuid)
       } yield execution
       started.left.toOption
     } catch {
@@ -218,14 +217,14 @@ class WorkflowWebsocketResource extends LazyLogging {
     }
 
   /**
-    * Applies the change to an operator that `update` names, which the Dashboard service stored, to
-    * the run of its execution on this socket's workflow
-    * ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyStoredUpdate]]), and
-    * answers `sender` whether it applies.
+    * Applies the change to an operator that `update` carries, which the Dashboard service made to
+    * run, to the run of its execution on this socket's workflow
+    * ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyUpdate]]), and answers
+    * `sender` whether it applies.
     *
     * @return why the change is refused, if its execution has no run here
     */
-  private def applyStoredUpdate(
+  private def applyUpdate(
       sender: SessionState,
       run: Option[WorkflowExecutionService],
       user: Option[User],
@@ -234,8 +233,7 @@ class WorkflowWebsocketResource extends LazyLogging {
     runOf(update, run).flatMap(_.services) match {
       case Some(services) =>
         sender.send(
-          services.reconfiguration
-            .applyStoredUpdate(update.updateId, user.map(_.getUid.intValue()))
+          services.reconfiguration.applyUpdate(update.update, user.map(_.getUid.intValue()))
         )
         None
       case None => Some(notRunningHere(update))

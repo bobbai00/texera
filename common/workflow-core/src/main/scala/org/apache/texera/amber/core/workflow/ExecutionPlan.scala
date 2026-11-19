@@ -64,13 +64,15 @@ final case class CostHints(
   * operator's new executor, and what its new code reads. The rest of the operator, its ports and
   * links included, stays as the running plan has it.
   *
-  * @param updateId         names the change among the execution's changes
-  * @param repositoryMounts the datasets and models the new code reads; None when it reads none
+  * @param repositoryMounts  the datasets and models the new code reads; None when it reads none
+  * @param pythonEnvironment the name of the Python environment the changed operator asks to run
+  *                          in; None for the engine's own. Its workers keep the interpreter they
+  *                          run in, so the engine refuses a change that asks for another.
   */
 final case class OperatorUpdate(
     executionId: ExecutionIdentity,
-    updateId: String,
     opId: PhysicalOpIdentity,
     opExecInitInfo: OpExecInitInfo,
-    repositoryMounts: Option[RepositoryMounts]
+    repositoryMounts: Option[RepositoryMounts],
+    pythonEnvironment: Option[String]
 )

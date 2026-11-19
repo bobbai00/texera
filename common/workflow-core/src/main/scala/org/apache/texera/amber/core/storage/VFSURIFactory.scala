@@ -31,8 +31,6 @@ object VFSResourceType extends Enumeration {
   val RUNTIME_STATISTICS: Value = Value("runtimeStatistics")
   val CONSOLE_MESSAGES: Value = Value("consoleMessages")
   val STATE: Value = Value("state")
-  // An execution's stored plan, the updates to its paused operators and its start claim.
-  val PLAN: Value = Value("plan")
   // An execution's log: the changes of its state.
   val EXECUTION_LOG: Value = Value("executionLog")
 }
@@ -167,6 +165,13 @@ object VFSURIFactory {
         s"/globalportid/${globalPortId.serializeAsString}"
     )
 
+  /**
+    * The VFS URI of `path` (`wid/<wid>/eid/<eid>/…`) in `warehouse`: what a table named after its
+    * URI's path, as [[DocumentFactory]] names tables, was made for.
+    */
+  private[storage] def uriOfPath(path: String, warehouse: Option[String]): URI =
+    new URI(s"$VFS_FILE_URI_SCHEME://${warehousePathSegment(warehouse)}/$path")
+
   def resultURI(baseURI: URI): URI = appendResource(baseURI, VFSResourceType.RESULT)
 
   def stateURI(baseURI: URI): URI = appendResource(baseURI, VFSResourceType.STATE)
@@ -189,17 +194,6 @@ object VFSURIFactory {
       warehouse
     )
   }
-
-  /**
-    * Create a URI pointing to an execution's plan table:
-    * `vfs:///[wh/<warehouse>/]wid/<wid>/eid/<eid>/plan`.
-    */
-  def createPlanURI(
-      workflowId: WorkflowIdentity,
-      executionId: ExecutionIdentity,
-      warehouse: Option[String] = None
-  ): URI =
-    createNonResultVFSURI(VFSResourceType.PLAN, workflowId, executionId, warehouse)
 
   /**
     * Create a URI pointing to an execution's log table:

@@ -109,7 +109,7 @@ const { apiEndpoint: DASHBOARD, executionEndpoint: UNIT } = getBackendConfig();
 const CREATE_URL = `${DASHBOARD}/api/executions`;
 
 // What the Dashboard answers a create with, unless a test says otherwise.
-const CREATED = { eid: 345, planUri: "vfs:///wid/1/eid/345/plan" };
+const CREATED = { eid: 345, plan: '{"executionId":345}' };
 
 function createdResponse(body: unknown = CREATED): Response {
   return new Response(JSON.stringify(body), { status: 201, headers: { "Content-Type": "application/json" } });
@@ -835,11 +835,11 @@ describe("executeOperatorAndFormat - request construction", () => {
 describe("executeOperatorAndFormat - create, then run", () => {
   const completed = () => legacyJsonResponse({ success: true, state: "Completed", operators: {} });
 
-  test("creates the execution at the Dashboard, then runs it on the unit by its id and stored plan", async () => {
+  test("creates the execution at the Dashboard, then runs it on the unit by its id, with the plan the create answered", async () => {
     const state = makeState(makeOperator("dst"));
-    // Not the default answer: the run has to name the execution and the plan this create answered.
-    const planUri = "vfs:///wh/user-1-7/wid/7/eid/12/plan";
-    routeFetch(createdResponse({ eid: 12, planUri }), completed());
+    // Not the default answer: the run has to name the execution and carry the plan this create answered.
+    const plan = '{"executionId":12,"operators":[{"id":"dst","code":"print(\\"café\\")\\n"}]}';
+    routeFetch(createdResponse({ eid: 12, plan }), completed());
     const controller = new AbortController();
 
     await executeOperatorAndFormat(
@@ -877,11 +877,11 @@ describe("executeOperatorAndFormat - create, then run", () => {
       computingUnitId: 3,
       emailNotificationEnabled: false,
     });
-    // The unit gets no plan to compile, only where the stored one is. 4200 rather than a round
-    // 4500: with 4500 the timeout holds for ceil, round *and* floor-plus-one, so it would not
-    // notice the rounding being changed. 4200 separates them.
+    // The unit gets the plan the Dashboard compiled, the text the create answered, and no workflow
+    // to compile. 4200 rather than a round 4500: with 4500 the timeout holds for ceil, round *and*
+    // floor-plus-one, so it would not notice the rounding being changed. 4200 separates them.
     expect(requestBody(1)).toEqual({
-      planUri,
+      plan,
       computingUnitId: 3,
       targetOperatorIds: ["dst"],
       timeoutSeconds: 5,
@@ -940,7 +940,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
     [400, "Bad Request", "A warehouse must be selected for this execution."],
     [403, "Forbidden", "You may not run workflows on computing unit 3."],
     [409, "Conflict", "Computing unit 3 is terminated."],
-    [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be written to the lake."],
+    [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be made."],
     [504, "Gateway Timeout", "Execution 345 could not be created: compiling the workflow took longer than 60 seconds."],
   ])("reports a create refused with %d, and runs nothing", async (status, statusText, message) => {
     const { state, target } = makeLinearState();
@@ -955,7 +955,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
     expect(requestUrls()).toEqual([CREATE_URL]);
   });
 
-  test("reports a create whose answer names no stored plan, and runs nothing", async () => {
+  test("reports a create whose answer holds no plan, and runs nothing", async () => {
     const { state, target } = makeLinearState();
     routeFetch(createdResponse({ eid: 345 }), completed());
 

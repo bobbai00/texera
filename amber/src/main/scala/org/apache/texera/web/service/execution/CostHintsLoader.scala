@@ -59,8 +59,8 @@ object CostHintsLoader {
 
 /**
   * Finds the cost hints of a run: how long each logical operator of the workflow took in the
-  * newest completed run of it by the same user, for the scheduler's cost model. The hints are
-  * stored with the plan ([[CostHints]]).
+  * newest completed run of it by the same user, for the scheduler's cost model. The hints go
+  * with the plan ([[CostHints]]).
   *
   * The costs come from that run's runtime statistics, which are where its row says its tables
   * are: the statistics table of its workflow and execution, in the warehouse it wrote into. An

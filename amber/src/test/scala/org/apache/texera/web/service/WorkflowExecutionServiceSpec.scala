@@ -30,7 +30,6 @@ import org.apache.texera.amber.core.executor.{
   OpExecWithCode,
   OperatorInputs
 }
-import org.apache.texera.amber.core.storage.{ExecutionPlanStore, PlanRecord}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
@@ -116,7 +115,7 @@ import java.net.URI
 import java.nio.file.{Files, Path, Paths}
 import java.time.Instant
 import java.util.concurrent.{CountDownLatch, ExecutorService, Executors, TimeUnit}
-import java.util.{Comparator, UUID}
+import java.util.Comparator
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -127,11 +126,11 @@ import scala.util.Using
   * Regression guard for the consolidated init-error reporting path (#5921):
   * `WorkflowExecutionService` registers its metadata-store diff handler at
   * construction, so a fatalErrors update -- e.g. the one `errorHandler` records
-  * when `startStored` fails -- surfaces as a `WorkflowErrorEvent` through the
+  * when `startPlan` fails -- surfaces as a `WorkflowErrorEvent` through the
   * normal websocket-event observable.
   *
   * The unused `resultService` is passed as `null` on purpose: construction must
-  * stay side-effect-free (all throwing work is in `startStored`), so a future
+  * stay side-effect-free (all throwing work is in `startPlan`), so a future
   * change that dereferences it during construction would fail here.
   *
   * The suite also owns two paths that need more scaffolding than that:
@@ -143,14 +142,13 @@ import scala.util.Using
   *     would leave the four teardown calls unobserved, which is the entire content of
   *     the method.
   *
-  *   - `startStored`, the start of a run from the plan read back from its execution's plan
-  *     table. Its runs are built as a computing unit builds one to start it by id (`StoredRun`),
-  *     on a plan encoded and read back here, for a unit that mounts under `unitMountRoot`. Only
+  *   - `startPlan`, the start of a run from the plan its start carried. Its runs are built as a
+  *     computing unit builds one to start it (`UnitRun`), on a plan encoded and read back
+  *     here, for a unit that mounts under `unitMountRoot`. Only
   *     the engine is stood in for, by the `createAmberRuntime` the service is given, which hands
   *     back a client on this suite's actor system that answers nothing unless a test answers it:
   *     every service is built around the plan, and nothing starts. They read nothing from the
-  *     lake but the changes one case stores in the fixture execution's plan table, in the catalog
-  *     the build's tests use (the Postgres JDBC catalog in CI). What a real engine does with the
+  *     lake. What a real engine does with the
   *     plan is exercised by the integration suites. The runs of plans that name Python
   *     environments install them on a `FakePython`, under a directory of this suite's: no
   *     interpreter and no pip runs. A run's record keeps what it is told and writes nothing, so
@@ -216,8 +214,6 @@ class WorkflowExecutionServiceSpec
 
   override protected def afterAll(): Unit = {
     try {
-      // The plan table one case below writes, in the catalog the build's tests share.
-      ExecutionPlanStore.drop(storedPlanTable)
       installerThreads.shutdownNow()
       Using.resource(Files.walk(environmentsScratch)) { paths =>
         paths.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.deleteIfExists(path))
@@ -327,8 +323,8 @@ class WorkflowExecutionServiceSpec
       )
       .withStorageLocations(None)
 
-  /** The context the Dashboard saves a plan of `storedSource` alone under. */
-  private def storedPlanContext(): WorkflowContext =
+  /** The context the Dashboard writes a plan of `storedSource` alone under. */
+  private def sourcePlanContext(): WorkflowContext =
     new WorkflowContext(
       workflowId = WorkflowIdentity(testWid.longValue()),
       executionId = ExecutionIdentity(testEid.longValue()),
@@ -339,13 +335,13 @@ class WorkflowExecutionServiceSpec
       )
     )
 
-  /** A plan of `storedSource` alone, as the Dashboard saves it. */
-  private def storedSourcePlan(
+  /** A plan of `storedSource` alone, as the Dashboard writes it. */
+  private def sourcePlan(
       replay: Option[ReplaySource] = None,
       replayLog: Option[URI] = None
   ): ExecutionPlan =
     ExecutionPlan(
-      storedPlanContext(),
+      sourcePlanContext(),
       PhysicalPlan(Set(storedSource), Set.empty),
       replay,
       replayLog
@@ -473,10 +469,10 @@ class WorkflowExecutionServiceSpec
     // only flips a flag and posts a PoisonPill, so whether it runs before or after the four
     // unsubscribes changes only a race against the client actor's mailbox -- nothing a
     // deterministic test can observe, and not an order any contract here states.
-    val executionPlan = readBack(storedSourcePlan())
-    val run = new StoredRun(executionPlan)
+    val executionPlan = readBack(sourcePlan())
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       val services = run.service.services.getOrElse(fail("the run was not set up"))
       val events = collectEvents(run.store)
@@ -529,14 +525,14 @@ class WorkflowExecutionServiceSpec
   }
 
   /**
-    * A run built as a computing unit builds one to start it by id: on the context its plan was
-    * read back with, for this unit. Only the engine is an `UnansweredClient`, so nothing starts.
+    * A run built as a computing unit builds one to start it: on the context its plan was read
+    * back with, for this unit. Only the engine is an `UnansweredClient`, so nothing starts.
     *
     * @param installer installs the plan's Python environments; the unit's own when not given,
     *                  which a plan that names no environment asks nothing of
     * @param newEngine makes the engine the run is given
     */
-  private final class StoredRun(
+  private final class UnitRun(
       executionPlan: ExecutionPlan,
       installer: Option[PythonEnvironmentInstaller] = None,
       mountRoot: Option[Path] = Some(unitMountRoot),
@@ -574,34 +570,19 @@ class WorkflowExecutionServiceSpec
     }
   }
 
-  /** `executionPlan`'s plan row, as the Dashboard writes it for `testUid` on `testCuid`. */
-  private def planRowOf(executionPlan: ExecutionPlan): PlanRecord =
-    PlanRecord(
-      entryId = ExecutionPlanStore.PlanEntryId,
-      body = PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(executionPlan)),
-      createdBy = testUid,
-      computingUnitId = testCuid
-    )
-
-  /** `executionPlan` read back from its plan row, as a unit reads it. */
+  /** `executionPlan` saved as text and read back, as a unit reads the plan its start carries. */
   private def readBack(executionPlan: ExecutionPlan): ExecutionPlan =
-    PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planRowOf(executionPlan).body))
-
-  /** The plan table of the fixture execution, in the default warehouse. */
-  private val storedPlanTable =
-    ExecutionPlanStore.planUri(
-      WorkflowIdentity(testWid.longValue()),
-      ExecutionIdentity(testEid.longValue()),
-      None
+    PhysicalPlanCodec.decode(
+      PhysicalPlanCodec.fromJson(PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(executionPlan)))
     )
 
-  "WorkflowExecutionService.startStored" should
+  "WorkflowExecutionService.startPlan" should
     "build the engine and every service around the run on the plan it is handed, and make the run READY" in {
     val executionPlan =
-      readBack(storedSourcePlan(Some(replaySource), Some(replayLogLocation)))
-    val run = new StoredRun(executionPlan)
+      readBack(sourcePlan(Some(replaySource), Some(replayLogLocation)))
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       run.errors shouldBe empty
 
@@ -634,10 +615,10 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "start a run whose plan replays nothing and writes no replay log with neither" in {
-    val executionPlan = readBack(storedSourcePlan())
-    val run = new StoredRun(executionPlan)
+    val executionPlan = readBack(sourcePlan())
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       run.errors shouldBe empty
       val config = run.coordinatorConfig.getOrElse(fail("the engine was not built"))
@@ -659,14 +640,14 @@ class WorkflowExecutionServiceSpec
       opExecInitInfo = udfReading(datasetLocator),
       repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
     )
-    readBack(ExecutionPlan(storedPlanContext(), PhysicalPlan(Set(reading), Set.empty)))
+    readBack(ExecutionPlan(sourcePlanContext(), PhysicalPlan(Set(reading), Set.empty)))
   }
 
   it should "run a plan's code with the directory this unit mounts each dataset at" in {
     val executionPlan = datasetReadingPlan()
-    val run = new StoredRun(executionPlan)
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       run.errors shouldBe empty
       // The engine and the services around the run hold the one plan, which names the mount.
@@ -680,10 +661,10 @@ class WorkflowExecutionServiceSpec
 
   it should "refuse a plan that reads a dataset on a unit that mounts none, through the error handler, before it builds the engine" in {
     val executionPlan = datasetReadingPlan()
-    val run = new StoredRun(executionPlan, mountRoot = None)
+    val run = new UnitRun(executionPlan, mountRoot = None)
     try {
       val failure = run.service
-        .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
+        .startPlan(executionPlan, testUid.intValue())
         .getOrElse(fail("the run started"))
       failure shouldBe an[IllegalStateException]
       failure.getMessage shouldBe s"Operator stored-text reads datasets or models " +
@@ -706,14 +687,14 @@ class WorkflowExecutionServiceSpec
     val reads = OperatorInputs(files = Seq(file("a.csv"), file("b.csv")))
     val executionPlan = readBack(
       ExecutionPlan(
-        storedPlanContext(),
+        sourcePlanContext(),
         PhysicalPlan(Set(storedSource.withInputs(reads)), Set.empty)
       )
     )
     executionPlan.plan.getOperator(storedSource.id).inputs shouldBe reads
-    val run = new StoredRun(executionPlan)
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       run.errors shouldBe empty
       run.engineWorkflow.getOrElse(fail("the engine was handed no workflow")).physicalPlan shouldBe
@@ -723,7 +704,7 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "shut the engine down and keep nothing of a run when a service around it cannot be built" in {
-    val executionPlan = readBack(storedSourcePlan())
+    val executionPlan = readBack(sourcePlan())
     // The console service, the last one built, registers for the operators' console messages.
     val engine = new UnansweredClient {
       override def registerCallback[T](callback: T => Unit)(implicit ct: ClassTag[T]): Disposable =
@@ -731,10 +712,10 @@ class WorkflowExecutionServiceSpec
           throw new IllegalStateException("the engine takes no console")
         } else super.registerCallback(callback)
     }
-    val run = new StoredRun(executionPlan, newEngine = () => engine)
+    val run = new UnitRun(executionPlan, newEngine = () => engine)
     try {
       val failure = run.service
-        .startStored(executionPlan, planRowOf(executionPlan), storedPlanTable)
+        .startPlan(executionPlan, testUid.intValue())
         .getOrElse(fail("the run was set up"))
 
       failure.getMessage shouldBe "the engine takes no console"
@@ -751,14 +732,14 @@ class WorkflowExecutionServiceSpec
   }
 
   it should "keep the state a run ended in when its start is answered after that" in {
-    def started(): StoredRun = {
-      val executionPlan = readBack(storedSourcePlan())
-      val run = new StoredRun(executionPlan)
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+    def started(): UnitRun = {
+      val executionPlan = readBack(sourcePlan())
+      val run = new UnitRun(executionPlan)
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       run
     }
-    def answerStart(run: StoredRun): Unit =
+    def answerStart(run: UnitRun): Unit =
       run.engine
         .getOrElse(fail("no engine"))
         .answers("startWorkflow")
@@ -789,10 +770,10 @@ class WorkflowExecutionServiceSpec
 
   "WorkflowExecutionService.end" should
     "end a run in the state asked, with why, at the time it ends, and shut its engine down" in {
-    val executionPlan = readBack(storedSourcePlan())
-    val run = new StoredRun(executionPlan)
+    val executionPlan = readBack(sourcePlan())
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
 
       val before = System.currentTimeMillis()
@@ -835,34 +816,21 @@ class WorkflowExecutionServiceSpec
     recorder.changes shouldBe Seq(StateChange("FAILED", Seq(error), None))
   }
 
-  it should "give a change the Dashboard stored the directory this unit mounts its dataset at, as it gives the plan" in {
-    val executionPlan = readBack(storedSourcePlan())
-    val record = planRowOf(executionPlan)
-    // The plan table, holding the plan row and the change, in the catalog the build's tests use.
-    ExecutionPlanStore.writePlan(storedPlanTable, record, "{}")
-    val updateId = s"update-${UUID.randomUUID()}"
+  it should "give a change the Dashboard made the directory this unit mounts its dataset at, as it gives the plan" in {
+    val executionPlan = readBack(sourcePlan())
     val changed = storedSource.copy(
       opExecInitInfo = udfReading(datasetLocator),
       repositoryMounts = Some(RepositoryMounts(Set(datasetLocator)))
     )
-    ExecutionPlanStore.appendUpdate(
-      storedPlanTable,
-      PlanRecord(
-        entryId = updateId,
-        body = PhysicalPlanCodec.updateToJson(
-          PhysicalPlanCodec.encodeUpdate(ExecutionIdentity(testEid.longValue()), updateId, changed)
-        ),
-        createdBy = testUid,
-        computingUnitId = testCuid
-      ),
-      "{}"
+    val change = PhysicalPlanCodec.updateToJson(
+      PhysicalPlanCodec.encodeUpdate(ExecutionIdentity(testEid.longValue()), changed)
     )
-    val run = new StoredRun(executionPlan)
+    val run = new UnitRun(executionPlan)
     try {
-      run.service.startStored(executionPlan, record, storedPlanTable) shouldBe None
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe None
 
       run.service.services.get.reconfiguration
-        .applyStoredUpdate(updateId, Some(testUid.intValue()))
+        .applyUpdate(change, Some(testUid.intValue()))
         .isValid shouldBe true
       run.store.reconfigurationStore.getState.unscheduledReconfigurations
         .map(_.opExecInitInfo) shouldBe List(udfReading(datasetDirectory))
@@ -925,13 +893,13 @@ class WorkflowExecutionServiceSpec
   }
 
   /** What the run's console of `operator` was told, in order. */
-  private def consoleOf(run: StoredRun, operator: String): Seq[ConsoleMessage] =
+  private def consoleOf(run: UnitRun, operator: String): Seq[ConsoleMessage] =
     run.store.consoleStore.getState.operatorConsole.get(operator).toSeq.flatMap(_.consoleMessages)
 
-  private def titlesOn(run: StoredRun, operator: String): Seq[String] =
+  private def titlesOn(run: UnitRun, operator: String): Seq[String] =
     consoleOf(run, operator).map(_.title)
 
-  private def startWorkflowAsked(run: StoredRun): Boolean =
+  private def startWorkflowAsked(run: UnitRun): Boolean =
     run.engine.getOrElse(fail("no engine")).answers.contains("startWorkflow")
 
   it should "install its plan's Python environment before its engine starts, off the thread that asks" in {
@@ -939,11 +907,11 @@ class WorkflowExecutionServiceSpec
     val held = python.holdPipInstalls()
     val executionPlan = readBack(environmentPlan("installs"))
     val installer = installerOn(python)
-    val run = new StoredRun(executionPlan, Some(installer))
+    val run = new UnitRun(executionPlan, Some(installer))
     try {
       // The start returns while pip is still at work, on a thread of the installer's: the run is
       // set up and READY, its engine built and not started.
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       // The engine's workers are to find the environment where this installer installs it.
       run.coordinatorConfig.map(_.pythonEnvironmentsRoot) shouldBe Some(installer.root.toString)
@@ -980,9 +948,9 @@ class WorkflowExecutionServiceSpec
     val installer = installerOn(python)
     installer.ensure(ml, _ => ()).get(30, TimeUnit.SECONDS)
     val executionPlan = readBack(environmentPlan("reuses"))
-    val run = new StoredRun(executionPlan, Some(installer))
+    val run = new UnitRun(executionPlan, Some(installer))
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
 
       eventually(startWorkflowAsked(run) shouldBe true)
@@ -1004,10 +972,10 @@ class WorkflowExecutionServiceSpec
     )
     python.pipInstall = _ => ProcessOutcome(Some(1), pipSaid)
     val executionPlan = readBack(environmentPlan("fails"))
-    val run = new StoredRun(executionPlan, Some(installerOn(python)))
+    val run = new UnitRun(executionPlan, Some(installerOn(python)))
     try {
       val before = System.currentTimeMillis()
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       val installing = Seq("Installing Python environment 'ml' (1 package)")
       eventually(run.store.metadataStore.getState.state shouldBe FAILED)
@@ -1057,9 +1025,9 @@ class WorkflowExecutionServiceSpec
     val held = python.holdPipInstalls()
     val installer = installerOn(python)
     val executionPlan = readBack(environmentPlan("killed"))
-    val run = new StoredRun(executionPlan, Some(installer))
+    val run = new UnitRun(executionPlan, Some(installer))
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       held.awaitBegun() shouldBe true
       eventually(titlesOn(run, "killed-first") should have size 1)
@@ -1085,9 +1053,9 @@ class WorkflowExecutionServiceSpec
 
     // The next run of the plan finds the environment installed, and starts.
     val nextPlan = readBack(environmentPlan("after-kill"))
-    val next = new StoredRun(nextPlan, Some(installer))
+    val next = new UnitRun(nextPlan, Some(installer))
     try {
-      next.service.startStored(nextPlan, planRowOf(nextPlan), storedPlanTable) shouldBe None
+      next.service.startPlan(nextPlan, testUid.intValue()) shouldBe None
       eventually(startWorkflowAsked(next) shouldBe true)
       titlesOn(next, "after-kill-first") shouldBe Seq("Python environment 'ml' reused")
       python.pipInstalls should have size 1
@@ -1105,9 +1073,9 @@ class WorkflowExecutionServiceSpec
     }
     val installer = installerOn(python)
     val executionPlan = readBack(environmentPlan("killed-then-failed"))
-    val run = new StoredRun(executionPlan, Some(installer))
+    val run = new UnitRun(executionPlan, Some(installer))
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       begun.await(30, TimeUnit.SECONDS) shouldBe true
       eventually(titlesOn(run, "killed-then-failed-first") should have size 1)
@@ -1129,9 +1097,9 @@ class WorkflowExecutionServiceSpec
     val held = python.holdPipInstalls()
     val installer = installerOn(python)
     val executionPlan = readBack(environmentPlan("superseded"))
-    val run = new StoredRun(executionPlan, Some(installer))
+    val run = new UnitRun(executionPlan, Some(installer))
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       held.awaitBegun() shouldBe true
 
@@ -1152,9 +1120,9 @@ class WorkflowExecutionServiceSpec
     val held = python.holdPipInstalls()
     val installer = installerOn(python)
     val executionPlan = readBack(environmentPlan("failed-meanwhile"))
-    val run = new StoredRun(executionPlan, Some(installer))
+    val run = new UnitRun(executionPlan, Some(installer))
     try {
-      run.service.startStored(executionPlan, planRowOf(executionPlan), storedPlanTable) shouldBe
+      run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       held.awaitBegun() shouldBe true
 
@@ -1177,7 +1145,7 @@ class WorkflowExecutionServiceSpec
     "start the coordinator replaying the plan's replay log, and writing its own where the plan says" in {
     val config = WorkflowExecutionService.coordinatorConfigOf(
       ExecutionPlan(
-        storedPlanContext(),
+        sourcePlanContext(),
         PhysicalPlan(Set(storedSource), Set.empty),
         Some(replaySource),
         Some(replayLogLocation)
@@ -1198,7 +1166,7 @@ class WorkflowExecutionServiceSpec
 
   it should "start the coordinator of a plan that replays nothing and writes no replay log as this unit's" in {
     val config = WorkflowExecutionService.coordinatorConfigOf(
-      ExecutionPlan(storedPlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
+      ExecutionPlan(sourcePlanContext(), PhysicalPlan(Set(storedSource), Set.empty))
     )
 
     config shouldBe CoordinatorConfig.default

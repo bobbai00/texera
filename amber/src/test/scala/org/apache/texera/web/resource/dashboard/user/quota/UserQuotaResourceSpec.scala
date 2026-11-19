@@ -21,9 +21,8 @@ package org.apache.texera.web.resource.dashboard.user.quota
 
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionPlanStore,
+  ExecutionLogStore,
   ExecutionTables,
-  PlanRecord,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
@@ -355,22 +354,12 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     execution
   }
 
-  /** Gives `execution` a plan table and the result table of a port, and returns them. */
+  /** Gives `execution` a log table and the result table of a port, and returns them. */
   private def storeTablesOf(execution: WorkflowExecutions): Seq[URI] = {
     val (wid, eid) =
       (WorkflowIdentity(testWid.toLong), ExecutionIdentity(execution.getEid.longValue()))
-    val planUri = ExecutionPlanStore.planUri(wid, eid, None)
-    ExecutionPlanStore.writePlan(
-      planUri,
-      PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        body = "{}",
-        createdBy = testUid,
-        computingUnitId = 1
-      ),
-      "{}"
-    )
-    ExecutionPlanStore.claimStart(planUri)
+    val logUri = ExecutionLogStore.logUri(wid, eid, None)
+    ExecutionLogStore.create(logUri, System.currentTimeMillis(), 30000L)
     val result = VFSURIFactory.resultURI(
       VFSURIFactory.createPortBaseURI(
         wid,
@@ -379,7 +368,7 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
       )
     )
     DocumentFactory.createDocument(result, Schema().add("line", AttributeType.STRING))
-    Seq(planUri, result)
+    Seq(logUri, result)
   }
 
   "deleteExecutionCollection" should "delete the execution row from WORKFLOW_EXECUTIONS" in {

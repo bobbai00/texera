@@ -21,13 +21,7 @@ package org.apache.texera.web.service.execution
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{
-  ExecutionPlanStore,
-  InputLinker,
-  LakeFSInputLinker,
-  PlanRecord,
-  PlanTooLargeException
-}
+import org.apache.texera.amber.core.storage.{InputLinker, LakeFSInputLinker}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{
   CostHints,
@@ -62,6 +56,7 @@ import org.apache.texera.web.service.execution.WorkflowCompilingService.{
 import org.apache.texera.web.service.{ExecutionsMetadataPersistService, WorkflowEmailNotifier}
 
 import java.net.URI
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{
   BlockingQueue,
@@ -149,8 +144,8 @@ final class WorkflowNotCompiled(
 
 /**
   * Creates executions: what `POST /api/executions` on the Dashboard service does. No computing
-  * unit is involved: the unit the execution is created for later starts it from the plan written
-  * here.
+  * unit is involved: the create answers the execution's plan, and the client hands it to the unit
+  * the execution is created for, which starts it. Nothing of the plan is kept here.
   *
   * In this order, which decides what a refused request leaves behind:
   *  1. The request is checked: a workflow, a computing unit, an engine version, settings a plan
@@ -179,10 +174,9 @@ final class WorkflowNotCompiled(
   *     the user's newest completed run of the workflow; and the replay log it replays and the
   *     one it writes. A plan that cannot be made for another reason, such as the storage not
   *     answering while the cost hints are read, closes the row as failed too (500).
-  *  1. The plan is written to the execution's plan table, with the logical plan it was compiled
-  *     from (as JSON that parses back to it, as the compiling service answered it), the user and
-  *     the unit. A plan larger than the table keeps closes the row as failed, "its plan could
-  *     not be stored" (400); so does a write that fails (500).
+  *  1. A plan larger than a computing unit takes ([[PhysicalPlanCodec.MaxPlanBytes]]) closes the
+  *     row as failed, "its plan is too large" (400). Otherwise the plan is answered (201), with
+  *     the execution's id.
   *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
   *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
   *     is replaced like any other. Then the results of its closed executions on the unit that a
@@ -195,8 +189,6 @@ final class WorkflowNotCompiled(
   * ended. No email is sent about it: the user is looking at the failure.
   *
   * @param replayLogRoot where runs keep their replay logs; None when they keep none
-  * @param writePlan     writes the plan row, and the logical plan it was compiled from, to the
-  *                      plan table at a URI
   * @param background    runs what a create leaves to be done after it has answered
   */
 class ExecutionCreator(
@@ -205,7 +197,6 @@ class ExecutionCreator(
     replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
     costHints: CostHintsLoader = new CostHintsLoader(),
-    writePlan: (URI, PlanRecord, String) => Unit = ExecutionPlanStore.writePlan,
     background: Executor = ExecutionCreator.daemonThreads(
       "execution-replacing",
       threads = 1,
@@ -216,6 +207,7 @@ class ExecutionCreator(
     expiry: ExecutionExpiry = ExecutionExpiry.forDeployment
 ) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, MaxColumnLength}
+  import PhysicalPlanCodec.MaxPlanBytes
 
   /**
     * Creates the execution `request` asks for, for `user`, in the steps this class describes.
@@ -271,7 +263,7 @@ class ExecutionCreator(
     )
     // From here the row exists: whatever fails closes it as failed, with why, so it does not
     // stay open although no unit can ever start it.
-    val (planUri, record, logical) = closingOnFailure(eid, planNotMade) {
+    val plan = closingOnFailure(eid, planNotMade) {
       val hints = costHints.load(checked.wid, uid)
       val made = compiling.planToRun(
         PlanRequest(
@@ -285,42 +277,34 @@ class ExecutionCreator(
         authorization,
         compileDeadline
       )
-      val storedPlan = planToStore(made.plan, wid, eid, warehouse, hints, replay, replayLog)
-      // The plan compiled, as the request sent it, loop-variable references included.
-      val logical = made.logicalPlan
-      val record = PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        body = storedPlan,
-        createdBy = uid.intValue(),
-        computingUnitId = checked.computingUnitId
-      )
-      (ExecutionPlanStore.planUri(wid, eid, warehouse), record, logical)
+      linkedPlan(made, wid, eid, warehouse, hints, replay, replayLog)
     }
-    closingOnFailure(eid, _ => ExecutionClosing.PlanNotStored) {
-      try writePlan(planUri, record, logical)
-      catch {
-        // The workflow's doing, not the lake's.
-        case tooLarge: PlanTooLargeException =>
-          throw new BadRequestException(
-            s"Execution ${eid.id} could not be created. ${tooLarge.getMessage} A plan holds a " +
-              "link to each file its operators read, so a workflow that lists fewer files " +
-              "makes a smaller plan.",
-            tooLarge
-          )
-        case NonFatal(failure) =>
-          throw new InternalServerErrorException(
-            s"Execution ${eid.id} could not be created: its plan could not be written to " +
-              "the lake.",
-            failure
-          )
-      }
-    }
+    closingOnFailure(eid, _ => ExecutionClosing.PlanTooLarge)(requireFits(eid, plan))
     background.execute(() => {
       closeEndedBefore(eid, wid, checked.computingUnitId)
       expiry.expireReplaced(wid.id, checked.computingUnitId, eid.id)
     })
-    CreateExecutionResponse(eid.id, planUri.toString)
+    CreateExecutionResponse(eid.id, plan)
   }
+
+  /**
+    * Refuses (400) the plan of execution `eid` when it is larger than a computing unit takes
+    * ([[MaxPlanBytes]]): the workflow's doing, as the files it lists make the plan.
+    */
+  private def requireFits(eid: ExecutionIdentity, plan: String): Unit =
+    PhysicalPlanCodec.oversizeMiB(plan).foreach { mib =>
+      throw new BadRequestException(
+        String.format(
+          Locale.ROOT,
+          "Execution %d could not be created. Its plan is %.1f MiB, and a plan may be at most " +
+            "%d MiB. A plan holds a link to each file its operators read, so a workflow that " +
+            "lists fewer files makes a smaller plan.",
+          Long.box(eid.id),
+          Double.box(mib),
+          Int.box(MaxPlanBytes / (1024 * 1024))
+        )
+      )
+    }
 
   /**
     * Closes each execution of workflow `wid` on computing unit `cuid` made before `eid` that is
@@ -379,7 +363,7 @@ class ExecutionCreator(
             Some(reason(failure)),
             System.currentTimeMillis(),
             fromLog = false,
-            neverStarted = true
+            unstartable = true
           )
         } catch {
           case NonFatal(unclosed) =>
@@ -389,11 +373,11 @@ class ExecutionCreator(
     }
 
   /**
-    * The plan the compiling service made for execution `eid` of workflow `wid`, `made`, as it
-    * is stored: each file its operators read linked, at the address the plan gives it, and the
-    * run's cost hints, the replay log it replays and the one it writes added.
+    * The plan the compiling service made for execution `eid` of workflow `wid`, `made`, as the
+    * computing unit runs it: each file its operators read linked, at the address the plan gives
+    * it, and the run's cost hints, the replay log it replays and the one it writes added.
     */
-  private def planToStore(
+  private def linkedPlan(
       made: String,
       wid: WorkflowIdentity,
       eid: ExecutionIdentity,

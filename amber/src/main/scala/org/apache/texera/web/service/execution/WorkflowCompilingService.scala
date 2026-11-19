@@ -56,44 +56,17 @@ object WorkflowCompilingService {
   )
 
   /**
-    * The plan of a run, as the compiling service made it.
-    *
-    * @param plan        the plan, as the text `PhysicalPlanCodec` writes, before its files are
-    *                    linked: each file names where it is kept. It holds the credentials an
-    *                    operator is set up with: keep it out of logs.
-    * @param logicalPlan the workflow the plan was compiled from, as JSON text
-    */
-  final case class MadePlan(plan: String, logicalPlan: String)
-
-  /**
-    * A physical operator the execution's plan runs for the operator that changes, as
-    * [[org.apache.texera.common.compiler.UpdateToRun.RunningOperator]] has it.
-    */
-  final case class RunningOperator(layerName: String, pythonEnvironment: Option[String])
-
-  /**
     * A change to a paused operator, as the compiling service is asked to make it to run: what
     * [[org.apache.texera.common.compiler.UpdateToRun.make]] takes.
     *
-    * @param updateId    the id the change is stored under
-    * @param logicalPlan the workflow the execution's plan was compiled from
+    * @param logicalPlan the workflow the execution ran, as the editor held it before the change
     */
   final case class UpdateRequest(
       workflowId: Long,
       executionId: Long,
-      updateId: String,
       logicalPlan: JsonNode,
-      operator: JsonNode,
-      running: Seq[RunningOperator]
+      operator: JsonNode
   )
-
-  /**
-    * A change made to run, as the compiling service made it.
-    *
-    * @param update   the operator made to run, as the text `PhysicalPlanCodec` writes an update
-    * @param operator the change as it was sent, as JSON text
-    */
-  final case class MadeUpdate(update: String, operator: String)
 
   /**
     * The compiling service refused the request: it answered `status`, with why.
@@ -143,17 +116,20 @@ trait WorkflowCompilingService {
 
   /**
     * @param authorization the `Authorization` header of the user the plan is made for
+    * @return the plan, as the text `PhysicalPlanCodec` writes, before its files are linked: each
+    *         file names where it is kept. It holds the credentials an operator is set up with:
+    *         keep it out of logs.
     * @throws CompileRefused    if the service refuses
     * @throws CompileUnanswered if it cannot be reached, or does not answer by the deadline
     */
-  def planToRun(request: PlanRequest, authorization: String, deadline: FiniteDuration): MadePlan
+  def planToRun(request: PlanRequest, authorization: String, deadline: FiniteDuration): String
 
-  /** As [[planToRun]], for a change to a paused operator. */
-  def updateToRun(
-      request: UpdateRequest,
-      authorization: String,
-      deadline: FiniteDuration
-  ): MadeUpdate
+  /**
+    * As [[planToRun]], for a change to a paused operator.
+    *
+    * @return the operator made to run, as the text `PhysicalPlanCodec` writes an update in
+    */
+  def updateToRun(request: UpdateRequest, authorization: String, deadline: FiniteDuration): String
 }
 
 /**
@@ -178,7 +154,7 @@ class WorkflowCompilingServiceClient(
       request: PlanRequest,
       authorization: String,
       deadline: FiniteDuration
-  ): MadePlan = {
+  ): String = {
     val body = mapper.createObjectNode()
     body.put("workflowId", request.workflowId)
     body.put("executionId", request.executionId)
@@ -189,28 +165,20 @@ class WorkflowCompilingServiceClient(
       .put("executionMode", request.settings.executionMode.name())
     body.set[JsonNode]("logicalPlan", request.logicalPlan)
     request.targetOperatorId.foreach(body.put("targetOperatorId", _))
-    val answer = post("/api/compile/run", body, authorization, deadline)
-    MadePlan(textOf(answer, "plan"), textOf(answer, "logicalPlan"))
+    textOf(post("/api/compile/run", body, authorization, deadline), "plan")
   }
 
   override def updateToRun(
       request: UpdateRequest,
       authorization: String,
       deadline: FiniteDuration
-  ): MadeUpdate = {
+  ): String = {
     val body = mapper.createObjectNode()
     body.put("workflowId", request.workflowId)
     body.put("executionId", request.executionId)
-    body.put("updateId", request.updateId)
     body.set[JsonNode]("logicalPlan", request.logicalPlan)
     body.set[JsonNode]("operator", request.operator)
-    val running = body.putArray("running")
-    request.running.foreach { op =>
-      val layer = running.addObject().put("layerName", op.layerName)
-      op.pythonEnvironment.foreach(layer.put("pythonEnvironment", _))
-    }
-    val answer = post("/api/compile/update", body, authorization, deadline)
-    MadeUpdate(textOf(answer, "update"), textOf(answer, "operator"))
+    textOf(post("/api/compile/update", body, authorization, deadline), "update")
   }
 
   /**

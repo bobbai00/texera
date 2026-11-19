@@ -30,17 +30,10 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
-  ExecutionPlanStore,
   ExecutionTables,
-  PlanRecord,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
   VFSURIFactory
-}
-import org.apache.texera.amber.core.storedplan.{
-  StoredOutputPort,
-  StoredPhysicalOp,
-  StoredPhysicalPlan
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -49,7 +42,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlanCodec, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.dao.jooq.generated.Tables.{
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
@@ -118,7 +111,6 @@ class ExecutionExpirySpec
   private val expiredAtMs = endedAtMs + 3600000L
 
   private val storedPort = port("scan", 0)
-  private val unstoredPort = port("search", 0)
 
   private val completed = WorkflowExecutionStatus.Completed
   private val failed = WorkflowExecutionStatus.Failed
@@ -289,29 +281,6 @@ class ExecutionExpirySpec
     uri
   }
 
-  /** Stores the plan of `execution`, which names where each of `ports` is stored. */
-  private def withPlan(
-      execution: ExecutionRecord,
-      ports: Seq[GlobalPortIdentity] = Seq(storedPort, unstoredPort)
-  ): ExecutionRecord = {
-    val body = PhysicalPlanCodec.toJson(
-      StoredPhysicalPlan(
-        formatVersion = PhysicalPlanCodec.FormatVersion,
-        operators = ports.map(port =>
-          StoredPhysicalOp(outputPorts =
-            Seq(StoredOutputPort(storageLocation = portBase(execution, port).toString))
-          )
-        )
-      )
-    )
-    ExecutionPlanStore.writePlan(
-      execution.planUri,
-      PlanRecord(ExecutionPlanStore.PlanEntryId, body, testUid, execution.cuid.get),
-      """{"operators":[],"links":[],"opsToViewResult":[],"opsToReuseResult":[]}"""
-    )
-    execution
-  }
-
   /** Makes the log of `execution` and records `states` in it, a second apart. */
   private def withLog(execution: ExecutionRecord, states: String*): ExecutionRecord = {
     ExecutionLogStore.create(execution.logUri, execution.startingTimeMs + 1000L, 30000L)
@@ -328,11 +297,10 @@ class ExecutionExpirySpec
   }
 
   /**
-    * Gives `execution` what a run leaves: its plan, its log, its statistics, its console, and
-    * the result and the state of the one port the run stored.
+    * Gives `execution` what a run leaves: its log, its statistics, its console, and the result
+    * and the state of the one port the run stored.
     */
   private def ran(execution: ExecutionRecord): ExecutionRecord = {
-    withPlan(execution)
     withLog(execution, "READY", "RUNNING", "COMPLETED")
     RuntimeStatisticsStore.create(statisticsOf(execution))
     RuntimeStatisticsStore.append(
@@ -350,13 +318,13 @@ class ExecutionExpirySpec
   }
 
   /**
-    * Gives `execution` what one made before plans and logs were stored left: the result and the
-    * state of a port, a console table for each of two operators, and a statistics table of
-    * another shape under the name statistics have.
+    * Gives `execution` what one made before executions kept a log left: the result and the state
+    * of a port, a console table for each of two operators, and a statistics table of another
+    * shape under the name statistics have.
     *
     * @return its tables
     */
-  private def ranBeforePlans(execution: ExecutionRecord): Seq[URI] =
+  private def ranBeforeLogs(execution: ExecutionRecord): Seq[URI] =
     Seq(
       resultOf(execution),
       stateOf(execution),
@@ -371,7 +339,7 @@ class ExecutionExpirySpec
     Seq(resultOf(execution), stateOf(execution), consoleOf(execution))
 
   private def keptBy(execution: ExecutionRecord): Seq[URI] =
-    Seq(execution.planUri, execution.logUri, statisticsOf(execution))
+    Seq(execution.logUri, statisticsOf(execution))
 
   private def bytesOf(uris: Seq[URI]): Long = uris.map(ExecutionTables.storedBytes).sum
 
@@ -442,7 +410,7 @@ class ExecutionExpirySpec
 
   // --- expire ---
 
-  "ExecutionExpiry.expire" should "drop what the run produced, keep its plan, log and statistics, and mark the row" in {
+  "ExecutionExpiry.expire" should "drop what the run produced, keep its log and statistics, and mark the row" in {
     val fixture = new Fixture()
     val execution = ran(made())
     ExecutionRecords.setStoredBytes(execution.eid, ExecutionCloser.storedBytesOf(execution))
@@ -457,7 +425,6 @@ class ExecutionExpirySpec
     // What is kept can still be read.
     ExecutionLogStore.label(execution.logUri).flatMap(_.state) shouldBe Some("COMPLETED")
     RuntimeStatisticsStore.read(statisticsOf(execution)) should have size 1
-    ExecutionPlanStore.readPlan(execution.planUri).createdBy shouldBe testUid
 
     val after = row(execution)
     after.getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
@@ -469,7 +436,7 @@ class ExecutionExpirySpec
       (
         Level.INFO,
         s"The results of execution ${execution.eid} of workflow $testWid are expired; its " +
-          s"plan, log and statistics hold ${after.getStoredBytes} bytes."
+          s"log and statistics hold ${after.getStoredBytes} bytes."
       )
     )
   }
@@ -516,33 +483,28 @@ class ExecutionExpirySpec
     fixture.binariesDeleted shouldBe Nil
   }
 
-  it should "drop a table of a port the plan names that the run stored, and pass over one it did not" in {
+  it should "drop the result and the state table of every port the run stored, found by their names" in {
     val fixture = new Fixture()
     val execution = ran(made())
-    has(resultOf(execution, unstoredPort)) shouldBe false
-    // A second stored port, and a table of the execution's that its plan does not name.
     val second = port("join", 1)
-    withPlan(execution, Seq(storedPort, unstoredPort, second))
-    val (secondResult, secondState) =
-      (tableOfLines(resultOf(execution, second)), tableOfLines(stateOf(execution, second)))
-    val unnamed = tableOfLines(resultOf(execution, port("left-behind", 0)))
+    val secondTables =
+      Seq(resultOf(execution, second), stateOf(execution, second)).map(tableOfLines(_))
 
     fixture.expiry.expire(execution.eid) shouldBe true
 
-    (producedBy(execution) ++ Seq(secondResult, secondState)).foreach { uri =>
+    (producedBy(execution) ++ secondTables).foreach { uri =>
       withClue(s"$uri: ") { has(uri) shouldBe false }
     }
-    // Found by the plan, not by a search: what the plan does not name is left for a delete.
-    has(unnamed) shouldBe true
+    keptBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe true })
   }
 
-  it should "find the tables of an execution with no plan by their names, and leave those of an execution whose id starts with its id" in {
+  it should "drop what an execution made before executions kept a log left, and leave the tables of an execution whose id starts with its id" in {
     val fixture = new Fixture()
     // Two executions whose table names start alike, up to the end of the first one's id.
     val short = made()
     val long = made(eid = short.eid.toInt * 10 + 4)
-    val shortTables = ranBeforePlans(short)
-    val longTables = ranBeforePlans(long)
+    val shortTables = ranBeforeLogs(short)
+    val longTables = ranBeforeLogs(long)
 
     fixture.expiry.expire(short.eid) shouldBe true
 
@@ -554,28 +516,6 @@ class ExecutionExpirySpec
     after.getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
     after.getStoredBytes.longValue() shouldBe ExecutionTables.storedBytes(statisticsOf(short))
     row(long).getResultsExpiredAt shouldBe null
-  }
-
-  it should "find the tables by their names when the stored plan does not tell where the ports are, and say so" in {
-    val fixture = new Fixture()
-    val execution = ran(made())
-    ExecutionPlanStore.drop(execution.planUri)
-    ExecutionPlanStore.writePlan(
-      execution.planUri,
-      PlanRecord(ExecutionPlanStore.PlanEntryId, """{"formatVersion":2}""", testUid, 1),
-      "{}"
-    )
-
-    val lines = logged { fixture.expiry.expire(execution.eid) shouldBe true }
-
-    producedBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe false })
-    keptBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe true })
-    val warnings = lines.collect { case (Level.WARN, line) => line }
-    warnings should have size 1
-    warnings.head should startWith(
-      s"The stored plan of execution ${execution.eid} does not tell where its ports are " +
-        "stored, so its tables are found by their names: "
-    )
   }
 
   it should "expire an execution that left nothing: no table, and no bytes" in {
@@ -591,7 +531,7 @@ class ExecutionExpirySpec
   it should "leave the tables of an execution in a per-user warehouse alone while those are disabled, and not mark it" in {
     // Under any catalog but the REST one, a warehouse's URI names the same table as the default's.
     val execution = ran(made(warehouse = Some(whid)))
-    execution.planUri.toString should include(s"/wh/$warehouseName/")
+    execution.logUri.toString should include(s"/wh/$warehouseName/")
     val disabled = new Fixture(warehousesEnabled = false)
 
     val lines = logged { disabled.expiry.expire(execution.eid) shouldBe false }
@@ -755,7 +695,7 @@ class ExecutionExpirySpec
     row(young).getLogLocation shouldBe youngFolder.toUri.toString
     lines.map(_._2) shouldBe Seq(old, onTime).map { expired =>
       s"The results of execution ${expired.eid} of workflow $testWid are expired by age; its " +
-        s"plan, log and statistics hold ${row(expired).getStoredBytes} bytes."
+        s"log and statistics hold ${row(expired).getStoredBytes} bytes."
     }
 
     // Once more there is nothing left that old.
@@ -789,28 +729,48 @@ class ExecutionExpirySpec
     row(stuck).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
   }
 
-  it should "never look for the tables of an execution that no unit ever started" in {
+  it should "never look for the tables of an execution whose create failed" in {
     val fixture = new Fixture()
     val longAgoMs = daysBefore(30)
-    val neverStarted = made(outcome = None)
+    val unstartable = made(outcome = None)
     ExecutionRecords.close(
-      neverStarted.eid,
+      unstartable.eid,
       failed,
-      Some(ExecutionClosing.NeverStarted),
+      Some(ExecutionClosing.PlanNotMade),
       longAgoMs,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     ) shouldBe true
     // A table at a name of its, which the expiry would drop if it looked.
     val console =
-      ConsoleMessageStore.consoleUri(neverStarted.workflowId, neverStarted.executionId, None)
+      ConsoleMessageStore.consoleUri(unstartable.workflowId, unstartable.executionId, None)
     ConsoleMessageStore.create(console)
 
     fixture.expiry.expirePast(endedBy(longAgoMs)) shouldBe 0
 
     has(console) shouldBe true
-    row(neverStarted).getResultsExpiredAt shouldBe new Timestamp(longAgoMs)
+    row(unstartable).getResultsExpiredAt shouldBe new Timestamp(longAgoMs)
     fixture.binariesDeleted shouldBe Nil
+  }
+
+  it should "expire one closed as never started like any verdict, dropping what a late start made" in {
+    val fixture = new Fixture()
+    val byMs = daysBefore(35)
+    // A unit started it after it was closed as never started.
+    val late = ran(made(outcome = None, endedAt = byMs))
+    ExecutionRecords.close(
+      late.eid,
+      failed,
+      Some(ExecutionClosing.NeverStarted),
+      byMs,
+      fromLog = false
+    ) shouldBe true
+    row(late).getResultsExpiredAt shouldBe null
+
+    fixture.expiry.expirePast(endedBy(byMs)) shouldBe 1
+
+    producedBy(late).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe false })
+    row(late).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
   }
 
   it should "pass over an execution in a per-user warehouse while those are disabled" in {
@@ -891,9 +851,9 @@ class ExecutionExpirySpec
     val elsewhere = ran(made(cuid = otherUnit))
     val otherWorkflows = ran(made(cuid = unit, wid = otherWid))
     // What the unit runs now: started, and not ended.
-    val running = withLog(withPlan(made(outcome = None, cuid = unit)), "READY", "RUNNING")
+    val running = withLog(made(outcome = None, cuid = unit), "READY", "RUNNING")
     // Made since, and started by no unit.
-    val created = withPlan(made(outcome = None, cuid = unit))
+    val created = made(outcome = None, cuid = unit)
     fixture.binaries.clear()
 
     val lines = logged {
@@ -921,8 +881,8 @@ class ExecutionExpirySpec
     row(expired).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
     lines.map(_._2) shouldBe Seq(first, second, third).map { replaced =>
       s"The results of execution ${replaced.eid} of workflow $testWid are expired, which " +
-        s"execution ${running.eid} replaced on computing unit $unit; its plan, log and " +
-        s"statistics hold ${row(replaced).getStoredBytes} bytes."
+        s"execution ${running.eid} replaced on computing unit $unit; its log and statistics " +
+        s"hold ${row(replaced).getStoredBytes} bytes."
     }
   }
 
@@ -931,7 +891,7 @@ class ExecutionExpirySpec
     val unit = freshUnit()
     val shown = ran(made(cuid = unit))
     // Created and not started, failed at its create, and started with no state written yet.
-    val abandoned = withPlan(made(outcome = None, cuid = unit))
+    val abandoned = made(outcome = None, cuid = unit)
     val notCompiled = made(outcome = None, cuid = unit)
     ExecutionRecords.close(
       notCompiled.eid,
@@ -939,11 +899,9 @@ class ExecutionExpirySpec
       Some("compile error: boom"),
       endedAtMs,
       fromLog = false,
-      neverStarted = true
+      unstartable = true
     ) shouldBe true
-    val next = withPlan(made(outcome = None, cuid = unit))
-    ExecutionPlanStore.claimStart(next.planUri)
-    withLog(next)
+    val next = withLog(made(outcome = None, cuid = unit))
 
     fixture.expiry.expireReplaced(testWid, unit, next.eid) shouldBe true
 
@@ -971,7 +929,7 @@ class ExecutionExpirySpec
     val first = ran(made(cuid = unit))
     // Ended in its log, and closed by it: what the unit ran last.
     val last = ran(made(cuid = unit))
-    val created = withPlan(made(outcome = None, cuid = unit))
+    val created = made(outcome = None, cuid = unit)
 
     fixture.expiry.expireReplaced(testWid, unit, created.eid) shouldBe true
 
@@ -987,13 +945,10 @@ class ExecutionExpirySpec
     val unit = freshUnit()
     val first = ran(made(cuid = unit))
     // Its unit was lost under its run: closed by a verdict, with a log that names a state.
-    val lost = withLog(
-      withPlan(made(outcome = Some(failed), cuid = unit, fromLog = false)),
-      "READY",
-      "RUNNING"
-    )
+    val lost =
+      withLog(made(outcome = Some(failed), cuid = unit, fromLog = false), "READY", "RUNNING")
     // Closed by a verdict with no log: its unit was terminated before it started it.
-    val unstarted = withPlan(made(outcome = Some(failed), cuid = unit, fromLog = false))
+    val unstarted = made(outcome = Some(failed), cuid = unit, fromLog = false)
 
     fixture.expiry.expireReplaced(testWid, unit, unstarted.eid) shouldBe true
 
@@ -1005,7 +960,7 @@ class ExecutionExpirySpec
   it should "replace nothing when no earlier execution holds results, reading no log" in {
     val fixture = new Fixture()
     val unit = freshUnit()
-    val running = withLog(withPlan(made(outcome = None, cuid = unit)), "READY", "RUNNING")
+    val running = withLog(made(outcome = None, cuid = unit), "READY", "RUNNING")
 
     fixture.expiry.expireReplaced(testWid, unit, running.eid) shouldBe true
 
@@ -1017,7 +972,7 @@ class ExecutionExpirySpec
     val fixture = new Fixture(label = _ => throw outage)
     val unit = freshUnit()
     val first = ran(made(cuid = unit))
-    val running = withLog(withPlan(made(outcome = None, cuid = unit)), "READY", "RUNNING")
+    val running = withLog(made(outcome = None, cuid = unit), "READY", "RUNNING")
 
     val lines = logged {
       fixture.expiry.expireReplaced(testWid, unit, running.eid) shouldBe false
@@ -1053,7 +1008,7 @@ class ExecutionExpirySpec
     val unit = freshUnit()
     val stuck = ran(made(cuid = unit))
     val replaced = ran(made(cuid = unit))
-    val running = withLog(withPlan(made(outcome = None, cuid = unit)), "READY", "RUNNING")
+    val running = withLog(made(outcome = None, cuid = unit), "READY", "RUNNING")
     val failing = new Fixture(beforeBinaries = eid => if (eid == stuck.eid) throw outage)
 
     val lines = logged {
@@ -1077,7 +1032,7 @@ class ExecutionExpirySpec
     val folder = replayLog()
     val execution = ran(made(replayLog = Some(folder.toUri.toString)))
     val other = ran(made())
-    // A table of the execution's that its plan does not name.
+    // A table of a port of the execution's that only its name ties to it.
     val unnamed = tableOfLines(resultOf(execution, port("left-behind", 0)))
     val before = row(execution)
 
@@ -1099,15 +1054,15 @@ class ExecutionExpirySpec
     logLines shouldBe Seq(
       (
         Level.INFO,
-        s"Dropped what execution ${execution.eid} of workflow $testWid kept: 7 tables."
+        s"Dropped what execution ${execution.eid} of workflow $testWid kept: 6 tables."
       )
     )
   }
 
-  it should "drop what an execution made before plans and logs were stored left, statistics included" in {
+  it should "drop what an execution made before executions kept a log left, statistics included" in {
     val fixture = new Fixture()
     val execution = made()
-    val tables = ranBeforePlans(execution)
+    val tables = ranBeforeLogs(execution)
 
     fixture.expiry.dropAll(execution.eid)
 

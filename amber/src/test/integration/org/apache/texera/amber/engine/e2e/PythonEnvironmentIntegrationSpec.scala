@@ -23,12 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import org.apache.pekko.actor.{ActorSystem, Props}
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.SingleNodeListener
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionPlanStore,
-  PlanRecord,
-  VFSURIFactory
-}
+import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Tuple}
 import org.apache.texera.amber.core.workflow.{
   GlobalPortIdentity,
@@ -215,7 +210,7 @@ class PythonEnvironmentIntegrationSpec
     /** The UDF, as the run's errors and consoles name it. */
     val udfId: String = udf.operatorIdentifier.id
 
-    private val storedPlan = TestUtils.storedPlan(
+    private val planText = TestUtils.planText(
       workflowContext(specId),
       LogicalPlanPojo(
         List(text, udf),
@@ -236,7 +231,7 @@ class PythonEnvironmentIntegrationSpec
           else throw PythonEnvironmentNotResolved.noSuchEnvironment(name)
       )
     )
-    private val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(storedPlan))
+    private val executionPlan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(planText))
     private val context = executionPlan.context
     written ++= executionPlan.plan.operators.flatMap(op =>
       op.outputPorts.keys.flatMap { port =>
@@ -285,14 +280,7 @@ class PythonEnvironmentIntegrationSpec
 
     /** Starts the run, and answers what it ended as. */
     def end(): ExecutionMetadataStore = {
-      val planRow = PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        body = storedPlan,
-        createdBy = specId,
-        computingUnitId = specId
-      )
-      val planUri = ExecutionPlanStore.planUri(context.workflowId, context.executionId, None)
-      service.startStored(executionPlan, planRow, planUri) shouldBe None
+      service.startPlan(executionPlan, startedBy = specId) shouldBe None
       eventually(patience, interval(Span(200, Millis))) {
         Set(COMPLETED, FAILED, KILLED, TERMINATED) should contain(
           store.metadataStore.getState.state

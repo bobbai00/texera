@@ -23,7 +23,8 @@ package org.apache.texera.amber.core.workflow
   * How an operator's output is partitioned, given how its inputs are partitioned.
   *
   * The scheduler applies the rule while it plans a region, once it knows the partitioning of
-  * every input port. The rule is plain data rather than a function, so a stored plan can carry it.
+  * every input port. The rule is plain data rather than a function, so a plan saved as text can
+  * carry it.
   */
 sealed trait PartitionRule extends Product with Serializable {
 

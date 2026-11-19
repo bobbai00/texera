@@ -474,7 +474,7 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
   it should "refuse a URI that is not an execution's log URI, touching no table" in {
     val executionId = ExecutionIdentity(1)
     val otherTables = Seq(
-      ExecutionPlanStore.planUri(workflowId, executionId, None),
+      VFSURIFactory.createConsoleMessagesURI(workflowId, executionId),
       VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId),
       // Segments the store did not write would address another table in the log namespace.
       new URI("vfs:///wid/12/eid/1/opid/op/executionlog"),

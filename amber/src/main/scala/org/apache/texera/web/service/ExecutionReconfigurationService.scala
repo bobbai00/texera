@@ -20,13 +20,7 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.storage.{
-  ExecutionPlanStore,
-  NoStoredPlanException,
-  NoSuchUpdateException,
-  PlanRecord,
-  RepositoryMountManager
-}
+import org.apache.texera.amber.core.storage.RepositoryMountManager
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, PhysicalOpIdentity}
 import org.apache.texera.amber.core.workflow.{OperatorUpdate, PhysicalOp, PhysicalPlanCodec}
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
@@ -41,21 +35,16 @@ import org.apache.texera.web.model.websocket.response.{
   ModifyLogicCompletedEvent,
   ModifyLogicResponse
 }
-import org.apache.texera.web.service.execution.StoredExecutionStart
 import org.apache.texera.web.storage.{ExecutionReconfigurationStore, ExecutionStateStore}
 
-import java.net.URI
 import java.nio.file.Path
 import java.util.UUID
-import scala.util.control.NonFatal
 
 /**
-  * Changes to the operators of a paused run ([[OperatorUpdate]]): those the Dashboard service
-  * stored in the execution's plan table ([[applyStoredUpdate]]).
+  * Changes to the operators of a paused run ([[OperatorUpdate]]), as the Dashboard service made
+  * them to run ([[applyUpdate]]).
   *
-  * @param planUri   the plan table of the execution the run runs
-  * @param creator   the user who created the execution: only the changes they stored apply, when
-  *                  they ask for them
+  * @param startedBy the user who started the execution: only the changes they ask for apply
   * @param mountRoot the directory this computing unit mounts datasets and models under; None on
   *                  a unit that mounts none
   */
@@ -63,10 +52,8 @@ class ExecutionReconfigurationService(
     client: AmberClient,
     stateStore: ExecutionStateStore,
     workflow: Workflow,
-    planUri: URI,
-    creator: Int,
-    mountRoot: Option[Path],
-    readUpdate: (URI, String) => PlanRecord = ExecutionPlanStore.readUpdate
+    startedBy: Int,
+    mountRoot: Option[Path]
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -78,31 +65,30 @@ class ExecutionReconfigurationService(
   registerCompletionDiffHandler()
 
   /**
-    * Queues the change stored as `updateId` in the execution's plan table, to be applied when the
-    * run resumes ([[performReconfigurationOnResume]]).
+    * Queues `update`, a change to an operator as the Dashboard service made it to run, to be
+    * applied when the run resumes ([[performReconfigurationOnResume]]).
     *
-    * Only the execution's creator may ask for it, and the change must be one they stored, for
-    * this execution, of an operator the running plan has, which reads no dataset or model unless
-    * this unit mounts them.
+    * Only the user who started the execution may ask for it, and the change must be this
+    * execution's, of an operator the running plan has, keep the Python environment that operator
+    * runs in, and read no dataset or model unless this unit mounts them.
     *
     * @param requester the user who asks for the change; None for a request of no user
     * @return valid, naming the logical operator that changes; or invalid, saying why the change is
     *         refused, naming the operator once the change is read
     */
-  def applyStoredUpdate(updateId: String, requester: Option[Int]): ModifyLogicResponse =
-    storedUpdate(updateId, requester) match {
+  def applyUpdate(update: String, requester: Option[Int]): ModifyLogicResponse =
+    changeOf(update, requester) match {
       case Left(why) => ModifyLogicResponse("", isValid = false, why)
-      case Right(update) =>
-        val operator = update.opId.logicalOpId.id
-        changedBy(update, updateId) match {
+      case Right(change) =>
+        val operator = change.opId.logicalOpId.id
+        changedBy(change) match {
           case Left(why) => ModifyLogicResponse(operator, isValid = false, why)
           case Right(changed) =>
             stateStore.reconfigurationStore.updateState(old =>
               old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
             )
             logger.info(
-              s"Queued $updateId, a change to operator ${show(update.opId)} of execution " +
-                s"$executionId."
+              s"Queued a change to operator ${show(change.opId)} of execution $executionId."
             )
             ModifyLogicResponse(operator, isValid = true, "")
         }
@@ -111,65 +97,48 @@ class ExecutionReconfigurationService(
   private def executionId: Long = workflow.context.executionId.id
 
   /**
-    * The change stored as `updateId`. Whether `requester` may ask is checked before the update
-    * row is read.
+    * The change `update` holds. Whether `requester` may ask is checked before it is read.
     *
     * @return why the change is refused (Left), or the change (Right)
     */
-  private def storedUpdate(
-      updateId: String,
-      requester: Option[Int]
-  ): Either[String, OperatorUpdate] = {
-    val onlyTheCreator =
-      s"Only the user who created execution $executionId may change its operators."
+  private def changeOf(update: String, requester: Option[Int]): Either[String, OperatorUpdate] =
     for {
-      _ <- Either.cond(requester.contains(creator), (), onlyTheCreator)
       _ <- Either.cond(
-        updateId != null && !updateId.isBlank,
+        requester.contains(startedBy),
         (),
-        "The request names no change to apply."
+        s"Only the user who started execution $executionId may change its operators."
       )
-      record <- updateRow(updateId)
-      _ <- Either.cond(record.createdBy == creator, (), onlyTheCreator)
-      update <-
-        try Right(PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(record.body)))
+      text <- Option(update).filterNot(_.isBlank).toRight("The request carries no change to apply.")
+      change <-
+        try Right(PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(text)))
         catch { case refused: IllegalArgumentException => Left(refused.getMessage) }
-    } yield update
-  }
-
-  /** The update row stored as `updateId`, or why it cannot be had. */
-  private def updateRow(updateId: String): Either[String, PlanRecord] =
-    // An update row: the store finds no other kind under an update's id.
-    try Right(readUpdate(planUri, updateId))
-    catch {
-      case _: NoSuchUpdateException => Left(s"Execution $executionId has no change $updateId.")
-      case _: NoStoredPlanException => Left(StoredExecutionStart.noStoredPlan(executionId))
-      case NonFatal(failure) =>
-        logger.warn(s"Change $updateId of execution $executionId could not be read.", failure)
-        Left(s"Change $updateId of execution $executionId could not be read.")
-    }
+    } yield change
 
   /**
-    * The running operator as `update`, stored as `updateId`, changes it.
+    * The running operator as `update` changes it.
     *
     * @return why the change is refused (Left), or the changed operator (Right)
     */
-  private def changedBy(update: OperatorUpdate, updateId: String): Either[String, PhysicalOp] =
+  private def changedBy(update: OperatorUpdate): Either[String, PhysicalOp] =
     for {
       _ <- Either.cond(
         update.executionId.id == executionId,
         (),
         s"The change is execution ${update.executionId.id}'s, not $executionId's."
       )
-      _ <- Either.cond(
-        update.updateId == updateId,
-        (),
-        s"The change stored as $updateId names itself ${update.updateId}."
-      )
       running <-
         workflow.physicalPlan.operators
           .find(_.id == update.opId)
           .toRight(s"Operator ${show(update.opId)} is not in the running plan.")
+      // An update gives the running operator a new executor and what its code reads; its workers
+      // keep the interpreter they run in, so a change of environment would never take effect.
+      // The running operator's environment is as its plan resolved it, whatever its user keeps
+      // under its name now: only asking for another is a change of it.
+      _ <- Either.cond(
+        update.pythonEnvironment == running.pythonEnvironment.environmentName,
+        (),
+        "The operator's Python environment cannot change while the run is paused."
+      )
       stored = running.copy(
         opExecInitInfo = update.opExecInitInfo,
         repositoryMounts = update.repositoryMounts

@@ -125,7 +125,7 @@ class PartitionRuleSpec extends AnyFlatSpec {
   }
 
   it should
-    "have only cases that hold nothing but partitionings, so a stored plan can carry it" in {
+    "have only cases that hold nothing but partitionings, so a plan's text can carry it" in {
     import scala.reflect.runtime.universe.typeOf
     val cases = typeOf[PartitionRule].typeSymbol.asClass.knownDirectSubclasses
     // A new case must be plain data too; add it here once it is.

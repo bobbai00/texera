@@ -29,9 +29,7 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
-  ExecutionPlanStore,
   ExecutionTables,
-  PlanRecord,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
   VFSURIFactory,
@@ -400,29 +398,20 @@ class WorkflowExecutionsResourceSpec
   private def closedExecution(whid: Integer = null): WorkflowExecutions =
     insertExecution(endedOffsetMillis = Some(0L), whid = whid)
 
-  /** Writes a plan table for `execution`, where its row says the plan is, and returns its URI. */
-  private def storePlanOf(execution: WorkflowExecutions, warehouse: Option[String] = None): URI = {
-    val uri = ExecutionPlanStore.planUri(
+  /** Makes the log table of `execution`, in `warehouse`, and returns its URI. */
+  private def storeLogOf(execution: WorkflowExecutions, warehouse: Option[String] = None): URI = {
+    val uri = ExecutionLogStore.logUri(
       WorkflowIdentity(testWorkflowWid.toLong),
       ExecutionIdentity(execution.getEid.longValue()),
       warehouse
     )
-    ExecutionPlanStore.writePlan(
-      uri,
-      PlanRecord(
-        entryId = ExecutionPlanStore.PlanEntryId,
-        body = "{}",
-        createdBy = testUser.getUid,
-        computingUnitId = 1
-      ),
-      "{}"
-    )
+    ExecutionLogStore.create(uri, System.currentTimeMillis(), 30000L)
     uri
   }
 
   /**
-    * Gives `execution` a table of each kind a run leaves: its plan, its log, its statistics,
-    * its console, and the result and the state of a port. Returns them.
+    * Gives `execution` a table of each kind a run leaves: its log, its statistics, its console,
+    * and the result and the state of a port. Returns them.
     */
   private def storeTablesOf(execution: WorkflowExecutions): Seq[URI] = {
     val (wid, eid) =
@@ -432,15 +421,14 @@ class WorkflowExecutionsResourceSpec
       eid,
       GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("scan"), "main"), PortIdentity())
     )
-    val log = ExecutionLogStore.logUri(wid, eid, None)
-    ExecutionLogStore.create(log, System.currentTimeMillis(), 30000L)
+    val log = storeLogOf(execution)
     val statistics = RuntimeStatisticsStore.statisticsUri(wid, eid, None)
     RuntimeStatisticsStore.create(statistics)
     val console = ConsoleMessageStore.consoleUri(wid, eid, None)
     ConsoleMessageStore.create(console)
     val ofPort = Seq(VFSURIFactory.resultURI(port), VFSURIFactory.stateURI(port))
     ofPort.foreach(DocumentFactory.createDocument(_, Schema().add("line", AttributeType.STRING)))
-    Seq(storePlanOf(execution), log, statistics, console) ++ ofPort
+    Seq(log, statistics, console) ++ ofPort
   }
 
   private def hasTable(uri: URI): Boolean = ExecutionTables.exists(uri)
@@ -463,15 +451,14 @@ class WorkflowExecutionsResourceSpec
 
   it should "drop every table of the executions it removes, with their large binaries, and no other's" in {
     val removed = closedExecution()
-    val claimed = closedExecution()
+    val alsoRemoved = closedExecution()
     val kept = closedExecution()
-    val removedTables = storeTablesOf(removed) ++ storeTablesOf(claimed)
-    ExecutionPlanStore.claimStart(removedTables.head)
+    val removedTables = storeTablesOf(removed) ++ storeTablesOf(alsoRemoved)
     val keptTables = storeTablesOf(kept)
     binariesDeletedFor.clear()
     try {
       WorkflowExecutionsResource.removeAllExecutionFiles(
-        Array(removed.getEid, claimed.getEid),
+        Array(removed.getEid, alsoRemoved.getEid),
         expiry
       )
 
@@ -479,7 +466,7 @@ class WorkflowExecutionsResourceSpec
       keptTables.foreach(uri => assert(hasTable(uri), uri))
       assert(
         binariesDeletedFor.asScala.toSeq ==
-          Seq(removed.getEid.longValue(), claimed.getEid.longValue())
+          Seq(removed.getEid.longValue(), alsoRemoved.getEid.longValue())
       )
     } finally expiry.dropAll(kept.getEid.longValue())
   }
@@ -536,20 +523,20 @@ class WorkflowExecutionsResourceSpec
   it should "leave the tables of an execution in a per-user warehouse alone while those are disabled" in {
     val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
     warehouse.setUid(testUser.getUid)
-    warehouse.setName("plan-drop-warehouse")
-    warehouse.setLakekeeperWarehouseName(s"user-${testUser.getUid}-plan-drop-warehouse")
+    warehouse.setName("log-drop-warehouse")
+    warehouse.setLakekeeperWarehouseName(s"user-${testUser.getUid}-log-drop-warehouse")
     warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
     warehouse.setFlavor(UserWarehouseFlavorEnum.local)
     warehouse.store()
     val execution = closedExecution(whid = warehouse.getWhid)
     // Under any catalog but the REST one, a warehouse's URI names the same table as the default's.
-    val planUri = storePlanOf(execution, Some(warehouse.getLakekeeperWarehouseName))
+    val logUri = storeLogOf(execution, Some(warehouse.getLakekeeperWarehouseName))
     try {
       WorkflowExecutionsResource.removeAllExecutionFiles(Array(execution.getEid), expiry)
 
       assert(!hasRow(execution))
-      assert(hasTable(planUri))
-    } finally ExecutionPlanStore.drop(planUri)
+      assert(hasTable(logUri))
+    } finally ExecutionLogStore.drop(logUri)
   }
 
   private def grantAccess(uid: Integer, privilege: PrivilegeEnum): Unit = {
