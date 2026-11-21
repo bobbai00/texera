@@ -1,10 +1,10 @@
 // What the graph beside a chat shows when a person goes into a thing on it: the thing's own view,
 // over the graph, with the trail of how they got there. A dataset, a workflow, a model, a
-// function and a unit show the view they have everywhere; an execution its own view; a
-// table the rows its run kept; what the plan has not made yet what the plan said. Under the trail,
-// what the thing is to the rest of the graph, to go to next. Going in grows the view out of the
-// thing's box; going all the way back shrinks it into the box again. The chat beside it is never
-// touched.
+// function and a unit show the view they have everywhere, a version of one that view at the
+// version (a workflow version, its canvas); an execution its own view; a result the rows its
+// execution kept; what the plan has not made yet what the plan said. Under the trail, what the
+// thing is to the rest of the graph, to go to next. Going in grows the view out of the thing's
+// box; going all the way back shrinks it into the box again. The chat beside it is never touched.
 
 import { useQuery } from "@tanstack/react-query";
 import { Button, cn, Skeleton } from "@texera/ui";
@@ -25,8 +25,7 @@ import { parseUri, refOf } from "../uri";
 import { createCanvasView, portKey } from "../workflow/canvas-view";
 import { KEEPS_CLEAR } from "./clear";
 import { entryFor, type FocusEntry, keyOf } from "./focus-trail";
-import { type GraphView, nameOf, type RunItem, relationsOf, runStateOf, SOMEWHERE } from "./model";
-import { lineOf } from "./steps";
+import { type GraphView, nameOf, type RunItem, relationsOf, runStateOf } from "./model";
 
 export interface Rect {
   x: number;
@@ -223,15 +222,13 @@ export function FocusLayer({
 /** The kind of a thing on the graph, for its icon. */
 function kindOf(view: GraphView, id: string): KindId {
   if (view.runs.has(id)) return "execution";
-  const n = view.nodes.get(id);
-  // A table a run made is data, drawn as data is.
-  if (n) return n.role === "data" ? "dataset" : (n.kind as KindId);
-  const planned =
-    view.works.find(w => w.id === id)?.planned ?? view.data.get(id)?.planned ?? view.units.get(id)?.planned;
-  const k = planned?.kind;
-  return k === "workflow" || k === "dataset" || k === "computing-unit" || k === "model" || k === "operator"
-    ? k
-    : "dataset";
+  // A result is data, drawn as data is.
+  if (view.results.has(id)) return "dataset";
+  if (view.functions.has(id)) return "operator";
+  if (view.units.has(id)) return "computing-unit";
+  const box = view.boxes.get(view.rows.get(id)?.box ?? id);
+  if (box?.node) return box.node.kind as KindId;
+  return box?.role === "workflow" ? "workflow" : "dataset";
 }
 
 /** An entry's name on the trail: what the graph calls it, or the resource's own name. */
@@ -274,7 +271,7 @@ function EntryView({
     return box ? <RunFocus box={box} view={view} onGo={onGo} /> : <Gone />;
   }
   if (entry.kind === "table")
-    return view.nodes.has(entry.id) ? <TableFocus id={entry.id} view={view} onGo={onGo} /> : <Gone />;
+    return view.results.has(entry.id) ? <TableFocus id={entry.id} view={view} onGo={onGo} /> : <Gone />;
   return <PlannedFocus id={entry.id} view={view} />;
 }
 
@@ -294,17 +291,22 @@ function RunFocus({ box, view, onGo }: { box: RunItem; view: GraphView; onGo: (e
   );
 }
 
-/** The execution a workflow has not had yet: where it will go, and what the plan says of it. */
+/** The execution the chat will start: of which version, on which unit, and what its plan says of it. */
 function WaitingRun({ box, view, onGo }: { box: RunItem; view: GraphView; onGo: (e: FocusEntry) => void }) {
   const state = runStateOf(box);
-  const work = entryFor(view, box.work);
-  const unit = box.unit === SOMEWHERE ? undefined : entryFor(view, box.unit);
+  const work = entryFor(view, box.row ?? box.work);
+  const unit = box.willRunOn ? entryFor(view, box.willRunOn.uri) : undefined;
+  const what = nameOf(view, box.row ?? box.work);
   return (
     <div className="m-6 grid max-w-lg gap-3 text-sm" data-graph-view="run" data-graph-waiting={state}>
-      <h3 className="text-base font-semibold">{state === "planned" ? "A planned execution" : "Not run yet"}</h3>
+      <h3 className="text-base font-semibold">{state === "planned" ? "A planned execution" : "Not executed yet"}</h3>
       <p className="text-muted-foreground">
-        {nameOf(view, box.work)} has not run{unit ? ` on ${nameOf(view, box.unit)}` : ""} in this chat
-        {state === "planned" ? "; the plan says it will." : "."}
+        {state === "planned" ? `The chat's plan says it will execute ${what}` : `${what} has not been executed in this chat`}
+        {box.willRunOn
+          ? `; it will likely run on ${box.willRunOn.name}, which the chat made.`
+          : box.plannedUnit
+            ? ` on ${box.plannedUnit.name}, a unit it will make.`
+            : "."}
       </p>
       {box.planned?.detail && <p className="rounded-md border border-dashed px-3 py-2">{box.planned.detail}</p>}
       <div className="flex flex-wrap gap-2">
@@ -323,7 +325,7 @@ function WaitingRun({ box, view, onGo }: { box: RunItem; view: GraphView; onGo: 
   );
 }
 
-/** A table a run made: the rows it kept, in the results window standing on its own. */
+/** A result an execution kept: the rows it kept, in the results window standing on its own. */
 function TableFocus({ id, view, onGo }: { id: string; view: GraphView; onGo: (e: FocusEntry) => void }) {
   const parsed = parseUri(id);
   const [, operator = "", , port = ""] = (parsed?.subresource ?? "").split("/");
@@ -334,13 +336,13 @@ function TableFocus({ id, view, onGo }: { id: string; view: GraphView; onGo: (e:
     v.getState().show(portKey(operator, port));
     return v;
   }, [operator, port]);
-  const box = [...view.runs.values()].find(b => b.results.includes(id));
-  const steps = view.works.find(w => w.id === box?.work)?.steps ?? [];
+  const by = view.results.get(id)?.run;
+  // Each result of the execution is named as the graph names it, which is as its canvas does.
   const labelOf = (operatorID: string): ResultLabel => {
-    const step = steps.find(s => s.id === operatorID);
-    return { title: operatorID, summary: step ? lineOf(step, view.nodes).text : undefined, type: step?.type };
+    const r = [...view.results.values()].find(x => x.run === by && x.result?.operator === operatorID);
+    return { title: r?.title ?? operatorID, ...(r?.result?.operatorType ? { type: r.result.operatorType } : {}) };
   };
-  const run = box ? entryFor(view, box.id) : undefined;
+  const run = by ? entryFor(view, by) : undefined;
   if (error) return <OpenError error={error} kind="execution" />;
   if (!x) return <Skeleton className="m-4 h-64" />;
   return (
@@ -361,11 +363,7 @@ function TableFocus({ id, view, onGo }: { id: string; view: GraphView; onGo: (e:
 
 /** Something the plan said it would make and has not: what the plan said. */
 function PlannedFocus({ id, view }: { id: string; view: GraphView }) {
-  const item =
-    view.works.find(w => w.id === id)?.planned ??
-    view.data.get(id)?.planned ??
-    view.units.get(id)?.planned ??
-    [...view.runs.values()].find(b => b.id === id)?.planned;
+  const item = view.boxes.get(id)?.planned ?? view.results.get(id)?.planned ?? view.runs.get(id)?.planned;
   if (!item)
     return (
       <p className="m-6 text-sm text-muted-foreground">This has been made since; go back to see it on the graph.</p>

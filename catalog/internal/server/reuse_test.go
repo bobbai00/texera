@@ -126,6 +126,21 @@ func TestARunReadsWhatAnEarlierRunOfTheSameWorkStored(t *testing.T) {
 		t.Fatalf("lineage says the second run read the first's rows: %+v", up.Edges)
 	}
 	finish(t, h, exec2, "completed")
+	// The graph says the version used the file its reused rows came of, though its scan did not run.
+	var graph api.ResourceGraph
+	h.mustJSON("alice", "GET", p+"/resources/"+rid(second)+"/graph", nil, &graph)
+	if got := edgesSaid(graph); strings.Join(got, "; ") != "iris@1 reads second@1 executed" {
+		t.Fatalf("the reused rows came of the file: %q", got)
+	}
+	// The file's own page has both executions: the one that read it and the one that read rows of it.
+	h.mustJSON("alice", "GET", p+"/resources/"+rid(ds)+"/graph", nil, &graph)
+	listed := map[api.Uri]bool{}
+	for _, x := range graph.Executions {
+		listed[x.Uri] = true
+	}
+	if !listed[exec1.Metadata.Uri] || !listed[exec2.Metadata.Uri] {
+		t.Fatalf("the executions of what names the file: %+v", graph.Executions)
+	}
 
 	// Fresh makes everything again.
 	exec3, fresh := runOnUnit(t, h, "alice", rid(second), map[string]any{"fresh": true})

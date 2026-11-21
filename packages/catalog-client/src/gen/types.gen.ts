@@ -373,19 +373,6 @@ export type Conversation = {
     status?: ConversationStatus;
 };
 
-/**
- * What a chat read, made and ran, and how they connect.
- */
-export type ConversationGraph = {
-    nodes: Array<GraphNode>;
-    edges: Array<GraphEdge>;
-    planned: Array<PlannedItem>;
-    /**
-     * The outside MCP servers the chat's agent consulted, in the order it first did; the catalog's own server is not among them.
-     */
-    sources: Array<GraphSource>;
-};
-
 export type ConversationPage = {
     items: Array<Conversation>;
     /**
@@ -1075,96 +1062,45 @@ export type GraphCall = {
 };
 
 /**
- * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.
+ * An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.
  */
 export type GraphEdge = {
+    /**
+     * A dataset, model or function at a version.
+     */
     from: Uri;
+    /**
+     * A workflow at a version.
+     */
     to: Uri;
-    relation: 'reads' | 'makes' | 'uses' | 'runsOn';
+    relation: 'reads' | 'uses';
+    /**
+     * An execution of the workflow version ran the operator that names it, or read an earlier execution's rows of that operator instead; false when the version only names it.
+     */
+    executed: boolean;
 };
 
 /**
- * A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
+ * An execution of a workflow version.
  */
-export type GraphNode = {
-    /**
-     * What the node opens: a resource's URI, or for a table a run made, its port's.
-     */
+export type GraphExecution = {
     uri: Uri;
-    role: GraphRole;
-    kind: ResourceKind;
+    /**
+     * The workflow it is an execution of, without a version.
+     */
+    workflow: Uri;
+    /**
+     * The version of the workflow it ran.
+     */
+    version: Vno;
     name: string;
-    /**
-     * What the resource says it is.
-     */
-    description?: string;
-    /**
-     * The version the chat worked from or made, the newest when there are several.
-     */
-    version?: Vno;
-    /**
-     * The chat made it, or a version of it.
-     */
-    made: boolean;
-    /**
-     * The turn of this chat that made it; absent for what the chat only worked from.
-     */
-    turn?: string;
-    /**
-     * For a workflow, its last run's phase; for a unit, its phase.
-     */
-    state?: string;
-    /**
-     * For a workflow, its runs in the chat, newest first.
-     */
-    runs?: Array<GraphRun>;
-    /**
-     * For a workflow, the steps of the version its newest run ran, or of the version the chat made or worked from when it has not run, each after the steps it reads.
-     */
-    steps?: Array<GraphStep>;
-    /**
-     * For a table a run made, the step that made it.
-     */
-    step?: string;
-    /**
-     * For a table a run made, the run.
-     */
-    run?: Uri;
-    /**
-     * For a table a run made, its rows.
-     */
-    rows?: number;
-    /**
-     * For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.
-     */
-    cpu?: string;
-    /**
-     * For a unit, the memory of its main node, as Kubernetes counts it.
-     */
-    memory?: string;
-    /**
-     * For a unit, the GPUs of its main node.
-     */
-    gpu?: number;
-};
-
-/**
- * What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.
- */
-export type GraphRole = 'data' | 'workflow' | 'model' | 'function' | 'unit';
-
-/**
- * A run of a workflow, as its node in a chat's graph lists it.
- */
-export type GraphRun = {
-    uri: Uri;
     phase: string;
     /**
      * The operators its plan had.
      */
     steps: number;
     /**
-     * Those that read an earlier run's rows instead of running.
+     * Those that read an earlier execution's rows instead of running.
      */
     reused: number;
     startedAt?: string;
@@ -1172,12 +1108,78 @@ export type GraphRun = {
     /**
      * The unit it ran on, when the caller may see it.
      */
-    unit?: Uri;
+    unit?: GraphUnit;
     /**
-     * The version of the workflow it ran.
+     * The profile version the unit was made from, and the warehouse that keeps its results.
      */
-    version?: Vno;
+    profile?: Uri;
+    warehouse?: Uri;
+    /**
+     * Beside a chat: the chat started it.
+     */
+    made: boolean;
+    /**
+     * Who started it, and the chat turn when an agent did for them.
+     */
+    createdBy: Pid;
+    origin?: Origin;
 };
+
+/**
+ * A resource on the graph, with the versions of it that took part, the newest first.
+ */
+export type GraphNode = {
+    /**
+     * The resource's URI, without a version.
+     */
+    uri: Uri;
+    role: GraphRole;
+    kind: ResourceKind;
+    /**
+     * Its name; empty for a resource the caller may not read.
+     */
+    name: string;
+    /**
+     * What the resource says it is.
+     */
+    description?: string;
+    /**
+     * False for a resource the caller may not read: it stands, unnamed, where it is named.
+     */
+    readable: boolean;
+    versions: Array<GraphVersion>;
+    /**
+     * Beside a chat: the chat made it, or a version of it.
+     */
+    made: boolean;
+    /**
+     * Beside a chat: the turn that made it.
+     */
+    turn?: string;
+};
+
+/**
+ * What an execution kept of one operator's output, and shows.
+ */
+export type GraphResult = {
+    /**
+     * Its port's URI: the execution's, then the operator and the port.
+     */
+    uri: Uri;
+    execution: Uri;
+    /**
+     * The operator it came out of, as the version that ran has it: its ID, its type and the name a person gave it.
+     */
+    operator: string;
+    operatorType: string;
+    displayName?: string;
+    rows?: number;
+};
+
+/**
+ * What a resource on the graph stands for: data, a model, a workflow, or a function a workflow calls (a custom operator).
+ */
+export type GraphRole = 'data' | 'workflow' | 'model' | 'function';
 
 /**
  * An outside MCP server the chat's agent consulted, and its calls, oldest first.
@@ -1189,27 +1191,51 @@ export type GraphSource = {
 };
 
 /**
- * A step of a workflow on a chat's graph: one operator of the version it shows.
+ * The computing unit an execution ran on, said on the execution.
  */
-export type GraphStep = {
+export type GraphUnit = {
+    uri: Uri;
+    name: string;
     /**
-     * The operator's ID in the workflow; the tables it makes are named by it.
+     * How it stands: starting, ready, and so on.
      */
-    id: string;
+    state?: string;
     /**
-     * What the step does: a built-in's type (scan, filter, join, ...), predict, or a custom operator's URI at a version.
+     * The CPU of its main node, as Kubernetes counts it; absent when it reserves none.
      */
-    type: string;
+    cpu?: string;
     /**
-     * Its settings, as the workflow version has them.
+     * The memory of its main node, as Kubernetes counts it.
      */
-    settings?: {
-        [key: string]: unknown;
-    };
+    memory?: string;
     /**
-     * The steps whose rows it reads, in port order.
+     * The GPUs of its main node.
      */
-    inputs?: Array<string>;
+    gpu?: number;
+};
+
+/**
+ * A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest.
+ */
+export type GraphVersion = {
+    vno: Vno;
+    /**
+     * For data and a model: the files of the version that were read or named, by path, in the order first named.
+     */
+    files?: Array<string>;
+    /**
+     * Beside a chat: the chat made this version.
+     */
+    made: boolean;
+    /**
+     * For a workflow: how many executions of the version the graph knows. It lists the newest of them.
+     */
+    executions?: number;
+    /**
+     * Who made the version, and the chat turn when an agent made it for them; absent for a resource the caller may not read.
+     */
+    createdBy?: Pid;
+    origin?: Origin;
 };
 
 /**
@@ -2166,6 +2192,34 @@ export type Resource = {
     status?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.
+ */
+export type ResourceGraph = {
+    /**
+     * Beside a chat, the workflows in the order the chat came to them, so a new one never comes before one drawn.
+     */
+    nodes: Array<GraphNode>;
+    /**
+     * The newest first, at most three of each version.
+     */
+    executions: Array<GraphExecution>;
+    results: Array<GraphResult>;
+    edges: Array<GraphEdge>;
+    /**
+     * Beside a chat: what its latest plan said it would make and has not made yet.
+     */
+    planned: Array<PlannedItem>;
+    /**
+     * Beside a chat: the outside MCP servers its agent consulted, in the order it first did; the catalog's own server is not among them.
+     */
+    sources: Array<GraphSource>;
+    /**
+     * Beside a chat: the computing units it made that no execution on the graph ran on yet, which its next execution will likely run on.
+     */
+    units: Array<GraphUnit>;
 };
 
 /**
@@ -3707,7 +3761,7 @@ export type ConversationsGraphResponses = {
     /**
      * The request has succeeded.
      */
-    200: ConversationGraph;
+    200: ResourceGraph;
 };
 
 export type ConversationsGraphResponse = ConversationsGraphResponses[keyof ConversationsGraphResponses];
@@ -6409,6 +6463,33 @@ export type ResourcesGrantResponses = {
 };
 
 export type ResourcesGrantResponse = ResourcesGrantResponses[keyof ResourcesGrantResponses];
+
+export type ResourcesGraphData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/resources/{rid}/graph';
+};
+
+export type ResourcesGraphErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ResourcesGraphError = ResourcesGraphErrors[keyof ResourcesGraphErrors];
+
+export type ResourcesGraphResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: ResourceGraph;
+};
+
+export type ResourcesGraphResponse = ResourcesGraphResponses[keyof ResourcesGraphResponses];
 
 export type ResourcesLineageData = {
     body?: never;

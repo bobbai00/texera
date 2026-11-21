@@ -1,13 +1,16 @@
-// Beside a chat that has started work: the resource graph, or the same things as a list. A click
+// Beside a chat that has started work: its lineage graph, or the same things as a list. A click
 // on a thing goes into it: its view stands over the graph, with the trail back. What that view
 // links to opens there too, after it on the trail, so the chat beside it stays as it is.
 
-import type { ConversationGraph } from "@texera/catalog-client/types";
+import { useQuery } from "@tanstack/react-query";
+import type { ResourceGraph as Graph } from "@texera/catalog-client/types";
 import { cn } from "@texera/ui";
 import { List, Network } from "lucide-react";
 import { type CSSProperties, memo, useMemo, useRef, useState } from "react";
 import { KEEPS_CLEAR } from "./clear";
 import { useHolds } from "../live/room";
+import { operatorSchemasQuery } from "../queries";
+import { useScope } from "../scope";
 import { FromThisChat } from "../shell/FromThisChat";
 import { type ViewHost, ViewHostContext } from "../shell/host";
 import { FocusLayer, type Rect, rectWithin } from "./Focus";
@@ -23,7 +26,7 @@ export const ResourcePanel = memo(function ResourcePanel({
   onComment,
 }: {
   rid: string;
-  graph: ConversationGraph;
+  graph: Graph;
   className?: string;
   /**
    * How much of the panel's left and right something stands over (the chat's window), in pixels:
@@ -37,7 +40,8 @@ export const ResourcePanel = memo(function ResourcePanel({
   const [trail, setTrail] = useState<FocusEntry[]>([]);
   const [from, setFrom] = useState<Rect>();
   const section = useRef<HTMLElement>(null);
-  const view = useMemo(() => viewOf(graph), [graph]);
+  const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
+  const view = useMemo(() => viewOf(graph, schemas), [graph, schemas]);
   const viewRef = useRef(view);
   viewRef.current = view;
   const host = useMemo<ViewHost>(
@@ -66,7 +70,7 @@ export const ResourcePanel = memo(function ResourcePanel({
     <div className="flex items-center gap-1" role="tablist">
       {(
         [
-          ["graph", "Graph", Network],
+          ["graph", "Lineage", Network],
           ["list", "List", List],
         ] as const
       ).map(([id, label, Icon]) => (
@@ -96,7 +100,7 @@ export const ResourcePanel = memo(function ResourcePanel({
         data-resource-panel>
         {tab === "graph" ? (
           <ResourceGraph
-            rid={rid}
+            room={rid}
             graph={graph}
             className="min-h-0 flex-1"
             bar={tabs}
@@ -117,7 +121,7 @@ export const ResourcePanel = memo(function ResourcePanel({
           <FocusLayer
             trail={trail}
             view={view}
-            root={tab === "graph" ? "Graph" : "List"}
+            root={tab === "graph" ? "Lineage" : "List"}
             from={from}
             onTo={i => setTrail(t => t.slice(0, i + 1))}
             onGo={entry => setTrail(t => pushed(t, entry))}

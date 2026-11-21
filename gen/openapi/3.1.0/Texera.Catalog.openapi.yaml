@@ -745,7 +745,7 @@ paths:
   /catalog/v1/conversations/{rid}/graph:
     get:
       operationId: Conversations_graph
-      description: 'The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.'
+      description: 'The lineage graph beside the chat: what it read, made and ran, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.'
       parameters:
         - name: rid
           in: path
@@ -758,7 +758,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConversationGraph'
+                $ref: '#/components/schemas/ResourceGraph'
         default:
           description: An unexpected error response.
           content:
@@ -3747,6 +3747,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: share
+  /catalog/v1/resources/{rid}/graph:
+    get:
+      operationId: Resources_graph
+      description: 'The lineage graph of a dataset, model, function, workflow or execution, as a person reads it: what it came from and what came of it, by version. Any other kind has none.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceGraph'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
   /catalog/v1/resources/{rid}/lineage:
     get:
       operationId: Resources_lineage
@@ -5569,32 +5593,6 @@ components:
         versioned: false
         content: spec
         parent: project
-    ConversationGraph:
-      type: object
-      required:
-        - nodes
-        - edges
-        - planned
-        - sources
-      properties:
-        nodes:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphNode'
-        edges:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphEdge'
-        planned:
-          type: array
-          items:
-            $ref: '#/components/schemas/PlannedItem'
-        sources:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphSource'
-          description: The outside MCP servers the chat's agent consulted, in the order it first did; the catalog's own server is not among them.
-      description: What a chat read, made and ran, and how they connect.
     ConversationPage:
       type: object
       required:
@@ -6542,102 +6540,46 @@ components:
         - from
         - to
         - relation
+        - executed
       properties:
         from:
           $ref: '#/components/schemas/Uri'
+          description: A dataset, model or function at a version.
         to:
           $ref: '#/components/schemas/Uri'
+          description: A workflow at a version.
         relation:
           type: string
           enum:
             - reads
-            - makes
             - uses
-            - runsOn
-      description: "An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit."
-    GraphNode:
-      type: object
-      required:
-        - uri
-        - role
-        - kind
-        - name
-        - made
-      properties:
-        uri:
-          $ref: '#/components/schemas/Uri'
-          description: "What the node opens: a resource's URI, or for a table a run made, its port's."
-        role:
-          $ref: '#/components/schemas/GraphRole'
-        kind:
-          $ref: '#/components/schemas/ResourceKind'
-        name:
-          type: string
-        description:
-          type: string
-          description: What the resource says it is.
-        version:
-          $ref: '#/components/schemas/Vno'
-          description: The version the chat worked from or made, the newest when there are several.
-        made:
+        executed:
           type: boolean
-          description: The chat made it, or a version of it.
-        turn:
-          type: string
-          description: The turn of this chat that made it; absent for what the chat only worked from.
-        state:
-          type: string
-          description: For a workflow, its last run's phase; for a unit, its phase.
-        runs:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphRun'
-          description: For a workflow, its runs in the chat, newest first.
-        steps:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphStep'
-          description: For a workflow, the steps of the version its newest run ran, or of the version the chat made or worked from when it has not run, each after the steps it reads.
-        step:
-          type: string
-          description: For a table a run made, the step that made it.
-        run:
-          $ref: '#/components/schemas/Uri'
-          description: For a table a run made, the run.
-        rows:
-          type: integer
-          format: int64
-          description: For a table a run made, its rows.
-        cpu:
-          type: string
-          description: For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.
-        memory:
-          type: string
-          description: For a unit, the memory of its main node, as Kubernetes counts it.
-        gpu:
-          type: integer
-          format: int32
-          description: For a unit, the GPUs of its main node.
-      description: A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
-    GraphRole:
-      type: string
-      enum:
-        - data
-        - workflow
-        - model
-        - function
-        - unit
-      description: "What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit."
-    GraphRun:
+          description: An execution of the workflow version ran the operator that names it, or read an earlier execution's rows of that operator instead; false when the version only names it.
+      description: 'An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.'
+    GraphExecution:
       type: object
       required:
         - uri
+        - workflow
+        - version
+        - name
         - phase
         - steps
         - reused
+        - made
+        - createdBy
       properties:
         uri:
           $ref: '#/components/schemas/Uri'
+        workflow:
+          $ref: '#/components/schemas/Uri'
+          description: The workflow it is an execution of, without a version.
+        version:
+          $ref: '#/components/schemas/Vno'
+          description: The version of the workflow it ran.
+        name:
+          type: string
         phase:
           type: string
         steps:
@@ -6647,7 +6589,7 @@ components:
         reused:
           type: integer
           format: int32
-          description: Those that read an earlier run's rows instead of running.
+          description: Those that read an earlier execution's rows instead of running.
         startedAt:
           type: string
           format: date-time
@@ -6655,12 +6597,92 @@ components:
           type: string
           format: date-time
         unit:
-          $ref: '#/components/schemas/Uri'
+          $ref: '#/components/schemas/GraphUnit'
           description: The unit it ran on, when the caller may see it.
-        version:
-          $ref: '#/components/schemas/Vno'
-          description: The version of the workflow it ran.
-      description: A run of a workflow, as its node in a chat's graph lists it.
+        profile:
+          $ref: '#/components/schemas/Uri'
+          description: The profile version the unit was made from, and the warehouse that keeps its results.
+        warehouse:
+          $ref: '#/components/schemas/Uri'
+        made:
+          type: boolean
+          description: 'Beside a chat: the chat started it.'
+        createdBy:
+          $ref: '#/components/schemas/Pid'
+          description: Who started it, and the chat turn when an agent did for them.
+        origin:
+          $ref: '#/components/schemas/Origin'
+      description: An execution of a workflow version.
+    GraphNode:
+      type: object
+      required:
+        - uri
+        - role
+        - kind
+        - name
+        - readable
+        - versions
+        - made
+      properties:
+        uri:
+          $ref: '#/components/schemas/Uri'
+          description: The resource's URI, without a version.
+        role:
+          $ref: '#/components/schemas/GraphRole'
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        name:
+          type: string
+          description: Its name; empty for a resource the caller may not read.
+        description:
+          type: string
+          description: What the resource says it is.
+        readable:
+          type: boolean
+          description: 'False for a resource the caller may not read: it stands, unnamed, where it is named.'
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphVersion'
+        made:
+          type: boolean
+          description: 'Beside a chat: the chat made it, or a version of it.'
+        turn:
+          type: string
+          description: 'Beside a chat: the turn that made it.'
+      description: A resource on the graph, with the versions of it that took part, the newest first.
+    GraphResult:
+      type: object
+      required:
+        - uri
+        - execution
+        - operator
+        - operatorType
+      properties:
+        uri:
+          $ref: '#/components/schemas/Uri'
+          description: "Its port's URI: the execution's, then the operator and the port."
+        execution:
+          $ref: '#/components/schemas/Uri'
+        operator:
+          type: string
+          description: 'The operator it came out of, as the version that ran has it: its ID, its type and the name a person gave it.'
+        operatorType:
+          type: string
+        displayName:
+          type: string
+        rows:
+          type: integer
+          format: int64
+      description: What an execution kept of one operator's output, and shows.
+    GraphRole:
+      type: string
+      enum:
+        - data
+        - workflow
+        - model
+        - function
+      description: 'What a resource on the graph stands for: data, a model, a workflow, or a function a workflow calls (a custom operator).'
     GraphSource:
       type: object
       required:
@@ -6677,28 +6699,56 @@ components:
           items:
             $ref: '#/components/schemas/GraphCall'
       description: An outside MCP server the chat's agent consulted, and its calls, oldest first.
-    GraphStep:
+    GraphUnit:
       type: object
       required:
-        - id
-        - type
+        - uri
+        - name
       properties:
-        id:
+        uri:
+          $ref: '#/components/schemas/Uri'
+        name:
           type: string
-          description: The operator's ID in the workflow; the tables it makes are named by it.
-        type:
+        state:
           type: string
-          description: "What the step does: a built-in's type (scan, filter, join, ...), predict, or a custom operator's URI at a version."
-        settings:
-          type: object
-          additionalProperties: {}
-          description: Its settings, as the workflow version has them.
-        inputs:
+          description: 'How it stands: starting, ready, and so on.'
+        cpu:
+          type: string
+          description: The CPU of its main node, as Kubernetes counts it; absent when it reserves none.
+        memory:
+          type: string
+          description: The memory of its main node, as Kubernetes counts it.
+        gpu:
+          type: integer
+          format: int32
+          description: The GPUs of its main node.
+      description: The computing unit an execution ran on, said on the execution.
+    GraphVersion:
+      type: object
+      required:
+        - vno
+        - made
+      properties:
+        vno:
+          $ref: '#/components/schemas/Vno'
+        files:
           type: array
           items:
             type: string
-          description: The steps whose rows it reads, in port order.
-      description: "A step of a workflow on a chat's graph: one operator of the version it shows."
+          description: 'For data and a model: the files of the version that were read or named, by path, in the order first named.'
+        made:
+          type: boolean
+          description: 'Beside a chat: the chat made this version.'
+        executions:
+          type: integer
+          format: int32
+          description: 'For a workflow: how many executions of the version the graph knows. It lists the newest of them.'
+        createdBy:
+          $ref: '#/components/schemas/Pid'
+          description: Who made the version, and the chat turn when an agent made it for them; absent for a resource the caller may not read.
+        origin:
+          $ref: '#/components/schemas/Origin'
+      description: "A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest."
     ImportFile:
       type: object
       required:
@@ -8077,6 +8127,51 @@ components:
           type: object
           additionalProperties: {}
       description: The untyped envelope, served by the generic routes.
+    ResourceGraph:
+      type: object
+      required:
+        - nodes
+        - executions
+        - results
+        - edges
+        - planned
+        - sources
+        - units
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          description: Beside a chat, the workflows in the order the chat came to them, so a new one never comes before one drawn.
+        executions:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphExecution'
+          description: The newest first, at most three of each version.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphResult'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+        planned:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlannedItem'
+          description: 'Beside a chat: what its latest plan said it would make and has not made yet.'
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphSource'
+          description: "Beside a chat: the outside MCP servers its agent consulted, in the order it first did; the catalog's own server is not among them."
+        units:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphUnit'
+          description: 'Beside a chat: the computing units it made that no execution on the graph ran on yet, which its next execution will likely run on.'
+      description: "A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it."
     ResourceKind:
       type: string
       enum:

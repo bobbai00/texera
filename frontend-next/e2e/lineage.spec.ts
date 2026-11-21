@@ -1,14 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { api, cleanups, discard, inTurn, signIn, tidyUp, withIris } from "./support";
 
-// The lineage of a resource is a graph: a card per resource, an arrow per thing that happened,
-// the words for it on the arrow, read left to right. Two levels: resources (the dataset, the
-// workflow, its executions) and data flow (the file, the version that ran, each result). Each
-// card says who made what it names.
+// A resource's Lineage tab draws the graph a chat draws beside it, around the resource, which is
+// marked: zoomed out a box for each resource, zoomed in a row for each version, each execution
+// off the version it ran with what it kept. Each version and execution says who made it. A box
+// opens what it names beside the page.
 
 test.afterEach(tidyUp);
 
-test("a workflow's lineage shows what it read, how it ran and what came out, at two levels", async ({ page, request }) => {
+/** Zooms the graph to a level, all of it in view. */
+async function toLevel(graph: Locator, level: "resources" | "versions") {
+  await graph.locator(`[data-graph-level="${level}"]`).click();
+  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", level);
+  await graph.locator("[data-graph-fit]").click();
+}
+
+test("a workflow's lineage shows what it read, each execution off the version it ran and what came out, at two levels", async ({ page, request }) => {
   test.setTimeout(240_000);
   const call = await api(request);
   const stamp = Date.now();
@@ -25,66 +32,56 @@ test("a workflow's lineage shows what it read, how it ran and what came out, at 
     },
   });
   const rid = workflow.metadata.rid as string;
+  const uri = workflow.metadata.uri as string;
   cleanups.push(async () => {
     await discard(call, [rid], [lab.dataset]);
     await call.attempt("DELETE", `/projects/${lab.project}`);
   });
-  // Three executions: the two most recent stand as cards, the first folds.
   const executions: string[] = [];
-  for (const n of [1, 2, 3]) {
+  for (const n of [1, 2]) {
     const execution = await call("POST", `/workflows/${rid}/run`, { waitSeconds: 180, name: `petals, run ${n} ${stamp}` });
     expect(execution.status.phase).toBe("completed");
-    executions.push(execution.metadata.rid as string);
+    executions.push(execution.metadata.uri as string);
   }
 
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
   await page.getByRole("tab", { name: "Lineage" }).click();
   const lineage = page.locator("[data-lineage]");
-  const cards = (type: string) => lineage.locator(`[data-lineage-card="${type}"]`);
 
-  // Resources: the dataset is read by the workflow, which ran as its executions. No address anywhere.
-  await expect(lineage).toHaveAttribute("data-level", "resources");
-  await expect(cards("resource")).toHaveCount(2);
-  await expect(cards("resource").filter({ hasText: "iris" })).toContainText("Dataset · v1");
-  await expect(lineage.locator('[data-lineage-card="resource"][data-root]')).toContainText(`mean petals ${stamp}`);
-  await expect(lineage.locator('[data-edge="used"]')).toHaveText("read iris.csv");
-  await expect(lineage.locator('[data-edge="ran"]')).toHaveText("ran");
-  await expect(cards("execution")).toHaveCount(2);
-  await expect(cards("execution").first()).toContainText(`petals, run 3 ${stamp}`);
-  await expect(cards("execution").first()).toContainText(/Completed · \d+ results?/);
-  await expect(cards("fold")).toContainText("1 earlier execution");
+  // Resources: the iris read by the workflow, which is marked, and what its newest execution kept.
+  await expect(lineage.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "resources");
+  await expect(lineage.locator('[data-graph-role="data"]').filter({ hasText: "iris" })).toContainText("Dataset · v1");
+  await expect(lineage.locator(`[data-graph-node="${uri}"]`)).toHaveAttribute("data-graph-root", "true");
+  await expect(lineage.locator('[data-graph-edge="reads"]')).toHaveCount(1);
+  await expect(lineage.locator('[data-graph-edge="reads"]')).not.toHaveAttribute("data-graph-dashed", "true");
+  await expect(lineage.locator('[data-graph-role="result"]')).toHaveCount(1);
+  await expect(lineage.locator('[data-graph-role="run"]')).toHaveCount(0);
   await expect(lineage).not.toContainText("texera://");
   await expect(lineage).not.toContainText("iceberg://");
 
-  // Data flow: the file, the version that ran, each execution and what it produced.
-  await lineage.locator('[data-segment="flow"]').click();
-  await expect(lineage).toHaveAttribute("data-level", "flow");
-  await expect(cards("file")).toContainText("iris.csv");
-  await expect(cards("file")).toContainText("File · v1 · iris");
-  await expect(lineage.locator('[data-lineage-card="resource"][data-root]')).toContainText("Workflow · v1");
-  await expect(lineage.locator('[data-edge="used"]')).toHaveText("read by scan");
-  await expect(cards("result").filter({ hasText: "avg" }).first()).toContainText("Result · 3 rows");
-  await expect(lineage.locator('[data-edge="produced"]').first()).toHaveText("produced");
-  await page.screenshot({ path: "test-results/lineage-flow.png" });
+  // Versions: the version on screen marked, both executions off it, each with what it kept.
+  await toLevel(lineage, "versions");
+  await expect(lineage.locator(`[data-graph-row="${uri}@1"]`)).toHaveAttribute("data-graph-on-screen", "true");
+  const runs = lineage.locator(`[data-graph-role="run"][data-graph-of="${uri}"]`);
+  await expect(runs).toHaveCount(2);
+  await expect(runs.first()).toHaveAttribute("data-graph-ran", "1");
+  await expect(lineage.locator('[data-graph-edge="runs"]')).toHaveCount(2);
+  await expect(lineage.locator('[data-graph-role="result"]')).toHaveCount(2);
+  await expect(lineage.locator('[data-graph-role="result"]').first()).toContainText("3 rows");
+  await page.screenshot({ path: "test-results/lineage-versions.png" });
 
-  // The earlier executions unfold and fold again.
-  await cards("fold").click();
-  await expect(cards("execution")).toHaveCount(3);
-  await expect(cards("fold")).toHaveCount(0);
-  await lineage.locator("[data-lineage-recent]").click();
-  await expect(cards("execution")).toHaveCount(2);
-
-  // A card opens what it names beside the page.
-  await cards("file").click();
+  // A box opens what it names beside the page.
+  await lineage.locator('[data-graph-role="data"]').filter({ hasText: "iris" }).click({ position: { x: 14, y: 12 } });
   await expect(page.locator('[data-side-panel] [data-resource-view="dataset"]')).toBeVisible();
 
-  // The same graph from the execution's side: the execution is the card that is marked.
-  await page.goto(`/workflows/${rid}/executions/${executions[2]}`);
+  // The same graph from the execution's side: the execution is the box that is marked.
+  await page.goto(executions[1]?.replace("texera://", "/") ?? "");
   await page.getByRole("tab", { name: "Lineage" }).click();
-  await expect(lineage.locator('[data-lineage-card="execution"][data-root]')).toContainText(`petals, run 3 ${stamp}`);
-  await expect(cards("execution")).toHaveCount(1);
-  await expect(lineage.locator('[data-edge="used"]')).toHaveText("read iris.csv");
+  await toLevel(lineage, "versions");
+  await expect(lineage.locator('[data-graph-role="run"]')).toHaveCount(1);
+  await expect(lineage.locator('[data-graph-role="run"]')).toHaveAttribute("data-graph-root", "true");
+  await expect(lineage.locator('[data-graph-edge="reads"]')).toHaveCount(1);
 });
 
 // Who made each thing is said on its card: a person, or a chat (the agent in it, for a person),
@@ -117,15 +114,15 @@ test("lineage says who made each thing: a person, or the agent in a chat someone
   await page.goto(`/workflows/${rid}`);
   await page.getByRole("tab", { name: "Lineage" }).click();
   const lineage = page.locator("[data-lineage]");
-  const cards = (type: string) => lineage.locator(`[data-lineage-card="${type}"]`);
-  // The dataset is the person's own; the workflow and its execution are the agent's, in the chat.
-  const dataset = cards("resource").filter({ hasText: "iris" });
+  await toLevel(lineage, "versions");
+  // The dataset is the person's own; the workflow's version and its execution are the agent's, in the chat.
+  const dataset = lineage.locator('[data-graph-role="data"]').filter({ hasText: "iris" });
   await expect(dataset.locator('[data-made-by="person"]')).toHaveText(`by ${me}`);
-  await expect(lineage.locator('[data-lineage-card="resource"][data-root] [data-made-by="agent"] [data-made-in]')).toHaveText(chatName);
-  const execution = cards("execution").first();
+  await expect(lineage.locator('[data-graph-root="true"] [data-graph-version] [data-made-by="agent"] [data-made-in]')).toHaveText(chatName);
+  const execution = lineage.locator('[data-graph-role="run"]').first();
   await expect(execution.locator('[data-made-by="agent"] [data-made-in]')).toHaveText(chatName);
-  // What a card says is in its tooltip in full, with the person the agent worked for.
-  await expect(execution).toHaveAttribute("title", new RegExp(`Made by Texera Agent for ${me}, in the chat ${chatName}`));
+  // Who made it is said in full on hover, with the person the agent worked for.
+  await expect(execution.locator('[data-made-by="agent"]')).toHaveAttribute("title", new RegExp(`Made by Texera Agent for ${me}, in the chat ${chatName}`));
   await page.screenshot({ path: "test-results/lineage-made-by.png" });
 
   // The chat's name opens the chat beside, and the chat says who started it.
@@ -133,9 +130,9 @@ test("lineage says who made each thing: a person, or the agent in a chat someone
   const chat = page.locator("[data-side-panel] [data-conversation-view]");
   await expect(chat).toBeVisible();
   await expect(chat).toContainText(`started by ${me}`);
-  // A card itself still opens what it names, once the panel is out of its way.
+  // A box itself still opens what it names, once the panel is out of its way.
   await page.locator("[data-side-panel]").getByRole("button", { name: "Close panel" }).click();
-  await dataset.click();
+  await dataset.click({ position: { x: 14, y: 12 } });
   await expect(page.locator('[data-side-panel] [data-resource-view="dataset"]')).toBeVisible();
 
   // The chat's own page says who started it too.
@@ -173,8 +170,10 @@ test("a person a workflow is shared with sees its lineage steadily, what is not 
   await page.goto(`/workflows/${rid}`);
   await page.getByRole("tab", { name: "Lineage" }).click();
   const lineage = page.locator("[data-lineage]");
-  await expect(lineage.locator('[data-lineage-card="execution"]')).toHaveCount(1);
-  await expect(lineage.locator('[data-lineage-card="resource"]').filter({ hasText: "Not shared with you" })).toContainText("Dataset");
+  await toLevel(lineage, "versions");
+  await expect(lineage.locator('[data-graph-role="run"]')).toHaveCount(1);
+  await expect(lineage.locator('[data-graph-readable="false"]')).toContainText("Not shared with you");
+  await expect(lineage.locator('[data-graph-readable="false"]')).toContainText("Dataset");
   // Once drawn, the graph stays: it is not taken off screen and asked for again and again.
   const resolved = { n: 0 };
   page.on("request", r => {

@@ -2,7 +2,64 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-11 (session 17): one way to delete, a model drawn as input, model, output, and a README drawn
+## 2026-11-21 (session 18): one lineage graph, by version, and a version's canvas under it
+
+A collaborator found the graph beside a chat and the workflow canvas too alike, and an
+execution of version 1 hung off version 2. The same lineage was drawn three ways: the canvas,
+the chat's graph (its own derivation in the catalog) and the Lineage tab (another drawing, its
+"Data flow" level, assembled in the browser from the lineage table). The user's design: one
+graph, at the level of resources and, zoomed in, of their versions; the canvas is the detail of
+one version, opened from it.
+
+- **One graph, two scopes, one derivation** (`catalog/internal/catalog/graph.go`, contract
+  `api/catalog/graph.tsp`): `GET /conversations/{rid}/graph` (what the chat made and worked from,
+  its executions, its plan, the sources it consulted) and the new `GET /resources/{rid}/graph`
+  (for a workflow its executions and newest version; for an execution itself; for a dataset, a
+  model or a function the executions of the versions that name it, and each naming workflow's
+  newest version) answer
+  the same `ResourceGraph`: resources with the versions that took part, each execution with the
+  version it ran, the results it kept, and an arrow from each data, model or function version to
+  the workflow version that reads or uses it, `executed` once an execution ran the operator that
+  names it or reused its rows (the Diabetes chat's executions reused their scan), else only named.
+  A workflow's versions on it are those executed and its newest; at most three executions of a
+  version are listed, the rest counted. Units, profiles and warehouses are said on an execution
+  (`unit`, `profile`, `warehouse`), never boxes; a unit the chat made that nothing ran on yet is
+  listed (`units`) for the execution it is about to start. Who made each version and execution
+  is on it. Steps (`GraphStep`), `runsOn`/`makes` edges and the unit role are gone; the walk
+  (`/lineage`, the agent's `get_lineage`) is unchanged.
+- **The drawing** (`packages/kinds/src/graph/`): two levels, Resources (a box each, a
+  workflow's newest results after it, its state) and Versions (a row per version; arrows row to
+  row, dashed while only named; executions off their version's row with the unit at the bottom
+  right; results after them). It opens on Resources. A row opens that version: a workflow version
+  on its canvas, in the chat's panel with the trail back, beside a resource page. The Detail level
+  and its step rows (`steps.ts`) are deleted. Results are named as the canvas names them
+  (`operatorTitle` in `results/labels.ts`). The chat's tab is "Lineage" now.
+- **The Lineage tab is the same graph** (`shell/Lineage.tsx`), around the resource, which is
+  marked with the version on screen; `packages/kinds/src/lineage/` (React Flow cards, "Data flow",
+  folds, per-name lookups) is deleted. Only datasets, models, functions, workflows and executions
+  have the tab.
+- **The canvas shows the version on screen** (`workflow/View.tsx`): its newest execution, else
+  the workflow's newest with "ran vN" on its results; the pinned badge says the pinned number
+  (it said the head's).
+
+Verified: catalog `go test` whole (new: the email's case on a workflow's, an execution's and a
+dataset's page, a function's page, an unshared dataset unnamed, reuse counted as use and a
+dataset's page listing an execution that reused rows of it, a made unit no execution ran on),
+frontend typecheck and vitest 341, Biome on the rewritten files. On the OrbStack stack (catalog
+and frontend images rolled): Playwright `graph`, `lineage` and the lineage test of `canvas`
+(7), and `canvas`, `texera2`, `delete`, `chat-tree`, `chat-page`, `sharing` (43 passed, the 2
+model tests skipped); the Diabetes chat looked at in the browser at both levels, its v1 row
+opening v1's canvas with v1's execution, and the Pima cohort's page with all four workflows
+that name it. Not run: the model layer (`diabetes.spec.ts`, `test_diabetes.py`, both updated)
+and `k8s.sh check` whole.
+
+Found on the way: the Mac slept, OrbStack restarted the stack's pods at once, and Keycloak was
+OOM-killed at start and stayed in back-off (Lakekeeper with it); OpenBao, in dev mode, came back
+empty, without the `texera` mount and the platform's model key, so making a unit failed and the
+agent could not answer. Restarted Keycloak and Lakekeeper, re-ran the `openbao-init` job.
+Next: OpenBao keeps nothing across a restart here; its init should run on every OpenBao start.
+
+: one way to delete, a model drawn as input, model, output, and a README drawn
 
 - **Deleting is the same wherever a resource shows.** One bin and one question
   (`packages/kinds/src/shell/Delete.tsx`, its words and its way out in `deleting.ts`): on every

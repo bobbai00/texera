@@ -10,6 +10,7 @@ import "@typespec/rest";
 import "@typespec/openapi";
 import "../../common.tsp";
 import "../core.tsp";
+import "../graph.tsp";
 
 using Http;
 using Rest;
@@ -102,119 +103,6 @@ model ChatVersion {
   ...VersionSummary;
   @doc("True when the chat made the version; false for one it worked from.")
   made: boolean;
-}
-
-@doc("What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.")
-enum GraphRole {
-  data,
-  workflow,
-  `model`,
-  `function`,
-  unit,
-}
-
-@doc("A run of a workflow, as its node in a chat's graph lists it.")
-model GraphRun {
-  uri: Uri;
-  phase: string;
-  @doc("The operators its plan had.")
-  steps: int32;
-  @doc("Those that read an earlier run's rows instead of running.")
-  reused: int32;
-  startedAt?: utcDateTime;
-  finishedAt?: utcDateTime;
-  @doc("The unit it ran on, when the caller may see it.")
-  unit?: Uri;
-  @doc("The version of the workflow it ran.")
-  version?: Vno;
-}
-
-@doc("A step of a workflow on a chat's graph: one operator of the version it shows.")
-model GraphStep {
-  @doc("The operator's ID in the workflow; the tables it makes are named by it.")
-  id: string;
-  @doc("What the step does: a built-in's type (scan, filter, join, ...), predict, or a custom operator's URI at a version.")
-  type: string;
-  @doc("Its settings, as the workflow version has them.")
-  settings?: Record<unknown>;
-  @doc("The steps whose rows it reads, in port order.")
-  inputs?: string[];
-}
-
-@doc("A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.")
-model GraphNode {
-  @doc("What the node opens: a resource's URI, or for a table a run made, its port's.")
-  uri: Uri;
-  role: GraphRole;
-  kind: ResourceKind;
-  name: string;
-  @doc("What the resource says it is.")
-  description?: string;
-  @doc("The version the chat worked from or made, the newest when there are several.")
-  version?: Vno;
-  @doc("The chat made it, or a version of it.")
-  made: boolean;
-  @doc("The turn of this chat that made it; absent for what the chat only worked from.")
-  turn?: string;
-  @doc("For a workflow, its last run's phase; for a unit, its phase.")
-  state?: string;
-  @doc("For a workflow, its runs in the chat, newest first.")
-  runs?: GraphRun[];
-  @doc("For a workflow, the steps of the version its newest run ran, or of the version the chat made or worked from when it has not run, each after the steps it reads.")
-  steps?: GraphStep[];
-  @doc("For a table a run made, the step that made it.")
-  step?: string;
-  @doc("For a table a run made, the run.")
-  run?: Uri;
-  @doc("For a table a run made, its rows.")
-  rows?: int64;
-  @doc("For a unit, the CPU of its main node, as Kubernetes counts it; absent when it reserves none.")
-  cpu?: string;
-  @doc("For a unit, the memory of its main node, as Kubernetes counts it.")
-  memory?: string;
-  @doc("For a unit, the GPUs of its main node.")
-  gpu?: int32;
-}
-
-@doc("An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.")
-model GraphEdge {
-  from: Uri;
-  to: Uri;
-  relation: "reads" | "makes" | "uses" | "runsOn";
-}
-
-@doc("Something the chat's latest plan said it would make that it has not made yet. An earlier plan's items are done or given up.")
-model PlannedItem {
-  kind?: string;
-  name: string;
-  detail?: string;
-  @doc("The turn whose start_work said so.")
-  turn: string;
-}
-
-@doc("A call the chat's agent made to an outside MCP server's tool.")
-model GraphCall {
-  tool: string;
-  @doc("What the call asked: its arguments, in short.")
-  asked: string;
-  @doc("The turn it was made in.")
-  turn: string;
-}
-
-@doc("An outside MCP server the chat's agent consulted, and its calls, oldest first.")
-model GraphSource {
-  uri: Uri;
-  name: string;
-  calls: GraphCall[];
-}
-
-@doc("What a chat read, made and ran, and how they connect.")
-model ConversationGraph {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  planned: PlannedItem[];
-  @doc("The outside MCP servers the chat's agent consulted, in the order it first did; the catalog's own server is not among them.")
-  sources: GraphSource[];
 }
 
 @doc("A resource as a chat knows it, with the versions that count.")
@@ -347,11 +235,11 @@ namespace Routes {
     @extension("x-texera-permission", "read")
     resources(@path rid: Rid): ChatResource[] | Error;
 
-    @doc("The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.")
+    @doc("The lineage graph beside the chat: what it read, made and ran, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.")
     @get
     @route("/{rid}/graph")
     @extension("x-texera-permission", "read")
-    graph(@path rid: Rid): ConversationGraph | Error;
+    graph(@path rid: Rid): ResourceGraph | Error;
 
     @doc("What a turn of this chat runs with, for the caller.")
     @get

@@ -758,7 +758,7 @@ test("an execution shows the file it read in its lineage, and can be kept past t
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
   await execution.getByRole("tab", { name: "Lineage" }).click();
   const lineage = execution.locator("[data-lineage]");
-  await expect(lineage.locator('[data-edge="used"]')).toBeVisible();
+  await expect(lineage.locator('[data-graph-edge="reads"]')).toBeVisible();
   await expect(lineage).toContainText("flowers.csv");
   await execution.locator('[data-keep-execution="free"]').click();
   await expect(execution.locator('[data-keep-execution="kept"]')).toBeVisible();

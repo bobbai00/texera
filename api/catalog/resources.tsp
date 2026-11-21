@@ -5,6 +5,7 @@ import "@typespec/rest";
 import "@typespec/openapi";
 import "../common.tsp";
 import "./core.tsp";
+import "./graph.tsp";
 import "./lineage.tsp";
 
 using Http;
@@ -130,6 +131,12 @@ namespace Routes {
       @query direction?: LineageDirection,
       @query depth?: int32,
     ): LineageGraph | Error;
+
+    @doc("The lineage graph of a dataset, model, function, workflow or execution, as a person reads it: what it came from and what came of it, by version. Any other kind has none.")
+    @get
+    @route("/{rid}/graph")
+    @extension("x-texera-permission", "read")
+    graph(@path rid: Rid): ResourceGraph | Error;
 
     @doc("The resources whose specs reference this one.")
     @get

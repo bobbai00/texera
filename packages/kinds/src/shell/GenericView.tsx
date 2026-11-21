@@ -14,7 +14,7 @@ import { Access } from "./Access";
 import { OriginChip } from "./Chips";
 import { JsonBlock } from "./JsonBlock";
 import { EditableName, KindHeader } from "./KindHeader";
-import { Lineage } from "./Lineage";
+import { LINEAGE_KINDS, Lineage } from "./Lineage";
 import { metaLine } from "./MetaLine";
 import { useMay } from "./may";
 import { SpecEditor } from "./SpecEditor";
@@ -100,9 +100,11 @@ export function ResourcePage({
           <Tab value="access">
             <Users /> {project ? "People" : "Access"}
           </Tab>
-          <Tab value="lineage">
-            <GitBranch /> Lineage
-          </Tab>
+          {LINEAGE_KINDS.has(kind) && (
+            <Tab value="lineage">
+              <GitBranch /> Lineage
+            </Tab>
+          )}
           <Tab value="json">
             <Braces /> JSON
           </Tab>
@@ -123,9 +125,11 @@ export function ResourcePage({
         <TabPanel value="access" className="scrollbar-thin overflow-y-auto">
           <Access resource={resource} />
         </TabPanel>
-        <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
-          <Lineage ref={{ ...ref, vno: vno ?? (entry.versioned && resource.metadata.head > 0 ? resource.metadata.head : undefined) }} />
-        </TabPanel>
+        {LINEAGE_KINDS.has(kind) && (
+          <TabPanel value="lineage" className="flex min-h-0 flex-1 flex-col">
+            <Lineage ref={{ ...ref, vno: vno ?? (entry.versioned && resource.metadata.head > 0 ? resource.metadata.head : undefined) }} />
+          </TabPanel>
+        )}
         <TabPanel value="json" className="scrollbar-thin overflow-y-auto p-3">
           <JsonBlock value={resource} />
         </TabPanel>

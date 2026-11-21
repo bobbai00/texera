@@ -564,9 +564,12 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
   await expect(execution.locator("[data-execution-computing] [data-ran-on]")).toContainText(`(${profile.metadata.name} v`);
   await expect(execution.locator("[data-execution-computing] [data-ran-on]")).toContainText(`results in ${lab.metadata.name}`);
   await expect(execution.locator("[data-execution-packages]")).toContainText("pandas==");
-  // So does its card in lineage: the unit and the warehouse are no cards of their own there.
+  // So does its box in lineage, on hover: the unit and the warehouse are no boxes of their own there.
   await execution.getByRole("tab", { name: "Lineage" }).click();
-  await expect(page.locator('[data-lineage-card="execution"][data-root] [data-ran-on]')).toContainText(lab.metadata.name);
+  const lineage = page.locator("[data-lineage]");
+  await lineage.locator('[data-graph-level="versions"]').click();
+  await expect(lineage.locator('[data-graph-role="run"][data-graph-root="true"]')).toHaveAttribute("data-graph-ran-on", new RegExp(`results in ${lab.metadata.name}`));
+  await expect(lineage.locator('[data-graph-role="computing-unit"], [data-graph-role="warehouse"]')).toHaveCount(0);
   await page.screenshot({ path: "test-results/run-target-lineage.png" });
 });
 

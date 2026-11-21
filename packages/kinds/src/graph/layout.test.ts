@@ -1,303 +1,209 @@
-import type { ConversationGraph, GraphNode, PlannedItem } from "@texera/catalog-client/types";
+import type { GraphExecution, GraphNode, GraphVersion, PlannedItem, ResourceGraph } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
-import { elbow, type Layout, layOut, type Measured } from "./layout";
-import { runId, viewOf } from "./model";
+import { type Box, elbow, type Layout, layOut, type Measured } from "./layout";
+import { boxOfRow, type GraphView, type Level, viewOf } from "./model";
 
 const D = "texera://datasets/11111111-1111-1111-1111-111111111111";
-const D2 = "texera://datasets/12121212-1212-1212-1212-121212121212";
+const L = "texera://datasets/12121212-1212-1212-1212-121212121212";
 const W = "texera://workflows/22222222-2222-2222-2222-222222222222";
 const W2 = "texera://workflows/33333333-3333-3333-3333-333333333333";
-const U = "texera://computing-units/66666666-6666-6666-6666-666666666666";
-const U2 = "texera://computing-units/67676767-6767-6767-6767-676767676767";
 const M = "texera://models/88888888-8888-8888-8888-888888888888";
-const exec = (wf: string, n = 1) => `${wf}/executions/7777777${n}-7777-7777-7777-777777777777`;
-const port = (wf: string, op: string, n = 1) => `${exec(wf, n)}/operators/${op}/ports/output-0`;
-const node = (uri: string, role: GraphNode["role"], extra: Partial<GraphNode> = {}): GraphNode => ({
+const exec = (wf: string, n: number) => `${wf}/executions/7777777${n}-7777-7777-7777-777777777777`;
+const port = (e: string, op: string) => `${e}/operators/${op}/ports/output-0`;
+
+const version = (vno: number, extra: Partial<GraphVersion> = {}): GraphVersion => ({ vno, made: false, ...extra });
+const node = (uri: string, role: GraphNode["role"], versions: GraphVersion[]): GraphNode => ({
   uri,
   role,
-  kind: role === "data" ? "dataset" : role,
+  kind: role === "data" ? "dataset" : role === "function" ? "operator" : role,
   name: uri.slice(-4),
+  readable: true,
+  versions,
   made: true,
-  ...extra,
+});
+const execution = (uri: string, workflow: string, vno: number): GraphExecution => ({
+  uri,
+  workflow,
+  version: vno,
+  name: "execution",
+  phase: "completed",
+  steps: 3,
+  reused: 0,
+  made: true,
+  createdBy: "alice",
 });
 
-const work = (uri: string, dataset: string, table: string, extra: Partial<GraphNode> = {}) =>
-  node(uri, "workflow", {
-    runs: [{ uri: exec(uri), phase: "completed", steps: 3, reused: 0, unit: U }],
-    steps: [
-      { id: "scan", type: "scan", settings: { file: `${dataset}@1/files/a.csv` } },
-      { id: "mid", type: "filter", settings: { where: "x > 1" }, inputs: ["scan"] },
-      { id: table, type: "aggregate", inputs: ["mid"] },
-    ],
-    ...extra,
-  });
-
-/** One workflow run on a unit: it reads a dataset and its run makes a table. */
-const one: ConversationGraph = {
+/** A workflow whose version 1 read the cohort and version 2 the cohort and the labs, each executed once and keeping a table; version 3, the newest, not executed. */
+const versions: ResourceGraph = {
   nodes: [
-    work(W, D, "t1"),
-    node(D, "data"),
-    node(U, "unit"),
-    node(port(W, "t1"), "data", { kind: "execution", step: "t1", rows: 3, run: exec(W) }),
+    node(W, "workflow", [version(3), version(2, { executions: 1 }), version(1, { executions: 1 })]),
+    node(D, "data", [version(1, { files: ["a.csv"] })]),
+    node(L, "data", [version(1, { files: ["b.csv"] })]),
+    node(M, "model", [version(1)]),
+  ],
+  executions: [execution(exec(W, 2), W, 2), execution(exec(W, 1), W, 1)],
+  results: [
+    { uri: port(exec(W, 2), "t2"), execution: exec(W, 2), operator: "t2", operatorType: "Aggregate", rows: 5 },
+    { uri: port(exec(W, 1), "t1"), execution: exec(W, 1), operator: "t1", operatorType: "Aggregate", rows: 3 },
   ],
   edges: [
-    { from: D, to: W, relation: "reads" },
-    { from: W, to: U, relation: "runsOn" },
-    { from: W, to: port(W, "t1"), relation: "makes" },
+    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true },
+    { from: `${D}@1`, to: `${W}@2`, relation: "reads", executed: true },
+    { from: `${L}@1`, to: `${W}@2`, relation: "reads", executed: true },
+    { from: `${D}@1`, to: `${W}@3`, relation: "reads", executed: false },
+    { from: `${L}@1`, to: `${W}@3`, relation: "reads", executed: false },
+    { from: `${M}@1`, to: `${W}@2`, relation: "uses", executed: true },
   ],
   planned: [],
   sources: [],
-};
-/** The same, and a second workflow run on the same unit that arrives later. */
-const two: ConversationGraph = {
-  ...one,
-  nodes: [
-    ...one.nodes,
-    work(W2, D2, "t2"),
-    node(D2, "data"),
-    node(port(W2, "t2"), "data", { kind: "execution", step: "t2", rows: 5, run: exec(W2) }),
-  ],
-  edges: [
-    ...one.edges,
-    { from: D2, to: W2, relation: "reads" },
-    { from: W2, to: U, relation: "runsOn" },
-    { from: W2, to: port(W2, "t2"), relation: "makes" },
-  ],
+  units: [],
 };
 
-/** Sizes as the page would measure them: a dataset or model 140 by 40, a workflow 220 by 120, an execution 110 by 30, a table 130 by 36; steps 20 apart. */
-const measured: Measured = {
-  size: id =>
-    id.startsWith("run:")
-      ? { w: 110, h: 30 }
-      : id.includes("/executions/")
-        ? { w: 130, h: 36 }
-        : id.startsWith("texera://workflows/")
-          ? { w: 220, h: 120 }
-          : id.startsWith("texera://datasets/") || id.startsWith("texera://models/")
-            ? { w: 140, h: 40 }
-            : undefined,
-  row: (id, row) => {
-    if (id.startsWith("texera://datasets/")) return row === "file:a.csv" ? 30 : undefined;
-    const at = ["scan", "mid", "t1", "t2"].indexOf(row);
-    return at < 0 ? undefined : 50 + at * 20;
-  },
-};
-const EM = 12.5;
-const mid = (b: { y: number; h: number } | undefined) => (b?.y as number) + (b?.h as number) / 2;
+/** Sizes as the page would measure them: a box is taller by a row for each of its versions zoomed in. */
+function measured(view: GraphView, level: Level): Measured {
+  const header = 30;
+  const line = 20;
+  const zoomedIn = level === "versions";
+  return {
+    size: id => {
+      const box = view.boxes.get(id);
+      if (box) {
+        const w = box.role === "workflow" ? 200 : 150;
+        return { w, h: header + (zoomedIn ? box.rows.length * line : 0) };
+      }
+      if (view.runs.has(id)) return { w: 150, h: 50 };
+      if (view.results.has(id)) return { w: 120, h: 34 };
+      return undefined;
+    },
+    row: (id, row) => {
+      const at = view.boxes.get(id)?.rows.indexOf(row) ?? -1;
+      return zoomedIn && at >= 0 ? header + at * line + line / 2 : undefined;
+    },
+  };
+}
 
-describe("the resource graph's layout", () => {
-  it("reads left to right: data, the workflow, its execution, the table it made, level along the row", () => {
-    const layout = layOut(viewOf(one), measured, "standard", EM);
-    const at = (id: string) => layout.places.get(id);
-    const run = runId(W, exec(W));
-    expect(at(D)?.x).toBeLessThan(at(W)?.x as number);
-    expect(at(run)?.x).toBeGreaterThan((at(W)?.x as number) + 220);
-    expect(at(port(W, "t1"))?.x).toBeGreaterThan((at(run)?.x as number) + 110);
-    const head = (at(W)?.y as number) + 20;
-    expect(mid(at(D))).toBe(head);
-    expect(at(run)?.y).toBe(at(W)?.y);
-    expect(at(port(W, "t1"))?.y).toBe(at(run)?.y);
-    expect(layout.columns.map(c => c.label)).toEqual(["Data", "Workflow", "Execution", "Result"]);
-    expect(layout.arrows.map(a => [a.relation, a.from, a.to])).toEqual([
-      ["reads", D, W],
-      ["runs", W, run],
-      ["makes", run, port(W, "t1")],
+const lay = (graph: ResourceGraph, level: Level) => {
+  const view = viewOf(graph);
+  return { view, layout: layOut(view, measured(view, level), level, 12) };
+};
+const at = (l: Layout, id: string) => l.places.get(id) as Box;
+const NAMES: Record<string, string> = { [D]: "D", [L]: "L", [W]: "W", [W2]: "W2", [M]: "M" };
+/** A thing of the graph in short: D, W@2, an execution's number, a result's operator. */
+const short = (id: string): string => {
+  if (NAMES[id]) return NAMES[id];
+  if (id.includes("/operators/")) return id.split("/operators/")[1]?.split("/")[0] ?? id;
+  if (id.includes("/executions/")) return `e${id.split("/executions/")[1]?.slice(7, 8)}`;
+  const box = boxOfRow(id);
+  return NAMES[box] ? `${NAMES[box]}${id.slice(box.length)}` : id;
+};
+const said = (l: Layout, relations: string[]) =>
+  l.arrows
+    .filter(a => relations.includes(a.relation))
+    .map(a => `${short(a.from)}>${short(a.to)}${a.dashed ? " dashed" : ""}`);
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+describe("the lineage graph's layout", () => {
+  it("zoomed out reads data, workflow, results: no execution, one arrow from each resource", () => {
+    const { layout } = lay(versions, "resources");
+    expect(layout.columns.map(c => c.label)).toEqual(["Data", "Model", "Workflow", "Result"]);
+    expect(layout.places.has(exec(W, 1))).toBe(false);
+    expect(at(layout, D).x + at(layout, D).w).toBeLessThan(at(layout, W).x);
+    // The newest execution's table, level with the workflow.
+    expect(at(layout, port(exec(W, 2), "t2")).y).toBe(at(layout, W).y);
+    expect(layout.places.has(port(exec(W, 1), "t1"))).toBe(false);
+    expect(said(layout, ["reads", "uses", "makes"])).toEqual(["D>W", "L>W", "M>W", "W>t2"]);
+  });
+
+  it("zoomed in stands each execution level with the row of the version it ran, its table level with it", () => {
+    const { view, layout } = lay(versions, "versions");
+    expect(layout.columns.map(c => c.label)).toEqual(["Data", "Model", "Workflow", "Execution", "Result"]);
+    const card = at(layout, W);
+    const rowY = (row: string) => card.y + (measured(view, "versions").row(W, row) as number);
+    const e2 = at(layout, exec(W, 2));
+    const e1 = at(layout, exec(W, 1));
+    expect(e2.y).toBeLessThan(e1.y);
+    // Each as level with its version's row as the one above allows.
+    expect(e1.y + Math.min(e1.h / 2, 1.2 * 12)).toBeGreaterThanOrEqual(rowY(`${W}@1`));
+    expect(at(layout, port(exec(W, 2), "t2")).y).toBe(e2.y);
+    expect(at(layout, port(exec(W, 1), "t1")).y).toBe(e1.y);
+    // The executions come out of their own rows.
+    const runs = layout.arrows.filter(a => a.relation === "runs");
+    expect(runs.map(a => `${short(a.from)}>${short(a.to)}`)).toEqual(["W@2>e2", "W@1>e1"]);
+    expect(runs[1]?.path.startsWith(`M${card.x + card.w},${rowY(`${W}@1`)}`)).toBe(true);
+  });
+
+  it("zoomed in runs each arrow from the version read to the version that read it, dashed where only named", () => {
+    const { layout } = lay(versions, "versions");
+    expect(said(layout, ["reads", "uses"])).toEqual([
+      "D@1>W@1",
+      "D@1>W@2",
+      "L@1>W@2",
+      "D@1>W@3 dashed",
+      "L@1>W@3 dashed",
+      "M@1>W@2",
     ]);
-    for (const a of layout.arrows) expect(a.path).not.toContain("Q");
+    expect(said(layout, ["runs", "makes"])).toEqual(["W@2>e2", "e2>t2", "W@1>e1", "e1>t1"]);
   });
 
-  it("gives a later workflow the next row and moves nothing", () => {
-    const before = layOut(viewOf(one), measured, "standard", EM);
-    const after = layOut(viewOf(two), measured, "standard", EM);
-    for (const [id, box] of before.places) expect(after.places.get(id), id).toEqual(box);
-    expect((after.places.get(W2)?.y as number) > (after.places.get(W)?.y as number) + 120).toBe(true);
-    expect(after.places.get(runId(W2, exec(W2)))?.x).toBe(after.places.get(runId(W, exec(W)))?.x);
+  it("stands what a version reads level with the row that reads it, and the models under all the data", () => {
+    const { view, layout } = lay(versions, "versions");
+    const m = measured(view, "versions");
+    const card = at(layout, W);
+    const d = at(layout, D);
+    // The cohort's row is level with the first workflow row that reads it, the newest's.
+    expect(d.y + (m.row(D, `${D}@1`) as number)).toBe(card.y + (m.row(W, `${W}@3`) as number));
+    const lowest = Math.max(at(layout, D).y + at(layout, D).h, at(layout, L).y + at(layout, L).h);
+    expect(at(layout, M).y).toBeGreaterThan(lowest);
+    expect(layout.columns.find(c => c.label === "Model")?.y).toBeGreaterThan(lowest);
   });
 
-  it("stands the models under the data, headed Model, with an arrow to the workflow that uses them", () => {
-    const g: ConversationGraph = {
-      ...one,
-      nodes: [...one.nodes, node(M, "model", { kind: "model" })],
-      edges: [...one.edges, { from: M, to: W, relation: "uses" }],
+  it("gives a later workflow the next band, and moves nothing drawn", () => {
+    const more: ResourceGraph = {
+      ...versions,
+      nodes: [...versions.nodes, node(W2, "workflow", [version(1, { executions: 1 })])],
+      executions: [...versions.executions, execution(exec(W2, 3), W2, 1)],
+      edges: [...versions.edges, { from: `${L}@1`, to: `${W2}@1`, relation: "reads", executed: true }],
     };
-    const layout = layOut(viewOf(g), measured, "standard", EM);
-    const [d, m] = [layout.places.get(D), layout.places.get(M)];
-    expect(m?.x).toBe(d?.x);
-    expect(m?.y).toBeGreaterThan((d?.y as number) + 40);
-    const heading = layout.columns.find(c => c.label === "Model");
-    expect(heading?.x).toBe(0);
-    expect(heading?.y).toBeGreaterThan((d?.y as number) + 40 - 1);
-    expect(heading?.y).toBeLessThan(m?.y as number);
-    expect(layout.arrows.find(a => a.relation === "uses")).toMatchObject({ from: M, to: W });
-    expect(noOverlaps(layout)).toEqual([]);
-  });
-
-  it("at the closest level runs the execution the height of the steps, and stands each table and file level with its step", () => {
-    const layout = layOut(viewOf(one), measured, "detail", EM);
-    const w = layout.places.get(W) as { x: number; y: number; w: number; h: number };
-    const run = layout.places.get(runId(W, exec(W)));
-    expect(run?.y).toBeCloseTo(w.y + 0.35 * EM);
-    expect(run?.h).toBeCloseTo(w.h - 0.7 * EM);
-    const t = layout.places.get(port(W, "t1"));
-    expect((t?.y as number) + 18).toBe(w.y + 50 + 2 * 20);
-    const d = layout.places.get(D);
-    expect((d?.y as number) + 30).toBe(w.y + 50);
-    // The table's arrow leaves the execution level with the table.
-    const makes = layout.arrows.find(a => a.relation === "makes");
-    const end = Math.round(((t?.x as number) - 0.5 * EM * 0.85) * 100) / 100;
-    expect(makes?.path).toBe(`M${(run?.x as number) + 110},${w.y + 90}H${end}`);
-  });
-
-  it("stands a workflow's executions one under another, newest first, and each table beside the one that made it", () => {
-    const moved: ConversationGraph = {
-      ...one,
-      nodes: [
-        work(W, D, "t1", {
-          runs: [
-            { uri: exec(W, 2), phase: "running", steps: 3, reused: 0, unit: U2 },
-            { uri: exec(W, 1), phase: "completed", steps: 3, reused: 0, unit: U },
-          ],
-        }),
-        ...one.nodes.slice(1),
-        node(U2, "unit"),
-      ],
-    };
-    const layout = layOut(viewOf(moved), measured, "standard", EM);
-    const [a, b] = [layout.places.get(runId(W, exec(W, 2))), layout.places.get(runId(W, exec(W, 1)))];
-    expect(a?.x).toBe(b?.x);
-    expect((b?.y as number) >= (a?.y as number) + (a?.h as number)).toBe(true);
-    expect(layout.arrows.find(x => x.relation === "makes")?.from).toBe(runId(W, exec(W, 1)));
-    expect(layout.arrows.filter(x => x.relation === "runs")).toHaveLength(2);
-    expect(noOverlaps(layout)).toEqual([]);
-  });
-
-  it("draws each execution from the row of the version it ran, as level with it as the executions above allow", () => {
-    const g: ConversationGraph = {
-      ...one,
-      nodes: [
-        work(W, D, "t1", {
-          version: 4,
-          runs: [
-            { uri: exec(W, 2), phase: "completed", steps: 3, reused: 0, unit: U, version: 4 },
-            { uri: exec(W, 1), phase: "completed", steps: 3, reused: 0, unit: U, version: 1 },
-          ],
-        }),
-        ...one.nodes.slice(1),
-      ],
-    };
-    const rows: Measured = {
-      ...measured,
-      row: (id, row) => (row === "version:4" ? 60 : row === "version:1" ? 80 : measured.row(id, row)),
-    };
-    const layout = layOut(viewOf(g), rows, "standard", EM);
-    const card = layout.places.get(W) as { x: number; y: number };
-    const [newer, older] = [layout.places.get(runId(W, exec(W, 2))), layout.places.get(runId(W, exec(W, 1)))];
-    expect((newer?.y as number) + 15).toBe(card.y + 60);
-    expect(older?.y).toBe((newer?.y as number) + 30 + 0.7 * EM);
-    const lines = layout.arrows.filter(a => a.relation === "runs");
-    expect(lines.map(a => a.to)).toEqual([runId(W, exec(W, 2)), runId(W, exec(W, 1))]);
-    expect(lines[0]?.path).toMatch(new RegExp(`^M${card.x + 220},${card.y + 60}H[\\d.]+$`));
-    expect(lines[1]?.path).toMatch(new RegExp(`^M${card.x + 220},${card.y + 80}H`));
-    expect(noOverlaps(layout)).toEqual([]);
-    // Closer, the executions keep the height of the steps, and their lines still leave from the rows.
-    const close = layOut(viewOf(g), rows, "detail", EM);
-    const at = close.places.get(W) as { x: number; y: number };
-    expect(close.arrows.filter(a => a.relation === "runs").map(a => a.path.split("H")[0])).toEqual([
-      `M${at.x + 220},${at.y + 60}`,
-      `M${at.x + 220},${at.y + 80}`,
-    ]);
-    expect(close.places.get(runId(W, exec(W, 2)))?.y).toBeCloseTo(at.y + 0.35 * EM);
-  });
-
-  it("stands a unit nothing ran on by itself, under the executions", () => {
-    const g: ConversationGraph = { ...one, nodes: [...one.nodes, node(U2, "unit")] };
-    const m: Measured = { ...measured, size: id => (id === U2 ? { w: 150, h: 40 } : measured.size(id)) };
-    const layout = layOut(viewOf(g), m, "standard", EM);
-    const run = layout.places.get(runId(W, exec(W)));
-    expect(layout.places.get(U2)?.x).toBe(run?.x);
-    expect(layout.places.get(U2)?.y).toBeGreaterThan((run?.y as number) + 30);
-    expect(layout.places.has(U)).toBe(false);
+    for (const level of ["resources", "versions"] as const) {
+      const before = lay(versions, level).layout;
+      const after = lay(more, level).layout;
+      for (const [id, b] of before.places) expect(after.places.get(id)).toEqual(b);
+      expect(at(after, W2).y).toBeGreaterThan(at(after, W).y + at(after, W).h);
+    }
   });
 
   it("draws an elbow only where the ends are not level, turning where it is told", () => {
-    expect(elbow(0, 10, 100, 10, EM)).toBe("M0,10H100");
-    expect(elbow(0, 10, 100, 60, EM)).toMatch(/^M0,10H\d.*Q.*V.*Q.*H100$/);
-    expect(elbow(0, 10, 100, 60, EM, 80)).toMatch(/^M0,10H7\d.*Q80,10 80,/);
+    expect(elbow(0, 10, 100, 10, 12)).toBe("M0,10H100");
+    const turned = elbow(0, 10, 100, 60, 12, 80);
+    expect(turned.startsWith("M0,10H")).toBe(true);
+    expect(turned).toContain("V");
+    expect(turned.endsWith("H100")).toBe(true);
   });
 });
-
-/** What overlaps: any two things placed. */
-function noOverlaps(layout: Layout): string[] {
-  const boxes = [...layout.places.entries()];
-  const bad: string[] = [];
-  for (const [a, x] of boxes)
-    for (const [b, y] of boxes)
-      if (a < b && x.x < y.x + y.w && y.x < x.x + x.w && x.y < y.y + y.h && y.y < x.y + x.h) bad.push(`${a} ~ ${b}`);
-  return bad;
-}
-
-const placed = (uri: string, role: GraphNode["role"], extra: Partial<GraphNode> = {}): GraphNode => ({
-  uri,
-  role,
-  kind: role === "data" ? "dataset" : role === "unit" ? "computing-unit" : role,
-  name: uri.slice(-4),
-  made: true,
-  turn: "t2",
-  ...extra,
-});
-const sized: Measured = {
-  size: id =>
-    id.startsWith("planned:workflow") || id.startsWith("texera://workflows/")
-      ? { w: 212, h: 130 }
-      : id.startsWith("run:")
-        ? { w: 120, h: 32 }
-        : { w: 160, h: 40 },
-  row: () => undefined,
-};
 
 describe("the layout, whatever the plan says", () => {
-  const ran = placed(W, "workflow", {
-    runs: [{ uri: exec(W), phase: "completed", steps: 1, reused: 0, unit: U }],
-    steps: [],
-  });
-  const unrun = placed(W, "workflow", { steps: [] });
   const plans: PlannedItem[][] = [
-    [],
-    [{ kind: "workflow", name: "other", turn: "t2" }],
-    [{ kind: "computing-unit", name: "X", turn: "t2" }],
+    [{ kind: "workflow", name: "Next", turn: "t2" }],
     [
-      { kind: "workflow", name: "other", turn: "t2" },
-      { kind: "computing-unit", name: "X", turn: "t2" },
+      { kind: "workflow", name: "Next", turn: "t2" },
+      { kind: "dataset", name: "Table", turn: "t2" },
+      { kind: "computing-unit", name: "Medium", turn: "t2" },
     ],
-    [{ kind: "dataset", name: "Out", turn: "t2" }],
-    [{ kind: "execution", name: "run it", turn: "t2" }],
     [
-      { kind: "execution", name: "run it", turn: "t2" },
-      { kind: "computing-unit", name: "X", turn: "t2" },
+      { kind: "execution", name: "rerun", turn: "t2" },
+      { kind: "dataset", name: "Alone", turn: "t2" },
     ],
   ];
-  for (const [label, work, edges] of [
-    [
-      "ran on U",
-      ran,
-      [
-        { from: D, to: W, relation: "reads" as const },
-        { from: W, to: U, relation: "runsOn" as const },
-      ],
-    ],
-    ["unrun, default U", unrun, [{ from: W, to: U, relation: "runsOn" as const }]],
-    ["unrun, no unit", unrun, []],
-  ] as const)
-    for (const planned of plans)
-      for (const level of ["overview", "standard", "detail"] as const)
-        it(`overlaps nothing at ${level}: a workflow ${label}, a plan of ${planned.map(p => p.kind).join(" and ") || "nothing"}`, () => {
-          const g: ConversationGraph = {
-            nodes: [work, placed(D, "data"), placed(U, "unit")],
-            edges: [...edges],
-            planned,
-            sources: [],
-          };
-          expect(noOverlaps(layOut(viewOf(g), sized, level, 12.5))).toEqual([]);
-        });
+  for (const level of ["resources", "versions"] as const)
+    it(`overlaps nothing ${level === "resources" ? "zoomed out" : "zoomed in"}`, () => {
+      for (const planned of plans) {
+        const { layout } = lay({ ...versions, planned }, level);
+        const boxes = [...layout.places.entries()];
+        for (const [i, [a, ba]] of boxes.entries())
+          for (const [b, bb] of boxes.slice(i + 1))
+            if (overlaps(ba, bb)) throw new Error(`${a} overlaps ${b} with ${JSON.stringify(planned)}`);
+        for (const a of layout.arrows) expect(a.path).not.toContain("NaN");
+        expect(boxOfRow(`${W}@2`)).toBe(W);
+      }
+    });
 });

@@ -1,14 +1,13 @@
-// Where each thing of a chat's graph stands, once its size is known. It reads left to right: data
-// above models, workflows, executions, and the tables they made, and the same again for a workflow
-// that reads another's table. Each workflow takes a row: the data it reads level with it on the
-// left, its executions beside it one under another, each as level as it can be with the row of the
-// version it ran when its card lists versions, the tables each kept level with it on the right; at
-// the closest level a file and a table stand level with the step that reads or made it, and an
-// execution runs the height of the steps. Rows are taken in the order the chat came to the
-// workflows, so a new one never moves what is drawn; the models, under the data, go down as data
-// comes. Arrows have at most one rounded elbow.
+// Where each thing of a lineage graph stands, once its size is known. It reads left to right:
+// data, with the models under it; workflows; executions, zoomed in; results. Each workflow takes
+// a band: what it reads level with it on the left, the results right of it. Zoomed out the
+// results are its newest execution's, level with it. Zoomed in each execution stands as level
+// as it can with the row of the version it ran, one under another, and the results it kept
+// level with it; what a workflow version reads stands level with that version's row. Bands are
+// taken in the order of the workflows, so a new one never moves what is drawn; the models go
+// under all the data. Arrows have at most one rounded elbow.
 
-import { type GraphView, type Level, namedBy, type RunItem, versionRowOf, type WorkItem } from "./model";
+import { boxOfRow, type GraphView, inputsOf, type Level, type RunItem } from "./model";
 
 export interface Box {
   x: number;
@@ -20,16 +19,18 @@ export interface Box {
 /** What the page measured of each drawn thing, in the units of the drawing. */
 export interface Measured {
   size: (id: string) => { w: number; h: number } | undefined;
-  /** How far down a thing a row of it sits, at its middle: a step of a workflow, a file of a dataset. */
+  /** How far down a box one of its rows sits, at its middle. */
   row: (id: string, row: string) => number | undefined;
 }
 
 export interface Arrow {
   key: string;
+  /** What it joins: boxes zoomed out, rows of versions zoomed in, executions and results. */
   from: string;
   to: string;
   relation: "reads" | "uses" | "runs" | "makes";
-  planned: boolean;
+  /** Named and not read, or planned: what has not happened. */
+  dashed: boolean;
   path: string;
   tip: string;
 }
@@ -52,17 +53,25 @@ export interface Layout {
 
 /** How a level spaces things, in ems of its own type. */
 const SPACING: Record<Level, { gap: number; row: number; track: number; stack: number }> = {
-  overview: { gap: 3.4, row: 0.7, track: 1.2, stack: 0.6 },
-  standard: { gap: 3.4, row: 0.9, track: 1.6, stack: 0.7 },
-  detail: { gap: 3.2, row: 0.9, track: 1.6, stack: 0.5 },
+  resources: { gap: 3.4, row: 0.7, track: 1.2, stack: 0.6 },
+  versions: { gap: 3.4, row: 0.9, track: 1.6, stack: 0.7 },
 };
 
 /** How far down the column's heading things start, in ems. */
 const HEADING = 2.6;
 
+/** A workflow's executions as they stand zoomed in: by its rows, the newest first; then any of no row. */
+function shownRuns(view: GraphView, work: string): RunItem[] {
+  const all = (view.runsOf.get(work) ?? []).map(id => view.runs.get(id) as RunItem);
+  const order = view.boxes.get(work)?.rows ?? [];
+  const at = (r: RunItem) => (r.row === undefined ? order.length : order.indexOf(r.row));
+  return [...all].sort((a, b) => at(a) - at(b));
+}
+
 /** Lays out a graph's view with what was measured; `em` is the level's type size in drawing units. */
 export function layOut(view: GraphView, m: Measured, level: Level, em: number): Layout {
   const s = SPACING[level];
+  const zoomedIn = level === "versions";
   const gap = s.gap * em;
   const rowGap = s.row * em;
   const trackGap = s.track * em;
@@ -70,173 +79,121 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
   const top0 = HEADING * em;
   const places = new Map<string, Box>();
   const sizeOf = (id: string) => m.size(id) ?? { w: 0, h: 0 };
-  const rankOf = (id: string) => view.rank.get(id) ?? 0;
-  const boxesOf = (w: WorkItem) => w.runs.map(id => view.runs.get(id)).filter((b): b is RunItem => !!b);
   const widest = (ids: string[]) => Math.max(0, ...ids.map(id => sizeOf(id).w));
+  const resultsOf = (work: string): string[] =>
+    zoomedIn ? shownRuns(view, work).flatMap(r => r.results) : (view.latest.get(work) ?? []);
+  const allResults = [...new Set([...view.works.flatMap(resultsOf), ...view.unhung])];
+  const allRuns = zoomedIn ? view.works.flatMap(w => shownRuns(view, w).map(r => r.id)) : [];
 
-  const dataIn = new Map<number, string[]>();
-  for (const id of view.data.keys()) dataIn.set(rankOf(id), [...(dataIn.get(rankOf(id)) ?? []), id]);
-  const models = view.models.map(n => n.uri);
-  const worksIn = (r: number) => view.works.filter(w => rankOf(w.id) === r);
-  const runsIn = (r: number) => [...view.runs.values()].filter(b => rankOf(b.id) === r);
-  const maxRank = Math.max(
-    view.idle.length ? 1 : 0,
-    ...dataIn.keys(),
-    ...view.works.map(w => rankOf(w.id)),
-    ...[...view.runs.values()].map(b => rankOf(b.id))
-  );
+  // Across: the data and models, right-aligned against their gap; workflows; executions; results.
+  const dataW = widest([...view.data, ...view.models]);
+  const workW = widest(view.works);
+  const runW = widest(allRuns);
+  const dataX = 0;
+  const workX = dataW + (dataW > 0 ? gap : 0);
+  const execX = workX + workW + (workW > 0 ? gap : 0);
+  const resultX = execX + (runW > 0 ? runW + gap : 0);
 
-  // Across: a data column for an even rank; for an odd one a column of workflows, then one of executions.
-  const dataX: number[] = [];
-  const dataW: number[] = [];
-  const workX: number[] = [];
-  const execX: number[] = [];
-  for (let r = 0, x = 0; r <= maxRank; r++) {
-    if (r % 2 === 0) {
-      const w = widest([...(dataIn.get(r) ?? []), ...(r === 0 ? models : [])]);
-      dataX[r] = x;
-      dataW[r] = w;
-      x += w + (w > 0 ? gap : 0);
-    } else {
-      workX[r] = x;
-      const card = widest(worksIn(r).map(w => w.id));
-      x += card + (card > 0 ? gap : 0);
-      execX[r] = x;
-      const run = widest([...runsIn(r).map(b => b.id), ...(r === 1 ? view.idle : [])]);
-      x += run + (run > 0 ? gap : 0);
-    }
-  }
-  const at = (xs: number[], r: number) => xs[r] as number;
+  const bottom = { data: top0, work: top0, exec: top0, result: top0 };
+  const atRight = (id: string) => dataX + dataW - sizeOf(id).w;
+  // How far down its box a row of a version is: where its arrows meet it.
+  const rowAt = (row: string) => m.row(boxOfRow(row), row);
+  const headOf = (id: string) => Math.min(sizeOf(id).h / 2, 1.6 * em);
 
-  const bottoms = new Map<number, number>();
-  const bottom = (r: number) => bottoms.get(r) ?? top0;
-  const raise = (r: number, y: number) => bottoms.set(r, Math.max(bottom(r), y));
+  for (const work of view.works) {
+    const card = sizeOf(work);
+    const runs = zoomedIn ? shownRuns(view, work) : [];
+    const results = resultsOf(work).filter(id => !places.has(id));
+    const inputs = inputsOf(view, work).filter(id => !places.has(id) && view.boxes.get(id)?.role === "data");
+    let top = bottom.work;
+    if (runs.length) top = Math.max(top, bottom.exec);
+    if (results.length) top = Math.max(top, bottom.result);
+    if (inputs.length) top = Math.max(top, bottom.data);
+    places.set(work, { x: workX, y: top, w: card.w, h: card.h });
+    let end = top + card.h;
 
-  // A workflow's head: where its arrows meet it when nothing finer is known.
-  const headOf = (w: WorkItem) => Math.min(sizeOf(w.id).h / 2, 1.6 * em);
-  // How far down its card the row of the version an execution ran is, when the card lists it.
-  const rowOn = (w: WorkItem, b: RunItem) => {
-    const row = versionRowOf(w, b);
-    return row === undefined ? undefined : m.row(w.id, row);
-  };
-  const runHead = (h: number) => runEnd(h, em);
-  for (const w of view.works) {
-    const r = rankOf(w.id);
-    const size = sizeOf(w.id);
-    const boxes = boxesOf(w);
-    const inputs = w.reads
-      .map(x => x.data)
-      .filter((id, i, all) => all.indexOf(id) === i && !places.has(id) && rankOf(id) === r - 1);
-    const placedInputs = w.reads.map(x => places.get(x.data)).filter((b): b is Box => !!b);
-    const results = boxes.flatMap(b => b.results).filter(id => !places.has(id));
-
-    let top = bottom(r);
-    if (inputs.length) top = Math.max(top, bottom(r - 1));
-    if (results.length) top = Math.max(top, bottom(r + 1));
-    const first = placedInputs[0];
-    if (first) top = Math.max(top, first.y + first.h / 2 - headOf(w));
-    places.set(w.id, { x: at(workX, r), y: top, w: size.w, h: size.h });
-    const head = top + headOf(w);
-    let end = top + size.h;
-
-    // Its executions, one under another from its top, each no higher than the row of the version it
-    // ran; at the closest level they share the height of the steps.
-    const span = { from: top + 0.35 * em, to: top + size.h - 0.35 * em };
-    const share = boxes.length ? (span.to - span.from - (boxes.length - 1) * stackGap) / boxes.length : 0;
-    let next = level === "detail" ? span.from : top;
-    for (const b of boxes) {
-      const bs = sizeOf(b.id);
-      const row = level === "detail" ? undefined : rowOn(w, b);
-      const y = row === undefined ? next : Math.max(next, top + row - runHead(bs.h));
-      const box = { x: at(execX, r), y, w: bs.w, h: level === "detail" ? Math.max(bs.h, share) : bs.h };
-      places.set(b.id, box);
-      next = box.y + box.h + stackGap;
-      end = Math.max(end, box.y + box.h);
+    // Its executions, one under another from its top, each no higher than its version's row.
+    let next = top;
+    for (const r of runs) {
+      const b = sizeOf(r.id);
+      const at = r.row !== undefined ? rowAt(r.row) : undefined;
+      const y = at === undefined ? next : Math.max(next, top + at - runHead(b.h, em));
+      places.set(r.id, { x: execX, y, w: b.w, h: b.h });
+      next = y + b.h + stackGap;
+      end = Math.max(end, y + b.h);
     }
 
-    // What it reads, level with it on the left, right-aligned against the gap.
-    let iy = bottom(r - 1);
+    // What it reads, level with the highest row of its own that reads it, or with its head.
+    let iy = bottom.data;
+    const order = view.boxes.get(work)?.rows ?? [];
     for (const id of inputs) {
       const d = sizeOf(id);
-      const read = w.reads.find(x => x.data === id);
-      const step = read?.steps[0];
-      const file = read?.files[0];
-      const stepAt = level === "detail" && step && file ? m.row(w.id, step) : undefined;
-      const fileAt = level === "detail" && file ? m.row(id, `file:${file}`) : undefined;
-      const want = stepAt !== undefined && fileAt !== undefined ? top + stepAt - fileAt : head - d.h / 2;
+      const link = view.links
+        .filter(l => boxOfRow(l.from) === id && boxOfRow(l.to) === work)
+        .sort((a, b) => order.indexOf(a.to) - order.indexOf(b.to))[0];
+      const into = zoomedIn && link ? rowAt(link.to) : undefined;
+      const out = zoomedIn && link ? rowAt(link.from) : undefined;
+      const want = into !== undefined && out !== undefined ? top + into - out : top + headOf(work) - d.h / 2;
       const y = Math.max(iy, want);
-      places.set(id, { x: at(dataX, r - 1) + at(dataW, r - 1) - d.w, y, w: d.w, h: d.h });
+      places.set(id, { x: atRight(id), y, w: d.w, h: d.h });
       iy = y + d.h + rowGap;
+      end = Math.max(end, y + d.h);
     }
-    // What each execution made, level with it on the right; at the closest level, level with its step.
-    let ry = Math.max(bottom(r + 1), top);
-    for (const b of boxes) {
-      const bb = places.get(b.id) as Box;
-      for (const [j, id] of b.results.entries()) {
-        if (places.has(id)) continue;
-        const d = sizeOf(id);
-        const step = view.nodes.get(id)?.step;
-        const stepAt = level === "detail" && step ? m.row(w.id, step) : undefined;
-        const want = stepAt !== undefined ? top + stepAt - d.h / 2 : j === 0 ? bb.y : ry;
-        const y = Math.max(ry, want);
-        places.set(id, { x: at(dataX, r + 1), y, w: d.w, h: d.h });
-        ry = y + d.h + rowGap;
+
+    // What came of it, level with the execution that kept it, or with it zoomed out.
+    let ry = Math.max(bottom.result, top);
+    const keep = (id: string, want: number) => {
+      const d = sizeOf(id);
+      const y = Math.max(ry, want);
+      places.set(id, { x: resultX, y, w: d.w, h: d.h });
+      ry = y + d.h + rowGap;
+      end = Math.max(end, y + d.h);
+    };
+    // The first of each level with what it came of, the rest under it.
+    if (zoomedIn)
+      for (const r of runs) {
+        const b = places.get(r.id) as Box;
+        for (const [j, id] of r.results.entries()) if (!places.has(id)) keep(id, j === 0 ? b.y : ry);
       }
-    }
-    const rowEnd = Math.max(end, iy - rowGap, ry - rowGap) + trackGap;
-    raise(r - 1, rowEnd);
-    raise(r, rowEnd);
-    raise(r + 1, rowEnd);
+    else for (const [j, id] of results.entries()) keep(id, j === 0 ? top : ry);
+
+    const band = end + trackGap;
+    bottom.data = Math.max(bottom.data, band);
+    bottom.work = band;
+    bottom.exec = band;
+    bottom.result = Math.max(bottom.result, band);
   }
 
-  // Data nothing read and nothing made, at the end of its column.
-  for (const id of view.loose) {
+  // Data nothing on the graph reads, at the end of its column; then the models under all of it.
+  for (const id of view.data) {
     if (places.has(id)) continue;
-    const r = rankOf(id);
     const d = sizeOf(id);
-    const y = bottom(r);
-    places.set(id, {
-      x: r === 0 ? at(dataX, 0) + at(dataW, 0) - d.w : at(dataX, r),
-      y,
-      w: d.w,
-      h: d.h,
-    });
-    raise(r, y + d.h + rowGap);
+    places.set(id, { x: atRight(id), y: bottom.data, w: d.w, h: d.h });
+    bottom.data += d.h + rowGap;
   }
-
-  // The models, under all the data of the first column.
-  const dataOfFirst = (dataIn.get(0) ?? []).map(id => places.get(id)).filter((b): b is Box => !!b);
-  const modelHeading = dataOfFirst.length ? Math.max(...dataOfFirst.map(b => b.y + b.h)) + 1.4 * em : 0;
+  const dataBottom = Math.max(0, ...view.data.map(id => places.get(id)).map(b => (b ? b.y + b.h : 0)));
+  const modelHeading = view.data.length ? dataBottom + 1.4 * em : 0;
   let my = modelHeading + top0;
-  for (const id of models) {
+  for (const id of view.models) {
     const d = sizeOf(id);
-    places.set(id, { x: at(dataX, 0) + at(dataW, 0) - d.w, y: my, w: d.w, h: d.h });
+    places.set(id, { x: atRight(id), y: my, w: d.w, h: d.h });
     my += d.h + rowGap;
   }
-
-  // Units nothing has run on, on their own under the executions.
-  for (const id of view.idle) {
+  // What the plan will make that no execution stands for, at the end of the results.
+  for (const id of view.unhung) {
+    if (places.has(id)) continue;
     const d = sizeOf(id);
-    const y = bottom(1);
-    places.set(id, { x: at(execX, 1), y, w: d.w, h: d.h });
-    raise(1, y + d.h + rowGap);
+    places.set(id, { x: resultX, y: bottom.result, w: d.w, h: d.h });
+    bottom.result += d.h + rowGap;
   }
 
   const columns: Column[] = [];
-  for (let r = 0; r <= maxRank; r++) {
-    if (r % 2 === 0) {
-      const count = (dataIn.get(r) ?? []).length;
-      if (count)
-        columns.push({ key: `${r}:data`, x: at(dataX, r), y: 0, label: r === 0 ? "Data" : "Result", count });
-      if (r === 0 && models.length)
-        columns.push({ key: "0:model", x: at(dataX, 0), y: modelHeading, label: "Model", count: models.length });
-    } else {
-      const works = worksIn(r).length;
-      if (works) columns.push({ key: `${r}:work`, x: at(workX, r), y: 0, label: "Workflow", count: works });
-      const runs = runsIn(r).length + (r === 1 ? view.idle.length : 0);
-      if (runs) columns.push({ key: `${r}:exec`, x: at(execX, r), y: 0, label: "Execution", count: runs });
-    }
-  }
+  if (view.data.length) columns.push({ key: "data", x: dataX, y: 0, label: "Data", count: view.data.length });
+  if (view.models.length)
+    columns.push({ key: "model", x: dataX, y: modelHeading, label: "Model", count: view.models.length });
+  if (view.works.length) columns.push({ key: "work", x: workX, y: 0, label: "Workflow", count: view.works.length });
+  if (allRuns.length) columns.push({ key: "exec", x: execX, y: 0, label: "Execution", count: allRuns.length });
+  if (allResults.length) columns.push({ key: "result", x: resultX, y: 0, label: "Result", count: allResults.length });
   let width = 0;
   let height = 0;
   for (const b of places.values()) {
@@ -246,110 +203,111 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
   return { places, arrows: arrowsOf(view, places, m, level, em), columns, width, height };
 }
 
-/** The arrows, left to right: what a workflow reads and uses, its executions, the tables they made. */
+/** The arrows, left to right: what each workflow reads and uses, its executions, what they kept. */
 function arrowsOf(view: GraphView, places: Map<string, Box>, m: Measured, level: Level, em: number): Arrow[] {
   const arrows: Arrow[] = [];
-  const rankOf = (id: string) => view.rank.get(id) ?? 0;
+  const zoomedIn = level === "versions";
   const inside = (y: number, b: Box, margin = 1.1 * em) =>
     Math.min(Math.max(y, b.y + Math.min(margin, b.h / 2)), b.y + b.h - Math.min(margin, b.h / 2));
   const push = (
-    relation: Arrow["relation"],
-    from: string,
-    to: string,
-    planned: boolean,
+    a: Pick<Arrow, "key" | "from" | "to" | "relation" | "dashed">,
     ends: { x1: number; y1: number; x2: number; y2: number },
-    options: { key?: string; late?: boolean } = {}
+    late = false
   ) => {
     const { x1, y1, x2, y2 } = ends;
     const head = 0.5 * em;
     const end = x2 - head * 0.85;
     arrows.push({
-      key: options.key ?? `${from}>${to}`,
-      from,
-      to,
-      relation,
-      planned,
-      // An arrow that passes other columns turns just before its end, past all it crosses.
-      path: elbow(x1, y1, end, y2, em, options.late ? end - 1.6 * em : undefined),
+      ...a,
+      // An arrow that passes other things turns just before its end, past all it crosses.
+      path: elbow(x1, y1, end, y2, em, late ? end - 1.6 * em : undefined),
       tip: `${x2},${y2} ${x2 - head},${y2 - head * 0.52} ${x2 - head},${y2 + head * 0.52}`,
     });
   };
-  for (const w of view.works) {
-    const card = places.get(w.id);
-    if (!card) continue;
-    const plannedWork = !!w.planned;
-    const r = rankOf(w.id);
-    for (const read of w.reads) {
-      const d = places.get(read.data);
-      if (!d) continue;
-      const pairs =
-        level === "detail" && read.steps.length
-          ? read.steps.map((step, i) => ({ step, file: read.files[Math.min(i, read.files.length - 1)] }))
-          : [{ step: undefined, file: undefined }];
-      for (const { step, file } of pairs) {
-        const fy = file !== undefined ? m.row(read.data, `file:${file}`) : undefined;
-        const sy = step !== undefined ? m.row(w.id, step) : undefined;
-        const y1 = fy !== undefined ? d.y + fy : d.y + d.h / 2;
-        const y2 = sy !== undefined ? card.y + sy : inside(y1, card);
+  const rowY = (row: string, b: Box) => {
+    const at = m.row(boxOfRow(row), row);
+    return at === undefined ? undefined : b.y + at;
+  };
+
+  if (zoomedIn)
+    for (const l of view.links) {
+      const d = places.get(boxOfRow(l.from));
+      const c = places.get(boxOfRow(l.to));
+      if (!d || !c) continue;
+      const y1 = rowY(l.from, d) ?? d.y + d.h / 2;
+      const y2 = rowY(l.to, c) ?? inside(y1, c);
+      const plannedWork = !!view.boxes.get(boxOfRow(l.to))?.planned;
+      push(
+        { key: l.key, from: l.from, to: l.to, relation: l.relation, dashed: !l.executed || plannedWork },
+        { x1: d.x + d.w, y1, x2: c.x, y2 },
+        view.boxes.get(boxOfRow(l.from))?.role === "model"
+      );
+    }
+  else {
+    // Zoomed out, one arrow from a resource to a workflow, solid when any version's was.
+    const folded = new Map<string, { from: string; to: string; relation: "reads" | "uses"; executed: boolean }>();
+    for (const l of view.links) {
+      const from = boxOfRow(l.from);
+      const to = boxOfRow(l.to);
+      const key = `${from}>${to}`;
+      const had = folded.get(key);
+      folded.set(key, { from, to, relation: l.relation, executed: l.executed || !!had?.executed });
+    }
+    for (const [key, f] of folded) {
+      const d = places.get(f.from);
+      const c = places.get(f.to);
+      if (!d || !c) continue;
+      const y1 = d.y + d.h / 2;
+      push(
+        { key, from: f.from, to: f.to, relation: f.relation, dashed: !f.executed },
+        { x1: d.x + d.w, y1, x2: c.x, y2: inside(y1, c) },
+        view.boxes.get(f.from)?.role === "model"
+      );
+    }
+  }
+
+  for (const work of view.works) {
+    const card = places.get(work);
+    const box = view.boxes.get(work);
+    if (!card || !box) continue;
+    const makes = (from: string, b: Box, ids: string[], dashed: boolean) => {
+      for (const id of ids) {
+        const t = places.get(id);
+        const item = view.results.get(id);
+        if (!t || !item) continue;
+        // What the plan will make is drawn from its workflow only when the same plan made or will make the workflow.
+        if (item.planned && !(box.planned || (box.node?.turn && box.node.turn === item.planned.turn))) continue;
+        const y2 = t.y + t.h / 2;
         push(
-          "reads",
-          read.data,
-          w.id,
-          plannedWork,
-          { x1: d.x + d.w, y1, x2: card.x, y2 },
-          { key: `${read.data}>${w.id}>${step ?? ""}`, late: r - rankOf(read.data) > 1 }
+          { key: `${from}>${id}`, from, to: id, relation: "makes", dashed: dashed || !!item.planned },
+          { x1: b.x + b.w, y1: inside(y2, b, 0.6 * em), x2: t.x, y2 },
+          true
         );
       }
+    };
+    if (!zoomedIn) {
+      makes(work, card, view.latest.get(work) ?? [], !!box.planned);
+      continue;
     }
-    for (const model of w.models) {
-      const b = places.get(model);
-      if (!b) continue;
-      const y1 = b.y + b.h / 2;
-      const step = level === "detail" ? w.steps.find(s => namedBy(s).some(n => n.base === model)) : undefined;
-      const sy = step ? m.row(w.id, step.id) : undefined;
-      const y2 = sy !== undefined ? card.y + sy : inside(y1, card);
-      push("uses", model, w.id, plannedWork, { x1: b.x + b.w, y1, x2: card.x, y2 }, { late: r > 1 });
-    }
-    // One line out of the workflow to each execution: from the row of the version it ran when the
-    // card lists it, else from level with the first execution, which stands level with the card.
-    const runY = (b: Box) => b.y + runEnd(b.h, em);
-    const firstRun = w.runs.map(id => places.get(id)).find((b): b is Box => !!b);
-    const out = firstRun ? inside(runY(firstRun), card) : 0;
-    for (const id of w.runs) {
-      const box = view.runs.get(id);
+    // One line out of each version's row to each execution of it.
+    for (const id of view.runsOf.get(work) ?? []) {
+      const run = view.runs.get(id);
       const b = places.get(id);
-      if (!box || !b) continue;
-      const row = versionRowOf(w, box);
-      const rowY = row === undefined ? undefined : m.row(w.id, row);
-      const ends =
-        rowY === undefined
-          ? { x1: card.x + card.w, y1: out, x2: b.x, y2: runY(b) }
-          : { x1: card.x + card.w, y1: card.y + rowY, x2: b.x, y2: inside(card.y + rowY, b, 1.2 * em) };
-      push("runs", w.id, id, plannedWork || !box.run, ends);
-      for (const t of box.results) {
-        const table = places.get(t);
-        if (!table) continue;
-        const item = view.data.get(t);
-        // A dataset the plan will make is drawn from its workflow's execution only when the same plan made or will make that workflow.
-        if (item?.planned && !(plannedWork || (w.node?.turn && w.node.turn === item.planned.turn))) continue;
-        const y2 = table.y + table.h / 2;
-        const y1 = inside(y2, b, 0.6 * em);
-        push(
-          "makes",
-          id,
-          t,
-          plannedWork || !!item?.planned || !box.run,
-          { x1: b.x + b.w, y1, x2: table.x, y2 },
-          { late: true }
-        );
-      }
+      if (!run || !b) continue;
+      const at = run.row !== undefined ? rowY(run.row, card) : undefined;
+      const y1 = at ?? card.y + Math.min(card.h / 2, 1.6 * em);
+      push(
+        { key: `${run.row ?? work}>${id}`, from: run.row ?? work, to: id, relation: "runs", dashed: !run.run },
+        { x1: card.x + card.w, y1, x2: b.x, y2: inside(y1, b, 1.2 * em) }
+      );
+      makes(id, b, run.results, !run.run);
     }
   }
   return arrows;
 }
 
 /** How far down an execution its line ends, its height being `h`. */
-const runEnd = (h: number, em: number) => Math.min(h / 2, 1.2 * em);
+const runHead = (h: number, em: number) => Math.min(h / 2, 1.2 * em);
 
 const round = (n: number) => Math.round(n * 100) / 100;
 

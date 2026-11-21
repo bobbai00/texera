@@ -216,6 +216,8 @@ test("the demo: a project at a glance, a file brought to the chat and analyzed w
   await expect(graph).toBeVisible({ timeout: 60_000 });
   await expect(page.locator("[data-chat-window]")).not.toHaveAttribute("data-chat-maximized", "true");
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "screening_cohort" }).first()).toBeVisible();
+  // Zoomed in: the execution off the version it ran, on the unit picked.
+  await graph.locator('[data-graph-level="versions"]').click();
   const run = graph.locator('[data-graph-role="run"]');
   await expect(run).toHaveCount(1);
   await expect(run).toHaveAttribute("data-graph-state", "completed");
@@ -330,6 +332,7 @@ test("the story: what models and data there are, an inference on the ones picked
   // It ran: on the unit she made, with the model she picked, over the data she picked.
   const graph = page.locator("[data-resource-graph]");
   await expect(graph).toBeVisible({ timeout: 60_000 });
+  await graph.locator('[data-graph-level="versions"]').click();
   await expect(graph.locator('[data-graph-role="run"][data-graph-state="completed"]').first()).toBeVisible({ timeout: 30_000 });
   await expect(graph.locator('[data-graph-role="model"]').filter({ hasText: "Undiagnosed" })).toHaveCount(1);
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "NHANES" }).first()).toBeVisible();
@@ -367,6 +370,7 @@ test("the story: what models and data there are, an inference on the ones picked
   await expect(bobs.locator('[data-message-role="user"]')).toHaveCount(await page.locator('[data-message-role="user"]').count(), { timeout: 30_000 });
   await expect(bobs.locator('[data-part="resources"] [data-resource-card="model"]').filter({ hasText: "Undiagnosed diabetes risk" }).first()).toBeVisible();
   const bobsGraph = bobs.locator("[data-resource-graph]");
+  await bobsGraph.locator('[data-graph-level="versions"]').click();
   await expect(bobsGraph.locator('[data-graph-role="run"][data-graph-state="completed"]').first()).toBeVisible({ timeout: 30_000 });
   const present = (on: Page) => on.locator("[data-presence] [data-present]");
   await expect(present(page)).toHaveCount(2, { timeout: 15_000 });

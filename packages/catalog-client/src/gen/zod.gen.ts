@@ -181,25 +181,14 @@ export const zGraphCall = z.object({
 });
 
 /**
- * What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.
+ * What a resource on the graph stands for: data, a model, a workflow, or a function a workflow calls (a custom operator).
  */
 export const zGraphRole = z.enum([
     'data',
     'workflow',
     'model',
-    'function',
-    'unit'
+    'function'
 ]);
-
-/**
- * A step of a workflow on a chat's graph: one operator of the version it shows.
- */
-export const zGraphStep = z.object({
-    id: z.string(),
-    type: z.string(),
-    settings: z.record(z.string(), z.unknown()).optional(),
-    inputs: z.array(z.string()).optional()
-});
 
 /**
  * A file the catalog fetches itself into the staging area, from the internet.
@@ -738,17 +727,25 @@ export const zExecutionPort = z.object({
 });
 
 /**
- * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.
+ * An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.
  */
 export const zGraphEdge = z.object({
     from: zUri,
     to: zUri,
-    relation: z.enum([
-        'reads',
-        'makes',
-        'uses',
-        'runsOn'
-    ])
+    relation: z.enum(['reads', 'uses']),
+    executed: z.boolean()
+});
+
+/**
+ * What an execution kept of one operator's output, and shows.
+ */
+export const zGraphResult = z.object({
+    uri: zUri,
+    execution: zUri,
+    operator: z.string(),
+    operatorType: z.string(),
+    displayName: z.string().optional(),
+    rows: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()
 });
 
 /**
@@ -758,6 +755,18 @@ export const zGraphSource = z.object({
     uri: zUri,
     name: z.string(),
     calls: z.array(zGraphCall)
+});
+
+/**
+ * The computing unit an execution ran on, said on the execution.
+ */
+export const zGraphUnit = z.object({
+    uri: zUri,
+    name: z.string(),
+    state: z.string().optional(),
+    cpu: z.string().optional(),
+    memory: z.string().optional(),
+    gpu: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional()
 });
 
 export const zLeaseRequest = z.object({
@@ -1144,21 +1153,40 @@ export const zDatasetVersion = z.object({
 });
 
 /**
- * A run of a workflow, as its node in a chat's graph lists it.
+ * An execution of a workflow version.
  */
-export const zGraphRun = z.object({
+export const zGraphExecution = z.object({
     uri: zUri,
+    workflow: zUri,
+    version: zVno,
+    name: z.string(),
     phase: z.string(),
     steps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
     reused: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
     startedAt: z.iso.datetime().optional(),
     finishedAt: z.iso.datetime().optional(),
-    unit: zUri.optional(),
-    version: zVno.optional()
+    unit: zGraphUnit.optional(),
+    profile: zUri.optional(),
+    warehouse: zUri.optional(),
+    made: z.boolean(),
+    createdBy: zPid,
+    origin: zOrigin.optional()
 });
 
 /**
- * A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
+ * A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest.
+ */
+export const zGraphVersion = z.object({
+    vno: zVno,
+    files: z.array(z.string()).optional(),
+    made: z.boolean(),
+    executions: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    createdBy: zPid.optional(),
+    origin: zOrigin.optional()
+});
+
+/**
+ * A resource on the graph, with the versions of it that took part, the newest first.
  */
 export const zGraphNode = z.object({
     uri: zUri,
@@ -1166,28 +1194,10 @@ export const zGraphNode = z.object({
     kind: zResourceKind,
     name: z.string(),
     description: z.string().optional(),
-    version: zVno.optional(),
+    readable: z.boolean(),
+    versions: z.array(zGraphVersion),
     made: z.boolean(),
-    turn: z.string().optional(),
-    state: z.string().optional(),
-    runs: z.array(zGraphRun).optional(),
-    steps: z.array(zGraphStep).optional(),
-    step: z.string().optional(),
-    run: zUri.optional(),
-    rows: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional(),
-    cpu: z.string().optional(),
-    memory: z.string().optional(),
-    gpu: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional()
-});
-
-/**
- * What a chat read, made and ran, and how they connect.
- */
-export const zConversationGraph = z.object({
-    nodes: z.array(zGraphNode),
-    edges: z.array(zGraphEdge),
-    planned: z.array(zPlannedItem),
-    sources: z.array(zGraphSource)
+    turn: z.string().optional()
 });
 
 /**
@@ -1268,6 +1278,19 @@ export const zProfileVersion = z.object({
     contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
+});
+
+/**
+ * A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.
+ */
+export const zResourceGraph = z.object({
+    nodes: z.array(zGraphNode),
+    executions: z.array(zGraphExecution),
+    results: z.array(zGraphResult),
+    edges: z.array(zGraphEdge),
+    planned: z.array(zPlannedItem),
+    sources: z.array(zGraphSource),
+    units: z.array(zGraphUnit)
 });
 
 export const zResourceMetadata = z.object({
@@ -2264,7 +2287,7 @@ export const zConversationsGraphPath = z.object({
 /**
  * The request has succeeded.
  */
-export const zConversationsGraphResponse = zConversationGraph;
+export const zConversationsGraphResponse = zResourceGraph;
 
 export const zConversationsListMessagesPath = z.object({
     rid: zRid
@@ -3295,6 +3318,15 @@ export const zResourcesGrantPath = z.object({
  * The request has succeeded.
  */
 export const zResourcesGrantResponse = zGrant;
+
+export const zResourcesGraphPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zResourcesGraphResponse = zResourceGraph;
 
 export const zResourcesLineagePath = z.object({
     rid: zRid

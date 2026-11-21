@@ -58,7 +58,9 @@ def test_a_file_brought_to_a_chat_is_analyzed_with_the_teams_model(alice, projec
     # The graph joins them, and says where the agent looked.
     graph = alice.get(f"/conversations/{crid}/graph")
     roles = {node["role"] for node in graph["nodes"]}
-    assert {"data", "model", "unit", "workflow"} <= roles, sorted(roles)
+    assert {"data", "model", "workflow"} <= roles, sorted(roles)
+    # Each execution hangs off the version it ran, the unit it ran on said on it.
+    assert graph["executions"] and all(x["version"] >= 1 and x.get("unit") for x in graph["executions"]), graph["executions"]
     edges = {(e["relation"], e["from"].split("@")[0]) for e in graph["edges"]}
     assert ("reads", attached[0].split("@")[0]) in edges, graph["edges"]
     assert ("uses", team["model"]) in edges, graph["edges"]

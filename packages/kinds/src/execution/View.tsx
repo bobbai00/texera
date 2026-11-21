@@ -220,7 +220,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
             <Ran execution={x} workflow={workflow} />
           </ProjectScope>
         </TabPanel>
-        <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
+        <TabPanel value="lineage" className="flex min-h-0 flex-1 flex-col">
           <Lineage ref={{ kind: "execution", rid: ref.rid, parent: workflow }} />
         </TabPanel>
         <TabPanel value="details" className="scrollbar-thin space-y-4 overflow-y-auto p-4">

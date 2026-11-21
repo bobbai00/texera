@@ -11,14 +11,13 @@ import {
   projectsChatSettingsOptions,
   projectsInheritorsOptions,
   projectsSettingsOptions,
-  resourcesLineageOptions,
   resourcesListGrantsOptions,
   resourcesListVersionsOptions,
   resourcesSearchOptions,
 } from "@texera/catalog-client/query";
-import type { LineageDirection, Resource, ResourceKind, SettingSource } from "@texera/catalog-client/types";
+import type { Resource, ResourceKind, SettingSource } from "@texera/catalog-client/types";
 import { schemaMap } from "@texera/workflow-model";
-import type { KindId, ResourceRef } from "./types";
+import type { KindId } from "./types";
 import { baseUri } from "./uri";
 
 export const meQuery = () => ({ ...meGetOptions(), staleTime: 5 * 60_000 });
@@ -54,9 +53,6 @@ export const resolveQuery = (uri: string) =>
 export const resourceByUriQuery = (uri: string) => ({ ...resolveQuery(baseUri(uri)), select: (r: { resource: Resource }) => r.resource });
 
 export const versionsQuery = (rid: string, limit = 50) => resourcesListVersionsOptions({ path: { rid }, query: { limit } });
-
-export const lineageQuery = (ref: ResourceRef, direction: LineageDirection = "both") =>
-  resourcesLineageOptions({ path: { rid: ref.rid }, query: { direction, ...(ref.vno !== undefined ? { vno: ref.vno } : {}) } });
 
 export const grantsQuery = (rid: string) => resourcesListGrantsOptions({ path: { rid } });
 

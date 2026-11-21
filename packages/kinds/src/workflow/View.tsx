@@ -60,7 +60,7 @@ import { Named } from "../shell/RanOn";
 import { Versions } from "../shell/Versions";
 import { useTellViewing } from "../shell/viewing";
 import type { KindViewProps } from "../types";
-import { uriOf } from "../uri";
+import { uriOf, versionOf } from "../uri";
 import { useWatch } from "../watch";
 import { createCanvasView, portKey } from "./canvas-view";
 import { useShow } from "./framing";
@@ -94,7 +94,7 @@ export default function WorkflowView({ ref, mode }: KindViewProps) {
         name={workflow.metadata.name}
         meta={metaLine("workflow", workflow.metadata)}
         headVno={workflow.metadata.head}
-        shown={pinned ? (version.data as WorkflowSpec) : undefined}
+        shown={pinned ? { vno: vno as number, spec: version.data as WorkflowSpec } : undefined}
         fallback={normalizeSpec(workflow.spec)}
         onPin={setVno}
       />
@@ -157,13 +157,13 @@ function Editor({
   meta: string;
   headVno: number;
   /** An older version to show instead of the head. */
-  shown?: WorkflowSpec;
+  shown?: { vno: number; spec: WorkflowSpec };
   /** The head as the catalog has it, shown when the workflow's session cannot be joined. */
   fallback: WorkflowSpec;
   onPin: (vno: number | undefined) => void;
 }) {
   const queryClient = useQueryClient();
-  const { document, readonly, unreachable, connecting } = useWorkflowDocument(rid, shown, fallback);
+  const { document, readonly, unreachable, connecting } = useWorkflowDocument(rid, shown?.spec, fallback);
   // The store is made once per document; the head and the name reach it through follow below.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   const store = useMemo(() => createEditorStore({ rid, name, headVno, readonly }, document), [document, readonly]);
@@ -182,7 +182,7 @@ function Editor({
           The workflow's live session cannot be reached, so it is shown as it was last saved and cannot be edited right now.
         </p>
       )}
-      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={shown !== undefined} onPin={onPin} connecting={connecting} />
+      <EditorLayout store={store} mode={mode} meta={meta} pinned={shown?.vno} onPin={onPin} connecting={connecting} />
     </ReactFlowProvider>
   );
 }
@@ -202,16 +202,15 @@ function EditorLayout({
   store,
   mode,
   meta,
-  headVno,
-  pinned,
+  pinned: pinnedVno,
   onPin,
   connecting,
 }: {
   store: EditorStore;
   mode: "panel" | "page";
   meta: string;
-  headVno: number;
-  pinned: boolean;
+  /** The older version shown instead of the head, when one is. */
+  pinned: number | undefined;
   onPin: (vno: number | undefined) => void;
   /** The workflow's live session is being joined: what is shown is the head, to look at. */
   connecting: boolean;
@@ -222,7 +221,10 @@ function EditorLayout({
   const selected = useStore(store, s => s.selected);
   const readonly = useStore(store, s => s.readonly);
   const refusal = useStore(store, s => s.refusal);
-  const vno = useStore(store, s => s.headVno);
+  const headVno = useStore(store, s => s.headVno);
+  const pinned = pinnedVno !== undefined;
+  // The version on screen: the one pinned, else the head as the session saves it.
+  const vno = pinnedVno ?? headVno;
   const queryClient = useQueryClient();
   const scope = useScope();
   // An agent asked about this page is told which operator is in focus, and reads the workflow
@@ -256,6 +258,9 @@ function EditorLayout({
     refetchInterval: q => (q.state.data?.items.some(x => LIVE.has(x.status?.phase ?? "pending")) ? 1000 : false),
   });
   const latest = executions.data?.items[0] as Execution | undefined;
+  // What the canvas shows of an execution is of the version on screen: its newest execution, else
+  // the workflow's newest, whose results then say the version they are of.
+  const onScreen = (executions.data?.items.find(x => versionOf(x.spec.workflow) === vno) ?? latest) as Execution | undefined;
   const [tab, setTab] = useState("canvas");
   const [resultsOpen, setResultsOpen] = useState(true);
   const { beside } = useOpenResource();
@@ -310,11 +315,11 @@ function EditorLayout({
   // shared with them, the unit) is told what, by the dry run before they press Run, or by Run.
   const blocked = isRefusal(compiled.error) ? compiled.error : isRefusal(run.error) ? run.error : undefined;
   const overlay = useMemo(() => {
-    const said = overlayFor(spec, compilation, latest);
+    const said = overlayFor(spec, compilation, onScreen);
     const operator = blocked && refusedOperator(blocked);
     if (operator && said[operator]) said[operator] = { ...said[operator], error: "Not shared with you: ask the workflow's owner" };
     return said;
-  }, [spec, compilation, latest, blocked]);
+  }, [spec, compilation, onScreen, blocked]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-workflow-view={rid}>
@@ -456,15 +461,15 @@ function EditorLayout({
               compilation={compilation}
               onRunTo={pinned ? undefined : runTo}
               className="flex min-h-0 min-w-0 flex-1">
-              {latest &&
+              {onScreen &&
                 (resultsOpen ? (
                   <ResultsWindow
-                    execution={latest}
+                    execution={onScreen}
                     workflow={rid}
                     view={view}
                     labelOf={labelOf}
                     onShowOperator={showCard}
-                    onOpen={() => beside({ kind: "execution", rid: latest.metadata.rid, parent: rid })}
+                    onOpen={() => beside({ kind: "execution", rid: onScreen.metadata.rid, parent: rid })}
                     onClose={() => setResultsOpen(false)}
                     showing={vno}
                   />
@@ -474,7 +479,7 @@ function EditorLayout({
                     onClick={() => setResultsOpen(true)}
                     className="nokey absolute bottom-4 left-4 z-20 flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md hover:bg-accent"
                     data-show-results>
-                    <Table2 className="size-3.5 text-primary" /> Results of {latest.metadata.name}
+                    <Table2 className="size-3.5 text-primary" /> Results of {onScreen.metadata.name}
                   </button>
                 ))}
             </EditorCanvas>
@@ -484,12 +489,12 @@ function EditorLayout({
           <Executions rid={rid} onOpen={eid => beside({ kind: "execution", rid: eid, parent: rid })} />
         </TabPanel>
         <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">
-          <Versions rid={rid} head={headVno} selected={pinned ? vno : undefined} onSelect={onPin} />
+          <Versions rid={rid} head={headVno} selected={pinnedVno} onSelect={onPin} />
         </TabPanel>
         <TabPanel value="access" className="scrollbar-thin overflow-y-auto">
           <AccessOf rid={rid} />
         </TabPanel>
-        <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
+        <TabPanel value="lineage" className="flex min-h-0 flex-1 flex-col">
           <Lineage ref={{ kind: "workflow", rid, vno }} />
         </TabPanel>
       </Tabs>

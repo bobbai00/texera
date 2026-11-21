@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -68,90 +69,63 @@ func TestAChatsGraphIsWhatItReadMadeAndRan(t *testing.T) {
 	report(t, h, exec, "tir", map[string]any{"opid": "tir", "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": ns + ".tir_output_0", "tupleCount": 1}})
 	finish(t, h, exec, "completed")
 
-	var graph api.ConversationGraph
+	var graph api.ResourceGraph
 	h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
-	var nodes []string
-	for _, n := range graph.Nodes {
-		said := string(n.Role) + " " + n.Name
-		if n.Made {
-			said += " made"
-		}
-		if n.Runs != nil {
-			run := (*n.Runs)[0]
-			said += " " + run.Phase
-			if run.Steps != 4 {
-				t.Errorf("the run's steps: %d", run.Steps)
-			}
-		}
-		nodes = append(nodes, said)
+	if got, want := nodesSaid(graph), []string{"data labs v1", "data readings v1", "function count lows v1 made", "workflow lows v1 made"}; strings.Join(got, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("the nodes, each with its versions:\n got %q\nwant %q", got, want)
 	}
-	sort.Strings(nodes)
-	want := []string{"data labs", "data readings", "data tir made", "function count lows made", "unit " + unitOf(h).Name, "workflow lows made completed"}
-	if strings.Join(nodes, "; ") != strings.Join(want, "; ") {
-		t.Fatalf("the nodes:\n got %q\nwant %q", nodes, want)
+	// What the version ran read and the function it called, solid.
+	if got, want := edgesSaid(graph), []string{"count lows@1 uses lows@1 executed", "labs@1 reads lows@1 executed", "readings@1 reads lows@1 executed"}; strings.Join(got, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("the edges:\n got %q\nwant %q", got, want)
 	}
-	// A run says the unit it ran on, and a table the run that made it.
-	for _, n := range graph.Nodes {
-		if n.Runs != nil {
-			if on := (*n.Runs)[0].Unit; on == nil || string(*on) != "texera://computing-units/"+unitOf(h).RID.String() {
-				t.Errorf("the run's unit: %v", on)
-			}
-		}
-		if n.Name == "tir" && (n.Run == nil || string(*n.Run) != string(exec.Metadata.Uri) || !strings.HasPrefix(string(n.Uri), string(*n.Run)+"/")) {
-			t.Errorf("the table's run: %v, want %s (the table is %s)", n.Run, exec.Metadata.Uri, n.Uri)
-		}
+	// The execution hangs off the version it ran, says the unit it ran on, and keeps its result.
+	if len(graph.Executions) != 1 {
+		t.Fatalf("the executions: %+v", graph.Executions)
 	}
-	name := map[string]string{}
-	for _, n := range graph.Nodes {
-		name[string(n.Uri)] = n.Name
+	x := graph.Executions[0]
+	if x.Uri != exec.Metadata.Uri || x.Version != 1 || x.Phase != "completed" || x.Steps != 4 || !x.Made || x.Unit == nil || x.Unit.Name != unitOf(h).Name {
+		t.Fatalf("the execution: %+v", x)
 	}
-	var edges []string
-	for _, e := range graph.Edges {
-		edges = append(edges, name[string(e.From)]+" "+string(e.Relation)+" "+name[string(e.To)])
-	}
-	sort.Strings(edges)
-	wantEdges := []string{"count lows uses lows", "labs reads lows", "lows makes tir", "lows runsOn " + unitOf(h).Name, "readings reads lows"}
-	if strings.Join(edges, "; ") != strings.Join(wantEdges, "; ") {
-		t.Fatalf("the edges:\n got %q\nwant %q", edges, wantEdges)
+	if len(graph.Results) != 1 || graph.Results[0].Execution != exec.Metadata.Uri || graph.Results[0].Operator != "tir" || graph.Results[0].OperatorType != string(fn.Metadata.Uri)+"@1" {
+		t.Fatalf("the result: %+v", graph.Results)
 	}
 	if len(graph.Planned) != 1 || graph.Planned[0].Name != "Overnight risk" || graph.Planned[0].Turn != turn.Turn {
 		t.Fatalf("what the plan said and was not made: %+v", graph.Planned)
 	}
 
-	// A later execution keeps its results, and the earlier one keeps its own; each says the
-	// version of the workflow it ran.
+	// A later execution keeps its results, and the earlier one keeps its own; each hangs off
+	// the version of the workflow it ran.
 	again, _ := runOnUnit(t, h, "alice", rid(wf), map[string]any{}, inChat...)
 	report(t, h, again, "tir", map[string]any{"opid": "tir", "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": "e_" + strings.ReplaceAll(rid(again), "-", "") + ".tir_output_0", "tupleCount": 1}})
 	finish(t, h, again, "completed")
 	h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
+	if len(graph.Executions) != 2 || graph.Executions[0].Uri != again.Metadata.Uri {
+		t.Fatalf("the executions, the newest first: %+v", graph.Executions)
+	}
+	for _, x := range graph.Executions {
+		if x.Version != 1 {
+			t.Errorf("the version an execution ran: %d", x.Version)
+		}
+	}
 	tables := map[string]bool{}
-	for _, n := range graph.Nodes {
-		if n.Name == "tir" && n.Run != nil {
-			tables[string(*n.Run)] = true
-		}
-		if n.Runs != nil {
-			if len(*n.Runs) != 2 {
-				t.Fatalf("the executions: %+v", *n.Runs)
-			}
-			for _, run := range *n.Runs {
-				if run.Version == nil || *run.Version != 1 {
-					t.Errorf("the version an execution ran: %v", run.Version)
-				}
-			}
-		}
+	for _, r := range graph.Results {
+		tables[string(r.Execution)] = true
 	}
 	if !tables[string(exec.Metadata.Uri)] || !tables[string(again.Metadata.Uri)] {
 		t.Fatalf("each execution's results, by execution: %v", tables)
 	}
+	if v := nodeNamed(graph, "lows").Versions[0]; v.Executions == nil || *v.Executions != 2 {
+		t.Fatalf("the version counts its executions: %+v", v)
+	}
 }
 
-// A workflow's node carries the steps of the version it shows, and each table the step that
-// made it. What a workflow names is drawn whoever touched it: the function a workflow the chat
-// ran calls, though the chat never touched it, and for a workflow not run yet the data it will
-// read and the default unit it will run on. Workflows come in the order the chat first made or
-// ran them. Only the latest plan counts: an item is made by a thing of its kind and name, else
-// by one of its kind made in or after the plan's turn, and a run by a run started then.
-func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
+// What a workflow version names is drawn whoever touched it: the function a workflow the chat
+// ran calls, though the chat never touched it; and for a workflow not executed yet, the data it
+// will read, dashed. Workflows come in the order the chat first made or ran them. Only the
+// latest plan counts: an item is made by a thing of its kind and name, else by one of its kind
+// made in or after the plan's turn, and an execution by one started then; a unit the chat makes
+// counts, though no unit is drawn.
+func TestAChatsGraphShowsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 	h := newHarness(t)
 	agent := theAgent(t, h)
 	ds := h.create("alice", "datasets", "cohort", map[string]any{"format": "csv"})
@@ -197,27 +171,18 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 		report(t, h, exec, step, map[string]any{"opid": step, "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": ns + "." + step + "_output_0", "tupleCount": 1}})
 		finish(t, h, exec, "completed")
 	}
-	graphOf := func() (api.ConversationGraph, map[string]api.GraphNode, []string) {
-		var graph api.ConversationGraph
+	graphOf := func() (api.ResourceGraph, []string) {
+		var graph api.ResourceGraph
 		h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
-		byName := map[string]api.GraphNode{}
-		name := map[string]string{}
 		var flows []string
 		for _, n := range graph.Nodes {
-			byName[string(n.Role)+" "+n.Name] = n
-			name[string(n.Uri)] = n.Name
 			if n.Role == api.GraphRoleWorkflow {
 				flows = append(flows, n.Name)
 			}
 		}
-		var edges []string
-		for _, e := range graph.Edges {
-			edges = append(edges, name[string(e.From)]+" "+string(e.Relation)+" "+name[string(e.To)])
-		}
-		sort.Strings(edges)
-		return graph, byName, append(flows, edges...)
+		return graph, append(flows, edgesSaid(graph)...)
 	}
-	plannedNames := func(graph api.ConversationGraph) []string {
+	plannedNames := func(graph api.ResourceGraph) []string {
 		var out []string
 		for _, item := range graph.Planned {
 			out = append(out, item.Name)
@@ -225,8 +190,8 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 		return out
 	}
 
-	// Turn one plans a draft name, a run and a dataset; it makes the workflow under another name
-	// and runs it, then runs the team's.
+	// Turn one plans a draft name, an execution and a dataset; it makes the workflow under
+	// another name and runs it, then runs the team's.
 	t1, in1 := turnIn()
 	plan(t1, in1, [2]string{"workflow", "screen draft"}, [2]string{"run", "rerun team screen"}, [2]string{"dataset", "never made"})
 	var mine envelope
@@ -238,31 +203,23 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 	ran(rid(team), "tir", in1)
 	h.mustJSON("alice", "DELETE", p+"/conversations/"+rid(conv)+"/turns/"+t1, nil, nil)
 
-	graph, nodes, said := graphOf()
-	screen := nodes["workflow my screen"]
-	var steps []string
-	for _, st := range stepsOf(screen) {
-		steps = append(steps, st.Id+":"+st.Type)
+	graph, said := graphOf()
+	if screen := nodeNamed(graph, "my screen"); screen.Turn == nil || *screen.Turn != t1 || !screen.Made {
+		t.Fatalf("my screen, made in turn one: %+v", screen)
 	}
-	if strings.Join(steps, " ") != "scan:CSVFileScan lows:filter" || screen.Turn == nil || *screen.Turn != t1 {
-		t.Fatalf("my screen's steps, each after what it reads, and its turn: %v %v", steps, screen.Turn)
-	}
-	if lows := nodes["data lows"]; lows.Step == nil || *lows.Step != "lows" {
-		t.Fatalf("a table says the step that made it: %+v", lows)
-	}
-	if fnNode := nodes["function time in range"]; fnNode.Version == nil || *fnNode.Version != 1 || fnNode.Description == nil || fnNode.Made || fnNode.Turn != nil {
+	if fnNode := nodeNamed(graph, "time in range"); len(fnNode.Versions) != 1 || fnNode.Versions[0].Vno != 1 || fnNode.Description == nil || fnNode.Made || fnNode.Turn != nil {
 		t.Fatalf("the team's function, which the chat never touched: %+v", fnNode)
 	}
-	want := []string{"my screen", "team screen", "cohort reads my screen", "cohort reads team screen", "my screen makes lows", "my screen runsOn " + unitOf(h).Name, "team screen makes tir", "team screen runsOn " + unitOf(h).Name, "time in range uses team screen"}
+	want := []string{"my screen", "team screen", "cohort@1 reads my screen@1 executed", "cohort@1 reads team screen@1 executed", "time in range@1 uses team screen@1 executed"}
 	if strings.Join(said, "; ") != strings.Join(want, "; ") {
 		t.Fatalf("the workflows in the order the chat came to them, then the edges:\n got %q\nwant %q", said, want)
 	}
 	if got := plannedNames(graph); strings.Join(got, ",") != "never made" {
-		t.Fatalf("a draft name is made by the workflow of its turn, a run by the run: %v", got)
+		t.Fatalf("a draft name is made by the workflow of its turn, an execution by the execution: %v", got)
 	}
 
-	// Turn two plans afresh, and makes a workflow it does not run: it reads the cohort, calls
-	// the function and will run on its default unit. The first plan's leftover is given up.
+	// Turn two plans afresh, and makes a workflow it does not run: it names the cohort and the
+	// function, dashed. The first plan's leftover is given up.
 	t2, in2 := turnIn()
 	plan(t2, in2, [2]string{"workflow", "next"}, [2]string{"dataset", "Later"})
 	h.mustJSON("alice", "POST", p+"/workflows", map[string]any{"name": "next", "spec": map[string]any{
@@ -270,19 +227,22 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 		"operators":            []any{op("scan", "CSVFileScan", map[string]any{"fileName": file}), op("tir", calls, map[string]any{"by": []any{"patient_id"}})},
 		"links":                []any{link("scan", "tir")},
 	}}, nil, in2...)
-	graph, nodes, said = graphOf()
-	want = []string{"my screen", "team screen", "next", "cohort reads my screen", "cohort reads next", "cohort reads team screen", "my screen makes lows", "my screen runsOn " + unitOf(h).Name, "next runsOn " + unitOf(h).Name, "team screen makes tir", "team screen runsOn " + unitOf(h).Name, "time in range uses next", "time in range uses team screen"}
+	graph, said = graphOf()
+	want = []string{"my screen", "team screen", "next", "cohort@1 reads my screen@1 executed", "cohort@1 reads next@1 named", "cohort@1 reads team screen@1 executed", "time in range@1 uses next@1 named", "time in range@1 uses team screen@1 executed"}
 	if strings.Join(said, "; ") != strings.Join(want, "; ") {
-		t.Fatalf("a workflow not run yet, with what it will read, use and run on:\n got %q\nwant %q", said, want)
+		t.Fatalf("a workflow not executed yet, with what it names:\n got %q\nwant %q", said, want)
 	}
-	if next := nodes["workflow next"]; next.Runs != nil || len(stepsOf(next)) != 2 {
-		t.Fatalf("next has not run, and shows its version's steps: %+v", next)
+	if next := nodeNamed(graph, "next"); len(next.Versions) != 1 || next.Versions[0].Executions != nil || !next.Versions[0].Made {
+		t.Fatalf("next has not been executed; its one version is the chat's: %+v", next)
 	}
 	if got := plannedNames(graph); strings.Join(got, ",") != "Later" {
 		t.Fatalf("only the latest plan counts: %v", got)
 	}
 
-	// A unit the chat makes says how it stands, as one it ran on does.
+	// Turn three plans a unit and makes it: the plan is done, and no unit is drawn.
+	h.mustJSON("alice", "DELETE", p+"/conversations/"+rid(conv)+"/turns/"+t2, nil, nil)
+	t3, in3 := turnIn()
+	plan(t3, in3, [2]string{"unit", "screening unit"})
 	h.svc.Units = unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
 	h.svc.Config.ProfileUnits = api.UnitProviderStatic
 	var profiles api.ResourcePage
@@ -293,13 +253,19 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 			small = it
 		}
 	}
-	h.mustJSON("alice", "POST", p+"/computing-units/from-profile", map[string]any{"name": "screening unit", "profile": small.Metadata.Uri, "waitSeconds": 5}, nil, in2...)
-	_, nodes, _ = graphOf()
-	if u := nodes["unit screening unit"]; !u.Made || u.Turn == nil || *u.Turn != t2 || u.State == nil || *u.State == "" {
-		t.Fatalf("the unit the chat made, with how it stands: %+v", u)
+	h.mustJSON("alice", "POST", p+"/computing-units/from-profile", map[string]any{"name": "screening unit", "profile": small.Metadata.Uri, "waitSeconds": 5}, nil, in3...)
+	graph, _ = graphOf()
+	if got := plannedNames(graph); len(got) != 0 {
+		t.Fatalf("the unit the plan named is made: %v", got)
 	}
-	if u := nodes["unit screening unit"]; u.Cpu == nil || *u.Cpu != "2" || u.Memory == nil || *u.Memory != "4Gi" {
-		t.Fatalf("the unit says what it has: %+v", u)
+	for _, n := range graph.Nodes {
+		if n.Kind == "computing-unit" {
+			t.Fatalf("a unit is said on an execution, never drawn: %+v", n)
+		}
+	}
+	// Nothing ran on it yet: the graph has it as what the chat's next execution will run on.
+	if len(graph.Units) != 1 || graph.Units[0].Name != "screening unit" || graph.Units[0].State == nil || graph.Units[0].Cpu == nil {
+		t.Fatalf("the unit the chat made, with how it stands and what it has: %+v", graph.Units)
 	}
 }
 
@@ -329,7 +295,7 @@ func TestAChatsGraphSaysWhatOutsideSourcesItConsulted(t *testing.T) {
 		call("c4", "search_pubmed", servers["biomcp"], map[string]any{"query": "Strack 2014", "max_results": 5}),
 	}}, nil)
 
-	var graph api.ConversationGraph
+	var graph api.ResourceGraph
 	h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
 	if len(graph.Sources) != 1 || graph.Sources[0].Name != "biomcp" || string(graph.Sources[0].Uri) != servers["biomcp"] {
 		t.Fatalf("the sources: %+v", graph.Sources)
@@ -347,9 +313,54 @@ func TestAChatsGraphSaysWhatOutsideSourcesItConsulted(t *testing.T) {
 	}
 }
 
-func stepsOf(n api.GraphNode) []api.GraphStep {
-	if n.Steps == nil {
-		return nil
+// nodesSaid says each node of a graph as "<role> <name> v<newest>[ made]", sorted.
+func nodesSaid(g api.ResourceGraph) []string {
+	var out []string
+	for _, n := range g.Nodes {
+		said := string(n.Role) + " " + n.Name
+		for _, v := range n.Versions {
+			said += " v" + strconv.Itoa(int(v.Vno))
+		}
+		if n.Made {
+			said += " made"
+		}
+		out = append(out, said)
 	}
-	return *n.Steps
+	sort.Strings(out)
+	return out
+}
+
+// edgesSaid says each edge as "<name>@<vno> <relation> <name>@<vno> executed|named", sorted.
+func edgesSaid(g api.ResourceGraph) []string {
+	name := map[string]string{}
+	for _, n := range g.Nodes {
+		name[string(n.Uri)] = n.Name
+		if !n.Readable {
+			name[string(n.Uri)] = "(not shared)"
+		}
+	}
+	at := func(u api.Uri) string {
+		base, vno, _ := strings.Cut(string(u), "@")
+		return name[base] + "@" + vno
+	}
+	var out []string
+	for _, e := range g.Edges {
+		how := "named"
+		if e.Executed {
+			how = "executed"
+		}
+		out = append(out, at(e.From)+" "+string(e.Relation)+" "+at(e.To)+" "+how)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// nodeNamed is the node of a graph by its name; the zero node when it has none.
+func nodeNamed(g api.ResourceGraph, name string) api.GraphNode {
+	for _, n := range g.Nodes {
+		if n.Name == name {
+			return n
+		}
+	}
+	return api.GraphNode{}
 }

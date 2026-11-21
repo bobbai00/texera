@@ -1,21 +1,23 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { api, cleanups, inTurn, signIn, tidyUp, withIris } from "./support";
 
-// Once a chat starts work, what it reads, makes and runs takes the left of the chat page as a
-// graph, left to right: Data above Model, Workflow, Execution, Result. Each execution is a box
-// with the unit it ran on at its bottom right; what the plan has not made yet is dashed. Nothing
-// moves when more arrives; it zooms from the whole graph to each workflow's steps. A click on any
-// box goes into it: its own view over the graph, with the trail back; what that view links to
-// opens there too, and the chat beside it never changes. Everyone on the chat sees each other on
-// the graph, and a comment on any box goes into the chat. The agent's calls are made here as the
-// runtime makes them, in a turn of the chat, so no model is needed.
+// Once a chat starts work, its lineage takes the left of the chat page as a graph, left to
+// right: Data above Model, Workflow, Execution, Result. It opens on the resources: a box for
+// each, a workflow's newest results after it. Zoomed in it shows their versions: each execution
+// off the row of the version it ran, the unit it ran on at its bottom right, what it kept after
+// it; what a version names but no execution of it read is dashed, and so is what the plan has not
+// made yet. Nothing moves when more arrives. A click on any box goes into it: its own view over
+// the graph, with the trail back, a version row its canvas at that version; what that view links
+// to opens there too, and the chat beside it never changes. Everyone on the chat sees each other
+// on the graph, and a comment on any box goes into the chat. The agent's calls are made here as
+// the runtime makes them, in a turn of the chat, so no model is needed.
 
 test.afterEach(tidyUp);
 
 /** Where each box of the graph is on screen, by what it stands for. */
 async function positions(graph: Locator) {
   const out = new Map<string, { x: number; y: number }>();
-  for (const node of await graph.locator("[data-graph-node]:not([data-graph-unit-box])").all()) {
+  for (const node of await graph.locator("[data-graph-node]").all()) {
     const box = await node.boundingBox();
     if (box)
       out.set((await node.getAttribute("data-graph-node")) as string, { x: Math.round(box.x), y: Math.round(box.y) });
@@ -38,7 +40,14 @@ async function backToGraph(page: Page) {
   await expect(page.locator("[data-resource-graph]")).toBeVisible();
 }
 
-test("a chat's graph reads from data to results, each execution with its unit, and goes into any box and back with the chat untouched", async ({
+/** Zooms the graph to a level, all of it in view. */
+async function toLevel(graph: Locator, level: "resources" | "versions") {
+  await graph.locator(`[data-graph-level="${level}"]`).click();
+  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", level);
+  await graph.locator("[data-graph-fit]").click();
+}
+
+test("a chat's lineage reads from data to results, each execution off its version, and goes into any box and back with the chat untouched", async ({
   page,
   request,
 }) => {
@@ -105,38 +114,26 @@ test("a chat's graph reads from data to results, each execution with its unit, a
   await agent.end();
   const unit = ran.spec.computingUnit as string;
   const workflow = first.metadata.uri as string;
+  const execution = ran.metadata.uri as string;
 
   await signIn(page);
   await page.goto(`/conversations/${conversation}`);
   const graph = page.locator("[data-resource-graph]");
+  // It opens on the resources: the iris, the workflow, its newest results; no execution.
+  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "resources");
   const workflows = graph.locator('[data-graph-role="workflow"]');
   await expect(workflows).toHaveCount(1);
   await expect(workflows.first()).toContainText("petal means");
+  await expect(workflows.first().locator("[data-graph-state]")).toHaveAttribute("data-graph-state", "completed");
   await expect(graph.locator('[data-graph-role="data"]').filter({ hasText: "iris" })).toHaveCount(1);
-  // Its execution is a box of its own beside the workflow, the unit it ran on at its bottom
-  // right; the plan's dataset, not made yet, beside it.
-  const run = graph.locator(`[data-graph-role="run"][data-graph-of="${workflow}"]`);
-  await expect(run).toHaveCount(1);
-  await expect(run).toHaveAttribute("data-graph-unit", unit);
-  await expect(run).toHaveAttribute("data-graph-state", "completed");
-  const foot = run.locator(`[data-graph-unit-box="${unit}"]`);
-  await expect(foot).toHaveCount(1);
-  const [box, base, card] = [await run.boundingBox(), await foot.boundingBox(), await workflows.first().boundingBox()];
-  expect(box && base && card).toBeTruthy();
-  if (box && base && card) {
-    expect(base.x + base.width).toBeGreaterThan(box.x + box.width - 14);
-    expect(base.y + base.height).toBeGreaterThan(box.y + box.height - 14);
-    expect(box.x).toBeGreaterThan(card.x + card.width);
-  }
+  await expect(graph.locator('[data-graph-role="run"]')).toHaveCount(0);
+  await expect(graph.locator('[data-graph-role="result"][data-graph-operator="long"]')).toHaveCount(1);
   await expect(graph.locator('[data-graph-planned="true"]')).toContainText("Long petals");
-  // The arrows go left to right: the iris file read, the execution, the tables it made.
   await expect(graph.locator('[data-graph-edge="reads"]')).toHaveCount(1);
-  await expect(graph.locator('[data-graph-edge="runs"]')).toHaveCount(1);
-  await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
+  await expect(graph.locator('[data-graph-edge="reads"]')).not.toHaveAttribute("data-graph-dashed", "true");
   for (const [column, label] of [
     ["data", "Data"],
     ["workflow", "Workflow"],
-    ["execution", "Execution"],
     ["result", "Result"],
   ] as const)
     await expect(graph.locator(`[data-graph-column="${column}"]`)).toContainText(label);
@@ -147,10 +144,32 @@ test("a chat's graph reads from data to results, each execution with its unit, a
   await expect(graph.locator("[data-graph-calls] li")).toHaveCount(1);
   await expect(graph.locator("[data-graph-calls] li")).toContainText("iris petal length");
   await page.screenshot({ path: "test-results/resource-graph.png" });
+
+  // Zoomed in, the versions: the execution off the row of the version it ran, the unit it ran on
+  // at its bottom right, the iris's version read into the workflow's.
+  await toLevel(graph, "versions");
+  const run = graph.locator(`[data-graph-role="run"][data-graph-of="${workflow}"]`);
+  await expect(run).toHaveCount(1);
+  await expect(run).toHaveAttribute("data-graph-state", "completed");
+  await expect(run).toHaveAttribute("data-graph-ran", "1");
+  const foot = run.locator(`[data-graph-unit="${unit}"]`);
+  await expect(foot).toHaveCount(1);
+  const [box, base, card] = [await run.boundingBox(), await foot.boundingBox(), await workflows.first().boundingBox()];
+  expect(box && base && card).toBeTruthy();
+  if (box && base && card) {
+    expect(base.x + base.width).toBeGreaterThan(box.x + box.width - 14);
+    expect(base.y + base.height).toBeGreaterThan(box.y + box.height - 14);
+    expect(box.x).toBeGreaterThan(card.x + card.width);
+  }
+  await expect(graph.locator(`[data-graph-edge="reads"][data-graph-to="${workflow}@1"]`)).toHaveCount(1);
+  await expect(graph.locator(`[data-graph-edge="runs"][data-graph-from="${workflow}@1"]`)).toHaveCount(1);
+  await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
+  await expect(graph.locator('[data-graph-column="execution"]')).toContainText("Execution");
+  await page.screenshot({ path: "test-results/resource-graph-versions.png" });
   const before = await positions(graph);
 
-  // A second workflow arrives, with a function the agent makes, not run yet: its execution waits
-  // on its default unit. Nothing already there moves.
+  // A second workflow arrives, with a function the agent makes, not executed yet: its version
+  // names the iris, dashed, and no execution stands for it. Nothing already there moves.
   agent = await inTurn(request, alice, conversation);
   const code =
     'import pandas as pd\n\n\n@returns(Species=str, n=int)\ndef count_species(rows: pd.DataFrame):\n    return rows.groupby("Species").size().reset_index(name="n")\n';
@@ -159,7 +178,7 @@ test("a chat's graph reads from data to results, each execution with its unit, a
     spec: { implementation: { python: { code } } },
   });
   others.push(fn.metadata.rid as string);
-  await agent("POST", "/workflows", {
+  const counts = await agent("POST", "/workflows", {
     name: "species counts",
     spec: {
       defaultComputingUnit: unit,
@@ -172,88 +191,73 @@ test("a chat's graph reads from data to results, each execution with its unit, a
   });
   await agent.end();
   await expect(workflows).toHaveCount(2, { timeout: 30_000 });
-  const waiting = graph.locator('[data-graph-role="run"][data-graph-state="idle"]');
-  await expect(waiting).toHaveAttribute("data-graph-unit", unit);
-  const [one, two] = [await run.boundingBox(), await waiting.boundingBox()];
-  expect(one && two && Math.abs(one.x - two.x)).toBeLessThan(2);
+  const species = workflows.filter({ hasText: "species counts" });
+  await expect(species.locator("[data-graph-version]")).toContainText("not executed");
+  await expect(graph.locator(`[data-graph-edge="reads"][data-graph-to="${counts.metadata.uri}@1"]`)).toHaveAttribute("data-graph-dashed", "true");
+  await expect(graph.locator(`[data-graph-role="run"][data-graph-of="${counts.metadata.uri}"]`)).toHaveCount(0);
   const after = await positions(graph);
   for (const [id, place] of before) expect(after.get(id), id).toEqual(place);
   await expect(graph.locator(`[data-graph-uses="${fn.metadata.uri}"]`)).toHaveCount(1);
-
-  // Closer, a workflow shows its steps, each table level with the step that made it, and its
-  // execution runs the height of the steps; further, only names.
-  await graph.locator('[data-graph-level="detail"]').click();
-  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "detail");
-  const petals = workflows.filter({ hasText: "petal means" });
-  await expect(petals.locator("[data-graph-step]")).toHaveText([
-    /readings\s*scan\s*iris\.csv/,
-    /means\s*aggregate/,
-    /long\s*filter\s*where mean > 2/,
-  ]);
-  await expect(graph.locator("[data-graph-file]").first()).toHaveText("iris.csv");
-  const step = await petals.locator('[data-graph-step="long"]').boundingBox();
-  const table = await graph.locator(`[data-graph-of="${workflow}"]`).filter({ hasText: "long" }).boundingBox();
-  expect(step && table && Math.abs(step.y + step.height / 2 - (table.y + table.height / 2))).toBeLessThan(3);
-  const [bar, tall] = [await run.boundingBox(), await petals.boundingBox()];
-  expect(bar && tall && bar.height).toBeGreaterThan((tall?.height ?? 0) * 0.7);
-  await page.screenshot({ path: "test-results/resource-graph-detail.png" });
-  await graph.locator('[data-graph-level="overview"]').click();
-  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "overview");
-  await expect(graph.locator("[data-graph-step]")).toHaveCount(0);
   await graph.locator("[data-graph-fit]").click();
 
   // Going into boxes: the chat beside it never changes, and nothing opens beside the page.
   const said = await page.locator("[data-message-seq]").count();
   const address = new URL(page.url()).pathname;
 
-  // A workflow: its own view, with what it is to the rest of the graph above it.
-  await petals.click({ position: { x: 14, y: 12 } });
-  let focus = await wentInto(page, "resource", "petal means");
-  await expect(
-    focus.locator(`[data-graph-view="workflow"] [data-workflow-view="${first.metadata.rid}"]`)
-  ).toBeVisible();
+  // A version: its canvas at that version, with the results of its own execution.
+  const petals = workflows.filter({ hasText: "petal means" });
+  await petals.locator(`[data-graph-row="${workflow}@1"]`).click();
+  let focus = await wentInto(page, "resource", "petal means v1");
+  await expect(focus.locator(`[data-graph-view="workflow"] [data-workflow-view="${first.metadata.rid}"]`)).toBeVisible();
+  await expect(focus.locator("[data-results-window]")).toBeVisible();
   await expect(focus.locator("[data-graph-related]")).toContainText("Reads");
   await expect(focus.locator("[data-graph-related]")).toContainText("iris");
-  await page.screenshot({ path: "test-results/resource-graph-workflow.png" });
+  await page.screenshot({ path: "test-results/resource-graph-version.png" });
   await focus.locator("[data-graph-back]").click();
   await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
 
-  // An execution: its view, completed. From it, a table it made; the trail grows, and goes back.
+  // A workflow: its own view.
+  await petals.click({ position: { x: 14, y: 12 } });
+  focus = await wentInto(page, "resource", "petal means");
+  await expect(focus.locator(`[data-graph-view="workflow"] [data-workflow-view="${first.metadata.rid}"]`)).toBeVisible();
+  await focus.locator("[data-graph-back]").click();
+  await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
+
+  // An execution: its view, completed. From it, a result it kept; the trail grows, and goes back.
   await run.click({ position: { x: 14, y: 12 } });
-  focus = await wentInto(page, "run", "petal means");
+  focus = await wentInto(page, "run", "petal means v1");
   await expect(focus.locator("[data-execution-view] [data-phase]")).toHaveText("completed");
-  await expect(focus.locator("[data-graph-related]")).toContainText("On");
+  await expect(focus.locator("[data-graph-related]")).toContainText("Of");
   await page.screenshot({ path: "test-results/resource-graph-run.png" });
   await focus.locator('[data-graph-related] [data-graph-go$="/operators/long/ports/output-0"]').click();
-  focus = await wentInto(page, "table", "long");
+  focus = await wentInto(page, "table", /.+/);
   await expect(focus.locator("[data-graph-crumbs] [data-graph-crumb]")).toHaveCount(3);
   await expect(focus.locator("[data-port-rows]")).toBeVisible();
   await focus.locator('[data-graph-crumb="0"]').click();
-  focus = await wentInto(page, "run", "petal means");
-  // What the run's view links to opens here too: its workflow, after it on the trail.
+  focus = await wentInto(page, "run", "petal means v1");
+  // What the execution's view links to opens here too: its workflow, after it on the trail.
   await focus.locator('[data-execution-view] [data-uri-chip="workflow"]').first().click();
   focus = await wentInto(page, "resource", "petal means");
   await expect(focus.locator("[data-graph-crumbs] [data-graph-crumb]")).toHaveCount(3);
   await expect(page.locator("[data-side-panel]")).toHaveCount(0);
   // Alt+Left goes back a step, Escape from the trail all the way.
   await page.keyboard.press("Alt+ArrowLeft");
-  focus = await wentInto(page, "run", "petal means");
+  focus = await wentInto(page, "run", "petal means v1");
   await focus.locator("[data-graph-back]").focus();
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
 
-  // A table: the rows its run kept; from there, the run that made them.
-  await graph.locator(`[data-graph-of="${workflow}"]`).filter({ hasText: "long" }).click();
-  focus = await wentInto(page, "table", "long");
+  // A result: the rows its execution kept; from there, the execution that made them.
+  await graph.locator(`[data-graph-node="${execution}/operators/long/ports/output-0"]`).click();
+  focus = await wentInto(page, "table", /.+/);
   await expect(focus.locator("[data-port-rows]")).toBeVisible();
   await expect(focus.locator("[data-graph-related]")).toContainText("Made by");
   await focus.locator("[data-open-execution]").click();
-  await wentInto(page, "run", "petal means");
+  await wentInto(page, "run", "petal means v1");
   await backToGraph(page);
 
-  // The dataset, the unit, the function on the second workflow, its run that has not happened,
-  // and the plan's dataset.
-  await graph.locator('[data-graph-role="data"]').filter({ hasText: "iris" }).click();
+  // The dataset, the unit, the function on the second workflow, and the plan's dataset.
+  await graph.locator('[data-graph-role="data"]').filter({ hasText: "iris" }).click({ position: { x: 14, y: 12 } });
   focus = await wentInto(page, "resource", "iris");
   await expect(focus.locator('[data-graph-view="dataset"]')).toContainText("iris.csv");
   await expect(focus.locator("[data-graph-related]")).toContainText("Read by");
@@ -261,7 +265,7 @@ test("a chat's graph reads from data to results, each execution with its unit, a
   await foot.click();
   focus = await wentInto(page, "resource", /.+/);
   await expect(focus.locator('[data-graph-view="computing-unit"]')).toBeVisible();
-  await expect(focus.locator("[data-graph-related] [data-graph-go]")).toHaveCount(2);
+  await expect(focus.locator("[data-graph-related] [data-graph-go]")).toHaveCount(1);
   await backToGraph(page);
   await graph.locator(`[data-graph-uses="${fn.metadata.uri}"]`).click();
   focus = await wentInto(page, "resource", "count species");
@@ -271,12 +275,6 @@ test("a chat's graph reads from data to results, each execution with its unit, a
   await focus.locator(`[data-made-in="${conversation}"], [data-origin]`).first().click();
   await expect(page.locator("[data-graph-focus]")).toHaveCount(0);
   await expect(page.locator("[data-side-panel]")).toHaveCount(0);
-  await waiting.click({ position: { x: 14, y: 12 } });
-  focus = await wentInto(page, "run", "species counts");
-  await expect(focus.locator('[data-graph-waiting="idle"]')).toContainText("Not run yet");
-  await focus.getByRole("button", { name: "The workflow" }).click();
-  await wentInto(page, "resource", "species counts");
-  await backToGraph(page);
   await graph.locator('[data-graph-planned="true"]').filter({ hasText: "Long petals" }).click();
   focus = await wentInto(page, "planned", "Long petals");
   await expect(focus.locator('[data-graph-view="planned"]')).toContainText("Planned, not made yet");
@@ -398,7 +396,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   // The graph follows what the catalog says while the page is too narrow to show it, and comes
   // back as it was; a change of size frames it again.
   const places = () =>
-    graph.locator("[data-graph-node]:not([data-graph-unit-box])").evaluateAll(nodes =>
+    graph.locator("[data-graph-node]").evaluateAll(nodes =>
       nodes.map(n => {
         const r = n.getBoundingClientRect();
         return [Math.round(r.x), Math.round(r.y)];
@@ -410,7 +408,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   await page.route("**/conversations/*/graph", async route => {
     const response = await route.fetch();
     const body = await response.json();
-    if (changed) for (const n of body.nodes) if (typeof n.rows === "number") n.rows += 1;
+    if (changed) for (const r of body.results) if (typeof r.rows === "number") r.rows += 1;
     await route.fulfill({ response, json: body });
   });
   await page.setViewportSize({ width: 1000, height: 700 });
@@ -466,7 +464,7 @@ test("people on a chat see each other on its graph, a comment on a box goes into
   await expect(page.locator('[data-overview-section="computing-unit"]')).toContainText(/\d+ cores?|Shared CPU/);
 });
 
-test("each execution is drawn from the version of the workflow it ran, and the card lists those versions", async ({
+test("each execution hangs off the version of the workflow it ran, and a version opens its own canvas", async ({
   page,
   request,
 }) => {
@@ -496,6 +494,7 @@ test("each execution is drawn from the version of the workflow it ran, and the c
   const agent = await inTurn(request, alice, conversation);
   const made = await agent("POST", "/workflows", { name: "long petals", spec: longer(4) });
   const rid = made.metadata.rid as string;
+  const workflow = made.metadata.uri as string;
   await agent("POST", `/workflows/${rid}/run`, { waitSeconds: 120 });
   await agent("PUT", `/workflows/${rid}`, { spec: longer(5) });
   await agent("POST", `/workflows/${rid}/run`, { waitSeconds: 120 });
@@ -504,16 +503,15 @@ test("each execution is drawn from the version of the workflow it ran, and the c
   await signIn(page);
   await page.goto(`/conversations/${conversation}`);
   const graph = page.locator("[data-resource-graph]");
-  await graph.locator('[data-graph-level="standard"]').click();
-  await expect(graph.locator("[data-graph-zoom]")).toHaveAttribute("data-graph-zoom", "standard");
+  await toLevel(graph, "versions");
   const card = graph.locator('[data-graph-role="workflow"]');
   await expect(card).toHaveCount(1);
-  // The card lists the versions its executions ran, the newest first.
-  const rows = card.locator("[data-graph-version]");
-  await expect(rows).toHaveText([/v2\s*1 execution/, /v1\s*1 execution/]);
-  const runs = graph.locator(`[data-graph-role="run"][data-graph-of="${made.metadata.uri}"]`);
+  // The card lists its versions, the newest first; each execution is of its own.
+  await expect(card.locator("[data-graph-version]")).toHaveText([/v2/, /v1/]);
+  const runs = graph.locator(`[data-graph-role="run"][data-graph-of="${workflow}"]`);
   await expect(runs).toHaveCount(2);
-  await expect(runs).toHaveText([/v2/, /v1/]);
+  await expect(runs.nth(0)).toHaveAttribute("data-graph-ran", "2");
+  await expect(runs.nth(1)).toHaveAttribute("data-graph-ran", "1");
   // Each execution's line leaves the card at the row of its version, the newer's straight across;
   // both are read in one frame, as the camera may still be moving.
   const lines = graph.locator('[data-graph-edge="runs"] path');
@@ -521,11 +519,24 @@ test("each execution is drawn from the version of the workflow it ran, and the c
   expect(await lines.first().getAttribute("d")).not.toContain("Q");
   const [starts, middles] = await graph.evaluate(g => [
     [...g.querySelectorAll('[data-graph-edge="runs"] path')].map(p => p.getBoundingClientRect().top),
-    [...g.querySelectorAll("[data-graph-version]")].map(r => {
+    [...g.querySelectorAll('[data-graph-role="workflow"] [data-graph-version]')].map(r => {
       const b = r.getBoundingClientRect();
       return b.top + b.height / 2;
     }),
   ]);
   expect(starts.map((y, i) => Math.abs(y - (middles[i] ?? Number.NaN)) < 2)).toEqual([true, true]);
-  await page.screenshot({ path: "test-results/resource-graph-versions.png" });
+  // Both versions read the same iris version.
+  await expect(graph.locator(`[data-graph-edge="reads"][data-graph-to="${workflow}@1"]`)).toHaveCount(1);
+  await expect(graph.locator(`[data-graph-edge="reads"][data-graph-to="${workflow}@2"]`)).toHaveCount(1);
+  await page.screenshot({ path: "test-results/resource-graph-two-versions.png" });
+
+  // Version 1 opens on its own canvas, pinned, with the results of its own execution.
+  await card.locator(`[data-graph-row="${workflow}@1"]`).click();
+  const focus = page.locator("[data-graph-focus]");
+  await expect(focus.locator("[data-graph-crumbs] [aria-current=page]")).toContainText("long petals v1");
+  await expect(focus.getByText("v1 pinned")).toBeVisible();
+  await expect(focus.locator("[data-results-window] [data-ran-version]")).toHaveCount(0);
+  // What it is to the rest: its one execution, and what that kept.
+  await expect(focus.locator('[data-graph-related] [data-graph-go*="/executions/"]:not([data-graph-go*="/operators/"])')).toHaveCount(1);
+  await expect(focus.locator('[data-graph-related] [data-graph-go$="/operators/long/ports/output-0"]')).toHaveCount(1);
 });

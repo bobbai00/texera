@@ -146,6 +146,18 @@ func (s *Server) routeResources() {
 		writeJSON(w, http.StatusOK, out)
 		return nil
 	})
+	s.handle("GET "+base+"/{rid}/graph", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		graph, err := s.svc.ResourceGraph(ctxOf(r), callerOf(r), rid)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, graph)
+		return nil
+	})
 	s.handle("GET "+base+"/{rid}/dependents", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
 		if err != nil {

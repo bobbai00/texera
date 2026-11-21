@@ -1,156 +1,61 @@
-import { useQueries, useQuery } from "@tanstack/react-query";
-import type { Edge, Execution, Resource } from "@texera/catalog-client/types";
-import { Button, EmptyState, ErrorNote, Segmented, Skeleton } from "@texera/ui";
-import { Boxes, Route } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
-import { LineageGraph } from "../lineage/LineageGraph";
-import { buildLineage, type ExecutionFacts, type Level, resourcesNamed, withoutGone } from "../lineage/model";
-import { executionsQuery, namedQuery } from "../lineage/queries";
-import { lineageQuery, resourceQuery } from "../queries";
-import type { ResourceRef } from "../types";
-import { parseUri, versionOf } from "../uri";
-import { whyNot } from "./OpenError";
+// Where a resource came from and what came of it: the lineage graph, drawn as it is beside a chat,
+// around the resource, which is marked, with the row of the version on screen. A click opens
+// what it names beside the page: a version at that version, so a workflow version on its canvas;
+// an execution, or the execution a result came out of.
 
-const factsOf = (x: Execution | Resource): ExecutionFacts => {
-  const spec = x.spec as Partial<Execution["spec"]>;
-  const status = x.status as Partial<NonNullable<Execution["status"]>> | undefined;
-  return {
-    name: x.metadata.name,
-    phase: status?.phase ?? "pending",
-    ...(spec.workflow && versionOf(spec.workflow) !== undefined ? { vno: versionOf(spec.workflow) } : {}),
-    createdAt: x.metadata.createdAt,
-    ...(status?.startedAt ? { startedAt: status.startedAt } : {}),
-    ...(status?.finishedAt ? { finishedAt: status.finishedAt } : {}),
-    ...(spec.computingUnit ? { unit: spec.computingUnit } : {}),
-    ...(spec.computing?.profile ? { profile: spec.computing.profile } : {}),
-    ...(spec.warehouse ? { warehouse: spec.warehouse } : {}),
-    createdBy: x.metadata.createdBy,
-    ...(x.metadata.origin ? { origin: x.metadata.origin } : {}),
-  };
-};
+import { useQuery } from "@tanstack/react-query";
+import { resourcesGraphOptions } from "@texera/catalog-client/query";
+import { EmptyState, ErrorNote, Skeleton } from "@texera/ui";
+import { entryFor } from "../graph/focus-trail";
+import { rowId } from "../graph/model";
+import { ResourceGraph } from "../graph/ResourceGraph";
+import type { KindId, ResourceRef } from "../types";
+import { refOf, uriOf } from "../uri";
+import { useOpenResource } from "./navigation";
 
-/**
- * The executions of every workflow asked for, once all of them answered; one that cannot be
- * listed has none. "Answered" is once, not now: a list asked again keeps the graph on screen.
- */
-const allListed = (results: { isFetched: boolean; data?: { items: Execution[] } }[]) => ({
-  pending: results.some(r => !r.isFetched),
-  items: results.flatMap(r => r.data?.items ?? []),
-});
+/** The kinds a lineage graph is drawn for: what is read, called, executed or made. */
+export const LINEAGE_KINDS: ReadonlySet<KindId> = new Set<KindId>([
+  "dataset",
+  "model",
+  "operator",
+  "workflow",
+  "execution",
+]);
 
-/** The workflows whose executions the arrows name. */
-function workflowsOf(edges: Edge[]): string[] {
-  const rids = new Set<string>();
-  for (const e of edges)
-    for (const uri of [e.from, e.to]) {
-      const ref = parseUri(uri)?.ref;
-      if (ref?.kind === "execution" && ref.parent) rids.add(ref.parent);
-    }
-  return [...rids].sort();
-}
+const GOING = new Set(["pending", "provisioning", "running"]);
 
-/**
- * Where a resource came from and what came out of it, as a graph: what was read on the left,
- * what was made on the right, the resource itself marked. The catalog walks its arrows both
- * ways from the resource; the graph shows them at the level of resources, or of data flow
- * (the file, the version that ran, each result). A resource or an execution that no longer
- * exists is left out, with the arrows that touched it.
- */
 export function Lineage({ ref }: { ref: ResourceRef }) {
-  // The page's resource by what names it, not by the object a caller happens to pass. The walk
-  // starts from the resource at large, so a workflow shows its executions and every version's
-  // inputs; the version on screen is the one the graph marks.
   const { kind, rid, vno, parent } = ref;
-  const whole = useMemo<ResourceRef>(() => ({ kind, rid, ...(parent ? { parent } : {}) }), [kind, rid, parent]);
-  const up = useQuery(lineageQuery(whole, "upstream"));
-  const down = useQuery(lineageQuery(whole, "downstream"));
-  const [level, setLevel] = useState<Level>("resources");
-  const [showAll, setShowAll] = useState(false);
-  const walked = useMemo(() => {
-    const seen = new Map<string, Edge>();
-    for (const e of [...(up.data?.edges ?? []), ...(down.data?.edges ?? [])])
-      seen.set(`${e.from}|${e.relation}|${e.to}`, e);
-    return [...seen.values()];
-  }, [up.data, down.data]);
-  // What each arrow names is asked for before anything is drawn: a resource that no longer
-  // exists is left out with its arrows, and the cards have their names from the start.
-  const names = useMemo(() => resourcesNamed(walked), [walked]);
-  // The graph waits for each name's first answer only. A card asks for its resource too, and
-  // asking again sets a query back to pending: waiting for every answer would take the cards
-  // off screen, they would ask again when drawn, and the graph would blink without end for a
-  // person who may not read one of them.
-  const named = useQueries({
-    queries: names.map(namedQuery),
-    combine: useCallback(
-      (results: { isFetched: boolean; error: unknown }[]) => ({
-        pending: results.some(r => !r.isFetched),
-        gone: names.filter((_, i) => whyNot(results[i]?.error) === "not_found"),
-      }),
-      [names]
-    ),
+  const { beside } = useOpenResource();
+  const { data, error } = useQuery({
+    ...resourcesGraphOptions({ path: { rid } }),
+    // While an execution of it goes, the graph follows it.
+    refetchInterval: q => (q.state.data?.executions.some(x => GOING.has(x.phase)) ? 2_500 : false),
   });
-  const edges = useMemo(() => withoutGone(walked, new Set(named.gone)), [walked, named.gone]);
-  const workflows = useMemo(() => workflowsOf(edges), [edges]);
-  const listed = useQueries({ queries: workflows.map(executionsQuery), combine: allListed });
-  // An execution's own page shows it whether or not its workflow's list can be read.
-  const own = useQuery({ ...resourceQuery(rid), enabled: kind === "execution" });
-  const executions = useMemo(() => {
-    const known = new Map<string, ExecutionFacts>();
-    for (const x of listed.items) known.set(x.metadata.rid, factsOf(x));
-    if (own.data && !known.has(own.data.metadata.rid)) known.set(own.data.metadata.rid, factsOf(own.data));
-    return known;
-  }, [listed.items, own.data]);
-  const graph = useMemo(
-    () => buildLineage({ root: vno !== undefined ? { ...whole, vno } : whole, edges, executions, level, showAll }),
-    [whole, vno, edges, executions, level, showAll]
-  );
-  const unfold = useCallback(() => setShowAll(true), []);
-
-  const error = up.error ?? down.error;
-  if (error) return <ErrorNote error={error} prefix="Could not load lineage" className="m-3" />;
-  if (!up.data || !down.data || named.pending || listed.pending || (kind === "execution" && own.isPending))
-    return <Skeleton className="m-3 h-24" />;
-  if (!graph.nodes.length) return <EmptyState>No lineage recorded for this resource yet.</EmptyState>;
+  if (error) return <ErrorNote error={error} prefix="Could not load the lineage" className="m-3" />;
+  if (!data) return <Skeleton className="m-3 h-24" />;
+  if (!data.nodes.length) return <EmptyState>No lineage recorded for this resource yet.</EmptyState>;
+  const root = uriOf({ kind, rid, ...(parent ? { parent } : {}) });
   return (
-    <div className="relative h-full min-h-[26rem] bg-canvas" data-lineage data-level={level}>
-      <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
-        <Segmented
-          label="Level of detail"
-          value={level}
-          onChange={setLevel}
-          options={[
-            {
-              value: "resources",
-              label: (
-                <>
-                  <Boxes /> Resources
-                </>
-              ),
-              title: "Datasets, workflows and executions",
-            },
-            {
-              value: "flow",
-              label: (
-                <>
-                  <Route /> Data flow
-                </>
-              ),
-              title: "Files, the versions that ran, and each result",
-            },
-          ]}
-        />
-        {showAll && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="bg-background"
-            onClick={() => setShowAll(false)}
-            data-lineage-recent>
-            Recent executions only
-          </Button>
-        )}
-      </div>
-      <LineageGraph graph={graph} level={level} onUnfold={unfold} />
-    </div>
+    <ResourceGraph
+      graph={data}
+      root={root}
+      {...(vno !== undefined ? { rootRow: rowId(root, vno) } : {})}
+      className="h-full min-h-[26rem]"
+      lineage
+      onOpen={(id, _from, view) => {
+        const entry = entryFor(view, id);
+        if (entry?.kind === "resource" && !(entry.id === root && entry.ref.vno === undefined)) beside(entry.ref);
+        if (entry?.kind === "run" && id !== root) {
+          const execution = refOf(id);
+          if (execution) beside(execution);
+        }
+        if (entry?.kind === "table") {
+          const by = view.results.get(id)?.run;
+          const execution = by ? refOf(by) : undefined;
+          if (execution) beside(execution);
+        }
+      }}
+    />
   );
 }

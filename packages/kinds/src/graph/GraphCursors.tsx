@@ -19,7 +19,7 @@ const pointOf = (state: Record<string, unknown>): GraphPoint | undefined => {
 };
 
 /** How this person says where they point on a chat's graph: at most once a frame; null when they leave it. */
-export const useGraphPointer = (rid: string) => useFramedField<GraphPoint>(rid, "graphCursor");
+export const useGraphPointer = (rid: string | undefined) => useFramedField<GraphPoint>(rid, "graphCursor");
 
 /** The others' pointers, inside the graph's drawing. `k` is its zoom: a pointer stays one size. */
 export function GraphCursors({

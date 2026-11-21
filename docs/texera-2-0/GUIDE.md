@@ -64,21 +64,27 @@ moment. A card stands still while you point at it, a click opens what it shows, 
 in is right under them. The project's own page has the whole list.
 
 **The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
-the left of the chat page shows what the chat read, made and ran, left to right: Data above Model,
-Workflow, Execution, Result. Each execution is a box of its own beside its workflow, the newest on
-top, saying the version it ran and keeping the tables it made beside it, with the unit it ran on at
-its bottom right (the unit's name and what it has, `2 cores · 2 GB`;
-several executions on one unit each show it). A function a workflow uses rides on its card. A
-workflow not run yet has a hollow box on the unit it will use, and what the plan has not made yet
-is dashed; a dot marks what this chat made. It zooms in three levels: Overview, names only;
-Standard, each thing's version, rows and how long an execution took; Detail, each workflow's steps,
-the file a step read and the table a step made standing level with it. Drag to move, scroll with
-Ctrl or ⌘ (or pinch) to zoom, Fit to see everything; it frames itself again when the page changes
-size, until you move it. A click on any box goes into it: the graph gives way to the thing's own
-view (an execution, a table's rows, a dataset, a workflow, a model, a function, a unit, or what the
-plan said of something not made yet), with a trail back to the graph and, under it, what the thing
-is to the rest (what it reads, uses, made, runs on) to go to next. What that view links to opens
-there too; Back, the trail, Escape or Alt+Left go back, and the chat beside it is never touched.
+the left of the chat page shows the chat's lineage, what it read, made and ran, left to right:
+Data above Model, Workflow, Execution, Result. It is the same graph a resource's Lineage tab
+draws (below), around the chat. It opens on the resources: a box for each dataset, model and
+workflow, an arrow where a workflow reads or uses one, and the results of a workflow's newest
+execution after it; a workflow says how its newest execution stands. Zoomed in ("Versions"), each
+box lists the versions of it that took part: an arrow runs from the version read to the workflow
+version that read it, each execution stands off the row of the version it ran, the newest of a
+version on top, with the results it kept beside it and the unit it ran on at its bottom right
+(the unit's name and what it has, `2 cores · 2 GB`; where it ran and kept its results in full on
+hover). A function a workflow calls rides on the version that calls it. An arrow is dashed while
+the version only names what it points from, and solid once an execution of it read it (or read
+rows an earlier execution made of it); what the plan has not made yet is dashed too, and so is
+the execution the chat is about to start, on the unit it made for it. A dot marks what this chat
+made; anything else says who made it. Drag to move, scroll with Ctrl or ⌘ (or pinch) to zoom,
+Fit to see everything; it frames itself again when the page changes size, until you move it. A
+click on any box goes into it: the graph gives way to the thing's own view (an execution, a
+result's rows, a dataset, a workflow, a model, a function, a unit, or what the plan said of
+something not made yet), and a version's row opens that version, a workflow version on its canvas
+with its own execution; with a trail back to the graph and, under it, what the thing is to the
+rest (what it reads, uses, executed, made) to go to next. What that view links to opens there
+too; Back, the trail, Escape or Alt+Left go back, and the chat beside it is never touched.
 Nothing drawn moves when more arrives, but the models, under the data. Everyone on the chat shows
 at the top of the graph, and their pointers on it with their names. Hovering a box shows a speech
 bubble: a comment posted there goes into the chat with the box attached, so the agent answers it
@@ -251,7 +257,9 @@ out of is lit (a port whose result is kept is lit too); a tab brings its operato
 run up to an operator (its run button) runs only what leads to it and shows its result; the
 workflow does not change. A result is a table (paged rows), or, for a visualization operator,
 the chart it drew. The results fold away; "Execution" opens the execution's own page beside the
-workflow.
+workflow. The canvas shows the newest execution of the version on screen, an older version pinned
+as much as the head; while that version has none, it shows the workflow's newest, and its results
+say the version they are of ("ran v1").
 
 **A workflow edited together.** Everyone who may change a workflow edits the same document at
 once: an operator one person adds, a property they change or a place they drag an operator to
@@ -277,17 +285,19 @@ follows the execution without reloading. Results live with the execution: to use
 run again or read the rows. An execution lives under its workflow; the sidebar lists them
 across workflows because that is how people look for one.
 
-**Lineage.** A resource's "Lineage" is a graph that reads left to right: what was read, what
-ran, what came out. Each thing is a card with its name and what it is; each arrow says what
-happened (read, ran, produced, saved as, referenced by), drawn dashed when a spec only names
-the thing and nothing ran. "Resources" shows one card per dataset, workflow and execution,
-with an execution's results folded into it. "Data flow" shows the parts: the file an operator
-read, the workflow version that ran, the execution, and the result of each output port with
-its rows. A workflow shows its two most recent executions and folds the earlier ones into one
-card that opens on a click. A card opens its resource beside the page; something that was not
-shared with you is a card that says so. Each card also says who made it: "by Alice Liddell" for
-what a person made, or "by" a chat for what the agent made in one (the whole of it, with the
-person the agent worked for, on hover). The chat's name opens the chat beside, and a chat says
+**Lineage.** A resource's "Lineage" is the graph a chat draws beside it, around the resource,
+which is marked: for a workflow, its executions and its newest version; for an execution, itself;
+for a dataset, a model or a function, the executions of the workflow versions that name it and
+the newest version of each workflow that names it. It reads left to right, what was
+read, what was executed, what came out, at the same two levels ("Resources", "Versions"), the
+version on screen marked. A workflow's versions on it are those executed and its newest: a
+version saved on the way and never executed made nothing. A version lists its three newest
+executions and counts the rest. A box opens its resource beside the page, a version's row that
+version, an execution or a result the execution; something that was not shared with you is a box
+that says so. Each version and execution says who made it: "by Alice Liddell" for what a person
+made, or "by" a chat for what the agent made in one (the whole of it, with the person the agent
+worked for, on hover). Datasets, models, functions, workflows and executions have a Lineage tab;
+other kinds take no part in it. The chat's name opens the chat beside, and a chat says
 who started it.
 
 **Datasets.** Upload files (they stay staged), then commit a version; download or presign any
@@ -501,7 +511,7 @@ the workflow's (`defaultWarehouse`), else the project's default (`defaults.wareh
 come from up its chain), and records it
 (`spec.warehouse`); its page shows it. The sliders beside Run say it before an execution: the
 profile the unit was made from and where the results go, and pick another warehouse for the
-executions started there, with Run fresh beside them; an execution's card in lineage says the same. On a warehouse's page, "Keep <project>'s results here"
+executions started there, with Run fresh beside them; an execution's box in lineage says the same on hover. On a warehouse's page, "Keep <project>'s results here"
 makes it the project's default, for its admins. Whoever runs needs `use` on the warehouse
 (grant `user`; Texera's is everyone's). Reading is decided by the execution, not by the warehouse: whoever
 may read an execution reads its rows, through the catalog. A warehouse is deleted only when no

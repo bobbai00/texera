@@ -1,325 +1,242 @@
-import type { ConversationGraph, GraphNode } from "@texera/catalog-client/types";
+import type { GraphExecution, GraphNode, GraphVersion, ResourceGraph } from "@texera/catalog-client/types";
+import type { OperatorSchema } from "@texera/workflow-model";
 import { describe, expect, it } from "vitest";
 import {
+  callsOf,
   commentTarget,
+  inputsOf,
   nameOf,
   plannedId,
-  type RunItem,
   relationsOf,
-  runId,
+  rowId,
   runStateOf,
-  SOMEWHERE,
   touching,
-  versionRow,
-  versionRowOf,
   viewOf,
 } from "./model";
 
 const D = "texera://datasets/11111111-1111-1111-1111-111111111111";
+const L = "texera://datasets/12121212-1212-1212-1212-121212121212";
 const W = "texera://workflows/22222222-2222-2222-2222-222222222222";
-const W2 = "texera://workflows/33333333-3333-3333-3333-333333333333";
 const F = "texera://operators/44444444-4444-4444-4444-444444444444";
 const M = "texera://models/55555555-5555-5555-5555-555555555555";
 const U = "texera://computing-units/66666666-6666-6666-6666-666666666666";
-const U2 = "texera://computing-units/88888888-8888-8888-8888-888888888888";
 const E1 = `${W}/executions/77777777-7777-7777-7777-777777777777`;
 const E2 = `${W}/executions/99999999-9999-9999-9999-999999999999`;
 const port = (exec: string, op: string) => `${exec}/operators/${op}/ports/output-0`;
 
-const node = (uri: string, role: GraphNode["role"], extra: Partial<GraphNode> = {}): GraphNode => ({
+const version = (vno: number, extra: Partial<GraphVersion> = {}): GraphVersion => ({ vno, made: false, ...extra });
+const node = (
+  uri: string,
+  role: GraphNode["role"],
+  versions: GraphVersion[],
+  extra: Partial<GraphNode> = {}
+): GraphNode => ({
   uri,
   role,
-  kind: role === "data" ? "dataset" : role,
-  name: uri.split("/").at(-1) as string,
+  kind: role === "data" ? "dataset" : role === "function" ? "operator" : role,
+  name: uri.slice(-4),
+  readable: true,
+  versions,
   made: false,
   ...extra,
 });
+const execution = (uri: string, vno: number, extra: Partial<GraphExecution> = {}): GraphExecution => ({
+  uri,
+  workflow: W,
+  version: vno,
+  name: "execution",
+  phase: "completed",
+  steps: 3,
+  reused: 0,
+  made: true,
+  createdBy: "alice",
+  unit: { uri: U, name: "Small" },
+  ...extra,
+});
 
-/** A screening: the cohort read by a workflow that predicts with a model, calls a function, ran on a unit and made two tables. */
-const screening: ConversationGraph = {
+/**
+ * The email's case: version 1 read the cohort and kept the lows; version 2 reads the labs too,
+ * predicts with a model and calls a function, and kept the joined table. Each execution is of
+ * its own version.
+ */
+const screening: ResourceGraph = {
   nodes: [
-    node(W, "workflow", {
-      name: "screen",
+    node(W, "workflow", [version(2, { executions: 1 }), version(1, { executions: 1 })], {
+      name: "Risk scoring",
       made: true,
       turn: "t1",
-      runs: [{ uri: E1, phase: "completed", steps: 4, reused: 0, unit: U }],
-      steps: [
-        { id: "cohort", type: "scan", settings: { file: `${D}@1/files/pima.csv` } },
-        { id: "scored", type: "predict", settings: { model: `${M}@1` }, inputs: ["cohort"] },
-        { id: "calib", type: `${F}@1`, settings: { bands: 10 }, inputs: ["scored"] },
-        { id: "auc", type: `${F}@1`, inputs: ["scored"] },
-      ],
     }),
-    node(D, "data", { name: "Pima cohort", version: 1, made: true }),
-    node(F, "function", { name: "ROC AUC", version: 1 }),
-    node(M, "model", { name: "Diabetes onset risk", version: 1 }),
-    node(U, "unit", { name: "Small", state: "ready", made: true }),
-    node(port(E1, "auc"), "data", { kind: "execution", name: "auc", step: "auc", rows: 1, made: true, run: E1 }),
-    node(port(E1, "calib"), "data", { kind: "execution", name: "calib", step: "calib", rows: 10, made: true, run: E1 }),
+    node(D, "data", [version(1, { files: ["pima.csv"] })], { name: "Pima cohort" }),
+    node(L, "data", [version(1, { files: ["labs.csv"] })], { name: "Labs" }),
+    node(M, "model", [version(1)], { name: "Risk model" }),
+    node(F, "function", [version(1)], { name: "Odds ratio" }),
+  ],
+  executions: [execution(E2, 2), execution(E1, 1)],
+  results: [
+    {
+      uri: port(E2, "both"),
+      execution: E2,
+      operator: "both",
+      operatorType: "HashJoin",
+      displayName: "Both tables",
+      rows: 614,
+    },
+    { uri: port(E1, "lows"), execution: E1, operator: "lows", operatorType: "Filter", rows: 12 },
   ],
   edges: [
-    { from: D, to: W, relation: "reads" },
-    { from: M, to: W, relation: "uses" },
-    { from: F, to: W, relation: "uses" },
-    { from: W, to: U, relation: "runsOn" },
-    { from: W, to: port(E1, "auc"), relation: "makes" },
-    { from: W, to: port(E1, "calib"), relation: "makes" },
+    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true },
+    { from: `${D}@1`, to: `${W}@2`, relation: "reads", executed: true },
+    { from: `${L}@1`, to: `${W}@2`, relation: "reads", executed: true },
+    { from: `${M}@1`, to: `${W}@2`, relation: "uses", executed: true },
+    { from: `${F}@1`, to: `${W}@2`, relation: "uses", executed: true },
   ],
   planned: [],
   sources: [],
+  units: [],
 };
 
-describe("the view of a chat's graph", () => {
-  it("draws a model on its own, a function on the card, and the execution in a box of its own with the tables it made in the order of the steps", () => {
+describe("the view of a lineage graph", () => {
+  it("hangs each execution off the version it ran, with the results it kept after it", () => {
     const view = viewOf(screening);
-    const [w] = view.works;
-    expect(w?.reads).toEqual([{ data: D, steps: ["cohort"], files: ["pima.csv"] }]);
-    expect(w?.models).toEqual([M]);
-    expect(view.models.map(n => n.name)).toEqual(["Diabetes onset risk"]);
-    expect(w?.uses.map(u => u.name)).toEqual(["ROC AUC"]);
-    expect(w?.runs).toEqual([runId(W, E1)]);
-    const box = view.runs.get(runId(W, E1));
-    expect(box?.run?.uri).toBe(E1);
-    expect(box?.unit).toBe(U);
-    expect(box?.results).toEqual([port(E1, "calib"), port(E1, "auc")]);
-    expect(box && runStateOf(box)).toBe("completed");
-    expect(view.data.get(D)?.files).toEqual(["pima.csv"]);
-    expect([view.rank.get(D), view.rank.get(W), view.rank.get(runId(W, E1)), view.rank.get(port(E1, "auc"))]).toEqual([
-      0, 1, 1, 2,
+    expect(view.works).toEqual([W]);
+    expect(view.boxes.get(W)?.rows).toEqual([`${W}@2`, `${W}@1`]);
+    expect(view.rows.get(`${W}@2`)?.runs).toEqual([E2]);
+    expect(view.rows.get(`${W}@1`)?.runs).toEqual([E1]);
+    expect(view.runs.get(E1)?.row).toBe(`${W}@1`);
+    expect(view.runs.get(E2)?.results).toEqual([port(E2, "both")]);
+    expect(view.runs.get(E1)?.results).toEqual([port(E1, "lows")]);
+    expect(view.runsOf.get(W)).toEqual([E2, E1]);
+  });
+
+  it("runs an arrow from each version read or used into the workflow version, and says a function on the version that calls it", () => {
+    const view = viewOf(screening);
+    expect(view.links.map(l => `${l.from.slice(-6)}>${l.to.slice(-6)}`)).toEqual([
+      `${D.slice(-4)}@1>${W.slice(-4)}@1`,
+      `${D.slice(-4)}@1>${W.slice(-4)}@2`,
+      `${L.slice(-4)}@1>${W.slice(-4)}@2`,
+      `${M.slice(-4)}@1>${W.slice(-4)}@2`,
     ]);
+    expect(view.rows.get(`${W}@2`)?.calls.map(c => [c.node.name, c.vno])).toEqual([["Odds ratio", 1]]);
+    expect(callsOf(view, W).map(c => c.node.name)).toEqual(["Odds ratio"]);
+    expect(inputsOf(view, W)).toEqual([D, L, M]);
     expect(view.loose).toEqual([]);
-    expect(view.idle).toEqual([]);
-    expect(nameOf(view, runId(W, E1))).toBe("screen on Small");
   });
 
-  it("gives each execution its box, newest first, and the tables to the execution that made them", () => {
-    const moved: ConversationGraph = {
+  it("shows zoomed out the results of the newest execution that kept any", () => {
+    const running: ResourceGraph = {
       ...screening,
-      nodes: [
-        node(W, "workflow", {
-          ...screening.nodes[0],
-          runs: [
-            { uri: E2, phase: "running", steps: 4, reused: 0, unit: U2 },
-            { uri: E1, phase: "completed", steps: 4, reused: 0, unit: U },
-          ],
-        }),
-        ...screening.nodes.slice(1),
-        node(U2, "unit", { name: "Large", state: "ready" }),
-      ],
-      edges: [...screening.edges, { from: W, to: U2, relation: "runsOn" }],
-    };
-    const view = viewOf(moved);
-    expect(view.works[0]?.runs).toEqual([runId(W, E2), runId(W, E1)]);
-    const [large, small] = [view.runs.get(runId(W, E2)), view.runs.get(runId(W, E1))];
-    expect(large && runStateOf(large)).toBe("running");
-    expect(large?.results).toEqual([]);
-    expect(small?.results).toEqual([port(E1, "calib"), port(E1, "auc")]);
-  });
-
-  it("lists the versions a workflow's executions ran, newest first, and draws each execution from its own, the one it has not had yet from the version shown", () => {
-    const view = viewOf({
-      ...screening,
-      nodes: [
-        node(W, "workflow", {
-          ...screening.nodes[0],
-          version: 4,
-          runs: [
-            // Executed last, but of an older version: it stands under the newer one.
-            { uri: E2, phase: "completed", steps: 4, reused: 0, unit: U, version: 1 },
-            { uri: E1, phase: "completed", steps: 5, reused: 1, unit: U, version: 4 },
-          ],
-        }),
-        ...screening.nodes.slice(1),
-      ],
-      planned: [{ kind: "execution", name: "screen again", turn: "t2" }],
-    });
-    const [w] = view.works;
-    expect(w?.executed).toEqual([4, 1]);
-    const [next, ...had] = (w?.runs ?? []).map(id => view.runs.get(id) as RunItem);
-    expect(next?.run).toBeUndefined();
-    expect(had.map(b => b.run?.uri)).toEqual([E1, E2]);
-    expect([next, ...had].map(b => w && b && versionRowOf(w, b))).toEqual([
-      versionRow(4),
-      versionRow(4),
-      versionRow(1),
-    ]);
-  });
-
-  it("lists no version when every execution ran the one the card shows, and the one they ran when the card shows a newer", () => {
-    const of = (version: number, ran: number[]) =>
-      viewOf({
-        ...screening,
-        nodes: [
-          node(W, "workflow", {
-            ...screening.nodes[0],
-            version,
-            runs: ran.map((v, i) => ({
-              uri: i ? E1 : E2,
-              phase: "completed",
-              steps: 4,
-              reused: 0,
-              unit: U,
-              version: v,
-            })),
-          }),
-          ...screening.nodes.slice(1),
-        ],
-      });
-    const same = of(2, [2, 2]);
-    expect(same.works[0]?.executed).toEqual([]);
-    expect(same.works[0]?.runs).toEqual([runId(W, E2), runId(W, E1)]);
-    const older = of(2, [1]);
-    expect(older.works[0]?.executed).toEqual([1]);
-    expect(versionRowOf(older.works[0] as never, older.runs.get(runId(W, E2)) as RunItem)).toBe(versionRow(1));
-    // Executions that do not say their version list none and keep their order.
-    expect(viewOf(screening).works[0]?.executed).toEqual([]);
-  });
-
-  it("puts a run that does not say its unit on the one unit its workflow ran on, and one on a unit the caller cannot see somewhere", () => {
-    const older = viewOf({
-      ...screening,
-      nodes: [
-        node(W, "workflow", { ...screening.nodes[0], runs: [{ uri: E1, phase: "failed", steps: 4, reused: 0 }] }),
-        ...screening.nodes.slice(1),
-      ],
-    });
-    expect(older.runs.get(runId(W, E1))?.unit).toBe(U);
-    expect(runStateOf(older.runs.get(runId(W, E1)) as never)).toBe("failed");
-    const hidden = viewOf({
-      ...screening,
-      nodes: [
-        node(W, "workflow", {
-          ...screening.nodes[0],
-          runs: [{ uri: E1, phase: "completed", steps: 4, reused: 0, unit: U2 }],
-        }),
-        ...screening.nodes.slice(1),
-      ],
-    });
-    expect(hidden.runs.get(runId(W, E1))?.unit).toBe(SOMEWHERE);
-    // The unit it did not run on stands with nothing on it.
-    expect(hidden.idle).toEqual([U]);
-  });
-
-  it("puts a workflow that reads another's table one rank past it, its runs with it", () => {
-    const chain: ConversationGraph = {
-      ...screening,
-      nodes: [...screening.nodes, node(W2, "workflow", { name: "follow up", made: true, steps: [] })],
-      edges: [
-        ...screening.edges,
-        { from: port(E1, "auc"), to: W2, relation: "reads" },
-        { from: W2, to: U, relation: "runsOn" },
+      executions: [
+        execution(`${W}/executions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`, 2, { phase: "running" }),
+        ...screening.executions,
       ],
     };
-    const view = viewOf(chain);
-    expect(view.rank.get(W2)).toBe(3);
-    expect(view.rank.get(runId(W2, U))).toBe(3);
-    expect(view.works.map(w => w.id)).toEqual([W, W2]);
-    expect(runStateOf(view.runs.get(runId(W2, U)) as never)).toBe("idle");
+    expect(viewOf(running).latest.get(W)).toEqual([port(E2, "both")]);
   });
 
-  it("stands each item of the plan where what it names will stand: the workflow's run on the unit it plans, its dataset beside it", () => {
-    const fresh: ConversationGraph = {
-      nodes: [node(D, "data", { name: "Pima cohort", made: true, turn: "t1" })],
-      edges: [],
+  it("counts the executions of a version it does not list, and lists a version not executed", () => {
+    const graph: ResourceGraph = {
+      ...screening,
+      nodes: [
+        node(W, "workflow", [version(3), version(2, { executions: 5 }), version(1, { executions: 1 })]),
+        ...screening.nodes.slice(1),
+      ],
+    };
+    const view = viewOf(graph);
+    expect(view.rows.get(`${W}@2`)?.earlier).toBe(4);
+    expect(view.rows.get(`${W}@3`)?.runs).toEqual([]);
+  });
+
+  it("names a result as its operator's card does: the name given it, else its type's", () => {
+    const schemas = new Map([["Filter", { userFriendlyName: "Filter rows" } as OperatorSchema]]);
+    const view = viewOf(screening, schemas);
+    expect(view.results.get(port(E2, "both"))?.title).toBe("Both tables");
+    expect(view.results.get(port(E1, "lows"))?.title).toBe("Filter rows");
+    expect(viewOf(screening).results.get(port(E1, "lows"))?.title).toBe("Filter");
+  });
+
+  it("stands each item of the plan where what it names will stand", () => {
+    const graph: ResourceGraph = {
+      ...screening,
       planned: [
-        { kind: "computing-unit", name: "Diabetes scoring", detail: "Small", turn: "t2" },
-        { kind: "workflow", name: "risk screen", turn: "t2" },
-        { kind: "dataset", name: "Screened", turn: "t2" },
-        { kind: "operator", name: "holdout metrics", turn: "t2" },
+        { kind: "workflow", name: "Calibration", turn: "t2" },
+        { kind: "dataset", name: "Calibration table", turn: "t2" },
+        { kind: "computing-unit", name: "Medium", turn: "t2" },
+        { kind: "execution", name: "rerun Risk scoring", turn: "t2" },
+        { kind: "operator", name: "Brier score", turn: "t2" },
       ],
-      sources: [],
     };
-    const view = viewOf(fresh);
-    const unit = plannedId({ kind: "computing-unit", name: "Diabetes scoring", turn: "t2" });
-    const [w] = view.works;
-    expect(w?.planned?.name).toBe("risk screen");
-    const box = view.runs.get(w?.runs[0] as string);
-    expect(box?.unit).toBe(unit);
-    expect(box && runStateOf(box)).toBe("planned");
-    expect(box?.results).toEqual([plannedId({ kind: "dataset", name: "Screened", turn: "t2" })]);
-    expect(w?.plannedUses.map(p => p.name)).toEqual(["holdout metrics"]);
-    expect(view.units.get(unit)?.planned?.detail).toBe("Small");
-    // The cohort no workflow reads yet stands at the end of its column.
-    expect(view.loose).toEqual([D]);
+    const view = viewOf(graph);
+    const calibration = plannedId({ kind: "workflow", name: "Calibration", turn: "t2" });
+    expect(view.works).toEqual([W, calibration]);
+    const ofPlan = view.runs.get(`planned:execution:${calibration}`);
+    expect(ofPlan?.planned?.name).toBe("Calibration");
+    expect(ofPlan?.results).toEqual([plannedId({ kind: "dataset", name: "Calibration table", turn: "t2" })]);
+    expect(ofPlan?.plannedUnit?.name).toBe("Medium");
+    // The rerun the plan names stands first on the newest version of the workflow it names.
+    const rerun = view.runs.get(`planned:execution:${W}`);
+    expect(rerun?.row).toBe(`${W}@2`);
+    expect(view.rows.get(`${W}@2`)?.runs[0]).toBe(rerun?.id);
+    expect(rerun && runStateOf(rerun)).toBe("planned");
+    expect(view.plannedUses.get(calibration)?.map(p => p.name)).toEqual(["Brier score"]);
   });
 
-  it("gives a workflow made and not run its execution on the fresh unit made for it, and a planned one its own box, first", () => {
-    const made: ConversationGraph = {
+  it("says the next execution of a workflow the chat made and has not executed on the unit it made for it", () => {
+    const W2 = "texera://workflows/33333333-3333-3333-3333-333333333333";
+    const fresh = "texera://computing-units/88888888-8888-8888-8888-888888888888";
+    const graph: ResourceGraph = {
+      ...screening,
       nodes: [
-        node(W, "workflow", { name: "risk screen", made: true, turn: "t2", steps: [] }),
-        node(W2, "workflow", {
-          name: "hba1c and readmission",
-          runs: [{ uri: `${W2}/executions/1`, phase: "completed", steps: 4, reused: 0, unit: U2 }],
-          steps: [],
-        }),
-        node(U, "unit", { name: "Small", state: "starting", made: true, turn: "t2" }),
-        node(U2, "unit", { name: "local unit", state: "ready" }),
+        ...screening.nodes,
+        node(W2, "workflow", [version(1, { made: true })], { name: "Calibration", made: true }),
       ],
-      edges: [{ from: W2, to: U2, relation: "runsOn" }],
-      planned: [{ kind: "execution", name: "hba1c and readmission, rerun on version 1", turn: "t2" }],
-      sources: [],
+      units: [{ uri: fresh, name: "Medium", state: "starting" }],
     };
-    const view = viewOf(made);
-    expect(view.works.find(w => w.id === W)?.runs).toEqual([runId(W, U)]);
-    expect(runStateOf(view.runs.get(runId(W, U)) as never)).toBe("idle");
-    // The fresh unit is the plan's target, so the rerun is planned there.
-    const rerun = view.works.find(w => w.id === W2)?.runs.map(id => view.runs.get(id));
-    expect(rerun?.map(b => [b?.unit, b?.planned?.name !== undefined])).toEqual([
-      [U, true],
-      [U2, false],
-    ]);
-    expect(view.idle).toEqual([]);
+    const view = viewOf(graph);
+    const next = view.runs.get(`planned:execution:${W2}`);
+    expect(next?.row).toBe(`${W2}@1`);
+    expect(next?.willRunOn?.name).toBe("Medium");
+    expect(next && runStateOf(next)).toBe("waiting");
+    expect(nameOf(view, next?.id ?? "")).toBe("Next execution of Calibration v1");
+    // A workflow it executed already has no such execution.
+    expect(view.runs.has(`planned:execution:${W}`)).toBe(false);
+    expect(relationsOf(view, fresh)).toEqual([{ label: "Executions on it", ids: [`planned:execution:${W2}`] }]);
   });
 
-  it("gives a workflow not run its execution on its default unit, and a planned one the unit it ran on when no unit was made", () => {
-    const view = viewOf({
-      nodes: [
-        node(W, "workflow", { name: "next", steps: [] }),
-        node(W2, "workflow", {
-          name: "hba1c and readmission",
-          runs: [{ uri: `${W2}/executions/1`, phase: "completed", steps: 4, reused: 0, unit: U2 }],
-          steps: [],
-        }),
-        node(U2, "unit", { name: "local unit", state: "ready" }),
-      ],
-      edges: [
-        { from: W, to: U2, relation: "runsOn" },
-        { from: W2, to: U2, relation: "runsOn" },
-      ],
-      planned: [{ kind: "execution", name: "hba1c and readmission, rerun", turn: "t2" }],
-      sources: [],
-    });
-    expect(runStateOf(view.runs.get(runId(W, U2)) as never)).toBe("idle");
-    const box = view.runs.get(runId(W2, U2));
-    expect(box?.planned?.name).toContain("rerun");
-    expect(box && runStateOf(box)).toBe("planned");
-    expect(view.works.find(w => w.id === W2)?.runs[0]).toBe(runId(W2, U2));
+  it("stands a resource the caller may not read unnamed, with nothing to comment on", () => {
+    const graph: ResourceGraph = {
+      ...screening,
+      nodes: screening.nodes.map(n => (n.uri === L ? { ...n, name: "", readable: false } : n)),
+    };
+    const view = viewOf(graph);
+    expect(nameOf(view, L)).toBe("Not shared with you");
+    expect(commentTarget(view, L)).toBeUndefined();
   });
 
   it("lights up what a thing touches, and says how it stands to the rest", () => {
     const view = viewOf(screening);
-    const box = runId(W, E1);
-    expect([...touching(view, box)].sort()).toEqual([box, D, M, U, W, port(E1, "auc"), port(E1, "calib")].sort());
-    expect([...touching(view, U)].sort()).toEqual([box, U, W].sort());
-    expect([...touching(view, port(E1, "auc"))].sort()).toEqual([box, U, W, port(E1, "auc")].sort());
-    expect([...touching(view, M)]).toContain(box);
-    expect(relationsOf(view, W)).toEqual([
-      { label: "Reads", ids: [D] },
-      { label: "Uses", ids: [M, F] },
-      { label: "Executions", ids: [box] },
-      { label: "Made", ids: [port(E1, "calib"), port(E1, "auc")] },
+    const v1 = touching(view, `${W}@1`);
+    expect([...v1]).toEqual(expect.arrayContaining([`${W}@1`, W, `${D}@1`, D, E1, port(E1, "lows")]));
+    expect(v1.has(E2)).toBe(false);
+    expect(v1.has(`${L}@1`)).toBe(false);
+    expect(touching(view, L).has(`${W}@2`)).toBe(true);
+    expect(relationsOf(view, E1)).toEqual([
+      { label: "Of", ids: [`${W}@1`] },
+      { label: "Read", ids: [`${D}@1`] },
+      { label: "Made", ids: [port(E1, "lows")] },
     ]);
-    expect(relationsOf(view, box).map(r => r.label)).toEqual(["Of", "On", "Read", "Made"]);
-    expect(relationsOf(view, U)).toEqual([{ label: "Executions on it", ids: [box] }]);
-    expect(relationsOf(view, port(E1, "auc"))).toEqual([{ label: "Made by", ids: [box] }]);
-    expect(relationsOf(view, D)).toEqual([{ label: "Read by", ids: [W] }]);
-    expect(relationsOf(view, M)).toEqual([{ label: "Used by", ids: [W] }]);
+    expect(relationsOf(view, D)).toEqual([{ label: "Read by", ids: [`${W}@1`, `${W}@2`] }]);
+    expect(relationsOf(view, F)).toEqual([{ label: "Used by", ids: [`${W}@2`] }]);
+    expect(nameOf(view, `${W}@2`)).toBe("Risk scoring v2");
+    expect(nameOf(view, E1)).toBe("Execution of Risk scoring v1");
   });
 
-  it("says what a comment is about: a thing's own URI, an execution's, and nothing for what is only planned", () => {
-    const view = viewOf(screening);
-    expect(commentTarget(view, D)).toEqual({ uri: D, name: "Pima cohort" });
-    expect(commentTarget(view, runId(W, E1))).toEqual({ uri: E1, name: "execution of screen" });
-    expect(commentTarget(view, runId(W, U))).toBeUndefined();
+  it("says what a comment is about: a resource, a version, an execution, a result; nothing for what is only planned", () => {
+    const view = viewOf({ ...screening, planned: [{ kind: "workflow", name: "Later", turn: "t2" }] });
+    expect(commentTarget(view, W)).toEqual({ uri: W, name: "Risk scoring" });
+    expect(commentTarget(view, `${W}@1`)).toEqual({ uri: `${W}@1`, name: "Risk scoring v1" });
+    expect(commentTarget(view, E2)).toEqual({ uri: E2, name: "execution of Risk scoring v2" });
+    expect(commentTarget(view, port(E2, "both"))?.uri).toBe(port(E2, "both"));
+    expect(commentTarget(view, plannedId({ kind: "workflow", name: "Later", turn: "t2" }))).toBeUndefined();
+    expect(rowId(W, 2)).toBe(`${W}@2`);
   });
 });
