@@ -9,6 +9,7 @@ import {
   PopoverContent,
   PopoverRoot,
   PopoverTrigger,
+  Segmented,
   Select,
   Skeleton,
   Tab,
@@ -33,19 +34,22 @@ import {
   History,
   Loader2,
   Lock,
+  Pencil,
   Play,
   RotateCcw,
   SlidersHorizontal,
-  Table2,
+  SquarePlay,
   Users,
   Workflow,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
-import { executionOverlay } from "../execution/overlay";
-import { useRoom } from "../live/room";
+import { ExecutionCanvas } from "../execution/ExecutionCanvas";
+import { asOf, executionOverlay } from "../execution/overlay";
+import { Standing } from "../execution/Standing";
 import { masterOf } from "../kinds/profiles";
+import { useRoom } from "../live/room";
 import { keysOf, operatorSchemasQuery, projectSettingsQuery, searchQuery, unitsQuery } from "../queries";
 import { resultLabel } from "../results/labels";
 import { ResultsWindow } from "../results/ResultsWindow";
@@ -54,8 +58,8 @@ import { Access } from "../shell/Access";
 import { EditableName, KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { metaLine } from "../shell/MetaLine";
-import { OpenError } from "../shell/OpenError";
 import { useOpenResource } from "../shell/navigation";
+import { OpenError } from "../shell/OpenError";
 import { Named } from "../shell/RanOn";
 import { Versions } from "../shell/Versions";
 import { useTellViewing } from "../shell/viewing";
@@ -63,14 +67,16 @@ import type { KindViewProps } from "../types";
 import { uriOf, versionOf } from "../uri";
 import { useWatch } from "../watch";
 import { createCanvasView, portKey } from "./canvas-view";
-import { useShow } from "./framing";
 import { fixedDocument, liveDocument, type WorkflowDocument } from "./document";
-import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
+import { createEditorStore, type EditorStore } from "./editor";
 import { compilationQuery, executionsQuery, versionSpecQuery, workflowQuery } from "./queries";
 import { isRefusal, notRunnable, refusedOperator } from "./runnable";
 
 const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running"]);
+
+/** How the workflow's canvas is shown: edited, or as an execution ran it. */
+type Mode = "edit" | "execution";
 
 /** The workflow workspace: the same view in the side panel next to a chat and as a full page. */
 export default function WorkflowView({ ref, mode }: KindViewProps) {
@@ -136,7 +142,13 @@ function useWorkflowDocument(
   const [first] = useState(fallback);
   return useMemo(() => {
     if (shown) return { document: fixedDocument(shown), readonly: true, unreachable: false, connecting: false };
-    if (room && joined) return { document: liveDocument(room), readonly: room.authorizedScope === "readonly", unreachable: false, connecting: false };
+    if (room && joined)
+      return {
+        document: liveDocument(room),
+        readonly: room.authorizedScope === "readonly",
+        unreachable: false,
+        connecting: false,
+      };
     return { document: fixedDocument(first), readonly: true, unreachable, connecting: !unreachable };
   }, [shown, room, joined, unreachable, first]);
 }
@@ -179,7 +191,8 @@ function Editor({
     <ReactFlowProvider>
       {unreachable && (
         <p className="border-b bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground" data-session-unreachable>
-          The workflow's live session cannot be reached, so it is shown as it was last saved and cannot be edited right now.
+          The workflow's live session cannot be reached, so it is shown as it was last saved and cannot be edited right
+          now.
         </p>
       )}
       <EditorLayout store={store} mode={mode} meta={meta} pinned={shown?.vno} onPin={onPin} connecting={connecting} />
@@ -187,13 +200,26 @@ function Editor({
   );
 }
 
-/** What the cards say: how each operator did in the execution on screen, and what the compiler says is wrong with it now. */
-function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, execution: Execution | undefined) {
-  const ran = executionOverlay(execution?.status, execution?.spec);
+/**
+ * What the cards say while the workflow is edited: how each operator did in the execution the
+ * canvas draws and what it kept, as of the version it ran (`ran`, once read), and what the
+ * compiler says is wrong with each now.
+ */
+function overlayFor(
+  spec: WorkflowSpec,
+  compilation: Compilation | undefined,
+  execution: Execution | undefined,
+  ran: WorkflowSpec | undefined
+) {
+  const vno = execution ? versionOf(execution.spec.workflow) : undefined;
+  const said =
+    execution && ran && vno !== undefined
+      ? asOf(executionOverlay(execution.status, execution.spec), ran, vno, spec)
+      : {};
   const overlay: Record<string, OperatorOverlay> = {};
   for (const op of spec.operators) {
     const error = compilation?.errors[op.operatorID];
-    overlay[op.operatorID] = { ...ran[op.operatorID], ...(error ? { error } : {}) };
+    overlay[op.operatorID] = { ...said[op.operatorID], ...(error ? { error } : {}) };
   }
   return overlay;
 }
@@ -223,6 +249,7 @@ function EditorLayout({
   const refusal = useStore(store, s => s.refusal);
   const headVno = useStore(store, s => s.headVno);
   const pinned = pinnedVno !== undefined;
+  const page = mode === "page";
   // The version on screen: the one pinned, else the head as the session saves it.
   const vno = pinnedVno ?? headVno;
   const queryClient = useQueryClient();
@@ -232,7 +259,10 @@ function EditorLayout({
   const settle = useCallback(async () => {
     await store.getState().flush();
   }, [store]);
-  useTellViewing(mode === "page" && selected ? `the operator ${selected} is selected` : undefined, mode === "page" ? settle : undefined);
+  useTellViewing(
+    mode === "page" && selected ? `the operator ${selected} is selected` : undefined,
+    mode === "page" ? settle : undefined
+  );
   const { data: schemas } = useQuery(operatorSchemasQuery(scope));
   const { data: units } = useQuery(unitsQuery(scope));
   // How the canvas is looked at: how much the cards say, the card open, the result on screen.
@@ -246,7 +276,8 @@ function EditorLayout({
   const [unitPick, setUnitPick] = useState<string>();
   const named = unitPick ?? spec.defaultComputingUnit ?? defaults?.computingUnit;
   // A unit the person may not run on is not among theirs: a ready one of theirs stands in.
-  const unit = units?.find(u => u.metadata.uri === named) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
+  const unit =
+    units?.find(u => u.metadata.uri === named) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
   const madeFrom = unit && masterOf(unit.spec as ComputingUnitSpec)?.profile;
   const [warehousePick, setWarehousePick] = useState<string>();
   const warehouse = warehousePick ?? spec.defaultWarehouse ?? defaults?.warehouse;
@@ -258,13 +289,20 @@ function EditorLayout({
     refetchInterval: q => (q.state.data?.items.some(x => LIVE.has(x.status?.phase ?? "pending")) ? 1000 : false),
   });
   const latest = executions.data?.items[0] as Execution | undefined;
-  // What the canvas shows of an execution is of the version on screen: its newest execution, else
-  // the workflow's newest, whose results then say the version they are of.
-  const onScreen = (executions.data?.items.find(x => versionOf(x.spec.workflow) === vno) ?? latest) as Execution | undefined;
+  // While the workflow is edited, the canvas draws an execution of the version on screen: its
+  // newest, else the workflow's newest, as of the version that ran: what changed since says the
+  // version its results are of.
+  const onScreen = (executions.data?.items.find(x => versionOf(x.spec.workflow) === vno) ?? latest) as
+    | Execution
+    | undefined;
+  const ranVno = onScreen ? versionOf(onScreen.spec.workflow) : undefined;
+  const ran = useQuery({ ...versionSpecQuery(rid, ranVno ?? 0), enabled: ranVno !== undefined });
+  // Edited, or looked at as an execution ran it: the newest, or one picked.
+  const [showing, setShowing] = useState<Mode>("edit");
+  const [picked, setPicked] = useState<string>();
+  const shown = (executions.data?.items.find(x => x.metadata.rid === picked) ?? latest) as Execution | undefined;
   const [tab, setTab] = useState("canvas");
-  const [resultsOpen, setResultsOpen] = useState(true);
   const { beside } = useOpenResource();
-  const live = latest !== undefined && LIVE.has(latest.status?.phase ?? "pending");
   const nameOf = useCallback(
     (operatorID: string) => {
       const op = spec.operators.find(o => o.operatorID === operatorID);
@@ -274,10 +312,11 @@ function EditorLayout({
     [spec, schemas]
   );
 
-  // A result is named as its operator's card names it; picking one brings the card into view.
-  const labelOf = useCallback((operatorID: string) => resultLabel(spec, schemas, operatorID), [spec, schemas]);
-  const show = useShow(view);
-  const showCard = useCallback((operatorID: string) => show(operatorID), [show]);
+  // A result is named as its operator's card named it in the version that made it.
+  const labelOf = useCallback(
+    (operatorID: string) => resultLabel(ran.data ?? spec, schemas, operatorID),
+    [ran.data, spec, schemas]
+  );
 
   // Runs the workflow, or up to one operator: only what leads to it, and its result is kept.
   const run = useMutation({
@@ -303,10 +342,11 @@ function EditorLayout({
       // The execution shows where it runs: on the cards of this canvas, its results under it.
       queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid } }] });
       queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      // A run up to an operator was asked for its result: that is the one on screen.
+      // A run up to an operator was asked for its result: that is the one open.
       const port = upTo && store.getState().spec.operators.find(o => o.operatorID === upTo)?.outputPorts?.[0]?.portID;
       view.getState().show(upTo && port ? portKey(upTo, port) : null);
-      setResultsOpen(true);
+      // An execution looked at follows the one just started.
+      setPicked(undefined);
       setTab("canvas");
     },
   });
@@ -315,18 +355,27 @@ function EditorLayout({
   // shared with them, the unit) is told what, by the dry run before they press Run, or by Run.
   const blocked = isRefusal(compiled.error) ? compiled.error : isRefusal(run.error) ? run.error : undefined;
   const overlay = useMemo(() => {
-    const said = overlayFor(spec, compilation, onScreen);
+    const said = overlayFor(spec, compilation, onScreen, ran.data);
     const operator = blocked && refusedOperator(blocked);
-    if (operator && said[operator]) said[operator] = { ...said[operator], error: "Not shared with you: ask the workflow's owner" };
+    if (operator && said[operator])
+      said[operator] = { ...said[operator], error: "Not shared with you: ask the workflow's owner" };
     return said;
-  }, [spec, compilation, onScreen, blocked]);
+  }, [spec, compilation, onScreen, ran.data, blocked]);
+  const staleOf = useCallback((operatorID: string) => overlay[operatorID]?.stale, [overlay]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-workflow-view={rid}>
       <KindHeader
         ref={{ kind: "workflow", rid }}
         mode={mode}
-        name={<EditableName value={name} onChange={n => store.getState().rename(n)} disabled={readonly} label="Workflow name" />}
+        name={
+          <EditableName
+            value={name}
+            onChange={n => store.getState().rename(n)}
+            disabled={readonly}
+            label="Workflow name"
+          />
+        }
         meta={
           <span className="flex items-center gap-1.5">
             {pinned ? (
@@ -337,7 +386,10 @@ function EditorLayout({
                 </button>
               </Badge>
             ) : connecting ? (
-              <span className="inline-flex items-center gap-1" title="Joining the workflow's live session" data-save-state="connecting">
+              <span
+                className="inline-flex items-center gap-1"
+                title="Joining the workflow's live session"
+                data-save-state="connecting">
                 <Loader2 className="size-3 animate-spin" /> Connecting
               </span>
             ) : (
@@ -348,6 +400,49 @@ function EditorLayout({
         }
         actions={
           <>
+            <Segmented<Mode>
+              label="How the workflow is shown"
+              value={showing === "execution" && shown ? "execution" : "edit"}
+              onChange={next => {
+                setShowing(next);
+                setTab("canvas");
+              }}
+              options={[
+                {
+                  value: "edit",
+                  label: (
+                    <span className="flex items-center gap-1" data-workflow-mode="edit">
+                      <Pencil /> {page ? "Edit" : <span className="sr-only">Edit</span>}
+                    </span>
+                  ),
+                  title: "Edit the workflow",
+                },
+                {
+                  value: "execution",
+                  label: (
+                    <span className="flex items-center gap-1" data-workflow-mode="execution">
+                      <SquarePlay /> {page ? "Execution" : <span className="sr-only">Execution</span>}
+                    </span>
+                  ),
+                  title: latest
+                    ? "Look at an execution as it ran: the version it ran and what it kept"
+                    : "No execution yet",
+                  disabled: !latest,
+                },
+              ]}
+            />
+            {showing === "execution" && shown && executions.data && (
+              <Select
+                aria-label="Execution"
+                value={shown.metadata.rid}
+                onChange={setPicked}
+                options={executions.data.items.map(x => ({
+                  value: x.metadata.rid,
+                  label: `${x.metadata.name} · v${versionOf(x.spec.workflow) ?? "?"} · ${x.status?.phase ?? "pending"}`,
+                }))}
+                className="w-56"
+              />
+            )}
             {units && units.length > 0 && (
               // Where an execution goes: the unit here, the rest of it a click away.
               <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground" data-run-target>
@@ -361,7 +456,12 @@ function EditorLayout({
                 {mode === "page" && (
                   <PopoverRoot>
                     <PopoverTrigger>
-                      <Button variant="ghost" size="icon-sm" aria-label="Execution options" title="Execution options" data-run-options>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Execution options"
+                        title="Execution options"
+                        data-run-options>
                         <SlidersHorizontal />
                       </Button>
                     </PopoverTrigger>
@@ -406,10 +506,9 @@ function EditorLayout({
                 <Cpu className="size-3" /> No computing unit
               </Badge>
             )}
-            {live && latest && (
-              <Badge tone="warning">
-                <Loader2 className="size-3 animate-spin" /> {latest.status?.phase}
-              </Badge>
+            {/* Where the execution on screen stands: the one the canvas draws while editing, the one looked at otherwise. */}
+            {(showing === "execution" ? shown : onScreen) && (
+              <Standing execution={(showing === "execution" ? shown : onScreen) as Execution} />
             )}
             <Button
               size="sm"
@@ -433,7 +532,9 @@ function EditorLayout({
           <span>You can look at this workflow but not run it. {notRunnable(blocked, nameOf)}</span>
         </p>
       )}
-      {run.error && !isRefusal(run.error) && <ErrorNote error={run.error} prefix="Could not start the execution" className="m-3" />}
+      {run.error && !isRefusal(run.error) && (
+        <ErrorNote error={run.error} prefix="Could not start the execution" className="m-3" />
+      )}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <Tab value="canvas">
@@ -453,40 +554,47 @@ function EditorLayout({
           </Tab>
         </TabsList>
         <TabPanel value="canvas" className="flex min-h-0 flex-1" keepMounted>
-          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-            <EditorCanvas
-              store={store}
-              view={view}
-              overlay={overlay}
-              compilation={compilation}
-              onRunTo={pinned ? undefined : runTo}
-              className="flex min-h-0 min-w-0 flex-1">
-              {onScreen &&
-                (resultsOpen ? (
+          {showing === "execution" && shown ? (
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-workflow-shows="execution">
+              <ExecutionCanvas
+                key={shown.metadata.rid}
+                execution={shown}
+                workflow={rid}
+                onOpen={() => beside({ kind: "execution", rid: shown.metadata.rid, parent: rid })}
+              />
+            </div>
+          ) : (
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-workflow-shows="edit">
+              <EditorCanvas
+                store={store}
+                view={view}
+                overlay={overlay}
+                compilation={compilation}
+                onRunTo={pinned ? undefined : runTo}
+                className="flex min-h-0 min-w-0 flex-1">
+                {onScreen && (
                   <ResultsWindow
                     execution={onScreen}
                     workflow={rid}
                     view={view}
                     labelOf={labelOf}
-                    onShowOperator={showCard}
+                    staleOf={staleOf}
                     onOpen={() => beside({ kind: "execution", rid: onScreen.metadata.rid, parent: rid })}
-                    onClose={() => setResultsOpen(false)}
-                    showing={vno}
                   />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setResultsOpen(true)}
-                    className="nokey absolute bottom-4 left-4 z-20 flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md hover:bg-accent"
-                    data-show-results>
-                    <Table2 className="size-3.5 text-primary" /> Results of {onScreen.metadata.name}
-                  </button>
-                ))}
-            </EditorCanvas>
-          </div>
+                )}
+              </EditorCanvas>
+            </div>
+          )}
         </TabPanel>
         <TabPanel value="executions" className="scrollbar-thin overflow-y-auto">
-          <Executions rid={rid} onOpen={eid => beside({ kind: "execution", rid: eid, parent: rid })} />
+          <Executions
+            rid={rid}
+            onOpen={eid => {
+              setPicked(eid);
+              setShowing("execution");
+              setTab("canvas");
+            }}
+          />
         </TabPanel>
         <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">
           <Versions rid={rid} head={headVno} selected={pinnedVno} onSelect={onPin} />
@@ -518,10 +626,21 @@ function Executions({ rid, onOpen }: { rid: string; onOpen: (eid: string) => voi
         const phase = x.status?.phase ?? "pending";
         return (
           <li key={x.metadata.rid}>
-            <button type="button" onClick={() => onOpen(x.metadata.rid)} className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60" data-execution-row={phase}>
-              <Badge tone={phase === "completed" ? "success" : phase === "failed" || phase === "cancelled" ? "danger" : "warning"}>{phase}</Badge>
+            <button
+              type="button"
+              onClick={() => onOpen(x.metadata.rid)}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60"
+              data-execution-row={phase}>
+              <Badge
+                tone={
+                  phase === "completed" ? "success" : phase === "failed" || phase === "cancelled" ? "danger" : "warning"
+                }>
+                {phase}
+              </Badge>
               <span className="min-w-0 flex-1 truncate">{x.metadata.name}</span>
-              <span className="text-xs text-muted-foreground">{x.spec.workflow.split("@")[1] ? `v${x.spec.workflow.split("@")[1]}` : ""}</span>
+              <span className="text-xs text-muted-foreground">
+                {x.spec.workflow.split("@")[1] ? `v${x.spec.workflow.split("@")[1]}` : ""}
+              </span>
               <span className="text-xs text-muted-foreground">{timeAgo(x.metadata.createdAt)}</span>
             </button>
           </li>
@@ -538,13 +657,19 @@ function SaveIndicator({ store }: { store: EditorStore }) {
   const renameError = useStore(store, s => s.saveError);
   if (state === "refused" || renameError)
     return (
-      <span className="inline-flex items-center gap-1 text-destructive" title={state === "refused" ? refusal : renameError} data-save-state="refused">
+      <span
+        className="inline-flex items-center gap-1 text-destructive"
+        title={state === "refused" ? refusal : renameError}
+        data-save-state="refused">
         <AlertTriangle className="size-3" /> Not saved
       </span>
     );
   if (state === "offline")
     return (
-      <span className="inline-flex items-center gap-1 text-destructive" title="Edits are kept here and sent when the connection is back." data-save-state="offline">
+      <span
+        className="inline-flex items-center gap-1 text-destructive"
+        title="Edits are kept here and sent when the connection is back."
+        data-save-state="offline">
         <AlertTriangle className="size-3" /> Offline
       </span>
     );

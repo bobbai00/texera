@@ -14,8 +14,10 @@ export interface OperatorOverlay {
   rowsOut?: number;
   /** Why it failed, or what the compiler says is wrong with it. */
   error?: string;
-  /** The output ports whose result the execution on screen keeps. */
-  results?: string[];
+  /** The output ports whose result the execution on screen keeps, with the rows it kept. */
+  results?: { port: string; rows?: number }[];
+  /** The version the execution on screen ran, when the operator or one it reads from changed since: its results are not what it would put out now. */
+  stale?: number;
   /** The earlier execution whose stored rows it read instead of running, as its URI. */
   reusedFrom?: string;
   /** It did not run: only results read from earlier runs needed it. */

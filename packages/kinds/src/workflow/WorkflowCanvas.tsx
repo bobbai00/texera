@@ -7,6 +7,7 @@ import {
   pictureOf,
   placeMissing,
   resourceRoom,
+  resultRoom,
   type WorkflowSpec,
 } from "@texera/workflow-model";
 import {
@@ -29,7 +30,7 @@ import { useScope } from "../scope";
 import { edgeOptions } from "../shell/canvas";
 import { CanvasContext, type CanvasView, createCanvasView, portKey } from "./canvas-view";
 import { CanvasControls } from "./controls";
-import { DensityToggle, ResourcesToggle, spread, useRowSpread } from "./density";
+import { DensityToggle, ResourcesToggle, spread, useCardHeights, useRowSpread } from "./density";
 import { useFollow, useFrame, useReframe } from "./framing";
 import { nodeTypes } from "./OperatorNode";
 
@@ -73,14 +74,15 @@ function Shown({ spec, overlay, view: shared, className, children }: Props) {
   const density = useStore(view, s => s.density);
   // A small picture has no room for what its operators use; a canvas with controls says it when asked.
   const showResources = useStore(view, s => s.resources) && shared !== undefined;
-  const k = useRowSpread(null, showResources ? resourceRoom(spec) : 0);
-  // Without a view to share it is a picture: operators are icons, closer together. Either way the
-  // operators sit where the version placed them.
+  // Without a view to share it is a picture: operators are icons, closer together, and what they
+  // kept is not drawn. Either way the operators sit where the version placed them.
   const picture = shared === undefined;
+  const heightOf = useCardHeights();
+  const k = useRowSpread(null, (showResources ? resourceRoom(spec) : 0) + (picture ? 0 : resultRoom(overlay)));
   const flow = useMemo(() => {
     const placed = picture ? pictureOf(spec) : spread(placeMissing(spec, spec.layout ?? {}), k);
-    return canvasFlow(spec, placed, overlay, showResources);
-  }, [spec, picture, k, overlay, showResources]);
+    return canvasFlow(spec, placed, overlay, { resources: showResources, ...(picture ? {} : { results: heightOf }) });
+  }, [spec, picture, k, overlay, showResources, heightOf]);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(flow.nodes);
   const [edges, setEdges] = useEdgesState<Edge>(flow.edges);
   const { fitView } = useReactFlow();
@@ -146,9 +148,9 @@ function Shown({ spec, overlay, view: shared, className, children }: Props) {
           onMoveStart={event => {
             if (event) userMoved.current = true;
           }}
-          // A click on a card shows its result, when the execution kept one.
+          // A click on a card opens its result, when the execution kept one.
           onNodeClick={(_, node) => {
-            const port = node.type === "operator" ? node.data.results?.[0] : undefined;
+            const port = node.type === "operator" ? node.data.results?.[0]?.port : undefined;
             if (shared && port) view.getState().show(portKey(node.id, port));
           }}
           fitView={shared === undefined}

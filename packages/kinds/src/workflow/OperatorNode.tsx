@@ -53,6 +53,7 @@ import { type Canvas, useCanvas } from "./canvas-view";
 import type { EditorStore } from "./editor";
 import { PropertyForm } from "./PropertyForm";
 import { ResourceChip } from "./ResourceNode";
+import { ResultChip } from "./ResultNode";
 
 /** Where a port's handle sits on the card's side: beside the name, one under the other. */
 const HANDLE_TOP = 28;
@@ -227,29 +228,17 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
           title={p.label}
         />
       ))}
-      {data.outputs.map((p, i) => {
-        // A port whose result is kept is lit; the one whose result is on screen, more.
-        const result = shown === p.id ? "shown" : data.results?.includes(p.id) ? "kept" : "";
-        return (
-          <Handle
-            key={p.id}
-            id={p.id}
-            type="source"
-            position={Position.Right}
-            style={{ top: HANDLE_TOP + i * HANDLE_STEP }}
-            className={cn(
-              "!border-2 !border-card",
-              result === "shown"
-                ? "!size-3.5 !bg-primary shadow-[0_0_0_4px_color-mix(in_oklch,var(--primary)_30%,transparent)]"
-                : result === "kept"
-                  ? "!size-3 !bg-primary"
-                  : "!size-3 !bg-edge"
-            )}
-            title={result ? `${p.label ?? "Result"}: kept` : p.label}
-            data-result={result}
-          />
-        );
-      })}
+      {data.outputs.map((p, i) => (
+        <Handle
+          key={p.id}
+          id={p.id}
+          type="source"
+          position={Position.Right}
+          style={{ top: HANDLE_TOP + i * HANDLE_STEP }}
+          className="!size-3 !border-2 !border-card !bg-edge"
+          title={p.label}
+        />
+      ))}
     </div>
   );
   return editor ? <Menu id={id} disabled={data.disabled === true} editor={editor} card={card} /> : card;
@@ -583,4 +572,4 @@ function Editor({
   );
 }
 
-export const nodeTypes = { operator: OperatorNode, resource: ResourceChip };
+export const nodeTypes = { operator: OperatorNode, resource: ResourceChip, result: ResultChip };

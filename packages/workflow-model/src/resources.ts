@@ -5,6 +5,7 @@
 
 import type { Edge, Node } from "@xyflow/react";
 import { CARD } from "./layout";
+import { type ResultNode, resultLayer } from "./results";
 import { type OperatorNode, toFlow } from "./to-flow";
 import type { Positions, WorkflowOperator, WorkflowSpec } from "./types";
 
@@ -65,8 +66,8 @@ interface ResourceNodeData extends Record<string, unknown>, ResourceUse {}
 
 export type ResourceNode = Node<ResourceNodeData, "resource">;
 
-/** What a canvas draws: operators, and when asked the resources they use. */
-export type CanvasNode = OperatorNode | ResourceNode;
+/** What a canvas draws: operators, and when asked the resources they use and the results they kept. */
+export type CanvasNode = OperatorNode | ResourceNode | ResultNode;
 
 /** The handle on an operator's card that a resource's dashed line ends at. */
 export const RESOURCE_HANDLE = "resource";
@@ -107,15 +108,33 @@ export function resourceLayer(spec: WorkflowSpec, positions: Positions): { nodes
   return { nodes, edges };
 }
 
-/** A canvas's cards and arrows: the operators', and on top of them, when asked for, what they read. */
+/** What a canvas draws besides its operators. */
+export interface Layers {
+  /** The datasets and models operators read, above their cards. */
+  resources: boolean;
+  /** The results the overlay holds, under their cards, given how tall each card is drawn; absent, none. */
+  results?: (operatorID: string) => number;
+}
+
+/** A canvas's cards and arrows: the operators', and when asked for, what they read and what they kept. */
 export function canvasFlow(
   spec: WorkflowSpec,
   positions: Positions,
   overlay: Parameters<typeof toFlow>[2],
-  withResources: boolean
+  layers: Layers
 ): { nodes: CanvasNode[]; edges: Edge[] } {
   const operators = toFlow(spec, positions, overlay);
-  if (!withResources) return operators;
-  const resources = resourceLayer(spec, positions);
-  return { nodes: [...operators.nodes, ...resources.nodes], edges: [...operators.edges, ...resources.edges] };
+  const nodes: CanvasNode[] = [...operators.nodes];
+  const edges = [...operators.edges];
+  if (layers.resources) {
+    const resources = resourceLayer(spec, positions);
+    nodes.push(...resources.nodes);
+    edges.push(...resources.edges);
+  }
+  if (layers.results) {
+    const results = resultLayer(spec, positions, overlay, layers.results);
+    nodes.push(...results.nodes);
+    edges.push(...results.edges);
+  }
+  return { nodes, edges };
 }

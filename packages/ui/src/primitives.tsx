@@ -9,7 +9,11 @@ export function Input({ className, ...props }: ComponentProps<"input">) {
 
 export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
   return (
-    <textarea data-slot="textarea" className={cn("control focus-ring block min-h-20 w-full resize-y p-2.5", className)} {...props} />
+    <textarea
+      data-slot="textarea"
+      className={cn("control focus-ring block min-h-20 w-full resize-y p-2.5", className)}
+      {...props}
+    />
   );
 }
 
@@ -88,7 +92,7 @@ export function Segmented<T extends string>({
   label: string;
   value: T;
   onChange: (value: T) => void;
-  options: { value: T; label: ReactNode; title?: string }[];
+  options: { value: T; label: ReactNode; title?: string; disabled?: boolean }[];
   className?: string;
 }) {
   return (
@@ -104,10 +108,11 @@ export function Segmented<T extends string>({
           role="radio"
           aria-checked={o.value === value}
           title={o.title}
+          disabled={o.disabled}
           onClick={() => onChange(o.value)}
           data-segment={o.value}
           className={cn(
-            "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 [&_svg]:size-3.5",
+            "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5",
             o.value === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
           )}>
           {o.label}
@@ -128,7 +133,11 @@ export function Chip({
   className?: string;
 }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2 text-xs", className)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2 text-xs",
+        className
+      )}>
       {children}
       {onRemove && (
         <button type="button" aria-label="Remove" onClick={onRemove} className="rounded px-1 hover:bg-accent">

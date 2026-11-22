@@ -1,7 +1,7 @@
 // How a canvas is looked at: how much each operator's card says, whether the resources operators
-// use are drawn, whether the map of a large workflow is open, which card is open for editing, and
-// which result is on screen. None of it
-// is the workflow's; it is the viewer's, so none of it is in the document or in a version.
+// use and the results an execution kept are drawn, whether the map of a large workflow is open,
+// which card is open for editing, and which result is open. None of it is the workflow's; it is
+// the viewer's, so none of it is in the document or in a version.
 
 import type { Compilation, OperatorSchema } from "@texera/workflow-model";
 import { createContext, use } from "react";
@@ -16,6 +16,7 @@ export type Density = "compact" | "detailed";
 const DENSITY_KEY = "texera-canvas-density";
 const MAP_KEY = "texera-canvas-map";
 const RESOURCES_KEY = "texera-canvas-resources";
+const RESULTS_KEY = "texera-canvas-results";
 
 function remembered(key: string): string | null {
   try {
@@ -48,13 +49,15 @@ export interface CanvasViewState {
   density: Density;
   /** Whether the datasets and models operators use are drawn above their cards. */
   resources: boolean;
+  /** Whether, while the workflow is edited, the results of the execution it shows are drawn under their cards. */
+  results: boolean;
   /** Whether the map of a workflow too large to see at once is open. It lies over the canvas, so it is closed until asked for. */
   map: boolean;
   /** The operator whose settings are open in its card. */
   editing: string | null;
   /** Whether the card open was just made: its first setting takes the keyboard. */
   fresh: boolean;
-  /** The result on screen, by its port's key. */
+  /** The result open in the results window, by its port's key; none, and there is no window. */
   result: string | null;
   /** The operator a result points out, while the result is pointed at. */
   pointed: string | null;
@@ -62,6 +65,7 @@ export interface CanvasViewState {
   covered: Covered | null;
   setDensity: (density: Density) => void;
   setResources: (shown: boolean) => void;
+  setResults: (shown: boolean) => void;
   setMap: (open: boolean) => void;
   edit: (operatorID: string | null, fresh?: boolean) => void;
   show: (result: string | null) => void;
@@ -75,6 +79,7 @@ export function createCanvasView(): CanvasView {
   return createStore<CanvasViewState>()(set => ({
     density: remembered(DENSITY_KEY) === "detailed" ? "detailed" : "compact",
     resources: remembered(RESOURCES_KEY) !== "hidden",
+    results: remembered(RESULTS_KEY) !== "hidden",
     map: remembered(MAP_KEY) === "open",
     editing: null,
     fresh: false,
@@ -88,6 +93,10 @@ export function createCanvasView(): CanvasView {
     setResources: shown => {
       remember(RESOURCES_KEY, shown ? "shown" : "hidden");
       set({ resources: shown });
+    },
+    setResults: shown => {
+      remember(RESULTS_KEY, shown ? "shown" : "hidden");
+      set({ results: shown, ...(shown ? {} : { result: null }) });
     },
     setMap: open => {
       remember(MAP_KEY, open ? "open" : "closed");

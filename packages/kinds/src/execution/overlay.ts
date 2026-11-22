@@ -1,10 +1,9 @@
 // An execution as a canvas shows it: what each operator's card says (its state, the rows it
-// read and put out, why it failed, which of its results are kept), which result is on screen
-// when nobody chose one, and whether a result is a table or a picture.
+// read and put out, why it failed), the results it kept, which of them the workflow on screen no
+// longer puts out, and whether a result is a table or a picture.
 
 import type { Attribute, ExecutionSpec, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
-import { type OperatorOverlay, statusOf } from "@texera/workflow-model";
-import { portKey } from "../workflow/canvas-view";
+import { changedSince, type OperatorOverlay, statusOf, type WorkflowSpec } from "@texera/workflow-model";
 
 const wordsOf = (error: unknown): string | undefined => {
   if (error === undefined || error === null) return undefined;
@@ -41,9 +40,34 @@ export function executionOverlay(
   if (!status?.resultsExpiredAt)
     for (const port of (status?.ports ?? []).filter(keptResult)) {
       const of = overlay[port.operatorID] ?? {};
-      overlay[port.operatorID] = { ...of, results: [...(of.results ?? []), port.portID] };
+      overlay[port.operatorID] = {
+        ...of,
+        results: [
+          ...(of.results ?? []),
+          { port: port.portID, ...(port.rows !== undefined ? { rows: port.rows } : {}) },
+        ],
+      };
     }
   return overlay;
+}
+
+/**
+ * An execution of another version, as the workflow on screen shows it: an operator that changed
+ * since, or reads from one that did, says nothing of how it did then, and its results say the
+ * version they are of. `ran` is the version the execution ran, `vno` its number.
+ */
+export function asOf(
+  overlay: Record<string, OperatorOverlay>,
+  ran: WorkflowSpec,
+  vno: number,
+  now: WorkflowSpec
+): Record<string, OperatorOverlay> {
+  const changed = changedSince(ran, now);
+  return Object.fromEntries(
+    Object.entries(overlay).map(([id, said]) =>
+      changed.has(id) ? [id, said.results ? { results: said.results, stale: vno } : {}] : [id, said]
+    )
+  );
 }
 
 /**
@@ -53,12 +77,6 @@ export function executionOverlay(
  */
 export function keptResult(port: PortSummary): boolean {
   return port.table !== undefined && !port.table.startsWith("vfs:");
-}
-
-/** The result on screen when nobody chose one: the last one kept. */
-export function defaultResult(ports: PortSummary[]): string | null {
-  const port = ports.findLast(keptResult);
-  return port ? portKey(port.operatorID, port.portID) : null;
 }
 
 /** A result that is a picture: its one column is the page a visualization operator drew. */

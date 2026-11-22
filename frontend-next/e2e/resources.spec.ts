@@ -73,10 +73,11 @@ test("deleting an execution takes it off its workflow's page, and deleting a pro
   await signIn(page);
   await page.goto(`/workflows/${workflow.metadata.rid}`);
   await expect(page.getByRole("tab", { name: "Executions (2)" })).toBeVisible();
+  await page.locator('[data-result-chip="scan:output-0"]').click();
   const shown = await page.locator("[data-results]").getAttribute("data-results");
   await page.locator("[data-open-execution]").click();
   await confirmDelete(page, page.locator('[data-delete="execution"]'));
-  // The workflow's page counts one, and its results window shows the other execution.
+  // The workflow's page counts one, and the result open is the other execution's.
   await expect(page.getByRole("tab", { name: "Executions (1)" })).toBeVisible({ timeout: 20_000 });
   await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 20_000 }).not.toBe(shown);
 

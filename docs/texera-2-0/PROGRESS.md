@@ -2,6 +2,99 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-22 (session 19): versions are the graph's nodes, arrows name their parts, a result is saved as a dataset version, and the canvas edits or shows an execution
+
+The user's definition of the resource graph: a DAG whose nodes are resources or resource
+versions and whose arrows say how one uses another, `(d1,v1)` read by `(w1,v1)`. A workflow
+version is one node; its operators name files of dataset versions, a finer grain; the version
+yields lineage between data, model and workflow versions, and its executions the runtime
+lineage (unit, execution, results, version). Agreed in the discussion (my answers, which the
+user built on): one node type, a resource at a version, a kind without versions counting as v1
+in the graph only; operators, files, ports and results are parts of a version's content,
+anchors, not nodes; an arrow joins two versions and names the parts at each end; an execution
+is a node whose parts mirror its version's operators, and a result becomes a node only when it
+is saved as a dataset version. The user's canvas: an Edit view, an Execution view (the newest
+execution, read-only, Edit to go back), editing while seeing the results, and on each port a
+dashed line to a small cylinder, the execution's table, which opens its metadata and rows.
+
+- **Catalog** (contract `api/catalog/graph.tsp`, `api/catalog/kinds/workflow.tsp`): an arrow
+  (`GraphEdge`) has `parts`, each `GraphPart` a path in `from` and in `to` (`files/<path>`,
+  `operators/<id>`, `operators/<id>/ports/<port>`) with the operator's type and name and whether
+  it was executed; `relation` gains `keeps`, an execution to the dataset version that keeps one
+  of its results. `GraphVersion.files` is gone: the parts say it. `graph.go` draws what a
+  workflow version names from its operators (`names`, one derivation for the arrows an execution
+  ran and those the version only names), joins parts once (`join`), and after the executions
+  are trimmed draws `keeps` from the lineage's `derivedFrom`; a dataset's page draws the
+  executions its versions were saved from. New `POST /workflows/{rid}/executions/{eid}/
+  operators/{op}/ports/{port}/save` (MCP `save_result`, `save.go`): a completed execution's port
+  rows, read through a unit as `Rows` reads them, become one CSV file of the next version of a
+  dataset the caller may write, or of a new one of the execution's project; the `derivedFrom`
+  arrow (from the file of the version to the port) is written in the version's own transaction
+  (`NewVersion.Lineage`, which needs `ExpectedHead`). A files version is made in one place
+  (`filesVersion`, used by Commit and the save), on the head it read; a commit raced by another
+  is now a 409. `Dependents` counts `derivedFrom`, so an execution (and its workflow) is not
+  deleted while a version derives from it, as the contract already said. The action is "save":
+  "keep" is the retention mark and the chat attachment.
+- **Canvas** (`packages/workflow-model/src/results.ts`, `packages/kinds/src/workflow`,
+  `packages/kinds/src/results`, `packages/kinds/src/execution`): each result an execution kept is
+  a cylinder node under the right edge of its card (`resultLayer`, `ResultNode.tsx`), joined to
+  its port by a dashed line; the rows spread to make room. A click on a cylinder or a card opens
+  the one result in the window (`ResultsWindow`, no tabs now): what it is (execution, version,
+  table, rows, columns), its rows or chart, and "Save as dataset" (`SaveResult.tsx`). The
+  workflow page shows Edit or Execution (a switch at the top; the Executions tab picks one):
+  Edit draws the execution of the version on screen, else the workflow's newest, as of the
+  version that ran (`changedSince`, `asOf`): a changed operator, or one reading from it, says
+  nothing of how it did, and its cylinder is faint, "v1 · changed since". Execution is the
+  execution's own canvas (`ExecutionCanvas`, the same on its page). The newest execution's
+  state moved from the results window to the header (`Standing`). The port's lit marks, the
+  result tabs and the "Results of" button are gone.
+- **Graph** (`packages/kinds/src/graph`): an arrow lit by pointing at either end says its
+  parts ("iris.csv → CSV File Scan"); a version's row says its files from its arrows; a result
+  is a cylinder; a saved version stands in a "Saved" column right of the results, an arrow from
+  the result to its row ("Aggregate → aggregate.csv"); "Saved as" and "Saved from" in a thing's
+  relations. A workflow that reads a saved version stands a stage further right, with columns of
+  its own (`stagesOf` in `layout.ts`), so a chain of workflows reads left to right.
+- **Found while recording the demo**: the form that saves a result opens from the result
+  window's title bar, and its presses, though in a portal, reached the bar's drag handler, which
+  took the pointer: a dataset picked with the pointer did not take, and a click did not put the
+  caret in a field. The bar now takes a press only on itself (`onTheBar`); the canvas spec saves
+  into an existing dataset picked with the pointer and types a name after clicking in. Zoomed
+  out, a result saved twice draws one arrow to the dataset.
+- **Agent**: `texera-agent.md` names `save_result` (when the person asks to keep a result) and
+  counts it as a change; the runtime words its approval ("Save the result as the dataset ...").
+
+Verified: catalog `go test` whole (new: `save_test.go`, a saved result end to end and the arrow
+parts; MCP tool lists), frontend typecheck and vitest 354 (new: `results.test.ts`, the stale
+rule and the layer; the overlay as of another version; parts, keeps and the Saved column in the
+graph's model and layout, a chain in stages), agent runtime 114, Biome on the rewritten package
+files. On this laptop's kind stack (images rolled from the tree): the save end to end through a
+unit (Bob's demo below: 156 rows, the lineage chain with its parts); Playwright, the whole suite
+against the stack: 79 passed, 7 skipped (the model ones), and the 2 this stack's old seed always
+fails (pages "a library lists every one", texera2 "a computing unit is made from a profile"). New
+or rewritten: canvas (cylinders and the result window, a stale result and the Execution view,
+saving a result and its lineage), graph (an arrow lit says its parts), and the specs that read
+the old results window (graph, resources, sharing, texera2). The scenarios (`tests/e2e`,
+`--cluster`): 58 passed, 10 skipped (model and local).
+
+Demo, on this laptop's kind stack (http://localhost:28088, as Bob, project Diabetes research):
+"Glucose screen" reads the Pima cohort, keeps the women with a two-hour glucose of 140 or more
+("High glucose") and sums them up by outcome; its version 1 ran, and the high-glucose women were
+saved as "High-glucose women" (156 rows); "High-glucose follow-up" reads that dataset and ran;
+then Glucose screen asked for 126 (version 2, executed), and version 3 added the mean glucose to
+the summary and ran; its High glucose result (241 rows) was saved as High-glucose women
+version 2. The dataset's Lineage at "Versions" draws the whole chain, left to right: its two
+versions, each from the execution that made it, and the follow-up reading version 1. Made
+through the API and the page, as a person would; nothing of it is a test's. Recordings (GIFs
+from Chrome's screencast, assembled with Pillow) and stills are in
+`frontend-next/test-results/demo/` (ignored by git).
+
+Not done: units are labels on executions, not nodes of the model; only a dataset is saved
+(a model version from an execution waits for training); zoomed out an arrow says no parts; a
+later version of a workflow that reads what an earlier version of it saved still draws that
+arrow back to the left. Two of the laptop's other Docker stacks (`texera-agent-e2e`, `texera-react`) have a file
+service restarting in a loop, which makes Chrome drop requests with `ERR_NETWORK_CHANGED`:
+browser runs here want `--retries=1`.
+
 ## 2026-11-21: the secret store outlives a restart
 
 On Nov 21 the Mac slept and OrbStack restarted the pods. OpenBao ran in dev mode, in memory, and

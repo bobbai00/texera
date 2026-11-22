@@ -309,7 +309,7 @@ test("a person is offered only what the catalog lets them do: a viewer reads, an
     await bobs.waitForTimeout(1000);
     await expect(bobs.locator("[data-delete]")).toHaveCount(0);
     await bobs.goto(`/workflows/${workflow.metadata.rid}/executions/${execution.metadata.rid}`);
-    await expect(bobs.locator("[data-results]")).toBeVisible();
+    await expect(bobs.locator("[data-result-chip]").first()).toBeVisible();
     await expect(bobs.locator("[data-keep-execution]")).toHaveCount(writes ? 1 : 0);
     await expect(bobs.locator('[data-delete="execution"]')).toHaveCount(0);
     await bobs.goto(pathOf(project));

@@ -716,6 +716,7 @@ test("a project keeps its results in a warehouse made for it, and an execution s
   await page.goto(`/workflows/${wf.metadata.rid}/executions/${started.metadata.rid}`);
   const execution = page.locator("[data-execution-view]");
   await expect(execution.locator('[data-uri-chip="warehouse"]')).toHaveText(`lab results ${stamp}`);
+  await execution.locator("[data-result-chip]").first().click();
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
   await page.screenshot({ path: "test-results/warehouse-execution.png", fullPage: true });
 
@@ -755,6 +756,7 @@ test("an execution shows the file it read in its lineage, and can be kept past t
   const execution = page.locator("[data-execution-view]");
   await expect(execution).toBeVisible();
   await expect(execution.locator("[data-phase]")).toHaveText("completed");
+  await execution.locator("[data-result-chip]").first().click();
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
   await execution.getByRole("tab", { name: "Lineage" }).click();
   const lineage = execution.locator("[data-lineage]");
@@ -858,6 +860,7 @@ test("an execution's page follows it as it goes, and pauses and resumes it", asy
   await expect(execution.locator("[data-phase]")).toHaveText("completed", { timeout: 90_000 });
   await expect(slow).toHaveAttribute("data-operator-status", "completed");
   await expect(slow.locator("[data-operator-rows]")).toContainText("150 rows");
+  await execution.locator("[data-result-chip]").first().click();
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
 });
 

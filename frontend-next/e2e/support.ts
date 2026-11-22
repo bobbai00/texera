@@ -92,7 +92,13 @@ export async function api(request: APIRequestContext, user = USER, headers: Reco
   };
   /** The status alone, for a call a scenario expects to be refused, or whose target may be gone. */
   const status = async (method: string, path: string, data?: unknown) => (await send(method, path, data)).status();
-  return Object.assign(call, { attempt, status });
+  /** What a call answers, as text: a file's bytes. */
+  const text = async (method: string, path: string) => {
+    const r = await send(method, path);
+    expect(r.ok(), `${method} ${path}: ${r.status()}`).toBeTruthy();
+    return r.text();
+  };
+  return Object.assign(call, { attempt, status, text });
 }
 export type Caller = Awaited<ReturnType<typeof api>>;
 

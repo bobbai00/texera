@@ -4,9 +4,9 @@ import {
   addLink,
   addOperator,
   type CanvasNode,
-  canvasFlow,
   COLUMN,
   type Compilation,
+  canvasFlow,
   deleteLinks,
   deleteOperators,
   freeSpot,
@@ -15,6 +15,7 @@ import {
   newOperator,
   type OperatorOverlay,
   resourceRoom,
+  resultRoom,
 } from "@texera/workflow-model";
 import {
   Background,
@@ -42,7 +43,15 @@ import { useArrivals } from "./arrivals";
 import { Cursors, useCanvasPeople } from "./Cursors";
 import { CanvasContext, type CanvasView, portKey } from "./canvas-view";
 import { CanvasControls } from "./controls";
-import { DensityToggle, ResourcesToggle, spread, unspread, useRowSpread } from "./density";
+import {
+  DensityToggle,
+  ResourcesToggle,
+  ResultsToggle,
+  spread,
+  unspread,
+  useCardHeights,
+  useRowSpread,
+} from "./density";
 import type { EditorStore } from "./editor";
 import { useFollow, useFrame, useReframe, useShow } from "./framing";
 import { nodeTypes } from "./OperatorNode";
@@ -73,12 +82,13 @@ export function EditorCanvas({
 }: {
   store: EditorStore;
   view: CanvasView;
+  /** How the operators did in the execution the canvas draws, and the results it kept, which the viewer may draw. */
   overlay?: Record<string, OperatorOverlay>;
   compilation?: Compilation;
   /** Runs the workflow up to an operator; without it, a card has no run button. */
   onRunTo?: (operatorID: string) => void;
   className?: string;
-  /** What floats over the canvas, within it: the results of the execution on screen. */
+  /** What floats over the canvas, within it: the result open. */
   children?: ReactNode;
 }) {
   const spec = useStore(store, s => s.spec);
@@ -90,6 +100,8 @@ export function EditorCanvas({
   const editing = useStore(view, s => s.editing);
   const density = useStore(view, s => s.density);
   const showResources = useStore(view, s => s.resources);
+  const showResults = useStore(view, s => s.results);
+  const heightOf = useCardHeights();
   const [fitOnOpen] = useState(() => store.getState().spec.operators.length <= FIT_UP_TO);
   // An empty workflow opens with the operators to choose from, once it can be edited (the page
   // shows the head before the live session is joined); one with operators shows them.
@@ -128,7 +140,10 @@ export function EditorCanvas({
   // the rows move apart so none lies on the next. A card open here, or someone else's open to
   // read, lies over the others.
   const overTheRest = editing ?? (selected && holds.has(selected) ? selected : null);
-  const k = useRowSpread(overTheRest, showResources ? resourceRoom(spec) : 0);
+  const k = useRowSpread(
+    overTheRest,
+    (showResources ? resourceRoom(spec) : 0) + (showResults ? resultRoom(overlay) : 0)
+  );
   // Until the person has moved the canvas themselves, it is the app's to frame.
   const still = useCallback(() => fitOnOpen && !userMoved.current, [fitOnOpen]);
   useReframe(wrapper, frame, still);
@@ -212,8 +227,11 @@ export function EditorCanvas({
     const placed = Object.fromEntries(
       Object.entries(drawn).map(([id, p]) => [id, room[id] ? { x: p.x, y: p.y + room[id] } : p])
     );
-    return canvasFlow(spec, placed, overlay, showResources);
-  }, [spec, drawn, room, overlay, showResources]);
+    return canvasFlow(spec, placed, overlay, {
+      resources: showResources,
+      ...(showResults ? { results: heightOf } : {}),
+    });
+  }, [spec, drawn, room, overlay, showResources, showResults, heightOf]);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
@@ -380,9 +398,9 @@ export function EditorCanvas({
                 )
             }
             onSelectionChange={onSelectionChange}
-            // A click on a card shows its result, when the execution on screen kept one.
+            // A click on a card opens its result, when the execution the canvas draws kept one and it is drawn.
             onNodeClick={(_, node) => {
-              const port = node.type === "operator" ? node.data.results?.[0] : undefined;
+              const port = node.type === "operator" && showResults ? node.data.results?.[0]?.port : undefined;
               if (port) view.getState().show(portKey(node.id, port));
             }}
             // A double click on a card opens it for editing, as its pencil does, unless someone else holds it.
@@ -449,6 +467,7 @@ export function EditorCanvas({
               )}
               <DensityToggle view={view} />
               <ResourcesToggle view={view} />
+              {overlay && Object.values(overlay).some(o => o.results?.length) && <ResultsToggle view={view} />}
               {!readonly && spec.operators.length > 1 && (
                 <Button
                   variant="outline"

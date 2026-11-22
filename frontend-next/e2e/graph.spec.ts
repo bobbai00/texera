@@ -214,7 +214,7 @@ test("a chat's lineage reads from data to results, each execution off its versio
   await petals.locator(`[data-graph-row="${workflow}@1"]`).click();
   let focus = await wentInto(page, "resource", "petal means v1");
   await expect(focus.locator(`[data-graph-view="workflow"] [data-workflow-view="${first.metadata.rid}"]`)).toBeVisible();
-  await expect(focus.locator("[data-results-window]")).toBeVisible();
+  await expect(focus.locator("[data-result-chip]").first()).toBeVisible();
   await expect(focus.locator("[data-graph-related]")).toContainText("Reads");
   await expect(focus.locator("[data-graph-related]")).toContainText("iris");
   await page.screenshot({ path: "test-results/resource-graph-version.png" });
@@ -540,7 +540,8 @@ test("each execution hangs off the version of the workflow it ran, and a version
   const focus = page.locator("[data-graph-focus]");
   await expect(focus.locator("[data-graph-crumbs] [aria-current=page]")).toContainText("long petals v1");
   await expect(focus.getByText("v1 pinned")).toBeVisible();
-  await expect(focus.locator("[data-results-window] [data-ran-version]")).toHaveCount(0);
+  await expect(focus.locator("[data-result-chip]").first()).toBeVisible();
+  await expect(focus.locator("[data-result-chip][data-result-stale]")).toHaveCount(0);
   // What it is to the rest: its one execution, and what that kept.
   await expect(focus.locator('[data-graph-related] [data-graph-go*="/executions/"]:not([data-graph-go*="/operators/"])')).toHaveCount(1);
   await expect(focus.locator('[data-graph-related] [data-graph-go$="/operators/long/ports/output-0"]')).toHaveCount(1);

@@ -1,13 +1,14 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, operatorList, pick, signIn, tidyUp, withIris } from "./support";
 
 // The canvas: an operator is a card that says how it is set, in one line or with every setting
 // on its own, and is edited in place, the cards under it making room; arrows are curves. Each
 // card has the operator's own two buttons: the eye keeps its result on every run, and the run
 // button runs up to it. An execution shows on the canvas of the workflow that ran: each card
-// says where its operator stands and the rows it read and put out; under the canvas each kept
-// result has a tab; a click on a card shows its result and lights the port it came out of. A
-// visualization's result is the chart it drew.
+// says where its operator stands and the rows it read and put out; each result it kept is a
+// cylinder under the card, joined to its port by a dashed line, which opens the table in a
+// window. A result of an earlier version whose operator changed since says so. A visualization's
+// result is the chart it drew.
 
 test.afterEach(tidyUp);
 
@@ -42,8 +43,6 @@ async function irisWorkflow(alice: Caller, label: string, { chart = false, keepS
   return { project: project.metadata.rid, rid: workflow.metadata.rid, name: workflow.metadata.name };
 }
 
-/** The output port of an operator, as its card draws it. */
-const portOf = (page: Page, operator: string) => operatorCard(page, operator).locator(".react-flow__handle.source").first();
 
 /** Where a thing is on screen. */
 const box = async (of: Locator) => (await of.boundingBox()) as { x: number; y: number; width: number; height: number };
@@ -382,7 +381,7 @@ test("Tidy up lays a workflow out left to right: a join stands between its branc
   expect((await alice("GET", `/workflows/${workflow.metadata.rid}`)).metadata.head).toBe(1);
 });
 
-test("an execution shows on the workflow's canvas, a click on a card shows its result, and a run can go up to one operator", async ({ page, request }) => {
+test("an execution shows on the workflow's canvas, each result a cylinder under its card that opens its table, and a run can go up to one operator", async ({ page, request }) => {
   test.setTimeout(300_000);
   const alice = await api(request);
   const { rid } = await irisWorkflow(alice, "run on canvas", { keepScan: true, beside: true });
@@ -391,72 +390,87 @@ test("an execution shows on the workflow's canvas, a click on a card shows its r
   const scan = operatorCard(page, "scan");
   const avg = operatorCard(page, "avg");
   const most = operatorCard(page, "most");
+  const latest = page.locator("[data-latest-execution]");
   await expect(avg).toBeVisible();
-  // Before any execution a card says nothing of one, and there are no results to show.
+  // Before any execution a card says nothing of one, there is no result, and nothing to look at as an execution.
   await expect(avg.locator("[data-operator-execution]")).toHaveCount(0);
-  await expect(page.locator("[data-results]")).toHaveCount(0);
+  await expect(page.locator("[data-result-chip]")).toHaveCount(0);
+  await expect(page.locator('[data-segment="execution"]')).toBeDisabled();
 
   // Run: the page stays where it is, and the cards say how each operator did: the rows a source
   // put out, the rows any other read and put out.
   await page.locator("[data-run]").click();
-  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  await expect(latest).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
   await expect(scan.locator("[data-operator-status]")).toHaveAttribute("data-operator-status", "completed");
   await expect(scan.locator("[data-operator-rows]")).toHaveText("150 rows");
   await expect(avg.locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
 
-  // The results kept are under the canvas: scan's and avg's, which have their eye on, and most's,
-  // which nothing reads from. One tab each; there is no line from a tab to its port.
+  // Each result kept is a cylinder under its card: scan's and avg's, which have their eye on, and
+  // most's, which nothing reads from. No table is open until one is asked for.
+  const chips = page.locator("[data-result-chip]");
+  await expect(chips).toHaveCount(3);
+  await expect(page.locator('[data-result-chip="scan:output-0"]')).toContainText("150 rows");
+  await expect(page.locator('[data-result-chip="avg:output-0"]')).toContainText("3 rows");
+  const chipOf = await box(page.locator('[data-result-chip="avg:output-0"]'));
+  const cardOf = await box(avg);
+  expect(chipOf.y).toBeGreaterThan(cardOf.y + cardOf.height);
   const results = page.locator("[data-results]");
-  await expect(results.locator("[data-result-tab]")).toHaveCount(3);
-  await expect(page.locator("[data-result-connector]")).toHaveCount(0);
-  // A click on a card shows its result, rings the card and lights the port it came out of.
-  await scan.click();
-  await expect(results.locator('[data-result-tab="scan:output-0"]')).toHaveAttribute("aria-selected", "true");
+  await expect(results).toHaveCount(0);
+  // A click on a cylinder opens its table, says what it is, and rings the card it came out of.
+  await page.locator('[data-result-chip="scan:output-0"]').click();
+  await expect(results).toHaveAttribute("data-result-open", "scan:output-0");
   await expect(results.locator("[data-port-rows]")).toContainText("SepalLengthCm");
+  await expect(results.locator("[data-result-about]")).toContainText("150 rows");
+  await expect(results.locator("[data-result-about]")).toContainText("6 columns");
   await expect(scan.locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
-  await expect(portOf(page, "scan")).toHaveAttribute("data-result", "shown");
-  await expect(portOf(page, "avg")).toHaveAttribute("data-result", "kept");
+  await expect(page.locator('[data-result-chip="scan:output-0"]')).toHaveAttribute("data-result-open", "true");
   await page.screenshot({ path: "test-results/canvas-results.png" });
-  // And a tab puts its operator's card in the ring and lights its port.
-  await results.locator('[data-result-tab="avg:output-0"]').click();
+  // A click on a card opens its result too.
+  await avg.click();
+  await expect(results).toHaveAttribute("data-result-open", "avg:output-0");
   await expect(avg.locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
-  await expect(portOf(page, "avg")).toHaveAttribute("data-result", "shown");
-  await expect(portOf(page, "scan")).toHaveAttribute("data-result", "kept");
   await expect(results.locator("[data-port-rows]")).toContainText("Iris-setosa");
   // More rows than a page holds: the way to the next page stands clear of the button of the
   // chat beside the page, which floats over that corner.
-  await scan.click();
+  await page.locator('[data-result-chip="scan:output-0"]').click();
   const next = results.getByLabel("Next page");
   await expect(next).toBeVisible();
   expect(await overlap(next, page.locator("[data-chat-dock-button]"))).toBe(false);
   await next.click();
   await expect(results.getByText("2 / 3")).toBeVisible();
 
-  // The results fold away and come back.
-  await page.getByLabel("Hide the results").click();
+  // The window closes; the cylinders stay. The viewer may hide them while editing.
+  await page.locator("[data-close-result]").click();
   await expect(results).toHaveCount(0);
-  await page.locator("[data-show-results]").click();
-  await expect(results.locator("[data-port-rows]")).toBeVisible();
+  await expect(chips).toHaveCount(3);
+  await page.locator("[data-canvas-results]").click();
+  await expect(chips).toHaveCount(0);
+  await page.locator("[data-canvas-results]").click();
+  await expect(chips).toHaveCount(3);
 
   // Run again, the same version on the same unit: a second execution starts, takes over the
-  // cards and the results, and has a name of its own.
-  const first = await results.getAttribute("data-results");
+  // cards and the cylinders, and has a name of its own.
+  const first = await latest.getAttribute("data-execution");
   await page.locator("[data-run]").click();
-  await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 30_000 }).not.toBe(first);
-  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  await expect(latest).not.toHaveAttribute("data-execution", first ?? "", { timeout: 30_000 });
+  await expect(latest).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
   await expect(avg.locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
+  await page.locator('[data-result-chip="avg:output-0"]').click();
+  await expect(results).toHaveAttribute("data-results", (await latest.getAttribute("data-execution")) ?? "");
+  await page.locator("[data-close-result]").click();
 
-  // Run up to most, from its card: only what leads to it runs, its result is on screen, and the
+  // Run up to most, from its card: only what leads to it runs, its result opens, and the
   // workflow is as it was.
+  const second = await latest.getAttribute("data-execution");
   const head = (await alice("GET", `/workflows/${rid}`)).metadata.head;
   await most.hover();
   await most.locator("[data-operator-run]").click();
-  await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 30_000 }).not.toBe(first);
-  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  await expect(latest).not.toHaveAttribute("data-execution", second ?? "", { timeout: 30_000 });
+  await expect(latest).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
   await expect(most.locator("[data-operator-status]")).toHaveAttribute("data-operator-status", "completed");
   await expect(avg.locator("[data-operator-execution]")).toHaveCount(0);
-  await expect(results.locator('[data-result-tab="most:output-0"]')).toHaveAttribute("aria-selected", "true");
-  await expect(results.locator('[data-result-tab="avg:output-0"]')).toHaveCount(0);
+  await expect(results).toHaveAttribute("data-result-open", "most:output-0");
+  await expect(page.locator('[data-result-chip="avg:output-0"]')).toHaveCount(0);
   await expect(results.locator("[data-port-rows]")).toContainText("most");
   const executions = (await alice("GET", `/workflows/${rid}/executions?limit=10`)).items as { metadata: { name: string }; spec: { upTo?: string } }[];
   expect(executions).toHaveLength(3);
@@ -465,7 +479,7 @@ test("an execution shows on the workflow's canvas, a click on a card shows its r
   expect((await alice("GET", `/workflows/${rid}`)).metadata.head).toBe(head);
 });
 
-test("the results float in a window over the canvas, named as their cards and pointing them out; it moves, folds and stays where it was put", async ({ page, request }) => {
+test("a result opens in a window over the canvas, named as its card and pointing it out; it moves, folds and stays where it was put", async ({ page, request }) => {
   test.setTimeout(300_000);
   const alice = await api(request);
   const { rid } = await irisWorkflow(alice, "results window", { beside: true });
@@ -473,58 +487,141 @@ test("the results float in a window over the canvas, named as their cards and po
   await page.goto(`/workflows/${rid}`);
   await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
   await page.locator("[data-run]").click();
-  const results = page.locator("[data-results]");
   await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  const results = page.locator("[data-results]");
+  await page.locator('[data-result-chip="avg:output-0"]').click();
   // A window over the canvas, not a panel under it; the canvas keeps its whole height.
   await expect(results).toHaveAttribute("data-results-window", "open");
   const canvas = await box(page.locator("[data-workflow-canvas]"));
   const window = await box(results);
   expect(window.y + window.height).toBeLessThanOrEqual(canvas.y + canvas.height);
   expect(window.y).toBeGreaterThan(canvas.y);
-  // Two aggregates are told apart: each result says what its operator does, as its card does.
-  const avgTab = results.locator('[data-result-tab="avg:output-0"]');
-  const mostTab = results.locator('[data-result-tab="most:output-0"]');
-  await expect(avgTab).toContainText("average PetalLengthCm");
-  await expect(mostTab).toContainText("max PetalLengthCm");
-  await expect(avgTab.locator("img")).toHaveAttribute("src", /Aggregate/);
-  // Pointing at a result points its card out; leaving it, no more.
-  await mostTab.hover();
+  // Named as its card names it, with what the operator does: two aggregates are told apart.
+  const title = results.locator("[data-results-title]");
+  await expect(title).toContainText("average PetalLengthCm");
+  await expect(title.locator("img")).toHaveAttribute("src", /Aggregate/);
+  // A window open may lie over results lower on a small screen: it closes, and another opens.
+  await page.locator("[data-close-result]").click();
+  await page.locator('[data-result-chip="most:output-0"]').click();
+  await expect(title).toContainText("max PetalLengthCm");
+  // Pointing at the window points its card out; leaving it, no more.
+  await title.hover();
   await expect(operatorCard(page, "most").locator("[data-pointed]")).toHaveAttribute("data-pointed", "true");
   await expect(operatorCard(page, "avg").locator("[data-pointed]")).toHaveCount(0);
-  await page.locator("[data-results-title]").hover();
+  await page.mouse.move(canvas.x + 4, canvas.y + 4);
   await expect(page.locator("[data-pointed]")).toHaveCount(0);
   // No card lies under the window when it opens on a canvas nobody moved.
   for (const id of ["scan", "avg", "most"]) expect(await overlap(operatorCard(page, id), results)).toBe(false);
 
   // Moved by its title bar, it stays where it was put, also after a reload.
-  const title = await box(page.locator("[data-results-title]"));
-  await page.mouse.move(title.x + 260, title.y + 12);
+  const bar = await box(title);
+  await page.mouse.move(bar.x + 8, bar.y + 12);
   await page.mouse.down();
-  await page.mouse.move(title.x + 460, title.y + 12 - 120, { steps: 8 });
+  await page.mouse.move(bar.x + 208, bar.y + 12 - 120, { steps: 8 });
   await page.mouse.up();
   // It is held by its bottom left corner: that corner went where the pointer took it.
   const moved = await box(results);
-  const before = await box(results.locator("[data-results-title]"));
+  const before = await box(title);
   expect(Math.round(moved.x - window.x)).toBe(200);
-  expect(Math.round(before.y - title.y)).toBe(-120);
+  expect(Math.round(before.y - bar.y)).toBe(-120);
   await page.reload();
+  await page.locator('[data-result-chip="most:output-0"]').click();
   await expect(results.locator("[data-port-rows]")).toBeVisible();
   const kept = await box(results);
   expect([Math.round(kept.x), Math.round(kept.y + kept.height)]).toEqual([Math.round(moved.x), Math.round(moved.y + moved.height)]);
   // Folded to its title bar, and back.
   await page.locator("[data-fold-results]").click();
   await expect(results).toHaveAttribute("data-results-window", "folded");
-  await expect(results.locator("[data-result-tab]")).toHaveCount(0);
+  await expect(results.locator("[data-port-rows]")).toHaveCount(0);
   await page.locator("[data-fold-results]").click();
-  await expect(results.locator("[data-result-tab]")).toHaveCount(2);
+  await expect(results.locator("[data-port-rows]")).toBeVisible();
   // A double click on its title bar puts it back where it started.
-  await page.locator("[data-results-title] >> text=Results").dblclick();
+  await title.dblclick({ position: { x: 6, y: 12 } });
   await expect.poll(async () => Math.round((await box(results)).x)).toBe(Math.round(window.x));
+});
 
-  // Once the workflow moves on, the window says which version the results are of.
-  await operatorCard(page, "most").click({ position: { x: 100, y: 14 } });
-  await page.keyboard.press("Delete");
-  await expect(results.locator("[data-ran-version]")).toHaveText("ran v1", { timeout: 20_000 });
+test("once the workflow moves on, a result of the version that ran says so, and the execution can be looked at as it ran", async ({ page, request }) => {
+  test.setTimeout(300_000);
+  const alice = await api(request);
+  const { rid } = await irisWorkflow(alice, "moved on", { beside: true });
+  // Version 1 runs; version 2 asks avg for the max instead: avg's result is of version 1, most's still holds.
+  const ran = await alice("POST", `/workflows/${rid}/run`, { waitSeconds: 180 });
+  expect(ran.status.phase).toBe("completed");
+  const wf = await alice("GET", `/workflows/${rid}`);
+  const spec = structuredClone(wf.spec) as { operators: { operatorID: string; operatorProperties: { aggregations: { aggFunction: string }[] } }[] };
+  const avgOp = spec.operators.find(o => o.operatorID === "avg");
+  if (avgOp?.operatorProperties.aggregations[0]) avgOp.operatorProperties.aggregations[0].aggFunction = "max";
+  await alice("PUT", `/workflows/${rid}`, { spec });
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  const stale = page.locator('[data-result-chip="avg:output-0"]');
+  await expect(stale).toHaveAttribute("data-result-stale", "1");
+  await expect(page.locator('[data-result-chip="most:output-0"]')).not.toHaveAttribute("data-result-stale", /./);
+  // The changed operator's card says nothing of how it did then.
+  await expect(operatorCard(page, "avg").locator("[data-operator-execution]")).toHaveCount(0);
+  await expect(operatorCard(page, "most").locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
+  await stale.click();
+  await expect(page.locator("[data-results] [data-result-stale]")).toHaveText("v1 · changed since");
+  await page.screenshot({ path: "test-results/canvas-stale.png" });
+
+  // Looked at as an execution: the version it ran, which cannot be edited, its results all as they were.
+  await page.locator('[data-segment="execution"]').click();
+  const stage = page.locator(`[data-execution-stage="${ran.metadata.rid}"]`);
+  await expect(stage.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "false");
+  await expect(stage.locator('[data-result-chip="avg:output-0"]')).not.toHaveAttribute("data-result-stale", /./);
+  await expect(stage.locator('.react-flow__node[data-id="avg"] [data-operator-rows]')).toHaveText("150 → 3 rows");
+  await stage.locator('[data-result-chip="avg:output-0"]').click();
+  await expect(stage.locator("[data-port-rows]")).toContainText("avg");
+  await page.screenshot({ path: "test-results/canvas-execution-view.png" });
+  // And back to editing the newest version.
+  await page.locator('[data-segment="edit"]').click();
+  await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
+});
+
+test("a result is saved as a version of a dataset, which the lineage shows came of it", async ({ page, request }) => {
+  test.setTimeout(300_000);
+  const alice = await api(request);
+  const { rid, name, project } = await irisWorkflow(alice, "saved", { beside: true });
+  const ran = await alice("POST", `/workflows/${rid}/run`, { waitSeconds: 180 });
+  expect(ran.status.phase).toBe("completed");
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  await page.locator('[data-result-chip="avg:output-0"]').click();
+  await page.locator("[data-save-result]").click();
+  const form = page.locator("[data-save-result-form]");
+  await expect(form.locator("[data-save-result-name]")).toHaveValue(`Aggregate of ${ran.metadata.name}`);
+  // Typed in as a person does: a click puts the caret in the field (the window's title bar the
+  // form opens from does not take the press), and the keys replace the name.
+  await form.locator("[data-save-result-name]").click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type(`Petal means ${name}`);
+  await expect(form.locator("[data-save-result-file]")).toHaveValue("aggregate.csv");
+  await form.locator("[data-save-result-go]").click();
+  await expect(form.locator("[data-result-saved]")).toContainText(`Petal means ${name} v1`);
+  await page.screenshot({ path: "test-results/canvas-saved.png" });
+  // Again, into the dataset just made, picked from the list with the pointer: its version 2.
+  await page.keyboard.press("Escape");
+  await page.locator("[data-save-result]").click();
+  await form.locator('[data-segment="existing"]').click();
+  await pick(page, form.locator('[aria-label="Dataset"]'), `Petal means ${name}`);
+  await expect(form.locator('[aria-label="Dataset"]')).toHaveText(`Petal means ${name}`);
+  await form.locator("[data-save-result-go]").click();
+  await expect(form.locator("[data-result-saved]")).toContainText(`Petal means ${name} v2`);
+  const datasets = (await alice("GET", `/resources?kind=dataset&scope=${project}`)).items as Envelope[];
+  const saved = datasets.find(d => d.metadata.name === `Petal means ${name}`);
+  expect(saved).toBeDefined();
+  cleanups.push(() => alice.attempt("DELETE", `/datasets/${saved?.metadata.rid}`));
+  const file = await alice.text("GET", `/datasets/${saved?.metadata.rid}/versions/1/files/aggregate.csv`);
+  expect(file.split("\n")[0]).toBe("Species,avg");
+  // The execution stays while the version derives from it.
+  expect(await alice.status("DELETE", `/workflows/${rid}/executions/${ran.metadata.rid}`)).toBe(409);
+  // The saved dataset's lineage: the version it is, saved from avg's result of the execution.
+  await page.goto(`/datasets/${saved?.metadata.rid}`);
+  await page.getByRole("tab", { name: "Lineage" }).click();
+  await expect(page.locator('[data-graph-column="saved"]')).toBeVisible();
+  await expect(page.locator('[data-graph-edge="keeps"]')).toHaveCount(1);
+  await page.locator('[data-graph-level="versions"]').click();
+  await expect(page.locator('[data-graph-edge="keeps"]')).toHaveCount(2);
 });
 
 test("the bar says where a run goes, and it goes there: on a unit made from a profile, results in the warehouse picked", async ({ page, request }) => {
@@ -626,16 +723,15 @@ test("an execution's page is the workflow as it ran, and a visualization's resul
   await expect(operatorCard(page, "avg").locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
   await expect(operatorCard(page, "scan").locator("[data-operator-edit]")).toHaveCount(0);
 
-  // The result on screen is the last one kept: the chart. It is a picture, not a table of its
-  // HTML, and its tab says so.
-  const chart = stage.locator('[data-result-tab="chart:output-0"]');
-  await expect(chart).toHaveAttribute("aria-selected", "true");
-  await expect(chart).toHaveAttribute("data-result-kind", "chart");
+  // Each result kept is a cylinder under its card. The chart's opens a picture, not a table of its HTML.
+  await stage.locator('[data-result-chip="chart:output-0"]').click();
+  await expect(stage.locator("[data-results]")).toHaveAttribute("data-result-open", "chart:output-0");
+  await expect(stage.locator("[data-result-about]")).toContainText("a picture");
   await expect(stage.locator("[data-port-chart] iframe")).toBeVisible();
   await expect(stage.locator("[data-port-rows]")).toHaveCount(0);
   // What the operator drew is in the frame, whole.
   await expect(page.frameLocator("[data-port-chart] iframe").locator(".plotly-graph-div")).toHaveCount(1, { timeout: 30_000 });
-  await expect(portOf(page, "chart")).toHaveAttribute("data-result", "shown");
+  await expect(operatorCard(page, "chart").locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
   await page.screenshot({ path: "test-results/execution-chart.png" });
 
   // Another tab and back, right after the cards changed size: the canvas is still there to see.
@@ -653,12 +749,11 @@ test("an execution's page is the workflow as it ran, and a visualization's resul
   await expect(operatorCard(page, "chart")).toBeInViewport();
   expect(noPlace).toEqual([]);
 
-  // The table it was drawn from is a click on its card away, its port lit.
+  // The table it was drawn from is a click on its card away.
   await operatorCard(page, "avg").click();
-  await expect(stage.locator('[data-result-tab="avg:output-0"]')).toHaveAttribute("aria-selected", "true");
-  await expect(stage.locator('[data-result-tab="avg:output-0"]')).toHaveAttribute("data-result-kind", "table");
+  await expect(stage.locator("[data-results]")).toHaveAttribute("data-result-open", "avg:output-0");
   await expect(stage.locator("[data-port-rows]")).toContainText("Iris-virginica");
-  await expect(portOf(page, "avg")).toHaveAttribute("data-result", "shown");
+  await expect(operatorCard(page, "avg").locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
 });
 
 test("a run reads what an earlier run of the same work stored, and its cards say so; Run fresh makes everything again", async ({ page, request }) => {
@@ -692,22 +787,28 @@ test("a run reads what an earlier run of the same work stored, and its cards say
   const readings = operatorCard(page, "readings");
   // Runs, and waits for the run to take over the cards and to end.
   const runWith = async (button: string) => {
-    const before = (await results.count()) > 0 ? await results.getAttribute("data-results") : null;
+    const before = (await latest.count()) > 0 ? await latest.getAttribute("data-execution") : null;
     await page.locator(button).click();
-    await expect(results).not.toHaveAttribute("data-results", before ?? "", { timeout: 60_000 });
+    await expect(latest).not.toHaveAttribute("data-execution", before ?? "", { timeout: 60_000 });
     await expect(latest).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  };
+  // The rows the filter showed, from its cylinder.
+  const shown = async () => {
+    await page.locator('[data-result-chip="long:output-0"]').click();
+    await expect(results.locator("[data-port-rows]")).toContainText("Iris-virginica");
+    await page.locator("[data-close-result]").click();
   };
 
   // The first run makes everything.
   await runWith("[data-run]");
   await expect(means.locator("[data-operator-reused]")).toHaveCount(0);
-  await expect(results.locator("[data-port-rows]")).toContainText("Iris-virginica");
+  await shown();
 
   // The second reads the aggregate's rows from the first, which its card names, and does not scan the file.
   await runWith("[data-run]");
   await expect(means.locator("[data-operator-reused]")).toContainText("Read from");
   await expect(readings.locator("[data-operator-skipped]")).toBeVisible();
-  await expect(results.locator("[data-port-rows]")).toContainText("Iris-virginica");
+  await shown();
   await page.screenshot({ path: "test-results/canvas-reused.png" });
 
   // Run fresh makes everything again.

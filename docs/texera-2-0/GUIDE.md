@@ -65,15 +65,19 @@ in is right under them. The project's own page has the whole list.
 
 **The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
 the left of the chat page shows the chat's lineage, what it read, made and ran, left to right:
-Data above Model, Workflow, Execution, Result. It is the same graph a resource's Lineage tab
+Data above Model, Workflow, Execution, Result, Saved. It is the same graph a resource's Lineage tab
 draws (below), around the chat. It opens on the resources: a box for each dataset, model and
 workflow, an arrow where a workflow reads or uses one, and the results of a workflow's newest
 execution after it; a workflow says how its newest execution stands. Zoomed in ("Versions"), each
 box lists the versions of it that took part: an arrow runs from the version read to the workflow
-version that read it, each execution stands off the row of the version it ran, the newest of a
-version on top, with the results it kept beside it and the unit it ran on at its bottom right
+version that read it, and pointing at either end lights it and says what it joins ("iris.csv →
+CSV File Scan": the file, and the operator that reads it). Each execution stands off the row of
+the version it ran, the newest of a version on top, with the results it kept beside it, each a
+cylinder, and the unit it ran on at its bottom right
 (the unit's name and what it has, `2 cores · 2 GB`; where it ran and kept its results in full on
-hover). A function a workflow calls rides on the version that calls it. An arrow is dashed while
+hover). A result saved as a dataset version stands under "Saved", an arrow from the result to
+that version ("Aggregate → aggregate.csv"); a workflow that reads it stands a stage further right,
+with columns of its own, so a chain of workflows reads left to right. A function a workflow calls rides on the version that calls it. An arrow is dashed while
 the version only names what it points from, and solid once an execution of it read it (or read
 rows an earlier execution made of it); what the plan has not made yet is dashed too, and so is
 the execution the chat is about to start, on the unit it made for it. A dot marks what this chat
@@ -244,22 +248,31 @@ closed as you left it. A file property takes a dataset file URI,
 a card says what is wrong with its operator. Every save is a version; an execution pins the
 version it ran.
 
-**An execution on the canvas.** "Run" starts an execution and the page stays where it is:
-each card says where its operator stands (waiting, running, paused, done, failed with the
+**An execution on the canvas.** A workflow's page shows it two ways, "Edit" and "Execution", at
+the top. In "Edit" the workflow is edited; "Run" starts an execution and the page stays where it
+is: each card says where its operator stands (waiting, running, paused, done, failed with the
 reason, or stopped when the run ended before it finished) and the rows it has read and put
-out, second by second; a running card
-has a bar moving along its edge, and an arrow moves while rows go along it. The bar over the
-results says how far the execution is ("3 of 7 done") and for how long. A run keeps the
-results of the operators whose eye is on, of the operators nothing reads from, and of the
-operator a run was asked to go up to; under the canvas is one tab for each, named after its
-operator. A click on a card puts its result on screen: its card is ringed and the port it came
-out of is lit (a port whose result is kept is lit too); a tab brings its operator into view. A
-run up to an operator (its run button) runs only what leads to it and shows its result; the
-workflow does not change. A result is a table (paged rows), or, for a visualization operator,
-the chart it drew. The results fold away; "Execution" opens the execution's own page beside the
-workflow. The canvas shows the newest execution of the version on screen, an older version pinned
-as much as the head; while that version has none, it shows the workflow's newest, and its results
-say the version they are of ("ran v1").
+out, second by second; a running card has a bar moving along its edge, and an arrow moves while
+rows go along it. Beside "Run", the execution's state, and while it goes how far it is ("3 of 7
+done") and for how long. A run keeps the results of the operators whose eye is on, of the
+operators nothing reads from, and of the operator a run was asked to go up to: each is a small
+cylinder under the card it came out of, joined to its port by a dashed line, saying its rows.
+A click on a cylinder, or on its card, opens the table in a window over the canvas: what it is
+(the execution and the version it ran, the table in the warehouse, its rows and columns) and
+its rows, or, for a visualization operator, the chart it drew; its card is ringed and pointing
+at the window points the card out. The window moves, folds and closes; "Save as dataset" in it
+keeps the rows as a version of a dataset, a new one of the project or the next version of one
+you may write, one CSV file, which outlives the execution and says in its lineage where it came
+from (the execution then stays while the version does). A run up to an operator (its run
+button) runs only what leads to it and opens its result; the workflow does not change. The
+cylinder button over the canvas hides the cylinders while you edit. The canvas draws the newest
+execution of the version on screen, an older version pinned as much as the head; while that
+version has none, the workflow's newest: then an operator changed since, or one that reads from
+it, says nothing of how it did, and its cylinder is faint and says the version it is of ("v1 ·
+changed since"). "Execution" shows an execution as it ran, the newest or one picked beside the
+switch (the Executions tab picks one too): the version it ran, which cannot be edited, its cards
+saying how each operator did and every result it kept, none of them stale. "Edit" goes back to
+the workflow as it is now.
 
 **A workflow edited together.** Everyone who may change a workflow edits the same document at
 once: an operator one person adds, a property they change or a place they drag an operator to
@@ -275,20 +288,21 @@ session; the edits stay, a run does not start, and the session keeps trying.
 
 **Executions.** An execution's page is the workflow as it ran, on the same canvas (the
 version it pinned, laid out from its graph, not editable): each card says how its operator
-did, as the unit reports it while the execution goes, and the results are under it, tied to
-their operators and ports the same way. "Details" has what it read, where it ran (the unit,
+did, as the unit reports it while the execution goes, and its results are cylinders under the
+cards, opened the same way. "Details" has what it read, where it ran (the unit,
 the profile version the unit was made from, the warehouse), what the unit had (its size, each
 package as installed) and the record as the catalog holds it; "Lineage" its lineage. "Pause" holds a running one where it is
 and "Resume" continues it; "Stop" cancels a live one; "Keep" marks a finished one so the
-retention policy leaves its results alone; "Delete" removes it with its tables. The page
-follows the execution without reloading. Results live with the execution: to use them again,
-run again or read the rows. An execution lives under its workflow; the sidebar lists them
+retention policy leaves its results alone; "Delete" removes it with its tables, unless a
+dataset version was saved from one of them. The page follows the execution without reloading.
+Results live with the execution: to keep one for good, save it as a dataset version. An execution lives under its workflow; the sidebar lists them
 across workflows because that is how people look for one.
 
 **Lineage.** A resource's "Lineage" is the graph a chat draws beside it, around the resource,
 which is marked: for a workflow, its executions and its newest version; for an execution, itself;
-for a dataset, a model or a function, the executions of the workflow versions that name it and
-the newest version of each workflow that names it. It reads left to right, what was
+for a dataset, a model or a function, the executions its versions were saved from, the
+executions of the workflow versions that name it and the newest version of each workflow that
+names it. It reads left to right, what was
 read, what was executed, what came out, at the same two levels ("Resources", "Versions"), the
 version on screen marked. A workflow's versions on it are those executed and its newest: a
 version saved on the way and never executed made nothing. A version lists its three newest
