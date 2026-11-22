@@ -165,7 +165,12 @@ test("a chat's lineage reads from data to results, each execution off its versio
   await expect(graph.locator(`[data-graph-edge="runs"][data-graph-from="${workflow}@1"]`)).toHaveCount(1);
   await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
   await expect(graph.locator('[data-graph-column="execution"]')).toContainText("Execution");
+  // Pointing at a workflow lights the arrows into its versions, and each says what it joins:
+  // the file read, and the operator that reads it.
+  await workflows.first().hover({ position: { x: 14, y: 12 } });
+  await expect(graph.locator(`[data-graph-edge-parts$=">${workflow}@1"]`)).toContainText("iris.csv → ");
   await page.screenshot({ path: "test-results/resource-graph-versions.png" });
+  await page.mouse.move(0, 0);
   const before = await positions(graph);
 
   // A second workflow arrives, with a function the agent makes, not executed yet: its version

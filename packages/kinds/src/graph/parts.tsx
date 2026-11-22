@@ -14,12 +14,12 @@ import {
   CheckCircle2,
   Circle,
   Cpu,
+  Cylinder,
   Database,
   Loader2,
   Lock,
   MessageSquare,
   PauseCircle,
-  Table2,
   Workflow,
   XCircle,
 } from "lucide-react";
@@ -183,9 +183,7 @@ export function ResourceCard({
   const rows = box.rows.map(id => d.view.rows.get(id) as RowItem);
   const newest = rows[0];
   const isRoot = d.root === box.id;
-  const meta = [look.label, newest ? `v${newest.vno}` : "", newest?.version.files?.join(", ") ?? ""]
-    .filter(Boolean)
-    .join(" · ");
+  const meta = [look.label, newest ? `v${newest.vno}` : "", newest?.files.join(", ") ?? ""].filter(Boolean).join(" · ");
   return (
     <div
       {...nodeProps(box.id, `${look.label} ${name}`, d.h, readable)}
@@ -226,8 +224,8 @@ export function ResourceCard({
         <ul className="grid gap-[0.12em] border-t px-[0.45em] pt-[0.3em] pb-[0.4em]" data-graph-versions>
           {rows.map(row => (
             <VersionRow key={row.id} row={row} d={d} open={readable}>
-              <span className="truncate font-mono text-[0.95em]" title={row.version.files?.join(", ")}>
-                {row.version.files?.join(", ")}
+              <span className="truncate font-mono text-[0.95em]" title={row.files.join(", ")}>
+                {row.files.join(", ")}
               </span>
             </VersionRow>
           ))}
@@ -316,7 +314,7 @@ export function ResultTile({
             ? "border border-dashed border-muted-foreground/50 text-muted-foreground"
             : "bg-kind-dataset/10 text-kind-dataset"
         )}>
-        <Table2 className="size-[1em]" />
+        <Cylinder className="size-[1em]" />
       </span>
       <div className="grid min-w-0">
         <span className={cn("truncate font-semibold", planned && "text-muted-foreground")}>{item.title}</span>

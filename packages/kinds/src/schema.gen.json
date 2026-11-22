@@ -2168,33 +2168,42 @@
       "type": "object"
     },
     "GraphEdge": {
-      "description": "An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.",
+      "description": "An arrow between two versions, with the parts it joins. `reads` and `uses`: a dataset, model or function version to the workflow version whose operators name it. `keeps`: an execution to the dataset version that keeps one of its results.",
       "properties": {
         "executed": {
-          "description": "An execution of the workflow version ran the operator that names it, or read an earlier execution's rows of that operator instead; false when the version only names it.",
+          "description": "One of its parts was executed; false while the workflow version only names `from`.",
           "type": "boolean"
         },
         "from": {
           "$ref": "#/$defs/Uri",
-          "description": "A dataset, model or function at a version."
+          "description": "A dataset, model or function at a version; for `keeps`, an execution."
+        },
+        "parts": {
+          "description": "The parts it joins, each once, in the order the version has them.",
+          "items": {
+            "$ref": "#/$defs/GraphPart"
+          },
+          "type": "array"
         },
         "relation": {
           "enum": [
             "reads",
-            "uses"
+            "uses",
+            "keeps"
           ],
           "type": "string"
         },
         "to": {
           "$ref": "#/$defs/Uri",
-          "description": "A workflow at a version."
+          "description": "A workflow at a version; for `keeps`, a dataset at a version."
         }
       },
       "required": [
         "from",
         "to",
         "relation",
-        "executed"
+        "executed",
+        "parts"
       ],
       "type": "object"
     },
@@ -2323,6 +2332,34 @@
       ],
       "type": "object"
     },
+    "GraphPart": {
+      "description": "What an arrow joins inside the versions at its ends. A part is named by its path in its version, as a texera:// name goes on after the version.",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "executed": {
+          "description": "An execution of the workflow version ran this operator, or read an earlier execution's rows of it instead; false while the version only names `from`. True for a kept result.",
+          "type": "boolean"
+        },
+        "from": {
+          "description": "In `from`: a file of a dataset or model version (`files/\u003cpath\u003e`), or an output port of an execution (`operators/\u003cid\u003e/ports/\u003cport\u003e`). Absent where `from` is used whole, as a function or a model is.",
+          "type": "string"
+        },
+        "operatorType": {
+          "description": "The operator at either end, as its version has it: its type and the name a person gave it.",
+          "type": "string"
+        },
+        "to": {
+          "description": "In `to`: the operator of the workflow version that names `from` (`operators/\u003cid\u003e`), or the file of the dataset version that keeps a result (`files/\u003cpath\u003e`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "executed"
+      ],
+      "type": "object"
+    },
     "GraphResult": {
       "description": "What an execution kept of one operator's output, and shows.",
       "properties": {
@@ -2423,7 +2460,7 @@
       "type": "object"
     },
     "GraphVersion": {
-      "description": "A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest.",
+      "description": "A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, one that keeps a result, or a workflow's newest.",
       "properties": {
         "createdBy": {
           "$ref": "#/$defs/Pid",
@@ -2433,13 +2470,6 @@
           "description": "For a workflow: how many executions of the version the graph knows. It lists the newest of them.",
           "format": "int32",
           "type": "integer"
-        },
-        "files": {
-          "description": "For data and a model: the files of the version that were read or named, by path, in the order first named.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
         },
         "made": {
           "description": "Beside a chat: the chat made this version.",
@@ -4399,7 +4429,7 @@
       "type": "object"
     },
     "ResourceGraph": {
-      "description": "A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.",
+      "description": "A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, the arrows into each workflow version and those from an execution to the dataset versions that keep its results. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.",
       "properties": {
         "edges": {
           "items": {
@@ -4700,6 +4730,28 @@
         "resources": {
           "additionalProperties": {},
           "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "SaveResult": {
+      "description": "Where to save a result: a new version of a dataset, whose one new file holds the port's rows as CSV. The result's lineage goes with it: the version derives from the port.",
+      "properties": {
+        "dataset": {
+          "$ref": "#/$defs/Uri",
+          "description": "The dataset to add the version to, which the caller may write; absent, a new dataset of the execution's project."
+        },
+        "description": {
+          "description": "A new dataset's description: what it holds and where it comes from.",
+          "type": "string"
+        },
+        "name": {
+          "description": "A new dataset's name; absent, the operator's name and the execution's.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The file's path in the version; absent, the operator's ID with `.csv`. A file of the head version at the same path is replaced.",
+          "type": "string"
         }
       },
       "type": "object"

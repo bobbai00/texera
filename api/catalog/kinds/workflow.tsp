@@ -139,6 +139,18 @@ model RunWorkflow {
   fresh?: boolean;
 }
 
+@doc("Where to save a result: a new version of a dataset, whose one new file holds the port's rows as CSV. The result's lineage goes with it: the version derives from the port.")
+model SaveResult {
+  @doc("The dataset to add the version to, which the caller may write; absent, a new dataset of the execution's project.")
+  dataset?: Uri;
+  @doc("A new dataset's name; absent, the operator's name and the execution's.")
+  name?: string;
+  @doc("A new dataset's description: what it holds and where it comes from.")
+  description?: string;
+  @doc("The file's path in the version; absent, the operator's ID with `.csv`. A file of the head version at the same path is replaced.")
+  path?: string;
+}
+
 namespace Routes {
   @route("/workflows")
   interface Workflows
@@ -279,5 +291,24 @@ namespace Routes {
       @query offset?: int64,
       @query limit?: int32,
     ): RowPage | Error;
+
+    @doc("Save an output port's rows as a version of a dataset: a result is dropped with its execution or by the retention policy, a saved one stays. The execution must have completed; from then on it is not deleted while the version derives from it.")
+    @post
+    @route("/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save")
+    @extension("x-texera-permission", "read")
+    @extension("x-mcp", #{
+      tool: "save_result",
+      description: "Save the rows of an operator's output port in a completed execution as a new version of a dataset (one CSV file), when the person asks to save or keep a result: name a dataset they may write to add the version to, or give a name and a description for a new dataset of the project. The version's lineage says which execution and port it came from.",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    })
+    saveResult(
+      @path rid: Rid,
+      @path eid: Rid,
+      @path operatorID: string,
+      @path portID: string,
+      @body body: SaveResult,
+    ): Created<DatasetVersion> | Error;
   }
 }

@@ -48,9 +48,9 @@ const graph: ResourceGraph = {
   ],
   results: [{ uri: T, execution: E, operator: "auc", operatorType: "Aggregate", displayName: "AUC" }],
   edges: [
-    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true },
-    { from: `${S}@1`, to: `${W}@2`, relation: "reads", executed: false },
-    { from: `${F}@1`, to: `${W}@1`, relation: "uses", executed: true },
+    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true, parts: [] },
+    { from: `${S}@1`, to: `${W}@2`, relation: "reads", executed: false, parts: [] },
+    { from: `${F}@1`, to: `${W}@1`, relation: "uses", executed: true, parts: [] },
   ],
   planned: [{ kind: "dataset", name: "Calibration", turn: "t2" }],
   sources: [],

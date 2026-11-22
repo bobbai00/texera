@@ -238,6 +238,22 @@ func (s *Server) routeWorkflows() {
 		return nil
 	})
 
+	s.handle("POST "+port+"/save", func(w http.ResponseWriter, r *http.Request) error {
+		rid, eid, err := workflowAndExecution(r)
+		if err != nil {
+			return err
+		}
+		var body api.SaveResult
+		if err := decode(r, &body); err != nil {
+			return err
+		}
+		res, v, err := s.svc.SaveResult(ctxOf(r), callerOf(r), rid, eid, r.PathValue("operatorID"), r.PathValue("portID"), body)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusCreated, catalog.VersionOf(res, v))
+		return nil
+	})
 }
 
 func workflowAndExecution(r *http.Request) (uuid.UUID, uuid.UUID, error) {

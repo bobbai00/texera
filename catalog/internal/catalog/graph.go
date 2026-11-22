@@ -2,12 +2,16 @@ package catalog
 
 // The lineage graph a person reads, the same beside a chat and on a resource's page: the
 // resources in it, each with the versions of it that took part; the executions of those
-// versions, each with the version it ran, the unit it ran on and the results it kept; and an
-// arrow from each dataset, model and function a workflow version reads or uses to that version.
-// An arrow is executed once an execution of the version ran the operator that names it, or
-// reused that operator's rows; else the version only names it. A workflow's versions on the graph are those executed and its newest: a version saved on
-// the way and never executed made nothing. It is computed from what the catalog records: the
-// executions' specs and statuses, and what each version's content names.
+// versions, each with the version it ran, the unit it ran on and the results it kept; an arrow
+// from each dataset, model and function version a workflow version reads or uses to that
+// version, joining the file to each operator that names it; and an arrow from an execution to
+// each dataset version that keeps one of its results, joining the port to the file. An arrow
+// into a workflow version is executed once an execution of the version ran an operator that
+// names its source, or reused that operator's rows; else the version only names it. A
+// workflow's versions on the graph are those executed and its newest: a version saved on the
+// way and never executed made nothing. It is computed from what the catalog records: the
+// executions' specs and statuses, what each version's content names, and the lineage of the
+// versions that keep results.
 
 import (
 	"context"
@@ -243,20 +247,8 @@ func (g *graphBuilder) execution(x *store.Resource) {
 	// neither ran them all.
 	version := ran.Resource().WithVersion(ran.Vno).String()
 	operators := g.spec(version)
-	if operators != nil {
-		ranOps := planOperators(spec)
-		for _, op := range operators.Operators {
-			if len(ranOps) > 0 && !ranOps[op.OperatorID] {
-				continue
-			}
-			if ref, err := uri.Parse(op.OperatorType); err == nil {
-				g.arrow(ref, version, true)
-			}
-			for _, ref := range uri.Extract(map[string]any(op.OperatorProperties)) {
-				g.arrow(ref, version, true)
-			}
-		}
-	}
+	ranOps := planOperators(spec)
+	g.names(version, func(id string) bool { return len(ranOps) == 0 || ranOps[id] })
 	// What it shows of what it kept; what it keeps only to reuse is no result.
 	if status.Ports == nil || status.ResultsExpiredAt != nil {
 		return
@@ -277,10 +269,28 @@ func (g *graphBuilder) execution(x *store.Resource) {
 	}
 }
 
-// arrow draws what a workflow version reads or uses: a file of a dataset or a model, a model,
-// or a function, at a version. It is executed once an execution of the version ran the
-// operator that names it, or read an earlier execution's rows of that operator instead.
-func (g *graphBuilder) arrow(ref uri.Ref, version string, executed bool) {
+// names draws what the operators of a workflow version name: an arrow from each version they
+// read or use, joining it to each operator. ran tells whether an execution of the version ran
+// an operator, or read an earlier execution's rows of it instead.
+func (g *graphBuilder) names(version string, ran func(operatorID string) bool) {
+	spec := g.spec(version)
+	if spec == nil {
+		return
+	}
+	for _, op := range spec.Operators {
+		executed := ran(op.OperatorID)
+		if ref, err := uri.Parse(op.OperatorType); err == nil {
+			g.arrow(ref, version, op, executed)
+		}
+		for _, ref := range uri.Extract(map[string]any(op.OperatorProperties)) {
+			g.arrow(ref, version, op, executed)
+		}
+	}
+}
+
+// arrow draws what an operator of a workflow version reads or uses: a file of a dataset or a
+// model, a model, or a function, at a version.
+func (g *graphBuilder) arrow(ref uri.Ref, version string, op api.WorkflowOperator, executed bool) {
 	relation := api.GraphEdgeRelationUses
 	switch ref.Kind.Name {
 	case "dataset":
@@ -296,23 +306,84 @@ func (g *graphBuilder) arrow(ref uri.Ref, version string, executed bool) {
 	if n == nil || (ref.Kind.Name == "operator" && n.Role != api.GraphRoleFunction) {
 		return
 	}
-	v := g.version(n, ref.Vno)
-	if path, ok := strings.CutPrefix(ref.Subresource, "files/"); ok && path != "" {
-		if v.Files == nil {
-			v.Files = &[]string{}
+	g.version(n, ref.Vno)
+	part := api.GraphPart{To: ptr("operators/" + op.OperatorID), OperatorType: ptr(op.OperatorType), DisplayName: op.CustomDisplayName, Executed: executed}
+	if ref.Subresource != "" {
+		part.From = ptr(ref.Subresource)
+	}
+	g.join(ref.Resource().WithVersion(ref.Vno).String(), version, relation, part)
+}
+
+// keeps draws the dataset versions that keep a result of an execution on the graph: an arrow
+// from the execution to each, joining the port to the file.
+func (g *graphBuilder) keeps(x api.GraphExecution) error {
+	at := string(x.Uri)
+	derived, err := g.s.Store.EdgesTo(g.ctx, at, []string{"derivedFrom"})
+	if err != nil {
+		return err
+	}
+	operators := g.spec(string(x.Workflow) + "@" + strconv.Itoa(int(x.Version)))
+	for _, e := range derived {
+		ref, err := uri.Parse(e.From)
+		port, isPort := strings.CutPrefix(e.To, at+"/")
+		if err != nil || ref.Kind.Name != "dataset" || ref.Vno == 0 || !isPort {
+			continue
 		}
-		if !slices.Contains(*v.Files, path) {
-			*v.Files = append(*v.Files, path)
+		n := g.named(ref)
+		if n == nil {
+			continue
+		}
+		g.version(n, ref.Vno)
+		part := api.GraphPart{From: ptr(port), Executed: true}
+		if ref.Subresource != "" {
+			part.To = ptr(ref.Subresource)
+		}
+		if op := operatorOf(operators, port); op != nil {
+			part.OperatorType, part.DisplayName = ptr(op.OperatorType), op.CustomDisplayName
+		}
+		g.join(at, ref.Resource().WithVersion(ref.Vno).String(), api.GraphEdgeRelationKeeps, part)
+	}
+	return nil
+}
+
+// operatorOf is the operator of a workflow version a port of its execution is of; nil when
+// the version is not at hand or has no such operator.
+func operatorOf(spec *api.WorkflowSpec, port string) *api.WorkflowOperator {
+	id, _, _ := strings.Cut(strings.TrimPrefix(port, "operators/"), "/")
+	if spec == nil {
+		return nil
+	}
+	for i := range spec.Operators {
+		if spec.Operators[i].OperatorID == id {
+			return &spec.Operators[i]
 		}
 	}
-	from := ref.Resource().WithVersion(ref.Vno).String()
-	key := from + "|" + version
-	if i, ok := g.edgeAt[key]; ok {
-		g.edges[i].Executed = g.edges[i].Executed || executed
-		return
+	return nil
+}
+
+// join puts an arrow between two versions on the graph once, with each part it joins once; an
+// arrow or a part is executed once any execution executed it.
+func (g *graphBuilder) join(from, to string, relation api.GraphEdgeRelation, part api.GraphPart) {
+	key := from + "|" + to
+	i, ok := g.edgeAt[key]
+	if !ok {
+		i = len(g.edges)
+		g.edgeAt[key] = i
+		g.edges = append(g.edges, api.GraphEdge{From: api.Uri(from), To: api.Uri(to), Relation: relation, Parts: []api.GraphPart{}})
 	}
-	g.edgeAt[key] = len(g.edges)
-	g.edges = append(g.edges, api.GraphEdge{From: api.Uri(from), To: api.Uri(version), Relation: relation, Executed: executed})
+	e := &g.edges[i]
+	e.Executed = e.Executed || part.Executed
+	for j := range e.Parts {
+		if samePtr(e.Parts[j].From, part.From) && samePtr(e.Parts[j].To, part.To) {
+			e.Parts[j].Executed = e.Parts[j].Executed || part.Executed
+			return
+		}
+	}
+	e.Parts = append(e.Parts, part)
+}
+
+func samePtr(a, b *string) bool {
+	return (a == nil) == (b == nil) && (a == nil || *a == *b)
 }
 
 // unit is the unit an execution ran on, as a label of it, when the caller may read it.
@@ -363,39 +434,26 @@ func (g *graphBuilder) otherwise(n *api.GraphNode, vno int) {
 }
 
 // done is the graph: what each workflow version on it names, its executions the newest first
-// and at most mostExecutions of each version, each resource's versions the newest first, and
-// a resource nothing reads, uses or ran at the version it shows otherwise.
+// and at most mostExecutions of each version, the dataset versions that keep their results,
+// each resource's versions the newest first, and a resource nothing reads, uses, ran or keeps
+// at the version it shows otherwise.
 func (g *graphBuilder) done() (*api.ResourceGraph, error) {
-	var sources []string
+	var flows []string
 	for _, n := range g.nodes {
 		if n.Role == api.GraphRoleWorkflow {
 			for vno := range g.versions[string(n.Uri)] {
-				sources = append(sources, string(n.Uri)+"@"+strconv.Itoa(vno))
+				flows = append(flows, string(n.Uri)+"@"+strconv.Itoa(vno))
 			}
 		}
 	}
-	slices.Sort(sources)
-	refs, err := g.s.Store.ReferencesFrom(g.ctx, sources)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range refs {
-		if ref, err := uri.Parse(e.To); err == nil {
-			g.arrow(ref, e.From, false)
-		}
-	}
-	for _, n := range g.nodes {
-		if vno := g.fallback[string(n.Uri)]; vno > 0 && len(g.versions[string(n.Uri)]) == 0 {
-			g.version(n, vno)
-		}
+	slices.Sort(flows)
+	for _, version := range flows {
+		g.names(version, func(string) bool { return false })
 	}
 
 	out := &api.ResourceGraph{
 		Nodes: make([]api.GraphNode, 0, len(g.nodes)), Executions: []api.GraphExecution{}, Results: []api.GraphResult{},
-		Edges: g.edges, Planned: []api.PlannedItem{}, Sources: []api.GraphSource{}, Units: []api.GraphUnit{},
-	}
-	if out.Edges == nil {
-		out.Edges = []api.GraphEdge{}
+		Planned: []api.PlannedItem{}, Sources: []api.GraphSource{}, Units: []api.GraphUnit{},
 	}
 	// The executions came in the order they were found; the newest first, a few of each version.
 	slices.SortStableFunc(g.executions, func(a, b api.GraphExecution) int { return startOf(b).Compare(startOf(a)) })
@@ -414,9 +472,23 @@ func (g *graphBuilder) done() (*api.ResourceGraph, error) {
 			kept[string(x.Uri)] = true
 		}
 	}
+	for _, x := range out.Executions {
+		if err := g.keeps(x); err != nil {
+			return nil, err
+		}
+	}
 	for _, r := range g.results {
 		if kept[string(r.Execution)] {
 			out.Results = append(out.Results, r)
+		}
+	}
+	out.Edges = g.edges
+	if out.Edges == nil {
+		out.Edges = []api.GraphEdge{}
+	}
+	for _, n := range g.nodes {
+		if vno := g.fallback[string(n.Uri)]; vno > 0 && len(g.versions[string(n.Uri)]) == 0 {
+			g.version(n, vno)
 		}
 	}
 	// Who made each version the caller may read of.
@@ -459,6 +531,8 @@ func (g *graphBuilder) done() (*api.ResourceGraph, error) {
 	return out, nil
 }
 
+func ptr[T any](v T) *T { return &v }
+
 // ranVersion is the version of its workflow an execution ran; 0 when it names none.
 func ranVersion(x *store.Resource) int {
 	var spec api.ExecutionSpec
@@ -482,9 +556,9 @@ func startOf(x api.GraphExecution) time.Time {
 
 // ResourceGraph is the lineage graph of a resource, as the caller may see it: for a workflow,
 // its executions and its newest version; for an execution, itself; for a dataset, a model or a
-// function, the executions of the workflow versions that name it, and the newest version of
-// each workflow that names it. Each workflow version on it shows all it reads and uses. Any
-// other kind has none.
+// function, the executions whose results its versions keep, the executions of the workflow
+// versions that name it, and the newest version of each workflow that names it. Each workflow
+// version on it shows all it reads and uses. Any other kind has none.
 func (s *Service) ResourceGraph(ctx context.Context, caller *auth.Caller, rid uuid.UUID) (*api.ResourceGraph, error) {
 	r, err := s.Get(ctx, caller, nil, rid)
 	if err != nil {
@@ -537,6 +611,16 @@ func (s *Service) ResourceGraph(ctx context.Context, caller *auth.Caller, rid uu
 		if n == nil {
 			break
 		}
+		// The executions whose results its versions keep, with what they ran.
+		derived, err := s.Store.EdgesFrom(ctx, whole, []string{"derivedFrom"})
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range derived {
+			if x := s.keptFrom(ctx, caller, e.To); x != nil {
+				g.execution(x)
+			}
+		}
 		refs, err := namers(whole)
 		if err != nil {
 			return nil, err
@@ -567,6 +651,24 @@ func (s *Service) ResourceGraph(ctx context.Context, caller *auth.Caller, rid uu
 		g.otherwise(n, r.HeadVno)
 	}
 	return g.done()
+}
+
+// keptFrom is the execution a port of it names, when the caller may read it; nil otherwise.
+func (s *Service) keptFrom(ctx context.Context, caller *auth.Caller, port string) *store.Resource {
+	ref, err := uri.Parse(port)
+	if err != nil || ref.Kind.Name != "execution" {
+		return nil
+	}
+	workflow, werr := uuid.Parse(ref.Parent)
+	eid, eerr := uuid.Parse(ref.Rid)
+	if werr != nil || eerr != nil {
+		return nil
+	}
+	x, err := s.Execution(ctx, caller, workflow, eid)
+	if err != nil {
+		return nil
+	}
+	return x
 }
 
 // workflowsInOrder puts the workflows in the order the chat first made or ran them, each in a

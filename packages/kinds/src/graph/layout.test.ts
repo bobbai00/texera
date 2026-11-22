@@ -12,6 +12,13 @@ const exec = (wf: string, n: number) => `${wf}/executions/7777777${n}-7777-7777-
 const port = (e: string, op: string) => `${e}/operators/${op}/ports/output-0`;
 
 const version = (vno: number, extra: Partial<GraphVersion> = {}): GraphVersion => ({ vno, made: false, ...extra });
+/** The scan of a workflow version that reads a file. */
+const read = (file: string, executed: boolean) => ({
+  from: `files/${file}`,
+  to: "operators/scan",
+  operatorType: "scan",
+  executed,
+});
 const node = (uri: string, role: GraphNode["role"], versions: GraphVersion[]): GraphNode => ({
   uri,
   role,
@@ -37,8 +44,8 @@ const execution = (uri: string, workflow: string, vno: number): GraphExecution =
 const versions: ResourceGraph = {
   nodes: [
     node(W, "workflow", [version(3), version(2, { executions: 1 }), version(1, { executions: 1 })]),
-    node(D, "data", [version(1, { files: ["a.csv"] })]),
-    node(L, "data", [version(1, { files: ["b.csv"] })]),
+    node(D, "data", [version(1)]),
+    node(L, "data", [version(1)]),
     node(M, "model", [version(1)]),
   ],
   executions: [execution(exec(W, 2), W, 2), execution(exec(W, 1), W, 1)],
@@ -47,12 +54,18 @@ const versions: ResourceGraph = {
     { uri: port(exec(W, 1), "t1"), execution: exec(W, 1), operator: "t1", operatorType: "Aggregate", rows: 3 },
   ],
   edges: [
-    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true },
-    { from: `${D}@1`, to: `${W}@2`, relation: "reads", executed: true },
-    { from: `${L}@1`, to: `${W}@2`, relation: "reads", executed: true },
-    { from: `${D}@1`, to: `${W}@3`, relation: "reads", executed: false },
-    { from: `${L}@1`, to: `${W}@3`, relation: "reads", executed: false },
-    { from: `${M}@1`, to: `${W}@2`, relation: "uses", executed: true },
+    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true, parts: [read("a.csv", true)] },
+    { from: `${D}@1`, to: `${W}@2`, relation: "reads", executed: true, parts: [read("a.csv", true)] },
+    { from: `${L}@1`, to: `${W}@2`, relation: "reads", executed: true, parts: [read("b.csv", true)] },
+    { from: `${D}@1`, to: `${W}@3`, relation: "reads", executed: false, parts: [read("a.csv", false)] },
+    { from: `${L}@1`, to: `${W}@3`, relation: "reads", executed: false, parts: [read("b.csv", false)] },
+    {
+      from: `${M}@1`,
+      to: `${W}@2`,
+      relation: "uses",
+      executed: true,
+      parts: [{ to: "operators/p", operatorType: "predict", executed: true }],
+    },
   ],
   planned: [],
   sources: [],
@@ -162,7 +175,10 @@ describe("the lineage graph's layout", () => {
       ...versions,
       nodes: [...versions.nodes, node(W2, "workflow", [version(1, { executions: 1 })])],
       executions: [...versions.executions, execution(exec(W2, 3), W2, 1)],
-      edges: [...versions.edges, { from: `${L}@1`, to: `${W2}@1`, relation: "reads", executed: true }],
+      edges: [
+        ...versions.edges,
+        { from: `${L}@1`, to: `${W2}@1`, relation: "reads", executed: true, parts: [read("b.csv", true)] },
+      ],
     };
     for (const level of ["resources", "versions"] as const) {
       const before = lay(versions, level).layout;
@@ -206,4 +222,125 @@ describe("the layout, whatever the plan says", () => {
         expect(boxOfRow(`${W}@2`)).toBe(W);
       }
     });
+});
+
+describe("what a result was saved as, laid out", () => {
+  const S = "texera://datasets/13131313-1313-1313-1313-131313131313";
+  const saved: ResourceGraph = {
+    ...versions,
+    nodes: [...versions.nodes, node(S, "data", [version(1)])],
+    edges: [
+      ...versions.edges,
+      {
+        from: exec(W, 1),
+        to: `${S}@1`,
+        relation: "keeps",
+        executed: true,
+        parts: [
+          { from: "operators/t1/ports/output-0", to: "files/lows.csv", operatorType: "Aggregate", executed: true },
+        ],
+      },
+    ],
+  };
+  NAMES[S] = "S";
+
+  it("stands the saved version right of the result it came of, level with it, an arrow from the result to its row", () => {
+    const { layout } = lay(saved, "versions");
+    expect(layout.columns.map(c => c.label)).toEqual(["Data", "Model", "Workflow", "Execution", "Result", "Saved"]);
+    const result = at(layout, port(exec(W, 1), "t1"));
+    expect(at(layout, S).x).toBeGreaterThan(result.x + result.w);
+    expect(at(layout, S).y).toBe(result.y);
+    expect(said(layout, ["keeps"])).toEqual(["t1>S@1"]);
+    expect(layout.arrows.find(a => a.relation === "keeps")?.label?.text).toBe("Aggregate → lows.csv");
+  });
+
+  it("says, zoomed in, the parts each arrow into a workflow version joins, and nothing zoomed out", () => {
+    const zoomedIn = lay(saved, "versions").layout;
+    expect(zoomedIn.arrows.filter(a => a.relation === "reads").map(a => a.label?.text)).toEqual(
+      Array(5)
+        .fill("a.csv → scan")
+        .map((t, i) => (i === 2 || i === 4 ? "b.csv → scan" : t))
+    );
+    const zoomedOut = lay(saved, "resources").layout;
+    expect(zoomedOut.arrows.every(a => a.label === undefined)).toBe(true);
+  });
+});
+
+describe("a chain of workflows, laid out", () => {
+  const S = "texera://datasets/13131313-1313-1313-1313-131313131313";
+  // W's version 1 kept t1, saved as S@1; W2's version 1 reads S@1.
+  const chain: ResourceGraph = {
+    ...versions,
+    nodes: [...versions.nodes, node(S, "data", [version(1)]), node(W2, "workflow", [version(1, { executions: 1 })])],
+    executions: [...versions.executions, execution(exec(W2, 3), W2, 1)],
+    results: [
+      ...versions.results,
+      { uri: port(exec(W2, 3), "t3"), execution: exec(W2, 3), operator: "t3", operatorType: "Aggregate", rows: 2 },
+    ],
+    edges: [
+      ...versions.edges,
+      {
+        from: exec(W, 1),
+        to: `${S}@1`,
+        relation: "keeps",
+        executed: true,
+        parts: [
+          { from: "operators/t1/ports/output-0", to: "files/lows.csv", operatorType: "Aggregate", executed: true },
+        ],
+      },
+      { from: `${S}@1`, to: `${W2}@1`, relation: "reads", executed: true, parts: [read("lows.csv", true)] },
+    ],
+  };
+
+  it("stands a workflow that reads a saved version a stage further right, so every arrow reads left to right", () => {
+    NAMES[S] = "S";
+    for (const level of ["resources", "versions"] as const) {
+      const { layout } = lay(chain, level);
+      const saved = at(layout, S);
+      expect(at(layout, W2).x).toBeGreaterThan(saved.x + saved.w);
+      for (const a of layout.arrows) {
+        const from = at(layout, boxOfRow(a.from)) ?? at(layout, a.from);
+        const to = at(layout, boxOfRow(a.to)) ?? at(layout, a.to);
+        if (from && to) expect(to.x, `${short(a.from)}>${short(a.to)}`).toBeGreaterThan(from.x);
+      }
+    }
+    const { layout } = lay(chain, "versions");
+    expect(layout.columns.map(c => c.label)).toEqual([
+      "Data",
+      "Model",
+      "Workflow",
+      "Execution",
+      "Result",
+      "Saved",
+      "Workflow",
+      "Execution",
+      "Result",
+    ]);
+    // Level with what it reads of the stage before.
+    expect(at(layout, W2).y).toBeGreaterThanOrEqual(at(layout, S).y);
+    expect(said(layout, ["reads"]).filter(a => a.startsWith("S"))).toEqual(["S@1>W2@1"]);
+  });
+});
+
+describe("a result saved twice, laid out", () => {
+  const S = "texera://datasets/13131313-1313-1313-1313-131313131313";
+  // The newest execution's result, which zoomed out stands after its workflow.
+  const keeps = (vno: number) => ({
+    from: exec(W, 2),
+    to: `${S}@${vno}`,
+    relation: "keeps" as const,
+    executed: true,
+    parts: [{ from: "operators/t2/ports/output-0", to: "files/means.csv", operatorType: "Aggregate", executed: true }],
+  });
+  const twice: ResourceGraph = {
+    ...versions,
+    nodes: [...versions.nodes, node(S, "data", [version(2), version(1)])],
+    edges: [...versions.edges, keeps(1), keeps(2)],
+  };
+
+  it("draws an arrow to each version zoomed in, and one to the dataset zoomed out", () => {
+    NAMES[S] = "S";
+    expect(said(lay(twice, "versions").layout, ["keeps"])).toEqual(["t2>S@1", "t2>S@2"]);
+    expect(said(lay(twice, "resources").layout, ["keeps"])).toEqual(["t2>S"]);
+  });
 });

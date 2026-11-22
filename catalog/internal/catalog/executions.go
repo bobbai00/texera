@@ -550,25 +550,39 @@ func (s *Service) Port(ctx context.Context, caller *auth.Caller, workflowRID, ei
 
 // inputBinding finds the upstream port linked to an input port in the execution's workflow version.
 func (s *Service) inputBinding(ctx context.Context, exec *store.Resource, operatorID, portID string) string {
-	var spec api.ExecutionSpec
-	_ = json.Unmarshal(exec.Spec, &spec)
-	ref, err := uri.Parse(string(spec.Workflow))
-	if err != nil {
+	wf := s.ranWorkflow(ctx, exec)
+	if wf == nil {
 		return ""
 	}
-	wfRID, _ := uuid.Parse(ref.Rid)
-	v, err := s.Store.GetVersion(ctx, wfRID, ref.Vno)
-	if err != nil {
-		return ""
-	}
-	var wf api.WorkflowSpec
-	_ = json.Unmarshal(v.Content, &wf)
 	for _, l := range wf.Links {
 		if l.Target.OperatorID == operatorID && l.Target.PortID == portID {
 			return URI(exec).With("operators", l.Source.OperatorID, "ports", l.Source.PortID).String()
 		}
 	}
 	return ""
+}
+
+// ranWorkflow is the content of the workflow version an execution ran; nil when it cannot be read.
+func (s *Service) ranWorkflow(ctx context.Context, exec *store.Resource) *api.WorkflowSpec {
+	var spec api.ExecutionSpec
+	_ = json.Unmarshal(exec.Spec, &spec)
+	ref, err := uri.Parse(string(spec.Workflow))
+	if err != nil {
+		return nil
+	}
+	wfRID, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return nil
+	}
+	v, err := s.Store.GetVersion(ctx, wfRID, ref.Vno)
+	if err != nil {
+		return nil
+	}
+	var wf api.WorkflowSpec
+	if json.Unmarshal(v.Content, &wf) != nil {
+		return nil
+	}
+	return &wf
 }
 
 // Rows reads a page of an output port's result from the unit.

@@ -181,6 +181,17 @@ export const zGraphCall = z.object({
 });
 
 /**
+ * What an arrow joins inside the versions at its ends. A part is named by its path in its version, as a texera:// name goes on after the version.
+ */
+export const zGraphPart = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+    operatorType: z.string().optional(),
+    displayName: z.string().optional(),
+    executed: z.boolean()
+});
+
+/**
  * What a resource on the graph stands for: data, a model, a workflow, or a function a workflow calls (a custom operator).
  */
 export const zGraphRole = z.enum([
@@ -727,13 +738,18 @@ export const zExecutionPort = z.object({
 });
 
 /**
- * An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.
+ * An arrow between two versions, with the parts it joins. `reads` and `uses`: a dataset, model or function version to the workflow version whose operators name it. `keeps`: an execution to the dataset version that keeps one of its results.
  */
 export const zGraphEdge = z.object({
     from: zUri,
     to: zUri,
-    relation: z.enum(['reads', 'uses']),
-    executed: z.boolean()
+    relation: z.enum([
+        'reads',
+        'uses',
+        'keeps'
+    ]),
+    executed: z.boolean(),
+    parts: z.array(zGraphPart)
 });
 
 /**
@@ -911,6 +927,16 @@ export const zExecutionSpec = z.object({
     upTo: z.string().optional(),
     reused: z.array(zReusedResult).optional(),
     skipped: z.array(z.string()).optional()
+});
+
+/**
+ * Where to save a result: a new version of a dataset, whose one new file holds the port's rows as CSV. The result's lineage goes with it: the version derives from the port.
+ */
+export const zSaveResult = z.object({
+    dataset: zUri.optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    path: z.string().optional()
 });
 
 /**
@@ -1174,11 +1200,10 @@ export const zGraphExecution = z.object({
 });
 
 /**
- * A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest.
+ * A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, one that keeps a result, or a workflow's newest.
  */
 export const zGraphVersion = z.object({
     vno: zVno,
-    files: z.array(z.string()).optional(),
     made: z.boolean(),
     executions: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     createdBy: zPid.optional(),
@@ -1281,7 +1306,7 @@ export const zProfileVersion = z.object({
 });
 
 /**
- * A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.
+ * A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, the arrows into each workflow version and those from an execution to the dataset versions that keep its results. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.
  */
 export const zResourceGraph = z.object({
     nodes: z.array(zGraphNode),
@@ -3675,6 +3700,20 @@ export const zWorkflowsReadRowsQuery = z.object({
  * The request has succeeded.
  */
 export const zWorkflowsReadRowsResponse = zRowPage;
+
+export const zWorkflowsSaveResultBody = zSaveResult;
+
+export const zWorkflowsSaveResultPath = z.object({
+    rid: zRid,
+    eid: zRid,
+    operatorID: z.string(),
+    portID: z.string()
+});
+
+/**
+ * The request has succeeded and a new resource has been created as a result.
+ */
+export const zWorkflowsSaveResultResponse = zDatasetVersion;
 
 export const zWorkflowsPauseExecutionPath = z.object({
     rid: zRid,

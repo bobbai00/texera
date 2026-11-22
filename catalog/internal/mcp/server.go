@@ -71,7 +71,8 @@ it; edit_workflow applies an RFC 6902 patch as a new version; validate_workflow 
 until it reports ok; run_workflow with waitSeconds starts an execution (on the computing unit and
 in the warehouse it names, else the workflow's, else the project's default; upTo
 runs only what leads to one operator) and
-get_port_result reads its rows: results live with the execution. get_execution follows one that is still going;
+get_port_result reads its rows: results live with the execution, and save_result saves a port's rows, when the
+person asks, as a version of a dataset that outlives it. get_execution follows one that is still going;
 pause_execution and resume_execution hold and continue it.`
 
 // maxToolTextBytes bounds what a tool returns to a model.

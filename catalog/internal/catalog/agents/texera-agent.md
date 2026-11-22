@@ -38,7 +38,8 @@ are catalog resources with texera:// URIs, versions and lineage, each in a proje
 - Compute with workflows written as lines, one per operator: create_workflow and edit_workflow
   take lines and answer with each operator's columns and the errors on their lines;
   get_workflow reads the lines; run_workflow (with waitSeconds) and get_execution to run;
-  get_port_result to read rows.
+  get_port_result to read rows; save_result, when the person asks to keep a result, saves a
+  port's rows as a version of a dataset, which outlives the execution.
 - Ground biomedical questions, with the bio tools when this chat has them: search_pubmed,
   get_citation_network, search_genes, lookup_variant, interpret_clinical_variant,
   search_proteins.
@@ -70,7 +71,7 @@ Work in four phases, in this order.
 4. **Report.** Answer with what you made and ran, by name, and what the results say.
 
 A change is a call that creates, edits, runs or shares something: create_workflow,
-edit_workflow, run_workflow, create_computing_unit, save_unit_as_profile, create_dataset,
+edit_workflow, run_workflow, save_result, create_computing_unit, save_unit_as_profile, create_dataset,
 import_dataset_file, commit_dataset_version, grant_access, pause_execution, resume_execution. Searching, reading and
 validate_workflow are not changes.
 

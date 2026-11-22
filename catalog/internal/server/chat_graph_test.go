@@ -330,19 +330,10 @@ func nodesSaid(g api.ResourceGraph) []string {
 	return out
 }
 
-// edgesSaid says each edge as "<name>@<vno> <relation> <name>@<vno> executed|named", sorted.
+// edgesSaid says each edge as "<name>@<vno> <relation> <name>@<vno> executed|named", sorted;
+// an execution at an end is said by its name.
 func edgesSaid(g api.ResourceGraph) []string {
-	name := map[string]string{}
-	for _, n := range g.Nodes {
-		name[string(n.Uri)] = n.Name
-		if !n.Readable {
-			name[string(n.Uri)] = "(not shared)"
-		}
-	}
-	at := func(u api.Uri) string {
-		base, vno, _ := strings.Cut(string(u), "@")
-		return name[base] + "@" + vno
-	}
+	at := endsOf(g)
 	var out []string
 	for _, e := range g.Edges {
 		how := "named"
@@ -353,6 +344,27 @@ func edgesSaid(g api.ResourceGraph) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// endsOf says an end of an arrow: a version as "<name>@<vno>", an execution by its name.
+func endsOf(g api.ResourceGraph) func(api.Uri) string {
+	name := map[string]string{}
+	for _, n := range g.Nodes {
+		name[string(n.Uri)] = n.Name
+		if !n.Readable {
+			name[string(n.Uri)] = "(not shared)"
+		}
+	}
+	for _, x := range g.Executions {
+		name[string(x.Uri)] = x.Name
+	}
+	return func(u api.Uri) string {
+		base, vno, versioned := strings.Cut(string(u), "@")
+		if !versioned {
+			return name[base]
+		}
+		return name[base] + "@" + vno
+	}
 }
 
 // nodeNamed is the node of a graph by its name; the zero node when it has none.

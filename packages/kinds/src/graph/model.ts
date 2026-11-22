@@ -1,17 +1,19 @@
 // What a lineage graph draws, read from what the catalog returns: the same beside a chat and on
 // a resource's page. It reads left to right: data, with the models workflows use under it; each
-// workflow; its executions; the results they kept. Zoomed out it draws resources: a box for
-// each, an arrow where a workflow reads or uses one, the results of a workflow's newest
-// execution after it. Zoomed in it draws versions: each box lists the versions of it that took
-// part, an arrow runs from the version read or used to the workflow version that read or used
-// it, and each execution stands off the version it ran, with the results it kept after it. A
-// function a workflow calls is said on the version that calls it. The steps of a version are
-// its canvas, which opens from its row. The latest plan's items stand where what they name will
-// stand. Pure, so it is tested on its own.
+// workflow; its executions; the results they kept; the dataset versions results were saved as.
+// Zoomed out it draws resources: a box for each, an arrow where a workflow reads or uses one, the
+// results of a workflow's newest execution after it. Zoomed in it draws versions: each box lists
+// the versions of it that took part, an arrow runs from the version read or used to the workflow
+// version that read or used it, naming each operator that reads and the file it reads, and each
+// execution stands off the version it ran, with the results it kept after it and an arrow from a
+// result to the version it was saved as. A function a workflow calls is said on the version that
+// calls it. The steps of a version are its canvas, which opens from its row. The latest plan's
+// items stand where what they name will stand. Pure, so it is tested on its own.
 
 import type {
   GraphExecution,
   GraphNode,
+  GraphPart,
   GraphResult,
   GraphUnit,
   GraphVersion,
@@ -53,6 +55,8 @@ export interface RowItem {
   earlier: number;
   /** For a workflow version: the functions it calls. */
   calls: Call[];
+  /** For a version of data or a model: its files the arrows join, in the order they come. */
+  files: string[];
 }
 
 /** An execution of a workflow version; or, beside a chat, the one it will start: one its plan names, or of a workflow it made and has not executed while a unit it made waits. */
@@ -79,6 +83,15 @@ export interface ResultItem {
   title: string;
 }
 
+/** What an arrow joins inside the versions at its ends: a file of one, an operator or a port of the other. */
+export interface PartItem {
+  /** The file of a version of data or a model. */
+  file?: string;
+  /** The operator, as its card on the canvas names it. */
+  operator?: string;
+  executed: boolean;
+}
+
 /** An arrow from a version of data or a model to the workflow version that read or used it. */
 export interface LinkItem {
   key: string;
@@ -88,6 +101,20 @@ export interface LinkItem {
   relation: "reads" | "uses";
   /** An execution of the workflow version read it; else the version only names it. */
   executed: boolean;
+  /** Each operator that reads or uses it, with the file it reads. */
+  parts: PartItem[];
+}
+
+/** An arrow from a result an execution kept to the version of a dataset it was saved as. */
+export interface KeptItem {
+  key: string;
+  /** The execution, and its result; the result is not on the graph once the execution's results expired. */
+  run: string;
+  result?: string;
+  /** The row of the version it was saved as. */
+  to: string;
+  /** The operator the result came out of, and the file it became. */
+  parts: PartItem[];
 }
 
 export interface GraphView {
@@ -100,6 +127,7 @@ export interface GraphView {
   runs: Map<string, RunItem>;
   results: Map<string, ResultItem>;
   links: LinkItem[];
+  kept: KeptItem[];
   /** The functions the workflows call, and the units the executions ran on, by URI. */
   functions: Map<string, GraphNode>;
   units: Map<string, GraphUnit>;
@@ -164,7 +192,7 @@ export function viewOf(graph: ResourceGraph, schemas?: ReadonlyMap<string, Opera
     for (const v of n.versions) {
       const id = rowId(n.uri, v.vno);
       box.rows.push(id);
-      rows.set(id, { id, box: n.uri, vno: v.vno, version: v, runs: [], earlier: 0, calls: [] });
+      rows.set(id, { id, box: n.uri, vno: v.vno, version: v, runs: [], earlier: 0, calls: [], files: [] });
     }
   }
 
@@ -195,13 +223,53 @@ export function viewOf(graph: ResourceGraph, schemas?: ReadonlyMap<string, Opera
   }
 
   const links: LinkItem[] = [];
+  const kept: KeptItem[] = [];
+  // A file a row's arrows join, once, in the order they come.
+  const fileOf = (row: RowItem | undefined, path: string | undefined) => {
+    const file = path?.startsWith("files/") ? path.slice("files/".length) : undefined;
+    if (row && file && !row.files.includes(file)) row.files.push(file);
+    return file;
+  };
+  const partOf = (part: GraphPart, file: string | undefined): PartItem => {
+    const op = part.operatorType
+      ? { operatorType: part.operatorType, ...(part.displayName ? { customDisplayName: part.displayName } : {}) }
+      : undefined;
+    return {
+      ...(file ? { file } : {}),
+      ...(op ? { operator: operatorTitle(op, schemas) } : {}),
+      executed: part.executed,
+    };
+  };
   for (const e of graph.edges) {
     const to = rows.get(e.to);
     if (!to) continue;
+    if (e.relation === "keeps") {
+      const run = runs.get(e.from);
+      if (!run) continue;
+      const port = e.parts.find(p => p.from)?.from;
+      const result = port && results.has(`${e.from}/${port}`) ? `${e.from}/${port}` : undefined;
+      kept.push({
+        key: `${e.from}>${e.to}`,
+        run: run.id,
+        ...(result ? { result } : {}),
+        to: e.to,
+        parts: e.parts.map(p => partOf(p, fileOf(to, p.to))),
+      });
+      continue;
+    }
     const fn = functions.get(boxOfRow(e.from));
     if (fn) to.calls.push({ node: fn, vno: Number(e.from.slice(e.from.lastIndexOf("@") + 1)), executed: e.executed });
-    else if (rows.has(e.from))
-      links.push({ key: `${e.from}>${e.to}`, from: e.from, to: e.to, relation: e.relation, executed: e.executed });
+    else if (rows.has(e.from)) {
+      const from = rows.get(e.from);
+      links.push({
+        key: `${e.from}>${e.to}`,
+        from: e.from,
+        to: e.to,
+        relation: e.relation,
+        executed: e.executed,
+        parts: e.parts.map(p => partOf(p, fileOf(from, p.from))),
+      });
+    }
   }
 
   // The latest plan: each item where what it names will stand.
@@ -278,7 +346,7 @@ export function viewOf(graph: ResourceGraph, schemas?: ReadonlyMap<string, Opera
     const shown = [...(kept?.results ?? []), ...promised];
     if (shown.length) latest.set(w, [...new Set(shown)]);
   }
-  const linked = new Set(links.map(l => boxOfRow(l.from)));
+  const linked = new Set([...links.map(l => boxOfRow(l.from)), ...kept.map(k => boxOfRow(k.to))]);
   const loose = [...data, ...models].filter(id => !linked.has(id));
   return {
     boxes,
@@ -289,6 +357,7 @@ export function viewOf(graph: ResourceGraph, schemas?: ReadonlyMap<string, Opera
     runs,
     results,
     links,
+    kept,
     functions,
     units,
     runsOf,
@@ -330,7 +399,18 @@ export function touching(view: GraphView, id: string): Set<string> {
   const intoRow = (row: string) => {
     for (const l of view.links) if (l.to === row) add(l.from, boxOfRow(l.from));
   };
-  const runAndResults = (run: string) => add(run, ...(view.runs.get(run)?.results ?? []));
+  const runAndResults = (run: string) => {
+    add(run, ...(view.runs.get(run)?.results ?? []));
+    for (const k of view.kept) if (k.run === run) add(k.to, boxOfRow(k.to));
+  };
+  // What a version of data was saved from: the result, its execution and the version that ran.
+  const savedFrom = (rows: (r: string) => boolean) => {
+    for (const k of view.kept)
+      if (rows(k.to)) {
+        const by = view.runs.get(k.run);
+        add(k.result, k.run, by?.work, by?.row);
+      }
+  };
   const workRow = (row: RowItem) => {
     add(row.id, row.box);
     intoRow(row.id);
@@ -347,11 +427,13 @@ export function touching(view: GraphView, id: string): Set<string> {
     add(...(view.latest.get(id) ?? []));
   } else if (box) {
     for (const l of view.links) if (boxOfRow(l.from) === id) add(l.from, l.to, boxOfRow(l.to));
+    savedFrom(r => boxOfRow(r) === id);
   }
   if (row && view.boxes.get(row.box)?.role === "workflow") workRow(row);
   else if (row) {
     add(row.box);
     for (const l of view.links) if (l.from === row.id) add(l.to, boxOfRow(l.to));
+    savedFrom(r => r === row.id);
   }
   if (run) {
     add(run.work, run.row);
@@ -361,6 +443,7 @@ export function touching(view: GraphView, id: string): Set<string> {
   if (result?.run) {
     const by = view.runs.get(result.run);
     add(by?.id, by?.work, by?.row);
+    for (const k of view.kept) if (k.result === id) add(k.to, boxOfRow(k.to));
   }
   if (view.functions.has(id))
     for (const r of view.rows.values()) if (r.calls.some(c => c.node.uri === id)) add(r.id, r.box);
@@ -400,10 +483,12 @@ export function relationsOf(view: GraphView, id: string): { label: string; ids: 
     return out;
   }
   if (box || row) {
+    const rows = new Set(box ? box.rows : [id]);
     add(
-      box?.role === "model" || view.boxes.get(row?.box ?? "")?.role === "model" ? "Used by" : "Read by",
-      to(new Set(box ? box.rows : [id]))
+      "Saved from",
+      view.kept.filter(k => rows.has(k.to)).map(k => k.result ?? k.run)
     );
+    add(box?.role === "model" || view.boxes.get(row?.box ?? "")?.role === "model" ? "Used by" : "Read by", to(rows));
     return out;
   }
   const run = view.runs.get(id);
@@ -411,11 +496,19 @@ export function relationsOf(view: GraphView, id: string): { label: string; ids: 
     add("Of", [run.row ?? run.work]);
     add("Read", run.row ? from(new Set([run.row]), "data") : []);
     add("Made", run.results);
+    add(
+      "Saved as",
+      view.kept.filter(k => k.run === run.id).map(k => k.to)
+    );
     return out;
   }
   const result = view.results.get(id);
   if (result?.run) {
     add("Made by", [result.run]);
+    add(
+      "Saved as",
+      view.kept.filter(k => k.result === id).map(k => k.to)
+    );
     return out;
   }
   if (view.functions.has(id))

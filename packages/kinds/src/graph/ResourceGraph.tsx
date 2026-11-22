@@ -14,7 +14,16 @@ import { conversationsGraphOptions } from "@texera/catalog-client/query";
 import type { ResourceGraph as Graph, GraphSource } from "@texera/catalog-client/types";
 import { Button, cn } from "@texera/ui";
 import { Info, MessageSquare, Minus, Plus, Scan, X } from "lucide-react";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Hold } from "../live/holds";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
@@ -64,7 +73,8 @@ export function useChatGraph(
     refetchInterval: q => (live || q.state.data?.executions.some(x => GOING.has(x.phase)) ? 2_500 : 10_000),
   });
   const graph = query.data;
-  const started = !!graph && (graph.planned.length > 0 || graph.nodes.some(n => n.made) || graph.executions.some(x => x.made));
+  const started =
+    !!graph && (graph.planned.length > 0 || graph.nodes.some(n => n.made) || graph.executions.some(x => x.made));
   const drawn = useMemo(() => (started && graph ? fingerprint(graph) : undefined), [started, graph]);
   const { refetch } = query;
   const refresh = useCallback(() => void refetch(), [refetch]);
@@ -400,7 +410,15 @@ export function ResourceGraph({
   };
   const dim = (id: string) => near && !near.has(id) && "opacity-25";
   const lit = (a: string, b: string) => !!near && near.has(a) && near.has(b);
-  const d: Drawing = { level, view, h: handlers, ...(hover ? { hot: hover } : {}), chat: !!room, ...(root ? { root } : {}), ...(rootRow ? { rootRow } : {}) };
+  const d: Drawing = {
+    level,
+    view,
+    h: handlers,
+    ...(hover ? { hot: hover } : {}),
+    chat: !!room,
+    ...(root ? { root } : {}),
+    ...(rootRow ? { rootRow } : {}),
+  };
   // Zoomed out a workflow shows its newest results; zoomed in each execution, with what it kept.
   const runs = level === "versions" ? [...view.runs.values()] : [];
   const results =
@@ -551,6 +569,18 @@ export function ResourceGraph({
                 })}
               </svg>
             )}
+            {/* What a lit arrow joins: the files and the operators that read them, the result and the file it became. */}
+            {layout?.arrows.map(a =>
+              a.label && lit(a.from, a.to) ? (
+                <span
+                  key={`${a.key}:parts`}
+                  className="pointer-events-none absolute z-10 -translate-x-full -translate-y-full rounded-[0.35em] border bg-background/95 px-[0.4em] py-[0.05em] text-[0.74em] whitespace-nowrap text-foreground shadow-xs"
+                  style={{ left: a.label.x, top: a.label.y }}
+                  data-graph-edge-parts={a.key}>
+                  {a.label.text}
+                </span>
+              ) : null
+            )}
             {view.works.map(id => {
               const box = view.boxes.get(id);
               return box ? (
@@ -563,11 +593,23 @@ export function ResourceGraph({
             {[...view.data, ...view.models].map(id => {
               const box = view.boxes.get(id);
               return box ? (
-                <ResourceCard key={id} box={box} d={d} className={cn("transition-opacity", dim(id))} style={place(id)} />
+                <ResourceCard
+                  key={id}
+                  box={box}
+                  d={d}
+                  className={cn("transition-opacity", dim(id))}
+                  style={place(id)}
+                />
               ) : null;
             })}
             {results.map(r => (
-              <ResultTile key={r.id} item={r} d={d} className={cn("transition-opacity", dim(r.id))} style={place(r.id)} />
+              <ResultTile
+                key={r.id}
+                item={r}
+                d={d}
+                className={cn("transition-opacity", dim(r.id))}
+                style={place(r.id)}
+              />
             ))}
             {layout &&
               [...(held ?? [])].map(([id, hold]) => {
@@ -680,8 +722,14 @@ function Legend() {
       data-graph-legend>
       {row(<span className="h-4 w-12 rounded-full border border-kind-dataset/45 bg-card" />, "Dataset")}
       {row(<span className="h-5 w-12 rounded-md border border-kind-model/45 bg-card" />, "Model")}
-      {row(<span className="h-5 w-12 rounded-md border border-kind-workflow/55 bg-card" />, "Workflow, with the functions it calls")}
-      {row(<span className="h-3 w-12 rounded-sm border bg-muted/70" />, "Zoomed in, a version: a click opens it, a workflow version on its canvas")}
+      {row(
+        <span className="h-5 w-12 rounded-md border border-kind-workflow/55 bg-card" />,
+        "Workflow, with the functions it calls"
+      )}
+      {row(
+        <span className="h-3 w-12 rounded-sm border bg-muted/70" />,
+        "Zoomed in, a version: a click opens it, a workflow version on its canvas"
+      )}
       {row(
         <span className="h-5 w-12 rounded-md border border-kind-execution/60 bg-kind-execution/10" />,
         "Execution of the version its line comes from, with the unit it ran on"

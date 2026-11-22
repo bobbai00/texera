@@ -16,7 +16,7 @@ func TestTheCatalogServerHoldsEveryTool(t *testing.T) {
 		"commit_dataset_version", "create_computing_unit", "create_dataset", "create_workflow", "edit_workflow", "get_execution",
 		"get_lineage", "get_port_result", "get_resource", "get_version", "get_workflow", "grant_access", "import_dataset_file",
 		"keep_attachment", "list_computing_units", "list_dataset_files", "list_operators", "list_versions",
-		"pause_execution", "project_settings", "read_dataset_file", "resolve_uri", "resume_execution", "run_workflow",
+		"pause_execution", "project_settings", "read_dataset_file", "resolve_uri", "resume_execution", "run_workflow", "save_result",
 		"save_unit_as_profile", "search_principals", "search_resources", "validate_workflow", "whoami",
 	}
 	var got []string

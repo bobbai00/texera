@@ -100,10 +100,11 @@ func (s *Store) queryEdges(ctx context.Context, match, uri string, relations []s
 }
 
 // Dependents returns the live resources whose versions reference the resource (or one
-// version of it when vno > 0).
+// version of it when vno > 0), or derive from it: a dataset version that keeps a result of an
+// execution depends on the execution.
 func (s *Store) Dependents(ctx context.Context, rid uuid.UUID, vno int) ([]Edge, error) {
 	sql := `SELECT ` + edgeColumns + ` FROM edge e JOIN resource r ON r.rid = e.from_rid
-		WHERE e.relation = 'references' AND e.to_rid = $1 AND r.deleted_at IS NULL`
+		WHERE e.relation IN ('references', 'derivedFrom') AND e.to_rid = $1 AND r.deleted_at IS NULL`
 	args := []any{rid}
 	if vno > 0 {
 		args = append(args, "%@"+strconv.Itoa(vno), "%@"+strconv.Itoa(vno)+"/%")

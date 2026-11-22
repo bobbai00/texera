@@ -1,4 +1,4 @@
-import type { GraphExecution, GraphNode, GraphVersion, ResourceGraph } from "@texera/catalog-client/types";
+import type { GraphExecution, GraphNode, GraphPart, GraphVersion, ResourceGraph } from "@texera/catalog-client/types";
 import type { OperatorSchema } from "@texera/workflow-model";
 import { describe, expect, it } from "vitest";
 import {
@@ -25,6 +25,13 @@ const E2 = `${W}/executions/99999999-9999-9999-9999-999999999999`;
 const port = (exec: string, op: string) => `${exec}/operators/${op}/ports/output-0`;
 
 const version = (vno: number, extra: Partial<GraphVersion> = {}): GraphVersion => ({ vno, made: false, ...extra });
+/** An operator of a workflow version that reads a file, or uses a version whole. */
+const part = (operator: string, file?: string, operatorType = "CSVFileScan"): GraphPart => ({
+  ...(file ? { from: `files/${file}` } : {}),
+  to: `operators/${operator}`,
+  operatorType,
+  executed: true,
+});
 const node = (
   uri: string,
   role: GraphNode["role"],
@@ -66,8 +73,8 @@ const screening: ResourceGraph = {
       made: true,
       turn: "t1",
     }),
-    node(D, "data", [version(1, { files: ["pima.csv"] })], { name: "Pima cohort" }),
-    node(L, "data", [version(1, { files: ["labs.csv"] })], { name: "Labs" }),
+    node(D, "data", [version(1)], { name: "Pima cohort" }),
+    node(L, "data", [version(1)], { name: "Labs" }),
     node(M, "model", [version(1)], { name: "Risk model" }),
     node(F, "function", [version(1)], { name: "Odds ratio" }),
   ],
@@ -84,11 +91,11 @@ const screening: ResourceGraph = {
     { uri: port(E1, "lows"), execution: E1, operator: "lows", operatorType: "Filter", rows: 12 },
   ],
   edges: [
-    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true },
-    { from: `${D}@1`, to: `${W}@2`, relation: "reads", executed: true },
-    { from: `${L}@1`, to: `${W}@2`, relation: "reads", executed: true },
-    { from: `${M}@1`, to: `${W}@2`, relation: "uses", executed: true },
-    { from: `${F}@1`, to: `${W}@2`, relation: "uses", executed: true },
+    { from: `${D}@1`, to: `${W}@1`, relation: "reads", executed: true, parts: [part("cohort", "pima.csv")] },
+    { from: `${D}@1`, to: `${W}@2`, relation: "reads", executed: true, parts: [part("cohort", "pima.csv")] },
+    { from: `${L}@1`, to: `${W}@2`, relation: "reads", executed: true, parts: [part("labs", "labs.csv")] },
+    { from: `${M}@1`, to: `${W}@2`, relation: "uses", executed: true, parts: [part("risk", undefined, "predict")] },
+    { from: `${F}@1`, to: `${W}@2`, relation: "uses", executed: true, parts: [part("odds", undefined, `${F}@1`)] },
   ],
   planned: [],
   sources: [],
@@ -238,5 +245,64 @@ describe("the view of a lineage graph", () => {
     expect(commentTarget(view, port(E2, "both"))?.uri).toBe(port(E2, "both"));
     expect(commentTarget(view, plannedId({ kind: "workflow", name: "Later", turn: "t2" }))).toBeUndefined();
     expect(rowId(W, 2)).toBe(`${W}@2`);
+  });
+});
+
+describe("what a result was saved as", () => {
+  const S = "texera://datasets/13131313-1313-1313-1313-131313131313";
+  const graph: ResourceGraph = {
+    ...screening,
+    nodes: [...screening.nodes, node(S, "data", [version(1)], { name: "Low readings" })],
+    edges: [
+      ...screening.edges,
+      {
+        from: E1,
+        to: `${S}@1`,
+        relation: "keeps",
+        executed: true,
+        parts: [
+          {
+            from: "operators/lows/ports/output-0",
+            to: "files/lows.csv",
+            operatorType: "Filter",
+            displayName: "Lows",
+            executed: true,
+          },
+        ],
+      },
+    ],
+  };
+
+  it("is an arrow from the result to the version, and the file it became is said on the version's row", () => {
+    const view = viewOf(graph);
+    expect(view.kept).toEqual([
+      {
+        key: `${E1}>${S}@1`,
+        run: E1,
+        result: port(E1, "lows"),
+        to: `${S}@1`,
+        parts: [{ file: "lows.csv", operator: "Lows", executed: true }],
+      },
+    ]);
+    expect(view.rows.get(`${S}@1`)?.files).toEqual(["lows.csv"]);
+    expect(view.loose).not.toContain(S);
+  });
+
+  it("names on each arrow into a workflow version the operator that reads and the file it reads", () => {
+    const view = viewOf(graph);
+    expect(view.rows.get(`${D}@1`)?.files).toEqual(["pima.csv"]);
+    expect(view.links.find(l => l.from === `${L}@1`)?.parts).toEqual([
+      { file: "labs.csv", operator: "CSVFileScan", executed: true },
+    ]);
+  });
+
+  it("is what the result, its execution and the version are to each other", () => {
+    const view = viewOf(graph);
+    expect(relationsOf(view, port(E1, "lows"))).toContainEqual({ label: "Saved as", ids: [`${S}@1`] });
+    expect(relationsOf(view, E1)).toContainEqual({ label: "Saved as", ids: [`${S}@1`] });
+    expect(relationsOf(view, S)).toContainEqual({ label: "Saved from", ids: [port(E1, "lows")] });
+    const near = touching(view, `${S}@1`);
+    expect([E1, port(E1, "lows"), W, `${W}@1`].every(id => near.has(id))).toBe(true);
+    expect(touching(view, E1).has(`${S}@1`)).toBe(true);
   });
 });

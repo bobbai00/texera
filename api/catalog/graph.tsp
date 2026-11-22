@@ -1,9 +1,12 @@
-// The lineage graph a person reads, the same beside a chat and on a resource's page. Its boxes
-// are resources, each with the versions of it that took part. An execution hangs off the
-// version it ran, and the results it kept follow it. An arrow runs from what a workflow version
-// reads or uses to that version: drawn solid once an execution of the version used it, dashed
-// while the version only names it. Where an execution ran is said on it, not drawn. It is the
-// lineage record (lineage.tsp) resolved for a person: names, versions, how each execution went.
+// The lineage graph a person reads, the same beside a chat and on a resource's page. Its nodes
+// are versions, grouped in their resources: a resource stands with the versions of it that took
+// part. An execution hangs off the version it ran, and the results it kept are parts of it. An
+// arrow joins two versions and names the parts it joins: from what a workflow version reads or
+// uses to that version, the operator that names a file; from an execution to the dataset
+// version that keeps one of its results, the port the file came from. An arrow into a
+// workflow version is solid once an execution of the version used what it names, dashed while
+// the version only names it. Where an execution ran is said on it, not drawn. It is the lineage
+// record (lineage.tsp) resolved for a person: names, versions, how each execution went.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -24,11 +27,9 @@ enum GraphRole {
   `function`,
 }
 
-@doc("A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest.")
+@doc("A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, one that keeps a result, or a workflow's newest.")
 model GraphVersion {
   vno: Vno;
-  @doc("For data and a model: the files of the version that were read or named, by path, in the order first named.")
-  files?: string[];
   @doc("Beside a chat: the chat made this version.")
   made: boolean;
   @doc("For a workflow: how many executions of the version the graph knows. It lists the newest of them.")
@@ -110,15 +111,30 @@ model GraphResult {
   rows?: int64;
 }
 
-@doc("An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.")
-model GraphEdge {
-  @doc("A dataset, model or function at a version.")
-  from: Uri;
-  @doc("A workflow at a version.")
-  to: Uri;
-  relation: "reads" | "uses";
-  @doc("An execution of the workflow version ran the operator that names it, or read an earlier execution's rows of that operator instead; false when the version only names it.")
+@doc("What an arrow joins inside the versions at its ends. A part is named by its path in its version, as a texera:// name goes on after the version.")
+model GraphPart {
+  @doc("In `from`: a file of a dataset or model version (`files/<path>`), or an output port of an execution (`operators/<id>/ports/<port>`). Absent where `from` is used whole, as a function or a model is.")
+  from?: string;
+  @doc("In `to`: the operator of the workflow version that names `from` (`operators/<id>`), or the file of the dataset version that keeps a result (`files/<path>`).")
+  to?: string;
+  @doc("The operator at either end, as its version has it: its type and the name a person gave it.")
+  operatorType?: string;
+  displayName?: string;
+  @doc("An execution of the workflow version ran this operator, or read an earlier execution's rows of it instead; false while the version only names `from`. True for a kept result.")
   executed: boolean;
+}
+
+@doc("An arrow between two versions, with the parts it joins. `reads` and `uses`: a dataset, model or function version to the workflow version whose operators name it. `keeps`: an execution to the dataset version that keeps one of its results.")
+model GraphEdge {
+  @doc("A dataset, model or function at a version; for `keeps`, an execution.")
+  from: Uri;
+  @doc("A workflow at a version; for `keeps`, a dataset at a version.")
+  to: Uri;
+  relation: "reads" | "uses" | "keeps";
+  @doc("One of its parts was executed; false while the workflow version only names `from`.")
+  executed: boolean;
+  @doc("The parts it joins, each once, in the order the version has them.")
+  parts: GraphPart[];
 }
 
 @doc("Something the chat's latest plan said it would make that it has not made yet. An earlier plan's items are done or given up.")
@@ -146,7 +162,7 @@ model GraphSource {
   calls: GraphCall[];
 }
 
-@doc("A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.")
+@doc("A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, the arrows into each workflow version and those from an execution to the dataset versions that keep its results. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.")
 model ResourceGraph {
   @doc("Beside a chat, the workflows in the order the chat came to them, so a new one never comes before one drawn.")
   nodes: GraphNode[];

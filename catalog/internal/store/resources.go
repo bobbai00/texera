@@ -534,6 +534,9 @@ type NewVersion struct {
 	Origin       *Origin
 	ExpectedHead *int
 	References   []Edge
+	// Lineage is the runtime arrows recorded with the version in its transaction, such as the
+	// port a kept result derives from; they name the version by the number ExpectedHead implies.
+	Lineage []Edge
 	// ClearStaging drops the staged files of the resource in the same transaction (a commit).
 	ClearStaging bool
 }
@@ -562,6 +565,12 @@ func (s *Store) CreateVersion(ctx context.Context, in NewVersion) (*Version, err
 			if _, err := tx.Exec(ctx, `DELETE FROM dataset_staging WHERE rid = $1`, in.RID); err != nil {
 				return err
 			}
+		}
+		if len(in.Lineage) > 0 && in.ExpectedHead == nil {
+			return errors.New("store: a version's lineage names it by number, so its head must be expected")
+		}
+		if err := insertEdges(ctx, tx, in.Lineage); err != nil {
+			return err
 		}
 		return replaceReferences(ctx, tx, in.References)
 	})

@@ -127,7 +127,7 @@ def test_the_mcp_server(alice, anon, project):
         "commit_dataset_version", "keep_attachment",
         "list_operators", "list_computing_units", "create_computing_unit", "save_unit_as_profile",
         "create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
-        "get_execution", "pause_execution", "resume_execution", "get_port_result", "project_settings"}
+        "get_execution", "pause_execution", "resume_execution", "get_port_result", "save_result", "project_settings"}
     # What a project's work runs with, and where each value comes from.
     _, runs_with = alice.mcp("tools/call", {"name": "project_settings", "arguments": {"rid": project}})
     settings = runs_with["result"]["structuredContent"]

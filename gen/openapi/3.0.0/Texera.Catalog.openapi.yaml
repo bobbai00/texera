@@ -4776,6 +4776,57 @@ paths:
         description: Read a bounded page of rows from an operator's output port in an execution (schema and rows).
         readOnlyHint: true
       x-texera-permission: read
+  /catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save:
+    post:
+      operationId: Workflows_saveResult
+      description: "Save an output port's rows as a version of a dataset: a result is dropped with its execution or by the retention policy, a saved one stays. The execution must have completed; from then on it is not deleted while the version derives from it."
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: operatorID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: portID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveResult'
+      x-mcp:
+        tool: save_result
+        description: "Save the rows of an operator's output port in a completed execution as a new version of a dataset (one CSV file), when the person asks to save or keep a result: name a dataset they may write to add the version to, or give a name and a description for a new dataset of the project. The version's lineage says which execution and port it came from."
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+      x-texera-permission: read
   /catalog/v1/workflows/{rid}/executions/{eid}/pause:
     post:
       operationId: Workflows_pauseExecution
@@ -6596,24 +6647,31 @@ components:
         - to
         - relation
         - executed
+        - parts
       properties:
         from:
           allOf:
             - $ref: '#/components/schemas/Uri'
-          description: A dataset, model or function at a version.
+          description: A dataset, model or function at a version; for `keeps`, an execution.
         to:
           allOf:
             - $ref: '#/components/schemas/Uri'
-          description: A workflow at a version.
+          description: A workflow at a version; for `keeps`, a dataset at a version.
         relation:
           type: string
           enum:
             - reads
             - uses
+            - keeps
         executed:
           type: boolean
-          description: An execution of the workflow version ran the operator that names it, or read an earlier execution's rows of that operator instead; false when the version only names it.
-      description: 'An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.'
+          description: One of its parts was executed; false while the workflow version only names `from`.
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphPart'
+          description: The parts it joins, each once, in the order the version has them.
+      description: 'An arrow between two versions, with the parts it joins. `reads` and `uses`: a dataset, model or function version to the workflow version whose operators name it. `keeps`: an execution to the dataset version that keeps one of its results.'
     GraphExecution:
       type: object
       required:
@@ -6714,6 +6772,26 @@ components:
           type: string
           description: 'Beside a chat: the turn that made it.'
       description: A resource on the graph, with the versions of it that took part, the newest first.
+    GraphPart:
+      type: object
+      required:
+        - executed
+      properties:
+        from:
+          type: string
+          description: 'In `from`: a file of a dataset or model version (`files/<path>`), or an output port of an execution (`operators/<id>/ports/<port>`). Absent where `from` is used whole, as a function or a model is.'
+        to:
+          type: string
+          description: 'In `to`: the operator of the workflow version that names `from` (`operators/<id>`), or the file of the dataset version that keeps a result (`files/<path>`).'
+        operatorType:
+          type: string
+          description: 'The operator at either end, as its version has it: its type and the name a person gave it.'
+        displayName:
+          type: string
+        executed:
+          type: boolean
+          description: An execution of the workflow version ran this operator, or read an earlier execution's rows of it instead; false while the version only names `from`. True for a kept result.
+      description: What an arrow joins inside the versions at its ends. A part is named by its path in its version, as a texera:// name goes on after the version.
     GraphResult:
       type: object
       required:
@@ -6795,11 +6873,6 @@ components:
       properties:
         vno:
           $ref: '#/components/schemas/Vno'
-        files:
-          type: array
-          items:
-            type: string
-          description: 'For data and a model: the files of the version that were read or named, by path, in the order first named.'
         made:
           type: boolean
           description: 'Beside a chat: the chat made this version.'
@@ -6813,7 +6886,7 @@ components:
           description: Who made the version, and the chat turn when an agent made it for them; absent for a resource the caller may not read.
         origin:
           $ref: '#/components/schemas/Origin'
-      description: "A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest."
+      description: "A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, one that keeps a result, or a workflow's newest."
     ImportFile:
       type: object
       required:
@@ -8261,7 +8334,7 @@ components:
           items:
             $ref: '#/components/schemas/GraphUnit'
           description: 'Beside a chat: the computing units it made that no execution on the graph ran on yet, which its next execution will likely run on.'
-      description: "A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it."
+      description: "A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, the arrows into each workflow version and those from an execution to the dataset versions that keep its results. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it."
     ResourceKind:
       type: string
       enum:
@@ -8451,6 +8524,23 @@ components:
         resources:
           type: object
           additionalProperties: {}
+    SaveResult:
+      type: object
+      properties:
+        dataset:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The dataset to add the version to, which the caller may write; absent, a new dataset of the execution's project.
+        name:
+          type: string
+          description: A new dataset's name; absent, the operator's name and the execution's.
+        description:
+          type: string
+          description: "A new dataset's description: what it holds and where it comes from."
+        path:
+          type: string
+          description: The file's path in the version; absent, the operator's ID with `.csv`. A file of the head version at the same path is replaced.
+      description: "Where to save a result: a new version of a dataset, whose one new file holds the port's rows as CSV. The result's lineage goes with it: the version derives from the port."
     SaveUnitAsProfile:
       type: object
       properties:

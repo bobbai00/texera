@@ -143,6 +143,8 @@ export function describeChange(toolName: string, input: unknown): string {
     }
     case "run_workflow":
       return text(a.computingUnit) ? `Run the workflow on ${text(a.computingUnit)}` : "Run the workflow";
+    case "save_result":
+      return name ? `Save the result as the dataset "${name}"` : "Save the result as a version of a dataset";
     case "create_computing_unit":
       return `Start a computing unit${name ? ` "${name}"` : ""}${text(a.profile) ? ` from the profile ${text(a.profile)}` : ""}`;
     case "save_unit_as_profile":

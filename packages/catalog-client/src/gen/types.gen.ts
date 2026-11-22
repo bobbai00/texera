@@ -1062,22 +1062,26 @@ export type GraphCall = {
 };
 
 /**
- * An arrow: a dataset, model or function at a version, to the workflow version that reads or uses it.
+ * An arrow between two versions, with the parts it joins. `reads` and `uses`: a dataset, model or function version to the workflow version whose operators name it. `keeps`: an execution to the dataset version that keeps one of its results.
  */
 export type GraphEdge = {
     /**
-     * A dataset, model or function at a version.
+     * A dataset, model or function at a version; for `keeps`, an execution.
      */
     from: Uri;
     /**
-     * A workflow at a version.
+     * A workflow at a version; for `keeps`, a dataset at a version.
      */
     to: Uri;
-    relation: 'reads' | 'uses';
+    relation: 'reads' | 'uses' | 'keeps';
     /**
-     * An execution of the workflow version ran the operator that names it, or read an earlier execution's rows of that operator instead; false when the version only names it.
+     * One of its parts was executed; false while the workflow version only names `from`.
      */
     executed: boolean;
+    /**
+     * The parts it joins, each once, in the order the version has them.
+     */
+    parts: Array<GraphPart>;
 };
 
 /**
@@ -1159,6 +1163,29 @@ export type GraphNode = {
 };
 
 /**
+ * What an arrow joins inside the versions at its ends. A part is named by its path in its version, as a texera:// name goes on after the version.
+ */
+export type GraphPart = {
+    /**
+     * In `from`: a file of a dataset or model version (`files/<path>`), or an output port of an execution (`operators/<id>/ports/<port>`). Absent where `from` is used whole, as a function or a model is.
+     */
+    from?: string;
+    /**
+     * In `to`: the operator of the workflow version that names `from` (`operators/<id>`), or the file of the dataset version that keeps a result (`files/<path>`).
+     */
+    to?: string;
+    /**
+     * The operator at either end, as its version has it: its type and the name a person gave it.
+     */
+    operatorType?: string;
+    displayName?: string;
+    /**
+     * An execution of the workflow version ran this operator, or read an earlier execution's rows of it instead; false while the version only names `from`. True for a kept result.
+     */
+    executed: boolean;
+};
+
+/**
  * What an execution kept of one operator's output, and shows.
  */
 export type GraphResult = {
@@ -1215,14 +1242,10 @@ export type GraphUnit = {
 };
 
 /**
- * A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, or a workflow's newest.
+ * A version of a resource on the graph: one an execution ran or read, one a workflow version on the graph names, one that keeps a result, or a workflow's newest.
  */
 export type GraphVersion = {
     vno: Vno;
-    /**
-     * For data and a model: the files of the version that were read or named, by path, in the order first named.
-     */
-    files?: Array<string>;
     /**
      * Beside a chat: the chat made this version.
      */
@@ -2195,7 +2218,7 @@ export type Resource = {
 };
 
 /**
- * A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, and the arrows into each workflow version. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.
+ * A lineage graph: its resources with the versions that took part, the executions of those versions with the results they kept, the arrows into each workflow version and those from an execution to the dataset versions that keep its results. Beside a chat, what the chat read, made and ran; on a resource's page, what the resource came from and what came of it.
  */
 export type ResourceGraph = {
     /**
@@ -2356,6 +2379,28 @@ export type RuntimeSpec = {
     resources?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * Where to save a result: a new version of a dataset, whose one new file holds the port's rows as CSV. The result's lineage goes with it: the version derives from the port.
+ */
+export type SaveResult = {
+    /**
+     * The dataset to add the version to, which the caller may write; absent, a new dataset of the execution's project.
+     */
+    dataset?: Uri;
+    /**
+     * A new dataset's name; absent, the operator's name and the execution's.
+     */
+    name?: string;
+    /**
+     * A new dataset's description: what it holds and where it comes from.
+     */
+    description?: string;
+    /**
+     * The file's path in the version; absent, the operator's ID with `.csv`. A file of the head version at the same path is replaced.
+     */
+    path?: string;
 };
 
 /**
@@ -7382,6 +7427,36 @@ export type WorkflowsReadRowsResponses = {
 };
 
 export type WorkflowsReadRowsResponse = WorkflowsReadRowsResponses[keyof WorkflowsReadRowsResponses];
+
+export type WorkflowsSaveResultData = {
+    body: SaveResult;
+    path: {
+        rid: Rid;
+        eid: Rid;
+        operatorID: string;
+        portID: string;
+    };
+    query?: never;
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save';
+};
+
+export type WorkflowsSaveResultErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WorkflowsSaveResultError = WorkflowsSaveResultErrors[keyof WorkflowsSaveResultErrors];
+
+export type WorkflowsSaveResultResponses = {
+    /**
+     * The request has succeeded and a new resource has been created as a result.
+     */
+    201: DatasetVersion;
+};
+
+export type WorkflowsSaveResultResponse = WorkflowsSaveResultResponses[keyof WorkflowsSaveResultResponses];
 
 export type WorkflowsPauseExecutionData = {
     body?: never;

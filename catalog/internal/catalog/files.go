@@ -52,6 +52,20 @@ func (s *Service) Upload(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	if err != nil {
 		return nil, err
 	}
+	file, err := s.putFile(ctx, path, body, contentType)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Store.Stage(ctx, store.StagedFile{RID: rid, Path: path, SHA256: string(file.Sha256), Size: file.Size, ContentType: file.ContentType}); err != nil {
+		return nil, err
+	}
+	s.refreshFileStatus(ctx, r)
+	return file, nil
+}
+
+// putFile stores a file's bytes in the blob store, once by their digest, and says what a
+// version's manifest records of it at the path given.
+func (s *Service) putFile(ctx context.Context, path string, body io.Reader, contentType string) (*api.DatasetFile, error) {
 	tmp, err := os.CreateTemp("", "texera-upload-*")
 	if err != nil {
 		return nil, err
@@ -76,10 +90,6 @@ func (s *Service) Upload(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	if _, err := s.Store.EnsureBlob(ctx, store.Blob{SHA256: digest, Size: size, ContentType: &contentType}); err != nil {
 		return nil, err
 	}
-	if err := s.Store.Stage(ctx, store.StagedFile{RID: rid, Path: path, SHA256: digest, Size: size, ContentType: &contentType}); err != nil {
-		return nil, err
-	}
-	s.refreshFileStatus(ctx, r)
 	return &api.DatasetFile{Path: path, Size: size, Sha256: api.Digest(digest), ContentType: &contentType}, nil
 }
 
@@ -165,20 +175,52 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	if len(staged) == 0 && contract == nil {
 		return nil, nil, Conflict("nothing_staged", "upload files before committing", nil)
 	}
+	// What a model version reads and puts out: as committed, else as a contract.json uploaded
+	// with it says, else as the head said.
+	if k.Name == "model" && contract == nil {
+		if contract, err = s.stagedContract(ctx, staged); err != nil {
+			return nil, nil, Invalid(contractFile+": "+err.Error(), map[string]any{"field": "contract"})
+		}
+	}
+	files := make([]api.DatasetFile, 0, len(staged))
+	for _, f := range staged {
+		files = append(files, api.DatasetFile{Path: f.Path, Size: f.Size, Sha256: api.Digest(f.SHA256), ContentType: f.ContentType})
+	}
+	return s.filesVersion(ctx, caller, k, r, nextFiles{files: files, message: message, contract: contract, staged: true})
+}
+
+// nextFiles is what the next version of a dataset or model is made of, beside its head's files.
+type nextFiles struct {
+	// The files over the head's, by path.
+	files   []api.DatasetFile
+	message *string
+	// For a model: what the version reads and puts out; nil keeps the head's.
+	contract *api.ModelContract
+	// The files are those staged: the version empties the staging area.
+	staged bool
+	// The runtime arrows the version is recorded with, given its number.
+	lineage func(vno int) []store.Edge
+}
+
+// filesVersion makes the next version of a dataset or model, whose writing the caller was
+// allowed: the head version's files with the given ones over them. It is made on the head it
+// was read from, so a version made meanwhile is never overwritten without its files.
+func (s *Service) filesVersion(ctx context.Context, caller *auth.Caller, k kinds.Kind, r *store.Resource, next nextFiles) (*store.Resource, *store.Version, error) {
 	files := map[string]api.DatasetFile{}
 	var headContract *api.ModelContract
-	if r.HeadVno > 0 {
-		if head, err := s.Store.GetVersion(ctx, rid, 0); err == nil {
+	head := r.HeadVno
+	if head > 0 {
+		if v, err := s.Store.GetVersion(ctx, r.RID, head); err == nil {
 			var m api.Manifest
-			_ = json.Unmarshal(head.Content, &m)
+			_ = json.Unmarshal(v.Content, &m)
 			for _, f := range m.Files {
 				files[f.Path] = f
 			}
 			headContract = m.Contract
 		}
 	}
-	for _, f := range staged {
-		files[f.Path] = api.DatasetFile{Path: f.Path, Size: f.Size, Sha256: api.Digest(f.SHA256), ContentType: f.ContentType}
+	for _, f := range next.files {
+		files[f.Path] = f
 	}
 	manifest := api.Manifest{Files: make([]api.DatasetFile, 0, len(files))}
 	for _, f := range files {
@@ -186,13 +228,7 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	}
 	sortFiles(manifest.Files)
 	if k.Name == "model" {
-		// What the version reads and puts out: as committed, else as a contract.json uploaded
-		// with it says, else as the head said.
-		if contract == nil {
-			if contract, err = s.stagedContract(ctx, staged); err != nil {
-				return nil, nil, Invalid(contractFile+": "+err.Error(), map[string]any{"field": "contract"})
-			}
-		}
+		contract := next.contract
 		if contract == nil {
 			contract = headContract
 		}
@@ -203,11 +239,18 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 			manifest.Contract = contract
 		}
 	}
-	v, err := s.Store.CreateVersion(ctx, store.NewVersion{RID: rid, ContentKind: "manifest", Content: mustJSON(manifest), Message: message, CreatedByPID: caller.PID(), Origin: caller.Origin, ClearStaging: true})
+	var lineage []store.Edge
+	if next.lineage != nil {
+		lineage = next.lineage(head + 1)
+	}
+	v, err := s.Store.CreateVersion(ctx, store.NewVersion{
+		RID: r.RID, ContentKind: "manifest", Content: mustJSON(manifest), Message: next.message, CreatedByPID: caller.PID(), Origin: caller.Origin,
+		ExpectedHead: &head, Lineage: lineage, ClearStaging: next.staged,
+	})
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)
 	}
-	r, _ = s.Store.GetResource(ctx, rid)
+	r, _ = s.Store.GetResource(ctx, r.RID)
 	s.refreshFileStatus(ctx, r)
 	return r, v, nil
 }
