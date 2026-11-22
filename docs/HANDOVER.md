@@ -1,6 +1,6 @@
 # Self-contained Amber engine: handover
 
-State on 2026-11-19. Nothing is merged upstream or opened as a pull request. All of the work is
+State on 2026-11-22. Nothing is merged upstream or opened as a pull request. All of the work is
 on branches of the fork `github.com/bobbai00/texera`, which is public (section 2). The handover
 of 2026-11-17 as a page: https://claude.ai/artifact/1uo7RCdbfrnUpTVFLzvhwG (private to its owner).
 
@@ -58,7 +58,7 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 | Branch | Where | Commit | What it holds |
 |---|---|---|---|
-| `feat/self-contained-engine` | Fork | `852329c0f` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782`, which holds `9abfc1e34` (the plan through the client) and `3334c89eb` (upstream main merged, with its result service) on top, not yet pushed |
+| `feat/self-contained-engine` | Fork | `3334c89eb` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782` |
 | `sce-e2e-harness` | Fork | see `git log` | The harness, the designs and reviews under `docs/`, and this file |
 | `feat/sce-step2-lane` | Fork | `c5511fab0` | The plan-shape batch, merged into the main branch |
 | `spike/sce-step0-proofs` | Fork | `ff4729363` | Step 0's proof scripts and results (`proofs/step0/*/RESULTS.md`) |
@@ -331,10 +331,10 @@ The first machine (2026-11-17):
   `sce/texera-*:step3p5`; Docker volumes `sce_*` and `e2e-localdev_*`; the test Postgres container
   `texera-tripwire-pg` on 127.0.0.1:5432.
 
-The Mac (2026-11-18):
+The Mac (2026-11-19):
 - The main branch is the session worktree `texera/.claude/worktrees/texera-upgrade-pr-e1b94a`.
-- Left running: the Compose project `sce` (http://localhost:38080) and the build's Postgres
-  container `sce-build-pg` on 127.0.0.1:35432. Both are this work's own; stop them with
-  `./sce-stack.sh down` and `docker rm -f sce-build-pg`.
-- Test images `sce/texera-*:sce1` to the newest; volumes `sce_*`.
+- Left running: the Compose project `sce` (http://localhost:38080, on the final tree's images
+  `sce/texera-*:sceC`) and the build's Postgres container `sce-build-pg` on 127.0.0.1:35432. Both
+  are this work's own; stop them with `./sce-stack.sh down` and `docker rm -f sce-build-pg`.
+- Test images `sce/texera-*:sce1` to `sceC`; volumes `sce_*`.
 - No other stack on the Mac was touched.
