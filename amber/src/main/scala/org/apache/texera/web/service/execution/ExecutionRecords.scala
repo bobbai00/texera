@@ -27,12 +27,14 @@ import org.apache.texera.amber.core.storage.{
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.auth.util.WorkflowAccess
 import org.apache.texera.dao.jooq.generated.Tables.{
+  OPERATOR_PORT_EXECUTIONS,
   USER_WAREHOUSE,
   WORKFLOW_COMPUTING_UNIT,
   WORKFLOW_EXECUTIONS,
   WORKFLOW_VERSION
 }
 import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTerminationReasonEnum
+import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.{SqlServer, WorkflowExecutionStatus}
 import org.jooq.impl.{DSL, SQLDataType}
 import org.jooq.{Condition, DSLContext, Field, OrderField, Record}
@@ -290,9 +292,11 @@ object ExecutionRecords {
   }
 
   /**
-    * Marks the results of execution `eid` expired as of `atMs`, and records what its tables
-    * still hold, unless it is open or its results are marked expired already. From then on its
-    * verdict is no longer replaced by an ending its log shows later ([[revise]]).
+    * Marks the results of execution `eid` expired as of `atMs`, records what its tables still
+    * hold, and deletes the rows of its result tables (`operator_port_executions`), so the result
+    * service lists none of them, in one transaction, unless it is open or its results are marked
+    * expired already. From then on its verdict is no longer replaced by an ending its log shows
+    * later ([[revise]]).
     *
     * The row is read again by the UPDATE itself: with `pastAge`, it is marked only if its
     * results are still past that age, which a verdict replaced in the meantime may not be.
@@ -305,12 +309,23 @@ object ExecutionRecords {
       storedBytes: Long,
       pastAge: Option[PastAge] = None
   ): Boolean =
-    context
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, timeOf(atMs))
-      .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(storedBytes))
-      .where(rowOf(eid).and(holdsResults(pastAge)))
-      .execute() == 1
+    withTransaction(context) { transaction =>
+      val marked = transaction
+        .update(WORKFLOW_EXECUTIONS)
+        .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, timeOf(atMs))
+        .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(storedBytes))
+        .where(rowOf(eid).and(holdsResults(pastAge)))
+        .execute() == 1
+      if (marked) {
+        transaction
+          .deleteFrom(OPERATOR_PORT_EXECUTIONS)
+          .where(
+            OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(Math.toIntExact(eid)))
+          )
+          .execute()
+      }
+      marked
+    }
 
   /** Stops naming the replay log of execution `eid`, once that log is gone. */
   def forgetReplayLog(eid: Long): Unit =

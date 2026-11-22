@@ -26,7 +26,6 @@ import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionLogStore,
-  ExecutionTables,
   IcebergCatalogInstance
 }
 import org.apache.texera.amber.core.storage.model.VirtualDocument
@@ -321,18 +320,19 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   ) {
 
     /**
-      * The rows the run stored as the result of operator `operatorId`, found by the names of the
-      * execution's tables, as the Dashboard finds them.
+      * The rows the run stored as the result of operator `operatorId`, in the table its plan names
+      * for the operator's first port: the table the Dashboard records for it.
       */
     def resultOf(operatorId: String): List[Tuple] = {
-      val plan = PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(execution.plan)).context
-      val uri = ExecutionTables
-        .resultTableAmong(
-          ExecutionTables.portTables(plan.workflowId, plan.executionId, plan.warehouse),
-          OperatorIdentity(operatorId),
-          PortIdentity()
+      val uri = PhysicalPlanCodec
+        .decode(PhysicalPlanCodec.fromJson(execution.plan))
+        .resultTables
+        .find(table =>
+          table.port.opId.logicalOpId == OperatorIdentity(operatorId) &&
+            table.port.portId == PortIdentity()
         )
-        .getOrElse(fail(s"the run stored no result of operator $operatorId"))
+        .map(_.uri)
+        .getOrElse(fail(s"the plan keeps no result of operator $operatorId"))
       DocumentFactory
         .openDocument(uri)
         ._1

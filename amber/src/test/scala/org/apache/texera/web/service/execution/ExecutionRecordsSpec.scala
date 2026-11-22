@@ -20,6 +20,7 @@
 package org.apache.texera.web.service.execution
 
 import org.apache.texera.dao.jooq.generated.Tables.{
+  OPERATOR_PORT_EXECUTIONS,
   USER_WAREHOUSE,
   WORKFLOW,
   WORKFLOW_EXECUTIONS,
@@ -717,15 +718,36 @@ class ExecutionRecordsSpec
       .where(WORKFLOW_EXECUTIONS.EID.eq(Integer.valueOf(eid.toInt)))
       .execute()
 
+  /** Records a result table of execution `eid`, as the Dashboard does when it creates one. */
+  private def recordResultRow(eid: Long, port: String = "op-port"): Unit =
+    getDSLContext
+      .insertInto(OPERATOR_PORT_EXECUTIONS)
+      .set(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid.toInt))
+      .set(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID, port)
+      .set(OPERATOR_PORT_EXECUTIONS.RESULT_URI, s"vfs:///wid/1/eid/$eid/$port/result")
+      .execute()
+
+  private def resultRowsOf(eid: Long): Int =
+    getDSLContext.fetchCount(
+      OPERATOR_PORT_EXECUTIONS,
+      OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(eid.toInt))
+    )
+
   "ExecutionRecords.expire" should "mark the results expired as of a time, to the millisecond, and record what the tables still hold" in {
     val eid = closedAt(createdAtMs + 5000L)
     ExecutionRecords.setStoredBytes(eid, 4096L)
+    Seq("one-port", "another-port").foreach(recordResultRow(eid, _))
+    val other = closedAt(createdAtMs + 5000L)
+    recordResultRow(other)
 
     val statements = recorder.record {
       ExecutionRecords.expire(eid, createdAtMs + 9123L, 512L) shouldBe true
     }
 
-    statements.map(_.verb) shouldBe Seq("UPDATE")
+    // The mark, then the rows of its result tables: the result service lists none of them.
+    statements.map(_.verb) shouldBe Seq("UPDATE", "DELETE")
+    resultRowsOf(eid) shouldBe 0
+    resultRowsOf(other) shouldBe 1
     row(eid).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 9123L)
     row(eid).getStoredBytes shouldBe 512L
     // How it ended stays as it was.
@@ -735,8 +757,11 @@ class ExecutionRecordsSpec
   it should "mark an execution once: a second call changes nothing" in {
     val eid = closedAt(createdAtMs + 5000L)
     ExecutionRecords.expire(eid, createdAtMs + 9000L, 512L) shouldBe true
+    recordResultRow(eid)
 
     ExecutionRecords.expire(eid, createdAtMs + 9999L, 7L) shouldBe false
+
+    resultRowsOf(eid) shouldBe 1
 
     row(eid).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 9000L)
     row(eid).getStoredBytes shouldBe 512L
@@ -745,6 +770,7 @@ class ExecutionRecordsSpec
   it should "leave an open execution, one whose create failed, and an id that names none" in {
     val open = insertExecution()
     val unstartable = unstartableAt(createdAtMs + 5000L)
+    recordResultRow(open)
 
     ExecutionRecords.expire(open, createdAtMs + 9000L, 1L) shouldBe false
     ExecutionRecords.expire(unstartable, createdAtMs + 9000L, 1L) shouldBe
@@ -753,6 +779,7 @@ class ExecutionRecordsSpec
 
     row(open).getResultsExpiredAt shouldBe null
     row(open).getStoredBytes shouldBe null
+    resultRowsOf(open) shouldBe 1
     row(unstartable).getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 5000L)
     row(unstartable).getStoredBytes shouldBe 0L
   }

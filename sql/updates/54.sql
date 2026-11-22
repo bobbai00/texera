@@ -29,9 +29,10 @@ BEGIN;
 
 -- A computing unit keeps a run's state, statistics, console and results in the lake, and sends
 -- Postgres nothing. So what it used to write here goes: the state of a run and where its
--- statistics are, on the execution's row, and the two tables that registered where its console
--- and its results are, with their sizes and counts. How an execution ended is its closing
--- record, which sql/updates/53.sql added and filled from `status` and `last_update_time`.
+-- statistics are, on the execution's row, and the table that registered where its console was.
+-- How an execution ended is its closing record, which sql/updates/53.sql added and filled from
+-- `status` and `last_update_time`. operator_port_executions stays: the Dashboard service now
+-- writes its rows, when it creates an execution.
 --
 -- Everything is dropped only if it is there, so this changes nothing on a database made from
 -- a texera_ddl.sql that no longer has them. Each column is listed with what it was.
@@ -44,10 +45,5 @@ ALTER TABLE texera_db.workflow_executions
 
 -- Where an execution's console tables were, and how large.
 DROP TABLE IF EXISTS texera_db.operator_executions;
--- Where the result of each output port was, with its size, its row count and its output mode.
-DROP TABLE IF EXISTS texera_db.operator_port_executions;
-
--- The output mode of a result, after the table whose column was of it.
-DROP TYPE IF EXISTS texera_db.output_mode_enum;
 
 COMMIT;

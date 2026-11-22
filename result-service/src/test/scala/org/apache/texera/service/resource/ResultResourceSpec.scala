@@ -24,13 +24,11 @@ import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import io.dropwizard.auth.AuthValueFactoryProvider
 import io.dropwizard.jackson.Jackson
 import io.dropwizard.testing.junit5.ResourceExtension
-import jakarta.ws.rs.ServiceUnavailableException
 import jakarta.ws.rs.core.{HttpHeaders, MediaType, Response}
 import org.apache.iceberg.catalog.TableIdentifier
 import org.apache.iceberg.types.Types
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionTables,
   IcebergCatalogInstance,
   LocalHadoopIcebergCatalog,
   VFSURIFactory
@@ -43,20 +41,21 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, JwtAuthFilter, SessionUser, UnauthorizedExceptionMapper}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{USER_WAREHOUSE, WORKFLOW_EXECUTIONS}
+import org.apache.texera.dao.jooq.generated.Tables.{OPERATOR_PORT_EXECUTIONS, WORKFLOW_EXECUTIONS}
 import org.apache.texera.dao.jooq.generated.enums.{
+  OutputModeEnum,
   PrivilegeEnum,
   UserRoleEnum,
-  UserWarehouseFlavorEnum,
   WorkflowComputingUnitTypeEnum
 }
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   ComputingUnitUserAccessDao,
+  OperatorPortExecutionsDao,
   UserDao,
   WorkflowComputingUnitDao,
   WorkflowDao,
@@ -67,6 +66,7 @@ import org.apache.texera.dao.jooq.generated.tables.daos.{
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.{
   ComputingUnitUserAccess,
+  OperatorPortExecutions,
   User,
   Workflow,
   WorkflowComputingUnit,
@@ -82,13 +82,11 @@ import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
 import java.net.URI
 import java.sql.Timestamp
-import java.util.{Locale, UUID}
+import java.util.Locale
 
 /**
   * Sends requests through the Jersey pipeline production uses, against an embedded database and
   * real Iceberg tables in a local Hadoop catalog, the way WorkflowCore's storage specs read them.
-  * An execution's results are the result tables named after it, as a computing unit makes them:
-  * each records its port's output mode.
   */
 class ResultResourceSpec
     extends AnyFlatSpec
@@ -97,6 +95,7 @@ class ResultResourceSpec
     with BeforeAndAfterEach
     with MockTexeraDB {
 
+  // The outcomes an execution is closed with.
   private val Completed: Short = 3
   private val Failed: Short = 4
   private val Killed: Short = 5
@@ -122,7 +121,7 @@ class ResultResourceSpec
     .addProvider(classOf[UnauthorizedExceptionMapper])
     .addProvider(classOf[RolesAllowedDynamicFeature])
     .addProvider(new AuthValueFactoryProvider.Binder(classOf[SessionUser]))
-    .addResource(new ResultResource(warehousesEnabled = true))
+    .addResource(new ResultResource)
     .build()
 
   private def newUser(uid: Int, name: String): User = {
@@ -134,7 +133,7 @@ class ResultResourceSpec
     user
   }
 
-  // Owns the workflow below, the computing unit its runs use, and a warehouse.
+  // Owns the workflow below and the computing unit its runs use.
   private val owner = newUser(1, "owner")
   // Granted the workflow, but not the computing unit.
   private val grantee = newUser(2, "grantee")
@@ -143,16 +142,13 @@ class ResultResourceSpec
   // Shares the owner's computing unit, but not the workflow.
   private val unitSharer = newUser(4, "unit-sharer")
 
-  private val warehouseName = "results-spec-wh"
-
   private var wid: Integer = _
   private var vid: Integer = _
   private var unit: Integer = _
-  private var whid: Integer = _
 
   override protected def beforeAll(): Unit = {
     initializeDBAndReplaceDSLContext()
-    LocalHadoopIcebergCatalog.ensure(warehouseName)
+    LocalHadoopIcebergCatalog.ensure()
     resources.before()
 
     val configuration = getDSLContext.configuration()
@@ -198,15 +194,6 @@ class ResultResourceSpec
     version.setContent("{}")
     new WorkflowVersionDao(configuration).insert(version)
     vid = version.getVid
-
-    val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
-    warehouse.setUid(owner.getUid)
-    warehouse.setName("owner-warehouse")
-    warehouse.setLakekeeperWarehouseName(warehouseName)
-    warehouse.setLakekeeperWarehouseId(UUID.randomUUID())
-    warehouse.setFlavor(UserWarehouseFlavorEnum.local)
-    warehouse.store()
-    whid = warehouse.getWhid
   }
 
   override protected def afterAll(): Unit = {
@@ -214,8 +201,10 @@ class ResultResourceSpec
     shutdownDB()
   }
 
-  override protected def beforeEach(): Unit =
+  override protected def beforeEach(): Unit = {
+    getDSLContext.deleteFrom(OPERATOR_PORT_EXECUTIONS).execute()
     getDSLContext.deleteFrom(WORKFLOW_EXECUTIONS).execute()
+  }
 
   /**
     * An execution of the workflow, on the owner's computing unit unless `on` says otherwise:
@@ -224,14 +213,12 @@ class ResultResourceSpec
   private def insertExecution(
       startedBy: User,
       outcome: Option[Short] = Some(Completed),
-      on: Option[Integer] = Some(unit),
-      warehouse: Option[Integer] = None
+      on: Option[Integer] = Some(unit)
   ): Integer = {
     val execution = new WorkflowExecutions
     execution.setVid(vid)
     execution.setUid(startedBy.getUid)
     execution.setCuid(on.orNull)
-    execution.setWhid(warehouse.orNull)
     execution.setEnvironmentVersion("test")
     outcome.foreach { ended =>
       execution.setOutcome(Short.box(ended))
@@ -239,6 +226,22 @@ class ResultResourceSpec
     }
     new WorkflowExecutionsDao(getDSLContext.configuration()).insert(execution)
     execution.getEid
+  }
+
+  private def insertRow(
+      eid: Integer,
+      port: GlobalPortIdentity,
+      uri: String,
+      mode: OutputModeEnum = OutputModeEnum.SET_SNAPSHOT,
+      count: java.lang.Long = 25L
+  ): Unit = {
+    val row = new OperatorPortExecutions
+    row.setWorkflowExecutionId(eid)
+    row.setGlobalPortId(port.serializeAsString)
+    row.setResultUri(uri)
+    row.setOutputMode(mode)
+    row.setResultCount(count)
+    new OperatorPortExecutionsDao(getDSLContext.configuration()).insert(row)
   }
 
   private def globalPort(
@@ -251,39 +254,42 @@ class ResultResourceSpec
       PortIdentity(port, internal)
     )
 
-  private def portBase(
-      eid: Integer,
-      port: GlobalPortIdentity,
-      warehouse: Option[String] = None
-  ): URI =
-    VFSURIFactory.createPortBaseURI(
-      WorkflowIdentity(wid.longValue()),
-      ExecutionIdentity(eid.longValue()),
-      port,
-      warehouse
+  private def resultUri(eid: Integer, port: GlobalPortIdentity): URI =
+    VFSURIFactory.resultURI(
+      VFSURIFactory.createPortBaseURI(
+        WorkflowIdentity(wid.longValue()),
+        ExecutionIdentity(eid.longValue()),
+        port
+      )
     )
 
-  /**
-    * Stores `data` in a real result table of `eid`, made as a computing unit makes one: with
-    * `mode` recorded, unless it is None.
-    */
+  /** Records a result of `eid` without storing its table, so reading it finds nothing. */
+  private def insertResult(
+      eid: Integer,
+      operatorId: String = "op",
+      port: Int = 0,
+      internal: Boolean = false,
+      mode: OutputModeEnum = OutputModeEnum.SET_SNAPSHOT,
+      count: java.lang.Long = 25L
+  ): URI = {
+    val globalPortId = globalPort(operatorId, port, internal)
+    val uri = resultUri(eid, globalPortId)
+    insertRow(eid, globalPortId, uri.toString, mode, count)
+    uri
+  }
+
+  /** Stores `data` in a real result table of `eid`, and records it. */
   private def storeResult(
       eid: Integer,
       operatorId: String = "op",
       port: Int = 0,
       data: Seq[Tuple] = rows,
-      mode: Option[OutputMode] = Some(OutputMode.SET_SNAPSHOT),
-      internal: Boolean = false,
-      warehouse: Option[String] = None
+      mode: OutputModeEnum = OutputModeEnum.SET_SNAPSHOT
   ): URI = {
-    val uri =
-      VFSURIFactory.resultURI(portBase(eid, globalPort(operatorId, port, internal), warehouse))
-    val document = DocumentFactory.createDocument(
-      uri,
-      schema,
-      mode.map(ExecutionTables.resultTableProperties).getOrElse(Map.empty)
-    )
-    write(document, data, "store")
+    val globalPortId = globalPort(operatorId, port)
+    val uri = resultUri(eid, globalPortId)
+    write(DocumentFactory.createDocument(uri, schema), data, "store")
+    insertRow(eid, globalPortId, uri.toString, mode)
     uri
   }
 
@@ -362,8 +368,9 @@ class ResultResourceSpec
   }
 
   it should "be refused for a user who only has the workflow, granted or public" in {
-    // No table is stored, so a refusal that came after looking for them would be a 404.
     val eid = insertExecution(owner)
+    // No table is stored, so a refusal that came after reading it would be a 404.
+    insertResult(eid)
 
     for (caller <- Seq(grantee, publicViewer); path <- readPaths(eid)) {
       withClue(s"${caller.getName} on $path")(get(caller, path).getStatus shouldBe 403)
@@ -390,6 +397,7 @@ class ResultResourceSpec
 
   it should "be refused without a token" in {
     val eid = insertExecution(owner)
+    insertResult(eid)
 
     (latestExecutionPath +: readPaths(eid)).foreach { path =>
       withClue(path) {
@@ -398,49 +406,41 @@ class ResultResourceSpec
     }
   }
 
-  "GET an execution's results" should "list each with the output mode its table records and its rows" in {
+  "GET an execution's results" should "list its operators from the database alone" in {
     val eid = insertExecution(owner)
-    storeResult(eid, "b", data = rows.take(7))
-    storeResult(eid, "a", port = 1, data = Seq.empty, mode = Some(OutputMode.SET_DELTA))
-    storeResult(eid, "a", mode = Some(OutputMode.SINGLE_SNAPSHOT))
-    storeResult(eid, "made-before-the-modes", data = rows.take(3), mode = None)
+    // None of these tables is stored, so the list cannot have come from reading them.
+    insertResult(eid, "b", count = 7L)
+    insertResult(eid, "a", port = 1, mode = OutputModeEnum.SET_DELTA, count = null)
+    insertResult(eid, "a", mode = OutputModeEnum.SINGLE_SNAPSHOT, count = null)
+    insertResult(eid, "from-before-the-columns", mode = null, count = null)
 
     getJson(owner, resultsPath(eid)) shouldBe mapper.readTree(
       """[
-        |{"operatorId":"a","portIndex":0,"outputMode":"SINGLE_SNAPSHOT","rowCount":25},
-        |{"operatorId":"a","portIndex":1,"outputMode":"SET_DELTA","rowCount":0},
+        |{"operatorId":"a","portIndex":0,"outputMode":"SINGLE_SNAPSHOT","rowCount":null},
+        |{"operatorId":"a","portIndex":1,"outputMode":"SET_DELTA","rowCount":null},
         |{"operatorId":"b","portIndex":0,"outputMode":"SET_SNAPSHOT","rowCount":7},
-        |{"operatorId":"made-before-the-modes","portIndex":0,"outputMode":null,"rowCount":3}
+        |{"operatorId":"from-before-the-columns","portIndex":0,"outputMode":null,"rowCount":null}
         |]""".stripMargin
     )
   }
 
   it should "order an operator's ports by number" in {
     val eid = insertExecution(owner)
-    // As text, which is how the tables' names order them, port 10 comes before port 2.
-    storeResult(eid, port = 10)
-    storeResult(eid, port = 2)
+    // As text, which is how the table's key orders them, port 10 comes before port 2.
+    insertResult(eid, port = 10)
+    insertResult(eid, port = 2)
 
     val results = getJson(owner, resultsPath(eid))
     (0 until results.size).map(results.get(_).get("portIndex").asInt) shouldBe Seq(2, 10)
   }
 
-  it should "leave out internal ports, states, and the tables of another execution" in {
+  it should "leave out internal ports and rows with no stored result" in {
     val eid = insertExecution(owner)
-    val other = insertExecution(owner)
-    storeResult(eid, "internal", internal = true)
-    DocumentFactory.createDocument(VFSURIFactory.stateURI(portBase(eid, globalPort("op"))), schema)
-    storeResult(other)
+    insertResult(eid, "internal", internal = true)
+    insertRow(eid, globalPort("empty-uri"), "")
+    insertRow(eid, globalPort("null-uri"), null)
 
     getJson(owner, resultsPath(eid)).size shouldBe 0
-  }
-
-  it should "read the results of an execution in its warehouse" in {
-    val eid = insertExecution(owner, warehouse = Some(whid))
-    storeResult(eid, warehouse = Some(warehouseName))
-
-    getJson(owner, resultsPath(eid)).get(0).get("rowCount").asLong shouldBe 25
-    getJson(owner, pagesPath(eid)).get("table").size shouldBe 10
   }
 
   "GET a page" should "return the requested rows with the schema and the full row count" in {
@@ -540,23 +540,20 @@ class ResultResourceSpec
     val long = "x" * 150
     val row = Seq(Tuple.builder(schema).addSequentially(Array[Any](0, long, "last-0")).build())
     val visualization = insertExecution(owner)
-    storeResult(visualization, data = row, mode = Some(OutputMode.SINGLE_SNAPSHOT))
+    storeResult(visualization, data = row, mode = OutputModeEnum.SINGLE_SNAPSHOT)
     val table = insertExecution(owner)
     storeResult(table, data = row)
-    // A table that records no output mode is not taken for a visualization.
-    val unrecorded = insertExecution(owner)
-    storeResult(unrecorded, data = row, mode = None)
 
     def firstName(eid: Integer): String =
       getJson(owner, pagesPath(eid)).get("table").get(0).get("first_name").asText
     firstName(visualization) shouldBe long
     firstName(table) shouldBe long.take(100) + "..."
-    firstName(unrecorded) shouldBe long.take(100) + "..."
   }
 
   it should "refuse a page or column range out of bounds before reading the table" in {
-    // No table is stored, so a check that came after looking for it would be a 404.
     val eid = insertExecution(owner)
+    // No table is stored, so a check that came after reading it would be a 404.
+    insertResult(eid)
 
     Seq[(String, Any)](
       "pageIndex" -> 0,
@@ -598,9 +595,9 @@ class ResultResourceSpec
     get(owner, pagesPath(eid)).getStatus shouldBe 404
   }
 
-  it should "answer 404 for a result whose table was dropped" in {
+  it should "answer 404 for a table that is no longer stored" in {
     val eid = insertExecution(owner)
-    ExecutionTables.drop(storeResult(eid)) shouldBe true
+    insertResult(eid)
 
     get(owner, pagesPath(eid)).getStatus shouldBe 404
   }
@@ -625,21 +622,15 @@ class ResultResourceSpec
     get(owner, pagesPath(eid)).getStatus shouldBe 500
   }
 
-  it should "answer 503 for a result in a per-user warehouse while those are disabled" in {
-    val eid = insertExecution(owner, warehouse = Some(whid))
-    storeResult(eid, warehouse = Some(warehouseName))
-    val disabled = new ResultResource(warehousesEnabled = false)
-    val caller = new SessionUser(owner)
+  it should "answer 503 for a result in a warehouse it cannot read" in {
+    val eid = insertExecution(owner)
+    val port = globalPort("op")
+    // An unresolvable warehouse is refused whether or not per-user warehouses are enabled, and
+    // before the table is read: none is stored, which would otherwise be a 404.
+    val uri = resultUri(eid, port).toString.replace("vfs:///", "vfs:///wh/a%2Fb/")
+    insertRow(eid, port, uri)
 
-    Seq[() => Any](
-      () => disabled.getResults(eid, caller),
-      () => disabled.getPage(eid, "op", 0, 1, 10, 0, Int.MaxValue, "", caller),
-      () => disabled.getStatistics(eid, "op", 0, caller)
-    ).foreach { read =>
-      the[ServiceUnavailableException] thrownBy read() should have message
-        s"this result is stored in warehouse '$warehouseName'; per-user warehouses are " +
-          "disabled in this deployment"
-    }
+    get(owner, pagesPath(eid)).getStatus shouldBe 503
   }
 
   "GET statistics" should "return the table's per-column statistics" in {

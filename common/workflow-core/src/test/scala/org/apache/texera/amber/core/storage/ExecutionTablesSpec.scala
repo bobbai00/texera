@@ -28,7 +28,6 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.common.config.StorageConfig
@@ -206,43 +205,6 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     ) shouldBe false
   }
 
-  "ExecutionTables.resultTableAmong" should "find the result, not the state, of a logical operator's external port among a plan's port tables" in {
-    val eid = freshExecution()
-    val internal = locationOf(eid, portOf("aggregate", "localAgg", 0, internal = true))
-    val external = locationOf(eid, portOf("aggregate", "globalAgg", 0))
-    val scan = locationOf(eid, port("scan", 0))
-    val tables = {
-      portTablesMade(scan, internal, external)
-      ExecutionTables.portTables(workflowId, eid, None)
-    }
-
-    ExecutionTables.resultTableAmong(tables, OperatorIdentity("aggregate"), PortIdentity()) shouldBe
-      Some(VFSURIFactory.resultURI(external))
-    ExecutionTables.resultTableAmong(tables, OperatorIdentity("scan"), PortIdentity()) shouldBe
-      Some(VFSURIFactory.resultURI(scan))
-    ExecutionTables.resultTableAmong(
-      tables,
-      OperatorIdentity("scan"),
-      PortIdentity(1)
-    ) shouldBe None
-    ExecutionTables.resultTableAmong(tables, OperatorIdentity("join"), PortIdentity()) shouldBe None
-    ExecutionTables.resultTableAmong(Nil, OperatorIdentity("scan"), PortIdentity()) shouldBe None
-    // A state table alone is no result.
-    ExecutionTables.resultTableAmong(
-      Seq(VFSURIFactory.stateURI(scan)),
-      OperatorIdentity("scan"),
-      PortIdentity()
-    ) shouldBe None
-  }
-
-  it should "refuse a URI that is no table of an execution" in {
-    an[IllegalArgumentException] should be thrownBy ExecutionTables.resultTableAmong(
-      Seq(new URI("mock:///not-a-vfs-uri")),
-      OperatorIdentity("scan"),
-      PortIdentity()
-    )
-  }
-
   "ExecutionTables.storedBytes" should "count nothing for a table that is not there, or that nothing was written to" in {
     val eid = freshExecution()
     val log = ExecutionLogStore.logUri(workflowId, eid, None)
@@ -285,37 +247,6 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
 
     whileCatalogUnavailable {
       a[ServiceUnavailableException] should be thrownBy ExecutionTables.storedBytes(log)
-    }
-  }
-
-  "ExecutionTables.outputModeOf" should "read the output mode each result table was made with" in {
-    val eid = freshExecution()
-    OutputMode.values.foreach { mode =>
-      val result = VFSURIFactory.resultURI(locationOf(eid, port(s"op${mode.value}", 0)))
-      DocumentFactory.createDocument(
-        result,
-        Schema().add("line", AttributeType.STRING),
-        ExecutionTables.resultTableProperties(mode)
-      )
-
-      withClue(s"$mode: ") { ExecutionTables.outputModeOf(result) shouldBe Some(mode) }
-    }
-  }
-
-  it should "read none of a table made without one, one that names no mode, and no table" in {
-    val eid = freshExecution()
-    val Seq(plain, odd, absent) = Seq("plain", "odd", "absent").map(name =>
-      VFSURIFactory.resultURI(locationOf(eid, port(name, 0)))
-    )
-    made(plain)
-    DocumentFactory.createDocument(
-      odd,
-      Schema().add("line", AttributeType.STRING),
-      Map(ExecutionTables.OutputModeProperty -> "NOT_A_MODE")
-    )
-
-    Seq(plain, odd, absent).foreach { uri =>
-      withClue(s"$uri: ") { ExecutionTables.outputModeOf(uri) shouldBe None }
     }
   }
 

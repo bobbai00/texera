@@ -275,8 +275,7 @@ object DocumentFactory {
     * output accumulates across re-runs (e.g. a LoopEnd port whose region
     * re-executes once per loop iteration) keeps the already-populated document
     * instead of clobbering it, since `createDocument` overrides any existing
-    * document. Otherwise create it, with `properties`: a reused document keeps
-    * the properties it was made with.
+    * document. Otherwise create it.
     *
     * `exists` / `open` / `create` default to this object's own `documentExists`
     * / `openDocument` / `createDocument`; they are parameterized only so the
@@ -286,12 +285,11 @@ object DocumentFactory {
       uri: URI,
       schema: Schema,
       reuseExisting: Boolean,
-      properties: Map[String, String] = Map.empty,
       exists: URI => Boolean = documentExists,
       open: URI => VirtualDocument[_] = (u: URI) => openDocument(u)._1,
-      create: (URI, Schema, Map[String, String]) => VirtualDocument[_] = createDocument
+      create: (URI, Schema) => VirtualDocument[_] = createDocument(_, _)
   ): VirtualDocument[_] =
-    if (reuseExisting && exists(uri)) open(uri) else create(uri, schema, properties)
+    if (reuseExisting && exists(uri)) open(uri) else create(uri, schema)
 
   /**
     * Open a document specified by the uri.

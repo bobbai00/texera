@@ -20,9 +20,13 @@
 package org.apache.texera.web.service
 
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
+import org.apache.texera.amber.core.workflow.ResultTable
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
+import org.apache.texera.dao.jooq.generated.Tables.{OPERATOR_PORT_EXECUTIONS, WORKFLOW_EXECUTIONS}
+import org.apache.texera.dao.jooq.generated.enums.OutputModeEnum
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
 import play.api.libs.json.Json
 
@@ -30,8 +34,9 @@ import java.net.URI
 import java.sql.Timestamp
 
 /**
-  * Inserts the row of a new execution, at the Dashboard service. A computing unit writes no
-  * row: what a run does is in its log, and the Dashboard closes the row from that.
+  * Inserts the row of a new execution, and the rows of the result tables its plan names, at the
+  * Dashboard service. A computing unit writes no row: what a run does is in its log, and the
+  * Dashboard closes the row from that.
   */
 object ExecutionsMetadataPersistService {
   private def context =
@@ -99,4 +104,39 @@ object ExecutionsMetadataPersistService {
       (ExecutionIdentity(eid.longValue()), replayLog)
     }
   }
+
+  /**
+    * Records where execution `eid` writes the results its workflow keeps: a row of
+    * `operator_port_executions` for each of `tables`, the result tables of its plan
+    * ([[org.apache.texera.amber.core.workflow.ExecutionPlan.resultTables]]), in one
+    * transaction. The result service lists and reads the results by these rows, and the export
+    * finds them by them. Their sizes and row counts are not recorded.
+    */
+  def insertResultTables(eid: ExecutionIdentity, tables: Seq[ResultTable]): Unit =
+    if (tables.nonEmpty) {
+      withTransaction(context) { transaction =>
+        tables.foreach { table =>
+          transaction
+            .insertInto(OPERATOR_PORT_EXECUTIONS)
+            .set(
+              OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID,
+              Integer.valueOf(Math.toIntExact(eid.id))
+            )
+            .set(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID, table.port.serializeAsString)
+            .set(OPERATOR_PORT_EXECUTIONS.RESULT_URI, table.uri.toString)
+            .set(OPERATOR_PORT_EXECUTIONS.OUTPUT_MODE, outputModeEnumOf(table.mode))
+            .execute()
+        }
+      }
+    }
+
+  /** The stored form of an output mode: `output_mode_enum` in sql/texera_ddl.sql mirrors it. */
+  def outputModeEnumOf(mode: OutputMode): OutputModeEnum =
+    mode match {
+      case OutputMode.SET_SNAPSHOT    => OutputModeEnum.SET_SNAPSHOT
+      case OutputMode.SET_DELTA       => OutputModeEnum.SET_DELTA
+      case OutputMode.SINGLE_SNAPSHOT => OutputModeEnum.SINGLE_SNAPSHOT
+      case OutputMode.Unrecognized(_) =>
+        throw new IllegalArgumentException(s"Unrecognized output mode: $mode")
+    }
 }

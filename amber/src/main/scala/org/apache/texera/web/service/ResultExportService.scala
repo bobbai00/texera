@@ -20,7 +20,11 @@
 package org.apache.texera.web.service
 
 import com.github.tototoshi.csv.CSVWriter
-import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionTables, WarehouseReadGuard}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionResultUris,
+  WarehouseReadGuard
+}
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
@@ -38,7 +42,7 @@ import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionRes
 import org.apache.texera.web.service.execution.{ExecutionRecord, ExecutionRecords}
 
 import java.io.{FilterOutputStream, IOException, OutputStream}
-import java.net.{HttpURLConnection, URI, URL, URLEncoder}
+import java.net.{HttpURLConnection, URL, URLEncoder}
 import java.nio.channels.Channels
 import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
@@ -80,7 +84,8 @@ object ResultExportService {
 
 /**
   * Exports the results execution `executionId` of workflow `workflowIdentity` stored, read from
-  * the tables of its output ports in the lake, found by their names. No computing unit is asked,
+  * the result tables the Dashboard service recorded for it when it created the execution
+  * ([[org.apache.texera.amber.core.storage.ExecutionResultUris]]). No computing unit is asked,
   * so a run whose unit is gone is exported as any other.
   *
   * Every export checks the execution before it reads anything of it ([[execution]]): one that
@@ -113,16 +118,6 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, executionId: Long)
   /** Refuses the export now, where the refusal would otherwise be met later ([[execution]]). */
   private def requireExecution(): Unit = {
     val _ = execution
-  }
-
-  /**
-    * The result and state tables of the execution's ports, found by their names
-    * ([[ExecutionTables.portTables]]).
-    */
-  private lazy val portTables: Seq[URI] = {
-    // Refuse to read a per-user warehouse while the feature is off (#6930).
-    WarehouseReadGuard.assertReadable(execution.logUri)
-    ExecutionTables.portTables(execution.workflowId, execution.executionId, execution.warehouse)
   }
 
   /**
@@ -476,17 +471,25 @@ class ResultExportService(workflowIdentity: WorkflowIdentity, executionId: Long)
   }
 
   /**
-    * The result the execution stored for one operator, as a document; null when the stored
-    * plan names no such operator, and when the run stored no result for it.
+    * The result the execution keeps for one operator, as a document: the table its row names
+    * ([[ExecutionResultUris]]). Null when the execution keeps no result for the operator, and
+    * when its run made no table for it.
     */
-  private def getOperatorDocument(operatorId: String): VirtualDocument[Tuple] = {
+  private def getOperatorDocument(operatorId: String): VirtualDocument[Tuple] =
     // Only supports external port 0 for now. TODO: support multiple ports
-    ExecutionTables
-      .resultTableAmong(portTables, OperatorIdentity(operatorId), PortIdentity())
-      .filter(DocumentFactory.documentExists)
+    ExecutionResultUris
+      .getResultUriByLogicalPortId(
+        execution.executionId,
+        OperatorIdentity(operatorId),
+        PortIdentity()
+      )
+      .filter { uri =>
+        // Refuse to export a per-user-warehouse result while the feature is off (#6930).
+        WarehouseReadGuard.assertReadable(uri)
+        DocumentFactory.documentExists(uri)
+      }
       .map(uri => DocumentFactory.openDocument(uri)._1.asInstanceOf[VirtualDocument[Tuple]])
       .orNull
-  }
 
   private def saveStreamToDataset(
       operatorId: String,

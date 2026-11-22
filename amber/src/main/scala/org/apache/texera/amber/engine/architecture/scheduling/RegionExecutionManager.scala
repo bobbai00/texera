@@ -23,12 +23,7 @@ import com.twitter.util.{Future, JavaTimer, Promise, Return, Throw, Timer}
 import org.apache.pekko.pattern.gracefulStop
 import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.state.State
-import org.apache.texera.amber.core.storage.{
-  DocumentFactory,
-  ExecutionTables,
-  RepositoryMountManager,
-  VFSURIFactory
-}
+import org.apache.texera.amber.core.storage.{DocumentFactory, RepositoryMountManager, VFSURIFactory}
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
 import org.apache.texera.amber.engine.architecture.common.{
@@ -718,14 +713,10 @@ class RegionExecutionManager(
         // MainLoop._process_state_frame, which is orthogonal to this.)
         val outputPort = region.getOperator(outputPortId.opId).outputPorts(outputPortId.portId)._1
         val reuseStorage = outputPort.reuseStorage
-        // The result table records the port's output mode, for whoever reads it without the plan.
-        DocumentFactory.createOrReuseDocument(
-          resultURI,
-          schema,
-          reuseStorage,
-          ExecutionTables.resultTableProperties(outputPort.mode)
-        )
-        DocumentFactory.createOrReuseDocument(stateURI, State.schema, reuseStorage)
+        Seq((resultURI, schema), (stateURI, State.schema)).foreach {
+          case (uri, sch) =>
+            DocumentFactory.createOrReuseDocument(uri, sch, reuseStorage)
+        }
         if (!isRestart) {
           asyncRPCClient.sendToClient(
             OperatorPortResultUriAvailable(outputPortId, resultURI, outputPort.mode)

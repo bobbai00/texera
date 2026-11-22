@@ -27,7 +27,7 @@ import org.apache.texera.amber.core.executor.{
   OpExecWithCode,
   OperatorInputs
 }
-import org.apache.texera.amber.core.storage.{InputLink, InputLinker}
+import org.apache.texera.amber.core.storage.{InputLink, InputLinker, VFSURIFactory}
 import org.apache.texera.amber.core.storedplan.StoredAttribute.{AttributeType => StoredType}
 import org.apache.texera.amber.core.storedplan.StoredPartitionInfo.Kind
 import org.apache.texera.amber.core.storedplan.StoredPartitionRequirement.Requirement
@@ -272,6 +272,31 @@ class PhysicalPlanCodecSpec extends AnyFlatSpec {
 
   "PhysicalPlanCodec" should "save a plan that sets every field and read the same plan back" in {
     assertRoundTrips(fullExecutionPlan)
+  }
+
+  "ExecutionPlan.resultTables" should "name the table of each port the settings store, where the plan stores the port, with its output mode" in {
+    def tableOf(op: PhysicalOp, mode: OutputMode): ResultTable = {
+      val port = GlobalPortIdentity(op.id, PortIdentity(0))
+      ResultTable(
+        port,
+        VFSURIFactory.resultURI(
+          VFSURIFactory.createPortBaseURI(workflowId, executionId, port, fullWarehouse)
+        ),
+        mode
+      )
+    }
+    // Neither the scan's port, which is not stored, nor the internal port between the
+    // aggregate's two physical operators; in the order of their operators.
+    val tables = Seq(
+      tableOf(globalAgg, OutputMode.SINGLE_SNAPSHOT),
+      tableOf(udf, OutputMode.SET_DELTA)
+    )
+
+    assert(fullExecutionPlan.resultTables == tables)
+    assert(
+      PhysicalPlanCodec.decode(PhysicalPlanCodec.encode(fullExecutionPlan)).resultTables == tables
+    )
+    assert(ExecutionPlan(contextOf(), fullPlan).resultTables.isEmpty)
   }
 
   // ----- a plan whose files are not linked yet -----

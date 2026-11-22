@@ -46,6 +46,7 @@ SET search_path TO texera_db, public;
 -- 3. Drop all tables if they exist
 --    (CASCADE handles FK dependencies)
 -- ============================================
+DROP TABLE IF EXISTS operator_port_executions CASCADE;
 DROP TABLE IF EXISTS operator_port_cache CASCADE;
 DROP TABLE IF EXISTS workflow_user_access CASCADE;
 DROP TABLE IF EXISTS workflow_of_user CASCADE;
@@ -100,6 +101,9 @@ CREATE TYPE workflow_computing_unit_termination_reason_enum AS ENUM ('USER_REQUE
 CREATE TYPE provider_type_enum AS ENUM ('LOCAL', 'GOOGLE', 'ORCID', 'APPLE');
 CREATE TYPE user_warehouse_flavor_enum AS ENUM ('local', 'aws');
 CREATE TYPE default_view_enum AS ENUM ('CANVAS', 'FORM');
+-- Mirrors OutputPort.OutputMode in workflow.proto: a new mode needs a value here, a migration,
+-- and a case in ExecutionsMetadataPersistService.outputModeEnumOf.
+CREATE TYPE output_mode_enum AS ENUM ('SET_SNAPSHOT', 'SET_DELTA', 'SINGLE_SNAPSHOT');
 
 -- ============================================
 -- 5. Create tables
@@ -546,6 +550,24 @@ CREATE TABLE IF NOT EXISTS model_upload_session_part
     FOREIGN KEY (upload_id)
         REFERENCES model_upload_session(upload_id)
         ON DELETE CASCADE
+);
+
+-- operator_port_executions
+-- The result tables of an execution, one row for each output port whose result the workflow keeps:
+-- written by the Dashboard service when it creates the execution, from the plan it hands the
+-- computing unit, which writes those tables and no row. With the output mode, the results can be
+-- listed without the plan or opening each table (#8994). result_size and result_count are not
+-- recorded: a page of a result counts its own rows.
+CREATE TABLE operator_port_executions
+(
+    workflow_execution_id INT NOT NULL,
+    global_port_id        VARCHAR(200) NOT NULL,
+    result_uri            TEXT,
+    result_size           BIGINT DEFAULT 0,
+    output_mode           output_mode_enum,
+    result_count          BIGINT,
+    PRIMARY KEY (workflow_execution_id, global_port_id),
+    FOREIGN KEY (workflow_execution_id) REFERENCES workflow_executions(eid) ON DELETE CASCADE
 );
 
 -- operator_port_cache

@@ -20,7 +20,9 @@
 package org.apache.texera.amber.core.workflow
 
 import org.apache.texera.amber.core.executor.OpExecInitInfo
+import org.apache.texera.amber.core.storage.VFSURIFactory
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, PhysicalOpIdentity}
+import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 
 import java.net.URI
 
@@ -36,7 +38,33 @@ final case class ExecutionPlan(
     plan: PhysicalPlan,
     replay: Option[ReplaySource] = None,
     replayLog: Option[URI] = None
-)
+) {
+
+  /**
+    * The tables the run writes the results the workflow keeps into: one for each output port the
+    * settings store the results of ([[WorkflowSettings.outputPortsNeedingStorage]]), at the
+    * location the plan names for the port, as the engine makes them. Ports the engine stores only
+    * to schedule the run are not among them. In the order of their operators and ports.
+    */
+  def resultTables: Seq[ResultTable] =
+    context.workflowSettings.outputPortsNeedingStorage.toSeq
+      .map { port =>
+        val op = plan.getOperator(port.opId)
+        ResultTable(
+          port,
+          VFSURIFactory.resultURI(op.storageLocation(port.portId)),
+          op.outputPorts(port.portId)._1.mode
+        )
+      }
+      .sortBy(table =>
+        (table.port.opId.logicalOpId.id, table.port.opId.layerName, table.port.portId.id)
+      )
+}
+
+/**
+  * The table an execution writes the result of an output port into, and how the port writes it.
+  */
+final case class ResultTable(port: GlobalPortIdentity, uri: URI, mode: OutputMode)
 
 /**
   * The replay log an earlier execution wrote, read up to one interaction.

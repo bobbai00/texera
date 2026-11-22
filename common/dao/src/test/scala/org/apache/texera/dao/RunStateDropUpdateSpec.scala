@@ -170,10 +170,13 @@ class RunStateDropUpdateSpec
       .asScala
       .toSeq
 
-  "sql/updates/54.sql" should "drop five columns of a run's state, the two tables of a run's console and results, and the type of a result's mode" in {
+  "sql/updates/54.sql" should "drop five columns of a run's state and the table of a run's console, and keep the table of its results" in {
     update.droppedColumns should have size 5
-    update.droppedTables should have size 2
-    update.droppedTypes should have size 1
+    update.droppedTables shouldBe Seq("operator_executions")
+    update.droppedTypes shouldBe empty
+    // The Dashboard writes the rows of an execution's result tables when it creates the execution.
+    schemaOfDdl.tables should contain("operator_port_executions")
+    schemaOfDdl.types should contain("output_mode_enum")
     // What goes is none of what the DDL makes, and was all put back, to be dropped.
     val before = schema()
     before.executionColumns.map(_.head) should contain allElementsOf update.droppedColumns.map(_._1)

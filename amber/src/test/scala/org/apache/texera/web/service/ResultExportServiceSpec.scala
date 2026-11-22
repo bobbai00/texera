@@ -38,7 +38,8 @@ import org.apache.texera.amber.core.virtualidentity.{
   PhysicalOpIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity, ResultTable}
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
@@ -555,21 +556,46 @@ class ResultExportServiceSpec
     )
 
   /** Where `port` of execution `eid` of the seeded workflow is stored, as a run stores it. */
-  private def locationOf(eid: Integer, port: GlobalPortIdentity): URI =
+  private def locationOf(
+      eid: Integer,
+      port: GlobalPortIdentity,
+      warehouse: Option[String] = None
+  ): URI =
     VFSURIFactory.createPortBaseURI(
       WorkflowIdentity(testWorkflowWid.longValue()),
       ExecutionIdentity(eid.longValue()),
-      port
+      port,
+      warehouse
     )
 
   /** The result table of `port` of execution `eid` of the seeded workflow. */
   private def resultTableOf(eid: Integer, port: GlobalPortIdentity): URI =
     VFSURIFactory.resultURI(locationOf(eid, port))
 
-  /** Creates a real Iceberg result table holding `rows`, as execution `eid` stores `port`. */
+  /**
+    * Records that execution `eid` keeps the result of `port`, as the Dashboard service does when
+    * it creates the execution, and answers where.
+    */
+  private def recordResultOf(
+      eid: Integer,
+      port: GlobalPortIdentity,
+      warehouse: Option[String] = None
+  ): URI = {
+    val table = VFSURIFactory.resultURI(locationOf(eid, port, warehouse))
+    ExecutionsMetadataPersistService.insertResultTables(
+      ExecutionIdentity(eid.longValue()),
+      Seq(ResultTable(port, table, OutputMode.SET_SNAPSHOT))
+    )
+    table
+  }
+
+  /**
+    * Creates a real Iceberg result table holding `rows`, as execution `eid` stores `port`, and
+    * records it, as the Dashboard service does.
+    */
   private def storeResultAt(eid: Integer, port: GlobalPortIdentity, rows: Seq[Tuple]): Unit = {
     val writer = DocumentFactory
-      .createDocument(resultTableOf(eid, port), schema)
+      .createDocument(recordResultOf(eid, port), schema)
       .writer("rexs")
       .asInstanceOf[BufferedItemWriter[Tuple]]
     writer.open()
@@ -1024,8 +1050,8 @@ class ResultExportServiceSpec
   }
 
   it should "turn a thrown per-operator failure into an error entry and keep going" in {
-    // An execution in a per-user warehouse while those are disabled, so the lookup throws
-    // instead of finding nothing — the path the per-operator catch exists for.
+    // Results in a per-user warehouse while those are disabled, so each lookup throws instead
+    // of finding nothing — the path the per-operator catch exists for.
     val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
     warehouse.setUid(testUser.getUid)
     warehouse.setName("export-warehouse-thrown")
@@ -1034,9 +1060,12 @@ class ResultExportServiceSpec
     warehouse.setFlavor(UserWarehouseFlavorEnum.local)
     warehouse.store()
     val execution = insertExecution(whid = warehouse.getWhid)
+    Seq("op-1", "op-2").foreach(op =>
+      recordResultOf(execution.getEid, outputPortOf(op), Some("rexs-byo-thrown"))
+    )
 
-    // TWO operators. The warehouse is the execution's rather than a single operator's, so both
-    // lookups throw — which is exactly the point: the try/catch lives INSIDE the foreach,
+    // TWO operators, both kept in that warehouse, so both lookups throw — which is exactly
+    // the point: the try/catch lives INSIDE the foreach,
     // so op-2 must still be attempted after op-1 blows up. Hoist the catch outside the loop
     // and only op-1's line survives, failing the second assertion.
     val response =
@@ -1178,6 +1207,14 @@ class ResultExportServiceSpec
     unnamed shouldBe null
   }
 
+  it should "return null for an operator whose run made no table, although it keeps the result" in {
+    val execution = insertExecution()
+    recordResultOf(execution.getEid, outputPortOf("rexs-doc-unmade"))
+
+    val unmade = exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-doc-unmade")
+    unmade shouldBe null
+  }
+
   it should "open the stored result document for the operator" in {
     val execution = insertExecution()
     storeResult(execution.getEid, "rexs-doc", Seq(tupleOf("a", 1), tupleOf("b", 2)))
@@ -1208,9 +1245,9 @@ class ResultExportServiceSpec
     doc.get().map(_.getField[String]("name")).toList shouldBe List("final")
   }
 
-  it should "refuse an execution in a per-user warehouse while those are disabled" in {
-    // Read there, its plan would be looked for in the shared warehouse, and its results
-    // answered as not stored: the refusal names the warehouse instead (#6930).
+  it should "refuse a result in a per-user warehouse while those are disabled" in {
+    // Read there, the result would be looked for in the shared warehouse, and answered as not
+    // stored: the refusal names the warehouse instead (#6930).
     val warehouse = getDSLContext.newRecord(USER_WAREHOUSE)
     warehouse.setUid(testUser.getUid)
     warehouse.setName("export-warehouse")
@@ -1219,6 +1256,7 @@ class ResultExportServiceSpec
     warehouse.setFlavor(UserWarehouseFlavorEnum.local)
     warehouse.store()
     val execution = insertExecution(whid = warehouse.getWhid)
+    recordResultOf(execution.getEid, outputPortOf("rexs-wh"), Some("rexs-byo"))
 
     val ex = intercept[WarehouseUnavailableException] {
       exportServiceOf(execution) invokePrivate getOperatorDocument("rexs-wh")

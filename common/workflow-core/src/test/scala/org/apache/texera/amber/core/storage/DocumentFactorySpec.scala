@@ -92,9 +92,9 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       uri,
       schema,
       reuseExisting,
-      exists = _ => exists,
-      open = _ => { path = "open"; opened },
-      create = (_, _, _) => { path = "create"; created }
+      _ => exists,
+      _ => { path = "open"; opened },
+      (_, _) => { path = "create"; created }
     )
     (doc, path)
   }
@@ -124,32 +124,11 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       uri,
       schema,
       reuseExisting = false,
-      exists = _ => { probed = true; true },
-      open = _ => opened,
-      create = (_, _, _) => created
+      _ => { probed = true; true },
+      _ => opened,
+      (_, _) => created
     )
     probed shouldBe false
-  }
-
-  it should "make a document with the properties it is given, and reuse one with its own" in {
-    val properties = Map("texera.result.output-mode" -> "SINGLE_SNAPSHOT")
-    var madeWith: Option[Map[String, String]] = None
-    def createOrReuse(exists: Boolean): VirtualDocument[_] =
-      DocumentFactory.createOrReuseDocument(
-        uri,
-        schema,
-        reuseExisting = true,
-        properties,
-        exists = _ => exists,
-        open = _ => opened,
-        create = (_, _, given) => { madeWith = Some(given); created }
-      )
-
-    createOrReuse(exists = false) should be theSameInstanceAs created
-    madeWith shouldBe Some(properties)
-    madeWith = None
-    createOrReuse(exists = true) should be theSameInstanceAs opened
-    madeWith shouldBe None
   }
 
   // ---------------------------------------------------------------------------

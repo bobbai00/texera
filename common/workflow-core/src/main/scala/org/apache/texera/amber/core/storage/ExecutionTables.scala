@@ -24,7 +24,6 @@ import org.apache.texera.amber.core.virtualidentity.{
   OperatorIdentity,
   WorkflowIdentity
 }
-import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 
 import java.net.URI
@@ -85,27 +84,6 @@ object ExecutionTables {
       DocumentFactory.tablesOf(wid, eid, warehouse, _)
     )
 
-  /**
-    * The table property a result table keeps its port's output mode in, as the name of an
-    * [[OutputMode]]: what a reader of the table tells a visualization by, with no plan to ask.
-    */
-  val OutputModeProperty = "texera.result.output-mode"
-
-  /** The table properties the result table of an output port of `mode` is made with. */
-  def resultTableProperties(mode: OutputMode): Map[String, String] =
-    Map(OutputModeProperty -> mode.name)
-
-  /**
-    * The output mode of the port whose result table is at `uri`, as the engine that made the
-    * table recorded it. None when there is no such table, or it records none: an engine made it
-    * before result tables recorded their output modes.
-    */
-  def outputModeOf(uri: URI): Option[OutputMode] =
-    DocumentFactory
-      .icebergTableOf(uri)
-      .flatMap(table => Option(table.properties().get(OutputModeProperty)))
-      .flatMap(OutputMode.fromName)
-
   def exists(uri: URI): Boolean = DocumentFactory.icebergTableOf(uri).isDefined
 
   /** @return false when there was no table at `uri` */
@@ -127,8 +105,7 @@ object ExecutionTables {
 
   /**
     * Whether `port` is output port `portId` of logical operator `operatorId` as the workflow's
-    * users see it: an external port of one of the operator's physical operators. Every lookup
-    * of a logical operator's result goes by this rule.
+    * users see it: an external port of one of the operator's physical operators.
     */
   def isOutputOf(
       port: GlobalPortIdentity,
@@ -136,23 +113,6 @@ object ExecutionTables {
       portId: PortIdentity
   ): Boolean =
     !port.portId.internal && port.opId.logicalOpId == operatorId && port.portId == portId
-
-  /**
-    * Of `tables`, the result table of output port `portId` of logical operator `operatorId`
-    * (see [[isOutputOf]]).
-    *
-    * @throws IllegalArgumentException if one of `tables` looked at is no table of an execution
-    */
-  def resultTableAmong(
-      tables: Iterable[URI],
-      operatorId: OperatorIdentity,
-      portId: PortIdentity
-  ): Option[URI] =
-    tables.find { uri =>
-      val named = VFSURIFactory.decodeURI(uri)
-      named.resourceType == VFSResourceType.RESULT &&
-      named.globalPortId.exists(isOutputOf(_, operatorId, portId))
-    }
 
   /**
     * The bytes of the data files of the table at `uri`, as its newest snapshot counts them

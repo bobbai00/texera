@@ -175,8 +175,12 @@ final class WorkflowNotCompiled(
   *     one it writes. A plan that cannot be made for another reason, such as the storage not
   *     answering while the cost hints are read, closes the row as failed too (500).
   *  1. A plan larger than a computing unit takes ([[PhysicalPlanCodec.MaxPlanBytes]]) closes the
-  *     row as failed, "its plan is too large" (400). Otherwise the plan is answered (201), with
-  *     the execution's id.
+  *     row as failed, "its plan is too large" (400).
+  *  1. The result tables the plan names are recorded, a row each
+  *     ([[ExecutionsMetadataPersistService.insertResultTables]]): the result service lists and
+  *     reads the execution's results by them. A record that fails closes the row as failed,
+  *     "its plan could not be made" (500). Otherwise the plan is answered (201), with the
+  *     execution's id.
   *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
   *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
   *     is replaced like any other. Then the results of its closed executions on the unit that a
@@ -263,7 +267,7 @@ class ExecutionCreator(
     )
     // From here the row exists: whatever fails closes it as failed, with why, so it does not
     // stay open although no unit can ever start it.
-    val plan = closingOnFailure(eid, planNotMade) {
+    val (plan, resultTables) = closingOnFailure(eid, planNotMade) {
       val hints = costHints.load(checked.wid, uid)
       val made = compiling.planToRun(
         PlanRequest(
@@ -277,9 +281,13 @@ class ExecutionCreator(
         authorization,
         compileDeadline
       )
-      linkedPlan(made, wid, eid, warehouse, hints, replay, replayLog)
+      val linked = linkedPlan(made, wid, eid, warehouse, hints, replay, replayLog)
+      (PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(linked)), linked.resultTables)
     }
     closingOnFailure(eid, _ => ExecutionClosing.PlanTooLarge)(requireFits(eid, plan))
+    closingOnFailure(eid, planNotMade)(
+      ExecutionsMetadataPersistService.insertResultTables(eid, resultTables)
+    )
     background.execute(() => {
       closeEndedBefore(eid, wid, checked.computingUnitId)
       expiry.expireReplaced(wid.id, checked.computingUnitId, eid.id)
@@ -385,7 +393,7 @@ class ExecutionCreator(
       hints: Option[CostHints],
       replay: Option[ReplaySource],
       replayLog: Option[URI]
-  ): String = {
+  ): ExecutionPlan = {
     val unlinked = PhysicalPlanCodec.decodeUnlinked(PhysicalPlanCodec.fromJson(made))
     val context = unlinked.context
     if (context.workflowId != wid || context.executionId != eid || context.warehouse != warehouse) {
@@ -395,11 +403,7 @@ class ExecutionCreator(
       )
     }
     context.costHints = hints
-    PhysicalPlanCodec.toJson(
-      PhysicalPlanCodec.encode(
-        ExecutionPlan(context, unlinked.plan.linkedBy(linker), replay, replayLog)
-      )
-    )
+    ExecutionPlan(context, unlinked.plan.linkedBy(linker), replay, replayLog)
   }
 
   /** Why an execution whose plan could not be made is closed, given what failed. */

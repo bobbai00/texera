@@ -73,6 +73,7 @@ import org.apache.texera.amber.operator.source.scan.file.{FileScanOpDesc, FileSc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.{CompileFor, PlanToRun}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
@@ -81,6 +82,7 @@ import org.apache.texera.dao.{MockTexeraDB, SiteSettings, WorkflowExecutionStatu
 import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
   DATASET_USER_ACCESS,
+  OPERATOR_PORT_EXECUTIONS,
   SITE_SETTINGS,
   USER_WAREHOUSE,
   VIRTUAL_ENVIRONMENTS,
@@ -129,7 +131,7 @@ import org.apache.texera.web.model.http.response.execution.{
   ExecutionStateResponse
 }
 import org.apache.texera.web.resource.EmailMessage
-import org.apache.texera.web.service.WorkflowEmailNotifier
+import org.apache.texera.web.service.{ExecutionsMetadataPersistService, WorkflowEmailNotifier}
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.WorkflowService
 import org.apache.texera.web.service.execution.WorkflowCompilingService.CompileRefused
@@ -439,6 +441,22 @@ class ExecutionResourceSpec
   private def row(eid: Long): WorkflowExecutions =
     new WorkflowExecutionsDao(getDSLContext.configuration())
       .fetchOneByEid(Integer.valueOf(eid.toInt))
+
+  /** The result tables recorded for execution `eid`: each port, its table and output mode. */
+  private def resultRowsOf(eid: Long): Seq[(String, String, String)] =
+    getDSLContext
+      .select(
+        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
+        OPERATOR_PORT_EXECUTIONS.RESULT_URI,
+        OPERATOR_PORT_EXECUTIONS.OUTPUT_MODE
+      )
+      .from(OPERATOR_PORT_EXECUTIONS)
+      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(eid.toInt)))
+      .orderBy(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID)
+      .fetch()
+      .asScala
+      .map(row => (row.value1(), row.value2(), row.value3().getLiteral))
+      .toSeq
 
   /** The cost hints the creator is handed, and the (workflow, user) each load asked for. */
   private class RecordingHints(hints: Option[CostHints]) extends CostHintsLoader(1) {
@@ -800,6 +818,17 @@ class ExecutionResourceSpec
     // The link took the place of where the plan said the file is kept.
     files.head.physicalAddress shouldBe empty
     execution.plan should not include "physicalAddress"
+
+    // Where the run writes each result the plan keeps, recorded for the result service: the
+    // last operator's, in the table the plan names for its port.
+    plan.resultTables.map(_.port.opId.logicalOpId) shouldBe Seq(OperatorIdentity("search"))
+    resultRowsOf(execution.eid) shouldBe plan.resultTables.map(table =>
+      (
+        table.port.serializeAsString,
+        table.uri.toString,
+        ExecutionsMetadataPersistService.outputModeEnumOf(table.mode).getLiteral
+      )
+    )
 
     // Compiled as the creator may read files, datasets and models.
     creator.resolvedFor.toSet shouldBe Set(Integer.valueOf(creatorUid))
@@ -1473,6 +1502,8 @@ class ExecutionResourceSpec
         "at most 16 MiB\\. A plan holds a link to each file its operators read, so a workflow " +
         "that lists fewer files makes a smaller plan\\."
     closedAtCreate(eid.toLong, "its plan is too large", since)
+    // No unit is handed its plan, so no result of it is recorded.
+    resultRowsOf(eid.toLong) shouldBe empty
   }
 
   it should "answer 500 and record the execution FAILED when its plan cannot be made for a reason not the workflow's" in {
