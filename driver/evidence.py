@@ -174,6 +174,10 @@ CLOSING_RECORDS = ("SELECT e.eid, v.wid, COALESCE(e.outcome::text, ''), (e.ended
                    "FROM texera_db.workflow_executions e JOIN texera_db.workflow_version v ON e.vid = v.vid "
                    "WHERE v.wid IN ({wids}) ORDER BY e.eid")
 OUTCOME_FAILED = 4
+#: the result tables the Dashboard recorded for an execution when it created it
+RESULT_ROWS = ("SELECT global_port_id, COALESCE(result_uri, ''), COALESCE(output_mode::text, '') "
+               "FROM texera_db.operator_port_executions WHERE workflow_execution_id = {eid} "
+               "ORDER BY global_port_id")
 #: the gateway's access log line (stack/sce_stack.py writes it with --isolate-unit);
 #: $uri carries no query string, so no token reaches the log
 GATEWAY_ACCESS = re.compile(r'sce-access (?P<addr>\S+) "(?P<method>[A-Z]+) (?P<uri>[^"]*)" (?P<status>\d{3})')
@@ -1470,6 +1474,19 @@ class Evidence:
         sent = [s for s in self._unit_statements(None) if (s.at_ns or 0) >= self.unit_started_ns]
         result = self._statements_result(sent, f"since its container started ({self.info.get('unit_started_at')})")
         return {"name": name, "ok": bool(result.ok), "detail": result.detail, **result.data}
+
+    def result_rows(self, eid: int) -> tuple[list[dict] | None, str]:
+        """The result tables the Dashboard recorded for execution `eid`: each one's port,
+        location and output mode; (None, why) when Postgres cannot be asked."""
+        p = self._psql(RESULT_ROWS.format(eid=int(eid)))
+        if p.returncode != 0:
+            return None, f"psql failed: {p.stdout.strip()[:300]}"
+        rows = []
+        for line in p.stdout.splitlines():
+            cells = line.split("|")
+            if len(cells) == 3:
+                rows.append({"port": cells[0], "uri": cells[1], "mode": cells[2]})
+        return rows, ""
 
     def _closing_records(self, wids: list[int]) -> tuple[list[dict], str]:
         """The closing record of every execution of the workflows; ([], why) when Postgres

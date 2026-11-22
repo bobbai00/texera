@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 import requests
 
-from lake import OUTPUT_MODES, RESULT_OUTPUT_MODE, Label, Lake, TableState
+from lake import OUTPUT_MODES, Label, Lake, TableState
 from record_timing import RecordTiming
 from texera_api import (REASON_COMPILE_ERROR, REASON_KILLED_BY_USER, REASON_NEVER_STARTED, REASON_UNIT_LOST,
                         REASON_UNIT_STOPPED, ExecutionState, StatisticsRow, TexeraApi, TexeraApiError,
@@ -2065,21 +2065,29 @@ def scenario_p(ctx: Ctx) -> None:
                   f"last {last}; seq {log.seqs}")
     if ctx.at_least("C"):
         _check_console_whole(ctx, eid, lines=len(ctx.data["numbers.csv"]))
-    _check_result_modes(ctx, wid, eid, udf)
+    _check_result_rows(ctx, wid, eid, udf)
     ctx.persisted_status(STATUS_COMPLETED, eid=eid)
 
 
-def _check_result_modes(ctx: Ctx, wid: int, eid: int, udf: str) -> None:
-    """Each result table of the run records the output mode of its port, as the engine made
-    it: what a reader with no plan, such as the result service, tells a visualization by."""
-    names, why = ctx.lake.port_tables(ctx.warehouse_name, wid, eid, "result")
-    warehouse = ctx.warehouse_name or ctx.lake.default_warehouse
-    modes = {name: ctx.lake.catalog.load_table(warehouse, ctx.lake.namespaces["result"], name)
-             .properties.get(RESULT_OUTPUT_MODE) for name in names or []}
-    ctx.check(f"each result table records its port's output mode, the UDF's {OUTPUT_MODES[0]}",
-              bool(modes) and all(mode in OUTPUT_MODES for mode in modes.values())
-              and [mode for name, mode in modes.items() if udf in name] == [OUTPUT_MODES[0]],
-              json.dumps(modes) if names is not None else why)
+def _check_result_rows(ctx: Ctx, wid: int, eid: int, udf: str) -> None:
+    """When it created the execution, the Dashboard recorded where its run writes each result
+    it keeps, with the port's output mode, here the UDF's: what the result service lists and
+    reads results by. Each row names a table the run made. Read from Postgres, so with the
+    evidence only."""
+    if ctx.evidence is None:
+        ctx.note("not checked without --evidence: the rows of the run's result tables")
+        return
+    rows, why = ctx.evidence.result_rows(eid)
+    names, why_names = ctx.lake.port_tables(ctx.warehouse_name, wid, eid, "result")
+    made = set(names or [])
+    ctx.check(f"the Dashboard recorded each result the run kept, in a table it made, with its port's "
+              f"output mode, the UDF's {OUTPUT_MODES[0]}",
+              bool(rows) and names is not None
+              and all(Lake.result_table_name(row["uri"]) in made and row["mode"] in OUTPUT_MODES
+                      for row in rows)
+              and [row["mode"] for row in rows if f"logicalOpId={udf}," in row["port"]] == [OUTPUT_MODES[0]],
+              json.dumps({"rows": rows, "tables": sorted(made)}) if rows is not None and names is not None
+              else why or why_names)
 
 
 # ------------------------------------------------------ q, s: the unit goes down

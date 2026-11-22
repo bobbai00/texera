@@ -32,6 +32,7 @@ docker exec -i texera-tripwire-pg psql -q -U postgres < sql/texera_lakefs.sql
 | Script | Does |
 |---|---|
 | `suite.sh <worktree> <tag> [catalog-db]` | every Scala suite of a worktree, one after another (about 15 minutes); one line per suite in `$SCE_WORK/suite-<tag>.summary`. A catalog database of its own keeps two worktrees' runs apart |
+| `live-result-service.sh <dist-zip> <worktree> [scenario]` | on the running `sce` stack: runs the result service's dist in a container with the Dashboard's settings, runs one scenario (default a), and reads its execution through the service before the stack's retention expires its results: the rows the Dashboard recorded, the latest finished execution, the results, a first page and the statistics of each |
 | `frontend-check.sh <worktree> <tag>` | the frontend's unit tests, `yarn format:ci` and `yarn build:ci` (Node 24 through nvm) |
 | `gate.sh <commit> <tag> <driver args>` | builds the images of a commit (with the frontend) in the `sce-imgbuild` worktree, then runs single-node, the browser smoke, Kubernetes and local-dev in turn; a summary in `reports/gate-<tag>.summary`. `SN_STACK_OPTS="--isolate-unit"` for the evidence checks; `K8S_SCN` and `LD_SCN` pick the scenarios of the two other modes. It needs the detached worktrees `sce-imgbuild` and `sce-localdev-src` and OrbStack's Kubernetes |
 | `step3/rest-check.sh <suites...>` | runs amber suites against a real REST catalog (the step 0 proof's Lakekeeper on RustFS), under the lock. Prepared for step 3's sub-part 5 and never run |

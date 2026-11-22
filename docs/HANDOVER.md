@@ -39,13 +39,15 @@ What is true after step 3:
   e-mail and expires results.
 - State, log, statistics, console output and exports of an execution are served by the Dashboard
   service from what the execution stored, with the unit up or down. Upstream's result service
-  (#9356, merged 2026-11-19) serves result pages with the unit up or down too, re-based on this
-  branch: it finds an execution's results by the tables' names, and each result table records
-  its port's output mode. The frontend still pages through the unit for the run it holds until
-  #8996 moves it over.
+  (#9356, merged 2026-11-19; discussion #8945) serves result pages with the unit up or down too,
+  as upstream wrote it but for when an execution counts as finished: it lists an execution's
+  results from `operator_port_executions`, whose rows the Dashboard writes when it creates the
+  execution, from the plan. The frontend still pages through the unit for the run it holds
+  until #8996 moves it over.
 - `workflow_executions` keeps the closing record only; `status`, `result`, `last_update_time`,
-  `runtime_stats_uri`, `runtime_stats_size` and the tables `operator_executions` and
-  `operator_port_executions` are dropped (`sql/updates/53.sql`, `54.sql`).
+  `runtime_stats_uri`, `runtime_stats_size` and the table `operator_executions` are dropped
+  (`sql/updates/53.sql`, `54.sql`). `operator_port_executions` stays, written by the Dashboard
+  only, without sizes or row counts.
 
 ## 2. How to get it
 
@@ -58,7 +60,7 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 
 | Branch | Where | Commit | What it holds |
 |---|---|---|---|
-| `feat/self-contained-engine` | Fork | `3334c89eb` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782` |
+| `feat/self-contained-engine` | Fork | `92383e2b6` | The main branch: everything below. On the Mac it is `claude/amber-engine-cleanup-review-8bf782` |
 | `sce-e2e-harness` | Fork | see `git log` | The harness, the designs and reviews under `docs/`, and this file |
 | `feat/sce-step2-lane` | Fork | `c5511fab0` | The plan-shape batch, merged into the main branch |
 | `spike/sce-step0-proofs` | Fork | `ff4729363` | Step 0's proof scripts and results (`proofs/step0/*/RESULTS.md`) |
@@ -69,8 +71,10 @@ git fetch bobbai00 feat/self-contained-engine feat/sce-step2-lane \
 85 commits over `3d84565a5`, 132 over upstream main `fddc4303e`, which is merged in, up to
 `852329c0f`; then `9abfc1e34`, the plan through the client (section 1 and
 `docs/step3-notes/changes-since-rev2.md` section 6); then `3334c89eb`, which merges upstream
-main up to `f020980c3` (8 commits) and re-bases its new result service on the lake
-(`docs/step3-notes/changes-since-rev2.md` section 7). The final tree is `3334c89eb`.
+main up to `f020980c3` (8 commits); then `92383e2b6`, which has the Dashboard record each
+execution's result tables when it creates it, so upstream's new result service reads them as
+upstream wrote it (`docs/step3-notes/changes-since-rev2.md` section 7). The final tree is
+`92383e2b6`.
 
 | Group | What it does |
 |---|---|
@@ -108,11 +112,16 @@ Fixes made on the way, each its own commit:
 
 ## 4. Verified
 
-On the Mac. The final tree is `3334c89eb` (upstream main merged, over `9abfc1e34`, the plan through
-the client); a row that names another commit was run there.
+On the Mac. The final tree is `92383e2b6` (the Dashboard records each execution's result tables,
+over `3334c89eb`, which merged upstream main); a row that names another commit was run there.
 
 | Check | Result |
 |---|---|
+| Scala suites at `92383e2b6` (`tools/suite.sh`) | No failure: config 113, DAO 70, core 1,250, operators 3,113, compiler 232, compiling service 121, access control 84, unit manager 329, config service 44, file service 481, result service 35, engine unit 2,991, engine integration 46. Not run here, as before: the R UDF case and `IcebergRestCatalogIntegrationSpec` |
+| Gate 3C at `92383e2b6`, unit on a network without Postgres (images `sce/sceD`) | 33 of 33 scenarios, 545 checks, among them p's check that the Dashboard recorded a row for each result the run kept, naming a table the run made (the UDF's, in the user's warehouse); no statement from the unit to Postgres; all 38 executions closed (`reports/baseline-20261122T225953Z.json`) |
+| The result service at `92383e2b6`, live | Its dist, run in a container on the stack's network with the Dashboard's settings (`tools/live-result-service.sh`), read a fresh run of scenario a: the latest finished execution, the Aggregate's result from the row the Dashboard wrote at create (its `globalAgg` port, SET_SNAPSHOT, no row count), its first page of 4 grouped rows and the column statistics |
+| Harness offline tests at `92383e2b6` | 345; each passed but for the two flakes of the fake's timing in section 9 (scenario v's reads, and once p's console read at gate 3A while the machine was building images), which passed when run again |
+| Not run again at `92383e2b6` | The frontend and agent-service checks (neither changed since `3334c89eb`) and the browser smoke |
 | Scala suites (`tools/suite.sh`, which now runs `ResultService/test` too) | No failure at `3334c89eb`: config 113, DAO 70, core 1,250, operators 3,113, compiler 232, compiling service 121, access control 84, unit manager 329, config service 44, file service 481, result service 36, engine unit 2,990, engine integration 46. Not run here: the R UDF case (no R) and `IcebergRestCatalogIntegrationSpec` (no REST catalog on :8181). Run with `LITELLM_BASE_URL` at a closed port: another stack's LiteLLM holds the default :4000, which `LiteLLMProxyAuthSpec` expects to refuse |
 | Frontend | 256 files, 7,462 tests; format clean; build OK (at `3334c89eb`) |
 | Agent service | 386 tests; type check and format clean (at `3334c89eb`). Install from the lockfile first (`bun install --frozen-lockfile`): an older install of `ai` fails an upstream test |
@@ -164,8 +173,8 @@ Also left:
   browser holds and sends to the unit, and a changed copy of a plan is not detected. A ticket the
   Dashboard signs per execution (execution, unit, the plan's hash, expiry) and per-run
   credentials are step 5.
-- The result service is a module with no deployment yet: its image, chart, gateway route and
-  local-dev entry are upstream's next pull request, and #8996 moves the frontend to it. Until
+- The result service is a module with no deployment yet: #9556 (open) deploys it on the
+  single-node stack, local-dev and Kubernetes follow, and #8996 moves the frontend to it. Until
   then nothing calls it.
 - A unit checks the plan it is sent, but no longer who created the execution or that it was
   created for this unit: both were columns of the plan row. A user with WRITE on a unit who holds
@@ -173,7 +182,9 @@ Also left:
   user's warehouse, which the unit still refuses), and a plan sent to another unit runs there
   (harness scenario l9 went with it). The signed ticket of step 5 names both; carrying the
   creator and the unit in the plan, unsigned, would bring the two checks back now. The owner's
-  call.
+  call. The result service lets in the execution's creator and the users of its unit as the
+  row records them, so a plan run on another unit is read by the users of the unit it was made
+  for.
 - With no plan kept, the Dashboard service finds an execution's result and state tables by their
   names, listing the whole result and state namespaces of its warehouse each time it measures,
   exports or expires the execution. Not measured on a catalog with many tables.
@@ -279,7 +290,9 @@ Things that cost time on 2026-11-18:
 
 - The build generates jOOQ classes from the Postgres that `STORAGE_JDBC_URL` names. Point it at
   a database of the branch's own schema, and apply `sql/texera_ddl.sql` again after the schema
-  changes (with `-v DB_NAME=<db>`; without it the script makes `texera_db` anew).
+  changes (with `-v DB_NAME=<db>`; without it the script makes `texera_db` anew). Then run
+  `DAO/clean` before compiling: an incremental compile pairs a regenerated table class with the
+  stale compiled `Keys`, and fails on a key it does not find.
 - Run each sbt module's tests in its own sbt process, as `tools/suite.sh` does.
 - After a merge that changes a Java constant used in a Scala annotation, clean the operator
   module before testing.

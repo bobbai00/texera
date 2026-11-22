@@ -50,8 +50,7 @@ LABEL_STATE_TIME_MS = "texera.execution.state-time-ms"
 LABEL_REASON = "texera.execution.reason"
 LABEL_BEAT_MS = "texera.execution.beat-ms"
 LABEL_BEAT_EVERY_MS = "texera.execution.beat-every-ms"
-#: the output mode of its port, a property of each result table the engine makes
-RESULT_OUTPUT_MODE = "texera.result.output-mode"
+#: the output modes a result is recorded with (`output_mode_enum`)
 OUTPUT_MODES = ("SET_SNAPSHOT", "SET_DELTA", "SINGLE_SNAPSHOT")
 #: a namespace listing is followed for at most this many pages
 MAX_LIST_PAGES = 200
@@ -223,6 +222,15 @@ class Lake:
         env = env or {}
         self.namespaces = {kind: env.get(setting) or default
                            for kind, (setting, default, *_) in {**EXECUTION_TABLES, **PORT_TABLES}.items()}
+
+    @staticmethod
+    def result_table_name(uri: str) -> str:
+        """The name of the table at a result's location, as the product names it: the path
+        below the warehouse, its slashes made underscores (DocumentFactory.sanitizeURIPath)."""
+        path = urllib.parse.unquote(urllib.parse.urlparse(uri).path).removeprefix("/")
+        if path.startswith("wh/"):
+            path = path.split("/", 2)[2]
+        return path.replace("/", "_")
 
     @staticmethod
     def table_name(wid: int, eid: int, kind: str) -> str:

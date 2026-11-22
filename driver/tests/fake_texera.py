@@ -92,7 +92,6 @@ from pathlib import Path
 from fake_closing import REASON_CHARS, REASON_COMPILE_ERROR, Closing
 from fake_lake import FakeLake
 from fake_record import NAMESPACES, Recorder, table_name
-from lake import RESULT_OUTPUT_MODE
 from record_timing import RecordTiming
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -125,6 +124,7 @@ FAULTS = {
     "stored-reads-need-unit": "stored statistics, console output and exports are answered only while the "
                               "unit is up",
     "export-after-expiry": "an export of expired results fails as a missing result does, not with 410",
+    "result-rows-unrecorded": "the Dashboard records no result table when it creates an execution",
 }
 REASON_UNIT_STOPPED = "the computing unit was stopped"
 #: how long a unit that is stopping waits for its runs' records to land (design 4.1 step 7)
@@ -693,9 +693,7 @@ class FakeTexera:
             return
         tables = self.port_tables(run)
         for kind, (_uri, name) in tables.items():
-            table = self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
-            if kind == "result" and "result-mode-unrecorded" not in self.faults:
-                table.set_properties({RESULT_OUTPUT_MODE: "SET_SNAPSHOT"})
+            self.lake.create(self.warehouse_of(e), NAMESPACES[kind], name)
         if run.recorder is not None and "output-rows" in self.faults:
             port = tables["result"][0].split("/globalportid/")[1].rsplit("/", 1)[0]
             run.recorder.output(port, tables["result"][0], "SET_SNAPSHOT")
@@ -1147,7 +1145,21 @@ class FakeTexera:
             self.clear_at_create(wid, cuid)
         elif "replaced-at-create" in self.faults:
             self.closing.expire_at_create(wid, cuid, eid)
+        if "result-rows-unrecorded" not in self.faults:
+            self.record_result_rows(eid, body["logicalPlan"])
         return 201, {"eid": eid, "plan": self.plan_of(eid, body["logicalPlan"])}
+
+    def record_result_rows(self, eid: int, plan: dict) -> None:
+        """The Dashboard records, as it creates an execution, the table its run writes the
+        result it keeps into: its sink's first output port, as the plan names it."""
+        view = plan.get("opsToViewResult") or []
+        sink = view[0] if view else plan["operators"][-1]["operatorID"]
+        port = self.port_base(eid, sink).split("/globalportid/")[1]
+        uri = f"{self.port_location(eid, sink)}/result"
+        self.executions[eid]["result_rows"] = [{"port": port, "uri": uri, "mode": "SET_SNAPSHOT"}]
+        self.sql("dashboard", "insert into operator_port_executions (workflow_execution_id, global_port_id, "
+                              "result_uri, output_mode) values ($1, $2, $3, $4)",
+                 f"$1 = '{eid}', $2 = '{port}', $3 = '{uri}', $4 = 'SET_SNAPSHOT'")
 
     def statistics_reach_the_unit(self, query: dict) -> bool:
         """Kubernetes until step 3's sub-part 16: the gateway sends a statistics request to

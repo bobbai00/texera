@@ -294,6 +294,7 @@ class Closing:
             for kind in KEPT:
                 self.fake.lake.drop(warehouse, NAMESPACES[kind], table_name(e["wid"], eid, kind))
         e["results_expired_at"] = now_ms()
+        e["result_rows"] = []  # the rows go with the mark, in its transaction
         if "stored-bytes-unchanged" not in self.faults:
             e["stored_bytes"] = self._size(eid, KEPT, ports=False)
         if with_replay_log:

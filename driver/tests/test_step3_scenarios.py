@@ -128,7 +128,8 @@ class RecordInLake(Step3Case):
 
     def test_p_reads_the_record_while_the_run_goes(self):
         rec = self.run_key("p")
-        self.assertEqual(10, len(rec.checks), self.names(rec))
+        # the rows of its result tables are read from Postgres, with the evidence only
+        self.assertEqual(9, len(rec.checks), self.names(rec))
         states = [w["msg"]["type"] for w in self.fake.ws_log]
         self.assertEqual(["WorkflowStartRequest", "WorkflowPauseRequest", "WorkflowResumeRequest"],
                          [s for s in states if s != "ResultPaginationRequest"])
@@ -153,9 +154,6 @@ class RecordInLake(Step3Case):
     def test_p_fails_when_console_output_reaches_the_lake_only_at_the_end(self):
         self.fake.faults.add("console-at-end-only")
         self.fails_on("p", "console lines are stored before the run ends")
-
-    def test_p_fails_when_a_result_table_records_no_output_mode(self):
-        self.fails_on("p", "each result table records its port's output mode", fault="result-mode-unrecorded")
 
     def test_p_fails_on_a_gap_in_seq(self):
         self.fake.faults.add("seq-gap")
@@ -189,7 +187,8 @@ class RecordServedByTheDashboard(Step3BCase):
 
     def test_p_reads_the_log_from_the_dashboard(self):
         rec = self.run_key("p")
-        self.assertEqual(12, len(rec.checks), self.names(rec))
+        # without the evidence, the rows of its result tables are not read
+        self.assertEqual(11, len(rec.checks), self.names(rec))
         logs = [r for r in self.fake.rest_log if r["path"] == f"/api/executions/{rec.eid}/log"]
         self.assertEqual(2, len(logs))  # while it runs, and after
         # the log holds the run's five state changes and nothing else
@@ -526,7 +525,8 @@ class RecordByExecutionAtGate3C(Step3CCase):
 
     def test_p_reads_the_console_route_while_the_run_goes_and_after(self):
         rec = self.run_key("p")
-        self.assertEqual(14, len(rec.checks), self.names(rec))
+        # without the evidence, the rows of its result tables are not read
+        self.assertEqual(13, len(rec.checks), self.names(rec))
         self.assertIn("after the run the console route returns all 300 lines in 2 page(s), seq rising by one",
                       self.names(rec))
         pages = [r["query"] for r in self.fake.rest_log if r["path"].endswith("/console") and "afterSeq" in r["query"]]

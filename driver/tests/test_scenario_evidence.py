@@ -55,6 +55,11 @@ class StackDocker(FakeDocker):
             rows = [f"{eid}|{x['wid']}|{x['status']}" for eid, x in sorted(self.fake.executions.items())
                     if x["status"] in (0, 6) and x["wid"] in wids]
             return subprocess.CompletedProcess(args, 0, "\n".join(rows) + "\n", "")
+        if args[0] == "exec" and "psql" in args and "operator_port_executions" in args[-1]:
+            eid = int(re.search(r"workflow_execution_id = (\d+)", args[-1]).group(1))
+            rows = [f"{r['port']}|{r['uri']}|{r['mode']}"
+                    for r in self.fake.executions.get(eid, {}).get("result_rows", [])]
+            return subprocess.CompletedProcess(args, 0, "".join(f"{r}\n" for r in rows), "")
         if args[0] == "exec" and "psql" in args and "ended_at IS NOT NULL" in args[-1]:  # Check K
             wids = {int(w) for w in re.search(r"IN \(([^)]*)\)", args[-1]).group(1).split(",")}
             rows = [f"{eid}|{x['wid']}|{'' if x['outcome'] is None else x['outcome']}|"

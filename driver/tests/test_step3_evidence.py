@@ -705,6 +705,20 @@ class RecordEvidence(EvidenceCase):
         # READY, RUNNING, PAUSED, RUNNING, COMPLETED
         self.assertIn("COMPLETED at seq 5", self.record_check(rec).detail)
 
+    def rows_check(self, rec):
+        return next(c for c in rec.checks if c.name.startswith("the Dashboard recorded each result"))
+
+    def test_p_finds_the_row_of_each_result_its_run_kept(self):
+        rec = self.run_ev("p")
+        check = self.rows_check(rec)
+        self.assertTrue(check.ok, check.detail)
+        self.assertIn("SET_SNAPSHOT", check.detail)
+
+    def test_p_fails_when_the_dashboard_records_no_result_table(self):
+        self.fake.faults.add("result-rows-unrecorded")
+        rec = self.run_ev("p", expect="FAIL")
+        self.assertEqual([self.rows_check(rec).name], [c.name for c in rec.checks if not c.ok])
+
     def test_every_kind_of_run_leaves_a_whole_record(self):
         """A refused second start (two records of one execution), the agent's run (no
         socket), a run that fails before it runs, and a run that prints while it installs."""

@@ -133,25 +133,30 @@ keys. The lock-down later: a ticket the Dashboard signs per execution (execution
 hash, expiry), files only through signed links, and tables through the catalog with a pass per
 execution.
 
-## 7. Upstream's result service, merged in (2026-11-19)
+## 7. Upstream's result service (merged 2026-11-19; as the branch has it since 2026-11-22)
 
-Upstream merged its result service (#9356): a module that serves an execution's result pages with
-no computing unit. It read `operator_port_executions` and `workflow_executions.status`, which
-step 3 drops. Merged into the branch, it is re-based on what the branch keeps:
+Upstream's result service (#9356, discussion #8945) serves an execution's result pages with no
+computing unit: it lists an execution's results from `operator_port_executions` and reads each
+table. The branch keeps the service as upstream wrote it and fills the table another way:
 
-1. Finished: the caller's latest finished execution is the newest with a closing record
-   (`ended_at` set). Upstream's `TerminalWorkflowExecutionStatus` is not kept: the DAO's
-   `WorkflowExecutionStatus.Ended` already says which outcomes end an execution.
-2. Results: an execution's results are the result tables of its external output ports, found by
-   the tables' names (`ExecutionTables.portTables`), in the warehouse its row names. A per-user
-   warehouse that is off answers 503, as the export does.
-3. Output mode: the engine records each port's output mode as a property of the result table it
-   makes (`texera.result.output-mode`, `ExecutionTables.resultTableProperties` and
-   `outputModeOf`), so a reader tells a visualization by the table. A table made before records
-   none, and is not taken for a visualization.
-4. Row count: counted from the table, as the page's own count is.
-5. Tables can be made with properties (`DocumentFactory.createDocument(uri, schema,
-   properties)`); the execution log is made with its first beat in that one commit.
+1. The rows: the Dashboard writes them when it creates the execution, one per result table its
+   plan names (`ExecutionPlan.resultTables`: each port the settings store, at the location the
+   plan gives it, with its output mode; `ExecutionsMetadataPersistService.insertResultTables`).
+   The unit still writes no row. Sizes and row counts are not recorded: a page counts its rows.
+2. Finished: the caller's latest finished execution is the newest with a closing record
+   (`ended_at` set). It is the one line in which the service differs from upstream's; upstream's
+   `TerminalWorkflowExecutionStatus` is not kept.
+3. A row whose table the run never made, as in a run that failed early, reads as "no longer
+   stored" (404), as an expired result does. Expiring an execution's results deletes its rows in
+   the transaction that marks it, so the service lists none of them.
+4. The export finds a result by its row too, through upstream's `ExecutionResultUris`. Tables are
+   found by their names only where no row names them: to drop and to measure all of an
+   execution's tables, those of the ports it materialized included.
+5. A port the engine stores only to schedule a run has no row: the service lists the results the
+   workflow keeps.
+6. Tables can be made with properties (`DocumentFactory.createDocument(uri, schema,
+   properties)`): the execution log is made with its first beat in one commit.
 
-Nothing calls the service yet: its deployment is upstream's next pull request, and #8996 moves the
-frontend to it. The API is upstream's, but for `rowCount`, which is always a number here.
+Nothing calls the service yet: #9556 deploys it on the single-node stack, and #8996 moves the
+result panel to it. Scenario p checks the rows, with the evidence: one for each result the run
+kept, each naming a table the run made, the UDF's with SET_SNAPSHOT.
