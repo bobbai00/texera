@@ -29,8 +29,8 @@
 # to localhost:28088, the stack's public URL. Another local cluster works with
 # TEXERA2_KUBE_CONTEXT set (OrbStack: `orbstack`, Docker Desktop: `docker-desktop`): such a
 # cluster publishes a LoadBalancer's port on localhost, so the gateway is made one there.
-# The model key goes from ANTHROPIC_API_KEY or TEXERA_ENV_FILE into a Secret and from there
-# into OpenBao; it is never written into a manifest. Remote clusters are refused.
+# The model key goes from ANTHROPIC_API_KEY or TEXERA_ENV_FILE into OpenBao, which keeps it on
+# its volume; it is never written into a manifest or a Secret. Remote clusters are refused.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -89,7 +89,7 @@ load() {
 }
 
 configure() {
-  local tmp key
+  local tmp
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' RETURN
   kubectl --context "$CONTEXT" apply -f "$ROOT/deploy/kubernetes/namespace.yaml" >/dev/null
@@ -118,17 +118,21 @@ configure() {
   fi
   k create configmap gateway-config --from-file=envoy.yaml="$tmp/envoy.yaml" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
-  # The model key goes straight from the env file into a Secret, through a private temp file;
-  # the openbao-init job moves it into the secret store.
-  key=${ANTHROPIC_API_KEY:-}
+}
+
+# model_key puts the platform's model key where the catalog reads it, through the store's own
+# CLI in its pod, as up.sh and deploy/aws/deploy.sh do: the key travels on stdin and the token
+# is the one the pod has. The store keeps it across restarts.
+model_key() {
+  local key=${ANTHROPIC_API_KEY:-}
   if [ -z "$key" ]; then key=$(env_file_value ANTHROPIC_API_KEY); fi
-  if [ -n "$key" ]; then
-    (umask 077 && printf 'ANTHROPIC_API_KEY=%s\n' "$key" >"$tmp/llm.env")
-    k create secret generic texera2-llm --from-env-file="$tmp/llm.env" --dry-run=client -o yaml | k apply -f - >/dev/null
-    echo "model key: from ${TEXERA_ENV_FILE:-the environment}"
-  else
+  if [ -z "$key" ]; then
     echo "model key: none (set TEXERA_ENV_FILE or ANTHROPIC_API_KEY to chat)"
+    return 0
   fi
+  printf '%s' "$key" | k exec -i deploy/openbao -c openbao -- \
+    sh -c 'BAO_TOKEN=$TEXERA_SECRETS_TOKEN bao kv put -mount=texera platform/anthropic value=- >/dev/null'
+  echo "model key: from ${TEXERA_ENV_FILE:-the environment}"
 }
 
 # expose makes the gateway reachable at the public URL. kind maps the Service's node port to
@@ -142,7 +146,7 @@ expose() {
 }
 
 wait_ready() {
-  k wait --for=condition=complete job/rustfs-buckets job/openbao-init --timeout=900s >/dev/null
+  k wait --for=condition=complete job/rustfs-buckets --timeout=900s >/dev/null
   for app in postgres rustfs; do k rollout status "statefulset/$app" --timeout=900s >/dev/null; done
   for app in keycloak openfga openbao lakekeeper "${APPS[@]}"; do
     k rollout status "deploy/$app" --timeout=900s >/dev/null
@@ -162,10 +166,14 @@ case "${1:-}" in
     [ "${2:-}" = "--no-build" ] || build
     load
     configure
-    # Jobs are immutable: a rerun recreates them, before the apply, so the key and the mounts are
-    # refreshed and a changed job spec goes through.
-    for job in rustfs-buckets openbao-init; do k delete job "$job" --ignore-not-found >/dev/null; done
+    # A job is immutable: a rerun recreates it, before the apply, so the buckets are made again
+    # and a changed job spec goes through.
+    k delete job rustfs-buckets --ignore-not-found >/dev/null
     kubectl --context "$CONTEXT" apply -k "$ROOT/deploy/kubernetes" >/dev/null
+    # The secret store first: on an empty volume it initializes itself, and the model key is in
+    # it before the services that read it start again.
+    k rollout status deploy/openbao --timeout=900s >/dev/null
+    model_key
     # Same tags, new images or config: restart what already runs so it picks them up.
     for app in "${APPS[@]}"; do k rollout restart "deploy/$app" >/dev/null 2>&1 || true; done
     expose

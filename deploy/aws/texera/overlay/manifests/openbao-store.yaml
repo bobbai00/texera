@@ -15,19 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# The secret store's volume, its service account (the cluster binds the unseal key's pod identity
-# to it), and the init job's account, which may keep the recovery key as a Secret.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: openbao-data
-spec:
-  accessModes: ["ReadWriteOnce"]
-  storageClassName: gp3
-  resources:
-    requests:
-      storage: 10Gi
----
+# The secret store's service account (the cluster binds the unseal key's pod identity to it),
+# and the init job's account, which may keep the recovery key as a Secret.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

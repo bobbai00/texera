@@ -15,29 +15,29 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Initializes the secret store once, over its API: the recovery key goes to a Secret in the
-# cluster (for `bao operator generate-root`, should the token ever be lost), the catalog's token
-# is the one the deployment chose (texera2-clients' secrets-token, with the root policy like the
-# dev stack's), and the token the initialization minted is revoked. Then the `texera` KV mount,
-# as on the local cluster. The platform's model key is not loaded here: the store keeps it, and
-# `deploy.sh model-key` puts it there.
+# Initializes the secret store once, over its API, where the local cluster's initializes
+# itself: here the initialization keeps a recovery key, which a store that initializes itself
+# does not make. The recovery key goes to a Secret in the cluster (for `bao operator
+# generate-root`, should the token ever be lost), the catalog's token is the one the deployment
+# chose (texera2-clients' secrets-token, with the root policy like the dev stack's), and the
+# token the initialization minted is revoked. Then the `texera` KV mount, as on the local
+# cluster. The platform's model key is not loaded here: the store keeps it, and `deploy.sh
+# model-key` puts it there.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: openbao-init
 spec:
+  backoffLimit: 20
   template:
     spec:
+      restartPolicy: OnFailure
       serviceAccountName: openbao-init
       containers:
         - name: init
           image: alpine/k8s:1.34.1
           env:
             - { name: BAO_ADDR, value: "http://openbao:8200" }
-            - name: BAO_TOKEN
-              $patch: delete
-            - name: ANTHROPIC_API_KEY
-              $patch: delete
             - name: SECRETS_TOKEN
               valueFrom: { secretKeyRef: { name: texera2-clients, key: secrets-token } }
           command: ["/bin/sh", "-c"]

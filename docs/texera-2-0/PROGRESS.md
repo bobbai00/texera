@@ -2,6 +2,59 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-21: the secret store outlives a restart
+
+On Nov 21 the Mac slept and OrbStack restarted the pods. OpenBao ran in dev mode, in memory, and
+the job that made its `texera` mount and loaded the model key had run once, so it came back
+empty: creating a computing unit failed (`secret store: put units/<rid>: status 404: no handler
+for route "texera/data/units/..."`) and the chat had no model key, until the job was made again
+by hand.
+
+- **What a restart lost.** The store holds the platform's model key (`platform/anthropic`), the
+  bio server's key (`platform/biomcp`, which the catalog seeds only when it starts), the client
+  secret of every unit the catalog provisions (`units/<rid>`) and the values of the credentials
+  people make (`credentials/<rid>`). A running unit kept working, since its pod reads a Secret of
+  its own, but once terminated it could not start again: the catalog writes that Secret from the
+  store. A credential still said it had a secret and its lease answered `no_secret`.
+- **Now nothing has to run after a restart** (`deploy/kubernetes/openbao.yaml`). OpenBao keeps
+  its data on a volume (`openbao-data`) and unseals itself with a static key, the local stand-in
+  for the KMS key on AWS (`texera2-clients`' new `secrets-seal-key`). On an empty volume it
+  initializes itself from its config (OpenBao's `initialize`): the `texera` mount and the
+  catalog's token. The `openbao-init` job and the `texera2-llm` Secret are gone: `k8s.sh up`
+  puts the model key in the store through its CLI in its pod, as `up.sh` and `deploy.sh
+  model-key` do, once OpenBao is ready and before the services start again.
+- **The cloud overlay** keeps its KMS seal and its init job, which keeps a recovery key that a
+  store initializing itself does not make; the job is now a manifest of the overlay, the volume
+  claim a patch of the base's, the config a replacement of the base's. Rendered with Terraform
+  against the base before and after, the overlay gives the same 43 objects, all alike but the
+  OpenBao Deployment: no second `-config` (the image's entrypoint adds the directory, and OpenBao
+  only warned about the duplicate) and no `IPC_LOCK` (mlock is off). Its pod starts again once
+  at the next `deploy.sh stack`, unsealed by KMS, the volume's data kept. Not deployed.
+- **The OrbStack stack moved over in place** (`k8s.sh up --no-build`, the catalog's database
+  dumped first). The dev-mode store held only the two platform keys, which came back: the model
+  key from `k8s.sh`, the bio key from the catalog's restart. The one unit whose secret an earlier
+  restart had lost, `gold-medals-unit`, got it back from its pod's Secret, and Keycloak issues a
+  token for the stored value. The old job and Secret were deleted there; on another cluster where
+  `k8s.sh up` ran before: `kubectl -n texera2 delete job openbao-init` and `kubectl -n texera2
+  delete secret texera2-llm`.
+- **What a lost volume still costs.** The store initializes itself once; one whose first start
+  died midway has no mount or token, and the way back is a new volume (delete the claim and run
+  `k8s.sh up`). A unit's secret can be put back from its pod's Secret, as for gold-medals-unit:
+  `kubectl get secret unit-<rid> -o json | jq -c '{clientId: (.data["client-id"]|@base64d),
+  secret: (.data["client-secret"]|@base64d)}' | kubectl exec -i deploy/openbao -- sh -c
+  'BAO_TOKEN=$TEXERA_SECRETS_TOKEN bao kv put -mount=texera units/<rid> -'`. A changed
+  `secrets-seal-key` leaves the volume unreadable. The Compose stack (`up.sh`) still runs OpenBao
+  in dev mode; `up.sh` loads its model key at every start.
+- Verified on the OrbStack stack, once after the OpenBao pod was deleted and once after its
+  container was restarted in place (what OrbStack does after a sleep): the store came back
+  unsealed with the mount, both platform keys and the unit's secret, and 3 of 3 scenarios passed
+  each time, with nothing left behind: `test_a_unit_lives_as_a_resource` (a unit made on
+  Kubernetes, its secret written, read and deleted with it),
+  `test_the_runtime_reaches_every_mcp_server` (the bio key leased) and
+  `test_the_agent_runs_on_the_unit_the_person_names` (the agent answers through the model, the
+  key leased). Self-initialization, the static key from the environment and a key of the wrong
+  length were tried on OpenBao 2.4.1 in a container first. The overlay was rendered, not applied.
+
 ## 2026-11-21 (session 18): one lineage graph, by version, and a version's canvas under it
 
 A collaborator found the graph beside a chat and the workflow canvas too alike, and an

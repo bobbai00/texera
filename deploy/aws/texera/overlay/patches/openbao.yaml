@@ -15,42 +15,26 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# The secret store as a service rather than in dev mode: its data on a volume, unsealed by the
-# KMS key through its service account's pod identity (openbao-config is rendered in main.tf). One
-# replica, recreated rather than rolled, since the volume attaches to one node at a time. It
-# answers ready while uninitialized or sealed too, so that the init job can reach it.
+# The secret store unsealed by the KMS key through its service account's pod identity (the
+# config main.tf renders replaces the base's), so it has no static key, and initialized by the
+# init job, so it needs no token of its own. It answers ready while uninitialized or sealed too,
+# so that the init job can reach it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: openbao
 spec:
-  strategy:
-    type: Recreate
   template:
     spec:
       serviceAccountName: openbao
-      securityContext:
-        fsGroup: 1000
       containers:
         - name: openbao
-          args: ["server", "-config=/openbao/config/server.hcl"]
           env:
-            - name: BAO_DEV_ROOT_TOKEN_ID
+            - name: TEXERA_SECRETS_SEAL_KEY
+              $patch: delete
+            - name: TEXERA_SECRETS_TOKEN
               $patch: delete
           readinessProbe:
             httpGet:
               path: /v1/sys/health?uninitcode=200&sealedcode=200
               port: 8200
-          volumeMounts:
-            - name: config
-              mountPath: /openbao/config
-              readOnly: true
-            - name: data
-              mountPath: /openbao/file
-      volumes:
-        - name: config
-          configMap:
-            name: openbao-config
-        - name: data
-          persistentVolumeClaim:
-            claimName: openbao-data

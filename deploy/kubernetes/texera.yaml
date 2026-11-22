@@ -33,7 +33,8 @@ data:
 ---
 # The deployment's own secrets, with the dev stack's values: the realm's service clients
 # (keycloak/texera-realm.json names the same), the bio server's key, Keycloak's first
-# administrator, Lakekeeper's key for the credentials it stores, and the secret store's token.
+# administrator, Lakekeeper's key for the credentials it stores, the secret store's token, and
+# the key the secret store unseals with (32 bytes; changed, it no longer opens what it holds).
 apiVersion: v1
 kind: Secret
 metadata:
@@ -45,6 +46,7 @@ stringData:
   keycloak-admin-password: admin
   lakekeeper-encryption-key: texera2-dev-only-encryption-key
   secrets-token: texera-dev-root
+  secrets-seal-key: texera2-dev-only-secret-seal-key
 ---
 apiVersion: v1
 kind: Service

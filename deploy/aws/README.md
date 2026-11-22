@@ -36,7 +36,7 @@ Two Terraform root modules, applied in order by `deploy.sh`:
 | Module | Makes |
 |---|---|
 | `cluster/` | A VPC of its own (public and private subnets in three zones, one NAT gateway), the EKS cluster (access by IAM, managed add-ons only: VPC CNI, kube-proxy, CoreDNS, Pod Identity, EBS CSI), one managed node group of Graviton nodes in the private subnets, an ECR repository per image, two S3 buckets (the catalog's dataset files, the lake's tables) with the roles and pod identities that reach them, the KMS key that unseals the secret store, a network load balancer to the gateway's node port, and, when a domain is given, the certificate and the DNS name. |
-| `texera/` | The stack: `deploy/kubernetes` through a kustomize overlay for the cloud (`texera/overlay`), applied as Terraform resources. The overlay points the images at the registry by digest, puts the public URL where the base has `localhost:28088`, replaces the dev stack's secrets with generated ones, renders the config maps `k8s.sh` makes from the dev stack's files, puts S3 where the base has RustFS, sizes the volumes on EBS, and runs OpenBao with a volume and the KMS seal instead of dev mode. |
+| `texera/` | The stack: `deploy/kubernetes` through a kustomize overlay for the cloud (`texera/overlay`), applied as Terraform resources. The overlay points the images at the registry by digest, puts the public URL where the base has `localhost:28088`, replaces the dev stack's secrets with generated ones, renders the config maps `k8s.sh` makes from the dev stack's files, puts S3 where the base has RustFS, sizes the volumes on EBS, and unseals OpenBao with the KMS key instead of the dev stack's static key, initialized by a job that keeps a recovery key. |
 
 `deploy.sh up` is `cluster` (Terraform), `images` (`docker build` for the nodes' architecture and
 `docker push`, the digests written to `texera/images.auto.tfvars.json`), `stack` (Terraform, then
@@ -171,13 +171,17 @@ kcadm.sh get users -r texera --fields username,enabled
   read dataset files by the presigned URLs the catalog gives them and write results through the
   vended credentials. (A project's own warehouse on another store still takes an endpoint and a
   key, as before.)
-- **The secret store persists.** OpenBao runs with a file store on an EBS volume and an `awskms`
-  seal: the cluster's KMS key, used through the pod identity of the `openbao` service account.
-  The init job initializes it once, over its API, keeps the recovery key in the Secret
-  `openbao-recovery`, mints the catalog's token (`texera2-clients`' `secrets-token`, root policy
-  like the dev stack's) and revokes the one initialization returned. The model key is not loaded
-  by the job but by `deploy.sh model-key`, through the store's CLI in its pod, from stdin: it is
-  in no manifest, state file or Secret, and the store keeps it across restarts.
+- **The secret store unseals with KMS and keeps a recovery key.** OpenBao keeps its data in a
+  file store on a volume, as on the local cluster, here on EBS. It unseals with an `awskms` seal,
+  the cluster's KMS key used through the pod identity of the `openbao` service account, where
+  the local cluster's unseals with the dev stack's static key (`texera2-clients`'
+  `secrets-seal-key`, which the generated Secret here does not have). And it does not initialize
+  itself: the init job initializes it once, over its API, keeps the recovery key in the Secret
+  `openbao-recovery` (a store that initializes itself makes none), mints the catalog's token
+  (`texera2-clients`' `secrets-token`, root policy like the dev stack's) and revokes the one
+  initialization returned. The model key is not loaded by the job but by `deploy.sh model-key`,
+  through the store's CLI in its pod, from stdin, as `k8s.sh` loads it on the local cluster: it
+  is in no manifest, state file or Secret, and the store keeps it across restarts.
 - **The way in.** The load balancer is Terraform's, made before the stack, so the public URL is
   known when the stack is configured, and TLS is a listener and a certificate rather than a change
   inside the cluster. It sends to the gateway Service's node port 30088 on every node (the base's

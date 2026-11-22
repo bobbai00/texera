@@ -153,13 +153,14 @@ v1, so the node image is Kubernetes 1.33 (`TEXERA2_KIND_IMAGE` overrides), and k
 higher inotify limits than Ubuntu's defaults (`sysctl fs.inotify.max_user_instances=1024
 fs.inotify.max_user_watches=1048576`).
 
-What runs there: Postgres, Keycloak, OpenFGA, OpenBao (dev mode), RustFS, Lakekeeper (with
+What runs there: Postgres, Keycloak, OpenFGA, OpenBao (on a volume, unsealed by a fixed key in
+`texera2-clients`, so what it holds outlives a restart), RustFS, Lakekeeper (with
 authentication and OpenFGA, bootstrapped by the catalog, reaching the public issuer through a
 `socat` sidecar in its pod), the Envoy gateway, the catalog, one static computing unit, the
 agent runtime, the live service, the bio MCP server and the frontend behind nginx, from `deploy/kubernetes/`
 (kustomize) and the images under `bin/dockerfiles/`. The config maps are rendered from the
 dev stack's own files (the realm, the gateway, the database bootstrap); the model key goes
-from `.env` into a Secret and from there into OpenBao by the `openbao-init` job.
+from `.env` into OpenBao, through its CLI in its pod.
 
 Computing units are resources there like everywhere else: a unit created with
 `provider: kubernetes` (`POST /computing-units`, or the library's "New computing unit")

@@ -19,8 +19,8 @@
 # from the registry by digest, the deployment's URL in place of the dev value, the config maps
 # k8s.sh makes from the dev stack's files, S3 as the object store in place of the base's RustFS
 # (the catalog and the lake reach it as themselves, through their pod identities), volumes on
-# EBS, and the secret store with a volume and the KMS seal. What is an overlay patch is a
-# difference from the local cluster; what is a generator is what k8s.sh does imperatively. The
+# EBS, and the secret store unsealed by KMS and initialized by a job. What is an overlay patch is
+# a difference from the local cluster; what is a generator is what k8s.sh does imperatively. The
 # two objects that carry generated secrets, the texera2-clients Secret and the realm, are not
 # rendered here: a render that took values made at apply time could not be planned. The base's
 # Secret is dropped, and the root module builds both from the `realm` output and the secrets
@@ -132,7 +132,8 @@ EOT
     )]
   }))
 
-  # The secret store: data on its volume, unsealed by the key through the pod identity.
+  # The secret store: data on its volume, unsealed by the key through the pod identity. Unlike
+  # the base's, it does not initialize itself: manifests/openbao-init.yaml does, once.
   openbao_config = <<-EOT
     ui            = false
     disable_mlock = true
@@ -160,6 +161,7 @@ data "kustomization_overlay" "texera" {
     local.base,
     "${path.module}/manifests/storage-class.yaml",
     "${path.module}/manifests/openbao-store.yaml",
+    "${path.module}/manifests/openbao-init.yaml",
     "${path.module}/manifests/lakekeeper-identity.yaml",
   ]
 
@@ -207,6 +209,7 @@ data "kustomization_overlay" "texera" {
 
   config_map_generator {
     name     = "openbao-config"
+    behavior = "replace"
     literals = ["server.hcl=${local.openbao_config}"]
     options {
       disable_name_suffix_hash = true
@@ -245,7 +248,7 @@ data "kustomization_overlay" "texera" {
     path = "${path.module}/patches/openbao.yaml"
   }
   patches {
-    path = "${path.module}/patches/openbao-init.yaml"
+    path = "${path.module}/patches/openbao-data.yaml"
   }
 
   kustomize_options {
