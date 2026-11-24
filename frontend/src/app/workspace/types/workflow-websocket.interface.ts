@@ -35,16 +35,20 @@ import { SchemaAttribute } from "./workflow-compiling.interface";
  * 2. value is the payload this request/event needs
  */
 
-/** Starts an execution the Dashboard service created, with the plan it compiled for it. */
+/**
+ * Starts an execution the Dashboard service created, with the plan it compiled for it. The plan names the
+ * execution, so the request names none beside it.
+ */
 export type WorkflowStartRequest = Readonly<{
-  executionId: number;
   /** The plan as `POST /api/executions` answered it, text passed on unchanged. */
   plan: string;
 }>;
 
-/** Applies, when the paused run of an execution resumes, a change to an operator that the Dashboard service compiled. */
+/**
+ * Applies, when the paused run of an execution resumes, a change to an operator that the Dashboard service compiled.
+ * The change names the execution, so the request names none beside it.
+ */
 export type OperatorUpdateRequest = Readonly<{
-  executionId: number;
   /** The change as `POST /api/executions/{eid}/updates` answered it, text passed on unchanged. */
   update: string;
 }>;
@@ -61,7 +65,10 @@ export type RunCommandRequest = Readonly<{
 export type RequestRefusedEvent = Readonly<{
   /** The type of the request, as its frame named it; left out for a frame that named none. */
   request?: string;
-  /** The execution the request named, when it named one. */
+  /**
+   * The execution the request was about: the one it named, or for a start the one its plan named. Left out for a
+   * request that said neither, as a start whose plan could not be read.
+   */
   executionId?: number;
   message: string;
 }>;

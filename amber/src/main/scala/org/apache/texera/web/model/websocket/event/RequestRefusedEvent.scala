@@ -26,8 +26,10 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
   * could not be read, or failed. It says nothing about the run this computing unit holds, which
   * is as it was.
   *
-  * @param request the request's type, as its frame names it; None for a frame that names none
-  * @param message in words for the user who made the request
+  * @param request     the request's type, as its frame names it; None for a frame that names none
+  * @param executionId the execution the request was about: the one it named, or for a start the
+  *                    one its plan named; None for a request that said neither
+  * @param message     in words for the user who made the request
   */
 case class RequestRefusedEvent(
     request: Option[String],

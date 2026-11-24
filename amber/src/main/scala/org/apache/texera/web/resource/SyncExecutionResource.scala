@@ -56,10 +56,11 @@ import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
 
 /**
-  * The body of `POST /api/execution/{eid}/run`: run an execution the Dashboard service created,
-  * on this computing unit, and answer with what it produced.
+  * The body of `POST /api/execution/run`: run an execution the Dashboard service created, on
+  * this computing unit, and answer with what it produced.
   *
-  * @param plan              the execution's plan, as `POST /api/executions` answered it
+  * @param plan              the execution's plan, as `POST /api/executions` answered it: it
+  *                          names the execution
   * @param computingUnitId   the computing unit the execution was created for: this one
   * @param targetOperatorIds the operators whose results are answered; with exactly one, the
   *                          execution was created to run up to it
@@ -139,9 +140,9 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
   private val MaxConsoleMessages = 5000
 
   /**
-    * Runs execution `executionId`, which the Dashboard service created for the caller, on this
-    * computing unit, from the plan the request carries, and answers once it ends, once its
-    * targets complete, or once an operator logs an error.
+    * Runs the execution the request's plan names, which the Dashboard service created for the
+    * caller, on this computing unit, and answers once it ends, once its targets complete, or
+    * once an operator logs an error.
     *
     * The start is checked ([[WorkflowService.checkStart]]) before the workflow's service is
     * asked for, so a start its checks refuse leaves no service behind; then it is started on that
@@ -149,31 +150,26 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     * an error that names why, and writes nothing.
     */
   @POST
-  @Path("/{eid}/run")
+  @Path("/run")
   @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def runExecution(
-      @PathParam("eid") executionId: Long,
-      request: SyncRunRequest,
-      @Auth user: SessionUser
-  ): SyncExecutionResult = {
+  def runExecution(request: SyncRunRequest, @Auth user: SessionUser): SyncExecutionResult = {
     if (request == null) return errorResult("The request has no body.")
-    logger.info(s"Asked to run execution $executionId.")
+    logger.info("Asked to run an execution from its plan.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
     try {
       WorkflowService.checkStart(
-        executionId,
         request.plan,
         user.getUser,
         request.computingUnitId,
         socketWorkflowId = None
       ) match {
-        case Left(message) => refused(executionId, message)
+        case Left(message) => refused(message)
         case Right(checked) =>
           val workflow = workflowServiceOf(checked.workflowId, request.computingUnitId)
           // No session watches a run started this way; this request does, until it is answered.
           workflow.watching {
             workflow.startChecked(checked) match {
-              case Left(message) => refused(executionId, message)
+              case Left(message) => refused(message)
               case Right(execution) =>
                 awaitResults(
                   execution,
@@ -196,8 +192,8 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
     }
   }
 
-  private def refused(executionId: Long, message: String): SyncExecutionResult = {
-    logger.info(s"Refused to start execution $executionId: $message")
+  private def refused(message: String): SyncExecutionResult = {
+    logger.info(s"Refused to run an execution: $message")
     errorResult(message)
   }
 

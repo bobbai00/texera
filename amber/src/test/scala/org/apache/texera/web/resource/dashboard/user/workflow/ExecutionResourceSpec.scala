@@ -1252,7 +1252,6 @@ class ExecutionResourceSpec
     // What a unit checks before it starts the execution passes, on the plan whole.
     val plan = WorkflowService
       .checkStart(
-        execution.eid,
         execution.plan,
         sessionUser(creatorUid).getUser,
         unitCuid,
@@ -1618,7 +1617,6 @@ class ExecutionResourceSpec
       // What a unit checks before it starts the execution passes.
       WorkflowService
         .checkStart(
-          execution.eid,
           execution.plan,
           sessionUser(creatorUid).getUser,
           unitCuid,

@@ -53,19 +53,21 @@ sealed trait ExecutionRequest extends TexeraWebSocketRequest {
 case class HeartBeatRequest() extends TexeraWebSocketRequest
 
 /**
-  * Starts execution `executionId`, which the Dashboard service created, from its plan.
+  * Starts an execution the Dashboard service created, from its plan. The plan names the
+  * execution, so the request names none beside it.
   *
   * @param plan the execution's plan, as `POST /api/executions` answered it
   */
-case class WorkflowStartRequest(executionId: Long, plan: String) extends ExecutionRequest
+case class WorkflowStartRequest(plan: String) extends TexeraWebSocketRequest
 
 /**
-  * Applies, when the paused run of execution `executionId` resumes, a change to one of its
-  * operators that the Dashboard service made to run.
+  * Applies, when the paused run of an execution resumes, a change to one of its operators that
+  * the Dashboard service made to run. The change names the execution, so the request names none
+  * beside it.
   *
   * @param update the change, as `POST /api/executions/{eid}/updates` answered it
   */
-case class OperatorUpdateRequest(executionId: Long, update: String) extends ExecutionRequest
+case class OperatorUpdateRequest(update: String) extends TexeraWebSocketRequest
 
 case class ResultPaginationRequest(
     requestID: String,

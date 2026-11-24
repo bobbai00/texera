@@ -221,12 +221,12 @@ class ComputingUnitWithoutDatabaseSpec
     def statesTold: Seq[String] =
       sent.asScala.collect { case WorkflowStateEvent(state, _) => state }.toSeq
 
-    /** Starts execution `eid` from `plan`, as a start over a socket does. */
-    def start(eid: Long, plan: String): WorkflowExecutionService =
+    /** Starts the execution `plan` names from it, as a start over a socket does. */
+    def start(plan: String): WorkflowExecutionService =
       WorkflowService
-        .checkStart(eid, plan, creator, unitCuid, socketWorkflowId = Some(workflowId.id))
+        .checkStart(plan, creator, unitCuid, socketWorkflowId = Some(workflowId.id))
         .flatMap(service.startChecked)
-        .fold(why => fail(s"the start of execution $eid was refused: $why"), identity)
+        .fold(why => fail(s"the start was refused: $why"), identity)
 
     def close(): Unit = {
       subscriptions.foreach(_.dispose())
@@ -309,7 +309,7 @@ class ComputingUnitWithoutDatabaseSpec
     session =>
       val plan = planOf(completedEid, List(linesSource("lines", 7)), List())
 
-      val run = session.start(completedEid, plan)
+      val run = session.start(plan)
       eventually(stateOf(run) shouldBe COMPLETED)
 
       logOf(run, completedEid) shouldBe
@@ -353,7 +353,7 @@ class ComputingUnitWithoutDatabaseSpec
         List(link("lines", "slow"))
       )
 
-      val run = session.start(pausedEid, plan)
+      val run = session.start(plan)
       eventually(stateOf(run) shouldBe RUNNING)
       ask(run, WorkflowPauseRequest(pausedEid))
       eventually(stateOf(run) shouldBe PAUSED)
@@ -388,7 +388,7 @@ class ComputingUnitWithoutDatabaseSpec
         List(link("lines", "broken"))
       )
 
-      val run = session.start(failedEid, plan)
+      val run = session.start(plan)
       eventually(stateOf(run) shouldBe FAILED)
 
       // The run's one error is the compiler's, of the operator's code.
@@ -415,7 +415,7 @@ class ComputingUnitWithoutDatabaseSpec
         List(link("lines", "throws"))
       )
 
-      val run = session.start(thrownEid, plan)
+      val run = session.start(plan)
       // The operator's worker reports what its executor threw, and waits: the run goes on.
       def thrown =
         run.executionStateStore.consoleStore.getState.operatorConsole

@@ -20,7 +20,7 @@
 package org.apache.texera.web.model.websocket.request
 
 import com.fasterxml.jackson.annotation.JsonSubTypes
-import com.fasterxml.jackson.databind.exc.InvalidTypeIdException
+import com.fasterxml.jackson.databind.exc.{InvalidTypeIdException, UnrecognizedPropertyException}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.web.model.websocket.request.python.{
   DebugCommandRequest,
@@ -28,6 +28,8 @@ import org.apache.texera.web.model.websocket.request.python.{
 }
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+
+import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 /**
   * Pins the client -> server half of the websocket wire contract.
@@ -76,13 +78,11 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     if (fields.isEmpty) s"""{"type":"$typeId"}""" else s"""{"type":"$typeId",$fields}"""
 
   // A start and a change, as the browser sends them: the plan and the change the Dashboard
-  // answered, each passed on as one JSON string.
-  private val planText = """{"formatVersion": 1, "operators": []}"""
-  private val updateText = """{"formatVersion": 1, "opId": "udf"}"""
-  private val startFields =
-    s""""executionId":345,"plan":${objectMapper.writeValueAsString(planText)}"""
-  private val updateFields =
-    s""""executionId":345,"update":${objectMapper.writeValueAsString(updateText)}"""
+  // answered, each passed on as one JSON string and nothing beside it. Each names its execution.
+  private val planText = """{"formatVersion": 1, "executionId": {"id": "345"}, "operators": []}"""
+  private val updateText = """{"formatVersion": 1, "executionId": {"id": "345"}, "opId": "udf"}"""
+  private val startFields = s""""plan":${objectMapper.writeValueAsString(planText)}"""
+  private val updateFields = s""""update":${objectMapper.writeValueAsString(updateText)}"""
   // A pause, a resume and a kill, as the browser sends them of the run it shows.
   private val commandFields = """"executionId":345"""
 
@@ -250,37 +250,44 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
     req.columnSearch shouldBe Some("city")
   }
 
-  "WorkflowStartRequest" should "bind the execution and its plan's text, and write them back the same" in {
+  "WorkflowStartRequest" should "bind its plan's text and nothing else, and write it back the same" in {
     val req = read(frame("WorkflowStartRequest", startFields)).asInstanceOf[WorkflowStartRequest]
-    req shouldBe WorkflowStartRequest(345L, planText)
-    // What the server writes is what it reads: the type id, then both fields.
+    req shouldBe WorkflowStartRequest(planText)
+    // What the server writes is what it reads: the type id, then the plan.
     val written = objectMapper.readTree(objectMapper.writeValueAsString(req))
+    written.fieldNames().asScala.toList shouldBe List("type", "plan")
     written.get("type").asText() shouldBe "WorkflowStartRequest"
-    written.get("executionId").asLong() shouldBe 345L
     written.get("plan").asText() shouldBe planText
     read(objectMapper.writeValueAsString(req)) shouldBe req
   }
 
-  it should "bind an execution id past the Int range" in {
-    read(frame("WorkflowStartRequest", s""""executionId":${Int.MaxValue + 1L},"plan":"p""""))
-      .asInstanceOf[WorkflowStartRequest]
-      .executionId shouldBe Int.MaxValue + 1L
-  }
-
   it should "leave a missing plan to the start's own check" in {
     // The start refuses it as "The request carries no plan."; the mapper only binds.
-    read(frame("WorkflowStartRequest", """"executionId":345""")) shouldBe
-      WorkflowStartRequest(345L, null)
+    read(frame("WorkflowStartRequest", "")) shouldBe WorkflowStartRequest(null)
   }
 
-  "OperatorUpdateRequest" should "bind the execution and the change's text, and write them back the same" in {
+  it should "not be read with an execution named beside its plan" in {
+    // The plan names its execution, so a frame of a page that still names one beside it reads
+    // as no request: the endpoint refuses it as one that could not be read.
+    an[UnrecognizedPropertyException] should be thrownBy read(
+      frame("WorkflowStartRequest", s""""executionId":345,$startFields""")
+    )
+  }
+
+  "OperatorUpdateRequest" should "bind the change's text and nothing else, and write it back the same" in {
     val req = read(frame("OperatorUpdateRequest", updateFields)).asInstanceOf[OperatorUpdateRequest]
-    req shouldBe OperatorUpdateRequest(345L, updateText)
+    req shouldBe OperatorUpdateRequest(updateText)
     val written = objectMapper.readTree(objectMapper.writeValueAsString(req))
+    written.fieldNames().asScala.toList shouldBe List("type", "update")
     written.get("type").asText() shouldBe "OperatorUpdateRequest"
-    written.get("executionId").asLong() shouldBe 345L
     written.get("update").asText() shouldBe updateText
     read(objectMapper.writeValueAsString(req)) shouldBe req
+  }
+
+  it should "not be read with an execution named beside its change" in {
+    an[UnrecognizedPropertyException] should be thrownBy read(
+      frame("OperatorUpdateRequest", s""""executionId":345,$updateFields""")
+    )
   }
 
   "a pause, a resume and a kill" should "bind the execution whose run they are for" in {
@@ -297,12 +304,11 @@ class TexeraWebSocketRequestSpec extends AnyFlatSpec with Matchers {
   }
 
   "every request that names an execution" should "be an ExecutionRequest" in {
+    // A start and a change name none: the plan and the change they carry say which they are of.
     registeredRequests.collect {
       case (typeId, fields, _) if read(frame(typeId, fields)).isInstanceOf[ExecutionRequest] =>
         typeId
     }.toSet shouldBe Set(
-      "WorkflowStartRequest",
-      "OperatorUpdateRequest",
       "WorkflowKillRequest",
       "WorkflowPauseRequest",
       "WorkflowResumeRequest"

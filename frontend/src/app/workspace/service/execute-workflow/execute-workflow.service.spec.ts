@@ -500,7 +500,7 @@ describe("ExecuteWorkflowService", () => {
       connected$.next(false);
       create.flush(created(345), { status: 201, statusText: "Created" });
 
-      expect(wsSendSpy.mock.calls).toEqual([["WorkflowStartRequest", { executionId: 345, plan: planOf(345) }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["WorkflowStartRequest", { plan: planOf(345) }]]);
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
       // The unit reports the run it was handed before the Dashboard would be asked about it.
       connected$.next(true);
@@ -587,7 +587,7 @@ describe("ExecuteWorkflowService", () => {
 
       // The plan as the Dashboard answered it, text the page does not read.
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
-      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 345, plan: planOf(345) });
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { plan: planOf(345) });
       // The unit's own "Initializing", once it has built the run, is the state the run already shows.
       emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Initializing, executionId: 345 });
       expect(states).toEqual([ExecutionState.Initializing]);
@@ -640,7 +640,7 @@ describe("ExecuteWorkflowService", () => {
       third.flush(created(7), { status: 201, statusText: "Created" });
 
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
-      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 7, plan: planOf(7) });
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { plan: planOf(7) });
     }));
 
     it("fails the run when the unit refuses the start this page waits for, and leaves Run usable", fakeAsync(() => {
@@ -683,6 +683,36 @@ describe("ExecuteWorkflowService", () => {
 
     beforeEach(() => {
       errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+    });
+
+    it("fails the run for a refused start that names no execution: one whose plan the unit could not read", fakeAsync(() => {
+      startExecution(345);
+
+      // The unit names the execution a refused start's plan named, and none where it could not read the plan.
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        message: "The plan is in format version 2, but this reader reads version 1.",
+      });
+
+      expect(service.getExecutionState().state).toEqual(ExecutionState.Failed);
+      expect(service.getErrorMessages().map(error => error.message)).toEqual([
+        "The plan is in format version 2, but this reader reads version 1.",
+      ]);
+      expect(errorSpy).not.toHaveBeenCalled();
+    }));
+
+    it("does not fail a run for a refused start that names no execution, when the page waits for none", () => {
+      emitWsEvent({ type: "WorkflowStateEvent", state: ExecutionState.Running, executionId: 345 });
+
+      emitWsEvent({
+        type: "RequestRefusedEvent",
+        request: "WorkflowStartRequest",
+        message: "The request carries no plan.",
+      });
+
+      expect(errorSpy.mock.calls).toEqual([["The request carries no plan."]]);
+      expect(service.getExecutionState()).toEqual({ state: ExecutionState.Running });
     });
 
     /** The states the page showed, from here on. */
@@ -929,7 +959,7 @@ describe("ExecuteWorkflowService", () => {
 
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
       expect(wsSendSpy).toHaveBeenCalledTimes(1);
-      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 346, plan: planOf(346) });
+      expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { plan: planOf(346) });
     }));
   });
 
@@ -1184,7 +1214,7 @@ describe("ExecuteWorkflowService", () => {
 
     create.flush(created(43), { status: 201, statusText: "Created" });
 
-    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { executionId: 43, plan: planOf(43) });
+    expect(wsSendSpy).toHaveBeenCalledWith("WorkflowStartRequest", { plan: planOf(43) });
   }));
 
   // ---- refusing a run before it is asked for -------------------------------------------------
@@ -1467,7 +1497,7 @@ describe("ExecuteWorkflowService", () => {
 
     // The unit has not reported on the run yet: the kill names the execution it was asked to start.
     expect(wsSendSpy.mock.calls).toEqual([
-      ["WorkflowStartRequest", { executionId: 345, plan: planOf(345) }],
+      ["WorkflowStartRequest", { plan: planOf(345) }],
       ["WorkflowKillRequest", { executionId: 345 }],
     ]);
     // Killed is the unit's to report.
@@ -1615,7 +1645,7 @@ describe("ExecuteWorkflowService", () => {
       update.flush(COMPILED, { status: 201, statusText: "Created" });
 
       // The change as the Dashboard answered it, text the page does not read.
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, update: COMPILED.update }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { update: COMPILED.update }]]);
     }));
 
     // One `it` per answer: it.each does not run its body in the zone fakeAsync needs.
@@ -1666,7 +1696,7 @@ describe("ExecuteWorkflowService", () => {
       service.modifyOperatorLogic("1");
 
       expectSentWith(mockLogicalPlan_scan_result, "returns");
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 345, update: COMPILED.update }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { update: COMPILED.update }]]);
     }));
 
     it("sends nothing for a change made without unlocking, and says why", fakeAsync(() => {
@@ -1773,7 +1803,7 @@ describe("ExecuteWorkflowService", () => {
       service.modifyOperatorLogic("1");
       expectSentWith(mockLogicalPlan_scan_result, "orders", 346);
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 346, update: COMPILED.update }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { update: COMPILED.update }]]);
     }));
 
     // The unit names the execution it holds to every session, so a page that did not start the paused run
@@ -1790,7 +1820,7 @@ describe("ExecuteWorkflowService", () => {
       service.modifyOperatorLogic("1");
       expectSentWith(mockLogicalPlan_scan_result, "orders", 777);
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 777, update: COMPILED.update }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { update: COMPILED.update }]]);
     });
 
     it("sends a change for the execution the unit holds, not for the one this page created last", fakeAsync(() => {
@@ -1806,7 +1836,7 @@ describe("ExecuteWorkflowService", () => {
       service.modifyOperatorLogic("1");
       expectSentWith(mockLogicalPlan_scan_result, "orders", 400);
 
-      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { executionId: 400, update: COMPILED.update }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["OperatorUpdateRequest", { update: COMPILED.update }]]);
     }));
 
     it("refuses to change a paused run whose execution the unit has not named", () => {
@@ -2172,7 +2202,7 @@ describe("ExecuteWorkflowService", () => {
       expect(service.executeWorkflow("again")).toBe(true);
       expectCreate().flush(created(346), { status: 201, statusText: "Created" });
 
-      expect(wsSendSpy.mock.calls).toEqual([["WorkflowStartRequest", { executionId: 346, plan: planOf(346) }]]);
+      expect(wsSendSpy.mock.calls).toEqual([["WorkflowStartRequest", { plan: planOf(346) }]]);
       expect(service.getExecutionState()).toEqual({ state: ExecutionState.Initializing });
     }));
 

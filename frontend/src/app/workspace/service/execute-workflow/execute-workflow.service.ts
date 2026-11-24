@@ -320,13 +320,15 @@ export class ExecuteWorkflowService {
   /**
    * A request of this page that the computing unit did not do. The refusal says nothing about the run the unit
    * holds, so the run on screen stays as it is and the user is told why in a notification. Only the start
-   * this page waits for is the run on screen itself: refused, that run has failed, with why as its error.
+   * this page waits for is the run on screen itself: refused, that run has failed, with why as its error. A
+   * refused start names the execution its plan named; one whose plan the unit could not read names none, and is
+   * taken as the start this page waits for.
    */
   private handleRefusedRequest(refusal: RequestRefusedEvent): void {
     const refusesAwaitedStart =
       refusal.request === "WorkflowStartRequest" &&
       this.awaitedStart !== undefined &&
-      refusal.executionId === this.awaitedStart;
+      (refusal.executionId === undefined || refusal.executionId === this.awaitedStart);
     if (refusesAwaitedStart) {
       this.awaitedStart = undefined;
       // The refusal is how this run ended on this page: nothing the Dashboard holds of it takes its place.
@@ -581,7 +583,8 @@ export class ExecuteWorkflowService {
           if (!this.socketConnected) {
             this.followAtDashboard();
           }
-          this.workflowWebsocketService.send("WorkflowStartRequest", { executionId: eid, plan });
+          // The plan names the execution it starts: nothing is sent beside it.
+          this.workflowWebsocketService.send("WorkflowStartRequest", { plan });
         },
         error: (error: unknown) =>
           this.updateExecutionState({
@@ -738,7 +741,7 @@ export class ExecuteWorkflowService {
       operatorType: op.operatorType,
     };
     this.executionApiService.postUpdate(executionId, operator, workflow).subscribe({
-      next: ({ update }) => this.workflowWebsocketService.send("OperatorUpdateRequest", { executionId, update }),
+      next: ({ update }) => this.workflowWebsocketService.send("OperatorUpdateRequest", { update }),
       error: (error: unknown) => this.notificationService.error(failureMessage(error)),
     });
   }

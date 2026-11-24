@@ -152,12 +152,13 @@ function compileFailureResponse(messageByOperator: Record<string, string>): Resp
 }
 
 // Answers the create with `create`, and the run of the execution it names with `run`. Any other
-// request fails loudly: a run when `run` is absent, and the route the agent used to run on.
+// request fails loudly: a run when `run` is absent, and the routes the agent used to run on,
+// which named a workflow and a unit, or an execution.
 function routeFetch(create: Response, run?: Response | Error): void {
   fetchSpy.mockImplementation(async (input: unknown) => {
     const url = String(input);
     if (url === CREATE_URL) return create;
-    if (run !== undefined && /\/api\/execution\/\d+\/run$/.test(url)) {
+    if (run !== undefined && /\/api\/execution\/run$/.test(url)) {
       if (run instanceof Error) throw run;
       return run;
     }
@@ -855,7 +856,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
       { abortSignal: controller.signal }
     );
 
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/12/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
     // Both as the user, and both ended by the same stop.
     for (const [, init] of fetchSpy.mock.calls) {
       const request = init as RequestInit;
@@ -983,7 +984,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
     expect(out).toBe(
       "[ERROR] Execution failed due to the following error:\nError:\n  execution 345 was already started"
     );
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/345/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
   });
 
   test("reports a unit that cannot be reached once the execution is created", async () => {
@@ -993,7 +994,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
     const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
 
     expect(out).toBe("[ERROR] Execution failed due to the following error:\nError:\n  connection refused");
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/345/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
   });
 
   test("creates at the Dashboard, and runs at the unit's own endpoint where each unit has one", async () => {
@@ -1007,7 +1008,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
 
       await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), "dst");
 
-      expect(requestUrls()).toEqual([CREATE_URL, "http://computing-unit-3.pool.svc:8085/api/execution/345/run"]);
+      expect(requestUrls()).toEqual([CREATE_URL, "http://computing-unit-3.pool.svc:8085/api/execution/run"]);
     } finally {
       env.EXECUTION_ENDPOINT_TEMPLATE = saved;
     }
@@ -1035,7 +1036,7 @@ describe("executeOperatorAndFormat - abort and callback failures", () => {
     await expect(
       executeOperatorAndFormat(state, makeConfig(), target, { abortSignal: new AbortController().signal })
     ).rejects.toThrow("aborted during the run");
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/345/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
   });
 
   test("does not ask the unit to run an execution once the run has been stopped", async () => {
@@ -1118,12 +1119,7 @@ describe("createExecuteOperatorTool", () => {
     expect(getConfig).toHaveBeenCalledTimes(2);
     expect(out).toContain(`Executed operator ${target}`);
     // Each invocation creates its own execution, then runs it.
-    expect(requestUrls()).toEqual([
-      CREATE_URL,
-      `${UNIT}/api/execution/345/run`,
-      CREATE_URL,
-      `${UNIT}/api/execution/345/run`,
-    ]);
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`, CREATE_URL, `${UNIT}/api/execution/run`]);
     expect(requestBody(0)).toMatchObject({ wid: 42, computingUnitId: 2 });
     expect(requestBody(2)).toMatchObject({ wid: 43, computingUnitId: 2 });
     expect(onResult).toHaveBeenCalledTimes(2);

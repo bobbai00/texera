@@ -30,9 +30,10 @@ import scala.util.control.NonFatal
 
 /**
   * What a computing unit checks of the plan it is asked to start an execution from, before it
-  * starts it ([[check]]). The plan comes with the request: the client got it when the Dashboard
-  * service created the execution. The checks read nothing, and answer why the start is refused
-  * (Left), in words for the user who asked to start it, or the plan read (Right).
+  * starts it ([[check]]). The plan is all the request carries: the client got it when the
+  * Dashboard service created the execution, and it names the execution it is of. The checks read
+  * nothing, and answer why the start is refused (Left), in words for the user who asked to start
+  * it, or the plan read (Right).
   */
 object ExecutionStart {
 
@@ -40,8 +41,8 @@ object ExecutionStart {
     s"The plan belongs to workflow $workflowId, not to this one."
 
   /**
-    * Reads `plan`, the plan a request to start execution `executionId` carries, and checks it. It
-    * must be a plan this unit reads, of that execution; of the socket's workflow when the request
+    * Reads `plan`, the plan a request to start an execution carries, and checks it. It must be a
+    * plan this unit reads, which names its execution; of the socket's workflow when the request
     * came over a socket; writing into the default warehouse or one of the user's own
     * ([[UserWarehouse]]), which this deployment serves; replaying and writing replay logs only
     * where this unit keeps them; and with none of the links its operators read files through
@@ -52,31 +53,29 @@ object ExecutionStart {
     * @param uid              the user who asks to start the execution
     * @param replayLogRoot    what executions' replay logs are resolved against on this unit; None
     *                         when it keeps none
-    * @return the plan, with the context it runs under, which names no computing unit
+    * @return the plan, with the context it runs under, which names the execution and no
+    *         computing unit
     */
   def check(
       plan: String,
-      executionId: Long,
       socketWorkflowId: Option[Long],
       uid: Int,
       nowMs: Long,
       warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
       replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder
   ): Either[String, ExecutionPlan] =
-    planOf(plan, executionId).flatMap { executionPlan =>
+    planOf(plan).flatMap { executionPlan =>
       val context = executionPlan.context
       val (workflowId, warehouse) = (context.workflowId.id, context.warehouse)
-      if (context.executionId.id != executionId) {
-        Left(s"The plan is execution ${context.executionId.id}'s, not $executionId's.")
-      } else if (socketWorkflowId.exists(_ != workflowId)) {
+      if (socketWorkflowId.exists(_ != workflowId)) {
         Left(ofAnotherWorkflow(workflowId))
       } else if (warehouse.exists(!UserWarehouse.isOwnedBy(_, uid))) {
         Left("The plan writes into another user's warehouse.")
       } else if (warehouse.isDefined && !warehousesEnabled) {
         // Opened while the switch is off, the user's warehouse would be the shared one (#6930).
         Left(
-          s"Execution $executionId writes into warehouse '${warehouse.get}', and per-user " +
-            "warehouses are disabled in this deployment."
+          s"Execution ${context.executionId.id} writes into warehouse '${warehouse.get}', and " +
+            "per-user warehouses are disabled in this deployment."
         )
       } else {
         misplacedReplayLog(executionPlan, replayLogRoot)
@@ -84,6 +83,17 @@ object ExecutionStart {
           .toLeft(executionPlan)
       }
     }
+
+  /**
+    * The execution that `plan`, the text a request to start one carries, names, when the text
+    * reads as a plan's and names one. Nothing of the plan is checked: this says which execution
+    * a start that was not done was of, in the answer to it.
+    */
+  def executionNamedBy(plan: String): Option[Long] =
+    Option(plan)
+      .flatMap(text => Try(PhysicalPlanCodec.fromJson(text)).toOption)
+      .flatMap(_.executionId)
+      .map(_.id)
 
   /** Why `plan` cannot be started for the links it reads files through, expired by `nowMs`. */
   private def expiredLinks(plan: ExecutionPlan, nowMs: Long): Option[String] =
@@ -159,16 +169,13 @@ object ExecutionStart {
       .getOrElse(new URI(null, null, null, null, null))
 
   /** The plan `text` holds, or why it cannot be read. */
-  private def planOf(text: String, executionId: Long): Either[String, ExecutionPlan] =
+  private def planOf(text: String): Either[String, ExecutionPlan] =
     Option(text).filterNot(_.isBlank).toRight("The request carries no plan.").flatMap { text =>
       try Right(PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(text)))
       catch {
         case refused: IllegalArgumentException => Left(refused.getMessage)
         case NonFatal(failure) =>
-          Left(
-            s"The plan of execution $executionId cannot be read" +
-              Option(failure.getMessage).fold(".")(why => s": $why")
-          )
+          Left("The plan cannot be read" + Option(failure.getMessage).fold(".")(why => s": $why"))
       }
     }
 }

@@ -380,7 +380,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     try {
       val statements = recorder.record {
         service
-          .startExecution(execution.eid, execution.plan, creator, unitCuid)
+          .startExecution(execution.plan, creator, unitCuid)
           .left
           .foreach(why => fail(s"the start was refused: $why"))
         Await.result(session.ended, 3.minutes)

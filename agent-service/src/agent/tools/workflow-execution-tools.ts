@@ -329,7 +329,8 @@ async function executeWorkflowHttp(
     // A stop that arrived while the Dashboard created the execution: the unit is not asked to run it.
     options.abortSignal?.throwIfAborted();
 
-    const runUrl = `${executionEndpoint}/api/execution/${execution.eid}/run`;
+    // The plan names the execution the unit runs: the request names none beside it.
+    const runUrl = `${executionEndpoint}/api/execution/run`;
     const runRequest: SyncRunRequest = {
       plan: execution.plan,
       computingUnitId,

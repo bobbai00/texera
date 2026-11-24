@@ -590,8 +590,10 @@ class ComputingUnitMasterSpec
     val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
 
     // It resolves, and is answered 401 without a signed-in user.
-    jersey.statusOf("POST", "/execution/12/run") shouldBe 401
-    jersey.statusOf("GET", "/execution/12/run") shouldBe 405
+    jersey.statusOf("POST", "/execution/run") shouldBe 401
+    jersey.statusOf("GET", "/execution/run") shouldBe 405
+    // The execution is the one the request's plan names: no route names one beside it.
+    jersey.statusOf("POST", "/execution/12/run") shouldBe 404
     // A workflow to compile and run on a unit, by the workflow's and the unit's ids: not served.
     jersey.statusOf("POST", "/execution/12/3/run") shouldBe 404
   }

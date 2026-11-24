@@ -88,13 +88,13 @@ export interface CreateExecutionResponse {
 }
 
 /**
- * The body of `POST /api/execution/{eid}/run` on a computing unit. Mirrors amber's
- * `SyncRunRequest`: run execution `eid`, which the Dashboard created for this unit, with the
- * plan the create answered. The unit answers with the legacy sync-execution result, which
- * `adaptLegacySyncExecutionResult` reads.
+ * The body of `POST /api/execution/run` on a computing unit. Mirrors amber's `SyncRunRequest`:
+ * run the execution the Dashboard created for this unit, with the plan the create answered. The
+ * plan names the execution, so the request names none beside it. The unit answers with the
+ * legacy sync-execution result, which `adaptLegacySyncExecutionResult` reads.
  */
 export interface SyncRunRequest {
-  // The execution's plan, as the create answered it.
+  // The execution's plan, as the create answered it: it names the execution.
   plan: string;
   // The computing unit the execution was created for: the one asked.
   computingUnitId: number;

@@ -1162,7 +1162,7 @@ describe("delegate mode", () => {
       const steps = agent.getAllSteps();
       const txt2 = (model as any).doGenerateCalls[1].prompt[1].content[0].text;
       // Created at the Dashboard, then run on the unit by the created execution's id.
-      expect(executionPaths()).toEqual(["/api/executions", "/api/execution/21/run"]);
+      expect(executionPaths()).toEqual(["/api/executions", "/api/execution/run"]);
       const entry = agent.getWorkflowResultState().get("op-1");
       expect(entry?.stepId).toBe(steps[1].id);
       expect(entry?.operatorInfo.state).toBe(OperatorState.COMPLETED);
@@ -1212,7 +1212,7 @@ describe("delegate mode", () => {
       agent.setDelegateConfig({ userToken: "tok", workflowId: 7, workflowName: "w" });
       await agent.sendMessage("run it");
       const steps = agent.getAllSteps();
-      expect(executionPaths()).toEqual(["/api/executions", "/api/execution/21/run"]);
+      expect(executionPaths()).toEqual(["/api/executions", "/api/execution/run"]);
       expect(agent.getWorkflowResultState().get("op-1")?.stepId).toBe(steps[0].id);
     } finally {
       vSpy.mockRestore();

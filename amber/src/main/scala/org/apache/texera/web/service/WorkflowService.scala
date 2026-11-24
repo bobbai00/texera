@@ -66,18 +66,19 @@ object WorkflowService extends LazyLogging {
 
   /**
     * A start of an execution that passed every check made before it is taken ([[checkStart]]),
-    * with the plan it carried, read.
+    * with the plan it carried, read. The plan names the execution and its workflow.
     *
     * @param computingUnitId the computing unit the start was asked of
     * @param startedBy       the user who asked to start it: only they may change its operators
     */
   final case class CheckedStart(
-      executionId: Long,
-      workflowId: WorkflowIdentity,
       executionPlan: ExecutionPlan,
       computingUnitId: Int,
       startedBy: Int
-  )
+  ) {
+    def executionId: Long = executionPlan.context.executionId.id
+    def workflowId: WorkflowIdentity = executionPlan.context.workflowId
+  }
 
   /**
     * The computing unit this process is, where whatever started it said so (a unit the unit
@@ -87,15 +88,20 @@ object WorkflowService extends LazyLogging {
   lazy val configuredUnitId: Option[Int] =
     sys.env.get(EnvironmentalVariable.ENV_CU_ID).map(_.trim).flatMap(_.toIntOption)
 
-  /** What a start is answered when its run could not even be built. */
-  def notStarted(executionId: Long): String =
-    s"Execution $executionId could not be started, because of an error on this computing unit."
+  /**
+    * What a start is answered when its run could not even be built.
+    *
+    * @param executionId the execution the start was of; None where its plan did not say
+    */
+  def notStarted(executionId: Option[Long]): String =
+    executionId.fold("The execution")(id => s"Execution $id") +
+      " could not be started, because of an error on this computing unit."
 
   /**
-    * Checks a request of `user` to start execution `executionId` on computing unit `cuid`, from
-    * `plan`, the plan the request carries. A user is required, and a unit that knows which unit
-    * it is starts only what was asked of that unit. The plan is read and checked by
-    * [[ExecutionStart.check]]. Nothing is read or written.
+    * Checks a request of `user` to start an execution on computing unit `cuid`, from `plan`, the
+    * plan the request carries, which names the execution. A user is required, and a unit that
+    * knows which unit it is starts only what was asked of that unit. The plan is read and checked
+    * by [[ExecutionStart.check]]. Nothing is read or written.
     *
     * @param socketWorkflowId the workflow of the socket the request came over; None for a request
     *                         that came another way, which starts the workflow the plan names
@@ -105,7 +111,6 @@ object WorkflowService extends LazyLogging {
     * @return why the start is refused (Left), or what it starts (Right)
     */
   def checkStart(
-      executionId: Long,
       plan: String,
       user: User,
       cuid: Int,
@@ -122,14 +127,8 @@ object WorkflowService extends LazyLogging {
           .filter(_ != cuid)
           .map(own => s"This is computing unit $own, not $cuid.")
           .toLeft(())
-      executionPlan <- ExecutionStart.check(
-        plan,
-        executionId,
-        socketWorkflowId,
-        uid,
-        System.currentTimeMillis()
-      )
-    } yield CheckedStart(executionId, executionPlan.context.workflowId, executionPlan, cuid, uid)
+      executionPlan <- ExecutionStart.check(plan, socketWorkflowId, uid, System.currentTimeMillis())
+    } yield CheckedStart(executionPlan, cuid, uid)
 
   /**
     * Builds the run of a plan, before it is started: given the context the plan was read with,
@@ -305,7 +304,7 @@ class WorkflowService(
   }
 
   /**
-    * Checks a start of execution `executionId` of this workflow from `plan`
+    * Checks a start of an execution of this workflow from `plan`, which names the execution
     * ([[WorkflowService.checkStart]]), then starts it ([[startChecked]]). `cuid` is the unit the
     * request to start it came to.
     *
@@ -313,13 +312,12 @@ class WorkflowService(
     *         before its engine started
     */
   def startExecution(
-      executionId: Long,
       plan: String,
       user: User,
       cuid: Int
   ): Either[String, WorkflowExecutionService] =
     WorkflowService
-      .checkStart(executionId, plan, user, cuid, Some(workflowId.id))
+      .checkStart(plan, user, cuid, Some(workflowId.id))
       .flatMap(startChecked)
 
   /**
@@ -404,7 +402,7 @@ class WorkflowService(
             // The execution's start is taken and it will not start: its sessions are shown why.
             if (!published) executionService.onNext(execution)
             Right(execution)
-          case None => Left(WorkflowService.notStarted(start.executionId))
+          case None => Left(WorkflowService.notStarted(Some(start.executionId)))
         }
     }
   }

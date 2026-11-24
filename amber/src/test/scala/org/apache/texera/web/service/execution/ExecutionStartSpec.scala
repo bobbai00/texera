@@ -119,7 +119,6 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   private def check(
       plan: String = planText(),
-      execution: Long = eid,
       socketWorkflow: Option[Long] = Some(wid),
       user: Int = uid,
       nowMs: Long = now,
@@ -128,7 +127,6 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
   ): Either[String, ExecutionPlan] =
     ExecutionStart.check(
       plan,
-      execution,
       socketWorkflow,
       user,
       nowMs,
@@ -182,9 +180,9 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
     )
   }
 
-  it should "refuse the plan of another execution" in {
-    check(planText(execution = eid + 1)) shouldBe
-      Left(s"The plan is execution ${eid + 1}'s, not $eid's.")
+  it should "start whichever execution the plan names: the request names none beside it" in {
+    check(planText(execution = eid + 1)).map(_.context.executionId) shouldBe
+      Right(ExecutionIdentity(eid + 1))
   }
 
   it should "refuse, over a socket, the plan of another workflow" in {
@@ -220,14 +218,11 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
     check(warehousesEnabled = false).isRight shouldBe true
   }
 
-  it should "check the execution first, then the workflow, then the warehouse" in {
-    val everythingWrong =
-      planText(workflow = wid + 1, execution = eid + 1, warehouse = Some("shared"))
-    check(everythingWrong, execution = eid) shouldBe
-      Left(s"The plan is execution ${eid + 1}'s, not $eid's.")
-    check(everythingWrong, execution = eid + 1) shouldBe
+  it should "check the workflow first, then the warehouse" in {
+    val everythingWrong = planText(workflow = wid + 1, warehouse = Some("shared"))
+    check(everythingWrong) shouldBe
       Left(s"The plan belongs to workflow ${wid + 1}, not to this one.")
-    check(everythingWrong, execution = eid + 1, socketWorkflow = None) shouldBe
+    check(everythingWrong, socketWorkflow = None) shouldBe
       Left("The plan writes into another user's warehouse.")
   }
 
@@ -329,6 +324,32 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
     )
     check(plan).left.getOrElse(fail("passed")) should
       startWith("The plan writes its replay log to file:/etc/texera/")
+  }
+
+  // --- the execution a plan names, for the answer to a start that is not done ---
+
+  "ExecutionStart.executionNamedBy" should "say which execution a plan's text names, without checking the plan" in {
+    ExecutionStart.executionNamedBy(planText()) shouldBe Some(eid)
+    ExecutionStart.executionNamedBy(planText(execution = eid + 1)) shouldBe Some(eid + 1)
+    // A plan the start refuses still says whose it is.
+    val refused = planText(workflow = wid + 1, warehouse = Some("shared"))
+    check(refused).isLeft shouldBe true
+    ExecutionStart.executionNamedBy(refused) shouldBe Some(eid)
+  }
+
+  it should "say none for a text that reads as no plan, or as a plan that names none" in {
+    Seq(null, "", "  \n", "not a plan", "[]", "{}").foreach { text =>
+      withClue(s"[$text]: ") {
+        ExecutionStart.executionNamedBy(text) shouldBe None
+      }
+    }
+    // A plan in a format this unit does not read names nothing it can go by.
+    ExecutionStart.executionNamedBy(
+      planText().replaceFirst(
+        s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
+        s""""formatVersion": ${PhysicalPlanCodec.FormatVersion + 1},"""
+      )
+    ) shouldBe None
   }
 
   // --- withoutSecrets ---

@@ -1251,7 +1251,6 @@ class SyncExecutionResourceSpec
     service.executionService.onNext(previous)
 
     val result = resource.runExecution(
-      execution.eid,
       runRequest(execution.plan),
       syncUser()
     )
@@ -1282,7 +1281,6 @@ class SyncExecutionResourceSpec
 
     val before = System.currentTimeMillis()
     val result = new ResourceOn(service).runExecution(
-      execution.eid,
       runRequest(execution.plan, timeoutSeconds = 1),
       syncUser()
     )
@@ -1308,7 +1306,6 @@ class SyncExecutionResourceSpec
     })
 
     val result = new ResourceOn(service).runExecution(
-      execution.eid,
       runRequest(execution.plan),
       syncUser()
     )
@@ -1339,7 +1336,6 @@ class SyncExecutionResourceSpec
 
     val result =
       try new ResourceOn(service).runExecution(
-        execution.eid,
         runRequest(execution.plan),
         syncUser()
       )
@@ -1364,7 +1360,6 @@ class SyncExecutionResourceSpec
       new EnginelessService(failure = Some(new IllegalStateException("the engine is gone")))
 
     val result = new ResourceOn(service).runExecution(
-      execution.eid,
       runRequest(execution.plan),
       syncUser()
     )
@@ -1395,7 +1390,7 @@ class SyncExecutionResourceSpec
     val resource = new ResourceOn(service)
 
     resource
-      .runExecution(execution.eid, runRequest(execution.plan), syncUser())
+      .runExecution(runRequest(execution.plan), syncUser())
       .success shouldBe true
     // Counted from before the run is set up (a run installing a Python environment is READY, which
     // the clean-up of a run nobody watches does not spare) until it is answered.
@@ -1404,39 +1399,45 @@ class SyncExecutionResourceSpec
 
     // A start the workflow's service refuses is not left counted either.
     refusalOf(
-      resource.runExecution(execution.eid, runRequest(execution.plan), syncUser())
+      resource.runExecution(runRequest(execution.plan), syncUser())
     ) shouldBe s"Execution ${execution.eid} was already started."
     service.watchers shouldBe 0
   }
 
-  it should "refuse a run of another plan, of no plan, or a second time" in {
+  it should "refuse a run of a plan it cannot read, of no plan, or a second time" in {
     val execution = createdExecution()
-    val other = createdExecution()
     val service = new EnginelessService
     val resource = new ResourceOn(service)
-    val eid = execution.eid
 
-    refusalOf(resource.runExecution(eid, runRequest(other.plan), syncUser())) shouldBe
-      s"The plan is execution ${other.eid}'s, not $eid's."
-    refusalOf(resource.runExecution(eid, runRequest("{}"), syncUser())) shouldBe
+    refusalOf(resource.runExecution(runRequest("{}"), syncUser())) shouldBe
       "The plan names no format version; this reader reads version " +
         s"${PhysicalPlanCodec.FormatVersion}."
-    refusalOf(resource.runExecution(eid, runRequest(null), syncUser())) shouldBe
+    refusalOf(resource.runExecution(runRequest(null), syncUser())) shouldBe
       "The request carries no plan."
-    refusalOf(resource.runExecution(eid, null, syncUser())) shouldBe
+    refusalOf(resource.runExecution(null, syncUser())) shouldBe
       "The request has no body."
     // None of them started anything, or asked for a workflow's service: each was refused by the
     // checks made before, so none leaves a service behind, made for the unit it named.
     resource.asked shouldBe empty
     service.started shouldBe empty
 
-    resource.runExecution(eid, runRequest(execution.plan), syncUser()).success shouldBe
-      true
+    resource.runExecution(runRequest(execution.plan), syncUser()).success shouldBe true
     // The second call passes the checks, and its start is refused on the workflow's service.
-    refusalOf(resource.runExecution(eid, runRequest(execution.plan), syncUser())) shouldBe
-      s"Execution $eid was already started."
+    refusalOf(resource.runExecution(runRequest(execution.plan), syncUser())) shouldBe
+      s"Execution ${execution.eid} was already started."
     resource.asked shouldBe Seq.fill(2)((WorkflowIdentity(testWid.toLong), testCuid))
     service.started should have size 1
+  }
+
+  it should "run the execution its plan names: each plan starts its own" in {
+    val (first, second) = (createdExecution(), createdExecution())
+    val service = new EnginelessService
+    val resource = new ResourceOn(service)
+
+    resource.runExecution(runRequest(first.plan), syncUser()).success shouldBe true
+    resource.runExecution(runRequest(second.plan), syncUser()).success shouldBe true
+
+    service.started.map(_._1.context.executionId.id) shouldBe Seq(first.eid, second.eid)
   }
 
   "expectedExternalInputsOf" should

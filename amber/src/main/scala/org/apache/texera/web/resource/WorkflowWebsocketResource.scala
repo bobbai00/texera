@@ -29,6 +29,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.{RequestRefusedEvent, WorkflowStateEvent}
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
+import org.apache.texera.web.service.execution.ExecutionStart
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
@@ -124,19 +125,26 @@ class WorkflowWebsocketResource extends LazyLogging {
     }
   }
 
+  /**
+    * The execution `request` is about, for the answer to it when it is not done: the one it
+    * names, and for a start the one its plan names, when the plan's text says.
+    */
   private def executionNamedBy(request: TexeraWebSocketRequest): Option[Long] =
     request match {
-      case named: ExecutionRequest => Some(named.executionId)
-      case _                       => None
+      case named: ExecutionRequest     => Some(named.executionId)
+      case start: WorkflowStartRequest => ExecutionStart.executionNamedBy(start.plan)
+      case _                           => None
     }
 
   /**
     * Does what `request` asks, for the session `sender` that sent it. A heartbeat and a read of
     * results are open to every session. Every other request changes a run, so it is its sender's
     * to make only with WRITE on the socket's computing unit: a start, a change to an operator, and
-    * every command to a run. A change, a pause, a resume and a kill name the execution whose run
-    * they are for, and are refused unless the workflow's service holds that run; a checkpoint, a
-    * retry, a skip, a debug command and an expression to evaluate go to the run it holds.
+    * every command to a run. A start carries the plan of its execution, and a change is made for
+    * one: each says which execution it is of, and names none beside. A pause, a resume and a
+    * kill name the execution whose run they are for, and are refused unless the workflow's
+    * service holds that run; a change, a checkpoint, a retry, a skip, a debug command and an
+    * expression to evaluate go to the run it holds.
     *
     * @return why the request is refused, if it is; None once it is done or handed on
     */
@@ -169,7 +177,7 @@ class WorkflowWebsocketResource extends LazyLogging {
       case command =>
         val asked = command match {
           case named: ExecutionRequest => runOf(named, run).toRight(notRunningHere(named))
-          case _                       => run.toRight("No execution of this workflow is running here.")
+          case _                       => run.toRight(NoRunHere)
         }
         asked.map(_.wsInput.onNext(command, user.map(_.getUid))).left.toOption
     }
@@ -185,9 +193,12 @@ class WorkflowWebsocketResource extends LazyLogging {
   private def notRunningHere(request: ExecutionRequest): String =
     s"Execution ${request.executionId} is not running here."
 
+  /** What a request for the run the workflow's service holds is answered when it holds none. */
+  private val NoRunHere = "No execution of this workflow is running here."
+
   /**
-    * Starts the execution `start` names, which the Dashboard service created, from the plan it
-    * carries, on this socket's workflow and computing unit, for the socket's user
+    * Starts the execution the plan `start` carries names, which the Dashboard service created,
+    * on this socket's workflow and computing unit, for the socket's user
     * ([[WorkflowService.startExecution]]). Once started, the run reaches every session on the
     * workflow, as a run does.
     *
@@ -200,29 +211,30 @@ class WorkflowWebsocketResource extends LazyLogging {
       start: WorkflowStartRequest
   ): Option[String] =
     try {
-      logger.info(s"Asked to start execution ${start.executionId}.")
+      logger.info("Asked to start an execution from its plan.")
       val started = for {
         user <- user.toRight("A signed-in user is required to start an execution.")
         workflow <- workflow.toRight("This connection is not open on a workflow.")
         cuid <- sender.getComputingUnitId.toRight(
           "This connection is not open on a computing unit."
         )
-        execution <- workflow.startExecution(start.executionId, start.plan, user, cuid)
+        execution <- workflow.startExecution(start.plan, user, cuid)
       } yield execution
       started.left.toOption
     } catch {
       case NonFatal(failure) =>
-        logger.error(s"Execution ${start.executionId} could not be started.", failure)
-        Some(WorkflowService.notStarted(start.executionId))
+        val execution = ExecutionStart.executionNamedBy(start.plan)
+        logger.error(WorkflowService.notStarted(execution), failure)
+        Some(WorkflowService.notStarted(execution))
     }
 
   /**
     * Applies the change to an operator that `update` carries, which the Dashboard service made to
-    * run, to the run of its execution on this socket's workflow
-    * ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyUpdate]]), and answers
-    * `sender` whether it applies.
+    * run, to the run this socket's workflow holds, which refuses a change made for another
+    * execution ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyUpdate]]),
+    * and answers `sender` whether it applies.
     *
-    * @return why the change is refused, if its execution has no run here
+    * @return why the change is refused, if the workflow holds no run to change
     */
   private def applyUpdate(
       sender: SessionState,
@@ -230,13 +242,13 @@ class WorkflowWebsocketResource extends LazyLogging {
       user: Option[User],
       update: OperatorUpdateRequest
   ): Option[String] =
-    runOf(update, run).flatMap(_.services) match {
+    run.flatMap(_.services) match {
       case Some(services) =>
         sender.send(
           services.reconfiguration.applyUpdate(update.update, user.map(_.getUid.intValue()))
         )
         None
-      case None => Some(notRunningHere(update))
+      case None => Some(NoRunHere)
     }
 
   /**
