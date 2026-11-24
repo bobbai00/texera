@@ -119,7 +119,6 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
 
   private def check(
       plan: String = planText(),
-      socketWorkflow: Option[Long] = Some(wid),
       user: Int = uid,
       nowMs: Long = now,
       warehousesEnabled: Boolean = true,
@@ -127,7 +126,6 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
   ): Either[String, ExecutionPlan] =
     ExecutionStart.check(
       plan,
-      socketWorkflow,
       user,
       nowMs,
       warehousesEnabled,
@@ -153,8 +151,6 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
     val inOwnWarehouse =
       check(planText(warehouse = Some(ownWarehouse))).getOrElse(fail("refused"))
     inOwnWarehouse.context.warehouse shouldBe Some(ownWarehouse)
-    // A request that came over no socket starts the workflow the plan names.
-    check(socketWorkflow = None).isRight shouldBe true
   }
 
   it should "refuse a request that carries no plan" in {
@@ -180,14 +176,11 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
     )
   }
 
-  it should "start whichever execution the plan names: the request names none beside it" in {
+  it should "read whichever execution, of whichever workflow, the plan names: the request names none beside it" in {
     check(planText(execution = eid + 1)).map(_.context.executionId) shouldBe
       Right(ExecutionIdentity(eid + 1))
-  }
-
-  it should "refuse, over a socket, the plan of another workflow" in {
-    check(planText(workflow = wid + 1)) shouldBe
-      Left(s"The plan belongs to workflow ${wid + 1}, not to this one.")
+    check(planText(workflow = wid + 1)).map(_.context.workflowId) shouldBe
+      Right(WorkflowIdentity(wid + 1))
   }
 
   it should "refuse a plan that writes into another user's warehouse, before it asks whether warehouses are on" in {
@@ -216,14 +209,6 @@ class ExecutionStartSpec extends AnyFlatSpec with Matchers {
       )
     // The default warehouse is written into either way.
     check(warehousesEnabled = false).isRight shouldBe true
-  }
-
-  it should "check the workflow first, then the warehouse" in {
-    val everythingWrong = planText(workflow = wid + 1, warehouse = Some("shared"))
-    check(everythingWrong) shouldBe
-      Left(s"The plan belongs to workflow ${wid + 1}, not to this one.")
-    check(everythingWrong, socketWorkflow = None) shouldBe
-      Left("The plan writes into another user's warehouse.")
   }
 
   // --- the input links ---

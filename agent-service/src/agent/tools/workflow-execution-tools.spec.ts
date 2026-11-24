@@ -104,12 +104,14 @@ function makeFatal(message: string): WorkflowFatalError {
 let fetchSpy: ReturnType<typeof spyOn>;
 let validateSpy: ReturnType<typeof spyOn>;
 
-// An execution is created at the Dashboard service, then run on the computing unit.
+// An execution is created at the Dashboard service, which has its computing unit start it; the
+// unit is then asked to wait for it.
 const { apiEndpoint: DASHBOARD, executionEndpoint: UNIT } = getBackendConfig();
 const CREATE_URL = `${DASHBOARD}/api/executions`;
 
-// What the Dashboard answers a create with, unless a test says otherwise.
-const CREATED = { eid: 345, plan: '{"executionId":345}' };
+// What the Dashboard answers a create with, unless a test says otherwise, and the wait for it.
+const CREATED = { eid: 345 };
+const WAIT_URL = `${UNIT}/api/execution/345/wait`;
 
 function createdResponse(body: unknown = CREATED): Response {
   return new Response(JSON.stringify(body), { status: 201, headers: { "Content-Type": "application/json" } });
@@ -151,22 +153,22 @@ function compileFailureResponse(messageByOperator: Record<string, string>): Resp
   );
 }
 
-// Answers the create with `create`, and the run of the execution it names with `run`. Any other
-// request fails loudly: a run when `run` is absent, and the routes the agent used to run on,
-// which named a workflow and a unit, or an execution.
-function routeFetch(create: Response, run?: Response | Error): void {
+// Answers the create with `create`, and a wait for an execution with `wait`. Any other request
+// fails loudly: a wait when `wait` is absent, and every other route of a unit, none of which
+// starts an execution for a client.
+function routeFetch(create: Response, wait?: Response | Error): void {
   fetchSpy.mockImplementation(async (input: unknown) => {
     const url = String(input);
     if (url === CREATE_URL) return create;
-    if (run !== undefined && /\/api\/execution\/run$/.test(url)) {
-      if (run instanceof Error) throw run;
-      return run;
+    if (wait !== undefined && /\/api\/execution\/\d+\/wait$/.test(url)) {
+      if (wait instanceof Error) throw wait;
+      return wait;
     }
     throw new Error(`unexpected fetch: ${url}`);
   });
 }
 
-// The Dashboard creates the execution, and the unit's run of it answers `value`.
+// The Dashboard creates and starts the execution, and the unit's wait for it answers `value`.
 function setFetchResolving(value: Response): void {
   routeFetch(createdResponse(), value);
 }
@@ -181,7 +183,7 @@ function requestUrls(): string[] {
   return fetchSpy.mock.calls.map((call: unknown[]) => String(call[0]));
 }
 
-// The JSON body of the nth request: an execution's create comes first (0), then its run (1).
+// The JSON body of the nth request: an execution's create comes first (0), then the wait for it (1).
 function requestBody(callIndex = 0): any {
   return JSON.parse((fetchSpy.mock.calls[callIndex][1] as RequestInit).body as string);
 }
@@ -656,7 +658,7 @@ describe("executeOperatorAndFormat - execution failures", () => {
 
     const out = await executeOperatorAndFormat(state, makeConfig(), target);
     expect(out).toContain("[ERROR]");
-    expect(out).toContain("Execution request failed: 500 Server Error - backend detail");
+    expect(out).toContain("Waiting for execution 345 failed: 500 Server Error - backend detail");
   });
 
   test("surfaces a malformed legacy response (non-array result) as a general error", async () => {
@@ -764,7 +766,7 @@ describe("executeOperatorAndFormat - request construction", () => {
     );
   });
 
-  test("the create carries the picked warehouse, and omits it when none is picked; the run never names one", async () => {
+  test("the create carries the picked warehouse, and omits it when none is picked; the wait never names one", async () => {
     // The last hop of the chain: the id has travelled request -> agent ->
     // delegate config -> here, and the Dashboard refuses a create without it while
     // the feature is enabled (#7751).
@@ -773,7 +775,7 @@ describe("executeOperatorAndFormat - request construction", () => {
 
     await executeOperatorAndFormat(state, makeConfig({ workflowId: 7, computingUnitId: 3, warehouseId: 42 }), "dst");
     expect(requestBody(0).warehouseId).toBe(42);
-    // The unit finds the warehouse in the URI of the plan the Dashboard stored.
+    // The unit has the warehouse from the plan the Dashboard handed it.
     expect("warehouseId" in requestBody(1)).toBe(false);
 
     fetchSpy.mockClear();
@@ -833,14 +835,13 @@ describe("executeOperatorAndFormat - request construction", () => {
   });
 });
 
-describe("executeOperatorAndFormat - create, then run", () => {
+describe("executeOperatorAndFormat - create, then wait", () => {
   const completed = () => legacyJsonResponse({ success: true, state: "Completed", operators: {} });
 
-  test("creates the execution at the Dashboard, then runs it on the unit by its id, with the plan the create answered", async () => {
+  test("creates the execution at the Dashboard, then waits for it at the unit, by its id", async () => {
     const state = makeState(makeOperator("dst"));
-    // Not the default answer: the run has to name the execution and carry the plan this create answered.
-    const plan = '{"executionId":12,"operators":[{"id":"dst","code":"print(\\"café\\")\\n"}]}';
-    routeFetch(createdResponse({ eid: 12, plan }), completed());
+    // Not the default answer: the wait has to name the execution this create answered.
+    routeFetch(createdResponse({ eid: 12 }), completed());
     const controller = new AbortController();
 
     await executeOperatorAndFormat(
@@ -856,7 +857,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
       { abortSignal: controller.signal }
     );
 
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/12/wait`]);
     // Both as the user, and both ended by the same stop.
     for (const [, init] of fetchSpy.mock.calls) {
       const request = init as RequestInit;
@@ -878,12 +879,10 @@ describe("executeOperatorAndFormat - create, then run", () => {
       computingUnitId: 3,
       emailNotificationEnabled: false,
     });
-    // The unit gets the plan the Dashboard compiled, the text the create answered, and no workflow
-    // to compile. 4200 rather than a round 4500: with 4500 the timeout holds for ceil, round *and*
+    // The unit is sent no plan and no workflow: the Dashboard handed it the plan as it started the
+    // execution. 4200 rather than a round 4500: with 4500 the timeout holds for ceil, round *and*
     // floor-plus-one, so it would not notice the rounding being changed. 4200 separates them.
     expect(requestBody(1)).toEqual({
-      plan,
-      computingUnitId: 3,
       targetOperatorIds: ["dst"],
       timeoutSeconds: 5,
       maxOperatorResultCharLimit: 111,
@@ -902,11 +901,11 @@ describe("executeOperatorAndFormat - create, then run", () => {
     expect(requestUrls()).toEqual([CREATE_URL]);
     expect(out).toBe(
       "[ERROR] Execution failed due to the following error:\nError:\n" +
-        `  Execution could not be created: 400 Bad Request - ${message}`
+        `  Execution request failed: 400 Bad Request - ${message}`
     );
   });
 
-  test("reports each operator's compilation error, naming the operator, and runs nothing", async () => {
+  test("reports each operator's compilation error, naming the operator, and waits for nothing", async () => {
     const { state, source, target } = makeLinearState();
     // The answer keys the errors by operator, here with the target's first: the tool lists the
     // source's, the cause, before it.
@@ -927,7 +926,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
       `  ${target}: java.lang.RuntimeException: column age does not exist`,
     ].join("\n");
     expect(out).toBe(`[ERROR] ${expected}`);
-    // There is no execution to run.
+    // There is no execution to wait for.
     expect(requestUrls()).toEqual([CREATE_URL]);
     // The target is told of the failure, as it is of any run that does not complete.
     expect(onResult).toHaveBeenCalledTimes(1);
@@ -943,7 +942,11 @@ describe("executeOperatorAndFormat - create, then run", () => {
     [409, "Conflict", "Computing unit 3 is terminated."],
     [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be made."],
     [504, "Gateway Timeout", "Execution 345 could not be created: compiling the workflow took longer than 60 seconds."],
-  ])("reports a create refused with %d, and runs nothing", async (status, statusText, message) => {
+    // The execution is created, and its computing unit does not start it, or does not say.
+    [409, "Conflict", "Execution 345 could not be started on computing unit 3. This is computing unit 5, not 3."],
+    [503, "Service Unavailable", "Execution 345 could not be started: computing unit 3 could not be reached."],
+    [504, "Gateway Timeout", "Computing unit 3 did not answer whether it started execution 345. It may be running."],
+  ])("reports a create refused with %d, and waits for nothing", async (status, statusText, message) => {
     const { state, target } = makeLinearState();
     routeFetch(refusedResponse(status, statusText, message));
 
@@ -951,14 +954,14 @@ describe("executeOperatorAndFormat - create, then run", () => {
 
     expect(out).toBe(
       "[ERROR] Execution failed due to the following error:\nError:\n" +
-        `  Execution could not be created: ${status} ${statusText} - ${message}`
+        `  Execution request failed: ${status} ${statusText} - ${message}`
     );
     expect(requestUrls()).toEqual([CREATE_URL]);
   });
 
-  test("reports a create whose answer holds no plan, and runs nothing", async () => {
+  test("reports a create whose answer names no execution, and waits for nothing", async () => {
     const { state, target } = makeLinearState();
-    routeFetch(createdResponse({ eid: 345 }), completed());
+    routeFetch(createdResponse({}), completed());
 
     const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
 
@@ -967,7 +970,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
     expect(requestUrls()).toEqual([CREATE_URL]);
   });
 
-  test("reports why the unit refused to start the execution", async () => {
+  test("reports why the unit does not wait for the execution", async () => {
     const { state, target } = makeLinearState();
     routeFetch(
       createdResponse(),
@@ -975,31 +978,31 @@ describe("executeOperatorAndFormat - create, then run", () => {
         success: false,
         state: "Error",
         operators: {},
-        errors: ["execution 345 was already started"],
+        errors: ["Execution 345 is not running here."],
       })
     );
 
     const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
 
     expect(out).toBe(
-      "[ERROR] Execution failed due to the following error:\nError:\n  execution 345 was already started"
+      "[ERROR] Execution failed due to the following error:\nError:\n  Execution 345 is not running here."
     );
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, WAIT_URL]);
   });
 
-  test("reports a unit that cannot be reached once the execution is created", async () => {
+  test("reports a unit that cannot be reached once the execution is started", async () => {
     const { state, target } = makeLinearState();
     routeFetch(createdResponse(), new Error("connection refused"));
 
     const out = await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), target);
 
     expect(out).toBe("[ERROR] Execution failed due to the following error:\nError:\n  connection refused");
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
+    expect(requestUrls()).toEqual([CREATE_URL, WAIT_URL]);
   });
 
-  test("creates at the Dashboard, and runs at the unit's own endpoint where each unit has one", async () => {
+  test("creates at the Dashboard, and waits at the unit's own endpoint where each unit has one", async () => {
     // In K8s each unit is a pod of its own, reached through EXECUTION_ENDPOINT_TEMPLATE. Only the
-    // run goes there: no unit creates executions.
+    // wait goes there: no unit creates executions.
     const saved = env.EXECUTION_ENDPOINT_TEMPLATE;
     env.EXECUTION_ENDPOINT_TEMPLATE = "http://computing-unit-{cuid}.pool.svc:8085";
     try {
@@ -1008,7 +1011,7 @@ describe("executeOperatorAndFormat - create, then run", () => {
 
       await executeOperatorAndFormat(state, makeConfig({ computingUnitId: 3 }), "dst");
 
-      expect(requestUrls()).toEqual([CREATE_URL, "http://computing-unit-3.pool.svc:8085/api/execution/run"]);
+      expect(requestUrls()).toEqual([CREATE_URL, "http://computing-unit-3.pool.svc:8085/api/execution/345/wait"]);
     } finally {
       env.EXECUTION_ENDPOINT_TEMPLATE = saved;
     }
@@ -1027,23 +1030,24 @@ describe("executeOperatorAndFormat - abort and callback failures", () => {
     ).rejects.toThrow("aborted");
   });
 
-  test("re-throws AbortError raised while the unit runs the execution", async () => {
+  test("re-throws AbortError raised while the unit is waited for", async () => {
     const { state, target } = makeLinearState();
-    const abortErr = new Error("aborted during the run");
+    const abortErr = new Error("aborted during the wait");
     abortErr.name = "AbortError";
     routeFetch(createdResponse(), abortErr);
 
     await expect(
       executeOperatorAndFormat(state, makeConfig(), target, { abortSignal: new AbortController().signal })
-    ).rejects.toThrow("aborted during the run");
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`]);
+    ).rejects.toThrow("aborted during the wait");
+    expect(requestUrls()).toEqual([CREATE_URL, WAIT_URL]);
   });
 
-  test("does not ask the unit to run an execution once the run has been stopped", async () => {
+  test("does not wait for an execution once the tool call has been stopped", async () => {
     const { state, target } = makeLinearState();
     const controller = new AbortController();
     fetchSpy.mockImplementation(async () => {
-      // The stop arrives as the Dashboard answers the create: too late to end that request.
+      // The stop arrives as the Dashboard answers the create: too late to end that request, or the
+      // start of the execution it made.
       controller.abort();
       return createdResponse();
     });
@@ -1118,8 +1122,8 @@ describe("createExecuteOperatorTool", () => {
 
     expect(getConfig).toHaveBeenCalledTimes(2);
     expect(out).toContain(`Executed operator ${target}`);
-    // Each invocation creates its own execution, then runs it.
-    expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/run`, CREATE_URL, `${UNIT}/api/execution/run`]);
+    // Each invocation creates its own execution, then waits for it.
+    expect(requestUrls()).toEqual([CREATE_URL, WAIT_URL, CREATE_URL, WAIT_URL]);
     expect(requestBody(0)).toMatchObject({ wid: 42, computingUnitId: 2 });
     expect(requestBody(2)).toMatchObject({ wid: 43, computingUnitId: 2 });
     expect(onResult).toHaveBeenCalledTimes(2);

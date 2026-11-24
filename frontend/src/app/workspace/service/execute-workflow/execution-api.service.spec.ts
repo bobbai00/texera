@@ -120,19 +120,16 @@ describe("ExecutionApiService", () => {
   });
 
   describe("create", () => {
-    it("posts the request to /api/executions and hands back the execution created, its plan as the text it is", () => {
+    it("posts the request to /api/executions and hands back the execution created", () => {
       let created: CreateExecutionResponse | undefined;
       service.create(request).subscribe(response => (created = response));
 
       const req = httpMock.expectOne(EXECUTIONS_URL);
       expect(req.request.method).toBe("POST");
       expect(req.request.body).toEqual(request);
-      // Text that is itself JSON, with escapes and characters beyond ASCII in it.
-      const plan = '{"executionId":345,"operators":[{"id":"udf-1","code":"print(\\"café\\")\\n"}]}';
-      req.flush({ eid: 345, plan }, { status: 201, statusText: "Created" });
+      req.flush({ eid: 345 }, { status: 201, statusText: "Created" });
 
-      expect(created).toEqual({ eid: 345, plan });
-      expect(created?.plan).toBe(plan);
+      expect(created).toEqual({ eid: 345 });
     });
 
     it("writes neither a warehouse nor a replay that the request does not name", () => {
@@ -149,7 +146,7 @@ describe("ExecutionApiService", () => {
         "wid",
         "workflowSettings",
       ]);
-      req.flush({ eid: 1, plan: '{"executionId":1}' }, { status: 201, statusText: "Created" });
+      req.flush({ eid: 1 }, { status: 201, statusText: "Created" });
     });
 
     it("fails with the operators' errors of a workflow that does not compile", () => {
@@ -212,20 +209,18 @@ describe("ExecutionApiService", () => {
       opsToReuseResult: [],
     };
 
-    it("posts the operator and the workflow the execution ran, and hands back the change compiled", () => {
-      let compiled: OperatorUpdateResponse | undefined;
-      service.postUpdate(345, operator, workflow).subscribe(response => (compiled = response));
+    it("posts the operator and the workflow the execution ran, and hands back the operator the unit took the change of", () => {
+      let taken: OperatorUpdateResponse | undefined;
+      service.postUpdate(345, operator, workflow).subscribe(response => (taken = response));
 
       const req = httpMock.expectOne(`${EXECUTIONS_URL}/345/updates`);
       expect(req.request.method).toBe("POST");
       expect(req.request.body).toEqual({ operator, workflow });
       // What goes on the wire: the two, and nothing else.
       expect(Object.keys(JSON.parse(req.request.serializeBody() as string)).sort()).toEqual(["operator", "workflow"]);
-      const update = '{"executionId":345,"operator":{"id":"PythonUDFV2-operator-1","code":"x = 1\\n"}}';
-      req.flush({ operatorId: "PythonUDFV2-operator-1", update }, { status: 201, statusText: "Created" });
+      req.flush({ operatorId: "PythonUDFV2-operator-1" }, { status: 201, statusText: "Created" });
 
-      expect(compiled).toEqual({ operatorId: "PythonUDFV2-operator-1", update });
-      expect(compiled?.update).toBe(update);
+      expect(taken).toEqual({ operatorId: "PythonUDFV2-operator-1" });
     });
 
     it("fails with the Dashboard's reason for a change it refuses", () => {

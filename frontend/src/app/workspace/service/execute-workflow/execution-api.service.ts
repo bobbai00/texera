@@ -55,18 +55,20 @@ export type CreateExecutionRequest = Readonly<{
   replayFromExecution?: ReplayExecutionInfo;
 }>;
 
-/** An execution `POST /api/executions` created (201), with the plan the computing unit is to start it with. */
+/**
+ * An execution `POST /api/executions` created (201). Its computing unit has started it by the time the answer
+ * comes: the Dashboard service hands the unit the execution's plan, which the page never holds.
+ */
 export type CreateExecutionResponse = Readonly<{
   eid: number;
-  /** The execution's compiled plan: text for the unit alone, which the page hands on as it is and never reads. */
-  plan: string;
 }>;
 
-/** A change to an operator of a paused execution, as `POST /api/executions/{eid}/updates` compiled it (201). */
+/**
+ * A change to an operator of a paused execution that `POST /api/executions/{eid}/updates` compiled and the
+ * execution's computing unit took (201), to apply when the run resumes.
+ */
 export type OperatorUpdateResponse = Readonly<{
   operatorId: string;
-  /** The change compiled: text for the unit alone, which the page hands on as it is and never reads. */
-  update: string;
 }>;
 
 /**
@@ -180,10 +182,10 @@ export function failureMessage(error: unknown): string {
 }
 
 /**
- * The Dashboard service's executions. An execution is created here, and the plan the answer holds is what the
- * page hands the computing unit to start it with; a change to one of its operators, while it is paused, is
- * compiled here, and handed to the unit the same way. Its state is kept here too, for a page whose computing
- * unit does not show its run.
+ * The Dashboard service's executions. An execution is created here, and the Dashboard has its computing unit
+ * start it; a change to one of its operators, while it is paused, is compiled here, and the Dashboard hands it
+ * to the unit the same way. The page carries neither the plan nor the change. An execution's state is kept
+ * here too, for a page whose computing unit does not show its run.
  *
  * Each call fails with the HTTP error: see {@link failureMessage} and, for a create, {@link operatorErrorsOf}.
  */
@@ -193,14 +195,20 @@ export function failureMessage(error: unknown): string {
 export class ExecutionApiService {
   constructor(private http: HttpClient) {}
 
+  /**
+   * Has the execution `request` asks for created, and started on its computing unit. Fails, beside the ways a
+   * create is refused, when the unit refuses the start (409) or cannot be reached (503), the execution being
+   * recorded as failed in both, and when the unit does not answer whether it started it (504).
+   */
   public create(request: CreateExecutionRequest): Observable<CreateExecutionResponse> {
     return this.http.post<CreateExecutionResponse>(WORKFLOW_EXECUTIONS_API_BASE_URL, request);
   }
 
   /**
-   * Has `operator`, as the editor holds it once changed, compiled into a change to paused execution `eid`.
-   * `workflow` is the workflow the execution ran, as the editor held it before the change: the Dashboard
-   * finds the operator as it runs there.
+   * Has `operator`, as the editor holds it once changed, compiled into a change to paused execution `eid`, and
+   * handed to the execution's computing unit. `workflow` is the workflow the execution ran, as the editor held
+   * it before the change: the Dashboard finds the operator as it runs there. Fails, beside the ways the change
+   * is refused, when the unit does not take it (409), cannot be reached (503) or does not answer (504).
    */
   public postUpdate(eid: number, operator: LogicalOperator, workflow: LogicalPlan): Observable<OperatorUpdateResponse> {
     return this.http.post<OperatorUpdateResponse>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${eid}/updates`, {

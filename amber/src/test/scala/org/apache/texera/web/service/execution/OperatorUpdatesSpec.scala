@@ -92,6 +92,14 @@ import org.apache.texera.web.model.http.response.execution.{
   OperatorUpdateResponse
 }
 import org.apache.texera.web.resource.dashboard.user.workflow.ExecutionResource
+import org.apache.texera.web.service.execution.ComputingUnitClient.{
+  Handover,
+  Refused,
+  Taken,
+  Unanswered,
+  Unreached
+}
+import org.apache.texera.web.service.execution.RecordingComputingUnits.Handed
 import org.apache.texera.web.service.execution.WorkflowCompilingService.CompileRefused
 import org.apache.texera.web.{TexeraWebApplication, TexeraWebConfiguration}
 import org.jooq.exception.DataAccessException
@@ -116,7 +124,8 @@ import scala.util.{Failure, Success, Try, Using}
   * The rows are in `MockTexeraDB`; each execution is created by [[ExecutionCreator]], and its
   * changes are sent with the workflow it was created from, as the editor sends them. Changes are
   * compiled with the fixture resolvers of `TestOperators`. Nothing a change makes is kept: a case
-  * reads the change it is answered.
+  * reads the change the Dashboard hands the execution's computing unit, which here keeps what it
+  * is handed and runs nothing ([[RecordingComputingUnits]]).
   *
   * Users: `ownerUid` owns the workflow and the unit; `creatorUid` creates the executions, as a
   * user who may only read the workflow and was given WRITE on the unit; `strangerUid` has no right
@@ -245,10 +254,24 @@ class OperatorUpdatesSpec
       .execute()
   }
 
-  /** Creates executions with the fixture bindings and no cost hints. */
+  /** What the execution's unit answers a change it is handed: taken, unless a case says. */
+  @volatile private var unitAnswer: Handover = Taken
+
+  /** The unit's side of every change the suite asks for. */
+  private val handedOver = new RecordingComputingUnits(unitAnswer)
+
+  /** Runs `body` while the execution's unit answers `answer` to a change it is handed. */
+  private def whileUnitAnswers[T](answer: Handover)(body: => T): T = {
+    unitAnswer = answer
+    try body
+    finally unitAnswer = Taken
+  }
+
+  /** Creates executions with the fixture bindings and no cost hints, on units that take them. */
   private class FixtureCreator
       extends ExecutionCreator(
         compiling = new FixtureCompilingService(),
+        units = new RecordingComputingUnits(),
         linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = false,
@@ -290,7 +313,8 @@ class OperatorUpdatesSpec
                 current.runtimeReconfiguration(workflowId, executionId, current, changed)
               )(_())
           )
-        )
+        ),
+        units = handedOver
       )
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -502,10 +526,26 @@ class OperatorUpdatesSpec
       updates
     )
 
-  /** The change a 201 answers. */
-  private def made(response: Response): OperatorUpdateResponse = {
-    withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 201 }
-    response.getEntity.asInstanceOf[OperatorUpdateResponse]
+  /**
+    * A change the Dashboard made and the execution's unit took.
+    *
+    * @param operatorId the operator the 201 names
+    * @param handed     what the unit was handed for it
+    */
+  private case class MadeUpdate(operatorId: String, handed: Handed) {
+
+    /** The change as text, as the unit reads it. */
+    def update: String = handed.text
+  }
+
+  /** The change `response` asks for, answered 201, with what the unit was handed for it. */
+  private def made(response: => Response): MadeUpdate = {
+    val before = handedOver.updates.size
+    val answered = response
+    withClue(s"${answered.getEntity}: ") { answered.getStatus shouldBe 201 }
+    val handed = handedOver.updates.drop(before)
+    handed should have size 1
+    MadeUpdate(answered.getEntity.asInstanceOf[OperatorUpdateResponse].operatorId, handed.head)
   }
 
   /** The message of the refusal `body` throws, which answers `status`. */
@@ -516,11 +556,11 @@ class OperatorUpdatesSpec
   }
 
   /** The operator to run that `update` holds, as the computing unit reads it. */
-  private def decoded(update: OperatorUpdateResponse): OperatorUpdate =
+  private def decoded(update: MadeUpdate): OperatorUpdate =
     PhysicalPlanCodec.decodeUpdate(PhysicalPlanCodec.updateFromJson(update.update))
 
   /** The descriptor that the operator `update` holds runs from, as `T`. */
-  private def descriptorOf[T](update: OperatorUpdateResponse, as: Class[T]): T =
+  private def descriptorOf[T](update: MadeUpdate, as: Class[T]): T =
     objectMapper.readValue(
       decoded(update).opExecInitInfo.asInstanceOf[OpExecWithClassName].descString,
       as
@@ -546,13 +586,17 @@ class OperatorUpdatesSpec
   // --- made ---
 
   "ExecutionResource.postUpdate" should
-    "make the change into the operator to run, for the execution's creator, and answer it" in {
+    "make the change into the operator to run, for the execution's creator, and hand it to the execution's unit" in {
     val execution = created()
     val updates = new FixtureUpdates()
 
     val update = made(post(execution.eid, udf(code = changedCode("v2")), updates = updates))
 
     update.operatorId shouldBe "udf"
+    // Handed to the unit the execution was created for, as the caller: with the request's own
+    // Authorization header.
+    update.handed.cuid shouldBe unitCuid
+    update.handed.authorization shouldBe FixtureCompilingService.authorizationOf(creatorUid)
     // What the unit applies: the new code for the running operator, of this execution.
     decoded(update) shouldBe OperatorUpdate(
       ExecutionIdentity(execution.eid),
@@ -596,7 +640,7 @@ class OperatorUpdatesSpec
     )
   }
 
-  it should "answer the Python environment the change asks for, for the computing unit to check" in {
+  it should "hand over the Python environment the change asks for, for the computing unit to check" in {
     // The unit refuses a change of the environment its operator runs in: the Dashboard does not
     // hold the plan to tell.
     val inDefault = created()
@@ -643,15 +687,58 @@ class OperatorUpdatesSpec
     descriptorOf(update, classOf[LimitOpDesc]).limit shouldBe 7
   }
 
-  it should "write the change it made as {operatorId, update}" in {
+  it should "answer the operator the unit took a change to, as {operatorId}, and nothing of the change" in {
     val execution = created()
-    val update = made(post(execution.eid, limit("limit", 7)))
+    val answer = post(execution.eid, limit("limit", 7))
+    answer.getStatus shouldBe 201
 
-    val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(update))
+    val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(answer.getEntity))
 
-    written.fieldNames().asScala.toSet shouldBe Set("operatorId", "update")
+    written.fieldNames().asScala.toList shouldBe List("operatorId")
     written.get("operatorId").asText() shouldBe "limit"
-    written.get("update").asText() shouldBe update.update
+  }
+
+  // --- handed to the unit ---
+
+  it should "answer 409 with the unit's reason when the unit does not take the change" in {
+    val execution = created()
+    val reasons = Seq(
+      s"Only the user who started execution ${execution.eid} may change its operators.",
+      s"Execution ${execution.eid} is not running here."
+    )
+    reasons.foreach { reason =>
+      whileUnitAnswers(Refused(reason)) {
+        refused(409)(post(execution.eid, limit("limit", 7))) shouldBe reason
+      }
+    }
+  }
+
+  it should "answer 503 when the unit cannot be reached, and 504 when it does not say whether it took the change" in {
+    val execution = created()
+    val before = handedOver.updates.size
+
+    whileUnitAnswers(Unreached(new java.net.ConnectException("refused"))) {
+      refused(503)(post(execution.eid, limit("limit", 7))) shouldBe
+        s"The change to execution ${execution.eid} could not be applied: computing unit " +
+          s"$unitCuid could not be reached."
+    }
+    whileUnitAnswers(Unanswered(new java.net.http.HttpTimeoutException("late"))) {
+      refused(504)(post(execution.eid, limit("limit", 7))) shouldBe
+        s"Computing unit $unitCuid did not answer whether it took the change to execution " +
+          s"${execution.eid}."
+    }
+    // Each was handed over once: the Dashboard does not hand a change over again.
+    handedOver.updates.drop(before).map(_.cuid) shouldBe Seq(unitCuid, unitCuid)
+  }
+
+  it should "hand the unit nothing of a change it refuses itself" in {
+    val execution = created()
+    val before = handedOver.updates.size
+
+    refused(404)(post(execution.eid, limit("ghost", 7)))
+    refused(403)(post(execution.eid, limit("limit", 7), uid = strangerUid))
+
+    handedOver.updates.drop(before) shouldBe empty
   }
 
   // --- refused: the change ---
@@ -809,10 +896,11 @@ class OperatorUpdatesSpec
   ): OperatorUpdates =
     new OperatorUpdates(
       compiling = new WorkflowCompilingServiceClient(endpoint, connectTimeout = 2.seconds),
+      units = handedOver,
       compileDeadline = deadline
     )
 
-  it should "ask the compiling service to make the change, with the caller's own token, and answer what it makes" in {
+  it should "ask the compiling service to make the change, with the caller's own token, and hand over what it makes" in {
     val execution = created()
     val workflow = udfPlan()
     Using.resource(StubCompilingServer.compiling()) { server =>

@@ -23,12 +23,6 @@ import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 
 case class HeartBeatResponse() extends TexeraWebSocketEvent
 
-case class ModifyLogicResponse(
-    opId: String,
-    isValid: Boolean,
-    errorMessage: String
-) extends TexeraWebSocketEvent
-
 case class ModifyLogicCompletedEvent(
     opIds: List[String]
 ) extends TexeraWebSocketEvent

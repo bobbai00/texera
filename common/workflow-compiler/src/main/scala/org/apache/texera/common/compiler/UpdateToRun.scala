@@ -33,11 +33,11 @@ import scala.util.{Failure, Success, Try}
   * the change compiled as the execution's plan was, for the user who created the execution, as
   * the text [[PhysicalPlanCodec]] writes an operator's update in.
   *
-  * The workflow compiling service makes it, for the Dashboard service to hand to the client, which
-  * hands it to the computing unit running the execution. Nothing a compile finds for a run but the
-  * datasets and models a change names is found for a change: an operator that takes a change
-  * while it runs reads no file and no listing. Whether the change fits the operator the unit
-  * runs, of the same layer and in the same Python environment, is the unit's to check.
+  * The workflow compiling service makes it, for the Dashboard service to hand to the computing
+  * unit running the execution. Nothing a compile finds for a run but the datasets and models a
+  * change names is found for a change: an operator that takes a change while it runs reads no
+  * file and no listing. Whether the change fits the operator the unit runs, of the same layer
+  * and in the same Python environment, is the unit's to check.
   */
 object UpdateToRun {
 

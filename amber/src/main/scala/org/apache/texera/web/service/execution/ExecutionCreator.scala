@@ -48,6 +48,12 @@ import org.apache.texera.web.model.http.request.execution.{
 import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
+import org.apache.texera.web.service.execution.ComputingUnitClient.{
+  Refused,
+  Taken,
+  Unanswered,
+  Unreached
+}
 import org.apache.texera.web.service.execution.WorkflowCompilingService.{
   CompileRefused,
   CompileUnanswered,
@@ -143,9 +149,9 @@ final class WorkflowNotCompiled(
 ) extends BadRequestException(message)
 
 /**
-  * Creates executions: what `POST /api/executions` on the Dashboard service does. No computing
-  * unit is involved: the create answers the execution's plan, and the client hands it to the unit
-  * the execution is created for, which starts it. Nothing of the plan is kept here.
+  * Creates executions and starts them: what `POST /api/executions` on the Dashboard service
+  * does. The execution's plan goes from here to the computing unit the execution is created
+  * for, which starts it; no client carries it, and nothing of it is kept here.
   *
   * In this order, which decides what a refused request leaves behind:
   *  1. The request is checked: a workflow, a computing unit, an engine version, settings a plan
@@ -179,8 +185,13 @@ final class WorkflowNotCompiled(
   *  1. The result tables the plan names are recorded, a row each
   *     ([[ExecutionsMetadataPersistService.insertResultTables]]): the result service lists and
   *     reads the execution's results by them. A record that fails closes the row as failed,
-  *     "its plan could not be made" (500). Otherwise the plan is answered (201), with the
-  *     execution's id.
+  *     "its plan could not be made" (500).
+  *  1. The plan is handed to the computing unit, with the user's own token
+  *     ([[ComputingUnitClient.start]]), and the unit starts the execution: the execution's id is
+  *     answered (201). A unit that refuses the start closes the row as failed, with the unit's
+  *     reason (409), and so does a unit that cannot be reached (503). A unit that was sent the
+  *     plan and does not answer may have started the execution: the row stays open (504), and
+  *     the closing job closes it by what its log shows.
   *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
   *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
   *     is replaced like any other. Then the results of its closed executions on the unit that a
@@ -188,15 +199,17 @@ final class WorkflowNotCompiled(
   *     execution replaces none until a unit runs it, which the closing job finds.
   *
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
-  * as `{"code", "message"}`. One that fails once its row exists closes the row itself
-  * ([[ExecutionRecords.close]]): no engine and no log will ever say how such an execution
-  * ended. No email is sent about it: the user is looking at the failure.
+  * as `{"code", "message"}`. One that fails once its row exists and before a unit may have the
+  * plan closes the row itself ([[ExecutionRecords.close]]): no engine and no log will ever say
+  * how such an execution ended. No email is sent about it: the user is looking at the failure.
   *
+  * @param units         hands the plan to the execution's computing unit
   * @param replayLogRoot where runs keep their replay logs; None when they keep none
   * @param background    runs what a create leaves to be done after it has answered
   */
 class ExecutionCreator(
     compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
+    units: ComputingUnitClient = ComputingUnitClient.forDeployment,
     linker: InputLinker = LakeFSInputLinker.forDeployment,
     replayLogRoot: Option[URI] = ApplicationConfig.faultToleranceLogRootFolder,
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
@@ -219,7 +232,8 @@ class ExecutionCreator(
     * @param requestUri    the URI the request came to: the email about the run links to the
     *                      workflow on its host
     * @param authorization the request's `Authorization` header: the user's own token, which the
-    *                      compiling service is asked for the plan with
+    *                      compiling service is asked for the plan with, and the computing unit
+    *                      handed it with
     * @throws WebApplicationException with the status of the step that refused the request or
     *                                 failed; a [[WorkflowNotCompiled]] when the workflow does not
     *                                 compile
@@ -265,8 +279,8 @@ class ExecutionCreator(
       s"Execution ${eid.id} of workflow ${checked.wid} is created for user $uid on computing " +
         s"unit ${checked.computingUnitId}."
     )
-    // From here the row exists: whatever fails closes it as failed, with why, so it does not
-    // stay open although no unit can ever start it.
+    // From here the row exists: whatever fails before a unit may have the plan closes it as
+    // failed, with why, so it does not stay open although no unit can ever start it.
     val (plan, resultTables) = closingOnFailure(eid, planNotMade) {
       val hints = costHints.load(checked.wid, uid)
       val made = compiling.planToRun(
@@ -288,12 +302,59 @@ class ExecutionCreator(
     closingOnFailure(eid, planNotMade)(
       ExecutionsMetadataPersistService.insertResultTables(eid, resultTables)
     )
+    handOver(eid, checked.computingUnitId, plan, authorization)
     background.execute(() => {
       closeEndedBefore(eid, wid, checked.computingUnitId)
       expiry.expireReplaced(wid.id, checked.computingUnitId, eid.id)
     })
-    CreateExecutionResponse(eid.id, plan)
+    CreateExecutionResponse(eid.id)
   }
+
+  /**
+    * Hands `plan`, the plan of execution `eid`, to computing unit `cuid`, which starts the
+    * execution. A unit that refuses it, or that nothing reached, never has the plan: the row is
+    * closed as failed, with why. A unit that was sent the plan and did not answer may run it:
+    * the row is left open.
+    *
+    * @throws WebApplicationException 409 with the unit's reason, 503, or 504
+    */
+  private def handOver(
+      eid: ExecutionIdentity,
+      cuid: Int,
+      plan: String,
+      authorization: String
+  ): Unit =
+    units.start(cuid, plan, authorization) match {
+      case Taken =>
+        logger.info(s"Execution ${eid.id} is started on computing unit $cuid.")
+      case Refused(why) =>
+        logger.info(s"Computing unit $cuid did not start execution ${eid.id}: $why")
+        closeUnstartable(eid, ExecutionClosing.notStartedByUnit(why))
+        throw new WebApplicationException(
+          s"Execution ${eid.id} could not be started on computing unit $cuid. $why",
+          Response.Status.CONFLICT
+        )
+      case Unreached(cause) =>
+        logger.warn(
+          s"Computing unit $cuid could not be reached to start execution ${eid.id}.",
+          cause
+        )
+        closeUnstartable(eid, ExecutionClosing.UnitUnreachable)
+        throw new WebApplicationException(
+          s"Execution ${eid.id} could not be started: computing unit $cuid could not be reached.",
+          Response.Status.SERVICE_UNAVAILABLE
+        )
+      case Unanswered(cause) =>
+        logger.warn(
+          s"Computing unit $cuid did not answer whether it started execution ${eid.id}.",
+          cause
+        )
+        throw new WebApplicationException(
+          s"Computing unit $cuid did not answer whether it started execution ${eid.id}. " +
+            "It may be running.",
+          Response.Status.GATEWAY_TIMEOUT
+        )
+    }
 
   /**
     * Refuses (400) the plan of execution `eid` when it is larger than a computing unit takes
@@ -350,13 +411,9 @@ class ExecutionCreator(
     }
 
   /**
-    * `step`, a step of the create of execution `eid` after its row exists. When it fails, the
-    * row is closed as failed for `reason` of the failure, and the create fails with
-    * [[answerTo]] the failure.
-    *
-    * The row is closed as one no unit ever started, which it is: nothing looks for its results.
-    * A close that fails is logged, not thrown, since the caller is owed the create's own
-    * failure; the closing job then closes the row as never started.
+    * `step`, a step of the create of execution `eid` after its row exists and before its plan
+    * is handed to a unit. When it fails, the row is closed as failed for `reason` of the
+    * failure ([[closeUnstartable]]), and the create fails with [[answerTo]] the failure.
     */
   private def closingOnFailure[T](eid: ExecutionIdentity, reason: Throwable => String)(
       step: => T
@@ -364,20 +421,29 @@ class ExecutionCreator(
     try step
     catch {
       case NonFatal(failure) =>
-        try {
-          ExecutionRecords.close(
-            eid.id,
-            WorkflowExecutionStatus.Failed,
-            Some(reason(failure)),
-            System.currentTimeMillis(),
-            fromLog = false,
-            unstartable = true
-          )
-        } catch {
-          case NonFatal(unclosed) =>
-            logger.warn(s"Execution ${eid.id}, whose create failed, could not be closed.", unclosed)
-        }
+        closeUnstartable(eid, reason(failure))
         throw answerTo(eid, failure)
+    }
+
+  /**
+    * Closes the row of execution `eid`, whose create failed, as failed for `reason`: as one no
+    * unit ever started, which it is, so nothing looks for its results. A close that fails is
+    * logged, not thrown, since the caller is owed the create's own failure; the closing job
+    * then closes the row as never started.
+    */
+  private def closeUnstartable(eid: ExecutionIdentity, reason: String): Unit =
+    try {
+      ExecutionRecords.close(
+        eid.id,
+        WorkflowExecutionStatus.Failed,
+        Some(reason),
+        System.currentTimeMillis(),
+        fromLog = false,
+        unstartable = true
+      )
+    } catch {
+      case NonFatal(unclosed) =>
+        logger.warn(s"Execution ${eid.id}, whose create failed, could not be closed.", unclosed)
     }
 
   /**

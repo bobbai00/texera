@@ -582,9 +582,13 @@ class WorkflowExecutionServiceSpec
       readBack(sourcePlan(Some(replaySource), Some(replayLogLocation)))
     val run = new UnitRun(executionPlan)
     try {
+      // Nobody started it yet.
+      run.service.startedBy shouldBe None
       run.service.startPlan(executionPlan, testUid.intValue()) shouldBe
         None
       run.errors shouldBe empty
+      // It is the run of the user its start was taken for.
+      run.service.startedBy shouldBe Some(testUid.intValue())
 
       // The engine is handed the plan as it was handed to the run, under its context: the one it
       // was read back with. Read back, not compiled: no operator keeps a schema function a
@@ -672,6 +676,8 @@ class WorkflowExecutionServiceSpec
       run.errors shouldBe Seq(failure)
       run.engineWorkflow shouldBe None
       run.service.services shouldBe None
+      // Its start was taken all the same: it is the run of the user who asked.
+      run.service.startedBy shouldBe Some(testUid.intValue())
     } finally run.close()
   }
 
@@ -830,8 +836,8 @@ class WorkflowExecutionServiceSpec
       run.service.startPlan(executionPlan, testUid.intValue()) shouldBe None
 
       run.service.services.get.reconfiguration
-        .applyUpdate(change, Some(testUid.intValue()))
-        .isValid shouldBe true
+        .applyUpdate(change, Some(testUid.intValue())) shouldBe
+        Right(storedSource.id.logicalOpId.id)
       run.store.reconfigurationStore.getState.unscheduledReconfigurations
         .map(_.opExecInitInfo) shouldBe List(udfReading(datasetDirectory))
     } finally run.close()

@@ -35,7 +35,6 @@ import org.apache.texera.web.model.websocket.response.{
   ClusterStatusUpdateEvent,
   HeartBeatResponse,
   ModifyLogicCompletedEvent,
-  ModifyLogicResponse,
   RegionUpdateEvent
 }
 import org.apache.texera.web.service.ExecutionResultService.{
@@ -73,10 +72,9 @@ import java.time.Instant
   * Its `TexeraWebsocketEventTypeMap` keys include `HeartBeatResponse`, `RequestRefusedEvent`,
   * `WorkflowStateEvent`, `OperatorStatisticsUpdateEvent`, `WebResultUpdateEvent`,
   * `WorkflowErrorEvent`, `ConsoleUpdateEvent`, `PaginatedResultEvent`,
-  * `PythonExpressionEvaluateResponse`,
-  * `WorkerAssignmentUpdateEvent`, `ModifyLogicResponse`, `ModifyLogicCompletedEvent`,
-  * `ExecutionDurationUpdateEvent`, `ClusterStatusUpdateEvent`, `RegionUpdateEvent` and
-  * `RegionStateEvent`. Renaming a Scala event class compiles fine on both sides and
+  * `PythonExpressionEvaluateResponse`, `WorkerAssignmentUpdateEvent`,
+  * `ModifyLogicCompletedEvent`, `ExecutionDurationUpdateEvent`, `ClusterStatusUpdateEvent`,
+  * `RegionUpdateEvent` and `RegionStateEvent`. Renaming a Scala event class compiles fine on both sides and
   * silently drops the corresponding UI update -- that is what this spec guards.
   *
   * Deliberate asymmetry: events are tested SERIALIZE-first. Five live event classes
@@ -159,8 +157,7 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
     "WorkerAssignmentUpdateEvent" -> WorkerAssignmentUpdateEvent(
       "op-assign",
       Seq("worker-9", "worker-10")
-    ),
-    "ModifyLogicResponse" -> ModifyLogicResponse("op-modify", isValid = false, "error-11")
+    )
   )
 
   /**
@@ -193,8 +190,7 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
     "ConsoleUpdateEvent",
     "PaginatedResultEvent",
     "PythonExpressionEvaluateResponse",
-    "WorkerAssignmentUpdateEvent",
-    "ModifyLogicResponse"
+    "WorkerAssignmentUpdateEvent"
   )
 
   "TexeraWebSocketEvent @JsonSubTypes" should
@@ -252,8 +248,7 @@ class TexeraWebSocketEventSpec extends AnyFlatSpec with Matchers {
       "OperatorStatisticsUpdateEvent",
       "PaginatedResultEvent",
       "PythonExpressionEvaluateResponse",
-      "WorkerAssignmentUpdateEvent",
-      "ModifyLogicResponse"
+      "WorkerAssignmentUpdateEvent"
     )
     val symmetric = registeredEvents.filter { case (id, _) => symmetricIds.contains(id) }
     symmetric.map(_._1).toSet shouldBe symmetricIds

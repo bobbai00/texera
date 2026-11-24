@@ -235,9 +235,10 @@ object ExecutionRecords {
   /**
     * Closes execution `eid`, unless it is closed already.
     *
-    * @param unstartable no unit can ever start it, as its create failed and no client got its
-    *                    plan: its results are marked expired in the same UPDATE, so nothing looks
-    *                    for tables it never made, and it holds no bytes
+    * @param unstartable no unit can ever start it, as its create failed and no unit took its
+    *                    plan: in the same transaction its results are marked expired and the rows
+    *                    of its result tables deleted, so nothing looks for tables it never made,
+    *                    and it holds no bytes
     * @return whether this call closed it
     */
   def close(
@@ -251,21 +252,32 @@ object ExecutionRecords {
     requireOutcome(outcome)
     require(!(unstartable && fromLog), "an execution that never started has no log to end in")
     val endedAt = timeOf(endedAtMs)
-    val closing = context
-      .update(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.OUTCOME, Short.box(outcome))
-      .set(WORKFLOW_EXECUTIONS.OUTCOME_REASON, reason.orNull)
-      .set(WORKFLOW_EXECUTIONS.ENDED_AT, endedAt)
-      .set(WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG, Boolean.box(fromLog))
-    val unstarted =
-      if (unstartable)
-        closing
-          .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, endedAt)
-          .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(0L))
-      else closing
-    unstarted
-      .where(rowOf(eid).and(WORKFLOW_EXECUTIONS.ENDED_AT.isNull))
-      .execute() == 1
+    withTransaction(context) { transaction =>
+      val closing = transaction
+        .update(WORKFLOW_EXECUTIONS)
+        .set(WORKFLOW_EXECUTIONS.OUTCOME, Short.box(outcome))
+        .set(WORKFLOW_EXECUTIONS.OUTCOME_REASON, reason.orNull)
+        .set(WORKFLOW_EXECUTIONS.ENDED_AT, endedAt)
+        .set(WORKFLOW_EXECUTIONS.OUTCOME_FROM_LOG, Boolean.box(fromLog))
+      val unstarted =
+        if (unstartable)
+          closing
+            .set(WORKFLOW_EXECUTIONS.RESULTS_EXPIRED_AT, endedAt)
+            .set(WORKFLOW_EXECUTIONS.STORED_BYTES, Long.box(0L))
+        else closing
+      val closed = unstarted
+        .where(rowOf(eid).and(WORKFLOW_EXECUTIONS.ENDED_AT.isNull))
+        .execute() == 1
+      if (closed && unstartable) {
+        transaction
+          .deleteFrom(OPERATOR_PORT_EXECUTIONS)
+          .where(
+            OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(Integer.valueOf(Math.toIntExact(eid)))
+          )
+          .execute()
+      }
+      closed
+    }
   }
 
   /**

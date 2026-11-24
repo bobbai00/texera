@@ -20,9 +20,7 @@
 package org.apache.texera.web.model.http.response.execution
 
 /**
-  * An execution created by `POST /api/executions` (201): its id, and the plan its computing unit
-  * runs, which a client hands to the unit as it got it and reads nothing from. The plan holds the
-  * links its operators read files through and the credentials they are set up with: keep it out
-  * of logs.
+  * An execution created by `POST /api/executions` (201) and started on its computing unit: its
+  * id. Its plan went from the Dashboard service to the unit, and is no part of the answer.
   */
-case class CreateExecutionResponse(eid: Long, plan: String)
+case class CreateExecutionResponse(eid: Long)

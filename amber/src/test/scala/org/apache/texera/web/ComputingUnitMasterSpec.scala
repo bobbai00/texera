@@ -59,9 +59,13 @@ import org.apache.texera.web.resource.dashboard.user.workflow.{
   WorkflowExecutionsResource
 }
 import org.apache.texera.web.resource.{
+  ApplyUpdateRequest,
+  ExecutionHandoverResource,
+  HandoverRefusal,
+  StartExecutionRequest,
   SyncExecutionResource,
   SyncExecutionResult,
-  SyncRunRequest,
+  SyncWaitRequest,
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
@@ -518,27 +522,39 @@ class ComputingUnitMasterSpec
     mapper.getRegisteredModuleIds.asScala should contain(
       com.fasterxml.jackson.module.scala.DefaultScalaModule.getClass.getName
     )
-    // Jersey parses SyncExecutionResource's request body, its list of targets included, with
-    // this mapper...
+    // Jersey parses the bodies of the unit's routes with this mapper: a plan and a change the
+    // Dashboard service hands over, each as one JSON string, and the agent's wait, its list of
+    // targets included...
     mapper.readValue(
-      """{"plan":"{\"formatVersion\": 1}","computingUnitId":3,
-        |"targetOperatorIds":["op-a"],"timeoutSeconds":60,"maxOperatorResultCharLimit":20000,
+      """{"plan":"{\"formatVersion\": 1}","computingUnitId":3}""",
+      classOf[StartExecutionRequest]
+    ) shouldBe StartExecutionRequest("""{"formatVersion": 1}""", 3)
+    mapper.readValue(
+      """{"update":"{\"formatVersion\": 1}"}""",
+      classOf[ApplyUpdateRequest]
+    ) shouldBe ApplyUpdateRequest("""{"formatVersion": 1}""")
+    mapper.readValue(
+      """{"targetOperatorIds":["op-a"],"timeoutSeconds":60,"maxOperatorResultCharLimit":20000,
         |"maxOperatorResultCellCharLimit":4000}""".stripMargin,
-      classOf[SyncRunRequest]
-    ) shouldBe SyncRunRequest("""{"formatVersion": 1}""", 3, List("op-a"), 60, 20000, 4000)
-    // ...and writes its answer with it, as the agent service reads it: a refused run.
+      classOf[SyncWaitRequest]
+    ) shouldBe SyncWaitRequest(List("op-a"), 60, 20000, 4000)
+    // ...and writes its answers with it: a refusal as the Dashboard service reads it, and a
+    // refused wait as the agent service reads it.
+    mapper.readTree(
+      mapper.writeValueAsString(HandoverRefusal("Execution 345 was already started."))
+    ) shouldBe mapper.readTree("""{"message":"Execution 345 was already started."}""")
     mapper.readTree(
       mapper.writeValueAsString(
         SyncExecutionResult(
           success = false,
           state = "Error",
           operators = Map.empty,
-          errors = Some(List("execution 345 was already started"))
+          errors = Some(List("Execution 345 is not running here."))
         )
       )
     ) shouldBe mapper.readTree(
       """{"success":false,"state":"Error","operators":{},
-        |"errors":["execution 345 was already started"]}""".stripMargin
+        |"errors":["Execution 345 is not running here."]}""".stripMargin
     )
   }
 
@@ -557,6 +573,7 @@ class ComputingUnitMasterSpec
 
   it should "register the master's Jersey resource classes" in {
     ranEnvironment.jersey.getResourceConfig.getClasses.asScala should contain allOf (
+      classOf[ExecutionHandoverResource],
       classOf[SyncExecutionResource],
       classOf[SessionHandler],
       classOf[RolesAllowedDynamicFeature]
@@ -586,13 +603,18 @@ class ComputingUnitMasterSpec
     jersey.statusOf("GET", "/executions/1/latest") shouldBe 404
   }
 
-  it should "serve the agent's run of an execution the Dashboard created, and no run of a workflow sent to it" in {
+  it should "serve the start and the change the Dashboard hands it and the agent's wait, and no run of what a client sends it" in {
     val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
 
-    // It resolves, and is answered 401 without a signed-in user.
-    jersey.statusOf("POST", "/execution/run") shouldBe 401
-    jersey.statusOf("GET", "/execution/run") shouldBe 405
-    // The execution is the one the request's plan names: no route names one beside it.
+    // Each resolves, and is answered 401 without a signed-in user.
+    Seq("/execution/start", "/execution/update", "/execution/12/wait").foreach { route =>
+      withClue(s"$route: ") {
+        jersey.statusOf("POST", route) shouldBe 401
+        jersey.statusOf("GET", route) shouldBe 405
+      }
+    }
+    // A plan to run and wait for, by itself or beside the execution it is of: not served.
+    jersey.statusOf("POST", "/execution/run") shouldBe 404
     jersey.statusOf("POST", "/execution/12/run") shouldBe 404
     // A workflow to compile and run on a unit, by the workflow's and the unit's ids: not served.
     jersey.statusOf("POST", "/execution/12/3/run") shouldBe 404

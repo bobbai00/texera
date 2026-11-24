@@ -709,6 +709,9 @@ export TEXERA_DASHBOARD_SERVICE_ENDPOINT="${TEXERA_DASHBOARD_SERVICE_ENDPOINT:-h
 # Read by the agent service, and by texera-web (the Dashboard), which asks the compiling service
 # for the plan of each execution it creates: it waits 5s for a connection and 60s for an answer.
 export WORKFLOW_COMPILING_SERVICE_ENDPOINT="${WORKFLOW_COMPILING_SERVICE_ENDPOINT:-http://localhost:9090}"
+# The computing unit. Read by texera-web, which hands it the plan of each execution it creates
+# (it waits 5s for a connection and 30s for an answer), and by the agent service, which waits
+# for its executions there.
 export WORKFLOW_EXECUTION_SERVICE_ENDPOINT="${WORKFLOW_EXECUTION_SERVICE_ENDPOINT:-http://localhost:8085}"
 export FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT="${FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT:-http://localhost:9092/api/dataset/presign-download}"
 export FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT="${FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT:-http://localhost:9092/api/dataset/did/upload}"

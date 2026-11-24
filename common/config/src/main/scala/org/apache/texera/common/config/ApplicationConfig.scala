@@ -118,6 +118,8 @@ object ApplicationConfig {
     getConfSource.getInt("web-server.max-workflow-websocket-request-payload-size-kb")
   val workflowCompilingServiceEndpoint: String =
     getConfSource.getString("web-server.workflow-compiling-service-endpoint")
+  val computingUnitEndpoint: String =
+    getConfSource.getString("web-server.computing-unit-endpoint")
 
   // AI Assistant
   val aiAssistantConfig: Option[Config] =

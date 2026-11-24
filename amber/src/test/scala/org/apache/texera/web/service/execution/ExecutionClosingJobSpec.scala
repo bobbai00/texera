@@ -319,9 +319,13 @@ class ExecutionClosingJobSpec
       targetOperatorId = None
     )
 
+  /** The units' side of a create: they take each plan handed over, and run none. */
+  private val handedOver = new RecordingComputingUnits()
+
   /** Creates as the Dashboard does, bound to the fixture files; nothing is expired afterwards. */
   private val creator = new ExecutionCreator(
     compiling = new FixtureCompilingService(),
+    units = handedOver,
     linker = FixtureInputs.linker,
     replayLogRoot = None,
     warehousesEnabled = false,
@@ -335,8 +339,8 @@ class ExecutionClosingJobSpec
   private val requestUri = new URI("http://texera.example:4200/api/executions")
 
   /**
-    * An execution as its create leaves it: an open row, whose plan no unit has started. With
-    * `notify`, its user asked to be emailed how it ends.
+    * An execution as its create leaves it: an open row, whose plan was handed over and which no
+    * unit has started. With `notify`, its user asked to be emailed how it ends.
     */
   private def created(cuid: Int = liveCuid, notify: Boolean = false): ExecutionRecord = {
     val response =
@@ -346,7 +350,7 @@ class ExecutionClosingJobSpec
         requestUri,
         FixtureCompilingService.authorizationOf(owner.getUid)
       )
-    plans.put(response.eid, response.plan)
+    plans.put(response.eid, handedOver.created(response).plan)
     record(response.eid)
   }
 

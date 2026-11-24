@@ -30,10 +30,10 @@ import scala.util.control.NonFatal
 
 /**
   * What a computing unit checks of the plan it is asked to start an execution from, before it
-  * starts it ([[check]]). The plan is all the request carries: the client got it when the
-  * Dashboard service created the execution, and it names the execution it is of. The checks read
-  * nothing, and answer why the start is refused (Left), in words for the user who asked to start
-  * it, or the plan read (Right).
+  * starts it ([[check]]). The plan is all the request carries: the Dashboard service made it
+  * when it created the execution and hands it over itself, and it names the execution it is of.
+  * The checks read nothing, and answer why the start is refused (Left), in words for the user
+  * the execution was created for, or the plan read (Right).
   */
 object ExecutionStart {
 
@@ -42,23 +42,19 @@ object ExecutionStart {
 
   /**
     * Reads `plan`, the plan a request to start an execution carries, and checks it. It must be a
-    * plan this unit reads, which names its execution; of the socket's workflow when the request
-    * came over a socket; writing into the default warehouse or one of the user's own
-    * ([[UserWarehouse]]), which this deployment serves; replaying and writing replay logs only
-    * where this unit keeps them; and with none of the links its operators read files through
-    * expired by `nowMs`.
+    * plan this unit reads, which names its execution and its workflow; writing into the default
+    * warehouse or one of the user's own ([[UserWarehouse]]), which this deployment serves;
+    * replaying and writing replay logs only where this unit keeps them; and with none of the
+    * links its operators read files through expired by `nowMs`.
     *
-    * @param socketWorkflowId the workflow of the socket the request came over; None for a request
-    *                         that came another way, which starts the workflow the plan names
-    * @param uid              the user who asks to start the execution
-    * @param replayLogRoot    what executions' replay logs are resolved against on this unit; None
-    *                         when it keeps none
+    * @param uid           the user who asks to start the execution
+    * @param replayLogRoot what executions' replay logs are resolved against on this unit; None
+    *                      when it keeps none
     * @return the plan, with the context it runs under, which names the execution and no
     *         computing unit
     */
   def check(
       plan: String,
-      socketWorkflowId: Option[Long],
       uid: Int,
       nowMs: Long,
       warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
@@ -66,10 +62,8 @@ object ExecutionStart {
   ): Either[String, ExecutionPlan] =
     planOf(plan).flatMap { executionPlan =>
       val context = executionPlan.context
-      val (workflowId, warehouse) = (context.workflowId.id, context.warehouse)
-      if (socketWorkflowId.exists(_ != workflowId)) {
-        Left(ofAnotherWorkflow(workflowId))
-      } else if (warehouse.exists(!UserWarehouse.isOwnedBy(_, uid))) {
+      val warehouse = context.warehouse
+      if (warehouse.exists(!UserWarehouse.isOwnedBy(_, uid))) {
         Left("The plan writes into another user's warehouse.")
       } else if (warehouse.isDefined && !warehousesEnabled) {
         // Opened while the switch is off, the user's warehouse would be the shared one (#6930).

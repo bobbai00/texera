@@ -61,10 +61,10 @@ object ExecutionResource {
 }
 
 /**
-  * Executions as the Dashboard service creates them, before any computing unit is involved, the
-  * changes made to their operators while they are paused, and what each one recorded: its
-  * state, its log and its console output, which are answered whether or not its computing unit
-  * is still there.
+  * Executions as the Dashboard service creates them and starts them on their computing units,
+  * the changes it makes to their operators while they are paused, and what each one recorded:
+  * its state, its log and its console output, which are answered whether or not its computing
+  * unit is still there.
   *
   * Registered only by the Dashboard, as is [[WorkflowExecutionsResource]], whose path it
   * shares; Jersey merges the two, and none of their methods share a path and a method. The
@@ -88,9 +88,10 @@ class ExecutionResource(
     this(ExecutionResource.creator, ExecutionResource.updates, ExecutionResource.records)
 
   /**
-    * Creates an execution of a workflow, to run on a computing unit (see [[ExecutionCreator]]).
+    * Creates an execution of a workflow and starts it on a computing unit (see
+    * [[ExecutionCreator]]).
     *
-    * @return 201 with `{eid, plan}`. Otherwise 400 when the request is malformed or names a
+    * @return 201 with `{eid}`. Otherwise 400 when the request is malformed or names a
     *         warehouse or a replay it may not; 400 when the workflow is not one the compiler can
     *         read, and 400 with `eid` and `operatorErrors` beside the code and the message when
     *         it does not compile ([[CreateExecutionFailure]]), the execution recorded as failed
@@ -98,7 +99,9 @@ class ExecutionResource(
     *         unit; 409 when the unit is terminated; 504 when the compile takes longer than its
     *         deadline and 503 when too many compiles wait or the compiling service cannot be
     *         reached; 400 when the plan is larger than a computing unit takes; 500 when the plan
-    *         cannot be made for any other reason.
+    *         cannot be made for any other reason; 409 when the unit refuses to start the
+    *         execution, 503 when the unit cannot be reached, and 504 when it does not say
+    *         whether it started it.
     */
   @POST
   @RolesAllowed(Array("REGULAR", "ADMIN"))
@@ -123,18 +126,19 @@ class ExecutionResource(
     }
 
   /**
-    * Makes a change to an operator of paused execution `eid` to run, for the client to hand to
-    * the execution's computing unit, which applies it when the run resumes (see
+    * Makes a change to an operator of paused execution `eid` to run and hands it to the
+    * execution's computing unit, which applies it when the run resumes (see
     * [[OperatorUpdates]]).
     *
-    * @return 201 with `{operatorId, update}`. Otherwise 400 when the request names no operator,
+    * @return 201 with `{operatorId}`. Otherwise 400 when the request names no operator,
     *         holds no workflow the compiler reads, or asks for a change the operator cannot take
     *         while it runs or that is larger than a computing unit takes; 403 unless
     *         the caller created the execution and may still read its workflow and run workflows
     *         on its unit; 404 for an execution, or an operator in the workflow sent, there is
     *         not; 409 when the execution has ended; 504 when the compiling service does not
     *         answer by its deadline and 503 when it cannot be reached; 500 when the change cannot
-    *         be made.
+    *         be made; 409 when the unit does not take the change, 503 when the unit cannot be
+    *         reached, and 504 when it does not say whether it took it.
     */
   @POST
   @Path("/{eid}/updates")

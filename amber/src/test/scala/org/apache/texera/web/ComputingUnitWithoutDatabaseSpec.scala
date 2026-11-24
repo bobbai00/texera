@@ -85,8 +85,8 @@ import scala.util.Try
   * none: it declares so (`SqlServer.withoutDatabase`), and whatever asks it for the database
   * from then on fails with the unit's reason.
   *
-  * An execution is here what the Dashboard service answers a client to hand a unit: the plan of
-  * a small workflow, made to run as every plan is. Nothing of it is in Postgres. It is started as
+  * An execution is here what the Dashboard service hands a unit: the plan of a small workflow,
+  * made to run as every plan is. Nothing of it is in Postgres. It is started as
   * a unit starts one from the plan its start carries (`WorkflowService.checkStart`, then
   * `startChecked`), on an engine of this suite's actor system, and asked what a session's
   * socket asks of a run: to
@@ -186,7 +186,7 @@ class ComputingUnitWithoutDatabaseSpec
 
   /**
     * The plan of execution `eid`, of the workflow of `operators` and `links`, as the Dashboard
-    * service answers it for the client to hand the unit asked to run it.
+    * service hands it to the unit that runs it.
     */
   private def planOf(eid: Long, operators: List[LogicalOp], links: List[LogicalLink]): String =
     TestUtils.planText(
@@ -221,10 +221,10 @@ class ComputingUnitWithoutDatabaseSpec
     def statesTold: Seq[String] =
       sent.asScala.collect { case WorkflowStateEvent(state, _) => state }.toSeq
 
-    /** Starts the execution `plan` names from it, as a start over a socket does. */
+    /** Starts the execution `plan` names from it, as the unit does with a plan it is handed. */
     def start(plan: String): WorkflowExecutionService =
       WorkflowService
-        .checkStart(plan, creator, unitCuid, socketWorkflowId = Some(workflowId.id))
+        .checkStart(plan, creator, unitCuid)
         .flatMap(service.startChecked)
         .fold(why => fail(s"the start was refused: $why"), identity)
 

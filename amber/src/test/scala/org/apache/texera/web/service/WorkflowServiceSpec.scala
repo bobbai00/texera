@@ -121,8 +121,8 @@ import scala.jdk.CollectionConverters.ListHasAsScala
   * The superseded-run and idle clean-up cases run on executions of their own, on computing units
   * no other case uses.
   *
-  * The cases of a start (`startExecution`) start their executions from plans made here, as text,
-  * as a client hands them. Their runs record the plan they are started from instead of building
+  * The cases of a start (`checkStart`, then `startChecked`) start their executions from plans
+  * made here, as text, as the Dashboard service hands them over. Their runs record the plan they are started from instead of building
   * an engine (`StartService`): `WorkflowExecutionServiceSpec` owns what a run does with its plan,
   * and `ExecutionStartSpec` every check a start makes of a plan.
   */
@@ -307,6 +307,10 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
 
   /** And one whose run the idle clean-up finds paused. */
   private val idlePausedEid = 941121
+
+  /** And two a service in the unit's registry holds the runs of, one after the other. */
+  private val registeredEid = 941122
+  private val registeredNextEid = 941123
 
   private val executingUser: User = {
     val user = new User
@@ -702,7 +706,17 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     ownSubscription.isDisposed shouldBe true
   }
 
-  "WorkflowService.startExecution" should
+  /**
+    * Checks a start of the execution `plan` names, asked of the fixture's unit by the fixture's
+    * user, and takes it on `service`: what the unit does with a plan it is handed.
+    */
+  private def startOn(
+      service: WorkflowService,
+      plan: String
+  ): Either[String, WorkflowExecutionService] =
+    WorkflowService.checkStart(plan, executingUser, storedCuid).flatMap(service.startChecked)
+
+  "A start, checked and taken (checkStart, startChecked)" should
     "take the execution's start, supersede the live run, and start a run of the plan on the unit asked" in {
     val plan = planOf(startedEid)
     val service = new StartService()
@@ -711,8 +725,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     heldEvents.clear()
 
     val (started, logged) = linesLoggedBy("org.apache.texera.web") {
-      service
-        .startExecution(plan, executingUser, storedCuid)
+      startOn(service, plan)
         .getOrElse(fail("the start was refused"))
     }
 
@@ -742,7 +755,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     started.workflowContext.workflowSettings.dataTransferBatchSize shouldBe 64
 
     // A second start of it is refused, however it comes, leaving the run started as it is.
-    service.startExecution(plan, executingUser, storedCuid) shouldBe
+    startOn(service, plan) shouldBe
       Left(s"Execution $startedEid was already started.")
     service.executionService.getValue should be theSameInstanceAs started
     service.started should have size 1
@@ -752,16 +765,13 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     val service = new StartService()
     val held = holdRunningRun(service, heldStoredEid)
 
-    // No plan, and the plan of another workflow: this service starts only its own workflow's.
+    // No plan.
+    startOn(service, "") shouldBe Left("The request carries no plan.")
+    // The plan of another workflow, whose start passes its checks: what it starts is what its
+    // plan names, which another service starts. This one starts only its own workflow's.
     val ofAnotherWorkflow = planOf(refusedEid, wid = testWid.toLong + 1)
-    service.startExecution("", executingUser, storedCuid) shouldBe
-      Left("The request carries no plan.")
-    service.startExecution(ofAnotherWorkflow, executingUser, storedCuid) shouldBe
-      Left(s"The plan belongs to workflow ${testWid + 1}, not to this one.")
-    // A start checked for another workflow, which the agent's path would have asked another
-    // service to start. What it starts is what its plan names.
     val checked = WorkflowService
-      .checkStart(ofAnotherWorkflow, executingUser, storedCuid, socketWorkflowId = None)
+      .checkStart(ofAnotherWorkflow, executingUser, storedCuid)
       .getOrElse(fail("the start was refused"))
     checked.workflowId shouldBe WorkflowIdentity(testWid.toLong + 1)
     checked.executionId shouldBe refusedEid
@@ -781,7 +791,6 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       "not a plan",
       executingUser,
       storedCuid,
-      socketWorkflowId = None,
       thisUnit = Some(storedCuid + 1)
     ) shouldBe Left(s"This is computing unit ${storedCuid + 1}, not $storedCuid.")
     // On the unit it was created for, it is checked as on a unit that was told nothing.
@@ -791,7 +800,6 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
           planOf(refusedEid),
           executingUser,
           storedCuid,
-          socketWorkflowId = None,
           thisUnit = thisUnit
         )
         .map(_.executionId) shouldBe Right(refusedEid)
@@ -803,7 +811,6 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       planOf(refusedEid),
       null,
       storedCuid,
-      socketWorkflowId = None,
       thisUnit = Some(storedCuid + 1)
     ) shouldBe Left("A signed-in user is required to start an execution.")
   }
@@ -816,8 +823,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     val held = holdRunningRun(service, heldStoredEid)
 
     val before = System.currentTimeMillis()
-    val failed = service
-      .startExecution(plan, executingUser, storedCuid)
+    val failed = startOn(service, plan)
       .getOrElse(fail("the start was refused"))
     val after = System.currentTimeMillis()
 
@@ -851,8 +857,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       startFailure = Some(new WorkflowRuntimeException("the worker lost its input", Some(worker)))
     )
 
-    val failed = service
-      .startExecution(plan, executingUser, storedCuid)
+    val failed = startOn(service, plan)
       .getOrElse(fail("the start was refused"))
 
     val errors = failed.executionStateStore.metadataStore.getState.fatalErrors
@@ -869,7 +874,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     service.computingUnitId shouldBe testCuid
 
     val (answer, logged) = linesLoggedBy("org.apache.texera.web") {
-      service.startExecution(plan, executingUser, storedCuid)
+      startOn(service, plan)
     }
 
     answer.isRight shouldBe true
@@ -887,8 +892,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       new StartService(supersedeFailure = Some(new IllegalStateException("cannot supersede")))
     val held = holdRunningRun(service, heldStoredEid)
 
-    val failed = service
-      .startExecution(plan, executingUser, storedCuid)
+    val failed = startOn(service, plan)
       .getOrElse(fail("the start was refused"))
 
     // Its start taken, so never to start again: published FAILED in the held run's place, with
@@ -913,12 +917,12 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       new StartService(buildFailure = Some(new IllegalStateException("cannot build")))
     val held = holdRunningRun(service, heldStoredEid)
 
-    service.startExecution(plan, executingUser, storedCuid) shouldBe
+    startOn(service, plan) shouldBe
       Left(
         s"Execution $unbuiltEid could not be started, because of an error on this computing unit."
       )
     // Its start taken, so never to start again.
-    service.startExecution(plan, executingUser, storedCuid) shouldBe
+    startOn(service, plan) shouldBe
       Left(s"Execution $unbuiltEid was already started.")
 
     // Recorded Failed; nothing is published, and the held run goes on.
@@ -939,15 +943,13 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       service.lifecycle.followedStates.collect {
         case (store, state) if store eq run.executionStateStore => state
       }.toSeq
-    val first = service
-      .startExecution(planOf(followedEid), executingUser, storedCuid)
+    val first = startOn(service, planOf(followedEid))
       .getOrElse(fail("the start was refused"))
     // As though its engine had started, so that the next run kills it.
     first.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
     statesFollowed(first).last shouldBe RUNNING
 
-    val second = service
-      .startExecution(planOf(followingEid), executingUser, storedCuid)
+    val second = startOn(service, planOf(followingEid))
       .getOrElse(fail("the start was refused"))
 
     // Killed, but the kill did not reach the clean-up: on a workflow no session has open, it
@@ -962,8 +964,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
 
   it should "record the paused run it lets go of once idle as killed, without arming the clean-up again" in {
     val service = new StartService()
-    val run = service
-      .startExecution(planOf(idlePausedEid), executingUser, storedCuid)
+    val run = startOn(service, planOf(idlePausedEid))
       .getOrElse(fail("the start was refused"))
     run.executionStateStore.transitionTo(RUNNING) shouldBe true
     run.executionStateStore.transitionTo(PAUSED) shouldBe true
@@ -999,7 +1000,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     implicit val onThreads: ExecutionContext = ExecutionContext.fromExecutorService(threads)
     try {
       val setUp = Future(
-        service.startExecution(plan, executingUser, storedCuid)
+        startOn(service, plan)
       )
       starting.await(60, TimeUnit.SECONDS) shouldBe true
       // The run is published by now, and still being set up.
@@ -1039,6 +1040,37 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     val other =
       WorkflowService.getOrCreate(WorkflowIdentity(9L), computingUnitId = 2, cleanUpTimeoutSecs)
     other should not be theSameInstanceAs(service)
+  }
+
+  "WorkflowService.holding" should
+    "find the run of an execution a service on this unit holds, with that service" in {
+    // The service leaves the registry at the end of the case: ClusterListener's node-failure
+    // recovery looks at every registered service that holds a run.
+    val service =
+      WorkflowService.getOrCreate(WorkflowIdentity(9431L), computingUnitId = 2, cleanUpTimeoutSecs)
+    try {
+      // A service that holds no run holds no execution's.
+      WorkflowService.holding(registeredEid.toLong) shouldBe None
+
+      val first = newExecution(Some(registeredEid))
+      service.executionService.onNext(first)
+      val held = WorkflowService.holding(registeredEid.toLong)
+      held.map(_._1).getOrElse(fail("no service holds the run")) should be theSameInstanceAs service
+      held.map(_._2).getOrElse(fail("no run is held")) should be theSameInstanceAs first
+      // An execution no service has a run of.
+      WorkflowService.holding(registeredNextEid.toLong) shouldBe None
+
+      // Once another run takes its place, the service holds that one's execution alone.
+      val next = newExecution(Some(registeredNextEid))
+      service.executionService.onNext(next)
+      WorkflowService.holding(registeredEid.toLong) shouldBe None
+      WorkflowService
+        .holding(registeredNextEid.toLong)
+        .map(_._2)
+        .getOrElse(fail("no run is held")) should be theSameInstanceAs next
+    } finally service.cleanUpAfterIdle()
+    // A service that left the registry holds nothing here.
+    WorkflowService.holding(registeredNextEid.toLong) shouldBe None
   }
 
   "WorkflowService.mkWorkflowStateId" should "key the registry by workflow id alone" in {

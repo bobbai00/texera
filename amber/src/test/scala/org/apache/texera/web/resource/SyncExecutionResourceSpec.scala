@@ -44,7 +44,6 @@ import org.apache.texera.amber.core.workflow.{
   InputPort,
   PhysicalOp,
   PhysicalPlan,
-  PhysicalPlanCodec,
   PortIdentity,
   WorkflowContext
 }
@@ -90,13 +89,14 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 }
 import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
-import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.model.websocket.event.WorkflowStateEvent
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
+  CreatedExecution,
   ExecutionCreator,
   ExecutionExpiry,
-  FixtureCompilingService
+  FixtureCompilingService,
+  RecordingComputingUnits
 }
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.{ExecutionStateStore, ResultUris}
@@ -113,13 +113,14 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 /**
-  * Unit tests for the synchronous "run this workflow and hand me the results" endpoint used by
-  * agent-service.
+  * Unit tests for the route the agent service waits on for the results of an execution it had
+  * the Dashboard service start: "wait for this execution and hand me what it produced".
   *
-  * Two of the resource's methods are public (`runExecution`, `healthCheck`); the others
-  * are `private def`. `runExecution` is driven for real here, on executions the Dashboard's
-  * `ExecutionCreator` made, on a resource given a workflow service whose runs end as
-  * soon as they start (what a run does with its plan is `WorkflowExecutionServiceSpec`'s). The
+  * Two of the resource's methods are public (`awaitExecution`, `healthCheck`); the others
+  * are `private def`. `awaitExecution` is driven for real here, on executions the Dashboard's
+  * `ExecutionCreator` made and handed over, each started as a unit starts the plan it is handed,
+  * on a workflow service whose runs have no engine (what a run does with its plan is
+  * `WorkflowExecutionServiceSpec`'s, and what a start does `WorkflowServiceSpec`'s). The
   * result-shaping helpers it calls cannot be reached that way: every one of them only produces an
   * observable difference once the engine has populated the stats/console stores or written
   * Iceberg results. They are therefore driven through `PrivateMethodTester` over fixtures that
@@ -136,10 +137,10 @@ import scala.util.Try
   * per-row size (`rowChars`) rather than round numbers, which land in a neighbouring branch.
   *
   * Deliberately NOT covered, and why:
-  *   - the engine shutdown of the run a sync run stops or supersedes. The runs here have no
-  *     engine; that ending a run shuts its engine down is `WorkflowExecutionServiceSpec`'s. What
-  *     stopping and superseding record is pinned below.
-  *   - a run that ends while `runExecution` waits for it. The runs here are in the state
+  *   - the engine shutdown of the run a wait stops. The runs here have no engine; that ending a
+  *     run shuts its engine down is `WorkflowExecutionServiceSpec`'s. What stopping records is
+  *     pinned below.
+  *   - a run that ends while `awaitExecution` waits for it. The runs here are in the state
   *     the wait ends on by the time it looks, or stay as they are until its timeout.
   */
 class SyncExecutionResourceSpec
@@ -513,7 +514,7 @@ class SyncExecutionResourceSpec
 
   "isTerminalState" should "treat exactly the four finished states as terminal" in {
     // Partitioning every declared state, so neither adding nor dropping a case survives: a state
-    // wrongly called terminal makes runExecution skip waiting for the run to finish.
+    // wrongly called terminal makes awaitExecution skip waiting for the run to finish.
     val terminal = List(
       UNINITIALIZED,
       READY,
@@ -1098,16 +1099,20 @@ class SyncExecutionResourceSpec
     result._5 shouldBe None
   }
 
-  // -- running an execution the Dashboard created, by its id ---------------------------
+  // -- waiting for the run of an execution the Dashboard started on this unit -----------
 
   private object NoHints extends CostHintsLoader(1) {
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
+  /** The units' side of the Dashboard's create: each plan handed over, for the suite's services. */
+  private val handedOver = new RecordingComputingUnits()
+
   /** The Dashboard's create, with the fixture bindings and no cost hints. */
   private object FixtureCreator
       extends ExecutionCreator(
         compiling = new FixtureCompilingService(),
+        units = handedOver,
         linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = false,
@@ -1124,16 +1129,19 @@ class SyncExecutionResourceSpec
     new SessionUser(user)
   }
 
-  /** An execution of lines of text into a Limit, which the user created for `testCuid`. */
-  private def createdExecution(): CreateExecutionResponse = {
+  /**
+    * An execution of lines of text into a Limit, which the user created for `testCuid`, with the
+    * plan the Dashboard handed over for it.
+    */
+  private def createdExecution(): CreatedExecution = {
     val lines = new TextInputSourceOpDesc
     lines.setOperatorId("lines")
     lines.textInput = "a\nb"
     val limit = new LimitOpDesc
     limit.setOperatorId("limit")
     limit.limit = 1
-    val response = FixtureCreator
-      .create(
+    handedOver.created(
+      FixtureCreator.create(
         CreateExecutionRequest(
           wid = testWid.toLong,
           engineVersion = "1.4.0-spec",
@@ -1155,35 +1163,34 @@ class SyncExecutionResourceSpec
         new URI("http://texera.example/api/executions"),
         FixtureCompilingService.authorizationOf(testUid)
       )
-    response
+    )
   }
 
   /**
-    * A service of the workflow, made for computing unit `serviceCuid`, whose runs have no engine.
-    * As soon as one is started it is what `atStart` makes of its states, by default completed;
-    * or it fails with `failure` when given, as a run that cannot be set up does.
-    * `WorkflowExecutionServiceSpec` owns what a run does with its plan. `started` is the plan
-    * each run is started from, with who started it, and `records` what each run's record is
-    * told, by execution.
+    * A service of the workflow whose runs have no engine. As soon as one is started it is what
+    * `atStart` makes of its states, by default completed; or it fails with `failure` when given,
+    * as a run that cannot be set up does. `WorkflowExecutionServiceSpec` owns what a run does
+    * with its plan. `records` is what each run's record is told, by execution.
     */
   private class EnginelessService(
-      serviceCuid: Int = testCuid,
       failure: Option[RuntimeException] = None,
       atStart: ExecutionStateStore => Unit = _.transitionTo(COMPLETED),
-      val started: scala.collection.mutable.ArrayBuffer[(ExecutionPlan, Int)] =
-        scala.collection.mutable.ArrayBuffer.empty,
       val records: TrieMap[Long, RecordingExecutionRecorder] = TrieMap.empty
   ) extends WorkflowService(
         WorkflowIdentity(testWid.toLong),
-        serviceCuid,
+        testCuid,
         3600,
         newRun = (context, _, executionStateStore, errorHandler) =>
           new WorkflowExecutionService(context, null, executionStateStore, errorHandler, None) {
+            @volatile private var starter: Option[Int] = None
+
+            override def startedBy: Option[Int] = starter
+
             override def startPlan(
                 executionPlan: ExecutionPlan,
                 startedBy: Int
             ): Option[Throwable] = {
-              started += ((executionPlan, startedBy))
+              starter = Some(startedBy)
               failure match {
                 case Some(failure) => errorHandler(failure)
                 case None          => atStart(this.executionStateStore)
@@ -1195,38 +1202,49 @@ class SyncExecutionResourceSpec
           records.getOrElseUpdate(context.executionId.id, new RecordingExecutionRecorder)
       ) {
 
-    /** How many callers watch the workflow now, as its clean-up counts them. */
+    /** How many callers watch the workflow now, as its clean-up counts them, and the most at once. */
     @volatile var watchers = 0
+    @volatile var mostWatchers = 0
 
     override val lifeCycleManager: WorkflowLifecycleManager =
       new WorkflowLifecycleManager("SyncExecutionResourceSpec", 3600, () => ()) {
         override def registerCleanUpOnStateChange(stateStore: ExecutionStateStore) =
           io.reactivex.rxjava3.disposables.Disposable.empty()
-        override def increaseUserCount(): Unit = watchers += 1
+        override def increaseUserCount(): Unit = {
+          watchers += 1
+          mostWatchers = math.max(mostWatchers, watchers)
+        }
         override def decreaseUserCount(state: Option[WorkflowAggregatedState]): Unit =
           watchers -= 1
       }
   }
 
-  /** The resource, running every workflow's executions on `service`; it records what it asks. */
-  private class ResourceOn(
-      service: WorkflowService,
-      val asked: scala.collection.mutable.ArrayBuffer[(WorkflowIdentity, Int)] =
-        scala.collection.mutable.ArrayBuffer.empty
-  ) extends SyncExecutionResource((workflowId, computingUnitId) => {
-        asked += ((workflowId, computingUnitId))
-        service
-      })
+  /** The resource, on a unit whose one workflow service is `service`: it holds the run that holds. */
+  private class ResourceOn(service: WorkflowService)
+      extends SyncExecutionResource(eid =>
+        Option(service.executionService.getValue)
+          .filter(_.workflowContext.executionId.id == eid)
+          .map(service -> _)
+      )
 
-  private def runRequest(
-      plan: String,
-      computingUnitId: Int = testCuid,
+  /** Starts `execution` on `service` for user `uid`, as a unit starts the plan it is handed. */
+  private def startOn(
+      service: WorkflowService,
+      execution: CreatedExecution,
+      uid: Int = testUid
+  ): WorkflowExecutionService =
+    WorkflowService
+      .checkStart(execution.plan, syncUser(uid).getUser, testCuid)
+      .flatMap(service.startChecked)
+      .fold(why => fail(s"the start was refused: $why"), identity)
+
+  private def waitRequest(
       targets: List[String] = List("limit"),
       timeoutSeconds: Int = 5
-  ): SyncRunRequest =
-    SyncRunRequest(plan, computingUnitId, targets, timeoutSeconds, 100000, 20000)
+  ): SyncWaitRequest =
+    SyncWaitRequest(targets, timeoutSeconds, 100000, 20000)
 
-  /** Why a run was refused, once the answer is found to be a refusal and nothing more. */
+  /** Why a wait was refused, once the answer is found to be a refusal and nothing more. */
   private def refusalOf(result: SyncExecutionResult): String = {
     result.success shouldBe false
     result.state shouldBe "Error"
@@ -1237,51 +1255,36 @@ class SyncExecutionResourceSpec
     }
   }
 
-  "runExecution" should
-    "run an execution the Dashboard created, from the plan the request carries, and answer once it ends" in {
+  "awaitExecution" should
+    "answer what the run of an execution its caller started produced, also when the run ended before the wait" in {
     val execution = createdExecution()
-    // The workflow's service, made for another unit by an earlier caller (#7676): the run is on
-    // the unit the request names, which the execution was created for.
-    val service = new EnginelessService(serviceCuid = fixtureCuid)
+    val service = new EnginelessService
     val resource = new ResourceOn(service)
-    // A run of the workflow still going in that service, as a browser's would be.
-    val previousEid = insertExecution("superseded-by-sync")
-    val previous = newExecution(new ExecutionStateStore(), eid = Some(previousEid))
-    previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
-    service.executionService.onNext(previous)
+    // Completed as soon as it started: the unit still holds the run.
+    startOn(service, execution)
 
-    val result = resource.runExecution(
-      runRequest(execution.plan),
-      syncUser()
-    )
+    val result = resource.awaitExecution(execution.eid, waitRequest(), syncUser())
 
-    // The workflow is the one the plan is of, on the unit the request names.
-    resource.asked shouldBe Seq((WorkflowIdentity(testWid.toLong), testCuid))
-    // Started from the plan the request carried, for the caller.
-    service.started should have size 1
-    val (executionPlan, startedBy) = service.started.head
-    startedBy shouldBe testUid
-    executionPlan.context.executionId shouldBe ExecutionIdentity(execution.eid)
-    service.computingUnitId shouldBe fixtureCuid
     // Answered as the run ended, for the target asked about.
     result.success shouldBe true
     result.state shouldBe "Completed"
     result.errors shouldBe None
     result.operators.keySet shouldBe Set("limit")
-    // The run it took the place of is recorded as killed.
-    previous.executionStateStore.metadataStore.getState.state shouldBe KILLED
-    previous.executionStateStore.statsStore.getState.endTimeStamp should be > 0L
-    // The record of the run started is told how it went.
+    service.records(execution.eid).states shouldBe Seq(("COMPLETED", None))
+    // Asked again, it answers the same: a wait changes nothing of a run that has ended.
+    resource.awaitExecution(execution.eid, waitRequest(), syncUser()).state shouldBe "Completed"
     service.records(execution.eid).states shouldBe Seq(("COMPLETED", None))
   }
 
   it should "stop a run that outlasts the time its caller gives it, recording it killed by its caller" in {
     val execution = createdExecution()
     val service = new EnginelessService(atStart = _.transitionTo(RUNNING))
+    startOn(service, execution)
 
     val before = System.currentTimeMillis()
-    val result = new ResourceOn(service).runExecution(
-      runRequest(execution.plan, timeoutSeconds = 1),
+    val result = new ResourceOn(service).awaitExecution(
+      execution.eid,
+      waitRequest(timeoutSeconds = 1),
       syncUser()
     )
     val after = System.currentTimeMillis()
@@ -1304,11 +1307,9 @@ class SyncExecutionResourceSpec
         ExecutionConsoleStore(Map("limit" -> console((ConsoleMessageType.ERROR, "boom", ""))))
       )
     })
+    startOn(service, execution)
 
-    val result = new ResourceOn(service).runExecution(
-      runRequest(execution.plan),
-      syncUser()
-    )
+    val result = new ResourceOn(service).awaitExecution(execution.eid, waitRequest(), syncUser())
 
     result.success shouldBe false
     result.state shouldBe "Failed"
@@ -1335,11 +1336,10 @@ class SyncExecutionResourceSpec
     }
 
     val result =
-      try new ResourceOn(service).runExecution(
-        runRequest(execution.plan),
-        syncUser()
-      )
-      finally session.dispose()
+      try {
+        startOn(service, execution)
+        new ResourceOn(service).awaitExecution(execution.eid, waitRequest(), syncUser())
+      } finally session.dispose()
 
     result.success shouldBe true
     result.state shouldBe "Completed"
@@ -1354,15 +1354,14 @@ class SyncExecutionResourceSpec
     told.synchronized(told.toList) shouldBe List("Running", "Completed")
   }
 
-  it should "answer a run that fails once it is started as failed, with its error and the target asked about" in {
+  it should "answer a run that failed as it started as failed, with its error and the target asked about" in {
     val execution = createdExecution()
     val service =
       new EnginelessService(failure = Some(new IllegalStateException("the engine is gone")))
+    // The start is taken, and the run it built failed: the unit holds it as it ended.
+    startOn(service, execution)
 
-    val result = new ResourceOn(service).runExecution(
-      runRequest(execution.plan),
-      syncUser()
-    )
+    val result = new ResourceOn(service).awaitExecution(execution.eid, waitRequest(), syncUser())
 
     result.success shouldBe false
     result.state shouldBe "Failed"
@@ -1378,66 +1377,59 @@ class SyncExecutionResourceSpec
     service.records(execution.eid).states shouldBe Seq(("FAILED", None))
   }
 
-  it should "watch the run for as long as it waits on it, as an open session does" in {
+  it should "watch the run for as long as it waits for it, as an open session does" in {
     val execution = createdExecution()
-    var watchersAtStart = -1
-    lazy val service: EnginelessService = new EnginelessService(
-      atStart = store => {
-        watchersAtStart = service.watchers
-        store.transitionTo(COMPLETED)
-      }
-    )
+    val service = new EnginelessService
     val resource = new ResourceOn(service)
+    startOn(service, execution)
+    // A start counts no watcher: the Dashboard service hands the plan over and leaves.
+    service.mostWatchers shouldBe 0
 
-    resource
-      .runExecution(runRequest(execution.plan), syncUser())
-      .success shouldBe true
-    // Counted from before the run is set up (a run installing a Python environment is READY, which
-    // the clean-up of a run nobody watches does not spare) until it is answered.
-    watchersAtStart shouldBe 1
+    resource.awaitExecution(execution.eid, waitRequest(), syncUser()).success shouldBe true
+
+    // Counted while it waited (the clean-up of a run nobody watches spares only a RUNNING one),
+    // and no longer once it is answered.
+    service.mostWatchers shouldBe 1
     service.watchers shouldBe 0
-
-    // A start the workflow's service refuses is not left counted either.
+    // A wait that is refused watches nothing.
     refusalOf(
-      resource.runExecution(runRequest(execution.plan), syncUser())
-    ) shouldBe s"Execution ${execution.eid} was already started."
+      resource.awaitExecution(execution.eid, waitRequest(), syncUser(testUid + 1))
+    ) shouldBe s"Only the user who started execution ${execution.eid} may wait for it."
+    service.mostWatchers shouldBe 1
     service.watchers shouldBe 0
   }
 
-  it should "refuse a run of a plan it cannot read, of no plan, or a second time" in {
-    val execution = createdExecution()
-    val service = new EnginelessService
+  it should "refuse a wait with no body, for an execution this unit holds no run of, and for one another user started" in {
+    val (first, second) = (createdExecution(), createdExecution())
+    val service = new EnginelessService(atStart = _.transitionTo(RUNNING))
     val resource = new ResourceOn(service)
 
-    refusalOf(resource.runExecution(runRequest("{}"), syncUser())) shouldBe
-      "The plan names no format version; this reader reads version " +
-        s"${PhysicalPlanCodec.FormatVersion}."
-    refusalOf(resource.runExecution(runRequest(null), syncUser())) shouldBe
-      "The request carries no plan."
-    refusalOf(resource.runExecution(null, syncUser())) shouldBe
+    refusalOf(resource.awaitExecution(first.eid, null, syncUser())) shouldBe
       "The request has no body."
-    // None of them started anything, or asked for a workflow's service: each was refused by the
-    // checks made before, so none leaves a service behind, made for the unit it named.
-    resource.asked shouldBe empty
-    service.started shouldBe empty
+    // Before the unit is handed its plan.
+    refusalOf(resource.awaitExecution(first.eid, waitRequest(), syncUser())) shouldBe
+      s"Execution ${first.eid} is not running here."
 
-    resource.runExecution(runRequest(execution.plan), syncUser()).success shouldBe true
-    // The second call passes the checks, and its start is refused on the workflow's service.
-    refusalOf(resource.runExecution(runRequest(execution.plan), syncUser())) shouldBe
-      s"Execution ${execution.eid} was already started."
-    resource.asked shouldBe Seq.fill(2)((WorkflowIdentity(testWid.toLong), testCuid))
-    service.started should have size 1
+    val run = startOn(service, first)
+    // Another user's wait is answered nothing of the run, and does not stop it when its time is
+    // up: the run stays as it is.
+    refusalOf(
+      resource.awaitExecution(first.eid, waitRequest(timeoutSeconds = 1), syncUser(testUid + 1))
+    ) shouldBe s"Only the user who started execution ${first.eid} may wait for it."
+    run.executionStateStore.metadataStore.getState.state shouldBe RUNNING
+    service.records(first.eid).states shouldBe Seq(("RUNNING", None))
+
+    // Once the run of another execution has taken its place, it is not running here any more.
+    startOn(service, second)
+    refusalOf(resource.awaitExecution(first.eid, waitRequest(), syncUser())) shouldBe
+      s"Execution ${first.eid} is not running here."
   }
 
-  it should "run the execution its plan names: each plan starts its own" in {
-    val (first, second) = (createdExecution(), createdExecution())
-    val service = new EnginelessService
-    val resource = new ResourceOn(service)
-
-    resource.runExecution(runRequest(first.plan), syncUser()).success shouldBe true
-    resource.runExecution(runRequest(second.plan), syncUser()).success shouldBe true
-
-    service.started.map(_._1.context.executionId.id) shouldBe Seq(first.eid, second.eid)
+  it should "wait, as the unit serves it, for the runs the unit's own workflow services hold" in {
+    // The resource Jersey builds looks a run up among the services registered on this unit
+    // (`WorkflowService.holding`), which hold no run of an execution nobody started here.
+    refusalOf(this.resource.awaitExecution(931799L, waitRequest(), syncUser())) shouldBe
+      "Execution 931799 is not running here."
   }
 
   "expectedExternalInputsOf" should

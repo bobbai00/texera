@@ -30,6 +30,12 @@ import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.http.request.execution.OperatorUpdateRequestBody
 import org.apache.texera.web.model.http.response.execution.OperatorUpdateResponse
+import org.apache.texera.web.service.execution.ComputingUnitClient.{
+  Refused,
+  Taken,
+  Unanswered,
+  Unreached
+}
 import org.apache.texera.web.service.execution.WorkflowCompilingService.{
   CompileRefused,
   CompileUnanswered,
@@ -64,9 +70,9 @@ object OperatorUpdates {
 /**
   * Changes to an operator of a paused execution: what `POST /api/executions/{eid}/updates` on the
   * Dashboard service does. A change is made to run as the execution's plan was, by the workflow
-  * compiling service and for the user who created the execution, and answered: the client hands
-  * it to the computing unit running the execution, which checks that it fits the operator it
-  * runs and applies it when the run resumes. Nothing of it is kept here.
+  * compiling service and for the user who created the execution, and handed to the computing
+  * unit running the execution, which checks that it fits the operator it runs and applies it
+  * when the run resumes. No client carries it, and nothing of it is kept here.
   *
   * In this order:
   *  1. The request must name an operator by its id, and hold the workflow the execution runs
@@ -83,13 +89,17 @@ object OperatorUpdates {
   *  1. The operator made to run must be no larger than a computing unit takes
   *     ([[PhysicalPlanCodec.MaxPlanBytes]]; 400).
   *  1. The operator made to run, as its executor and what its code reads (as
-  *     [[PhysicalPlanCodec.encodeUpdate]] writes one), is answered (201).
+  *     [[PhysicalPlanCodec.encodeUpdate]] writes one), is handed to the execution's computing
+  *     unit, with the caller's own token ([[ComputingUnitClient.update]]), and the operator's
+  *     id is answered (201). A unit that does not take the change is a 409, with the unit's
+  *     reason; one that cannot be reached a 503, and one that does not answer a 504.
   *
   * Refusals are thrown as the JAX-RS exceptions of their status, which the Dashboard answers as
   * `{"code", "message"}`.
   */
 class OperatorUpdates(
     compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
+    units: ComputingUnitClient = ComputingUnitClient.forDeployment,
     compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline
 ) extends LazyLogging {
   import OperatorUpdates.{ExecutionRow, OperatorIdField}
@@ -99,7 +109,8 @@ class OperatorUpdates(
     * steps this class describes.
     *
     * @param authorization the request's `Authorization` header: the user's own token, which the
-    *                      compiling service is asked for the change with
+    *                      compiling service is asked for the change with, and the computing unit
+    *                      handed it with
     * @throws WebApplicationException with the status of the step that refused the request; 500
     *                                 when the change cannot be made
     */
@@ -117,7 +128,7 @@ class OperatorUpdates(
 
     val execution =
       executionOf(eid).getOrElse(throw new NotFoundException(s"There is no execution $eid."))
-    requireAllowed(eid, execution, uid)
+    val cuid = requireAllowed(eid, execution, uid)
     if (execution.ended) {
       throw new WebApplicationException(s"Execution $eid has ended.", Response.Status.CONFLICT)
     }
@@ -132,8 +143,29 @@ class OperatorUpdates(
         )
       )
     }
-    logger.info(s"Made a change to operator ${operatorId.id} of execution $eid, for user $uid.")
-    OperatorUpdateResponse(operatorId.id, update)
+    units.update(cuid, update, authorization) match {
+      case Taken =>
+        logger.info(
+          s"Computing unit $cuid took a change to operator ${operatorId.id} of execution $eid, " +
+            s"for user $uid."
+        )
+        OperatorUpdateResponse(operatorId.id)
+      case Refused(why) =>
+        throw new WebApplicationException(why, Response.Status.CONFLICT)
+      case Unreached(cause) =>
+        logger.warn(s"Computing unit $cuid could not be reached to change execution $eid.", cause)
+        throw new WebApplicationException(
+          s"The change to execution $eid could not be applied: computing unit $cuid could not " +
+            "be reached.",
+          Response.Status.SERVICE_UNAVAILABLE
+        )
+      case Unanswered(cause) =>
+        logger.warn(s"Computing unit $cuid did not answer a change to execution $eid.", cause)
+        throw new WebApplicationException(
+          s"Computing unit $cuid did not answer whether it took the change to execution $eid.",
+          Response.Status.GATEWAY_TIMEOUT
+        )
+    }
   }
 
   /**
@@ -186,8 +218,10 @@ class OperatorUpdates(
     * Refuses (403) a change by user `uid` to execution `eid` unless they created it, since its
     * plan was resolved with their access, and may still read its workflow and run workflows on
     * its computing unit.
+    *
+    * @return the execution's computing unit
     */
-  private def requireAllowed(eid: Long, execution: ExecutionRow, uid: Integer): Unit = {
+  private def requireAllowed(eid: Long, execution: ExecutionRow, uid: Integer): Int = {
     if (execution.uid != uid.intValue()) {
       throw new ForbiddenException(
         s"Only the user who created execution $eid may change its operators."
@@ -204,6 +238,7 @@ class OperatorUpdates(
     ) {
       throw new ForbiddenException(s"You may not run workflows on computing unit $cuid.")
     }
+    cuid
   }
 
   /**

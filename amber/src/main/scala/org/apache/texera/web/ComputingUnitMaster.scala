@@ -38,6 +38,7 @@ import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
 import org.apache.texera.web.resource.{
+  ExecutionHandoverResource,
   SyncExecutionResource,
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
@@ -145,7 +146,7 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     // add websocket bundle
     bootstrap.addBundle(new WebsocketBundle(classOf[WorkflowWebsocketResource]))
     // register the Scala module on Dropwizard's mapper: Jersey reads the unit's request bodies
-    // and writes its answers (SyncExecutionResource) with it
+    // and writes its answers (ExecutionHandoverResource, SyncExecutionResource) with it
     bootstrap.getObjectMapper.registerModule(DefaultScalaModule)
   }
 
@@ -185,8 +186,10 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
         new WebsocketPayloadSizeTuner(ApplicationConfig.maxWorkflowWebsocketRequestPayloadSizeKb)
       )
 
-    // What an execution stored is the Dashboard service's to serve: this unit serves the run
-    // it holds, over its websocket and to the agent service.
+    // What an execution stored is the Dashboard service's to serve: this unit starts what the
+    // Dashboard service hands it, and serves the run it holds, over its websocket and to the
+    // agent service.
+    environment.jersey.register(classOf[ExecutionHandoverResource])
     environment.jersey.register(classOf[SyncExecutionResource])
 
     environment.lifecycle().manage(ComputingUnitMaster.EndRunsOnStop)

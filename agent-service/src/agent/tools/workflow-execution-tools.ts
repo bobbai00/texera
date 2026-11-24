@@ -31,7 +31,7 @@ import {
   type CreateExecutionRequest,
   type LogicalPlan,
   type LogicalLink,
-  type SyncRunRequest,
+  type SyncWaitRequest,
 } from "../../api/execution-api";
 import {
   OperatorState,
@@ -258,12 +258,13 @@ function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?: string
 }
 
 /**
- * Runs the workflow as the user, in two calls: the Dashboard service creates the execution and
- * answers with its plan, and the computing unit then runs that execution by its id, with the plan,
+ * Runs the workflow as the user, in two calls: the Dashboard service creates the execution and has
+ * its computing unit start it, and the unit is then asked to wait for that execution, by its id,
  * and answers with its results.
  *
- * The unit is asked only once the Dashboard has created the execution: not when it refuses the
- * create, not when the workflow does not compile, and not when the run was stopped meanwhile.
+ * The unit is asked only once the Dashboard has answered with the execution: not when it refuses
+ * the create, not when the workflow does not compile, not when the unit does not start the
+ * execution, and not when the tool call was stopped meanwhile.
  */
 async function executeWorkflowHttp(
   config: ExecutionConfig,
@@ -284,7 +285,7 @@ async function executeWorkflowHttp(
     ? Math.ceil(config.executionTimeoutMs / 1000)
     : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
 
-  const postAsUser = (url: string, body: CreateExecutionRequest | SyncRunRequest): Promise<Response> =>
+  const postAsUser = (url: string, body: CreateExecutionRequest | SyncWaitRequest): Promise<Response> =>
     fetch(url, {
       method: "POST",
       headers: createAuthHeaders(config.userToken),
@@ -320,20 +321,21 @@ async function executeWorkflowHttp(
         await createResponse.text(),
         createRequest.logicalPlan
       );
-      log.info({ status: createResponse.status, state: failure.state }, "execution not created");
+      log.info({ status: createResponse.status, state: failure.state }, "execution not created or not started");
       return failure;
     }
 
     const execution = parseCreateExecutionResponse(await createResponse.json());
 
-    // A stop that arrived while the Dashboard created the execution: the unit is not asked to run it.
+    // The unit has started the execution by the time the create answers, so a stop that arrived
+    // meanwhile does not undo the start: it ends the tool call here, and the unit is not asked to
+    // wait for an execution nobody reads the results of.
     options.abortSignal?.throwIfAborted();
 
-    // The plan names the execution the unit runs: the request names none beside it.
-    const runUrl = `${executionEndpoint}/api/execution/run`;
-    const runRequest: SyncRunRequest = {
-      plan: execution.plan,
-      computingUnitId,
+    // The wait carries the same stop signal as the create: a stop ends the wait, and leaves the
+    // execution to its unit.
+    const waitUrl = `${executionEndpoint}/api/execution/${execution.eid}/wait`;
+    const waitRequest: SyncWaitRequest = {
       targetOperatorIds,
       timeoutSeconds,
       maxOperatorResultCharLimit:
@@ -344,20 +346,22 @@ async function executeWorkflowHttp(
 
     log.debug(
       {
-        url: runUrl,
-        maxOperatorResultCharLimit: runRequest.maxOperatorResultCharLimit,
-        maxOperatorResultCellCharLimit: runRequest.maxOperatorResultCellCharLimit,
+        url: waitUrl,
+        maxOperatorResultCharLimit: waitRequest.maxOperatorResultCharLimit,
+        maxOperatorResultCellCharLimit: waitRequest.maxOperatorResultCellCharLimit,
       },
-      "running execution"
+      "waiting for execution"
     );
-    const runResponse = await postAsUser(runUrl, runRequest);
+    const waitResponse = await postAsUser(waitUrl, waitRequest);
 
-    if (!runResponse.ok) {
-      const errorText = await runResponse.text();
-      throw new Error(`Execution request failed: ${runResponse.status} ${runResponse.statusText} - ${errorText}`);
+    if (!waitResponse.ok) {
+      const errorText = await waitResponse.text();
+      throw new Error(
+        `Waiting for execution ${execution.eid} failed: ${waitResponse.status} ${waitResponse.statusText} - ${errorText}`
+      );
     }
 
-    return adaptLegacySyncExecutionResult(await runResponse.json());
+    return adaptLegacySyncExecutionResult(await waitResponse.json());
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw error;

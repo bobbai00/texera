@@ -99,22 +99,18 @@ object WorkflowService extends LazyLogging {
 
   /**
     * Checks a request of `user` to start an execution on computing unit `cuid`, from `plan`, the
-    * plan the request carries, which names the execution. A user is required, and a unit that
-    * knows which unit it is starts only what was asked of that unit. The plan is read and checked
-    * by [[ExecutionStart.check]]. Nothing is read or written.
+    * plan the request carries, which names the execution and its workflow. A user is required,
+    * and a unit that knows which unit it is starts only what was asked of that unit. The plan is
+    * read and checked by [[ExecutionStart.check]]. Nothing is read or written.
     *
-    * @param socketWorkflowId the workflow of the socket the request came over; None for a request
-    *                         that came another way, which starts the workflow the plan names
-    * @param thisUnit         the computing unit this one is, where it was told
-    *                         ([[configuredUnitId]]); None where it was not, and `cuid` is then
-    *                         all it has to go by
+    * @param thisUnit the computing unit this one is, where it was told ([[configuredUnitId]]);
+    *                 None where it was not, and `cuid` is then all it has to go by
     * @return why the start is refused (Left), or what it starts (Right)
     */
   def checkStart(
       plan: String,
       user: User,
       cuid: Int,
-      socketWorkflowId: Option[Long],
       thisUnit: Option[Int] = configuredUnitId
   ): Either[String, CheckedStart] =
     for {
@@ -127,7 +123,7 @@ object WorkflowService extends LazyLogging {
           .filter(_ != cuid)
           .map(own => s"This is computing unit $own, not $cuid.")
           .toLeft(())
-      executionPlan <- ExecutionStart.check(plan, socketWorkflowId, uid, System.currentTimeMillis())
+      executionPlan <- ExecutionStart.check(plan, uid, System.currentTimeMillis())
     } yield CheckedStart(executionPlan, cuid, uid)
 
   /**
@@ -146,6 +142,15 @@ object WorkflowService extends LazyLogging {
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
   def getAllWorkflowServices: Iterable[WorkflowService] = workflowServiceMapping.values().asScala
+
+  /**
+    * The run of execution `eid`, with the service of its workflow, when a service on this unit
+    * holds it: from its start until another run takes its place or the service is cleaned up.
+    */
+  def holding(eid: Long): Option[(WorkflowService, WorkflowExecutionService)] =
+    getAllWorkflowServices.iterator
+      .flatMap(service => Option(service.executionService.getValue).map(service -> _))
+      .find { case (_, run) => run.workflowContext.executionId.id == eid }
 
   def mkWorkflowStateId(workflowId: WorkflowIdentity): String = {
     workflowId.toString
@@ -304,25 +309,9 @@ class WorkflowService(
   }
 
   /**
-    * Checks a start of an execution of this workflow from `plan`, which names the execution
-    * ([[WorkflowService.checkStart]]), then starts it ([[startChecked]]). `cuid` is the unit the
-    * request to start it came to.
-    *
-    * @return why the start was refused (Left), or the run started (Right), which may have failed
-    *         before its engine started
-    */
-  def startExecution(
-      plan: String,
-      user: User,
-      cuid: Int
-  ): Either[String, WorkflowExecutionService] =
-    WorkflowService
-      .checkStart(plan, user, cuid, Some(workflowId.id))
-      .flatMap(startChecked)
-
-  /**
-    * Starts the execution `start` names, a start of this workflow that passed its checks
-    * ([[WorkflowService.checkStart]]). Under `runLock`, the execution's one start is taken (a
+    * Starts the execution `start` names, a start that passed its checks
+    * ([[WorkflowService.checkStart]]); one of another workflow's execution is refused. Under
+    * `runLock`, the execution's one start is taken (a
     * second start is refused, however it comes), and its run takes the place of the run this
     * service holds ([[startRun]]).
     *

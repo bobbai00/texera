@@ -161,6 +161,10 @@ class WorkflowExecutionService(
 
   // Set once, by the start that sets the run up. Read on other threads than that start's.
   @volatile private var built: Option[RunServices] = None
+  @volatile private var starter: Option[Int] = None
+
+  /** The user who asked to start the run, once its start was taken ([[startPlan]]). */
+  def startedBy: Option[Int] = starter
 
   /**
     * What the run is made of, once [[startPlan]] has set it up; None before that, and for a run
@@ -185,7 +189,8 @@ class WorkflowExecutionService(
     *         handler: nothing is kept of it, and its engine, if one was built, is shut down.
     *         None once the run is set up
     */
-  def startPlan(executionPlan: ExecutionPlan, startedBy: Int): Option[Throwable] =
+  def startPlan(executionPlan: ExecutionPlan, startedBy: Int): Option[Throwable] = {
+    starter = Some(startedBy)
     Try(setUp(executionPlan, startedBy)) match {
       case Failure(failure) =>
         errorHandler(failure)
@@ -195,6 +200,7 @@ class WorkflowExecutionService(
         start(run)
         None
     }
+  }
 
   /**
     * Builds the engine and every service around the run on `executionPlan`, as this unit runs

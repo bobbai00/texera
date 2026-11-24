@@ -30,11 +30,9 @@ import org.apache.texera.web.model.websocket.request.python.{
 @JsonSubTypes(
   Array(
     new Type(value = classOf[HeartBeatRequest]),
-    new Type(value = classOf[OperatorUpdateRequest]),
     new Type(value = classOf[ResultPaginationRequest]),
     new Type(value = classOf[RetryRequest]),
     new Type(value = classOf[SkipTupleRequest]),
-    new Type(value = classOf[WorkflowStartRequest]),
     new Type(value = classOf[WorkflowKillRequest]),
     new Type(value = classOf[WorkflowPauseRequest]),
     new Type(value = classOf[WorkflowResumeRequest]),
@@ -51,23 +49,6 @@ sealed trait ExecutionRequest extends TexeraWebSocketRequest {
 }
 
 case class HeartBeatRequest() extends TexeraWebSocketRequest
-
-/**
-  * Starts an execution the Dashboard service created, from its plan. The plan names the
-  * execution, so the request names none beside it.
-  *
-  * @param plan the execution's plan, as `POST /api/executions` answered it
-  */
-case class WorkflowStartRequest(plan: String) extends TexeraWebSocketRequest
-
-/**
-  * Applies, when the paused run of an execution resumes, a change to one of its operators that
-  * the Dashboard service made to run. The change names the execution, so the request names none
-  * beside it.
-  *
-  * @param update the change, as `POST /api/executions/{eid}/updates` answered it
-  */
-case class OperatorUpdateRequest(update: String) extends TexeraWebSocketRequest
 
 case class ResultPaginationRequest(
     requestID: String,

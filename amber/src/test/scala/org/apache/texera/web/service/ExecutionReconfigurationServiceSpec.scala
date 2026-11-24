@@ -48,10 +48,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 import org.apache.texera.amber.operator.udf.UiUDFParameter
 import org.apache.texera.amber.operator.udf.python.PythonUdfUiParameterInjector
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
-import org.apache.texera.web.model.websocket.response.{
-  ModifyLogicCompletedEvent,
-  ModifyLogicResponse
-}
+import org.apache.texera.web.model.websocket.response.ModifyLogicCompletedEvent
 import org.apache.texera.web.storage.{
   ExecutionReconfigurationStore,
   ExecutionStateStore,
@@ -72,7 +69,7 @@ import scala.concurrent.duration.DurationInt
   * UpdateExecutor on workers) is covered by ReconfigurationSpec. This spec covers the
   * service's own wiring:
   *
-  *   - `applyUpdate`, queueing a change the Dashboard made to run, as the client sends it,
+  *   - `applyUpdate`, queueing a change the Dashboard made to run, as the Dashboard hands it over,
   *   - `performReconfigurationOnResume`, i.e. empty short-circuit, request construction
   *     and store reset semantics,
   *   - the two constructor-time subscriptions: the engine's UpdateExecutorCompleted
@@ -318,9 +315,9 @@ class ExecutionReconfigurationServiceSpec
     val service = new ChangeService(stateStore)
 
     service.applyUpdate(changeOf(changedUdf), asStarter) shouldBe
-      ModifyLogicResponse("udf-a", isValid = true, "")
+      Right("udf-a")
     service.applyUpdate(changeOf(changedLimit), asStarter) shouldBe
-      ModifyLogicResponse("limit-a", isValid = true, "")
+      Right("limit-a")
 
     // The running operator, with the change's executor and what its code reads, in the order the
     // changes came: a user can change several operators during one pause, so the queue has to
@@ -366,40 +363,22 @@ class ExecutionReconfigurationServiceSpec
       workflowId = testWorkflowId,
       executionId = testExecutionId
     )
-    val refusals: Seq[(String, ModifyLogicResponse)] = Seq(
-      "" -> ModifyLogicResponse("", isValid = false, "The request carries no change to apply."),
-      (null: String) -> ModifyLogicResponse(
-        "",
-        isValid = false,
-        "The request carries no change to apply."
-      ),
+    val refusals: Seq[(String, Either[String, String])] = Seq(
+      "" -> Left("The request carries no change to apply."),
+      (null: String) -> Left("The request carries no change to apply."),
       changeOf(changedLimit, ofExecution = ExecutionIdentity(9299L)) ->
-        ModifyLogicResponse(
-          "limit-a",
-          isValid = false,
-          "The change is execution 9299's, not 9232's."
-        ),
+        Left("The change is execution 9299's, not 9232's."),
       inNextFormat ->
-        ModifyLogicResponse(
-          "",
-          isValid = false,
+        Left(
           s"The operator update is in format version $nextFormat, but this reader reads version " +
             s"${PhysicalPlanCodec.FormatVersion}."
         ),
       changeOf(notInPlan) ->
-        ModifyLogicResponse(
-          "filter-z",
-          isValid = false,
-          "Operator filter-z-main is not in the running plan."
-        ),
+        Left("Operator filter-z-main is not in the running plan."),
       // A change that asks for an environment the running operator does not run in: its workers
       // would keep the interpreter they have.
       changeOf(changedLimit.withPythonEnvironment(PythonEnvironmentRef.Named("ml"))) ->
-        ModifyLogicResponse(
-          "limit-a",
-          isValid = false,
-          "The operator's Python environment cannot change while the run is paused."
-        )
+        Left("The operator's Python environment cannot change while the run is paused.")
     )
 
     refusals.foreach {
@@ -407,9 +386,8 @@ class ExecutionReconfigurationServiceSpec
         withClue(s"$change: ") { service.applyUpdate(change, asStarter) shouldBe refusal }
     }
     // A text that is not a change, in the codec's words.
-    val unreadable = service.applyUpdate("not a change", asStarter)
-    unreadable.isValid shouldBe false
-    unreadable.errorMessage should startWith("The operator update is not JSON")
+    service.applyUpdate("not a change", asStarter).left.getOrElse("") should
+      startWith("The operator update is not JSON")
 
     stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe
       List(alreadyQueued)
@@ -422,11 +400,7 @@ class ExecutionReconfigurationServiceSpec
       withClue(s"$requester: ") {
         // Not read: a text that is no change is refused as one from the wrong user.
         service.applyUpdate("not a change", requester) shouldBe
-          ModifyLogicResponse(
-            "",
-            isValid = false,
-            "Only the user who started execution 9232 may change its operators."
-          )
+          Left("Only the user who started execution 9232 may change its operators.")
       }
     }
     stateStore.reconfigurationStore.getState.unscheduledReconfigurations shouldBe empty
@@ -434,14 +408,12 @@ class ExecutionReconfigurationServiceSpec
 
   it should "refuse a change that reads a dataset this unit cannot give its code" in {
     val mounts = Some(RepositoryMounts(Set(datasetLocator)))
-    val refusals: Seq[(PhysicalOp, Option[Path], ModifyLogicResponse)] = Seq(
+    val refusals: Seq[(PhysicalOp, Option[Path], Either[String, String])] = Seq(
       // On a unit that mounts none.
       (
         changedUdf,
         None,
-        ModifyLogicResponse(
-          "udf-a",
-          isValid = false,
+        Left(
           "Operator udf-a reads datasets or models (dataset-1:abc123), which this computing " +
             "unit cannot mount."
         )
@@ -450,9 +422,7 @@ class ExecutionReconfigurationServiceSpec
       (
         runningUdf.copy(repositoryMounts = mounts),
         Some(unitMountRoot),
-        ModifyLogicResponse(
-          "udf-a",
-          isValid = false,
+        Left(
           "The code of operator udf-a does not name dataset-1:abc123, which its plan says it " +
             "reads."
         )
@@ -461,9 +431,7 @@ class ExecutionReconfigurationServiceSpec
       (
         changedLimit.copy(repositoryMounts = mounts),
         Some(unitMountRoot),
-        ModifyLogicResponse(
-          "limit-a",
-          isValid = false,
+        Left(
           "Operator limit-a reads datasets or models (dataset-1:abc123), but it is no UDF " +
             "whose code names them."
         )
@@ -484,7 +452,7 @@ class ExecutionReconfigurationServiceSpec
     }
     // A change that reads nothing needs no mount.
     val nowhere = new ChangeService(new ExecutionStateStore, mountRoot = None)
-    nowhere.applyUpdate(changeOf(changedLimit), asStarter).isValid shouldBe true
+    nowhere.applyUpdate(changeOf(changedLimit), asStarter) shouldBe Right("limit-a")
   }
 
   it should "take a change that asks for the environment the running operator runs in" in {
@@ -494,7 +462,7 @@ class ExecutionReconfigurationServiceSpec
     service.applyUpdate(
       changeOf(changedUdf.withPythonEnvironment(PythonEnvironmentRef.Named("ml"))),
       asStarter
-    ) shouldBe ModifyLogicResponse("udf-a", isValid = true, "")
+    ) shouldBe Right("udf-a")
   }
 
   "performReconfigurationOnResume" should

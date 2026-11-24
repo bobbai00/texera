@@ -31,10 +31,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.udf.UdfRepositoryDirectories
 import org.apache.texera.web.SubscriptionManager
-import org.apache.texera.web.model.websocket.response.{
-  ModifyLogicCompletedEvent,
-  ModifyLogicResponse
-}
+import org.apache.texera.web.model.websocket.response.ModifyLogicCompletedEvent
 import org.apache.texera.web.storage.{ExecutionReconfigurationStore, ExecutionStateStore}
 
 import java.nio.file.Path
@@ -73,25 +70,18 @@ class ExecutionReconfigurationService(
     * runs in, and read no dataset or model unless this unit mounts them.
     *
     * @param requester the user who asks for the change; None for a request of no user
-    * @return valid, naming the logical operator that changes; or invalid, saying why the change is
-    *         refused, naming the operator once the change is read
+    * @return why the change is refused (Left), or the logical operator that changes (Right)
     */
-  def applyUpdate(update: String, requester: Option[Int]): ModifyLogicResponse =
-    changeOf(update, requester) match {
-      case Left(why) => ModifyLogicResponse("", isValid = false, why)
-      case Right(change) =>
-        val operator = change.opId.logicalOpId.id
-        changedBy(change) match {
-          case Left(why) => ModifyLogicResponse(operator, isValid = false, why)
-          case Right(changed) =>
-            stateStore.reconfigurationStore.updateState(old =>
-              old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
-            )
-            logger.info(
-              s"Queued a change to operator ${show(change.opId)} of execution $executionId."
-            )
-            ModifyLogicResponse(operator, isValid = true, "")
-        }
+  def applyUpdate(update: String, requester: Option[Int]): Either[String, String] =
+    for {
+      change <- changeOf(update, requester)
+      changed <- changedBy(change)
+    } yield {
+      stateStore.reconfigurationStore.updateState(old =>
+        old.copy(unscheduledReconfigurations = old.unscheduledReconfigurations :+ changed)
+      )
+      logger.info(s"Queued a change to operator ${show(change.opId)} of execution $executionId.")
+      change.opId.logicalOpId.id
     }
 
   private def executionId: Long = workflow.context.executionId.id

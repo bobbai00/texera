@@ -79,25 +79,22 @@ export interface CreateExecutionRequest {
   emailNotificationEnabled: boolean;
 }
 
-/** The body of a create's 201 answer. Mirrors amber's `CreateExecutionResponse`. */
+/**
+ * The body of a create's 201 answer. Mirrors amber's `CreateExecutionResponse`: the execution the
+ * Dashboard created, which its computing unit has started by the time the create answers.
+ */
 export interface CreateExecutionResponse {
   eid: number;
-  // The execution's compiled plan, which the computing unit runs the execution with: text for
-  // the unit alone, passed on as it is and never read here.
-  plan: string;
 }
 
 /**
- * The body of `POST /api/execution/run` on a computing unit. Mirrors amber's `SyncRunRequest`:
- * run the execution the Dashboard created for this unit, with the plan the create answered. The
- * plan names the execution, so the request names none beside it. The unit answers with the
- * legacy sync-execution result, which `adaptLegacySyncExecutionResult` reads.
+ * The body of `POST /api/execution/{eid}/wait` on a computing unit. Mirrors amber's
+ * `SyncWaitRequest`: wait for execution `eid`, which the Dashboard started on the unit, and answer
+ * with what it produced. The unit answers with the legacy sync-execution result, which
+ * `adaptLegacySyncExecutionResult` reads; a wait for an execution it holds no run of is answered
+ * in that shape too, as an error that says why.
  */
-export interface SyncRunRequest {
-  // The execution's plan, as the create answered it: it names the execution.
-  plan: string;
-  // The computing unit the execution was created for: the one asked.
-  computingUnitId: number;
+export interface SyncWaitRequest {
   // The operators whose results are answered.
   targetOperatorIds: string[];
   timeoutSeconds: number;
@@ -107,10 +104,9 @@ export interface SyncRunRequest {
 
 const createdExecutionSchema = z.object({
   eid: z.number().int().positive(),
-  plan: z.string().min(1),
 });
 
-/** Reads a create's 201 answer. Throws when it names no execution, or holds no plan. */
+/** Reads a create's 201 answer. Throws when it names no execution. */
 export function parseCreateExecutionResponse(input: unknown): CreateExecutionResponse {
   const parsed = createdExecutionSchema.safeParse(input);
   if (!parsed.success) {
@@ -163,7 +159,9 @@ function upstreamFirst(plan: Pick<LogicalPlan, "operators" | "links">): string[]
  * no order, and the Dashboard has recorded the execution as failed. The errors are listed in the
  * plan's order, an operator before those downstream of it, so that the cause of a chain of errors
  * comes first. Any other answer is an error that names the status and what the Dashboard said:
- * the message of its `{code, message}`, or else the body as it is, such as a proxy's.
+ * the message of its `{code, message}`, or else the body as it is, such as a proxy's. A create
+ * also hands the execution to its computing unit, so such an answer may be about the start: the
+ * unit refused it (409), could not be reached (503), or did not say whether it started it (504).
  */
 export function adaptCreateExecutionFailure(
   status: number,
@@ -188,9 +186,7 @@ export function adaptCreateExecutionFailure(
   return {
     state: WorkflowExecutionState.ERROR,
     operators: {},
-    errors: [
-      makeWorkflowError(WorkflowFatalErrorType.EXECUTION_FAILURE, `Execution could not be created: ${answer}`, ""),
-    ],
+    errors: [makeWorkflowError(WorkflowFatalErrorType.EXECUTION_FAILURE, `Execution request failed: ${answer}`, "")],
   };
 }
 

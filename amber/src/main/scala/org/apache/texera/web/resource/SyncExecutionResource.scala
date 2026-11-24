@@ -30,7 +30,7 @@ import org.apache.texera.amber.core.storage.{
 }
 import org.apache.texera.amber.core.tuple.{Tuple, TupleUtils}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
-import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, PortIdentity}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
@@ -56,18 +56,13 @@ import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
 
 /**
-  * The body of `POST /api/execution/run`: run an execution the Dashboard service created, on
-  * this computing unit, and answer with what it produced.
+  * The body of `POST /api/execution/{eid}/wait`: wait for the run of an execution this computing
+  * unit holds, and answer with what it produced.
   *
-  * @param plan              the execution's plan, as `POST /api/executions` answered it: it
-  *                          names the execution
-  * @param computingUnitId   the computing unit the execution was created for: this one
   * @param targetOperatorIds the operators whose results are answered; with exactly one, the
   *                          execution was created to run up to it
   */
-case class SyncRunRequest(
-    plan: String,
-    computingUnitId: Int,
+case class SyncWaitRequest(
     targetOperatorIds: List[String],
     timeoutSeconds: Int,
     maxOperatorResultCharLimit: Int,
@@ -113,19 +108,21 @@ case class ConsoleErrorDetected(consoleState: ExecutionConsoleStore) extends Ter
 case class TargetResultsReady(statsState: ExecutionStatsStore) extends TerminationReason
 
 /**
-  * Runs of executions that wait for their results: what the agent asks of a computing unit.
+  * Waits for the results of a run this computing unit holds: what the agent asks of a unit,
+  * once the Dashboard service has started the execution it created for it.
   *
-  * @param workflowServiceOf the service of a workflow's runs on this unit, for a computing unit:
-  *                          the one the workflow's sessions share
+  * @param holding the run of an execution, with the service of its workflow, when this unit
+  *                holds it
   */
 @Path("/execution")
 @Consumes(Array(MediaType.APPLICATION_JSON))
 @Produces(Array(MediaType.APPLICATION_JSON))
-class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => WorkflowService)
-    extends LazyLogging {
+class SyncExecutionResource(
+    holding: Long => Option[(WorkflowService, WorkflowExecutionService)]
+) extends LazyLogging {
 
   // No-arg constructor for Jersey reflection. Tests use the param-ful form.
-  def this() = this(WorkflowService.getOrCreate(_, _))
+  def this() = this(WorkflowService.holding)
 
   // Hard caps applied regardless of request — guard against runaway payloads.
   private val MAX_OPERATOR_RESULT_CHARS = 100000
@@ -140,49 +137,44 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
   private val MaxConsoleMessages = 5000
 
   /**
-    * Runs the execution the request's plan names, which the Dashboard service created for the
-    * caller, on this computing unit, and answers once it ends, once its targets complete, or
-    * once an operator logs an error.
+    * Waits for the run of execution `eid`, which the caller started and this computing unit
+    * holds, and answers once it ends, once its targets complete, or once an operator logs an
+    * error.
     *
-    * The start is checked ([[WorkflowService.checkStart]]) before the workflow's service is
-    * asked for, so a start its checks refuse leaves no service behind; then it is started on that
-    * service ([[WorkflowService.startChecked]]). A start that is refused is answered at once, as
-    * an error that names why, and writes nothing.
+    * A wait for an execution this unit holds no run of, or that another user started, is
+    * answered at once, as an error that names why, and leaves the run as it is.
     */
   @POST
-  @Path("/run")
+  @Path("/{eid}/wait")
   @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def runExecution(request: SyncRunRequest, @Auth user: SessionUser): SyncExecutionResult = {
+  def awaitExecution(
+      @PathParam("eid") eid: Long,
+      request: SyncWaitRequest,
+      @Auth user: SessionUser
+  ): SyncExecutionResult = {
     if (request == null) return errorResult("The request has no body.")
-    logger.info("Asked to run an execution from its plan.")
+    logger.info(s"Asked to wait for execution $eid.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
+    val uid = Option(user.getUser.getUid).map(_.intValue())
     try {
-      WorkflowService.checkStart(
-        request.plan,
-        user.getUser,
-        request.computingUnitId,
-        socketWorkflowId = None
-      ) match {
-        case Left(message) => refused(message)
-        case Right(checked) =>
-          val workflow = workflowServiceOf(checked.workflowId, request.computingUnitId)
-          // No session watches a run started this way; this request does, until it is answered.
+      holding(eid) match {
+        case None => refused(s"Execution $eid is not running here.")
+        case Some((_, execution)) if execution.startedBy.isEmpty || execution.startedBy != uid =>
+          refused(s"Only the user who started execution $eid may wait for it.")
+        case Some((workflow, execution)) =>
+          // A run nobody watches is cleaned up; this request watches it, until it is answered.
           workflow.watching {
-            workflow.startChecked(checked) match {
-              case Left(message) => refused(message)
-              case Right(execution) =>
-                awaitResults(
-                  execution,
-                  targetOperatorIds,
-                  // A run that could not be set up has ended already, and waits for no input.
-                  execution.services.fold(Map.empty[String, Int])(services =>
-                    expectedExternalInputsOf(services.workflow.physicalPlan, targetOperatorIds)
-                  ),
-                  request.timeoutSeconds,
-                  Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS),
-                  Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
-                )
-            }
+            awaitResults(
+              execution,
+              targetOperatorIds,
+              // A run that could not be set up has ended already, and waits for no input.
+              execution.services.fold(Map.empty[String, Int])(services =>
+                expectedExternalInputsOf(services.workflow.physicalPlan, targetOperatorIds)
+              ),
+              request.timeoutSeconds,
+              Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS),
+              Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
+            )
           }
       }
     } catch {
@@ -193,11 +185,11 @@ class SyncExecutionResource(workflowServiceOf: (WorkflowIdentity, Int) => Workfl
   }
 
   private def refused(message: String): SyncExecutionResult = {
-    logger.info(s"Refused to run an execution: $message")
+    logger.info(s"Refused to wait for an execution: $message")
     errorResult(message)
   }
 
-  /** The answer for a run this unit refused to start, or failed on: an error, saying why. */
+  /** The answer for a wait this unit refused, or failed on: an error, saying why. */
   private def errorResult(message: String): SyncExecutionResult =
     SyncExecutionResult(
       success = false,

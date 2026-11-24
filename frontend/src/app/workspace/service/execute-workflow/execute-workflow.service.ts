@@ -136,9 +136,10 @@ function stateAnsweredFor(answer: ExecutionStateResponse, shown: ExecutionStateI
 }
 
 /**
- * The errors of a run of `plan` whose execution the Dashboard service did not create, `error` being how the
- * request for it failed: the operators' errors when the workflow does not compile ({@link operatorErrorsOf}),
- * or else the failure's reason, as one error that belongs to no operator.
+ * The errors of a run of `plan` that the Dashboard service did not answer with an execution, `error` being how
+ * the request for it failed: the operators' errors when the workflow does not compile
+ * ({@link operatorErrorsOf}), or else the failure's reason, as one error that belongs to no operator. The
+ * reason is the Dashboard's own, or the computing unit's for not starting the execution it was handed.
  */
 function errorsOfFailedCreate(error: unknown, plan: LogicalPlan): ReadonlyArray<WorkflowFatalError> {
   const operatorErrors = operatorErrorsOf(error, plan);
@@ -201,24 +202,27 @@ export class ExecuteWorkflowService {
   private durationTicker?: Subscription;
 
   /**
-   * The run that was asked for and has not reached the computing unit yet: its wait for the form debounce,
-   * then the creation of its execution at the Dashboard service. Closed once the execution is created or
-   * refused, and when the run is given up before that.
+   * The run that was asked for and that the Dashboard service has not answered for yet: its wait for the form
+   * debounce, then the request that has the Dashboard create its execution and the computing unit start it.
+   * Closed once the Dashboard answers, with the execution or with why there is none, and when this page stops
+   * waiting for the answer.
    */
   private pendingRun = Subscription.EMPTY;
   /**
-   * The execution of the run on screen: the one this page asked the computing unit to start, once the
-   * Dashboard service has created it, and then the one the unit names with each state it reports. A pause, a
-   * resume, a kill and a change to a paused operator name it, whichever page started the run.
+   * The execution of the run on screen: the one the computing unit names with each state it reports, and
+   * before the unit's first word of a run this page asked for, the one the Dashboard service created for it.
+   * It has none from the moment a run is asked for until one of the two says. A pause, a resume, a kill and a
+   * change to a paused operator name it, whichever page started the run.
    */
   private currentExecutionId?: number;
   /**
-   * The execution this page asked the computing unit to start, until the unit answers: with the state of a
-   * run, which is the run on screen from then on, or by refusing the start.
+   * Whether the run this page asked for is to be killed once the Dashboard service says which execution it
+   * is: a kill asked for while {@link pendingRun} is open and neither the Dashboard nor the unit has named
+   * the run, which leaves a kill no execution to name.
    */
-  private awaitedStart?: number;
+  private killOnceCreated = false;
   /**
-   * The execution this page follows: the one it asked the computing unit to start, or the one the unit named
+   * The execution this page follows: the one the Dashboard service created for it, or the one the unit named
    * last. Unlike {@link currentExecutionId} it outlives a unit that stops showing its run, so that the
    * Dashboard service can be asked how the run went. Forgotten once the Dashboard service says the
    * execution is closed, when another run is asked for, and when the page leaves the session.
@@ -288,9 +292,9 @@ export class ExecuteWorkflowService {
     });
 
     // Ends an in-flight run once its unit is gone or Failed and the socket is down; console and results are kept.
-    // A run is in flight from the moment it is asked for: one that has not reached the unit is given up, so
-    // nothing of it is sent there later. A run whose execution this page follows is not ended here: the
-    // Dashboard service says how it went.
+    // A run is in flight from the moment it is asked for: one the Dashboard service has not answered for is no
+    // longer waited for, whether or not the Dashboard reaches the unit with it. A run whose execution this
+    // page follows is not ended here: the Dashboard service says how it went.
     combineLatest([
       computingUnitStatusService.getSelectedComputingUnit(),
       workflowWebsocketService.getConnectionStatusStream(),
@@ -303,40 +307,19 @@ export class ExecuteWorkflowService {
     });
   }
 
+  /** Tells the user that the change to a paused run's operators has been applied, as the unit reports it. */
   public handleReconfigurationEvent(event: TexeraWebsocketEvent) {
-    switch (event.type) {
-      case "ModifyLogicResponse":
-        if (!event.isValid) {
-          this.notificationService.error(event.errorMessage);
-        } else {
-          this.notificationService.info("reconfiguration registered");
-        }
-        return;
-      case "ModifyLogicCompletedEvent":
-        this.notificationService.info("reconfiguration on operator(s) " + event.opIds + " complete");
+    if (event.type === "ModifyLogicCompletedEvent") {
+      this.notificationService.info("reconfiguration on operator(s) " + event.opIds + " complete");
     }
   }
 
   /**
    * A request of this page that the computing unit did not do. The refusal says nothing about the run the unit
-   * holds, so the run on screen stays as it is and the user is told why in a notification. Only the start
-   * this page waits for is the run on screen itself: refused, that run has failed, with why as its error. A
-   * refused start names the execution its plan named; one whose plan the unit could not read names none, and is
-   * taken as the start this page waits for.
+   * holds, so the run on screen stays as it is and the user is told why in a notification.
    */
   private handleRefusedRequest(refusal: RequestRefusedEvent): void {
-    const refusesAwaitedStart =
-      refusal.request === "WorkflowStartRequest" &&
-      this.awaitedStart !== undefined &&
-      (refusal.executionId === undefined || refusal.executionId === this.awaitedStart);
-    if (refusesAwaitedStart) {
-      this.awaitedStart = undefined;
-      // The refusal is how this run ended on this page: nothing the Dashboard holds of it takes its place.
-      this.unfollow();
-      this.updateExecutionState({ state: ExecutionState.Failed, errorMessages: [startFailure(refusal.message)] });
-    } else {
-      this.notificationService.error(refusal.message);
-    }
+    this.notificationService.error(refusal.message);
   }
 
   public handleExecutionEvent(event: TexeraWebsocketEvent): ExecutionStateInfo | undefined {
@@ -345,9 +328,9 @@ export class ExecuteWorkflowService {
         // The unit names the execution its state is of, and none with the state of no run.
         this.currentExecutionId = event.executionId;
         if (event.executionId !== undefined) {
-          // The run the unit holds: the one this page asked for, or one another page started meanwhile.
-          this.awaitedStart = undefined;
-          // It is the run to follow, and its unit shows it: the unit's word is the state on screen.
+          // The run the unit holds: the one this page asked for, which the unit may name before the Dashboard
+          // service answers for it, or one another page started meanwhile. It is the run to follow, and its
+          // unit shows it: the unit's word is the state on screen.
           this.follow(event.executionId);
         } else if (this.isFollowedRunInFlight()) {
           // The state of no run is what every new socket is told first, and all that a unit which holds no
@@ -406,8 +389,9 @@ export class ExecuteWorkflowService {
   }
 
   /**
-   * The execution of the run on screen, for a request about what that run stored; undefined while the
-   * computing unit names none, as before a run and for a run whose unit no longer shows it.
+   * The execution of the run on screen, for a request about what that run stored; undefined while the run has
+   * none: before a run, from the moment a run is asked for until its execution is known, and for a run whose
+   * unit no longer shows it.
    */
   public getCurrentExecutionId(): number | undefined {
     return this.currentExecutionId;
@@ -539,7 +523,7 @@ export class ExecuteWorkflowService {
     }
     this.resetExecutionState();
     this.workflowStatusService.resetStatus();
-    this.createThenStart({
+    this.createExecution({
       wid,
       executionName,
       engineVersion: version.buildNumber,
@@ -555,16 +539,17 @@ export class ExecuteWorkflowService {
   }
 
   /**
-   * Has the Dashboard service create the execution `request` asks for, then asks the computing unit, over
-   * the websocket, to start it with the plan the Dashboard answered with. An execution the Dashboard does not
-   * create fails the run with the errors it reports, and nothing is sent to the unit: the run it holds, and that
-   * run's results, stay as they are.
+   * Has the Dashboard service create the execution `request` asks for, which has the computing unit start it
+   * before it answers: nothing of the run is sent to the unit from here. An execution the Dashboard does not
+   * create, or the unit does not start, fails the run with the errors the Dashboard reports, and the run the
+   * unit holds, with that run's results, stays as it is.
    */
-  private createThenStart(request: CreateExecutionRequest): void {
-    // The run asked for last is the one that starts, and the one whose start is waited for. It takes the place
-    // of the run this page followed.
+  private createExecution(request: CreateExecutionRequest): void {
+    // The run asked for last is the one on screen, in place of the run this page followed: it has no
+    // execution until the Dashboard or the unit names one.
     this.pendingRun.unsubscribe();
-    this.awaitedStart = undefined;
+    this.currentExecutionId = undefined;
+    this.killOnceCreated = false;
     this.unfollow();
     // wait for the form debounce to complete, then create the execution
     this.pendingRun = timer(FORM_DEBOUNCE_TIME_MS)
@@ -574,23 +559,30 @@ export class ExecuteWorkflowService {
         switchMap(() => this.executionApiService.create(request))
       )
       .subscribe({
-        next: ({ eid, plan }) => {
-          this.currentExecutionId = eid;
-          this.awaitedStart = eid;
-          // The unit is taken to show the run it is asked to start, until it says that it holds none. A unit
-          // whose socket is down is asked nothing yet.
-          this.follow(eid);
-          if (!this.socketConnected) {
-            this.followAtDashboard();
+        next: ({ eid }) => {
+          // The unit starts the run before the Dashboard answers, so it may have named it already, with a state
+          // that stays on screen; and it may have named a run another page started after it. In both the
+          // unit's word stands. Where the unit has named no run, this page takes the Dashboard's word for the
+          // run on screen: it follows the execution, at the Dashboard while the unit's socket is down.
+          if (this.currentExecutionId === undefined) {
+            this.currentExecutionId = eid;
+            this.follow(eid);
+            if (!this.socketConnected) {
+              this.followAtDashboard();
+            }
           }
-          // The plan names the execution it starts: nothing is sent beside it.
-          this.workflowWebsocketService.send("WorkflowStartRequest", { plan });
+          if (this.killOnceCreated) {
+            this.killOnceCreated = false;
+            this.workflowWebsocketService.send("WorkflowKillRequest", { executionId: eid });
+          }
         },
-        error: (error: unknown) =>
+        error: (error: unknown) => {
+          this.killOnceCreated = false;
           this.updateExecutionState({
             state: ExecutionState.Failed,
             errorMessages: errorsOfFailedCreate(error, request.logicalPlan),
-          }),
+          });
+        },
       });
   }
 
@@ -648,11 +640,11 @@ export class ExecuteWorkflowService {
     ) {
       throw new Error("cannot kill workflow, the current execution state is " + this.currentState.state);
     }
-    if (!this.pendingRun.closed) {
-      // The run has not reached the computing unit: it is given up here. A kill sent now would end the run
-      // the unit still holds, the one before it.
-      this.pendingRun.unsubscribe();
-      this.updateExecutionState({ state: ExecutionState.Killed });
+    if (!this.pendingRun.closed && this.currentExecutionId === undefined) {
+      // The Dashboard service is creating the run's execution and has the unit start it, whether or not this
+      // page waits for its answer, and neither has named the execution, which a kill names. The kill is sent
+      // once the Dashboard answers; until then the run shows as starting.
+      this.killOnceCreated = true;
       return;
     }
     this.workflowWebsocketService.send("WorkflowKillRequest", { executionId: this.executionOnScreen("kill workflow") });
@@ -718,9 +710,9 @@ export class ExecuteWorkflowService {
   /**
    * Changes operator `operatorID` of the paused run to what the editor holds: the Dashboard service compiles the
    * change against the workflow snapshot ({@link snapshotWorkflowForLogicChange}), for the execution the computing
-   * unit names as the paused one, and the change it answers with is handed to the unit, which answers with a
-   * ModifyLogicResponse. A change with no snapshot, or one the Dashboard does not compile, is reported in a toast,
-   * and nothing is sent to the unit.
+   * unit names as the paused one, and hands it to the unit, which applies it when the run resumes. The user is
+   * told in a toast that the unit took the change, or why there is none to take: a change with no snapshot, one
+   * the Dashboard does not compile, and one the unit refuses.
    */
   public modifyOperatorLogic(operatorID: string): void {
     if (this.currentState.state !== ExecutionState.Paused) {
@@ -741,7 +733,7 @@ export class ExecuteWorkflowService {
       operatorType: op.operatorType,
     };
     this.executionApiService.postUpdate(executionId, operator, workflow).subscribe({
-      next: ({ update }) => this.workflowWebsocketService.send("OperatorUpdateRequest", { update }),
+      next: () => this.notificationService.info("reconfiguration registered"),
       error: (error: unknown) => this.notificationService.error(failureMessage(error)),
     });
   }
@@ -775,11 +767,12 @@ export class ExecuteWorkflowService {
    * executionStateStream so subscribers drop the previous unit's status.
    */
   public resetExecutionAndWorkers(): void {
-    // A run still on its way, and the execution the unit named, belong to the session that is reset: the one
-    // must not start in the next session, and the other is not the next session's to change, or to follow.
+    // A run still being asked for, and the execution of the run on screen, belong to the session that is
+    // reset: the Dashboard's answer for the one is not the next session's to read, or its kill the next
+    // session's to send, and the other is not the next session's to change, or to follow.
     this.pendingRun.unsubscribe();
     this.currentExecutionId = undefined;
-    this.awaitedStart = undefined;
+    this.killOnceCreated = false;
     this.unfollow();
     this.updateExecutionState({ state: ExecutionState.Uninitialized });
     this.assignedWorkerIds.clear();
@@ -839,9 +832,6 @@ export class ExecuteWorkflowService {
    */
   private showAnsweredState(answer: ExecutionStateResponse): void {
     if (!answer.open) {
-      if (this.awaitedStart === this.followedExecutionId) {
-        this.awaitedStart = undefined;
-      }
       this.unfollow();
     }
     const state = stateAnsweredFor(answer, this.currentState);

@@ -41,6 +41,7 @@ object ExecutionClosing {
   // which failed, or at the closing job.
   val PlanNotMade = "its plan could not be made"
   val PlanTooLarge = "its plan is too large"
+  val UnitUnreachable = "its computing unit could not be reached"
   val UnitLost = "unit lost"
   val UnitTerminated = "unit terminated"
   val NeverStarted = "never started"
@@ -50,14 +51,21 @@ object ExecutionClosing {
     * Why an execution whose workflow does not compile is closed: the message of an operator's
     * error, cut to [[ExecutionLogStore.MaxReasonLength]] characters.
     */
-  def compileError(message: String): String = {
+  def compileError(message: String): String = s"compile error: ${cut(message)}"
+
+  /**
+    * Why an execution its computing unit refused to start is closed: the unit's reason, cut to
+    * [[ExecutionLogStore.MaxReasonLength]] characters.
+    */
+  def notStartedByUnit(why: String): String = s"its computing unit did not start it: ${cut(why)}"
+
+  /** `message`, cut to [[ExecutionLogStore.MaxReasonLength]] characters. */
+  private def cut(message: String): String = {
     val limit = ExecutionLogStore.MaxReasonLength
     // Never the first half alone of a character that takes two chars.
-    val kept =
-      if (message.length <= limit) message
-      else if (Character.isHighSurrogate(message.charAt(limit - 1))) message.take(limit - 1)
-      else message.take(limit)
-    s"compile error: $kept"
+    if (message.length <= limit) message
+    else if (Character.isHighSurrogate(message.charAt(limit - 1))) message.take(limit - 1)
+    else message.take(limit)
   }
 
   /**

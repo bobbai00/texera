@@ -29,7 +29,6 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.{RequestRefusedEvent, WorkflowStateEvent}
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
-import org.apache.texera.web.service.execution.ExecutionStart
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
@@ -103,11 +102,7 @@ class WorkflowWebsocketResource extends LazyLogging {
         def refused(why: String) = RequestRefusedEvent(Some(kind), executionNamedBy(request), why)
         try handle(session, sender, request).foreach { why =>
           logger.info(s"Refused a $kind: $why")
-          sender.send(request match {
-            // A change to an operator is answered as a change that does not apply.
-            case _: OperatorUpdateRequest => ModifyLogicResponse("", isValid = false, why)
-            case _                        => refused(why)
-          })
+          sender.send(refused(why))
         } catch {
           // What a run cannot do says so itself.
           case unsupported: UnsupportedOperationException if unsupported.getMessage != null =>
@@ -125,26 +120,24 @@ class WorkflowWebsocketResource extends LazyLogging {
     }
   }
 
-  /**
-    * The execution `request` is about, for the answer to it when it is not done: the one it
-    * names, and for a start the one its plan names, when the plan's text says.
-    */
+  /** The execution `request` names, for the answer to it when it is not done. */
   private def executionNamedBy(request: TexeraWebSocketRequest): Option[Long] =
     request match {
-      case named: ExecutionRequest     => Some(named.executionId)
-      case start: WorkflowStartRequest => ExecutionStart.executionNamedBy(start.plan)
-      case _                           => None
+      case named: ExecutionRequest => Some(named.executionId)
+      case _                       => None
     }
 
   /**
     * Does what `request` asks, for the session `sender` that sent it. A heartbeat and a read of
-    * results are open to every session. Every other request changes a run, so it is its sender's
-    * to make only with WRITE on the socket's computing unit: a start, a change to an operator, and
-    * every command to a run. A start carries the plan of its execution, and a change is made for
-    * one: each says which execution it is of, and names none beside. A pause, a resume and a
+    * results are open to every session. Every other request is a command to a run, so it is its
+    * sender's to make only with WRITE on the socket's computing unit. A pause, a resume and a
     * kill name the execution whose run they are for, and are refused unless the workflow's
-    * service holds that run; a change, a checkpoint, a retry, a skip, a debug command and an
-    * expression to evaluate go to the run it holds.
+    * service holds that run; a checkpoint, a retry, a skip, a debug command and an expression to
+    * evaluate go to the run it holds.
+    *
+    * No run is started over a socket, and no operator of one changed: the Dashboard service
+    * hands the unit both ([[ExecutionHandoverResource]]), and every session on the workflow sees
+    * the run it started.
     *
     * @return why the request is refused, if it is; None once it is done or handed on
     */
@@ -170,10 +163,6 @@ class WorkflowWebsocketResource extends LazyLogging {
         None
       case _ if sender.getUserComputingUnitAccess != PrivilegeEnum.WRITE =>
         Some("You do not have write access to the computing unit.")
-      case start: WorkflowStartRequest =>
-        startExecution(sender, workflow, user, start)
-      case update: OperatorUpdateRequest =>
-        applyUpdate(sender, run, user, update)
       case command =>
         val asked = command match {
           case named: ExecutionRequest => runOf(named, run).toRight(notRunningHere(named))
@@ -195,61 +184,6 @@ class WorkflowWebsocketResource extends LazyLogging {
 
   /** What a request for the run the workflow's service holds is answered when it holds none. */
   private val NoRunHere = "No execution of this workflow is running here."
-
-  /**
-    * Starts the execution the plan `start` carries names, which the Dashboard service created,
-    * on this socket's workflow and computing unit, for the socket's user
-    * ([[WorkflowService.startExecution]]). Once started, the run reaches every session on the
-    * workflow, as a run does.
-    *
-    * @return why the start is refused, if it is
-    */
-  private def startExecution(
-      sender: SessionState,
-      workflow: Option[WorkflowService],
-      user: Option[User],
-      start: WorkflowStartRequest
-  ): Option[String] =
-    try {
-      logger.info("Asked to start an execution from its plan.")
-      val started = for {
-        user <- user.toRight("A signed-in user is required to start an execution.")
-        workflow <- workflow.toRight("This connection is not open on a workflow.")
-        cuid <- sender.getComputingUnitId.toRight(
-          "This connection is not open on a computing unit."
-        )
-        execution <- workflow.startExecution(start.plan, user, cuid)
-      } yield execution
-      started.left.toOption
-    } catch {
-      case NonFatal(failure) =>
-        val execution = ExecutionStart.executionNamedBy(start.plan)
-        logger.error(WorkflowService.notStarted(execution), failure)
-        Some(WorkflowService.notStarted(execution))
-    }
-
-  /**
-    * Applies the change to an operator that `update` carries, which the Dashboard service made to
-    * run, to the run this socket's workflow holds, which refuses a change made for another
-    * execution ([[org.apache.texera.web.service.ExecutionReconfigurationService.applyUpdate]]),
-    * and answers `sender` whether it applies.
-    *
-    * @return why the change is refused, if the workflow holds no run to change
-    */
-  private def applyUpdate(
-      sender: SessionState,
-      run: Option[WorkflowExecutionService],
-      user: Option[User],
-      update: OperatorUpdateRequest
-  ): Option[String] =
-    run.flatMap(_.services) match {
-      case Some(services) =>
-        sender.send(
-          services.reconfiguration.applyUpdate(update.update, user.map(_.getUid.intValue()))
-        )
-        None
-      case None => Some(NoRunHere)
-    }
 
   /**
     * The type of request `frame`, which binds to no request, says it is, when it says one that

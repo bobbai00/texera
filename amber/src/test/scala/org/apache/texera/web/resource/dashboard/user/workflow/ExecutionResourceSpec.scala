@@ -134,17 +134,28 @@ import org.apache.texera.web.resource.EmailMessage
 import org.apache.texera.web.service.{ExecutionsMetadataPersistService, WorkflowEmailNotifier}
 import org.apache.texera.web.service.WorkflowEmailNotifier.Notification
 import org.apache.texera.web.service.WorkflowService
+import org.apache.texera.web.service.execution.ComputingUnitClient.{
+  Handover,
+  Refused,
+  Taken,
+  Unanswered,
+  Unreached
+}
 import org.apache.texera.web.service.execution.WorkflowCompilingService.CompileRefused
 import org.apache.texera.web.service.execution.{
   ClosingRecord,
+  ComputingUnitClient,
   CostHintsLoader,
+  CreatedExecution,
   ExecutionCloser,
   ExecutionCreator,
   ExecutionExpiry,
   ExecutionRecordReader,
   ExecutionRecords,
+  ExecutionStart,
   FixtureCompilingService,
   OperatorUpdates,
+  RecordingComputingUnits,
   StubCompilingServer,
   WorkflowCompilingService,
   WorkflowCompilingServiceClient
@@ -184,7 +195,9 @@ import scala.util.{Try, Using}
   * fixture resolvers of `TestOperators` (scan files on the local disk) unless a case binds
   * them otherwise, or a server a case asks over HTTP ([[StubCompilingServer]]); files are
   * linked to the fixture server, and the cost hints, the replay log root and the warehouse
-  * switch are the creator's seams.
+  * switch are the creator's seams. No computing unit runs: the units keep the plan each create
+  * hands them, which is the plan a case reads, and answer that they took it unless a case has
+  * them answer otherwise ([[RecordingComputingUnits]]).
   *
   * Users: `creatorUid` owns the workflows and most units; `readerUid` may only read
   * `testWid`, only read `unitCuid`, and owns `readerCuid`; `strangerUid` has no right to
@@ -491,6 +504,19 @@ class ExecutionResourceSpec
       emailThread = _.run()
     )
 
+  /** What a unit answers a plan it is handed: that it took it, unless a case says otherwise. */
+  @volatile private var unitAnswer: Handover = Taken
+
+  /** The units' side of every create of the suite: they keep each plan handed over. */
+  private val handedOver = new RecordingComputingUnits(unitAnswer)
+
+  /** Runs `body` while a unit answers `answer` to the plan it is handed. */
+  private def whileUnitAnswers[T](answer: Handover)(body: => T): T = {
+    unitAnswer = answer
+    try body
+    finally unitAnswer = Taken
+  }
+
   /** An expiry whose lake calls are the stores', and which deletes no large binary. */
   private val expiryWithoutBinaries =
     new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
@@ -507,6 +533,7 @@ class ExecutionResourceSpec
     *                  binds it to for its user; the fixtures', unless a case gives another
     * @param linker    signs the plan's links; the fixture server's, unless a case gives another
     * @param compiling the compiling service, for a case that asks one of its own
+    * @param units     the units the plans are handed to; the suite's, which keep them
     */
   private class FixtureCreator(
       logRoot: Option[URI] = None,
@@ -519,7 +546,8 @@ class ExecutionResourceSpec
       expiry: ExecutionExpiry = expiryWithoutBinaries,
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty,
-      compiling: Option[WorkflowCompilingService] = None
+      compiling: Option[WorkflowCompilingService] = None,
+      units: ComputingUnitClient = handedOver
   ) extends ExecutionCreator(
         compiling = compiling.getOrElse(
           new FixtureCompilingService(bindingsFor = uid => {
@@ -528,6 +556,7 @@ class ExecutionResourceSpec
             bindings(forUser).copy(settings = forUser.settings)
           })
         ),
+        units = units,
         linker = linker,
         replayLogRoot = logRoot,
         warehousesEnabled = warehouses,
@@ -625,10 +654,10 @@ class ExecutionResourceSpec
       targetOperatorId = target
     )
 
-  /** The execution a 201 created. */
-  private def created(response: Response): CreateExecutionResponse = {
+  /** The execution a 201 created, with the plan the create handed its unit. */
+  private def created(response: Response): CreatedExecution = {
     withClue(s"${response.getEntity}: ") { response.getStatus shouldBe 201 }
-    response.getEntity.asInstanceOf[CreateExecutionResponse]
+    handedOver.created(response.getEntity.asInstanceOf[CreateExecutionResponse])
   }
 
   private def compileFailure(response: Response): CreateExecutionFailure = {
@@ -636,8 +665,8 @@ class ExecutionResourceSpec
     response.getEntity.asInstanceOf[CreateExecutionFailure]
   }
 
-  /** The plan the create of `execution` answered, read as a computing unit reads it. */
-  private def planOf(execution: CreateExecutionResponse): ExecutionPlan =
+  /** The plan the create of `execution` handed over, read as a computing unit reads it. */
+  private def planOf(execution: CreatedExecution): ExecutionPlan =
     PhysicalPlanCodec.decode(PhysicalPlanCodec.fromJson(execution.plan))
 
   /** The id of the execution created last. */
@@ -766,14 +795,27 @@ class ExecutionResourceSpec
   // --- created ---
 
   "ExecutionResource.create" should
-    "record the execution as Created, and answer 201 with its plan made for the creator" in {
+    "record the execution as Created, hand its plan made for the creator to its unit, and answer 201 with its id" in {
     val creator = new FixtureCreator()
     val sent = request()
     val before = System.currentTimeMillis()
+    val handedBefore = handedOver.starts.size
 
-    val execution = created(post(sent, creator = creator))
+    val answer = post(sent, creator = creator)
+    val execution = created(answer)
 
     execution.eid should be > firstCreatedEid.toLong
+    // The answer is the execution's id, and nothing of its plan.
+    answer.getEntity shouldBe CreateExecutionResponse(execution.eid)
+    // The plan went to the unit the execution was created for, once, as the caller: with the
+    // request's own Authorization header.
+    handedOver.starts.drop(handedBefore) shouldBe Seq(
+      RecordingComputingUnits.Handed(
+        unitCuid,
+        execution.plan,
+        FixtureCompilingService.authorizationOf(creatorUid)
+      )
+    )
 
     val stored = row(execution.eid)
     // Open: nothing of its closing record is written until it is over.
@@ -915,7 +957,7 @@ class ExecutionResourceSpec
     }
   }
 
-  it should "link each file the creator may read, in the plan it answers and nowhere else" in {
+  it should "link each file the creator may read, in the plan it hands over and nowhere else" in {
     val located = mutable.ListBuffer.empty[URI]
     val linked = mutable.ListBuffer.empty[String]
     val creator = creatorLinkingWith(
@@ -1017,7 +1059,7 @@ class ExecutionResourceSpec
     )
 
   /** The environment the plan of `execution` gives its operator `udf`. */
-  private def environmentOf(execution: CreateExecutionResponse): PythonEnvironmentRef =
+  private def environmentOf(execution: CreatedExecution): PythonEnvironmentRef =
     planOf(execution).plan
       .getOperator(PhysicalOpIdentity(OperatorIdentity("udf"), "main"))
       .pythonEnvironment
@@ -1120,7 +1162,7 @@ class ExecutionResourceSpec
     row(newestEid.toLong).getOutcome shouldBe 4
   }
 
-  it should "list each File Lister's dataset version and link the files listed, in the plan it stores and nowhere else" in {
+  it should "list each File Lister's dataset version and link the files listed, in the plan it hands over and nowhere else" in {
     val files = FixtureInputs.datasetFiles.map {
       case (file, _) => s"${FixtureInputs.datasetVersionPath}/$file"
     }
@@ -1237,7 +1279,7 @@ class ExecutionResourceSpec
     )
   }
 
-  it should "answer a plan of as many files as an operator may list, linked as the object store signs links, which a computing unit reads and starts from" in {
+  it should "hand over a plan of as many files as an operator may list, linked as the object store signs links, which a computing unit reads and starts from" in {
     val files = ApplicationConfig.maxListedFiles
     val execution = created(
       post(
@@ -1254,8 +1296,7 @@ class ExecutionResourceSpec
       .checkStart(
         execution.plan,
         sessionUser(creatorUid).getUser,
-        unitCuid,
-        Some(testWid.toLong)
+        unitCuid
       )
       .fold(why => fail(s"the start was refused: $why"), _.executionPlan)
     val read = inputsOf(plan, "scan")
@@ -1468,15 +1509,14 @@ class ExecutionResourceSpec
     scanError.has("workerId") shouldBe true
   }
 
-  it should "write the execution it created as {eid, plan}, the plan as its text" in {
-    val execution = created(post(request()))
+  it should "write the execution it created as {eid}, with nothing of its plan" in {
+    val answer = post(request())
+    val execution = created(answer)
 
-    val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(execution))
+    val written = dashboardMapper.readTree(dashboardMapper.writeValueAsString(answer.getEntity))
 
-    written.fieldNames().asScala.toSet shouldBe Set("eid", "plan")
+    written.fieldNames().asScala.toList shouldBe List("eid")
     written.get("eid").asLong() shouldBe execution.eid
-    written.get("plan").isTextual shouldBe true
-    written.get("plan").asText() shouldBe execution.plan
   }
 
   // --- the plan cannot be made ---
@@ -1485,6 +1525,7 @@ class ExecutionResourceSpec
     // A thousand files, whose links alone fill what a plan may hold.
     val before = executionCount
     val since = System.currentTimeMillis()
+    val handedBefore = handedOver.starts.size
 
     val failure = intercept[BadRequestException] {
       post(
@@ -1502,6 +1543,7 @@ class ExecutionResourceSpec
         "that lists fewer files makes a smaller plan\\."
     closedAtCreate(eid.toLong, "its plan is too large", since)
     // No unit is handed its plan, so no result of it is recorded.
+    handedOver.starts should have size handedBefore
     resultRowsOf(eid.toLong) shouldBe empty
   }
 
@@ -1530,6 +1572,106 @@ class ExecutionResourceSpec
     // A create that fails expires nothing.
     hasTable(console) shouldBe true
     row(961921).getResultsExpiredAt shouldBe null
+  }
+
+  // --- the plan is handed to the unit ---
+
+  /**
+    * Units that answer `answer` to the plan they are handed, and note the result tables
+    * recorded for its execution by then.
+    */
+  private class NotingUnits(answer: Handover) extends RecordingComputingUnits(answer) {
+    @volatile var rowsAtHandover: Seq[(String, String, String)] = Nil
+
+    override def start(cuid: Int, plan: String, authorization: String): Handover = {
+      rowsAtHandover = ExecutionStart.executionNamedBy(plan).toSeq.flatMap(resultRowsOf)
+      super.start(cuid, plan, authorization)
+    }
+  }
+
+  /**
+    * The create of an execution of the search plan whose unit answers `answer` to its plan:
+    * the failure it is answered, the units it was handed to, and what it left to be done after
+    * its answer.
+    */
+  private def createdOn(
+      answer: Handover
+  ): (WebApplicationException, NotingUnits, mutable.ListBuffer[Runnable]) = {
+    val units = new NotingUnits(answer)
+    val left = mutable.ListBuffer.empty[Runnable]
+    val failure = intercept[WebApplicationException] {
+      post(request(), creator = new FixtureCreator(units = units, background = left += _))
+    }
+    (failure, units, left)
+  }
+
+  it should "answer 409 with the unit's reason, and record the execution FAILED, when its unit refuses to start it" in {
+    val before = executionCount
+    val since = System.currentTimeMillis()
+    val why = s"This is computing unit $otherUnitCuid, not $unitCuid."
+
+    val (failure, units, left) = createdOn(Refused(why))
+
+    failure.getResponse.getStatus shouldBe 409
+    executionCount shouldBe before + 1
+    val eid = newestEid.toLong
+    failure.getMessage shouldBe
+      s"Execution $eid could not be started on computing unit $unitCuid. $why"
+    // Handed over once, with its result tables recorded by then: a unit that starts it finds
+    // them.
+    units.starts.map(_.cuid) shouldBe Seq(unitCuid)
+    units.rowsAtHandover should not be empty
+    // No unit has the plan, so none will ever start it: closed as failed, with the unit's
+    // reason, its results marked expired and the rows of its result tables gone.
+    closedAtCreate(eid, s"its computing unit did not start it: $why", since)
+    resultRowsOf(eid) shouldBe empty
+    // A create that fails replaces no run of the unit.
+    left shouldBe empty
+  }
+
+  it should "answer 503, and record the execution FAILED, when its unit cannot be reached" in {
+    val before = executionCount
+    val since = System.currentTimeMillis()
+
+    val (failure, units, left) =
+      createdOn(Unreached(new java.net.ConnectException("Connection refused")))
+
+    failure.getResponse.getStatus shouldBe 503
+    executionCount shouldBe before + 1
+    val eid = newestEid.toLong
+    failure.getMessage shouldBe
+      s"Execution $eid could not be started: computing unit $unitCuid could not be reached."
+    units.starts.map(_.cuid) shouldBe Seq(unitCuid)
+    units.rowsAtHandover should not be empty
+    closedAtCreate(eid, "its computing unit could not be reached", since)
+    resultRowsOf(eid) shouldBe empty
+    left shouldBe empty
+  }
+
+  it should "answer 504, and leave the execution open, when its unit does not say whether it started it" in {
+    val before = executionCount
+
+    val (failure, units, left) =
+      createdOn(Unanswered(new java.net.http.HttpTimeoutException("request timed out")))
+
+    failure.getResponse.getStatus shouldBe 504
+    executionCount shouldBe before + 1
+    val eid = newestEid.toLong
+    failure.getMessage shouldBe
+      s"Computing unit $unitCuid did not answer whether it started execution $eid. It may be " +
+        "running."
+    // The unit was sent the plan and may run it: the row stays open, for the closing job to
+    // close by what the execution's log shows, and its result tables stay recorded.
+    units.starts.map(_.cuid) shouldBe Seq(unitCuid)
+    val open = row(eid)
+    open.getOutcome shouldBe null
+    open.getOutcomeReason shouldBe null
+    open.getEndedAt shouldBe null
+    open.getResultsExpiredAt shouldBe null
+    resultRowsOf(eid) should not be empty
+    resultRowsOf(eid) shouldBe units.rowsAtHandover
+    // Whether it replaced the unit's last run is not known yet.
+    left shouldBe empty
   }
 
   // --- the compiling service, asked over HTTP ---
@@ -1601,7 +1743,7 @@ class ExecutionResourceSpec
       body.get("logicalPlan") shouldBe sent.logicalPlan
 
       // The link is signed for where the plan says the scan's file is kept, and takes the
-      // address's place in the plan answered, with the expiry the linker gave it.
+      // address's place in the plan handed over, with the expiry the linker gave it.
       val scanned = TestOperators.localFileUri(TestOperators.CountrySalesSmallCsvPath)
       signed.toList shouldBe List(scanned.toString)
       val plan = planOf(execution)
@@ -1619,8 +1761,7 @@ class ExecutionResourceSpec
         .checkStart(
           execution.plan,
           sessionUser(creatorUid).getUser,
-          unitCuid,
-          Some(testWid.toLong)
+          unitCuid
         )
         .isRight shouldBe true
     }
@@ -1842,8 +1983,8 @@ class ExecutionResourceSpec
         }
       }
 
-    // A workflow that does not compile, then two executions that are created and not started,
-    // as a reload or a Stop during the create leaves them: the unit still shows its last run.
+    // A workflow that does not compile, then two executions whose plans the unit was handed
+    // and which it has written nothing of yet: the unit still shows its last run.
     compileFailure(post(request(plan = brokenPlan(), cuid = clearingCuid)))
     val abandoned = created(post(request(cuid = clearingCuid)))
     val started = created(post(request(cuid = clearingCuid)))

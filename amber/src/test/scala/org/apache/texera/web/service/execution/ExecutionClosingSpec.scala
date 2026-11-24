@@ -376,6 +376,16 @@ class ExecutionClosingSpec extends AnyFlatSpec with Matchers {
     compileError("x" * 498 + pair + "tail") shouldBe "compile error: " + "x" * 498 + pair
   }
 
+  "ExecutionClosing.notStartedByUnit" should "say the unit's reason, cut as a compile error is" in {
+    notStartedByUnit("Execution 7 was already started.") shouldBe
+      "its computing unit did not start it: Execution 7 was already started."
+    notStartedByUnit("x" * 600) shouldBe
+      "its computing unit did not start it: " + "x" * ExecutionLogStore.MaxReasonLength
+    val pair = "😀"
+    notStartedByUnit("x" * 499 + pair + "tail") shouldBe
+      "its computing unit did not start it: " + "x" * 499
+  }
+
   "ExecutionClosing.Settings" should "refuse an interval that is no interval, and negative limits" in {
     an[IllegalArgumentException] should be thrownBy settings.copy(intervalSeconds = 0)
     an[IllegalArgumentException] should be thrownBy settings.copy(intervalSeconds = -30)

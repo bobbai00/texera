@@ -38,41 +38,22 @@ function compilationError(operatorId: string, message: string) {
 }
 
 describe("parseCreateExecutionResponse", () => {
-  // The plan the Dashboard compiles: text that is itself JSON, with escapes and characters beyond ASCII in it.
-  const plan = '{"executionId":345,"operators":[{"id":"udf-1","code":"print(\\"café\\")\\n"}]}';
+  test("reads the execution's id from the Dashboard's answer", () => {
+    expect(parseCreateExecutionResponse({ eid: 345 })).toEqual({ eid: 345 });
+  });
 
-  test("reads the execution's id and its plan from the Dashboard's answer, the plan as the text it is", () => {
-    const created = parseCreateExecutionResponse({ eid: 345, plan });
-
-    expect(created).toEqual({ eid: 345, plan });
-    expect(created.plan).toBe(plan);
+  test("reads nothing of the answer beside the execution's id", () => {
+    expect(parseCreateExecutionResponse({ eid: 345, executionName: "agent-execution" })).toEqual({ eid: 345 });
   });
 
   test.each([
-    ["no plan", { eid: 345 }],
-    ["an empty plan", { eid: 345, plan: "" }],
-    ["a plan that is not text", { eid: 345, plan: { operators: [] } }],
-    ["a plan's address in place of the plan", { eid: 345, planUri: "vfs:///wid/12/eid/345/plan" }],
-    ["no execution id", { plan }],
-    ["an execution id that is text", { eid: "345", plan }],
-    ["an execution id that is not a whole number", { eid: 3.5, plan }],
-    ["an execution id below 1", { eid: 0, plan }],
+    ["no execution id", {}],
+    ["an execution id that is text", { eid: "345" }],
+    ["an execution id that is not a whole number", { eid: 3.5 }],
+    ["an execution id below 1", { eid: 0 }],
     ["no object at all", null],
   ])("refuses an answer with %s", (_case, answer) => {
     expect(() => parseCreateExecutionResponse(answer)).toThrow("Invalid create-execution response");
-  });
-
-  test("leaves the plan out of why it refuses an answer", () => {
-    let refusal: unknown;
-    try {
-      parseCreateExecutionResponse({ eid: "345", plan });
-    } catch (error) {
-      refusal = error;
-    }
-
-    expect(refusal).toBeInstanceOf(Error);
-    expect((refusal as Error).message).toContain("Invalid create-execution response");
-    expect((refusal as Error).message).not.toContain("udf-1");
   });
 });
 
@@ -181,6 +162,10 @@ describe("adaptCreateExecutionFailure", () => {
     [409, "Conflict", "Computing unit 3 is terminated."],
     [500, "Internal Server Error", "Execution 345 could not be created: its plan could not be made."],
     [504, "Gateway Timeout", "Execution 345 could not be created: compiling the workflow took longer than 60 seconds."],
+    // The execution is created, and its computing unit does not start it, or does not say.
+    [409, "Conflict", "Execution 345 could not be started on computing unit 3. This is computing unit 5, not 3."],
+    [503, "Service Unavailable", "Execution 345 could not be started: computing unit 3 could not be reached."],
+    [504, "Gateway Timeout", "Computing unit 3 did not answer whether it started execution 345. It may be running."],
   ])("turns a %d refusal into an error with its status and message", (status, statusText, message) => {
     const summary = adaptCreateExecutionFailure(
       status,
@@ -194,7 +179,7 @@ describe("adaptCreateExecutionFailure", () => {
     expect(summary.errors).toHaveLength(1);
     expect(summary.errors[0]).toMatchObject({
       type: { name: WorkflowFatalErrorType.EXECUTION_FAILURE },
-      message: `Execution could not be created: ${status} ${statusText} - ${message}`,
+      message: `Execution request failed: ${status} ${statusText} - ${message}`,
       operatorId: "",
     });
   });
@@ -206,7 +191,7 @@ describe("adaptCreateExecutionFailure", () => {
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
     expect(summary.errors[0].message).toBe(
-      "Execution could not be created: 401 Unauthorized - Credentials are required to access this resource."
+      "Execution request failed: 401 Unauthorized - Credentials are required to access this resource."
     );
   });
 
@@ -214,12 +199,10 @@ describe("adaptCreateExecutionFailure", () => {
     const messageOf = (status: number, statusText: string, body: string) =>
       adaptCreateExecutionFailure(status, statusText, body, pipeline).errors[0].message;
 
-    expect(messageOf(502, "Bad Gateway", "")).toBe("Execution could not be created: 502 Bad Gateway");
-    expect(messageOf(503, "", "upstream connect error")).toBe(
-      "Execution could not be created: 503 - upstream connect error"
-    );
+    expect(messageOf(502, "Bad Gateway", "")).toBe("Execution request failed: 502 Bad Gateway");
+    expect(messageOf(503, "", "upstream connect error")).toBe("Execution request failed: 503 - upstream connect error");
     expect(messageOf(500, "Internal Server Error", JSON.stringify({ code: 500, message: " " }))).toBe(
-      "Execution could not be created: 500 Internal Server Error"
+      "Execution request failed: 500 Internal Server Error"
     );
   });
 
@@ -230,7 +213,7 @@ describe("adaptCreateExecutionFailure", () => {
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
     expect(summary.errors.map(error => error.message)).toEqual([
-      "Execution could not be created: 400 Bad Request - The workflow does not compile.",
+      "Execution request failed: 400 Bad Request - The workflow does not compile.",
     ]);
   });
 
@@ -247,9 +230,7 @@ describe("adaptCreateExecutionFailure", () => {
     const summary = adaptCreateExecutionFailure(400, "Bad Request", body, pipeline);
 
     expect(summary.state).toBe(WorkflowExecutionState.ERROR);
-    expect(summary.errors.map(error => error.message)).toEqual([
-      `Execution could not be created: 400 Bad Request - ${body}`,
-    ]);
+    expect(summary.errors.map(error => error.message)).toEqual([`Execution request failed: 400 Bad Request - ${body}`]);
   });
 });
 

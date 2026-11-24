@@ -67,7 +67,6 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 }
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder}
 import org.apache.texera.web.model.http.request.execution.CreateExecutionRequest
-import org.apache.texera.web.model.http.response.execution.CreateExecutionResponse
 import org.apache.texera.web.model.websocket.event.python.ConsoleUpdateEvent
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
@@ -77,9 +76,11 @@ import org.apache.texera.web.model.websocket.event.{
 }
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
+  CreatedExecution,
   ExecutionCreator,
   ExecutionExpiry,
-  FixtureCompilingService
+  FixtureCompilingService,
+  RecordingComputingUnits
 }
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
@@ -99,10 +100,10 @@ import scala.util.Try
   * run without a statement to Postgres, and keeps the run's record in the lake.
   *
   * An execution is created as the Dashboard service creates one (`ExecutionCreator`): its row is
-  * inserted, and its plan is compiled for its creator and answered. It is then started with that
-  * plan as a computing unit starts one (`WorkflowService.startExecution`), on a workflow service
-  * that a session is connected
-  * to, and runs to its end on an engine of this suite's actor system. Every statement the unit
+  * inserted, and its plan is compiled for its creator and handed over. It is then started with
+  * that plan as a computing unit starts what it is handed (`WorkflowService.checkStart`, then
+  * `startChecked`), on a workflow service that a session is connected to, and runs to its end on
+  * an engine of this suite's actor system. Every statement the unit
   * sends through jOOQ, from any thread, is recorded from the start until the session has been
   * sent the results of the completed run, which is the last thing a unit does for a run. The
   * run's record is kept in the lake as a unit keeps it, in the same catalog.
@@ -144,7 +145,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
 
   private var recorder: StatementRecorder = _
   private var configuredLakefsEndpoint: String = _
-  private val created = ArrayBuffer.empty[CreateExecutionResponse]
+  private val created = ArrayBuffer.empty[CreatedExecution]
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
@@ -221,10 +222,14 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   /** The Dashboard's expiry, which deletes no large binary: the suite's runs write none. */
   private val expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
 
+  /** The units' side of the Dashboard's create: each plan handed over, for the suite's unit. */
+  private val handedOver = new RecordingComputingUnits()
+
   /** The Dashboard's create, its plans bound as the suite binds them. */
   private object Dashboard
       extends ExecutionCreator(
         compiling = new FixtureCompilingService(bindingsFor = _ => bindings),
+        units = handedOver,
         linker = FixtureInputs.linker,
         replayLogRoot = None,
         warehousesEnabled = false,
@@ -306,14 +311,14 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
   /**
     * A run of an execution of the suite's, from its start to its end.
     *
-    * @param execution  the execution, as the Dashboard created it
+    * @param execution  the execution, as the Dashboard created it, with the plan it handed over
     * @param statements what the unit sent to Postgres meanwhile, in the order it was sent
     * @param states     the states of the run a session on the workflow was told, in order
     * @param recorded   whether the run's record had nothing left to write within a minute of
     *                   the run's end
     */
   protected case class Run(
-      execution: CreateExecutionResponse,
+      execution: CreatedExecution,
       statements: Seq[Statement],
       states: Seq[String],
       recorded: Boolean
@@ -352,11 +357,12 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
 
   /**
     * Creates an execution of the workflow of `operators` and `links` at the Dashboard, for the
-    * creator, then starts it on the unit by its id and waits for its run to end.
+    * creator, then starts it on the unit from the plan the Dashboard handed over and waits for
+    * its run to end.
     */
   protected def run(operators: List[LogicalOp], links: List[LogicalLink]): Run = {
-    val execution = Dashboard
-      .create(
+    val execution = handedOver.created(
+      Dashboard.create(
         CreateExecutionRequest(
           wid = wid.toLong,
           engineVersion = "1.4.0-spec",
@@ -371,6 +377,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         new URI("http://texera.example/api/executions"),
         FixtureCompilingService.authorizationOf(creatorUid)
       )
+    )
     created += execution
 
     val service = unitWorkflowService()
@@ -379,8 +386,9 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
       Seq(service.connect(session.receive), service.connectToExecution(session.receive))
     try {
       val statements = recorder.record {
-        service
-          .startExecution(execution.plan, creator, unitCuid)
+        WorkflowService
+          .checkStart(execution.plan, creator, unitCuid)
+          .flatMap(service.startChecked)
           .left
           .foreach(why => fail(s"the start was refused: $why"))
         Await.result(session.ended, 3.minutes)
@@ -394,7 +402,7 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     }
   }
 
-  private def logUriOf(execution: CreateExecutionResponse): URI =
+  private def logUriOf(execution: CreatedExecution): URI =
     ExecutionLogStore.logUri(WorkflowIdentity(wid.toLong), ExecutionIdentity(execution.eid), None)
 
   /**

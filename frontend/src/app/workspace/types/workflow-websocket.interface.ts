@@ -35,24 +35,6 @@ import { SchemaAttribute } from "./workflow-compiling.interface";
  * 2. value is the payload this request/event needs
  */
 
-/**
- * Starts an execution the Dashboard service created, with the plan it compiled for it. The plan names the
- * execution, so the request names none beside it.
- */
-export type WorkflowStartRequest = Readonly<{
-  /** The plan as `POST /api/executions` answered it, text passed on unchanged. */
-  plan: string;
-}>;
-
-/**
- * Applies, when the paused run of an execution resumes, a change to an operator that the Dashboard service compiled.
- * The change names the execution, so the request names none beside it.
- */
-export type OperatorUpdateRequest = Readonly<{
-  /** The change as `POST /api/executions/{eid}/updates` answered it, text passed on unchanged. */
-  update: string;
-}>;
-
 /** Pauses, resumes or kills the run of an execution: the computing unit refuses it for any other run. */
 export type RunCommandRequest = Readonly<{
   executionId: number;
@@ -65,10 +47,7 @@ export type RunCommandRequest = Readonly<{
 export type RequestRefusedEvent = Readonly<{
   /** The type of the request, as its frame named it; left out for a frame that named none. */
   request?: string;
-  /**
-   * The execution the request was about: the one it named, or for a start the one its plan named. Left out for a
-   * request that said neither, as a start whose plan could not be read.
-   */
+  /** The execution the request named, as a pause, a resume and a kill do; left out for a request that named none. */
   executionId?: number;
   message: string;
 }>;
@@ -172,12 +151,6 @@ export type RegionStateEvent = Readonly<{
   state: string;
 }>;
 
-export type ModifyLogicResponse = Readonly<{
-  opId: string;
-  isValid: boolean;
-  errorMessage: string;
-}>;
-
 export type ModifyLogicCompletedEvent = Readonly<{
   opIds: readonly string[];
 }>;
@@ -197,11 +170,9 @@ export type WorkflowStateInfo = Readonly<{
 
 export type TexeraWebsocketRequestTypeMap = {
   HeartBeatRequest: {};
-  OperatorUpdateRequest: OperatorUpdateRequest;
   ResultPaginationRequest: PaginationRequest;
   RetryRequest: { workers: ReadonlyArray<string> };
   SkipTupleRequest: { workers: ReadonlyArray<string> };
-  WorkflowStartRequest: WorkflowStartRequest;
   WorkflowKillRequest: RunCommandRequest;
   WorkflowPauseRequest: RunCommandRequest;
   WorkflowCheckpointRequest: {};
@@ -223,7 +194,6 @@ export type TexeraWebsocketEventTypeMap = {
   PaginatedResultEvent: PaginatedResultEvent;
   PythonExpressionEvaluateResponse: PythonExpressionEvaluateResponse;
   WorkerAssignmentUpdateEvent: WorkerAssignmentUpdateEvent;
-  ModifyLogicResponse: ModifyLogicResponse;
   ModifyLogicCompletedEvent: ModifyLogicCompletedEvent;
   ExecutionDurationUpdateEvent: ExecutionDurationUpdateEvent;
   ClusterStatusUpdateEvent: ClusterStatusUpdateEvent;

@@ -39,9 +39,8 @@ import org.apache.texera.common.compiler.model.LogicalPlanPojo
   * The workflow compiling service makes the plan of each execution the Dashboard service
   * creates, with the access of the user who creates it. The plan made here takes no secret: it
   * says where each file its operators read is kept, and the Dashboard service, which holds the
-  * object store's keys, signs a link to each, adds what else the run needs and answers the plan
-  * to the client, which hands it to the computing unit that runs the execution: the engine never
-  * sees the plan the compile made.
+  * object store's keys, signs a link to each, adds what else the run needs and hands the plan to
+  * the computing unit that runs the execution: the engine never sees the plan the compile made.
   */
 object PlanToRun {
 

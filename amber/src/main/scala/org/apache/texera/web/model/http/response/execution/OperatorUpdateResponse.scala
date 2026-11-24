@@ -20,7 +20,7 @@
 package org.apache.texera.web.model.http.response.execution
 
 /**
-  * The change that `POST /api/executions/{eid}/updates` made to run (201): the operator it changes,
-  * and the change, which a client hands to the computing unit running the execution as it got it.
+  * A change that `POST /api/executions/{eid}/updates` made to run and the execution's computing
+  * unit took (201): the operator it changes.
   */
-case class OperatorUpdateResponse(operatorId: String, update: String)
+case class OperatorUpdateResponse(operatorId: String)

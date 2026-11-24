@@ -144,7 +144,12 @@ class ApplicationConfigSpec extends AnyFlatSpec with Matchers {
       ApplicationConfig.executionStateCleanUpInSecs shouldBe 30
     )
     ifUnset("MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB")(
-      ApplicationConfig.maxWorkflowWebsocketRequestPayloadSizeKb shouldBe 24576
+      ApplicationConfig.maxWorkflowWebsocketRequestPayloadSizeKb shouldBe 1024
+    )
+    // Where the Dashboard service reaches the one computing unit of a deployment that runs one
+    // beside it: the address the agent service is given for it too.
+    ifUnset("WORKFLOW_EXECUTION_SERVICE_ENDPOINT")(
+      ApplicationConfig.computingUnitEndpoint shouldBe "http://localhost:8085"
     )
   }
 

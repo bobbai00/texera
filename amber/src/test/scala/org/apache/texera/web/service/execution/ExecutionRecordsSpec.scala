@@ -450,6 +450,7 @@ class ExecutionRecordsSpec
 
   it should "close an execution once: a second close changes nothing" in {
     val eid = insertExecution()
+    recordResultRow(eid)
     ExecutionRecords.close(
       eid,
       killed,
@@ -478,10 +479,15 @@ class ExecutionRecordsSpec
     record(eid).closing shouldBe
       Some(ClosingRecord(killed, Some("killed by the user"), createdAtMs + 5000L, true))
     row(eid).getResultsExpiredAt shouldBe null
+    // Nor does it delete the rows of the result tables of the run that ended.
+    resultRowsOf(eid) shouldBe 1
   }
 
-  it should "mark the results of an execution no unit can start expired, with no bytes, in the same statement" in {
+  it should "mark the results of an execution no unit can start expired, with no bytes, and delete the rows of its result tables, in one transaction" in {
     val eid = insertExecution()
+    Seq("one-port", "another-port").foreach(recordResultRow(eid, _))
+    val other = insertExecution()
+    recordResultRow(other)
 
     val statements = recorder.record {
       ExecutionRecords.close(
@@ -494,12 +500,29 @@ class ExecutionRecordsSpec
       ) shouldBe true
     }
 
-    statements.map(_.verb) shouldBe Seq("UPDATE")
+    // The closing record, then the rows of its result tables: nothing looks for tables it
+    // never made.
+    statements.map(_.verb) shouldBe Seq("UPDATE", "DELETE")
     val closed = row(eid)
     closed.getOutcome shouldBe failed
     closed.getOutcomeFromLog shouldBe false
     closed.getResultsExpiredAt shouldBe new Timestamp(createdAtMs + 600000L)
     closed.getStoredBytes shouldBe 0L
+    resultRowsOf(eid) shouldBe 0
+    resultRowsOf(other) shouldBe 1
+  }
+
+  it should "keep the rows of the result tables of an execution a unit ran, in the one statement that closes it" in {
+    val eid = insertExecution()
+    recordResultRow(eid)
+
+    val statements = recorder.record {
+      ExecutionRecords.close(eid, completed, None, createdAtMs + 1000L, fromLog = true) shouldBe
+        true
+    }
+
+    statements.map(_.verb) shouldBe Seq("UPDATE")
+    resultRowsOf(eid) shouldBe 1
   }
 
   it should "close nothing for an id that names no execution" in {

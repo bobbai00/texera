@@ -83,11 +83,9 @@ object PhysicalPlanCodec {
     * The most bytes of UTF-8 a plan's text may be, and an update's: 16 MiB. A plan holds a link
     * to each file its operators read, so it grows with the files it lists: at the default of
     * `constants.max-listed-files`, with links of 600 characters, it is about 9 MiB. The limit
-    * keeps a plan within what its way to the computing unit takes: the websocket message a start
-    * carries it in (`web-server.max-workflow-websocket-request-payload-size-kb`), the longest
-    * string a JSON reader takes (20 million characters), and the largest message between the
-    * nodes of a computing unit (30 MiB), which hands each operator its part. An update takes the
-    * same way.
+    * keeps a plan within what its way to the computing unit takes: the longest string a JSON
+    * reader takes (20 million characters), and the largest message between the nodes of a
+    * computing unit (30 MiB), which hands each operator its part. An update takes the same way.
     */
   val MaxPlanBytes: Int = 16 * 1024 * 1024
 
