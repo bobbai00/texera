@@ -40,13 +40,12 @@ import org.apache.texera.amber.operator.hashJoin.HashJoinOpDesc
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.common.compiler.model.LogicalLink
-import org.scalamock.scalatest.MockFactory
 import org.scalatest.flatspec.AnyFlatSpec
 
 import java.net.URI
 import scala.jdk.CollectionConverters._
 
-class CostBasedScheduleGeneratorSpec extends AnyFlatSpec with MockFactory {
+class CostBasedScheduleGeneratorSpec extends AnyFlatSpec {
 
   /** A run's context with `hints`, as a run's web layer would set it up. */
   private def contextWith(

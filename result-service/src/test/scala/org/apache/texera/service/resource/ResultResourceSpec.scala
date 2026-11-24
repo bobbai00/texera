@@ -34,6 +34,7 @@ import org.apache.texera.amber.core.storage.{
   VFSURIFactory
 }
 import org.apache.texera.amber.core.storage.model.{BufferedItemWriter, VirtualDocument}
+import org.apache.texera.amber.core.storage.result.iceberg.{FailingCatalog, OnIceberg}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -44,7 +45,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, JwtAuthFilter, SessionUser, UnauthorizedExceptionMapper}
-import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{OPERATOR_PORT_EXECUTIONS, WORKFLOW_EXECUTIONS}
 import org.apache.texera.dao.jooq.generated.enums.{
@@ -204,6 +204,14 @@ class ResultResourceSpec
   override protected def beforeEach(): Unit = {
     getDSLContext.deleteFrom(OPERATOR_PORT_EXECUTIONS).execute()
     getDSLContext.deleteFrom(WORKFLOW_EXECUTIONS).execute()
+  }
+
+  /** Runs `body` on a catalog that lets `succeeding` `loadTable` calls through, then fails. */
+  private def withFailingCatalog(succeeding: Int)(body: => Unit): Unit = {
+    val catalog = IcebergCatalogInstance.getInstance()
+    IcebergCatalogInstance.replaceInstance(new FailingCatalog(catalog, succeeding))
+    try body
+    finally IcebergCatalogInstance.replaceInstance(catalog)
   }
 
   /**
@@ -605,21 +613,33 @@ class ResultResourceSpec
   it should "not pass off a table it cannot read as a missing result" in {
     val eid = insertExecution(owner)
     val uri = storeResult(eid)
-    // Texera has no attribute type for a float column, so opening the table now fails. The
-    // table is named after its URI's path, as DocumentFactory names result tables.
-    IcebergCatalogInstance
-      .getInstance()
-      .loadTable(
-        TableIdentifier.of(
-          StorageConfig.icebergTableResultNamespace,
-          uri.getPath.stripPrefix("/").replace('/', '_')
-        )
-      )
+    // Texera has no attribute type for a float column, so opening the table now fails.
+    val table = DocumentFactory.openDocument(uri)._1.asInstanceOf[OnIceberg]
+    table.catalog
+      .loadTable(TableIdentifier.of(table.tableNamespace, table.tableName))
       .updateSchema()
       .addColumn("weight", Types.FloatType.get())
       .commit()
 
     get(owner, pagesPath(eid)).getStatus shouldBe 500
+  }
+
+  it should "answer 500, not 404, when the catalog is unavailable" in {
+    val eid = insertExecution(owner)
+    storeResult(eid)
+
+    withFailingCatalog(succeeding = 0) {
+      get(owner, pagesPath(eid)).getStatus shouldBe 500
+    }
+  }
+
+  it should "answer 500, not an empty page, when the catalog fails after opening the result" in {
+    val eid = insertExecution(owner)
+    storeResult(eid)
+
+    withFailingCatalog(succeeding = 1) {
+      get(owner, pagesPath(eid)).getStatus shouldBe 500
+    }
   }
 
   it should "answer 503 for a result in a warehouse it cannot read" in {

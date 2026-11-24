@@ -33,12 +33,19 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Workflow
 import org.apache.texera.amber.util.IcebergUtil
 import org.apache.iceberg.catalog.{Namespace, TableIdentifier}
 import org.apache.iceberg.data.Record
-import org.apache.iceberg.exceptions.{NoSuchNamespaceException, NoSuchTableException}
+import org.apache.iceberg.exceptions.NoSuchNamespaceException
 import org.apache.iceberg.{Table, Schema => IcebergSchema}
 
 import java.net.URI
 import scala.jdk.CollectionConverters._
 import scala.util.Try
+
+/**
+  * Signals that a URI addresses a document with no storage behind it, as one whose table was
+  * deleted. A distinct type so callers can tell it from a document that could not be opened. It
+  * is an `IllegalArgumentException` because `openDocument` has always thrown one here.
+  */
+class DocumentNotFoundException(message: String) extends IllegalArgumentException(message)
 
 object DocumentFactory {
 
@@ -166,8 +173,7 @@ object DocumentFactory {
 
   /**
     * The Iceberg table a VFS URI resolves to; None when its catalog has no such table or
-    * namespace. Any other failure to load it is thrown, so a catalog that cannot answer is never
-    * taken for a missing table (`IcebergUtil.loadTableMetadata` reads every failure as None).
+    * namespace, and any other failure to load it is thrown (`IcebergUtil.loadTableMetadata`).
     * For the storage layer's use of Iceberg features that a document does not expose, such as
     * the size of a table's data.
     */
@@ -175,11 +181,11 @@ object DocumentFactory {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
         val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
-        val catalog = IcebergCatalogInstance.getInstance(warehouse)
-        try Some(catalog.loadTable(TableIdentifier.of(namespace, storageKey)))
-        catch {
-          case _: NoSuchTableException | _: NoSuchNamespaceException => None
-        }
+        IcebergUtil.loadTableMetadata(
+          IcebergCatalogInstance.getInstance(warehouse),
+          namespace,
+          storageKey
+        )
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
           s"Unsupported URI scheme: $unsupportedScheme for loading the table"
@@ -311,7 +317,7 @@ object DocumentFactory {
             storageKey
           )
           .getOrElse(
-            throw new IllegalArgumentException("No storage is found for the given URI")
+            throw new DocumentNotFoundException("No storage is found for the given URI")
           )
 
         val amberSchema = IcebergUtil.fromIcebergSchema(table.schema())

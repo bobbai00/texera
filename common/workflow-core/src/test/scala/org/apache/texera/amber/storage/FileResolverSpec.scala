@@ -45,16 +45,12 @@ import org.jooq.ConnectionProvider
 import org.jooq.exception.DataAccessException
 import org.jooq.impl.DSL
 import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
+import org.scalatest.BeforeAndAfterAll
 
 import java.nio.file.Paths
 import java.sql.{Connection, SQLException}
 
-class FileResolverSpec
-    extends AnyFlatSpec
-    with BeforeAndAfterAll
-    with BeforeAndAfterEach
-    with MockTexeraDB {
+class FileResolverSpec extends AnyFlatSpec with BeforeAndAfterAll with MockTexeraDB {
 
   private val testUser: User = {
     val user = new User

@@ -88,25 +88,30 @@ describe("toOperatorRuntimeStatusMap", () => {
     });
   });
 
-  // A row of `GET /api/executions/{wid}/stats/{eid}`, as it arrives: the names are the server's.
-  it("reads the times and the workers of a row as the Dashboard service sends it", () => {
-    const sent = JSON.parse(`{
-      "operatorId": "op1", "timestamp": 1794873600000, "inputTupleCount": 1000, "inputTupleSize": 8000,
-      "outputTupleCount": 250, "outputTupleSize": 2000, "dataProcessingTime": 5000000,
-      "controlProcessingTime": 1000000, "idleTime": 700000, "numWorkers": 2, "status": 3
-    }`) as WorkflowRuntimeStatistics;
+  // One row exactly as `WorkflowExecutionsResource.WorkflowRuntimeStatistics` serializes it.
+  const BACKEND_BODY =
+    '[{"operatorId":"op1","timestamp":1700000000000,"inputTupleCount":10,"inputTupleSize":80,' +
+    '"outputTupleCount":5,"outputTupleSize":40,"dataProcessingTime":5000000,"controlProcessingTime":1000000,' +
+    '"idleTime":700000,"numWorkers":3,"status":3}]';
 
-    expect(toOperatorRuntimeStatusMap([sent]).op1).toEqual({
-      operatorState: OperatorState.Completed,
-      aggregatedInputRowCount: 1_000,
-      aggregatedInputSize: 8_000,
-      aggregatedOutputRowCount: 250,
-      aggregatedOutputSize: 2_000,
-      numWorkers: 2,
-      aggregatedDataProcessingTime: 5_000_000,
-      aggregatedControlProcessingTime: 1_000_000,
-      aggregatedIdleTime: 700_000,
-    });
+  it("reads the timing and worker fields from the JSON the stats endpoint returns", () => {
+    // A renamed field on either side fails here instead of restoring zero times and one worker.
+    const restored = toOperatorRuntimeStatusMap(JSON.parse(BACKEND_BODY)).op1;
+    expect(restored.aggregatedDataProcessingTime).toBe(5_000_000);
+    expect(restored.aggregatedControlProcessingTime).toBe(1_000_000);
+    expect(restored.aggregatedIdleTime).toBe(700_000);
+    expect(restored.numWorkers).toBe(3);
+  });
+
+  it("ignores the legacy total*/numberOfWorkers names", () => {
+    const legacyBody =
+      '[{"operatorId":"op1","timestamp":1,"totalDataProcessingTime":5000000,"totalControlProcessingTime":1000000,' +
+      '"totalIdleTime":700000,"numberOfWorkers":3,"status":3}]';
+    const restored = toOperatorRuntimeStatusMap(JSON.parse(legacyBody)).op1;
+    expect(restored.aggregatedDataProcessingTime).toBeUndefined();
+    expect(restored.aggregatedControlProcessingTime).toBeUndefined();
+    expect(restored.aggregatedIdleTime).toBeUndefined();
+    expect(restored.numWorkers).toBeUndefined();
   });
 
   it("omits the port maps rather than emitting empty ones, so port labels survive a restore", () => {
